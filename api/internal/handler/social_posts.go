@@ -71,8 +71,14 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate accounts belong to project and are connected
-	var accounts []db.SocialAccount
+	// Validate accounts belong to project — disconnected accounts are included
+	// but will be marked as failed in results (one failure doesn't block others)
+	type accountEntry struct {
+		account      db.SocialAccount
+		disconnected bool
+		notFound     bool
+	}
+	var entries []accountEntry
 	for _, id := range body.AccountIDs {
 		acc, err := h.queries.GetSocialAccountByIDAndProject(r.Context(), db.GetSocialAccountByIDAndProjectParams{
 			ID:        id,
@@ -80,17 +86,23 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if err == pgx.ErrNoRows {
-				writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found: "+id)
-				return
+				entries = append(entries, accountEntry{account: db.SocialAccount{ID: id}, notFound: true})
+				continue
 			}
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate account")
 			return
 		}
-		if acc.DisconnectedAt.Valid {
-			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Account is disconnected: "+id)
-			return
+		entries = append(entries, accountEntry{
+			account:      acc,
+			disconnected: acc.DisconnectedAt.Valid,
+		})
+	}
+
+	var accounts []db.SocialAccount
+	for _, e := range entries {
+		if !e.notFound && !e.disconnected {
+			accounts = append(accounts, e.account)
 		}
-		accounts = append(accounts, acc)
 	}
 
 	// Create post record
@@ -199,6 +211,37 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 			rr.PublishedAt = &t
 		}
 		responseResults = append(responseResults, rr)
+	}
+
+	// Record failed results for disconnected/not-found accounts
+	for _, e := range entries {
+		if !e.notFound && !e.disconnected {
+			continue
+		}
+		allPublished = false
+		errMessage := "account is disconnected"
+		if e.notFound {
+			errMessage = "account not found"
+		}
+		dbResult, err := h.queries.CreateSocialPostResult(r.Context(), db.CreateSocialPostResultParams{
+			PostID:          post.ID,
+			SocialAccountID: e.account.ID,
+			Status:          "failed",
+			ExternalID:      pgtype.Text{},
+			ErrorMessage:    pgtype.Text{String: errMessage, Valid: true},
+			PublishedAt:     pgtype.Timestamptz{},
+		})
+		if err != nil {
+			log.Printf("failed to save post result: %v", err)
+			continue
+		}
+		msg := dbResult.ErrorMessage.String
+		responseResults = append(responseResults, postResultResponse{
+			SocialAccountID: dbResult.SocialAccountID,
+			Platform:        e.account.Platform,
+			Status:          "failed",
+			ErrorMessage:    &msg,
+		})
 	}
 
 	// Update post status
