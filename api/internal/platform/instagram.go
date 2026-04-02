@@ -66,31 +66,29 @@ func (a *InstagramAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 		return nil, err
 	}
 
-	// Exchange for long-lived token (60 days)
+	// Exchange for long-lived token (60 days) via Instagram API
 	longToken, expiresIn, err := a.exchangeForLongLivedToken(ctx, config, tokenResp.AccessToken)
 	if err != nil {
-		// Fall back to short-lived token
 		longToken = tokenResp.AccessToken
-		expiresIn = tokenResp.ExpiresIn
+		expiresIn = 3600
 	}
 
-	// Get Instagram account info via pages
-	igAccount, err := a.getInstagramAccount(ctx, longToken)
+	// Get Instagram profile directly via Instagram Graph API
+	profile, err := a.getProfile(ctx, longToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get Instagram account: %w", err)
+		return nil, fmt.Errorf("failed to get Instagram profile: %w", err)
 	}
 
 	return &ConnectResult{
 		AccessToken:       longToken,
-		RefreshToken:      longToken, // Meta uses token exchange instead of refresh tokens
+		RefreshToken:      longToken,
 		TokenExpiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
-		ExternalAccountID: igAccount.id,
-		AccountName:       igAccount.username,
-		AvatarURL:         igAccount.profilePicURL,
+		ExternalAccountID: profile.id,
+		AccountName:       profile.username,
+		AvatarURL:         profile.profilePicURL,
 		Metadata: map[string]any{
-			"ig_user_id": igAccount.id,
-			"username":   igAccount.username,
-			"page_id":    igAccount.pageID,
+			"ig_user_id": profile.id,
+			"username":   profile.username,
 		},
 	}, nil
 }
@@ -201,13 +199,12 @@ func (a *InstagramAdapter) RefreshToken(ctx context.Context, refreshToken string
 
 func (a *InstagramAdapter) exchangeForLongLivedToken(ctx context.Context, config OAuthConfig, shortToken string) (string, int, error) {
 	params := url.Values{
-		"grant_type":    {"fb_exchange_token"},
-		"client_id":     {config.ClientID},
+		"grant_type":    {"ig_exchange_token"},
 		"client_secret": {config.ClientSecret},
-		"fb_exchange_token": {shortToken},
+		"access_token":  {shortToken},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://graph.facebook.com/v21.0/oauth/access_token?"+params.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://graph.instagram.com/access_token?"+params.Encode(), nil)
 	if err != nil {
 		return "", 0, err
 	}
@@ -226,21 +223,22 @@ func (a *InstagramAdapter) exchangeForLongLivedToken(ctx context.Context, config
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", 0, err
 	}
+	if result.AccessToken == "" {
+		return "", 0, fmt.Errorf("empty access token in long-lived exchange")
+	}
 
 	return result.AccessToken, result.ExpiresIn, nil
 }
 
-type igAccountInfo struct {
+type igProfile struct {
 	id            string
 	username      string
 	profilePicURL string
-	pageID        string
 }
 
-func (a *InstagramAdapter) getInstagramAccount(ctx context.Context, accessToken string) (*igAccountInfo, error) {
-	// Get pages, then find connected Instagram account
+func (a *InstagramAdapter) getProfile(ctx context.Context, accessToken string) (*igProfile, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		"https://graph.facebook.com/v21.0/me/accounts?fields=id,name,instagram_business_account&access_token="+accessToken, nil)
+		"https://graph.instagram.com/v21.0/me?fields=id,username,profile_picture_url&access_token="+accessToken, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -251,45 +249,28 @@ func (a *InstagramAdapter) getInstagramAccount(ctx context.Context, accessToken 
 	}
 	defer resp.Body.Close()
 
-	var pages struct {
-		Data []struct {
-			ID                       string `json:"id"`
-			InstagramBusinessAccount struct {
-				ID string `json:"id"`
-			} `json:"instagram_business_account"`
-		} `json:"data"`
-	}
-	json.NewDecoder(resp.Body).Decode(&pages)
-
-	for _, page := range pages.Data {
-		if page.InstagramBusinessAccount.ID != "" {
-			// Get Instagram account details
-			igReq, _ := http.NewRequestWithContext(ctx, "GET",
-				fmt.Sprintf("https://graph.instagram.com/v21.0/%s?fields=id,username,profile_picture_url&access_token=%s",
-					page.InstagramBusinessAccount.ID, accessToken), nil)
-			igResp, err := a.client.Do(igReq)
-			if err != nil {
-				continue
-			}
-			defer igResp.Body.Close()
-
-			var ig struct {
-				ID                string `json:"id"`
-				Username          string `json:"username"`
-				ProfilePictureURL string `json:"profile_picture_url"`
-			}
-			json.NewDecoder(igResp.Body).Decode(&ig)
-
-			return &igAccountInfo{
-				id:            ig.ID,
-				username:      ig.Username,
-				profilePicURL: ig.ProfilePictureURL,
-				pageID:        page.ID,
-			}, nil
-		}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get profile (%d): %s", resp.StatusCode, string(body))
 	}
 
-	return nil, fmt.Errorf("no Instagram business account found. Make sure your Facebook page has a connected Instagram account")
+	var profile struct {
+		ID                string `json:"id"`
+		Username          string `json:"username"`
+		ProfilePictureURL string `json:"profile_picture_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
+		return nil, err
+	}
+	if profile.ID == "" {
+		return nil, fmt.Errorf("empty profile ID")
+	}
+
+	return &igProfile{
+		id:            profile.ID,
+		username:      profile.Username,
+		profilePicURL: profile.ProfilePictureURL,
+	}, nil
 }
 
 func (a *InstagramAdapter) getIGUserID(ctx context.Context, accessToken string) (string, error) {
