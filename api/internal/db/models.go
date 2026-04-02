@@ -42,6 +42,7 @@ type SocialAccount struct {
 	AccountAvatarUrl  pgtype.Text        `json:"account_avatar_url"`
 	ConnectedAt       pgtype.Timestamptz `json:"connected_at"`
 	DisconnectedAt    pgtype.Timestamptz `json:"disconnected_at"`
+	Metadata          []byte             `json:"metadata"`
 }
 
 type SocialPost struct {
@@ -53,6 +54,7 @@ type SocialPost struct {
 	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 	PublishedAt pgtype.Timestamptz `json:"published_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Metadata    []byte             `json:"metadata"`
 }
 
 type SocialPostResult struct {
@@ -71,4 +73,26 @@ type User struct {
 	Name      pgtype.Text        `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Webhook struct {
+	ID        string             `json:"id"`
+	ProjectID string             `json:"project_id"`
+	Url       string             `json:"url"`
+	Secret    string             `json:"secret"`
+	Events    []string           `json:"events"`
+	Active    bool               `json:"active"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type WebhookDelivery struct {
+	ID          string             `json:"id"`
+	WebhookID   string             `json:"webhook_id"`
+	Event       string             `json:"event"`
+	Payload     []byte             `json:"payload"`
+	StatusCode  pgtype.Int4        `json:"status_code"`
+	Attempts    int32              `json:"attempts"`
+	DeliveredAt pgtype.Timestamptz `json:"delivered_at"`
+	NextRetryAt pgtype.Timestamptz `json:"next_retry_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }

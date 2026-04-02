@@ -17,8 +17,11 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/worker"
 )
 
 func main() {
@@ -33,6 +36,19 @@ func main() {
 	if databaseURL == "" {
 		log.Fatal("DATABASE_URL is required")
 	}
+
+	// Initialize AES encryptor for token encryption
+	encryptionKey := os.Getenv("ENCRYPTION_KEY")
+	if encryptionKey == "" {
+		log.Fatal("ENCRYPTION_KEY is required")
+	}
+	encryptor, err := crypto.NewAESEncryptor(encryptionKey)
+	if err != nil {
+		log.Fatalf("Failed to initialize encryptor: %v", err)
+	}
+
+	// Register platform adapters
+	platform.Register(platform.NewBlueskyAdapter())
 
 	ctx := context.Background()
 
@@ -54,6 +70,16 @@ func main() {
 
 	queries := db.New(pool)
 
+	// Start background workers
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
+
+	tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor)
+	go tokenWorker.Start(workerCtx)
+
+	webhookWorker := worker.NewWebhookDeliveryWorker(queries)
+	go webhookWorker.Start(workerCtx)
+
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -74,8 +100,9 @@ func main() {
 	webhookHandler := handler.NewWebhookHandler(queries)
 	projectHandler := handler.NewProjectHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
-	socialAccountHandler := handler.NewSocialAccountHandler()
-	socialPostHandler := handler.NewSocialPostHandler()
+	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor)
+	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -96,6 +123,15 @@ func main() {
 		r.Get("/v1/projects/{projectID}/api-keys", apiKeyHandler.List)
 		r.Post("/v1/projects/{projectID}/api-keys", apiKeyHandler.Create)
 		r.Delete("/v1/projects/{projectID}/api-keys/{keyID}", apiKeyHandler.Revoke)
+
+		// Social accounts (dashboard)
+		r.Get("/v1/projects/{projectID}/social-accounts", socialAccountHandler.List)
+		r.Post("/v1/projects/{projectID}/social-accounts/connect", socialAccountHandler.Connect)
+		r.Delete("/v1/projects/{projectID}/social-accounts/{accountID}", socialAccountHandler.Disconnect)
+
+		// Social posts (dashboard)
+		r.Get("/v1/projects/{projectID}/social-posts", socialPostHandler.List)
+		r.Post("/v1/projects/{projectID}/social-posts", socialPostHandler.Create)
 	})
 
 	// Public API routes (API key auth)
@@ -103,8 +139,16 @@ func main() {
 		r.Use(auth.APIKeyMiddleware(queries))
 
 		r.Get("/v1/social-accounts", socialAccountHandler.List)
+		r.Post("/v1/social-accounts/connect", socialAccountHandler.Connect)
+		r.Delete("/v1/social-accounts/{id}", socialAccountHandler.Disconnect)
+
 		r.Get("/v1/social-posts", socialPostHandler.List)
 		r.Post("/v1/social-posts", socialPostHandler.Create)
+		r.Get("/v1/social-posts/{id}", socialPostHandler.Get)
+		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
+
+		r.Post("/v1/webhooks", webhookSubHandler.Create)
+		r.Get("/v1/webhooks", webhookSubHandler.List)
 	})
 
 	srv := &http.Server{
@@ -128,6 +172,7 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down server...")
+	workerCancel()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

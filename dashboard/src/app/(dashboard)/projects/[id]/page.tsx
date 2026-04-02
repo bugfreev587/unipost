@@ -51,7 +51,7 @@ export default function ProjectOverviewPage() {
         {new Date(project.created_at).toLocaleDateString()}
       </p>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <Link href={`/projects/${id}/api-keys`}>
           <Card className="hover:border-primary/50 transition-colors cursor-pointer">
             <CardHeader>
@@ -65,6 +65,14 @@ export default function ProjectOverviewPage() {
             <CardHeader>
               <CardTitle className="text-base">Accounts</CardTitle>
               <CardDescription>Connected social accounts</CardDescription>
+            </CardHeader>
+          </Card>
+        </Link>
+        <Link href={`/projects/${id}/posts`}>
+          <Card className="hover:border-primary/50 transition-colors cursor-pointer">
+            <CardHeader>
+              <CardTitle className="text-base">Posts</CardTitle>
+              <CardDescription>Send and manage posts</CardDescription>
             </CardHeader>
           </Card>
         </Link>

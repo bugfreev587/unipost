@@ -146,3 +146,81 @@ export async function revokeApiKey(
     method: "DELETE",
   });
 }
+
+// Social Accounts
+
+export interface SocialAccount {
+  id: string;
+  platform: string;
+  account_name: string | null;
+  connected_at: string;
+  status: "active" | "reconnect_required";
+}
+
+export async function listSocialAccounts(
+  token: string,
+  projectId: string
+): Promise<ApiResponse<SocialAccount[]>> {
+  return request(`/v1/projects/${projectId}/social-accounts`, token);
+}
+
+export async function connectSocialAccount(
+  token: string,
+  projectId: string,
+  data: { platform: string; credentials: Record<string, string> }
+): Promise<ApiResponse<SocialAccount>> {
+  return request(`/v1/projects/${projectId}/social-accounts/connect`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function disconnectSocialAccount(
+  token: string,
+  projectId: string,
+  accountId: string
+): Promise<void> {
+  return request(
+    `/v1/projects/${projectId}/social-accounts/${accountId}`,
+    token,
+    { method: "DELETE" }
+  );
+}
+
+// Social Posts
+
+export interface SocialPostResult {
+  social_account_id: string;
+  platform?: string;
+  status: string;
+  external_id?: string;
+  error_message?: string;
+  published_at?: string;
+}
+
+export interface SocialPost {
+  id: string;
+  caption: string | null;
+  status: string;
+  created_at: string;
+  published_at?: string;
+  results?: SocialPostResult[];
+}
+
+export async function listSocialPosts(
+  token: string,
+  projectId: string
+): Promise<ApiResponse<SocialPost[]>> {
+  return request(`/v1/projects/${projectId}/social-posts`, token);
+}
+
+export async function createSocialPost(
+  token: string,
+  projectId: string,
+  data: { caption: string; account_ids: string[]; media_urls?: string[] }
+): Promise<ApiResponse<SocialPost>> {
+  return request(`/v1/projects/${projectId}/social-posts`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
