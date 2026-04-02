@@ -1,0 +1,256 @@
+package handler
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/crypto"
+	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
+)
+
+type OAuthHandler struct {
+	queries         *db.Queries
+	encryptor       *crypto.AESEncryptor
+	baseRedirectURL string
+}
+
+func NewOAuthHandler(queries *db.Queries, encryptor *crypto.AESEncryptor) *OAuthHandler {
+	baseURL := os.Getenv("OAUTH_REDIRECT_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.unipost.dev"
+	}
+	return &OAuthHandler{
+		queries:         queries,
+		encryptor:       encryptor,
+		baseRedirectURL: baseURL,
+	}
+}
+
+// Connect handles GET /v1/oauth/connect/{platform}
+// Returns the authorization URL for the user to redirect to.
+func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
+	platformName := chi.URLParam(r, "platform")
+	redirectURL := r.URL.Query().Get("redirect_url")
+
+	projectID := h.getProjectID(r)
+	if projectID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+		return
+	}
+
+	adapter, err := platform.Get(platformName)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+
+	oauthAdapter, ok := adapter.(platform.OAuthAdapter)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", fmt.Sprintf("%s does not support OAuth", platformName))
+		return
+	}
+
+	// Get OAuth config — check for White Label credentials first
+	config := h.getOAuthConfig(r, projectID, platformName, oauthAdapter)
+
+	// Generate CSRF state
+	state, err := platform.GenerateState()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate state")
+		return
+	}
+
+	// Store state for verification on callback
+	_, err = h.queries.CreateOAuthState(r.Context(), db.CreateOAuthStateParams{
+		State:       state,
+		ProjectID:   projectID,
+		Platform:    platformName,
+		RedirectUrl: pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to store OAuth state")
+		return
+	}
+
+	authURL := oauthAdapter.GetAuthURL(config, state)
+	writeSuccess(w, map[string]string{"auth_url": authURL})
+}
+
+// Callback handles GET /v1/oauth/callback/{platform}
+// This is called by the OAuth provider after user authorization.
+func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
+	platformName := chi.URLParam(r, "platform")
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	errorParam := r.URL.Query().Get("error")
+
+	if errorParam != "" {
+		errorDesc := r.URL.Query().Get("error_description")
+		slog.Warn("oauth callback error", "platform", platformName, "error", errorParam, "description", errorDesc)
+		h.redirectWithError(w, r, "", "Authorization denied: "+errorDesc)
+		return
+	}
+
+	if code == "" || state == "" {
+		h.redirectWithError(w, r, "", "Missing code or state parameter")
+		return
+	}
+
+	// Verify state (CSRF protection)
+	oauthState, err := h.queries.GetOAuthState(r.Context(), state)
+	if err != nil {
+		slog.Warn("oauth callback: invalid or expired state", "state", state)
+		h.redirectWithError(w, r, "", "Invalid or expired OAuth state")
+		return
+	}
+
+	// Clean up state
+	h.queries.DeleteOAuthState(r.Context(), state)
+
+	if oauthState.Platform != platformName {
+		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Platform mismatch")
+		return
+	}
+
+	adapter, err := platform.Get(platformName)
+	if err != nil {
+		h.redirectWithError(w, r, oauthState.RedirectUrl.String, err.Error())
+		return
+	}
+
+	oauthAdapter, ok := adapter.(platform.OAuthAdapter)
+	if !ok {
+		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Platform does not support OAuth")
+		return
+	}
+
+	config := h.getOAuthConfigForProject(r, oauthState.ProjectID, platformName, oauthAdapter)
+
+	// Exchange code for tokens
+	result, err := oauthAdapter.ExchangeCode(r.Context(), config, code)
+	if err != nil {
+		slog.Error("oauth callback: code exchange failed", "platform", platformName, "error", err)
+		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to exchange authorization code")
+		return
+	}
+
+	// Encrypt tokens
+	encAccess, err := h.encryptor.Encrypt(result.AccessToken)
+	if err != nil {
+		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to encrypt token")
+		return
+	}
+
+	var encRefresh string
+	if result.RefreshToken != "" {
+		encRefresh, err = h.encryptor.Encrypt(result.RefreshToken)
+		if err != nil {
+			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to encrypt token")
+			return
+		}
+	}
+
+	metadataJSON := []byte("{}")
+	if result.Metadata != nil {
+		if m, err := json.Marshal(result.Metadata); err == nil {
+			metadataJSON = m
+		}
+	}
+
+	// Store account
+	_, err = h.queries.CreateSocialAccount(r.Context(), db.CreateSocialAccountParams{
+		ProjectID:         oauthState.ProjectID,
+		Platform:          platformName,
+		AccessToken:       encAccess,
+		RefreshToken:      pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
+		TokenExpiresAt:    pgtype.Timestamptz{Time: result.TokenExpiresAt, Valid: !result.TokenExpiresAt.IsZero()},
+		ExternalAccountID: result.ExternalAccountID,
+		AccountName:       pgtype.Text{String: result.AccountName, Valid: result.AccountName != ""},
+		AccountAvatarUrl:  pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
+		Metadata:          metadataJSON,
+	})
+	if err != nil {
+		slog.Error("oauth callback: failed to save account", "error", err)
+		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to save account")
+		return
+	}
+
+	slog.Info("oauth account connected", "platform", platformName, "project_id", oauthState.ProjectID, "account", result.AccountName)
+
+	// Redirect back to frontend
+	redirectURL := oauthState.RedirectUrl.String
+	if redirectURL == "" {
+		redirectURL = "https://app.unipost.dev"
+	}
+	sep := "?"
+	if strings.Contains(redirectURL, "?") {
+		sep = "&"
+	}
+	http.Redirect(w, r, redirectURL+sep+"status=success&account_name="+result.AccountName, http.StatusFound)
+}
+
+func (h *OAuthHandler) getOAuthConfig(r *http.Request, projectID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
+	return h.getOAuthConfigForProject(r, projectID, platformName, adapter)
+}
+
+func (h *OAuthHandler) getOAuthConfigForProject(r *http.Request, projectID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
+	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
+
+	// Check for White Label credentials
+	creds, err := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
+		ProjectID: projectID,
+		Platform:  platformName,
+	})
+	if err == nil {
+		config.ClientID = creds.ClientID
+		secret, err := h.encryptor.Decrypt(creds.ClientSecret)
+		if err == nil {
+			config.ClientSecret = secret
+		}
+	}
+
+	return config
+}
+
+func (h *OAuthHandler) getProjectID(r *http.Request) string {
+	if pid := auth.GetProjectID(r.Context()); pid != "" {
+		return pid
+	}
+	projectID := chi.URLParam(r, "projectID")
+	if projectID == "" {
+		return ""
+	}
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		return ""
+	}
+	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
+		ID:      projectID,
+		OwnerID: userID,
+	})
+	if err != nil {
+		return ""
+	}
+	return projectID
+}
+
+func (h *OAuthHandler) redirectWithError(w http.ResponseWriter, r *http.Request, redirectURL, errMsg string) {
+	if redirectURL == "" {
+		redirectURL = "https://app.unipost.dev"
+	}
+	sep := "?"
+	if strings.Contains(redirectURL, "?") {
+		sep = "&"
+	}
+	http.Redirect(w, r, redirectURL+sep+"status=error&error="+errMsg, http.StatusFound)
+}
+

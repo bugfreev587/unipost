@@ -14,7 +14,7 @@ import (
 const createSocialAccount = `-- name: CreateSocialAccount :one
 INSERT INTO social_accounts (project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata
+RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope
 `
 
 type CreateSocialAccountParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccou
 		&i.ConnectedAt,
 		&i.DisconnectedAt,
 		&i.Metadata,
+		&i.Scope,
 	)
 	return i, err
 }
@@ -62,7 +63,7 @@ func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccou
 const disconnectSocialAccount = `-- name: DisconnectSocialAccount :one
 UPDATE social_accounts SET disconnected_at = NOW()
 WHERE id = $1 AND project_id = $2
-RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata
+RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope
 `
 
 type DisconnectSocialAccountParams struct {
@@ -86,15 +87,16 @@ func (q *Queries) DisconnectSocialAccount(ctx context.Context, arg DisconnectSoc
 		&i.ConnectedAt,
 		&i.DisconnectedAt,
 		&i.Metadata,
+		&i.Scope,
 	)
 	return i, err
 }
 
 const getExpiringTokens = `-- name: GetExpiringTokens :many
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata FROM social_accounts
+SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope FROM social_accounts
 WHERE disconnected_at IS NULL
   AND token_expires_at IS NOT NULL
-  AND token_expires_at < NOW() + INTERVAL '1 hour'
+  AND token_expires_at < NOW() + INTERVAL '24 hours'
 `
 
 func (q *Queries) GetExpiringTokens(ctx context.Context) ([]SocialAccount, error) {
@@ -119,6 +121,7 @@ func (q *Queries) GetExpiringTokens(ctx context.Context) ([]SocialAccount, error
 			&i.ConnectedAt,
 			&i.DisconnectedAt,
 			&i.Metadata,
+			&i.Scope,
 		); err != nil {
 			return nil, err
 		}
@@ -131,7 +134,7 @@ func (q *Queries) GetExpiringTokens(ctx context.Context) ([]SocialAccount, error
 }
 
 const getSocialAccount = `-- name: GetSocialAccount :one
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata FROM social_accounts WHERE id = $1
+SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope FROM social_accounts WHERE id = $1
 `
 
 func (q *Queries) GetSocialAccount(ctx context.Context, id string) (SocialAccount, error) {
@@ -150,12 +153,13 @@ func (q *Queries) GetSocialAccount(ctx context.Context, id string) (SocialAccoun
 		&i.ConnectedAt,
 		&i.DisconnectedAt,
 		&i.Metadata,
+		&i.Scope,
 	)
 	return i, err
 }
 
 const getSocialAccountByIDAndProject = `-- name: GetSocialAccountByIDAndProject :one
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata FROM social_accounts WHERE id = $1 AND project_id = $2
+SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope FROM social_accounts WHERE id = $1 AND project_id = $2
 `
 
 type GetSocialAccountByIDAndProjectParams struct {
@@ -179,12 +183,13 @@ func (q *Queries) GetSocialAccountByIDAndProject(ctx context.Context, arg GetSoc
 		&i.ConnectedAt,
 		&i.DisconnectedAt,
 		&i.Metadata,
+		&i.Scope,
 	)
 	return i, err
 }
 
 const listSocialAccountsByProject = `-- name: ListSocialAccountsByProject :many
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata FROM social_accounts
+SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope FROM social_accounts
 WHERE project_id = $1 AND disconnected_at IS NULL
 ORDER BY connected_at DESC
 `
@@ -211,6 +216,7 @@ func (q *Queries) ListSocialAccountsByProject(ctx context.Context, projectID str
 			&i.ConnectedAt,
 			&i.DisconnectedAt,
 			&i.Metadata,
+			&i.Scope,
 		); err != nil {
 			return nil, err
 		}

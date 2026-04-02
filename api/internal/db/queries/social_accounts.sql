@@ -23,7 +23,7 @@ RETURNING *;
 SELECT * FROM social_accounts
 WHERE disconnected_at IS NULL
   AND token_expires_at IS NOT NULL
-  AND token_expires_at < NOW() + INTERVAL '1 hour';
+  AND token_expires_at < NOW() + INTERVAL '24 hours';
 
 -- name: UpdateSocialAccountTokens :exec
 UPDATE social_accounts

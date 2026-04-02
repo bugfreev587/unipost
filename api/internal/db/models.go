@@ -21,6 +21,24 @@ type ApiKey struct {
 	Environment string             `json:"environment"`
 }
 
+type OauthState struct {
+	State       string             `json:"state"`
+	ProjectID   string             `json:"project_id"`
+	Platform    string             `json:"platform"`
+	RedirectUrl pgtype.Text        `json:"redirect_url"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type PlatformCredential struct {
+	ID           string             `json:"id"`
+	ProjectID    string             `json:"project_id"`
+	Platform     string             `json:"platform"`
+	ClientID     string             `json:"client_id"`
+	ClientSecret string             `json:"client_secret"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type Project struct {
 	ID        string             `json:"id"`
 	OwnerID   string             `json:"owner_id"`
@@ -43,6 +61,7 @@ type SocialAccount struct {
 	ConnectedAt       pgtype.Timestamptz `json:"connected_at"`
 	DisconnectedAt    pgtype.Timestamptz `json:"disconnected_at"`
 	Metadata          []byte             `json:"metadata"`
+	Scope             []string           `json:"scope"`
 }
 
 type SocialPost struct {

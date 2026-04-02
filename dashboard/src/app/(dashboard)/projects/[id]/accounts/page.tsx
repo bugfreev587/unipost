@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,21 +27,35 @@ import {
   listSocialAccounts,
   connectSocialAccount,
   disconnectSocialAccount,
+  getOAuthConnectURL,
   type SocialAccount,
 } from "@/lib/api";
 
+const PLATFORMS = [
+  { id: "bluesky", name: "Bluesky", type: "credentials" as const },
+  { id: "linkedin", name: "LinkedIn", type: "oauth" as const },
+  { id: "instagram", name: "Instagram", type: "oauth" as const },
+  { id: "threads", name: "Threads", type: "oauth" as const },
+];
+
 export default function AccountsPage() {
   const { id: projectId } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Connect dialog state
   const [connectOpen, setConnectOpen] = useState(false);
+  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
   const [appPassword, setAppPassword] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
+
+  // OAuth callback status
+  const callbackStatus = searchParams.get("status");
+  const callbackAccount = searchParams.get("account_name");
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -60,7 +74,7 @@ export default function AccountsPage() {
     loadAccounts();
   }, [loadAccounts]);
 
-  async function handleConnect() {
+  async function handleBlueskyConnect() {
     if (!handle.trim() || !appPassword.trim()) return;
     setConnecting(true);
     setConnectError("");
@@ -76,6 +90,7 @@ export default function AccountsPage() {
         },
       });
       setConnectOpen(false);
+      setSelectedPlatform(null);
       setHandle("");
       setAppPassword("");
       loadAccounts();
@@ -88,14 +103,26 @@ export default function AccountsPage() {
     }
   }
 
-  async function handleDisconnect(accountId: string) {
-    if (
-      !confirm(
-        "Are you sure you want to disconnect this account? You will need to reconnect it to post again."
-      )
-    ) {
-      return;
+  async function handleOAuthConnect(platform: string) {
+    setConnecting(true);
+    setConnectError("");
+
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const redirectUrl = window.location.href.split("?")[0];
+      const res = await getOAuthConnectURL(token, projectId, platform, redirectUrl);
+      window.location.href = res.data.auth_url;
+    } catch (err) {
+      setConnectError(
+        err instanceof Error ? err.message : "Failed to start OAuth flow"
+      );
+      setConnecting(false);
     }
+  }
+
+  async function handleDisconnect(accountId: string) {
+    if (!confirm("Are you sure you want to disconnect this account?")) return;
 
     try {
       const token = await getToken();
@@ -109,6 +136,18 @@ export default function AccountsPage() {
 
   return (
     <div>
+      {/* OAuth callback notification */}
+      {callbackStatus === "success" && (
+        <div className="mb-6 p-4 rounded-md bg-green-50 border border-green-200 text-green-800 text-sm">
+          Successfully connected {callbackAccount || "account"}!
+        </div>
+      )}
+      {callbackStatus === "error" && (
+        <div className="mb-6 p-4 rounded-md bg-red-50 border border-red-200 text-red-800 text-sm">
+          Failed to connect account. Please try again.
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Connected Accounts</h1>
@@ -116,59 +155,114 @@ export default function AccountsPage() {
             Connect social media accounts to start posting
           </p>
         </div>
-        <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
+        <Dialog
+          open={connectOpen}
+          onOpenChange={(open) => {
+            setConnectOpen(open);
+            if (!open) {
+              setSelectedPlatform(null);
+              setConnectError("");
+            }
+          }}
+        >
           <DialogTrigger render={<Button />}>+ Connect</DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Connect Bluesky Account</DialogTitle>
+              <DialogTitle>
+                {selectedPlatform
+                  ? `Connect ${PLATFORMS.find((p) => p.id === selectedPlatform)?.name}`
+                  : "Connect Account"}
+              </DialogTitle>
               <DialogDescription>
-                Enter your Bluesky handle and an App Password. You can generate
-                an App Password at bsky.app &rarr; Settings &rarr; App
-                Passwords.
+                {selectedPlatform === "bluesky"
+                  ? "Enter your Bluesky handle and App Password."
+                  : selectedPlatform
+                    ? "You will be redirected to authorize your account."
+                    : "Choose a platform to connect."}
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="handle">Handle</Label>
-                <Input
-                  id="handle"
-                  placeholder="alice.bsky.social"
-                  value={handle}
-                  onChange={(e) => setHandle(e.target.value)}
-                />
+
+            {!selectedPlatform ? (
+              <div className="space-y-2 py-4">
+                {PLATFORMS.map((p) => {
+                  const connected = accounts.some((a) => a.platform === p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        if (p.type === "oauth") {
+                          handleOAuthConnect(p.id);
+                        } else {
+                          setSelectedPlatform(p.id);
+                        }
+                      }}
+                      disabled={connecting}
+                      className="w-full flex items-center justify-between px-4 py-3 rounded-md border hover:bg-muted/50 transition-colors text-left cursor-pointer disabled:opacity-50"
+                    >
+                      <span className="font-medium text-sm">{p.name}</span>
+                      {connected && (
+                        <Badge variant="secondary">Connected</Badge>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="app-password">App Password</Label>
-                <Input
-                  id="app-password"
-                  type="password"
-                  placeholder="xxxx-xxxx-xxxx-xxxx"
-                  value={appPassword}
-                  onChange={(e) => setAppPassword(e.target.value)}
-                />
-              </div>
-              {connectError && (
-                <p className="text-sm text-destructive">{connectError}</p>
-              )}
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setConnectOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleConnect}
-                disabled={connecting || !handle.trim() || !appPassword.trim()}
-              >
-                {connecting ? "Connecting..." : "Connect Account"}
-              </Button>
-            </DialogFooter>
+            ) : selectedPlatform === "bluesky" ? (
+              <>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="handle">Handle</Label>
+                    <Input
+                      id="handle"
+                      placeholder="alice.bsky.social"
+                      value={handle}
+                      onChange={(e) => setHandle(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="app-password">App Password</Label>
+                    <Input
+                      id="app-password"
+                      type="password"
+                      placeholder="xxxx-xxxx-xxxx-xxxx"
+                      value={appPassword}
+                      onChange={(e) => setAppPassword(e.target.value)}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Generate at bsky.app &rarr; Settings &rarr; App Passwords
+                  </p>
+                  {connectError && (
+                    <p className="text-sm text-destructive">{connectError}</p>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setSelectedPlatform(null)}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    onClick={handleBlueskyConnect}
+                    disabled={
+                      connecting || !handle.trim() || !appPassword.trim()
+                    }
+                  >
+                    {connecting ? "Connecting..." : "Connect"}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {connectError && !selectedPlatform && (
+              <p className="text-sm text-destructive px-4">{connectError}</p>
+            )}
           </DialogContent>
         </Dialog>
       </div>
 
+      {/* Accounts list */}
       {loading ? (
         <div className="text-muted-foreground">Loading...</div>
       ) : accounts.length === 0 ? (
@@ -203,7 +297,9 @@ export default function AccountsPage() {
                       account.status === "active" ? "default" : "destructive"
                     }
                   >
-                    {account.status === "active" ? "Active" : "Reconnect Required"}
+                    {account.status === "active"
+                      ? "Active"
+                      : "Reconnect Required"}
                   </Badge>
                   <Button
                     size="sm"

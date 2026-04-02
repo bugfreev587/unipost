@@ -187,6 +187,19 @@ export async function disconnectSocialAccount(
   );
 }
 
+export async function getOAuthConnectURL(
+  token: string,
+  projectId: string,
+  platform: string,
+  redirectUrl: string
+): Promise<ApiResponse<{ auth_url: string }>> {
+  const params = new URLSearchParams({ redirect_url: redirectUrl });
+  return request(
+    `/v1/projects/${projectId}/oauth/connect/${platform}?${params}`,
+    token
+  );
+}
+
 // Social Posts
 
 export interface SocialPostResult {

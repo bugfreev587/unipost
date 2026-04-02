@@ -57,6 +57,9 @@ func main() {
 
 	// Register platform adapters
 	platform.Register(platform.NewBlueskyAdapter())
+	platform.Register(platform.NewLinkedInAdapter())
+	platform.Register(platform.NewInstagramAdapter())
+	platform.Register(platform.NewThreadsAdapter())
 
 	ctx := context.Background()
 
@@ -113,12 +116,17 @@ func main() {
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
+	oauthHandler := handler.NewOAuthHandler(queries, encryptor)
+	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
 
 	// Webhook routes (verified by Clerk webhook secret)
 	r.Post("/webhooks/clerk", webhookHandler.HandleClerk)
+
+	// OAuth callback routes (no auth — called by OAuth providers)
+	r.Get("/v1/oauth/callback/{platform}", oauthHandler.Callback)
 
 	// Dashboard routes (Clerk session auth)
 	r.Group(func(r chi.Router) {
@@ -142,6 +150,14 @@ func main() {
 		// Social posts (dashboard)
 		r.Get("/v1/projects/{projectID}/social-posts", socialPostHandler.List)
 		r.Post("/v1/projects/{projectID}/social-posts", socialPostHandler.Create)
+
+		// OAuth connect (dashboard)
+		r.Get("/v1/projects/{projectID}/oauth/connect/{platform}", oauthHandler.Connect)
+
+		// Platform credentials (White Label)
+		r.Post("/v1/projects/{projectID}/platform-credentials", platformCredHandler.Create)
+		r.Get("/v1/projects/{projectID}/platform-credentials", platformCredHandler.List)
+		r.Delete("/v1/projects/{projectID}/platform-credentials/{platform}", platformCredHandler.Delete)
 	})
 
 	// Public API routes (API key auth)
@@ -159,6 +175,8 @@ func main() {
 
 		r.Post("/v1/webhooks", webhookSubHandler.Create)
 		r.Get("/v1/webhooks", webhookSubHandler.List)
+
+		r.Get("/v1/oauth/connect/{platform}", oauthHandler.Connect)
 	})
 
 	srv := &http.Server{

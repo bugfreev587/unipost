@@ -22,7 +22,7 @@ func NewTokenRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor) 
 }
 
 func (w *TokenRefreshWorker) Start(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Minute)
+	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
 
 	slog.Info("token refresh worker started")
