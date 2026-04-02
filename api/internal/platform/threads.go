@@ -23,8 +23,8 @@ func (a *ThreadsAdapter) Platform() string { return "threads" }
 
 func (a *ThreadsAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 	return OAuthConfig{
-		ClientID:     os.Getenv("META_APP_ID"),
-		ClientSecret: os.Getenv("META_APP_SECRET"),
+		ClientID:     os.Getenv("THREADS_APP_ID"),
+		ClientSecret: os.Getenv("THREADS_APP_SECRET"),
 		AuthURL:      "https://threads.net/oauth/authorize",
 		TokenURL:     "https://graph.threads.net/oauth/access_token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/threads",
