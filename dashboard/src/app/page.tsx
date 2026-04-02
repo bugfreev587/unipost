@@ -1,5 +1,6 @@
-import Link from "next/link";
+import { SignInButton, SignUpButton } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
+
 
 export default function LandingPage() {
   return (
@@ -9,14 +10,14 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <span className="text-xl font-bold">UniPost</span>
           <div className="flex items-center gap-4">
-            <Link href="/login">
+            <SignInButton mode="redirect" fallbackRedirectUrl="/dashboard">
               <Button variant="ghost" size="sm">
                 Log in
               </Button>
-            </Link>
-            <Link href="/signup">
+            </SignInButton>
+            <SignUpButton mode="redirect" fallbackRedirectUrl="/dashboard">
               <Button size="sm">Get Started</Button>
-            </Link>
+            </SignUpButton>
           </div>
         </div>
       </header>
@@ -31,11 +32,11 @@ export default function LandingPage() {
             UniPost gives your app a unified API to post, schedule, and analyze
             across all major social platforms.
           </p>
-          <Link href="/signup">
+          <SignUpButton mode="redirect" fallbackRedirectUrl="/dashboard">
             <Button size="lg" className="text-base px-8">
               Get Started Free
             </Button>
-          </Link>
+          </SignUpButton>
         </div>
       </section>
 
@@ -95,7 +96,7 @@ export default function LandingPage() {
           <p className="text-lg opacity-80 mb-8">
             Create your free account and start integrating in minutes.
           </p>
-          <Link href="/signup">
+          <SignUpButton mode="redirect" fallbackRedirectUrl="/dashboard">
             <Button
               size="lg"
               variant="secondary"
@@ -103,7 +104,7 @@ export default function LandingPage() {
             >
               Sign Up Free
             </Button>
-          </Link>
+          </SignUpButton>
         </div>
       </section>
 
