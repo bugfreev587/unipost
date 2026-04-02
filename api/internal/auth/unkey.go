@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -80,7 +80,7 @@ func APIKeyMiddleware(queries *db.Queries) func(http.Handler) http.Handler {
 			// Update last_used_at in background
 			go func() {
 				if err := queries.UpdateAPIKeyLastUsedAt(context.Background(), ak.ID); err != nil {
-					log.Printf("failed to update last_used_at for key %s: %v", ak.ID, err)
+					slog.Error("failed to update last_used_at", "key_id", ak.ID, "error", err)
 				}
 			}()
 

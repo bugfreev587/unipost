@@ -2,7 +2,7 @@ package handler
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -191,7 +191,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 			PublishedAt:     pubAt,
 		})
 		if err != nil {
-			log.Printf("failed to save post result: %v", err)
+			slog.Error("failed to save post result", "error", err)
 			continue
 		}
 
@@ -232,7 +232,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 			PublishedAt:     pgtype.Timestamptz{},
 		})
 		if err != nil {
-			log.Printf("failed to save post result: %v", err)
+			slog.Error("failed to save post result", "error", err)
 			continue
 		}
 		msg := dbResult.ErrorMessage.String
@@ -414,7 +414,7 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := adapter.DeletePost(r.Context(), accessToken, res.ExternalID.String); err != nil {
-			log.Printf("failed to delete post from %s: %v", acc.Platform, err)
+			slog.Error("failed to delete post from platform", "platform", acc.Platform, "error", err)
 		}
 	}
 

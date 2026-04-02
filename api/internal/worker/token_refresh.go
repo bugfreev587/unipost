@@ -2,7 +2,7 @@ package worker
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -12,7 +12,6 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
-// TokenRefreshWorker refreshes expiring social account tokens in the background.
 type TokenRefreshWorker struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
@@ -22,17 +21,16 @@ func NewTokenRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor) 
 	return &TokenRefreshWorker{queries: queries, encryptor: encryptor}
 }
 
-// Start runs the token refresh loop every 15 minutes until ctx is cancelled.
 func (w *TokenRefreshWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 
-	log.Println("Token refresh worker started")
+	slog.Info("token refresh worker started")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Token refresh worker stopped")
+			slog.Info("token refresh worker stopped")
 			return
 		case <-ticker.C:
 			w.refreshExpiring(ctx)
@@ -43,7 +41,7 @@ func (w *TokenRefreshWorker) Start(ctx context.Context) {
 func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 	accounts, err := w.queries.GetExpiringTokens(ctx)
 	if err != nil {
-		log.Printf("token refresh: failed to query expiring tokens: %v", err)
+		slog.Error("token refresh: failed to query expiring tokens", "error", err)
 		return
 	}
 
@@ -51,41 +49,41 @@ func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 		return
 	}
 
-	log.Printf("token refresh: found %d accounts with expiring tokens", len(accounts))
+	slog.Info("token refresh: found expiring tokens", "count", len(accounts))
 
 	for _, acc := range accounts {
 		adapter, err := platform.Get(acc.Platform)
 		if err != nil {
-			log.Printf("token refresh: unsupported platform %s for account %s", acc.Platform, acc.ID)
+			slog.Warn("token refresh: unsupported platform", "platform", acc.Platform, "account_id", acc.ID)
 			continue
 		}
 
 		if !acc.RefreshToken.Valid {
-			log.Printf("token refresh: no refresh token for account %s", acc.ID)
+			slog.Warn("token refresh: no refresh token", "account_id", acc.ID)
 			continue
 		}
 
 		refreshToken, err := w.encryptor.Decrypt(acc.RefreshToken.String)
 		if err != nil {
-			log.Printf("token refresh: failed to decrypt refresh token for account %s: %v", acc.ID, err)
+			slog.Error("token refresh: failed to decrypt refresh token", "account_id", acc.ID, "error", err)
 			continue
 		}
 
 		newAccess, newRefresh, expiresAt, err := adapter.RefreshToken(ctx, refreshToken)
 		if err != nil {
-			log.Printf("token refresh: failed to refresh token for account %s: %v", acc.ID, err)
+			slog.Error("token refresh: failed to refresh", "account_id", acc.ID, "error", err)
 			continue
 		}
 
 		encAccess, err := w.encryptor.Encrypt(newAccess)
 		if err != nil {
-			log.Printf("token refresh: failed to encrypt new access token for account %s: %v", acc.ID, err)
+			slog.Error("token refresh: failed to encrypt access token", "account_id", acc.ID, "error", err)
 			continue
 		}
 
 		encRefresh, err := w.encryptor.Encrypt(newRefresh)
 		if err != nil {
-			log.Printf("token refresh: failed to encrypt new refresh token for account %s: %v", acc.ID, err)
+			slog.Error("token refresh: failed to encrypt refresh token", "account_id", acc.ID, "error", err)
 			continue
 		}
 
@@ -96,10 +94,10 @@ func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 			TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
 		})
 		if err != nil {
-			log.Printf("token refresh: failed to update tokens for account %s: %v", acc.ID, err)
+			slog.Error("token refresh: failed to update tokens", "account_id", acc.ID, "error", err)
 			continue
 		}
 
-		log.Printf("token refresh: refreshed token for account %s (%s)", acc.ID, acc.Platform)
+		slog.Info("token refresh: refreshed", "account_id", acc.ID, "platform", acc.Platform)
 	}
 }

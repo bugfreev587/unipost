@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -36,12 +36,12 @@ func (w *WebhookDeliveryWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	log.Println("Webhook delivery worker started")
+	slog.Info("webhook delivery worker started")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Webhook delivery worker stopped")
+			slog.Info("webhook delivery worker stopped")
 			return
 		case <-ticker.C:
 			w.deliverPending(ctx)
@@ -75,7 +75,7 @@ func (w *WebhookDeliveryWorker) Enqueue(ctx context.Context, projectID string, e
 			Payload:   payload,
 		})
 		if err != nil {
-			log.Printf("webhook enqueue: failed to create delivery for webhook %s: %v", wh.ID, err)
+			slog.Error("webhook enqueue: failed to create delivery", "webhook_id", wh.ID, "error", err)
 		}
 	}
 
@@ -85,14 +85,14 @@ func (w *WebhookDeliveryWorker) Enqueue(ctx context.Context, projectID string, e
 func (w *WebhookDeliveryWorker) deliverPending(ctx context.Context) {
 	deliveries, err := w.queries.GetPendingWebhookDeliveries(ctx)
 	if err != nil {
-		log.Printf("webhook delivery: failed to get pending deliveries: %v", err)
+		slog.Error("webhook delivery: failed to get pending", "error", err)
 		return
 	}
 
 	for _, d := range deliveries {
 		webhook, err := w.queries.GetWebhook(ctx, d.WebhookID)
 		if err != nil {
-			log.Printf("webhook delivery: failed to get webhook %s: %v", d.WebhookID, err)
+			slog.Error("webhook delivery: failed to get webhook", "webhook_id", d.WebhookID, "error", err)
 			continue
 		}
 
@@ -102,7 +102,7 @@ func (w *WebhookDeliveryWorker) deliverPending(ctx context.Context) {
 		if err != nil || statusCode < 200 || statusCode >= 300 {
 			// Schedule retry with exponential backoff (max 3 attempts)
 			if attempts >= 3 {
-				log.Printf("webhook delivery: giving up on delivery %s after %d attempts", d.ID, attempts)
+				slog.Warn("webhook delivery: giving up", "delivery_id", d.ID, "attempts", attempts)
 				w.queries.UpdateWebhookDelivery(ctx, db.UpdateWebhookDeliveryParams{
 					ID:          d.ID,
 					StatusCode:  pgtype.Int4{Int32: int32(statusCode), Valid: statusCode > 0},

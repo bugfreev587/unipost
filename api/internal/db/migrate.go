@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/pressly/goose/v3"
 )
@@ -30,6 +30,6 @@ func RunMigrations(databaseURL string) error {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	log.Println("Database migrations completed")
+	slog.Info("database migrations completed")
 	return nil
 }

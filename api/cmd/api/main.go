@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,12 +20,17 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
+	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 )
 
 func main() {
 	_ = godotenv.Load()
+
+	// Set up structured JSON logging
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -34,17 +39,20 @@ func main() {
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+		slog.Error("DATABASE_URL is required")
+		os.Exit(1)
 	}
 
 	// Initialize AES encryptor for token encryption
 	encryptionKey := os.Getenv("ENCRYPTION_KEY")
 	if encryptionKey == "" {
-		log.Fatal("ENCRYPTION_KEY is required")
+		slog.Error("ENCRYPTION_KEY is required")
+		os.Exit(1)
 	}
 	encryptor, err := crypto.NewAESEncryptor(encryptionKey)
 	if err != nil {
-		log.Fatalf("Failed to initialize encryptor: %v", err)
+		slog.Error("failed to initialize encryptor", "error", err)
+		os.Exit(1)
 	}
 
 	// Register platform adapters
@@ -54,18 +62,21 @@ func main() {
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		log.Fatalf("Unable to connect to database: %v", err)
+		slog.Error("unable to connect to database", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("Unable to ping database: %v", err)
+		slog.Error("unable to ping database", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Connected to database")
+	slog.Info("connected to database")
 
 	// Run database migrations
 	if err := db.RunMigrations(databaseURL); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+		slog.Error("failed to run migrations", "error", err)
+		os.Exit(1)
 	}
 
 	queries := db.New(pool)
@@ -83,9 +94,8 @@ func main() {
 	r := chi.NewRouter()
 
 	// Global middleware
-	r.Use(chimw.Logger)
+	r.Use(mw.Logger)
 	r.Use(chimw.Recoverer)
-	r.Use(chimw.RequestID)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://app.unipost.dev", "http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
@@ -161,9 +171,10 @@ func main() {
 
 	// Graceful shutdown
 	go func() {
-		log.Printf("Server starting on :%s", port)
+		slog.Info("server starting", "port", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+			slog.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -171,13 +182,14 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	slog.Info("shutting down server")
 	workerCancel()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		slog.Error("server forced to shutdown", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Server stopped")
+	slog.Info("server stopped")
 }
