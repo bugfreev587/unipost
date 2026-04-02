@@ -43,9 +43,10 @@ func (a *InstagramAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 		"client_secret": {config.ClientSecret},
 		"redirect_uri":  {config.RedirectURL},
 		"code":          {code},
+		"grant_type":    {"authorization_code"},
 	}
 
-	resp, err := a.client.Get(config.TokenURL + "?" + params.Encode())
+	resp, err := a.client.PostForm(config.TokenURL, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code: %w", err)
 	}
