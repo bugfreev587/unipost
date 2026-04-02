@@ -23,12 +23,12 @@ func (a *InstagramAdapter) Platform() string { return "instagram" }
 
 func (a *InstagramAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 	return OAuthConfig{
-		ClientID:     os.Getenv("META_APP_ID"),
-		ClientSecret: os.Getenv("META_APP_SECRET"),
-		AuthURL:      "https://www.facebook.com/v21.0/dialog/oauth",
-		TokenURL:     "https://graph.facebook.com/v21.0/oauth/access_token",
+		ClientID:     os.Getenv("INSTAGRAM_APP_ID"),
+		ClientSecret: os.Getenv("INSTAGRAM_APP_SECRET"),
+		AuthURL:      "https://api.instagram.com/oauth/authorize",
+		TokenURL:     "https://api.instagram.com/oauth/access_token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/instagram",
-		Scopes:       []string{"instagram_basic", "instagram_content_publish", "pages_show_list", "pages_read_engagement"},
+		Scopes:       []string{"instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights"},
 	}
 }
 
