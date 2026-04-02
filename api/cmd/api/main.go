@@ -13,6 +13,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -45,6 +46,11 @@ func main() {
 		log.Fatalf("Unable to ping database: %v", err)
 	}
 	log.Println("Connected to database")
+
+	// Run database migrations
+	if err := db.RunMigrations(databaseURL); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
 
 	queries := db.New(pool)
 
