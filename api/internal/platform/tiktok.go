@@ -235,8 +235,9 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 	if err != nil {
 		return nil, err
 	}
-	uploadReq.Header.Set("Content-Type", "video/mp4")
+	uploadReq.Header.Set("Content-Type", "application/octet-stream")
 	uploadReq.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", videoSize-1, videoSize))
+	uploadReq.Header.Set("Content-Length", fmt.Sprintf("%d", videoSize))
 
 	uploadResp, err := a.client.Do(uploadReq)
 	if err != nil {
@@ -244,8 +245,10 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 	}
 	defer uploadResp.Body.Close()
 
+	uploadRespBody, _ := io.ReadAll(uploadResp.Body)
+	slog.Info("tiktok post: upload response", "status", uploadResp.StatusCode, "body", string(uploadRespBody))
+
 	if uploadResp.StatusCode != http.StatusOK && uploadResp.StatusCode != http.StatusCreated {
-		uploadRespBody, _ := io.ReadAll(uploadResp.Body)
 		return nil, fmt.Errorf("tiktok upload failed (%d): %s", uploadResp.StatusCode, string(uploadRespBody))
 	}
 
