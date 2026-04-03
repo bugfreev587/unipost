@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
+	slogbetterstack "github.com/samber/slog-betterstack"
 	"github.com/stripe/stripe-go/v82"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -30,8 +31,18 @@ import (
 func main() {
 	_ = godotenv.Load()
 
-	// Set up structured JSON logging
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	// Set up structured JSON logging with optional BetterStack
+	stdoutHandler := slog.NewJSONHandler(os.Stdout, nil)
+
+	var logHandler slog.Handler
+	if bsToken := os.Getenv("BETTERSTACK_TOKEN"); bsToken != "" {
+		bsHandler := slogbetterstack.Option{Token: bsToken}.NewBetterstackHandler()
+		logHandler = fanoutHandler{handlers: []slog.Handler{stdoutHandler, bsHandler}}
+	} else {
+		logHandler = stdoutHandler
+	}
+
+	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
 
 	port := os.Getenv("PORT")
@@ -238,4 +249,43 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+// fanoutHandler sends log records to multiple slog.Handlers.
+type fanoutHandler struct {
+	handlers []slog.Handler
+}
+
+func (h fanoutHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, handler := range h.handlers {
+		if handler.Enabled(ctx, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h fanoutHandler) Handle(ctx context.Context, record slog.Record) error {
+	for _, handler := range h.handlers {
+		if err := handler.Handle(ctx, record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h fanoutHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	handlers := make([]slog.Handler, len(h.handlers))
+	for i, handler := range h.handlers {
+		handlers[i] = handler.WithAttrs(attrs)
+	}
+	return fanoutHandler{handlers: handlers}
+}
+
+func (h fanoutHandler) WithGroup(name string) slog.Handler {
+	handlers := make([]slog.Handler, len(h.handlers))
+	for i, handler := range h.handlers {
+		handlers[i] = handler.WithGroup(name)
+	}
+	return fanoutHandler{handlers: handlers}
 }
