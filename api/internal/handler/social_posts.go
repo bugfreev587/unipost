@@ -161,6 +161,25 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			// Refresh token inline if expired
+			if account.TokenExpiresAt.Valid && account.TokenExpiresAt.Time.Before(time.Now()) && account.RefreshToken.Valid {
+				refreshToken, decErr := h.encryptor.Decrypt(account.RefreshToken.String)
+				if decErr == nil {
+					newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(r.Context(), refreshToken)
+					if refErr == nil {
+						accessToken = newAccess
+						encAccess, _ := h.encryptor.Encrypt(newAccess)
+						encRefresh, _ := h.encryptor.Encrypt(newRefresh)
+						h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+							ID:             account.ID,
+							AccessToken:    encAccess,
+							RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+							TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+						})
+					}
+				}
+			}
+
 			postResult, err := adapter.Post(r.Context(), accessToken, body.Caption, body.MediaURLs)
 			results[idx] = accountResult{
 				accountID: account.ID,
