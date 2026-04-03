@@ -47,19 +47,19 @@ func (a *TikTokAdapter) GetAuthURL(config OAuthConfig, state string) string {
 }
 
 func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, code string) (*ConnectResult, error) {
-	body, _ := json.Marshal(map[string]string{
-		"client_key":    config.ClientID,
-		"client_secret": config.ClientSecret,
-		"code":          code,
-		"grant_type":    "authorization_code",
-		"redirect_uri":  config.RedirectURL,
-	})
+	data := url.Values{
+		"client_key":    {config.ClientID},
+		"client_secret": {config.ClientSecret},
+		"code":          {code},
+		"grant_type":    {"authorization_code"},
+		"redirect_uri":  {config.RedirectURL},
+	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -195,18 +195,18 @@ func (a *TikTokAdapter) DeletePost(ctx context.Context, accessToken string, exte
 
 func (a *TikTokAdapter) RefreshToken(ctx context.Context, refreshToken string) (string, string, time.Time, error) {
 	config := a.DefaultOAuthConfig("")
-	body, _ := json.Marshal(map[string]string{
-		"client_key":    config.ClientID,
-		"client_secret": config.ClientSecret,
-		"grant_type":    "refresh_token",
-		"refresh_token": refreshToken,
-	})
+	data := url.Values{
+		"client_key":    {config.ClientID},
+		"client_secret": {config.ClientSecret},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := a.client.Do(req)
 	if err != nil {
