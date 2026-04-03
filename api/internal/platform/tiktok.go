@@ -252,8 +252,42 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 		return nil, fmt.Errorf("tiktok upload failed (%d): %s", uploadResp.StatusCode, string(uploadRespBody))
 	}
 
-	slog.Info("tiktok post: video uploaded successfully", "publish_id", initResult.Data.PublishID)
+	slog.Info("tiktok post: video uploaded, polling status", "publish_id", initResult.Data.PublishID)
 
+	// Step 4: Poll publish status until complete or failed (max 60 seconds)
+	for i := 0; i < 12; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+
+		status, err := a.CheckPublishStatus(ctx, accessToken, initResult.Data.PublishID)
+		if err != nil {
+			continue
+		}
+
+		data, _ := status["data"].(map[string]any)
+		if data == nil {
+			continue
+		}
+
+		publishStatus, _ := data["status"].(string)
+		switch publishStatus {
+		case "PUBLISH_COMPLETE":
+			slog.Info("tiktok post: publish complete", "publish_id", initResult.Data.PublishID)
+			return &PostResult{
+				ExternalID: initResult.Data.PublishID,
+				URL:        "https://www.tiktok.com",
+			}, nil
+		case "FAILED":
+			reason, _ := data["fail_reason"].(string)
+			return nil, fmt.Errorf("tiktok publish failed: %s", reason)
+		}
+		// PROCESSING_UPLOAD or PROCESSING_DOWNLOAD — keep polling
+	}
+
+	// Timeout — return as published with publish_id, user can check status later
 	return &PostResult{
 		ExternalID: initResult.Data.PublishID,
 		URL:        "https://www.tiktok.com",
