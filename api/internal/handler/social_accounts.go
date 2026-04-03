@@ -34,8 +34,11 @@ type socialAccountResponse struct {
 
 func toSocialAccountResponse(a db.SocialAccount) socialAccountResponse {
 	status := "active"
-	if a.TokenExpiresAt.Valid && a.TokenExpiresAt.Time.Before(time.Now()) {
-		status = "reconnect_required"
+	// Token expiry is normal for OAuth platforms — the refresh worker handles it.
+	// Only mark as reconnect_required if the account has been explicitly flagged
+	// (e.g., refresh token also expired and refresh failed).
+	if a.DisconnectedAt.Valid {
+		status = "disconnected"
 	}
 	var name *string
 	if a.AccountName.Valid {
