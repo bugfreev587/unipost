@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -89,6 +90,13 @@ func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, co
 		return nil, fmt.Errorf("tiktok error: %s", tokenResp.Error.Message)
 	}
 
+	slog.Info("tiktok token exchange",
+		"has_access_token", tokenResp.Data.AccessToken != "",
+		"token_length", len(tokenResp.Data.AccessToken),
+		"open_id", tokenResp.Data.OpenID,
+		"expires_in", tokenResp.Data.ExpiresIn,
+	)
+
 	// Get user info
 	userInfo, err := a.getUserInfo(ctx, tokenResp.Data.AccessToken)
 	if err != nil {
@@ -130,6 +138,8 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 			"video_url": imageURLs[0],
 		},
 	})
+
+	slog.Info("tiktok post: initiating upload", "token_length", len(accessToken), "token_prefix", accessToken[:min(10, len(accessToken))])
 
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		"https://open.tiktokapis.com/v2/post/publish/video/init/", bytes.NewReader(body))
