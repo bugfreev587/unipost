@@ -78,6 +78,50 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Pricing */}
+      <section className="bg-zinc-50 border-t border-zinc-200">
+        <div className="max-w-6xl mx-auto px-6 py-20">
+          <h2 className="text-3xl font-bold text-center mb-4 text-zinc-900">
+            Simple, transparent pricing
+          </h2>
+          <p className="text-center text-zinc-500 mb-12">
+            Start free. Scale as you grow.
+          </p>
+          <div className="grid md:grid-cols-4 gap-4 max-w-4xl mx-auto">
+            {[
+              { name: "Free", price: "$0", posts: "100 posts/mo" },
+              { name: "Starter", price: "$10", posts: "1,000 posts/mo" },
+              { name: "Growth", price: "$50", posts: "5,000 posts/mo", popular: true },
+              { name: "Scale", price: "$150", posts: "20,000 posts/mo" },
+            ].map((plan) => (
+              <div
+                key={plan.name}
+                className={`rounded-lg border p-6 text-center ${
+                  plan.popular
+                    ? "border-zinc-900 bg-white ring-1 ring-zinc-900"
+                    : "border-zinc-200 bg-white"
+                }`}
+              >
+                {plan.popular && (
+                  <p className="text-xs font-semibold text-zinc-900 mb-2 uppercase">
+                    Most Popular
+                  </p>
+                )}
+                <h3 className="font-semibold text-zinc-900">{plan.name}</h3>
+                <p className="text-3xl font-bold text-zinc-900 my-2">
+                  {plan.price}
+                  <span className="text-sm font-normal text-zinc-500">/mo</span>
+                </p>
+                <p className="text-sm text-zinc-500">{plan.posts}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-center text-sm text-zinc-500 mt-6">
+            All plans include unlimited accounts, all platforms, and API access.
+          </p>
+        </div>
+      </section>
+
       {/* CTA */}
       <section className="bg-zinc-900 text-white">
         <div className="max-w-6xl mx-auto px-6 py-16 text-center">

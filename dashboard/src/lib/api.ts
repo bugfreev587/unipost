@@ -227,6 +227,59 @@ export async function listSocialPosts(
   return request(`/v1/projects/${projectId}/social-posts`, token);
 }
 
+// Billing
+
+export interface BillingInfo {
+  plan: string;
+  plan_name: string;
+  status: string;
+  usage: number;
+  limit: number;
+  percentage: number;
+  period: string;
+  warning?: string;
+  cancel_at_period_end: boolean;
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  price_cents: number;
+  post_limit: number;
+}
+
+export async function getBilling(
+  token: string,
+  projectId: string
+): Promise<ApiResponse<BillingInfo>> {
+  return request(`/v1/projects/${projectId}/billing`, token);
+}
+
+export async function createCheckout(
+  token: string,
+  projectId: string,
+  planId: string
+): Promise<ApiResponse<{ checkout_url: string }>> {
+  return request(`/v1/projects/${projectId}/billing/checkout`, token, {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId }),
+  });
+}
+
+export async function createPortal(
+  token: string,
+  projectId: string
+): Promise<ApiResponse<{ portal_url: string }>> {
+  return request(`/v1/projects/${projectId}/billing/portal`, token, {
+    method: "POST",
+  });
+}
+
+export async function listPlans(): Promise<ApiResponse<Plan[]>> {
+  const res = await fetch(`${API_URL}/v1/plans`);
+  return res.json();
+}
+
 export async function createSocialPost(
   token: string,
   projectId: string,

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
+	"github.com/stripe/stripe-go/v82"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
@@ -22,6 +23,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/handler"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 )
 
@@ -55,11 +57,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize Stripe
+	if sk := os.Getenv("STRIPE_SECRET_KEY"); sk != "" {
+		stripe.Key = sk
+		slog.Info("stripe initialized")
+	}
+
 	// Register platform adapters
 	platform.Register(platform.NewBlueskyAdapter())
 	platform.Register(platform.NewLinkedInAdapter())
 	platform.Register(platform.NewInstagramAdapter())
 	platform.Register(platform.NewThreadsAdapter())
+
+	// Conditionally register adapters that need credentials
+	if os.Getenv("TIKTOK_CLIENT_KEY") != "" {
+		platform.Register(platform.NewTikTokAdapter())
+		slog.Info("tiktok adapter registered")
+	}
+	if os.Getenv("YOUTUBE_CLIENT_ID") != "" {
+		platform.Register(platform.NewYouTubeAdapter())
+		slog.Info("youtube adapter registered")
+	}
 
 	ctx := context.Background()
 
@@ -83,6 +101,7 @@ func main() {
 	}
 
 	queries := db.New(pool)
+	quotaChecker := quota.NewChecker(queries)
 
 	// Start background workers
 	workerCtx, workerCancel := context.WithCancel(ctx)
@@ -103,7 +122,7 @@ func main() {
 		AllowedOrigins:   []string{"https://app.unipost.dev", "http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		ExposedHeaders:   []string{"Link"},
+		ExposedHeaders:   []string{"Link", "X-UniPost-Usage", "X-UniPost-Warning"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -114,16 +133,20 @@ func main() {
 	projectHandler := handler.NewProjectHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor)
-	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)
+	billingHandler := handler.NewBillingHandler(queries, quotaChecker)
+	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
+	r.Get("/v1/plans", billingHandler.ListPlans)
 
-	// Webhook routes (verified by Clerk webhook secret)
+	// Webhook routes (no API key auth, verified by signatures)
 	r.Post("/webhooks/clerk", webhookHandler.HandleClerk)
+	r.Post("/webhooks/stripe", stripeWebhookHandler.HandleStripe)
 
 	// OAuth callback routes (no auth — called by OAuth providers)
 	r.Get("/v1/oauth/callback/{platform}", oauthHandler.Callback)
@@ -158,6 +181,11 @@ func main() {
 		r.Post("/v1/projects/{projectID}/platform-credentials", platformCredHandler.Create)
 		r.Get("/v1/projects/{projectID}/platform-credentials", platformCredHandler.List)
 		r.Delete("/v1/projects/{projectID}/platform-credentials/{platform}", platformCredHandler.Delete)
+
+		// Billing (dashboard)
+		r.Get("/v1/projects/{projectID}/billing", billingHandler.GetBilling)
+		r.Post("/v1/projects/{projectID}/billing/checkout", billingHandler.CreateCheckout)
+		r.Post("/v1/projects/{projectID}/billing/portal", billingHandler.CreatePortal)
 	})
 
 	// Public API routes (API key auth)

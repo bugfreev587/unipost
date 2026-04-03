@@ -76,6 +76,14 @@ export default function ProjectOverviewPage() {
             </CardHeader>
           </Card>
         </Link>
+        <Link href={`/projects/${id}/billing`}>
+          <Card className="hover:border-primary/50 transition-colors cursor-pointer">
+            <CardHeader>
+              <CardTitle className="text-base">Billing</CardTitle>
+              <CardDescription>Plan and usage</CardDescription>
+            </CardHeader>
+          </Card>
+        </Link>
         <Link href={`/projects/${id}/settings`}>
           <Card className="hover:border-primary/50 transition-colors cursor-pointer">
             <CardHeader>

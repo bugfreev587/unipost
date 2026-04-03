@@ -30,6 +30,15 @@ type OauthState struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type Plan struct {
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	PriceCents    int32              `json:"price_cents"`
+	PostLimit     int32              `json:"post_limit"`
+	StripePriceID pgtype.Text        `json:"stripe_price_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type PlatformCredential struct {
 	ID           string             `json:"id"`
 	ProjectID    string             `json:"project_id"`
@@ -84,6 +93,29 @@ type SocialPostResult struct {
 	ExternalID      pgtype.Text        `json:"external_id"`
 	ErrorMessage    pgtype.Text        `json:"error_message"`
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+}
+
+type Subscription struct {
+	ID                   string             `json:"id"`
+	ProjectID            string             `json:"project_id"`
+	PlanID               string             `json:"plan_id"`
+	StripeCustomerID     pgtype.Text        `json:"stripe_customer_id"`
+	StripeSubscriptionID pgtype.Text        `json:"stripe_subscription_id"`
+	Status               string             `json:"status"`
+	CurrentPeriodStart   pgtype.Timestamptz `json:"current_period_start"`
+	CurrentPeriodEnd     pgtype.Timestamptz `json:"current_period_end"`
+	CancelAtPeriodEnd    pgtype.Bool        `json:"cancel_at_period_end"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Usage struct {
+	ID        string             `json:"id"`
+	ProjectID string             `json:"project_id"`
+	Period    string             `json:"period"`
+	PostCount int32              `json:"post_count"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {

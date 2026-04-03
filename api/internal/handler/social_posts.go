@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -15,15 +16,17 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 type SocialPostHandler struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	quota     *quota.Checker
 }
 
-func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor) *SocialPostHandler {
-	return &SocialPostHandler{queries: queries, encryptor: encryptor}
+func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker) *SocialPostHandler {
+	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker}
 }
 
 type postResultResponse struct {
@@ -69,6 +72,13 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if len(body.AccountIDs) == 0 {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "At least one account_id is required")
 		return
+	}
+
+	// Check quota (soft block — never hard block)
+	quotaStatus := h.quota.Check(r.Context(), projectID)
+	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", quotaStatus.Usage, quotaStatus.Limit))
+	if quotaStatus.Warning != "" {
+		w.Header().Set("X-UniPost-Warning", quotaStatus.Warning)
 	}
 
 	// Validate accounts belong to project — disconnected accounts are included
@@ -261,6 +271,17 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Status:      postStatus,
 		PublishedAt: publishedAt,
 	})
+
+	// Increment usage for successfully posted accounts
+	publishedCount := 0
+	for _, res := range results {
+		if res.err == nil {
+			publishedCount++
+		}
+	}
+	if publishedCount > 0 {
+		h.quota.Increment(r.Context(), projectID, publishedCount)
+	}
 
 	var caption *string
 	if post.Caption.Valid {
