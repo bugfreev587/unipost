@@ -67,8 +67,10 @@ func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, co
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
+	slog.Info("tiktok token response", "status", resp.StatusCode, "body_length", len(respBody))
+
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
@@ -84,7 +86,9 @@ func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, co
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	json.NewDecoder(resp.Body).Decode(&tokenResp)
+	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+		return nil, fmt.Errorf("failed to parse token response: %w, body: %s", err, string(respBody))
+	}
 
 	if tokenResp.Error.Code != "" && tokenResp.Error.Code != "ok" {
 		return nil, fmt.Errorf("tiktok error: %s", tokenResp.Error.Message)
@@ -96,6 +100,10 @@ func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, co
 		"open_id", tokenResp.Data.OpenID,
 		"expires_in", tokenResp.Data.ExpiresIn,
 	)
+
+	if tokenResp.Data.AccessToken == "" {
+		return nil, fmt.Errorf("tiktok returned empty access token")
+	}
 
 	// Get user info
 	userInfo, err := a.getUserInfo(ctx, tokenResp.Data.AccessToken)
