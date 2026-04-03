@@ -74,52 +74,76 @@ func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, co
 		return nil, fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
-	var tokenResp struct {
-		Data struct {
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
-			ExpiresIn    int    `json:"expires_in"`
-			OpenID       string `json:"open_id"`
-		} `json:"data"`
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+	// TikTok may return tokens nested under "data" or at root level
+	// Parse as generic map first to handle both formats
+	var raw map[string]any
+	if err := json.Unmarshal(respBody, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse token response: %w, body: %s", err, string(respBody))
 	}
 
-	if tokenResp.Error.Code != "" && tokenResp.Error.Code != "ok" {
-		return nil, fmt.Errorf("tiktok error: %s", tokenResp.Error.Message)
+	slog.Info("tiktok token response body", "body", string(respBody))
+
+	// Check for error
+	if errMsg, ok := raw["error"].(string); ok && errMsg != "" {
+		desc, _ := raw["error_description"].(string)
+		return nil, fmt.Errorf("tiktok error: %s - %s", errMsg, desc)
+	}
+	if errObj, ok := raw["error"].(map[string]any); ok {
+		if code, _ := errObj["code"].(string); code != "" && code != "ok" {
+			msg, _ := errObj["message"].(string)
+			return nil, fmt.Errorf("tiktok error: %s", msg)
+		}
+	}
+
+	// Extract token data — try nested "data" first, then root level
+	tokenData := raw
+	if data, ok := raw["data"].(map[string]any); ok {
+		tokenData = data
+	}
+
+	accessToken := ""
+	if v, ok := tokenData["access_token"].(string); ok {
+		accessToken = v
+	}
+	refreshToken := ""
+	if v, ok := tokenData["refresh_token"].(string); ok {
+		refreshToken = v
+	}
+	openID := ""
+	if v, ok := tokenData["open_id"].(string); ok {
+		openID = v
+	}
+	expiresIn := 86400
+	if v, ok := tokenData["expires_in"].(float64); ok {
+		expiresIn = int(v)
 	}
 
 	slog.Info("tiktok token exchange",
-		"has_access_token", tokenResp.Data.AccessToken != "",
-		"token_length", len(tokenResp.Data.AccessToken),
-		"open_id", tokenResp.Data.OpenID,
-		"expires_in", tokenResp.Data.ExpiresIn,
+		"has_access_token", accessToken != "",
+		"token_length", len(accessToken),
+		"open_id", openID,
+		"expires_in", expiresIn,
 	)
 
-	if tokenResp.Data.AccessToken == "" {
-		return nil, fmt.Errorf("tiktok returned empty access token")
+	if accessToken == "" {
+		return nil, fmt.Errorf("tiktok returned empty access token, response: %s", string(respBody))
 	}
 
 	// Get user info
-	userInfo, err := a.getUserInfo(ctx, tokenResp.Data.AccessToken)
+	userInfo, err := a.getUserInfo(ctx, accessToken)
 	if err != nil {
-		userInfo = &tiktokUserInfo{openID: tokenResp.Data.OpenID, displayName: tokenResp.Data.OpenID}
+		userInfo = &tiktokUserInfo{openID: openID, displayName: openID}
 	}
 
 	return &ConnectResult{
-		AccessToken:       tokenResp.Data.AccessToken,
-		RefreshToken:      tokenResp.Data.RefreshToken,
-		TokenExpiresAt:    time.Now().Add(time.Duration(tokenResp.Data.ExpiresIn) * time.Second),
-		ExternalAccountID: tokenResp.Data.OpenID,
+		AccessToken:       accessToken,
+		RefreshToken:      refreshToken,
+		TokenExpiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
+		ExternalAccountID: openID,
 		AccountName:       userInfo.displayName,
 		AvatarURL:         userInfo.avatarURL,
 		Metadata: map[string]any{
-			"open_id":      tokenResp.Data.OpenID,
+			"open_id":      openID,
 			"display_name": userInfo.displayName,
 		},
 	}, nil
