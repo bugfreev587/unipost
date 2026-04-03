@@ -13,6 +13,11 @@ export default clerkMiddleware(async (auth, request) => {
     hostname === "localhost:3000" ||
     hostname.startsWith("localhost:");
 
+  // Public pages (no auth, available on both domains)
+  if (pathname === "/terms" || pathname === "/privacy") {
+    return NextResponse.next();
+  }
+
   if (!isDashboard) {
     // Landing page domain (unipost.dev) — rewrite to /marketing
     if (pathname === "/") {
