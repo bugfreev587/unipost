@@ -32,7 +32,9 @@ func (h *StripeWebhookHandler) HandleStripe(w http.ResponseWriter, r *http.Reque
 	}
 
 	secret := os.Getenv("STRIPE_WEBHOOK_SECRET")
-	event, err := webhook.ConstructEvent(body, r.Header.Get("Stripe-Signature"), secret)
+	event, err := webhook.ConstructEventWithOptions(body, r.Header.Get("Stripe-Signature"), secret, webhook.ConstructEventOptions{
+		IgnoreAPIVersionMismatch: true,
+	})
 	if err != nil {
 		slog.Error("stripe webhook: signature verification failed", "error", err)
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid signature")
