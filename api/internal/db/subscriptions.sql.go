@@ -68,6 +68,17 @@ func (q *Queries) CreateSubscription(ctx context.Context, arg CreateSubscription
 	return i, err
 }
 
+const ensureSubscription = `-- name: EnsureSubscription :exec
+INSERT INTO subscriptions (project_id, plan_id, status)
+VALUES ($1, 'free', 'active')
+ON CONFLICT (project_id) DO NOTHING
+`
+
+func (q *Queries) EnsureSubscription(ctx context.Context, projectID string) error {
+	_, err := q.db.Exec(ctx, ensureSubscription, projectID)
+	return err
+}
+
 const getSubscriptionByProject = `-- name: GetSubscriptionByProject :one
 SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at FROM subscriptions WHERE project_id = $1
 `

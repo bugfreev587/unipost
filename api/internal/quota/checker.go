@@ -88,12 +88,9 @@ func (c *Checker) Increment(ctx context.Context, projectID string, count int) {
 }
 
 // EnsureSubscription creates a free subscription if one doesn't exist.
+// Uses DO NOTHING to avoid overwriting an existing paid subscription.
 func (c *Checker) EnsureSubscription(ctx context.Context, projectID string) {
-	c.queries.CreateSubscription(ctx, db.CreateSubscriptionParams{
-		ProjectID: projectID,
-		PlanID:    "free",
-		Status:    "active",
-	})
+	c.queries.EnsureSubscription(ctx, projectID)
 }
 
 func currentPeriod() string {

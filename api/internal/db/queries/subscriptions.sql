@@ -9,6 +9,11 @@ SET plan_id = EXCLUDED.plan_id,
     updated_at = NOW()
 RETURNING *;
 
+-- name: EnsureSubscription :exec
+INSERT INTO subscriptions (project_id, plan_id, status)
+VALUES ($1, 'free', 'active')
+ON CONFLICT (project_id) DO NOTHING;
+
 -- name: GetSubscriptionByProject :one
 SELECT * FROM subscriptions WHERE project_id = $1;
 
