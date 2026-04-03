@@ -7,7 +7,10 @@ export default function LandingPage() {
       <header className="border-b border-zinc-200">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <span className="text-xl font-bold">UniPost</span>
-          <MarketingNav />
+          <div className="flex items-center gap-6">
+            <a href="/docs" className="text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors">Docs</a>
+            <MarketingNav />
+          </div>
         </div>
       </header>
 
