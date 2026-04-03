@@ -9,6 +9,7 @@ export default function LandingPage() {
           <span className="text-xl font-bold">UniPost</span>
           <div className="flex items-center gap-6">
             <a href="/docs" className="text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors">Docs</a>
+            <a href="/pricing" className="text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors">Pricing</a>
             <MarketingNav />
           </div>
         </div>

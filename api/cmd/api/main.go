@@ -216,6 +216,7 @@ func main() {
 		r.Get("/v1/webhooks", webhookSubHandler.List)
 
 		r.Get("/v1/oauth/connect/{platform}", oauthHandler.Connect)
+		r.Get("/v1/usage", billingHandler.GetUsage)
 	})
 
 	srv := &http.Server{

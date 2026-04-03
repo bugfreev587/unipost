@@ -37,6 +37,7 @@ type Plan struct {
 	PostLimit     int32              `json:"post_limit"`
 	StripePriceID pgtype.Text        `json:"stripe_price_id"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	WhiteLabel    bool               `json:"white_label"`
 }
 
 type PlatformCredential struct {

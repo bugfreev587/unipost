@@ -189,6 +189,33 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, map[string]string{"portal_url": s.URL})
 }
 
+// GetUsage handles GET /v1/usage (API key auth)
+func (h *BillingHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
+	projectID := auth.GetProjectID(r.Context())
+	if projectID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+		return
+	}
+
+	h.quota.EnsureSubscription(r.Context(), projectID)
+	status := h.quota.Check(r.Context(), projectID)
+
+	sub, _ := h.queries.GetSubscriptionByProject(r.Context(), projectID)
+	planID := "free"
+	if sub.PlanID != "" {
+		planID = sub.PlanID
+	}
+
+	writeSuccess(w, map[string]any{
+		"period":     status.Period(),
+		"post_count": status.Usage,
+		"post_limit": status.Limit,
+		"plan":       planID,
+		"percentage": status.Percentage,
+		"warning":    status.Warning,
+	})
+}
+
 // ListPlans handles GET /v1/plans
 func (h *BillingHandler) ListPlans(w http.ResponseWriter, r *http.Request) {
 	plans, err := h.queries.ListPlans(r.Context())
