@@ -80,3 +80,17 @@ func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
 	}
 	return items, nil
 }
+
+const updatePlanStripePriceID = `-- name: UpdatePlanStripePriceID :exec
+UPDATE plans SET stripe_price_id = $2 WHERE id = $1
+`
+
+type UpdatePlanStripePriceIDParams struct {
+	ID            string      `json:"id"`
+	StripePriceID pgtype.Text `json:"stripe_price_id"`
+}
+
+func (q *Queries) UpdatePlanStripePriceID(ctx context.Context, arg UpdatePlanStripePriceIDParams) error {
+	_, err := q.db.Exec(ctx, updatePlanStripePriceID, arg.ID, arg.StripePriceID)
+	return err
+}

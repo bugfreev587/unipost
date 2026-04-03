@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -112,6 +114,9 @@ func main() {
 	}
 
 	queries := db.New(pool)
+
+	// Sync Stripe price IDs from env vars into plans table
+	syncStripePriceIDs(ctx, queries)
 	quotaChecker := quota.NewChecker(queries)
 
 	// Start background workers
@@ -250,6 +255,32 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+// syncStripePriceIDs reads Stripe price IDs from env vars and updates the plans table.
+// Env var format: STRIPE_PRICE_ID_10, STRIPE_PRICE_ID_25, etc.
+func syncStripePriceIDs(ctx context.Context, queries *db.Queries) {
+	planEnvMap := map[string]string{
+		"p10":   "STRIPE_PRICE_ID_10",
+		"p25":   "STRIPE_PRICE_ID_25",
+		"p50":   "STRIPE_PRICE_ID_50",
+		"p75":   "STRIPE_PRICE_ID_75",
+		"p150":  "STRIPE_PRICE_ID_150",
+		"p300":  "STRIPE_PRICE_ID_300",
+		"p500":  "STRIPE_PRICE_ID_500",
+		"p1000": "STRIPE_PRICE_ID_1000",
+	}
+
+	for planID, envVar := range planEnvMap {
+		priceID := os.Getenv(envVar)
+		if priceID != "" {
+			queries.UpdatePlanStripePriceID(ctx, db.UpdatePlanStripePriceIDParams{
+				ID:            planID,
+				StripePriceID: pgtype.Text{String: priceID, Valid: true},
+			})
+			slog.Info("synced stripe price", "plan", planID, "env", envVar)
+		}
+	}
 }
 
 // fanoutHandler sends log records to multiple slog.Handlers.
