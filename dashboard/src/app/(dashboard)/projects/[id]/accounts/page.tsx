@@ -36,6 +36,8 @@ const PLATFORMS = [
   { id: "linkedin", name: "LinkedIn", type: "oauth" as const },
   { id: "instagram", name: "Instagram", type: "oauth" as const },
   { id: "threads", name: "Threads", type: "oauth" as const },
+  { id: "tiktok", name: "TikTok", type: "oauth" as const },
+  { id: "youtube", name: "YouTube", type: "oauth" as const },
 ];
 
 export default function AccountsPage() {
