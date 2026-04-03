@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stripe/stripe-go/v82"
@@ -73,17 +72,29 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 		return
 	}
 
-	h.queries.UpdateSubscriptionStripe(r.Context(), db.UpdateSubscriptionStripeParams{
-		ProjectID:            projectID,
-		StripeCustomerID:     pgtype.Text{String: session.Customer.ID, Valid: true},
-		StripeSubscriptionID: pgtype.Text{String: session.Subscription.ID, Valid: true},
-		PlanID:               planID,
-		Status:               "active",
-		CurrentPeriodStart:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		CurrentPeriodEnd:     pgtype.Timestamptz{Time: time.Now().AddDate(0, 1, 0), Valid: true},
-	})
+	customerID := ""
+	if session.Customer != nil {
+		customerID = session.Customer.ID
+	}
+	subscriptionID := ""
+	if session.Subscription != nil {
+		subscriptionID = session.Subscription.ID
+	}
 
-	slog.Info("stripe webhook: subscription created", "project_id", projectID, "plan_id", planID)
+	// Use upsert to handle both new and existing subscription rows
+	_, err := h.queries.CreateSubscription(r.Context(), db.CreateSubscriptionParams{
+		ProjectID:            projectID,
+		PlanID:               planID,
+		StripeCustomerID:     pgtype.Text{String: customerID, Valid: customerID != ""},
+		StripeSubscriptionID: pgtype.Text{String: subscriptionID, Valid: subscriptionID != ""},
+		Status:               "active",
+	})
+	if err != nil {
+		slog.Error("stripe webhook: failed to upsert subscription", "error", err, "project_id", projectID)
+		return
+	}
+
+	slog.Info("stripe webhook: subscription created", "project_id", projectID, "plan_id", planID, "customer", customerID)
 }
 
 func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event stripe.Event) {
