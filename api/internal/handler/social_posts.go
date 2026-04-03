@@ -253,24 +253,24 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if e.notFound {
 			errMessage = "account not found"
 		}
-		dbResult, err := h.queries.CreateSocialPostResult(r.Context(), db.CreateSocialPostResultParams{
-			PostID:          post.ID,
-			SocialAccountID: e.account.ID,
-			Status:          "failed",
-			ExternalID:      pgtype.Text{},
-			ErrorMessage:    pgtype.Text{String: errMessage, Valid: true},
-			PublishedAt:     pgtype.Timestamptz{},
-		})
-		if err != nil {
-			slog.Error("failed to save post result", "error", err)
-			continue
+
+		// Only save to DB if the account exists (disconnected but not deleted)
+		if !e.notFound {
+			h.queries.CreateSocialPostResult(r.Context(), db.CreateSocialPostResultParams{
+				PostID:          post.ID,
+				SocialAccountID: e.account.ID,
+				Status:          "failed",
+				ExternalID:      pgtype.Text{},
+				ErrorMessage:    pgtype.Text{String: errMessage, Valid: true},
+				PublishedAt:     pgtype.Timestamptz{},
+			})
 		}
-		msg := dbResult.ErrorMessage.String
+
 		responseResults = append(responseResults, postResultResponse{
-			SocialAccountID: dbResult.SocialAccountID,
+			SocialAccountID: e.account.ID,
 			Platform:        e.account.Platform,
 			Status:          "failed",
-			ErrorMessage:    &msg,
+			ErrorMessage:    &errMessage,
 		})
 	}
 
