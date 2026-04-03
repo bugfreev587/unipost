@@ -30,12 +30,13 @@ func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, q
 }
 
 type postResultResponse struct {
-	SocialAccountID string  `json:"social_account_id"`
-	Platform        string  `json:"platform,omitempty"`
-	Status          string  `json:"status"`
-	ExternalID      *string `json:"external_id,omitempty"`
-	ErrorMessage    *string `json:"error_message,omitempty"`
-	PublishedAt     *string `json:"published_at,omitempty"`
+	SocialAccountID string         `json:"social_account_id"`
+	Platform        string         `json:"platform,omitempty"`
+	Status          string         `json:"status"`
+	ExternalID      *string        `json:"external_id,omitempty"`
+	ErrorMessage    *string        `json:"error_message,omitempty"`
+	PublishedAt     *string        `json:"published_at,omitempty"`
+	PublishStatus   map[string]any `json:"publish_status,omitempty"`
 }
 
 type socialPostResponse struct {
@@ -354,6 +355,24 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 			t := res.PublishedAt.Time.Format(time.RFC3339)
 			rr.PublishedAt = &t
 		}
+
+		// For TikTok, check real-time publish status
+		if res.ExternalID.Valid {
+			acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID)
+			if accErr == nil && acc.Platform == "tiktok" {
+				if adapter, adErr := platform.Get("tiktok"); adErr == nil {
+					if tiktokAdapter, ok := adapter.(*platform.TikTokAdapter); ok {
+						accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
+						if decErr == nil {
+							if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
+								rr.PublishStatus = status
+							}
+						}
+					}
+				}
+			}
+		}
+
 		responseResults = append(responseResults, rr)
 	}
 

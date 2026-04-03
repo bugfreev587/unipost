@@ -257,6 +257,31 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 	}, nil
 }
 
+// CheckPublishStatus queries TikTok for the publish status of a video.
+func (a *TikTokAdapter) CheckPublishStatus(ctx context.Context, accessToken string, publishID string) (map[string]any, error) {
+	body, _ := json.Marshal(map[string]string{
+		"publish_id": publishID,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		"https://open.tiktokapis.com/v2/post/publish/status/fetch/", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]any
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
+}
+
 func (a *TikTokAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
 	return fmt.Errorf("tiktok does not support post deletion via API")
 }
