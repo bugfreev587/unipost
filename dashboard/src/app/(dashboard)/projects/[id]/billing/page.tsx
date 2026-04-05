@@ -3,16 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  getBilling,
-  createCheckout,
-  createPortal,
-  type BillingInfo,
-  type Plan,
-} from "@/lib/api";
-import { Activity, ExternalLink, CheckCircle2, Zap } from "lucide-react";
+import { getBilling, createCheckout, createPortal, type BillingInfo, type Plan } from "@/lib/api";
+import { CheckCircle2, ExternalLink } from "lucide-react";
 
 const PLANS: Plan[] = [
   { id: "free", name: "Free", price_cents: 0, post_limit: 100 },
@@ -33,7 +25,6 @@ export default function BillingPage() {
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
-
   const callbackStatus = searchParams.get("status");
 
   const loadBilling = useCallback(async () => {
@@ -42,16 +33,10 @@ export default function BillingPage() {
       if (!token) return;
       const res = await getBilling(token, projectId);
       setBilling(res.data);
-    } catch (err) {
-      console.error("Failed to load billing:", err);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { console.error("Failed to load billing:", err); } finally { setLoading(false); }
   }, [getToken, projectId]);
 
-  useEffect(() => {
-    loadBilling();
-  }, [loadBilling]);
+  useEffect(() => { loadBilling(); }, [loadBilling]);
 
   async function handleUpgrade(planId: string) {
     setUpgrading(planId);
@@ -60,10 +45,7 @@ export default function BillingPage() {
       if (!token) return;
       const res = await createCheckout(token, projectId, planId);
       window.location.href = res.data.checkout_url;
-    } catch (err) {
-      console.error("Failed to create checkout:", err);
-      setUpgrading(null);
-    }
+    } catch (err) { console.error("Failed:", err); setUpgrading(null); }
   }
 
   async function handleManage() {
@@ -72,168 +54,124 @@ export default function BillingPage() {
       if (!token) return;
       const res = await createPortal(token, projectId);
       window.location.href = res.data.portal_url;
-    } catch (err) {
-      console.error("Failed to open portal:", err);
-    }
+    } catch (err) { console.error("Failed:", err); }
   }
 
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <div className="h-5 w-24 bg-[#111111] rounded animate-pulse" />
-        <div className="h-32 rounded-lg bg-[#111111] border border-[#1e1e1e] animate-pulse" />
-      </div>
-    );
-  }
+  if (loading) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
 
-  const usagePct = billing ? Math.min(billing.percentage, 100) : 0;
-  const usageColor =
-    usagePct >= 100
-      ? "bg-destructive"
-      : usagePct >= 80
-        ? "bg-amber-status"
-        : "bg-emerald";
+  const used = billing?.usage ?? 0;
+  const limit = billing?.limit ?? 100;
+  const pct = billing ? Math.round(billing.percentage) : 0;
+  const barClass = pct >= 100 ? "bar-red" : pct >= 80 ? "bar-amber" : "bar-green";
 
   return (
-    <div>
+    <>
       {callbackStatus === "success" && (
-        <div className="mb-5 flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald/5 border border-emerald/10 text-[13px] text-emerald animate-enter">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          Subscription updated.
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "#10b98110", border: "1px solid #10b98125", fontSize: 12.5, color: "var(--daccent)", marginBottom: 20 }}>
+          <CheckCircle2 style={{ width: 14, height: 14 }} /> Subscription updated.
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-6 animate-enter">
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <h1 className="text-[18px] font-semibold text-[#e5e5e5] tracking-tight">
-            Billing
-          </h1>
-          <p className="text-[13px] text-[#525252] mt-0.5">
-            Plan, usage, and subscription management.
-          </p>
+          <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: -0.4, color: "var(--dtext)" }}>Billing</div>
+          <div style={{ fontSize: 12.5, color: "var(--dmuted)", marginTop: 3 }}>Plan usage and subscription management</div>
         </div>
         {billing?.plan !== "free" && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleManage}
-            className="gap-1.5 border-[#1e1e1e] text-[#a3a3a3] hover:text-[#e5e5e5] hover:border-[#2a2a2a]"
-          >
-            Manage
-            <ExternalLink className="w-3 h-3" />
-          </Button>
+          <button className="dbtn dbtn-ghost" onClick={handleManage}>
+            Manage Subscription <ExternalLink style={{ width: 12, height: 12 }} />
+          </button>
         )}
       </div>
 
-      {/* Current plan card */}
-      <div className="rounded-lg bg-[#111111] border border-[#1e1e1e] p-5 mb-6 animate-enter" style={{ animationDelay: "50ms" }}>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2.5">
-            <Zap className="w-4 h-4 text-emerald" />
-            <span className="text-[14px] font-semibold text-[#e5e5e5]">
-              {billing?.plan_name || "Free"}
-            </span>
-            <Badge
-              variant="secondary"
-              className={`text-[9px] border-0 ${
-                billing?.plan === "free"
-                  ? "bg-[#1a1a1a] text-[#525252]"
-                  : "bg-emerald/10 text-emerald"
-              }`}
-            >
-              {billing?.status || "active"}
-            </Badge>
+      {/* Stats */}
+      <div className="stat-grid">
+        <div className="stat-card">
+          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>Posts This Month</div>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>{used.toLocaleString()}</div>
+          <div style={{ margin: "8px 0 4px" }}>
+            <div className="usage-bar-track">
+              <div className={`usage-bar-fill ${barClass}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+            </div>
           </div>
-          {billing?.period && (
-            <span className="mono text-[11px] text-[#3a3a3a]">
-              {billing.period}
-            </span>
-          )}
+          <div style={{ fontSize: 11.5, color: pct >= 80 ? "var(--warning)" : "var(--dmuted)" }}>
+            {used.toLocaleString()} / {limit.toLocaleString()} posts &middot; {pct}%
+          </div>
         </div>
-
-        {/* Usage bar */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-[12px]">
-            <span className="text-[#525252]">Posts this month</span>
-            <span className="mono text-[#a3a3a3]">
-              {billing?.usage ?? 0}
-              <span className="text-[#3a3a3a]"> / {billing?.limit ?? 100}</span>
-              <span className="text-[#2a2a2a] ml-1.5">
-                ({Math.round(billing?.percentage ?? 0)}%)
-              </span>
-            </span>
+        <div className="stat-card">
+          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>Current Plan</div>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>
+            {billing?.plan_name || "Free"}
           </div>
-          <div className="w-full bg-[#1a1a1a] rounded-full h-2">
-            <div
-              className={`h-2 rounded-full transition-all duration-700 ease-out ${usageColor}`}
-              style={{ width: `${usagePct}%` }}
-            />
+          <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>{billing?.period || ""}</div>
+        </div>
+        <div className="stat-card">
+          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>Status</div>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>
+            {billing?.status || "active"}
           </div>
-          {billing?.warning === "approaching_limit" && (
-            <p className="text-[11px] text-amber-status flex items-center gap-1.5">
-              <Activity className="w-3 h-3" />
-              {Math.round(billing.percentage)}% used. Consider upgrading.
-            </p>
-          )}
-          {billing?.warning === "over_limit" && (
-            <p className="text-[11px] text-destructive flex items-center gap-1.5">
-              <Activity className="w-3 h-3" />
-              Limit exceeded. Upgrade to continue posting.
-            </p>
-          )}
+          <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>Unlimited accounts</div>
         </div>
       </div>
 
-      {/* Plans grid — horizontal scroll */}
-      <div className="animate-enter" style={{ animationDelay: "100ms" }}>
-        <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#525252] mb-3 px-0.5">
-          Available Plans
-        </p>
-        <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
-          {PLANS.map((plan) => {
+      {billing?.warning && (
+        <div style={{ padding: "10px 14px", borderRadius: 6, marginBottom: 20, background: billing.warning === "over_limit" ? "#ef444410" : "#f59e0b10", border: `1px solid ${billing.warning === "over_limit" ? "#ef444425" : "#f59e0b25"}`, fontSize: 12.5, color: billing.warning === "over_limit" ? "var(--danger)" : "var(--warning)" }}>
+          {billing.warning === "over_limit" ? "Monthly limit exceeded. Upgrade to continue posting." : `${pct}% of monthly limit used. Consider upgrading.`}
+        </div>
+      )}
+
+      {/* Plans */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--dtext)", marginBottom: 4 }}>Upgrade Plan</div>
+        <div style={{ color: "var(--dmuted)", fontSize: 12.5 }}>All plans include the same features. Only post volume differs.</div>
+      </div>
+      <div className="plan-cards">
+        {PLANS.slice(0, 6).map((plan) => {
+          const isCurrent = billing?.plan === plan.id;
+          const price = plan.price_cents === 0 ? "$0" : `$${plan.price_cents / 100}`;
+          return (
+            <div key={plan.id} className={`plan-card ${isCurrent ? "current" : ""}`}>
+              {isCurrent && <div style={{ fontSize: 10, color: "var(--daccent)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Current Plan</div>}
+              <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 20, fontWeight: 600, color: "var(--dtext)" }}>
+                {price}<span style={{ fontSize: 12, color: "var(--dmuted)", fontWeight: 400 }}>/mo</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>{plan.post_limit.toLocaleString()} posts</div>
+              {!isCurrent && plan.id !== "free" && (
+                <button
+                  className="dbtn dbtn-ghost"
+                  style={{ marginTop: 10, width: "100%", justifyContent: "center", fontSize: 12 }}
+                  onClick={() => handleUpgrade(plan.id)}
+                  disabled={upgrading === plan.id}
+                >
+                  {upgrading === plan.id ? "..." : "Upgrade"}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {PLANS.length > 6 && (
+        <div className="plan-cards" style={{ marginTop: 10 }}>
+          {PLANS.slice(6).map((plan) => {
             const isCurrent = billing?.plan === plan.id;
-            const price = plan.price_cents === 0 ? "Free" : `$${plan.price_cents / 100}`;
+            const price = `$${plan.price_cents / 100}`;
             return (
-              <div
-                key={plan.id}
-                className={`shrink-0 w-[140px] rounded-lg border p-4 flex flex-col ${
-                  isCurrent
-                    ? "bg-emerald/5 border-emerald/20"
-                    : "bg-[#111111] border-[#1e1e1e] hover:border-[#2a2a2a]"
-                } transition-colors`}
-              >
-                <p className="text-[12px] font-medium text-[#d4d4d4] mb-1">
-                  {plan.name}
-                </p>
-                <p className="mono text-[18px] font-bold text-[#e5e5e5] tracking-tight mb-0.5">
-                  {price}
-                  {plan.price_cents > 0 && (
-                    <span className="text-[10px] font-normal text-[#3a3a3a]">/mo</span>
-                  )}
-                </p>
-                <p className="mono text-[10px] text-[#3a3a3a] mb-3">
-                  {plan.post_limit.toLocaleString()} posts
-                </p>
-                {isCurrent ? (
-                  <Badge variant="secondary" className="text-[9px] bg-emerald/10 text-emerald border-0 w-fit">
-                    Current
-                  </Badge>
-                ) : plan.id === "free" ? null : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-[11px] h-7 border-[#1e1e1e] text-[#737373] hover:text-[#e5e5e5] hover:border-emerald/30"
-                    onClick={() => handleUpgrade(plan.id)}
-                    disabled={upgrading === plan.id}
-                  >
-                    {upgrading === plan.id ? "..." : "Select"}
-                  </Button>
+              <div key={plan.id} className={`plan-card ${isCurrent ? "current" : ""}`}>
+                {isCurrent && <div style={{ fontSize: 10, color: "var(--daccent)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Current Plan</div>}
+                <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 20, fontWeight: 600, color: "var(--dtext)" }}>
+                  {price}<span style={{ fontSize: 12, color: "var(--dmuted)", fontWeight: 400 }}>/mo</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>{plan.post_limit.toLocaleString()} posts</div>
+                {!isCurrent && (
+                  <button className="dbtn dbtn-ghost" style={{ marginTop: 10, width: "100%", justifyContent: "center", fontSize: 12 }} onClick={() => handleUpgrade(plan.id)} disabled={upgrading === plan.id}>
+                    {upgrading === plan.id ? "..." : "Upgrade"}
+                  </button>
                 )}
               </div>
             );
           })}
         </div>
-      </div>
-    </div>
+      )}
+    </>
   );
 }

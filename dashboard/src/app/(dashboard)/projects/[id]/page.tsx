@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
 import {
   getProject,
   getBilling,
@@ -17,15 +16,7 @@ import {
   type SocialPost,
   type ApiKey,
 } from "@/lib/api";
-import {
-  Key,
-  Users,
-  Send,
-  CreditCard,
-  Settings,
-  ArrowUpRight,
-  Activity,
-} from "lucide-react";
+import { Key, Users, Send, CreditCard, Settings, ChevronRight } from "lucide-react";
 
 const NAV_CARDS = [
   { href: "/api-keys", label: "API Keys", desc: "Manage access tokens", icon: Key },
@@ -73,151 +64,116 @@ export default function ProjectOverviewPage() {
   }, [getToken, id]);
 
   if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="h-5 w-40 bg-[#111111] rounded animate-pulse" />
-        <div className="grid grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-[80px] rounded-lg bg-[#111111] border border-[#1e1e1e] animate-pulse" />
-          ))}
-        </div>
-      </div>
-    );
+    return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
   }
 
   if (!project) {
-    return <p className="text-[13px] text-destructive">Project not found.</p>;
+    return <div style={{ color: "var(--danger)" }}>Project not found.</div>;
   }
 
   const usagePct = billing ? Math.min(billing.percentage, 100) : 0;
-  const usageColor =
-    usagePct >= 100
-      ? "bg-destructive"
-      : usagePct >= 80
-        ? "bg-amber-status"
-        : "bg-emerald";
-
-  const stats = [
-    { label: "API Keys", value: keys.length },
-    { label: "Accounts", value: accounts.length },
-    { label: "Posts", value: posts.length },
-    {
-      label: "Usage",
-      value: billing ? `${billing.usage}/${billing.limit}` : "—",
-    },
-  ];
+  const barClass = usagePct >= 100 ? "bar-red" : usagePct >= 80 ? "bar-amber" : "bar-green";
 
   return (
-    <div>
+    <>
       {/* Header */}
-      <div className="flex items-start justify-between mb-6 animate-enter">
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-[18px] font-semibold text-[#e5e5e5] tracking-tight">
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: -0.4, color: "var(--dtext)" }}>
               {project.name}
-            </h1>
-            <Badge variant="secondary" className="text-[10px] bg-[#1a1a1a] text-[#737373] border-0">
+            </div>
+            <span className="dbadge dbadge-green">
+              <span className="dbadge-dot" />
               {project.mode}
-            </Badge>
+            </span>
           </div>
-          <p className="mono text-[11px] text-[#3a3a3a] mt-1">{project.id}</p>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 11, color: "var(--dmuted2)", marginTop: 4 }}>
+            {project.id}
+          </div>
         </div>
         {billing && (
-          <Badge
-            variant={billing.plan === "free" ? "secondary" : "default"}
-            className={`text-[10px] ${billing.plan === "free" ? "bg-[#1a1a1a] text-[#737373] border-0" : "bg-emerald/10 text-emerald border-emerald/20"}`}
-          >
+          <span className={`dbadge ${billing.plan === "free" ? "dbadge-amber" : "dbadge-green"}`}>
             {billing.plan_name}
-          </Badge>
+          </span>
         )}
       </div>
 
-      {/* Stats row */}
-      <div
-        className="grid grid-cols-4 gap-3 mb-6 animate-enter"
-        style={{ animationDelay: "50ms" }}
-      >
-        {stats.map((stat) => (
-          <div
-            key={stat.label}
-            className="rounded-lg bg-[#111111] border border-[#1e1e1e] px-4 py-3"
-          >
-            <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#525252] mb-1.5">
-              {stat.label}
-            </p>
-            <p className="mono text-[18px] font-semibold text-[#e5e5e5] tracking-tight">
-              {stat.value}
-            </p>
+      {/* Stats */}
+      <div className="stat-grid">
+        <div className="stat-card">
+          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>
+            Posts This Month
           </div>
-        ))}
-      </div>
-
-      {/* Usage bar */}
-      {billing && (
-        <div
-          className="rounded-lg bg-[#111111] border border-[#1e1e1e] p-4 mb-6 animate-enter"
-          style={{ animationDelay: "100ms" }}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Activity className="w-3.5 h-3.5 text-[#525252]" />
-              <span className="text-[12px] font-medium text-[#a3a3a3]">
-                Monthly Usage
-              </span>
-            </div>
-            <span className="mono text-[11px] text-[#525252]">
-              {billing.usage} / {billing.limit} posts &middot;{" "}
-              {Math.round(billing.percentage)}%
-            </span>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>
+            {billing?.usage ?? 0}
           </div>
-          <div className="w-full bg-[#1a1a1a] rounded-full h-1.5">
-            <div
-              className={`h-1.5 rounded-full transition-all duration-700 ease-out ${usageColor}`}
-              style={{ width: `${usagePct}%` }}
-            />
-          </div>
-          {billing.warning && (
-            <p
-              className={`text-[11px] mt-2 ${
-                billing.warning === "over_limit" ? "text-destructive" : "text-amber-status"
-              }`}
-            >
-              {billing.warning === "over_limit"
-                ? "Monthly limit exceeded. Upgrade to continue."
-                : "Approaching monthly limit. Consider upgrading."}
-            </p>
+          {billing && (
+            <>
+              <div style={{ margin: "8px 0 4px" }}>
+                <div className="usage-bar-track">
+                  <div className={`usage-bar-fill ${barClass}`} style={{ width: `${usagePct}%` }} />
+                </div>
+              </div>
+              <div style={{ fontSize: 11.5, color: usagePct >= 80 ? "var(--warning)" : "var(--dmuted)" }}>
+                {billing.usage} / {billing.limit} &middot; {Math.round(billing.percentage)}%
+              </div>
+            </>
           )}
         </div>
-      )}
-
-      {/* Quick nav */}
-      <div className="animate-enter" style={{ animationDelay: "150ms" }}>
-        <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#525252] mb-3 px-0.5">
-          Manage
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {NAV_CARDS.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Link key={item.href} href={`/projects/${id}${item.href}`}>
-                <div className="group flex items-center gap-3.5 px-4 py-3 rounded-lg bg-[#111111] border border-[#1e1e1e] hover:border-[#2a2a2a] transition-colors">
-                  <Icon
-                    className="w-4 h-4 text-[#3a3a3a] group-hover:text-[#525252] transition-colors shrink-0"
-                    strokeWidth={1.75}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-medium text-[#d4d4d4]">
-                      {item.label}
-                    </p>
-                    <p className="text-[11px] text-[#3a3a3a]">{item.desc}</p>
-                  </div>
-                  <ArrowUpRight className="w-3.5 h-3.5 text-[#1e1e1e] group-hover:text-[#3a3a3a] transition-colors shrink-0" />
-                </div>
-              </Link>
-            );
-          })}
+        <div className="stat-card">
+          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>
+            Connected Accounts
+          </div>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>
+            {accounts.length}
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>Unlimited on all plans</div>
+        </div>
+        <div className="stat-card">
+          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>
+            API Keys
+          </div>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>
+            {keys.length}
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>{posts.length} total posts</div>
         </div>
       </div>
-    </div>
+
+      {/* Quick nav */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {NAV_CARDS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={`/projects/${id}${item.href}`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "14px 16px",
+                background: "var(--surface)",
+                border: "1px solid var(--dborder)",
+                borderRadius: 8,
+                textDecoration: "none",
+                color: "inherit",
+                transition: "border-color 0.15s, background 0.15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--dborder2)"; e.currentTarget.style.background = "var(--surface2)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--dborder)"; e.currentTarget.style.background = "var(--surface)"; }}
+            >
+              <Icon style={{ width: 16, height: 16, color: "var(--dmuted2)" }} strokeWidth={1.75} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--dtext)" }}>{item.label}</div>
+                <div style={{ fontSize: 11.5, color: "var(--dmuted2)" }}>{item.desc}</div>
+              </div>
+              <ChevronRight style={{ width: 14, height: 14, color: "var(--dmuted2)" }} />
+            </Link>
+          );
+        })}
+      </div>
+    </>
   );
 }

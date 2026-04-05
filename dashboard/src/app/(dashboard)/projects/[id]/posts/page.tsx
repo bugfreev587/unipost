@@ -3,25 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import {
-  listSocialAccounts,
-  listSocialPosts,
-  createSocialPost,
-  type SocialAccount,
-  type SocialPost,
+  listSocialAccounts, listSocialPosts, createSocialPost, type SocialAccount, type SocialPost,
 } from "@/lib/api";
-import {
-  Send,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  AlertCircle,
-  ChevronDown,
-  ChevronUp,
-} from "lucide-react";
+import { Send, CheckCircle2, XCircle, Clock, AlertCircle } from "lucide-react";
+
+const PLATFORM_ICONS: Record<string, string> = { bluesky: "🦋", linkedin: "💼", instagram: "📸", threads: "🧵", tiktok: "🎵", youtube: "▶️", twitter: "𝕏" };
 
 type FilterTab = "all" | "published" | "scheduled" | "failed";
 
@@ -31,12 +19,10 @@ export default function PostsPage() {
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [caption, setCaption] = useState("");
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [posting, setPosting] = useState(false);
   const [postResult, setPostResult] = useState<SocialPost | null>(null);
-
   const [filter, setFilter] = useState<FilterTab>("all");
   const [expandedPost, setExpandedPost] = useState<string | null>(null);
 
@@ -44,301 +30,173 @@ export default function PostsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [accountsRes, postsRes] = await Promise.all([
-        listSocialAccounts(token, projectId),
-        listSocialPosts(token, projectId),
-      ]);
-      setAccounts(accountsRes.data);
-      setPosts(postsRes.data);
-    } catch (err) {
-      console.error("Failed to load data:", err);
-    } finally {
-      setLoading(false);
-    }
+      const [accountsRes, postsRes] = await Promise.all([listSocialAccounts(token, projectId), listSocialPosts(token, projectId)]);
+      setAccounts(accountsRes.data); setPosts(postsRes.data);
+    } catch (err) { console.error("Failed to load:", err); } finally { setLoading(false); }
   }, [getToken, projectId]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   function toggleAccount(id: string) {
-    setSelectedAccounts((prev) =>
-      prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]
-    );
+    setSelectedAccounts((prev) => prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]);
   }
 
   async function handlePost() {
     if (!caption.trim() || selectedAccounts.length === 0) return;
-    setPosting(true);
-    setPostResult(null);
+    setPosting(true); setPostResult(null);
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await createSocialPost(token, projectId, {
-        caption: caption.trim(),
-        account_ids: selectedAccounts,
-      });
-      setPostResult(res.data);
-      setCaption("");
-      setSelectedAccounts([]);
-      loadData();
-    } catch (err) {
-      console.error("Failed to create post:", err);
-    } finally {
-      setPosting(false);
-    }
+      const res = await createSocialPost(token, projectId, { caption: caption.trim(), account_ids: selectedAccounts });
+      setPostResult(res.data); setCaption(""); setSelectedAccounts([]); loadData();
+    } catch (err) { console.error("Failed to post:", err); } finally { setPosting(false); }
   }
 
-  const filteredPosts =
-    filter === "all" ? posts : posts.filter((p) => p.status === filter);
-
-  const filterCounts = {
-    all: posts.length,
-    published: posts.filter((p) => p.status === "published").length,
-    scheduled: posts.filter((p) => p.status === "scheduled").length,
-    failed: posts.filter((p) => p.status === "failed").length,
-  };
+  const filtered = filter === "all" ? posts : posts.filter((p) => p.status === filter);
 
   function statusBadge(status: string) {
-    const map: Record<string, { class: string; icon: typeof CheckCircle2 }> = {
-      published: { class: "bg-emerald/10 text-emerald", icon: CheckCircle2 },
-      scheduled: { class: "bg-[#3b82f6]/10 text-[#3b82f6]", icon: Clock },
-      failed: { class: "bg-destructive/10 text-destructive", icon: XCircle },
-      partial: { class: "bg-amber-status/10 text-amber-status", icon: AlertCircle },
-    };
-    const s = map[status] || map.scheduled;
-    const Icon = s.icon;
-    return (
-      <Badge variant="secondary" className={`text-[10px] border-0 gap-1 ${s.class}`}>
-        <Icon className="w-2.5 h-2.5" />
-        {status}
-      </Badge>
-    );
+    const cls = status === "published" ? "dbadge-green" : status === "scheduled" ? "dbadge-blue" : status === "partial" ? "dbadge-amber" : "dbadge-red";
+    return <span className={`dbadge ${cls}`}><span className="dbadge-dot" />{status}</span>;
   }
 
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <div className="h-5 w-24 bg-[#111111] rounded animate-pulse" />
-        <div className="h-44 rounded-lg bg-[#111111] border border-[#1e1e1e] animate-pulse" />
-      </div>
-    );
-  }
+  if (loading) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
 
   return (
-    <div>
-      <div className="mb-6 animate-enter">
-        <h1 className="text-[18px] font-semibold text-[#e5e5e5] tracking-tight">
-          Posts
-        </h1>
-        <p className="text-[13px] text-[#525252] mt-0.5">
-          Compose, send, and track posts.
-        </p>
+    <>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: -0.4, color: "var(--dtext)" }}>Posts</div>
+          <div style={{ fontSize: 12.5, color: "var(--dmuted)", marginTop: 3 }}>Published and scheduled social media posts</div>
+        </div>
       </div>
 
       {/* Compose */}
-      <div className="rounded-lg bg-[#111111] border border-[#1e1e1e] p-5 mb-6 animate-enter" style={{ animationDelay: "50ms" }}>
-        <div className="flex items-center justify-between mb-3">
-          <Label className="text-[12px] font-medium text-[#a3a3a3]">Compose</Label>
-          <span className="mono text-[10px] text-[#3a3a3a]">
-            {caption.length} chars
-          </span>
+      <div className="settings-section" style={{ marginBottom: 24 }}>
+        <div className="settings-section-header">
+          Compose
+          <span style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 11, color: "var(--dmuted2)" }}>{caption.length} chars</span>
         </div>
-        <textarea
-          className="w-full min-h-[90px] rounded-md bg-[#0a0a0a] border border-[#1e1e1e] px-3 py-2.5 text-[13px] text-[#e5e5e5] placeholder:text-[#2a2a2a] resize-none focus:border-emerald/30 transition-colors"
-          placeholder="What would you like to share?"
-          value={caption}
-          onChange={(e) => setCaption(e.target.value)}
-        />
-
-        {/* Account chips */}
-        <div className="mt-3">
+        <div className="settings-section-body">
+          <textarea
+            className="dform-input"
+            style={{ minHeight: 80, resize: "none", marginBottom: 12 }}
+            placeholder="What would you like to share?"
+            value={caption}
+            onChange={(e) => setCaption(e.target.value)}
+          />
           {accounts.length === 0 ? (
-            <p className="text-[12px] text-[#3a3a3a]">
-              No accounts.{" "}
-              <a href={`/projects/${projectId}/accounts`} className="text-emerald hover:underline">
-                Connect one
-              </a>
-            </p>
+            <div style={{ fontSize: 12, color: "var(--dmuted2)" }}>
+              No accounts. <a href={`/projects/${projectId}/accounts`} style={{ color: "var(--daccent)" }}>Connect one</a>
+            </div>
           ) : (
             <>
-              <Label className="text-[11px] text-[#3a3a3a] mb-2 block">Post to</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {accounts.map((account) => {
-                  const sel = selectedAccounts.includes(account.id);
+              <Label className="dform-label">Post to</Label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                {accounts.map((a) => {
+                  const sel = selectedAccounts.includes(a.id);
                   return (
                     <button
-                      key={account.id}
+                      key={a.id}
                       type="button"
-                      onClick={() => toggleAccount(account.id)}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium transition-all cursor-pointer ${
-                        sel
-                          ? "border-emerald/30 bg-emerald/5 text-emerald"
-                          : "border-[#1e1e1e] text-[#525252] hover:border-[#2a2a2a]"
-                      }`}
+                      onClick={() => toggleAccount(a.id)}
+                      className={sel ? "dbtn dbtn-primary" : "dbtn dbtn-ghost"}
+                      style={{ padding: "4px 10px", fontSize: 12, gap: 5 }}
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full ${sel ? "bg-emerald" : "bg-[#2a2a2a]"}`} />
-                      {account.account_name || account.platform}
+                      <span style={{ fontSize: 12 }}>{PLATFORM_ICONS[a.platform] || "🔗"}</span>
+                      {a.account_name || a.platform}
                     </button>
                   );
                 })}
               </div>
             </>
           )}
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <span className="text-[11px] text-[#3a3a3a]">
-            {selectedAccounts.length > 0 &&
-              `${selectedAccounts.length} account${selectedAccounts.length > 1 ? "s" : ""}`}
-          </span>
-          <Button
-            size="sm"
-            onClick={handlePost}
-            disabled={posting || !caption.trim() || selectedAccounts.length === 0}
-            className="gap-1.5 bg-emerald text-emerald-foreground hover:bg-emerald/90"
-          >
-            <Send className="w-3.5 h-3.5" />
-            {posting ? "Sending..." : "Send"}
-          </Button>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button className="dbtn dbtn-primary" onClick={handlePost} disabled={posting || !caption.trim() || selectedAccounts.length === 0}>
+              <Send style={{ width: 13, height: 13 }} />
+              {posting ? "Sending..." : "Send Post"}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Result banner */}
+      {/* Result */}
       {postResult && (
-        <div className={`rounded-lg border p-4 mb-6 animate-enter ${
-          postResult.status === "published"
-            ? "bg-emerald/5 border-emerald/10"
-            : postResult.status === "partial"
-              ? "bg-amber-status/5 border-amber-status/10"
-              : "bg-destructive/5 border-destructive/10"
-        }`}>
-          <div className="flex items-center gap-2 mb-2">
-            {statusBadge(postResult.status)}
-          </div>
+        <div style={{ padding: "10px 14px", borderRadius: 6, marginBottom: 20, background: postResult.status === "published" ? "#10b98110" : postResult.status === "partial" ? "#f59e0b10" : "#ef444410", border: `1px solid ${postResult.status === "published" ? "#10b98125" : postResult.status === "partial" ? "#f59e0b25" : "#ef444425"}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>{statusBadge(postResult.status)}</div>
           {postResult.results?.map((r, i) => (
-            <div key={i} className="flex items-center gap-2 text-[12px] mt-1.5">
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginTop: 4 }}>
               {statusBadge(r.status)}
-              <span className="text-[#737373]">{r.platform || "unknown"}</span>
-              {r.external_id && (
-                <span className="mono text-[10px] text-[#2a2a2a] truncate max-w-[200px]">
-                  {r.external_id}
-                </span>
-              )}
-              {r.error_message && (
-                <span className="text-[11px] text-destructive">{r.error_message}</span>
-              )}
+              <span style={{ color: "var(--dmuted)" }}>{r.platform || "unknown"}</span>
+              {r.external_id && <span className="mono" style={{ fontSize: 10 }}>{r.external_id}</span>}
+              {r.error_message && <span style={{ color: "var(--danger)", fontSize: 11 }}>{r.error_message}</span>}
             </div>
           ))}
         </div>
       )}
 
-      {/* Filter tabs + post table */}
+      {/* Tabs + table */}
       {posts.length > 0 && (
-        <div className="animate-enter" style={{ animationDelay: "100ms" }}>
-          {/* Tabs */}
-          <div className="flex items-center gap-1 mb-3">
-            {(["all", "published", "scheduled", "failed"] as FilterTab[]).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setFilter(tab)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
-                  filter === tab
-                    ? "bg-[#1a1a1a] text-[#e5e5e5]"
-                    : "text-[#3a3a3a] hover:text-[#525252]"
-                }`}
-              >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                {filterCounts[tab] > 0 && (
-                  <span className="ml-1 text-[#2a2a2a]">{filterCounts[tab]}</span>
-                )}
-              </button>
+        <>
+          <div className="dtabs">
+            {(["all", "published", "scheduled", "failed"] as FilterTab[]).map((t) => (
+              <div key={t} className={`dtab ${filter === t ? "active" : ""}`} onClick={() => setFilter(t)}>
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </div>
             ))}
           </div>
 
-          {/* Table */}
-          <div className="rounded-lg border border-[#1e1e1e] overflow-hidden">
-            <div className="grid grid-cols-[1fr_120px_100px_48px] gap-4 px-4 py-2.5 bg-[#0d0d0d] border-b border-[#1e1e1e]">
-              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Caption</span>
-              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Status</span>
-              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Created</span>
-              <span />
+          {filtered.length === 0 ? (
+            <div className="empty-state" style={{ padding: 40 }}>
+              <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 4 }}>No {filter} posts</div>
+              <div style={{ fontSize: 12.5, color: "var(--dmuted)" }}>Posts in this status will appear here.</div>
             </div>
-            {filteredPosts.length === 0 ? (
-              <div className="px-4 py-8 text-center text-[12px] text-[#3a3a3a]">
-                No {filter === "all" ? "" : filter + " "}posts.
-              </div>
-            ) : (
-              filteredPosts.map((post) => {
-                const isExpanded = expandedPost === post.id;
-                return (
-                  <div key={post.id} className="border-b border-[#1e1e1e] last:border-b-0">
-                    <div
-                      className="table-row grid grid-cols-[1fr_120px_100px_48px] gap-4 items-center px-4 py-2.5 cursor-pointer"
-                      onClick={() => setExpandedPost(isExpanded ? null : post.id)}
-                    >
-                      <p className="text-[13px] text-[#d4d4d4] truncate">
-                        {post.caption || "(no caption)"}
-                      </p>
-                      {statusBadge(post.status)}
-                      <span className="mono text-[11px] text-[#3a3a3a]">
-                        {new Date(post.created_at).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </span>
-                      <div className="flex justify-end">
-                        {isExpanded ? (
-                          <ChevronUp className="w-3.5 h-3.5 text-[#3a3a3a]" />
-                        ) : (
-                          <ChevronDown className="w-3.5 h-3.5 text-[#2a2a2a]" />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Expanded detail */}
-                    {isExpanded && (
-                      <div className="px-4 pb-3 pt-0">
-                        <div className="rounded-md bg-[#0a0a0a] border border-[#1a1a1a] p-3">
-                          <p className="text-[12px] text-[#a3a3a3] mb-3 whitespace-pre-wrap">
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Caption</th><th>Platforms</th><th>Status</th><th>Created</th></tr></thead>
+                <tbody>
+                  {filtered.map((post) => (
+                    <tr key={post.id} onClick={() => setExpandedPost(expandedPost === post.id ? null : post.id)} style={{ cursor: "pointer" }}>
+                      <td style={{ maxWidth: 300 }}>
+                        <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {post.caption || "(no caption)"}
+                        </span>
+                        {expandedPost === post.id && (
+                          <div style={{ marginTop: 8, padding: 10, background: "var(--bg)", border: "1px solid var(--dborder)", borderRadius: 6, whiteSpace: "pre-wrap", fontSize: 12, color: "var(--dmuted)" }}>
                             {post.caption}
-                          </p>
-                          {post.results && post.results.length > 0 && (
-                            <div className="space-y-1.5">
-                              <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a] mb-1">
-                                Per-platform results
-                              </p>
-                              {post.results.map((r, i) => (
-                                <div key={i} className="flex items-center gap-2 text-[12px]">
-                                  {statusBadge(r.status)}
-                                  <span className="text-[#525252]">{r.platform || "unknown"}</span>
-                                  {r.external_id && (
-                                    <span className="mono text-[10px] text-[#2a2a2a] truncate max-w-[200px]">
-                                      {r.external_id}
-                                    </span>
-                                  )}
-                                  {r.error_message && (
-                                    <span className="text-[11px] text-destructive">
-                                      {r.error_message}
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          <p className="mono text-[10px] text-[#2a2a2a] mt-2">
-                            {new Date(post.created_at).toLocaleString()}
-                          </p>
+                            {post.results && post.results.length > 0 && (
+                              <div style={{ marginTop: 8, borderTop: "1px solid var(--dborder)", paddingTop: 8 }}>
+                                {post.results.map((r, i) => (
+                                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                                    {statusBadge(r.status)}
+                                    <span>{r.platform}</span>
+                                    {r.error_message && <span style={{ color: "var(--danger)", fontSize: 11 }}>{r.error_message}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          {post.results?.map((r, i) => (
+                            <span key={i} style={{ fontSize: 14 }}>{PLATFORM_ICONS[r.platform || ""] || "🔗"}</span>
+                          ))}
                         </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
+                      </td>
+                      <td>{statusBadge(post.status)}</td>
+                      <td style={{ color: "var(--dmuted)" }}>
+                        {new Date(post.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
-    </div>
+    </>
   );
 }

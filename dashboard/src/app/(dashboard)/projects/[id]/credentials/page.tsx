@@ -13,8 +13,6 @@ export default function CredentialsPage() {
   }, [id, router]);
 
   return (
-    <div className="text-[13px] text-[#525252]">
-      Redirecting to settings...
-    </div>
+    <div style={{ color: "var(--dmuted)" }}>Redirecting to settings...</div>
   );
 }

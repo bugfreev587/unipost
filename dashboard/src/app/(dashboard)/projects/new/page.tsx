@@ -3,11 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { createProject } from "@/lib/api";
-import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
 export default function NewProjectPage() {
@@ -20,9 +16,7 @@ export default function NewProjectPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    setLoading(true);
-    setError("");
-
+    setLoading(true); setError("");
     try {
       const token = await getToken();
       if (!token) return;
@@ -30,66 +24,42 @@ export default function NewProjectPage() {
       router.push(`/projects/${res.data.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
   return (
-    <div className="max-w-[420px] mx-auto pt-8">
-      <Link
-        href="/"
-        className="inline-flex items-center gap-1.5 text-[12px] text-[#3a3a3a] hover:text-[#737373] transition-colors mb-6"
-      >
-        <ArrowLeft className="w-3 h-3" />
-        Back to Projects
+    <div style={{ maxWidth: 440, margin: "0 auto", paddingTop: 32 }}>
+      <Link href="/" style={{ fontSize: 12.5, color: "var(--dmuted)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
+        ← Back to Projects
       </Link>
 
-      <div className="rounded-lg bg-[#111111] border border-[#1e1e1e] p-6 animate-enter">
-        <div className="mb-5">
-          <h1 className="text-[16px] font-semibold text-[#e5e5e5] tracking-tight">
-            New Project
-          </h1>
-          <p className="text-[13px] text-[#525252] mt-1">
+      <div className="settings-section">
+        <div className="settings-section-header">New Project</div>
+        <div className="settings-section-body">
+          <div style={{ fontSize: 12.5, color: "var(--dmuted)", marginBottom: 16, lineHeight: 1.6 }}>
             Each project has isolated API keys, accounts, and billing.
-          </p>
+          </div>
+          <form onSubmit={handleSubmit}>
+            <div style={{ marginBottom: 16 }}>
+              <label className="dform-label">Project Name</label>
+              <input
+                className="dform-input"
+                placeholder="My App"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+                required
+              />
+            </div>
+            {error && <div style={{ fontSize: 12, color: "var(--danger)", marginBottom: 12 }}>{error}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" className="dbtn dbtn-ghost" onClick={() => router.back()}>Cancel</button>
+              <button type="submit" className="dbtn dbtn-primary" disabled={loading || !name.trim()}>
+                {loading ? "Creating..." : "Create Project"}
+              </button>
+            </div>
+          </form>
         </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label className="text-[12px] text-[#a3a3a3]">Project Name</Label>
-            <Input
-              placeholder="My App"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              required
-              className="bg-[#0a0a0a] border-[#1e1e1e]"
-            />
-          </div>
-          {error && (
-            <p className="text-[12px] text-destructive">{error}</p>
-          )}
-          <div className="flex gap-2 pt-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => router.back()}
-              className="border-[#1e1e1e] text-[#737373] hover:text-[#e5e5e5] hover:border-[#2a2a2a]"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={loading || !name.trim()}
-              className="bg-emerald text-emerald-foreground hover:bg-emerald/90"
-            >
-              {loading ? "Creating..." : "Create Project"}
-            </Button>
-          </div>
-        </form>
       </div>
     </div>
   );
