@@ -1,82 +1,137 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { UserButton } from "@clerk/nextjs";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth, UserButton } from "@clerk/nextjs";
 import {
-  FolderOpen,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
+import { listProjects, type Project } from "@/lib/api";
+import {
   Key,
   Users,
   Send,
-  ShieldCheck,
   CreditCard,
   Settings,
-  ChevronLeft,
-  Layers,
+  ChevronDown,
+  Plus,
+  FolderOpen,
+  Zap,
 } from "lucide-react";
 
 const PROJECT_NAV = [
-  { href: "", label: "Overview", icon: Layers },
-  { href: "/posts", label: "Posts", icon: Send },
-  { href: "/accounts", label: "Accounts", icon: Users },
   { href: "/api-keys", label: "API Keys", icon: Key },
-  { href: "/credentials", label: "Credentials", icon: ShieldCheck },
+  { href: "/accounts", label: "Accounts", icon: Users },
+  { href: "/posts", label: "Posts", icon: Send },
   { href: "/billing", label: "Billing", icon: CreditCard },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { getToken } = useAuth();
+  const [projects, setProjects] = useState<Project[]>([]);
 
-  // Extract project context from path
   const projectMatch = pathname.match(/^\/projects\/([^/]+)/);
   const projectId = projectMatch?.[1];
-  const isProjectPage = !!projectId;
+  const currentProject = projects.find((p) => p.id === projectId);
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await listProjects(token);
+      setProjects(res.data);
+    } catch {
+      // silent
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
 
   function isActive(href: string) {
-    if (!projectId) return pathname === href;
+    if (!projectId) return false;
     const full = `/projects/${projectId}${href}`;
-    // Exact match for overview, prefix match for sub-pages
-    return href === "" ? pathname === full : pathname.startsWith(full);
+    return pathname.startsWith(full);
   }
 
   return (
-    <div className="flex min-h-screen">
-      {/* Sidebar */}
-      <aside className="w-[220px] shrink-0 bg-sidebar text-sidebar-foreground flex flex-col border-r border-sidebar-border">
+    <div className="flex min-h-screen bg-[#0a0a0a]">
+      {/* ── Sidebar ── */}
+      <aside className="w-[220px] shrink-0 flex flex-col border-r border-[#1e1e1e] bg-[#0a0a0a]">
         {/* Logo */}
-        <div className="h-14 flex items-center px-5 border-b border-sidebar-border">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-6 h-6 rounded bg-amber text-amber-foreground flex items-center justify-center text-xs font-bold">
-              U
+        <div className="h-[52px] flex items-center px-4 border-b border-[#1e1e1e]">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="w-[22px] h-[22px] rounded bg-emerald flex items-center justify-center">
+              <Zap className="w-3 h-3 text-emerald-foreground" strokeWidth={2.5} />
             </div>
-            <span className="text-[15px] font-semibold text-sidebar-primary tracking-tight">
+            <span className="text-[14px] font-semibold text-[#e5e5e5] tracking-tight">
               UniPost
             </span>
           </Link>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {isProjectPage ? (
-            <>
-              {/* Back to projects */}
-              <Link
-                href="/"
-                className="sidebar-link flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-[13px] text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent mb-3 transition-colors"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>All Projects</span>
-              </Link>
-
-              {/* Project section label */}
-              <div className="px-2.5 pb-2">
-                <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-sidebar-foreground/40">
-                  Project
+        {/* Project selector */}
+        <div className="px-3 pt-3 pb-1">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="w-full flex items-center justify-between px-2.5 py-2 rounded-md bg-[#111111] border border-[#1e1e1e] hover:border-[#2a2a2a] transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-5 h-5 rounded bg-[#1a1a1a] flex items-center justify-center shrink-0">
+                  <span className="text-[10px] font-semibold text-[#737373]">
+                    {currentProject?.name?.charAt(0).toUpperCase() || "P"}
+                  </span>
+                </div>
+                <span className="text-[12px] font-medium text-[#d4d4d4] truncate">
+                  {currentProject?.name || "Select project"}
                 </span>
               </div>
+              <ChevronDown className="w-3 h-3 text-[#525252] shrink-0" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="bottom" align="start" sideOffset={4} className="w-[196px]">
+              <DropdownMenuLabel>Projects</DropdownMenuLabel>
+              {projects.map((p) => (
+                <DropdownMenuItem
+                  key={p.id}
+                  onSelect={() => router.push(`/projects/${p.id}`)}
+                  className={p.id === projectId ? "bg-accent" : ""}
+                >
+                  <div className="w-4 h-4 rounded bg-[#1a1a1a] flex items-center justify-center shrink-0">
+                    <span className="text-[9px] font-bold text-[#525252]">
+                      {p.name.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <span className="truncate">{p.name}</span>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => router.push("/projects/new")}>
+                <Plus className="w-3.5 h-3.5 text-emerald" />
+                <span>New Project</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
-              {/* Project nav items */}
+        {/* Navigation */}
+        <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
+          {projectId ? (
+            <>
+              <div className="px-2.5 pt-1 pb-2">
+                <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#525252]">
+                  Navigate
+                </span>
+              </div>
               {PROJECT_NAV.map((item) => {
                 const active = isActive(item.href);
                 const Icon = item.icon;
@@ -85,83 +140,85 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                     key={item.href}
                     href={`/projects/${projectId}${item.href}`}
                     data-active={active}
-                    className={`sidebar-link flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
+                    className={`nav-item flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] transition-colors ${
                       active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60"
+                        ? "bg-[#141414] text-[#e5e5e5] font-medium"
+                        : "text-[#737373] hover:text-[#a3a3a3] hover:bg-[#111111]"
                     }`}
                   >
-                    <Icon className="w-4 h-4 shrink-0" strokeWidth={1.75} />
+                    <Icon className="w-[15px] h-[15px] shrink-0" strokeWidth={1.75} />
                     <span>{item.label}</span>
                   </Link>
                 );
               })}
             </>
           ) : (
-            <>
-              <Link
-                href="/"
-                data-active={pathname === "/"}
-                className={`sidebar-link flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-                  pathname === "/"
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60"
-                }`}
-              >
-                <FolderOpen className="w-4 h-4 shrink-0" strokeWidth={1.75} />
-                <span>Projects</span>
-              </Link>
-            </>
+            <Link
+              href="/"
+              data-active={pathname === "/"}
+              className={`nav-item flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] transition-colors ${
+                pathname === "/"
+                  ? "bg-[#141414] text-[#e5e5e5] font-medium"
+                  : "text-[#737373] hover:text-[#a3a3a3] hover:bg-[#111111]"
+              }`}
+            >
+              <FolderOpen className="w-[15px] h-[15px] shrink-0" strokeWidth={1.75} />
+              <span>Projects</span>
+            </Link>
           )}
         </nav>
 
-        {/* User */}
-        <div className="px-4 py-3 border-t border-sidebar-border flex items-center gap-3">
+        {/* User section */}
+        <div className="px-4 py-3 border-t border-[#1e1e1e] flex items-center gap-2.5">
           <UserButton
             appearance={{
               elements: {
-                avatarBox: "w-7 h-7",
+                avatarBox: "w-6 h-6",
               },
             }}
           />
-          <span className="text-[12px] text-sidebar-foreground/50 truncate">
-            Account
-          </span>
+          <span className="text-[11px] text-[#525252] truncate">Account</span>
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 min-w-0">
-        <div className="h-14 border-b border-border flex items-center px-8">
-          <Breadcrumb pathname={pathname} />
+      {/* ── Main content ── */}
+      <main className="flex-1 min-w-0 bg-[#0a0a0a]">
+        {/* Top bar */}
+        <div className="h-[52px] border-b border-[#1e1e1e] flex items-center px-8">
+          <Breadcrumb pathname={pathname} currentProject={currentProject} />
         </div>
-        <div className="px-8 py-6 max-w-5xl">{children}</div>
+        {/* Content */}
+        <div className="px-8 py-6 max-w-[960px]">{children}</div>
       </main>
     </div>
   );
 }
 
-function Breadcrumb({ pathname }: { pathname: string }) {
+function Breadcrumb({
+  pathname,
+  currentProject,
+}: {
+  pathname: string;
+  currentProject?: Project;
+}) {
   const segments = pathname.split("/").filter(Boolean);
   const crumbs: { label: string; href: string }[] = [];
 
-  if (segments.length === 0) {
-    crumbs.push({ label: "Projects", href: "/" });
-  } else if (segments[0] === "projects") {
-    crumbs.push({ label: "Projects", href: "/" });
-    if (segments[1]) {
-      const id = segments[1];
-      crumbs.push({ label: truncateId(id), href: `/projects/${id}` });
-      if (segments[2]) {
-        const sub = segments[2];
-        const label = PROJECT_NAV.find(
-          (n) => n.href === `/${sub}` || (sub === "new" && n.href === "")
-        )?.label;
-        crumbs.push({
-          label: label || capitalize(sub),
-          href: `/projects/${id}/${sub}`,
-        });
-      }
+  crumbs.push({ label: "Projects", href: "/" });
+
+  if (segments[0] === "projects" && segments[1]) {
+    const id = segments[1];
+    crumbs.push({
+      label: currentProject?.name || truncateId(id),
+      href: `/projects/${id}`,
+    });
+    if (segments[2]) {
+      const sub = segments[2];
+      const nav = PROJECT_NAV.find((n) => n.href === `/${sub}`);
+      crumbs.push({
+        label: nav?.label || capitalize(sub),
+        href: `/projects/${id}/${sub}`,
+      });
     }
   }
 
@@ -170,14 +227,14 @@ function Breadcrumb({ pathname }: { pathname: string }) {
       {crumbs.map((crumb, i) => (
         <span key={crumb.href} className="flex items-center gap-1.5">
           {i > 0 && (
-            <span className="text-muted-foreground/40 select-none">/</span>
+            <span className="text-[#2a2a2a] select-none">/</span>
           )}
           {i === crumbs.length - 1 ? (
-            <span className="text-foreground font-medium">{crumb.label}</span>
+            <span className="text-[#d4d4d4] font-medium">{crumb.label}</span>
           ) : (
             <Link
               href={crumb.href}
-              className="text-muted-foreground hover:text-foreground transition-colors"
+              className="text-[#525252] hover:text-[#a3a3a3] transition-colors"
             >
               {crumb.label}
             </Link>
@@ -189,8 +246,7 @@ function Breadcrumb({ pathname }: { pathname: string }) {
 }
 
 function truncateId(id: string) {
-  if (id.length <= 12) return id;
-  return id.slice(0, 8) + "...";
+  return id.length <= 10 ? id : id.slice(0, 8) + "\u2026";
 }
 
 function capitalize(s: string) {

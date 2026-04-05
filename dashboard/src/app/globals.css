@@ -39,8 +39,9 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --color-amber: var(--amber);
-  --color-amber-foreground: var(--amber-foreground);
+  --color-emerald: var(--emerald);
+  --color-emerald-foreground: var(--emerald-foreground);
+  --color-amber-status: var(--amber-status);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -50,77 +51,73 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Dark-only theme — no light mode */
 :root {
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.13 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.13 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.13 0 0);
-  --primary: oklch(0.17 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.965 0.002 75);
-  --secondary-foreground: oklch(0.17 0 0);
-  --muted: oklch(0.955 0 0);
-  --muted-foreground: oklch(0.48 0 0);
-  --accent: oklch(0.955 0.002 75);
-  --accent-foreground: oklch(0.17 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.91 0 0);
-  --input: oklch(0.91 0 0);
-  --ring: oklch(0.17 0 0);
-  --amber: oklch(0.75 0.16 70);
-  --amber-foreground: oklch(0.17 0.02 60);
-  --chart-1: oklch(0.75 0.16 70);
-  --chart-2: oklch(0.55 0 0);
-  --chart-3: oklch(0.40 0 0);
-  --chart-4: oklch(0.30 0 0);
-  --chart-5: oklch(0.20 0 0);
+  --background: #0a0a0a;
+  --foreground: #e5e5e5;
+  --card: #111111;
+  --card-foreground: #e5e5e5;
+  --popover: #141414;
+  --popover-foreground: #e5e5e5;
+  --primary: #10b981;
+  --primary-foreground: #021a0f;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #a3a3a3;
+  --muted: #171717;
+  --muted-foreground: #737373;
+  --accent: #1a1a1a;
+  --accent-foreground: #e5e5e5;
+  --destructive: #ef4444;
+  --border: #1e1e1e;
+  --input: #1e1e1e;
+  --ring: #10b981;
+  --emerald: #10b981;
+  --emerald-foreground: #021a0f;
+  --amber-status: #f59e0b;
+  --chart-1: #10b981;
+  --chart-2: #3b82f6;
+  --chart-3: #f59e0b;
+  --chart-4: #8b5cf6;
+  --chart-5: #ef4444;
   --radius: 0.5rem;
-  --sidebar: oklch(0.115 0 0);
-  --sidebar-foreground: oklch(0.75 0 0);
-  --sidebar-primary: oklch(0.95 0 0);
-  --sidebar-primary-foreground: oklch(0.115 0 0);
-  --sidebar-accent: oklch(0.18 0 0);
-  --sidebar-accent-foreground: oklch(0.92 0 0);
-  --sidebar-border: oklch(0.22 0 0);
-  --sidebar-ring: oklch(0.35 0 0);
+  --sidebar: #0a0a0a;
+  --sidebar-foreground: #737373;
+  --sidebar-primary: #e5e5e5;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #171717;
+  --sidebar-accent-foreground: #e5e5e5;
+  --sidebar-border: #1e1e1e;
+  --sidebar-ring: #10b981;
 }
 
+/* Override dark variant to always apply */
 .dark {
-  --background: oklch(0.10 0 0);
-  --foreground: oklch(0.93 0 0);
-  --card: oklch(0.14 0 0);
-  --card-foreground: oklch(0.93 0 0);
-  --popover: oklch(0.14 0 0);
-  --popover-foreground: oklch(0.93 0 0);
-  --primary: oklch(0.93 0 0);
-  --primary-foreground: oklch(0.10 0 0);
-  --secondary: oklch(0.18 0 0);
-  --secondary-foreground: oklch(0.93 0 0);
-  --muted: oklch(0.18 0 0);
-  --muted-foreground: oklch(0.55 0 0);
-  --accent: oklch(0.18 0 0);
-  --accent-foreground: oklch(0.93 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.55 0 0);
-  --amber: oklch(0.80 0.16 70);
-  --amber-foreground: oklch(0.10 0 0);
-  --chart-1: oklch(0.80 0.16 70);
-  --chart-2: oklch(0.55 0 0);
-  --chart-3: oklch(0.40 0 0);
-  --chart-4: oklch(0.30 0 0);
-  --chart-5: oklch(0.20 0 0);
-  --sidebar: oklch(0.08 0 0);
-  --sidebar-foreground: oklch(0.65 0 0);
-  --sidebar-primary: oklch(0.93 0 0);
-  --sidebar-primary-foreground: oklch(0.08 0 0);
-  --sidebar-accent: oklch(0.14 0 0);
-  --sidebar-accent-foreground: oklch(0.93 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.35 0 0);
+  --background: #0a0a0a;
+  --foreground: #e5e5e5;
+  --card: #111111;
+  --card-foreground: #e5e5e5;
+  --popover: #141414;
+  --popover-foreground: #e5e5e5;
+  --primary: #10b981;
+  --primary-foreground: #021a0f;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #a3a3a3;
+  --muted: #171717;
+  --muted-foreground: #737373;
+  --accent: #1a1a1a;
+  --accent-foreground: #e5e5e5;
+  --destructive: #ef4444;
+  --border: #1e1e1e;
+  --input: #1e1e1e;
+  --ring: #10b981;
+  --sidebar: #0a0a0a;
+  --sidebar-foreground: #737373;
+  --sidebar-primary: #e5e5e5;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #171717;
+  --sidebar-accent-foreground: #e5e5e5;
+  --sidebar-border: #1e1e1e;
+  --sidebar-ring: #10b981;
 }
 
 @layer base {
@@ -135,86 +132,101 @@
   }
 }
 
-/* Dot grid pattern for content area */
-.dot-grid {
-  background-image: radial-gradient(circle, oklch(0.80 0 0 / 30%) 1px, transparent 1px);
-  background-size: 24px 24px;
+/* ── Monospace data ── */
+.mono {
+  font-family: var(--font-jetbrains), var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+  font-variant-ligatures: none;
 }
 
-/* Sidebar transitions */
-.sidebar-link {
+/* ── Sidebar active indicator ── */
+.nav-item {
   position: relative;
   transition: color 0.15s ease, background-color 0.15s ease;
 }
-.sidebar-link::before {
+.nav-item[data-active="true"]::before {
   content: '';
   position: absolute;
   left: 0;
   top: 50%;
   transform: translateY(-50%);
   width: 2px;
-  height: 0;
-  background: oklch(0.75 0.16 70);
-  border-radius: 1px;
-  transition: height 0.2s ease;
-}
-.sidebar-link[data-active="true"]::before {
   height: 16px;
+  background: #10b981;
+  border-radius: 1px;
 }
 
-/* Subtle card hover lift */
-.card-hover {
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+/* ── Subtle hover lift ── */
+.hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
-.card-hover:hover {
+.hover-lift:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px oklch(0 0 0 / 6%);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
-/* Staggered entrance animations */
-@keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* ── Entrance animation ── */
+@keyframes enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.animate-fade-up {
-  animation: fade-up 0.4s ease forwards;
+.animate-enter {
+  animation: enter 0.3s ease forwards;
   opacity: 0;
 }
 
-/* Usage bar shimmer */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+/* ── Pulse dot ── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
-.bar-shimmer {
-  background-size: 200% 100%;
-  animation: shimmer 3s ease-in-out infinite;
-}
-
-/* Monospace data styling */
-.mono-data {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 0.8125rem;
-  letter-spacing: -0.01em;
+.pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
 }
 
-/* Platform icon colors */
-.platform-bluesky { color: oklch(0.63 0.17 245); }
-.platform-linkedin { color: oklch(0.52 0.14 250); }
-.platform-instagram { color: oklch(0.62 0.22 340); }
-.platform-threads { color: oklch(0.25 0 0); }
-.platform-tiktok { color: oklch(0.45 0 0); }
-.platform-youtube { color: oklch(0.57 0.24 28); }
-.platform-twitter { color: oklch(0.35 0 0); }
+/* ── Status colors ── */
+.status-active { color: #10b981; }
+.status-reconnect { color: #f59e0b; }
+.status-published { color: #10b981; }
+.status-scheduled { color: #3b82f6; }
+.status-failed { color: #ef4444; }
 
-/* Textarea focus ring matching shadcn */
-textarea:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -1px;
+/* ── Platform brand colors ── */
+.brand-bluesky { color: #0085ff; }
+.brand-linkedin { color: #0a66c2; }
+.brand-instagram { color: #e4405f; }
+.brand-threads { color: #ffffff; }
+.brand-tiktok { color: #ffffff; }
+.brand-youtube { color: #ff0000; }
+.brand-twitter { color: #ffffff; }
+
+/* ── Table row hover ── */
+.table-row {
+  transition: background-color 0.1s ease;
+}
+.table-row:hover {
+  background-color: #141414;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a3a;
+}
+
+/* ── Focus ring override for dark theme ── */
+textarea:focus-visible,
+input:focus-visible {
+  outline: 1px solid #10b981;
+  outline-offset: 0;
 }

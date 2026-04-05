@@ -13,7 +13,17 @@ import {
   type SocialAccount,
   type SocialPost,
 } from "@/lib/api";
-import { Send, CheckCircle2, XCircle, Clock, AlertCircle } from "lucide-react";
+import {
+  Send,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
+
+type FilterTab = "all" | "published" | "scheduled" | "failed";
 
 export default function PostsPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -26,6 +36,9 @@ export default function PostsPage() {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [posting, setPosting] = useState(false);
   const [postResult, setPostResult] = useState<SocialPost | null>(null);
+
+  const [filter, setFilter] = useState<FilterTab>("all");
+  const [expandedPost, setExpandedPost] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -58,7 +71,6 @@ export default function PostsPage() {
     if (!caption.trim() || selectedAccounts.length === 0) return;
     setPosting(true);
     setPostResult(null);
-
     try {
       const token = await getToken();
       if (!token) return;
@@ -77,86 +89,96 @@ export default function PostsPage() {
     }
   }
 
+  const filteredPosts =
+    filter === "all" ? posts : posts.filter((p) => p.status === filter);
+
+  const filterCounts = {
+    all: posts.length,
+    published: posts.filter((p) => p.status === "published").length,
+    scheduled: posts.filter((p) => p.status === "scheduled").length,
+    failed: posts.filter((p) => p.status === "failed").length,
+  };
+
+  function statusBadge(status: string) {
+    const map: Record<string, { class: string; icon: typeof CheckCircle2 }> = {
+      published: { class: "bg-emerald/10 text-emerald", icon: CheckCircle2 },
+      scheduled: { class: "bg-[#3b82f6]/10 text-[#3b82f6]", icon: Clock },
+      failed: { class: "bg-destructive/10 text-destructive", icon: XCircle },
+      partial: { class: "bg-amber-status/10 text-amber-status", icon: AlertCircle },
+    };
+    const s = map[status] || map.scheduled;
+    const Icon = s.icon;
+    return (
+      <Badge variant="secondary" className={`text-[10px] border-0 gap-1 ${s.class}`}>
+        <Icon className="w-2.5 h-2.5" />
+        {status}
+      </Badge>
+    );
+  }
+
   if (loading) {
     return (
       <div className="space-y-4">
-        <div className="h-6 w-32 bg-muted rounded animate-pulse" />
-        <div className="h-48 rounded-lg bg-muted/50 animate-pulse" />
+        <div className="h-5 w-24 bg-[#111111] rounded animate-pulse" />
+        <div className="h-44 rounded-lg bg-[#111111] border border-[#1e1e1e] animate-pulse" />
       </div>
     );
   }
 
-  const charCount = caption.length;
-
   return (
     <div>
-      <div className="mb-6 animate-fade-up">
-        <h1 className="text-xl font-semibold tracking-tight">Posts</h1>
-        <p className="text-[13px] text-muted-foreground mt-1">
-          Compose and send posts to connected social accounts.
+      <div className="mb-6 animate-enter">
+        <h1 className="text-[18px] font-semibold text-[#e5e5e5] tracking-tight">
+          Posts
+        </h1>
+        <p className="text-[13px] text-[#525252] mt-0.5">
+          Compose, send, and track posts.
         </p>
       </div>
 
       {/* Compose */}
-      <div
-        className="rounded-lg border border-border bg-card p-5 mb-6 animate-fade-up"
-        style={{ animationDelay: "60ms" }}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <Label className="text-[13px] font-medium">Compose</Label>
-          <span className="mono-data text-[11px] text-muted-foreground">
-            {charCount} chars
+      <div className="rounded-lg bg-[#111111] border border-[#1e1e1e] p-5 mb-6 animate-enter" style={{ animationDelay: "50ms" }}>
+        <div className="flex items-center justify-between mb-3">
+          <Label className="text-[12px] font-medium text-[#a3a3a3]">Compose</Label>
+          <span className="mono text-[10px] text-[#3a3a3a]">
+            {caption.length} chars
           </span>
         </div>
-
         <textarea
-          className="w-full min-h-[100px] rounded-md border border-input bg-background px-3 py-2.5 text-[14px] placeholder:text-muted-foreground/60 resize-none focus-visible:ring-1 focus-visible:ring-ring transition-shadow"
+          className="w-full min-h-[90px] rounded-md bg-[#0a0a0a] border border-[#1e1e1e] px-3 py-2.5 text-[13px] text-[#e5e5e5] placeholder:text-[#2a2a2a] resize-none focus:border-emerald/30 transition-colors"
           placeholder="What would you like to share?"
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
         />
 
-        {/* Account selector */}
-        <div className="mt-4">
+        {/* Account chips */}
+        <div className="mt-3">
           {accounts.length === 0 ? (
-            <p className="text-[12px] text-muted-foreground">
-              No connected accounts.{" "}
-              <a
-                href={`/projects/${projectId}/accounts`}
-                className="text-foreground underline underline-offset-2"
-              >
+            <p className="text-[12px] text-[#3a3a3a]">
+              No accounts.{" "}
+              <a href={`/projects/${projectId}/accounts`} className="text-emerald hover:underline">
                 Connect one
-              </a>{" "}
-              to start posting.
+              </a>
             </p>
           ) : (
             <>
-              <Label className="text-[12px] text-muted-foreground mb-2 block">
-                Post to
-              </Label>
-              <div className="flex flex-wrap gap-2">
+              <Label className="text-[11px] text-[#3a3a3a] mb-2 block">Post to</Label>
+              <div className="flex flex-wrap gap-1.5">
                 {accounts.map((account) => {
-                  const selected = selectedAccounts.includes(account.id);
+                  const sel = selectedAccounts.includes(account.id);
                   return (
                     <button
                       key={account.id}
                       type="button"
                       onClick={() => toggleAccount(account.id)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-[12px] font-medium transition-all cursor-pointer ${
-                        selected
-                          ? "border-foreground/20 bg-foreground/[0.04] text-foreground"
-                          : "border-border bg-transparent text-muted-foreground hover:border-foreground/10 hover:text-foreground"
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium transition-all cursor-pointer ${
+                        sel
+                          ? "border-emerald/30 bg-emerald/5 text-emerald"
+                          : "border-[#1e1e1e] text-[#525252] hover:border-[#2a2a2a]"
                       }`}
                     >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          selected ? "bg-foreground" : "bg-muted-foreground/30"
-                        }`}
-                      />
+                      <span className={`w-1.5 h-1.5 rounded-full ${sel ? "bg-emerald" : "bg-[#2a2a2a]"}`} />
                       {account.account_name || account.platform}
-                      <span className="text-muted-foreground/60">
-                        {account.platform}
-                      </span>
                     </button>
                   );
                 })}
@@ -165,131 +187,155 @@ export default function PostsPage() {
           )}
         </div>
 
-        {/* Submit */}
         <div className="mt-4 flex items-center justify-between">
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[11px] text-[#3a3a3a]">
             {selectedAccounts.length > 0 &&
-              `${selectedAccounts.length} account${selectedAccounts.length > 1 ? "s" : ""} selected`}
+              `${selectedAccounts.length} account${selectedAccounts.length > 1 ? "s" : ""}`}
           </span>
           <Button
             size="sm"
             onClick={handlePost}
             disabled={posting || !caption.trim() || selectedAccounts.length === 0}
-            className="gap-1.5"
+            className="gap-1.5 bg-emerald text-emerald-foreground hover:bg-emerald/90"
           >
             <Send className="w-3.5 h-3.5" />
-            {posting ? "Sending..." : "Send Post"}
+            {posting ? "Sending..." : "Send"}
           </Button>
         </div>
       </div>
 
       {/* Result banner */}
       {postResult && (
-        <div
-          className={`rounded-lg border p-4 mb-6 animate-fade-up ${
-            postResult.status === "published"
-              ? "border-foreground/10 bg-foreground/[0.02]"
-              : postResult.status === "partial"
-                ? "border-amber/30 bg-amber/5"
-                : "border-destructive/30 bg-destructive/5"
-          }`}
-        >
-          <div className="flex items-center gap-2 mb-3">
-            {postResult.status === "published" ? (
-              <CheckCircle2 className="w-4 h-4 text-foreground/70" />
-            ) : postResult.status === "partial" ? (
-              <AlertCircle className="w-4 h-4 text-amber" />
-            ) : (
-              <XCircle className="w-4 h-4 text-destructive" />
-            )}
-            <span className="text-[13px] font-medium">
-              {postResult.status === "published"
-                ? "Published"
-                : postResult.status === "partial"
-                  ? "Partially Published"
-                  : "Failed"}
-            </span>
+        <div className={`rounded-lg border p-4 mb-6 animate-enter ${
+          postResult.status === "published"
+            ? "bg-emerald/5 border-emerald/10"
+            : postResult.status === "partial"
+              ? "bg-amber-status/5 border-amber-status/10"
+              : "bg-destructive/5 border-destructive/10"
+        }`}>
+          <div className="flex items-center gap-2 mb-2">
+            {statusBadge(postResult.status)}
           </div>
-          <div className="space-y-1.5">
-            {postResult.results?.map((result, i) => (
-              <div key={i} className="flex items-center gap-2 text-[12px]">
-                <Badge
-                  variant={
-                    result.status === "published" ? "default" : "destructive"
-                  }
-                  className="text-[10px]"
-                >
-                  {result.status}
-                </Badge>
-                <span className="text-muted-foreground">
-                  {result.platform || "unknown"}
+          {postResult.results?.map((r, i) => (
+            <div key={i} className="flex items-center gap-2 text-[12px] mt-1.5">
+              {statusBadge(r.status)}
+              <span className="text-[#737373]">{r.platform || "unknown"}</span>
+              {r.external_id && (
+                <span className="mono text-[10px] text-[#2a2a2a] truncate max-w-[200px]">
+                  {r.external_id}
                 </span>
-                {result.external_id && (
-                  <span className="mono-data text-[10px] text-muted-foreground/60 truncate max-w-[250px]">
-                    {result.external_id}
-                  </span>
-                )}
-                {result.error_message && (
-                  <span className="text-destructive text-[11px]">
-                    {result.error_message}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+              )}
+              {r.error_message && (
+                <span className="text-[11px] text-destructive">{r.error_message}</span>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Post history */}
+      {/* Filter tabs + post table */}
       {posts.length > 0 && (
-        <div className="animate-fade-up" style={{ animationDelay: "120ms" }}>
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-3">
-            Recent Posts
-          </p>
-          <div className="space-y-1.5">
-            {posts.map((post) => (
-              <div
-                key={post.id}
-                className="flex items-center justify-between px-4 py-2.5 rounded-md border border-border bg-card"
+        <div className="animate-enter" style={{ animationDelay: "100ms" }}>
+          {/* Tabs */}
+          <div className="flex items-center gap-1 mb-3">
+            {(["all", "published", "scheduled", "failed"] as FilterTab[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setFilter(tab)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
+                  filter === tab
+                    ? "bg-[#1a1a1a] text-[#e5e5e5]"
+                    : "text-[#3a3a3a] hover:text-[#525252]"
+                }`}
               >
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="shrink-0">
-                    {post.status === "published" ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-foreground/40" />
-                    ) : post.status === "failed" ? (
-                      <XCircle className="w-3.5 h-3.5 text-destructive/60" />
-                    ) : (
-                      <Clock className="w-3.5 h-3.5 text-muted-foreground/40" />
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {filterCounts[tab] > 0 && (
+                  <span className="ml-1 text-[#2a2a2a]">{filterCounts[tab]}</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Table */}
+          <div className="rounded-lg border border-[#1e1e1e] overflow-hidden">
+            <div className="grid grid-cols-[1fr_120px_100px_48px] gap-4 px-4 py-2.5 bg-[#0d0d0d] border-b border-[#1e1e1e]">
+              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Caption</span>
+              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Status</span>
+              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Created</span>
+              <span />
+            </div>
+            {filteredPosts.length === 0 ? (
+              <div className="px-4 py-8 text-center text-[12px] text-[#3a3a3a]">
+                No {filter === "all" ? "" : filter + " "}posts.
+              </div>
+            ) : (
+              filteredPosts.map((post) => {
+                const isExpanded = expandedPost === post.id;
+                return (
+                  <div key={post.id} className="border-b border-[#1e1e1e] last:border-b-0">
+                    <div
+                      className="table-row grid grid-cols-[1fr_120px_100px_48px] gap-4 items-center px-4 py-2.5 cursor-pointer"
+                      onClick={() => setExpandedPost(isExpanded ? null : post.id)}
+                    >
+                      <p className="text-[13px] text-[#d4d4d4] truncate">
+                        {post.caption || "(no caption)"}
+                      </p>
+                      {statusBadge(post.status)}
+                      <span className="mono text-[11px] text-[#3a3a3a]">
+                        {new Date(post.created_at).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </span>
+                      <div className="flex justify-end">
+                        {isExpanded ? (
+                          <ChevronUp className="w-3.5 h-3.5 text-[#3a3a3a]" />
+                        ) : (
+                          <ChevronDown className="w-3.5 h-3.5 text-[#2a2a2a]" />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expanded detail */}
+                    {isExpanded && (
+                      <div className="px-4 pb-3 pt-0">
+                        <div className="rounded-md bg-[#0a0a0a] border border-[#1a1a1a] p-3">
+                          <p className="text-[12px] text-[#a3a3a3] mb-3 whitespace-pre-wrap">
+                            {post.caption}
+                          </p>
+                          {post.results && post.results.length > 0 && (
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a] mb-1">
+                                Per-platform results
+                              </p>
+                              {post.results.map((r, i) => (
+                                <div key={i} className="flex items-center gap-2 text-[12px]">
+                                  {statusBadge(r.status)}
+                                  <span className="text-[#525252]">{r.platform || "unknown"}</span>
+                                  {r.external_id && (
+                                    <span className="mono text-[10px] text-[#2a2a2a] truncate max-w-[200px]">
+                                      {r.external_id}
+                                    </span>
+                                  )}
+                                  {r.error_message && (
+                                    <span className="text-[11px] text-destructive">
+                                      {r.error_message}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <p className="mono text-[10px] text-[#2a2a2a] mt-2">
+                            {new Date(post.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <p className="text-[13px] truncate min-w-0">
-                    {post.caption || "(no caption)"}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 shrink-0 ml-4">
-                  <Badge
-                    variant={
-                      post.status === "published"
-                        ? "secondary"
-                        : post.status === "failed"
-                          ? "destructive"
-                          : "secondary"
-                    }
-                    className="text-[10px]"
-                  >
-                    {post.status}
-                  </Badge>
-                  <span className="mono-data text-[11px] text-muted-foreground">
-                    {new Date(post.created_at).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </div>
-              </div>
-            ))}
+                );
+              })
+            )}
           </div>
         </div>
       )}

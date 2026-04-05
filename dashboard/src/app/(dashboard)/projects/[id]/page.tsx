@@ -21,20 +21,18 @@ import {
   Key,
   Users,
   Send,
-  ShieldCheck,
   CreditCard,
   Settings,
-  ArrowRight,
+  ArrowUpRight,
   Activity,
 } from "lucide-react";
 
-const QUICK_NAV = [
-  { href: "/posts", label: "Posts", desc: "Send and manage posts", icon: Send },
+const NAV_CARDS = [
+  { href: "/api-keys", label: "API Keys", desc: "Manage access tokens", icon: Key },
   { href: "/accounts", label: "Accounts", desc: "Connected platforms", icon: Users },
-  { href: "/api-keys", label: "API Keys", desc: "Manage API access", icon: Key },
-  { href: "/credentials", label: "Credentials", desc: "Native mode (BYOC)", icon: ShieldCheck },
-  { href: "/billing", label: "Billing", desc: "Plan and usage", icon: CreditCard },
-  { href: "/settings", label: "Settings", desc: "Project config", icon: Settings },
+  { href: "/posts", label: "Posts", desc: "Send & track posts", icon: Send },
+  { href: "/billing", label: "Billing", desc: "Plan & usage", icon: CreditCard },
+  { href: "/settings", label: "Settings", desc: "Configuration", icon: Settings },
 ];
 
 export default function ProjectOverviewPage() {
@@ -56,9 +54,9 @@ export default function ProjectOverviewPage() {
           await Promise.all([
             getProject(token, id),
             getBilling(token, id).catch(() => null),
-            listSocialAccounts(token, id).catch(() => ({ data: [] })),
-            listSocialPosts(token, id).catch(() => ({ data: [] })),
-            listApiKeys(token, id).catch(() => ({ data: [] })),
+            listSocialAccounts(token, id).catch(() => ({ data: [] as SocialAccount[] })),
+            listSocialPosts(token, id).catch(() => ({ data: [] as SocialPost[] })),
+            listApiKeys(token, id).catch(() => ({ data: [] as ApiKey[] })),
           ]);
         setProject(projectRes.data);
         if (billingRes) setBilling(billingRes.data);
@@ -77,10 +75,10 @@ export default function ProjectOverviewPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="h-6 w-48 bg-muted rounded animate-pulse" />
+        <div className="h-5 w-40 bg-[#111111] rounded animate-pulse" />
         <div className="grid grid-cols-4 gap-3">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-20 rounded-lg bg-muted/50 animate-pulse" />
+            <div key={i} className="h-[80px] rounded-lg bg-[#111111] border border-[#1e1e1e] animate-pulse" />
           ))}
         </div>
       </div>
@@ -88,145 +86,132 @@ export default function ProjectOverviewPage() {
   }
 
   if (!project) {
-    return (
-      <div className="text-destructive text-sm">Project not found</div>
-    );
+    return <p className="text-[13px] text-destructive">Project not found.</p>;
   }
 
+  const usagePct = billing ? Math.min(billing.percentage, 100) : 0;
+  const usageColor =
+    usagePct >= 100
+      ? "bg-destructive"
+      : usagePct >= 80
+        ? "bg-amber-status"
+        : "bg-emerald";
+
   const stats = [
-    { label: "Posts", value: posts.length, href: `/projects/${id}/posts` },
-    { label: "Accounts", value: accounts.length, href: `/projects/${id}/accounts` },
-    { label: "API Keys", value: keys.length, href: `/projects/${id}/api-keys` },
+    { label: "API Keys", value: keys.length },
+    { label: "Accounts", value: accounts.length },
+    { label: "Posts", value: posts.length },
     {
       label: "Usage",
-      value: billing ? `${billing.usage}/${billing.limit}` : "---",
-      href: `/projects/${id}/billing`,
+      value: billing ? `${billing.usage}/${billing.limit}` : "—",
     },
   ];
-
-  const usagePct = billing ? Math.min(billing.percentage, 100) : 0;
 
   return (
     <div>
       {/* Header */}
-      <div className="flex items-start justify-between mb-8 animate-fade-up">
+      <div className="flex items-start justify-between mb-6 animate-enter">
         <div>
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-xl font-semibold tracking-tight">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-[18px] font-semibold text-[#e5e5e5] tracking-tight">
               {project.name}
             </h1>
-            <Badge variant="secondary" className="text-[11px] font-normal">
+            <Badge variant="secondary" className="text-[10px] bg-[#1a1a1a] text-[#737373] border-0">
               {project.mode}
             </Badge>
           </div>
-          <p className="mono-data text-muted-foreground text-[11px]">
-            {project.id}
-          </p>
+          <p className="mono text-[11px] text-[#3a3a3a] mt-1">{project.id}</p>
         </div>
         {billing && (
-          <div className="text-right">
-            <p className="text-[11px] text-muted-foreground mb-1">
-              {billing.plan_name} plan
-            </p>
-            <Badge
-              variant={billing.plan === "free" ? "secondary" : "default"}
-              className="text-[11px]"
-            >
-              {billing.plan_name}
-            </Badge>
-          </div>
+          <Badge
+            variant={billing.plan === "free" ? "secondary" : "default"}
+            className={`text-[10px] ${billing.plan === "free" ? "bg-[#1a1a1a] text-[#737373] border-0" : "bg-emerald/10 text-emerald border-emerald/20"}`}
+          >
+            {billing.plan_name}
+          </Badge>
         )}
       </div>
 
       {/* Stats row */}
       <div
-        className="grid grid-cols-4 gap-3 mb-8 animate-fade-up"
-        style={{ animationDelay: "60ms" }}
+        className="grid grid-cols-4 gap-3 mb-6 animate-enter"
+        style={{ animationDelay: "50ms" }}
       >
         {stats.map((stat) => (
-          <Link key={stat.label} href={stat.href}>
-            <div className="card-hover rounded-lg border border-border bg-card px-4 py-3 hover:border-foreground/15">
-              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider mb-1">
-                {stat.label}
-              </p>
-              <p className="text-lg font-semibold tracking-tight mono-data">
-                {stat.value}
-              </p>
-            </div>
-          </Link>
+          <div
+            key={stat.label}
+            className="rounded-lg bg-[#111111] border border-[#1e1e1e] px-4 py-3"
+          >
+            <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#525252] mb-1.5">
+              {stat.label}
+            </p>
+            <p className="mono text-[18px] font-semibold text-[#e5e5e5] tracking-tight">
+              {stat.value}
+            </p>
+          </div>
         ))}
       </div>
 
       {/* Usage bar */}
       {billing && (
         <div
-          className="rounded-lg border border-border bg-card p-4 mb-8 animate-fade-up"
-          style={{ animationDelay: "120ms" }}
+          className="rounded-lg bg-[#111111] border border-[#1e1e1e] p-4 mb-6 animate-enter"
+          style={{ animationDelay: "100ms" }}
         >
-          <div className="flex items-center justify-between mb-2.5">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <Activity className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[13px] font-medium">Monthly Usage</span>
+              <Activity className="w-3.5 h-3.5 text-[#525252]" />
+              <span className="text-[12px] font-medium text-[#a3a3a3]">
+                Monthly Usage
+              </span>
             </div>
-            <span className="mono-data text-[12px] text-muted-foreground">
-              {billing.usage} / {billing.limit} posts
+            <span className="mono text-[11px] text-[#525252]">
+              {billing.usage} / {billing.limit} posts &middot;{" "}
+              {Math.round(billing.percentage)}%
             </span>
           </div>
-          <div className="w-full bg-muted rounded-full h-1.5">
+          <div className="w-full bg-[#1a1a1a] rounded-full h-1.5">
             <div
-              className={`h-1.5 rounded-full transition-all duration-500 ${
-                usagePct >= 100
-                  ? "bg-destructive"
-                  : usagePct >= 80
-                    ? "bg-amber"
-                    : "bg-foreground/70"
-              }`}
+              className={`h-1.5 rounded-full transition-all duration-700 ease-out ${usageColor}`}
               style={{ width: `${usagePct}%` }}
             />
           </div>
           {billing.warning && (
             <p
-              className={`text-[12px] mt-2 ${
-                billing.warning === "over_limit"
-                  ? "text-destructive"
-                  : "text-amber"
+              className={`text-[11px] mt-2 ${
+                billing.warning === "over_limit" ? "text-destructive" : "text-amber-status"
               }`}
             >
               {billing.warning === "over_limit"
-                ? "You've exceeded your monthly limit. Upgrade to continue posting."
-                : `${Math.round(billing.percentage)}% of monthly limit used.`}
+                ? "Monthly limit exceeded. Upgrade to continue."
+                : "Approaching monthly limit. Consider upgrading."}
             </p>
           )}
         </div>
       )}
 
-      {/* Quick nav grid */}
-      <div
-        className="animate-fade-up"
-        style={{ animationDelay: "180ms" }}
-      >
-        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-3">
+      {/* Quick nav */}
+      <div className="animate-enter" style={{ animationDelay: "150ms" }}>
+        <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#525252] mb-3 px-0.5">
           Manage
         </p>
         <div className="grid grid-cols-2 gap-2">
-          {QUICK_NAV.map((item) => {
+          {NAV_CARDS.map((item) => {
             const Icon = item.icon;
             return (
               <Link key={item.href} href={`/projects/${id}${item.href}`}>
-                <div className="group card-hover flex items-center gap-3.5 px-4 py-3 rounded-lg border border-border bg-card hover:border-foreground/15">
-                  <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center shrink-0">
-                    <Icon
-                      className="w-4 h-4 text-muted-foreground"
-                      strokeWidth={1.75}
-                    />
-                  </div>
+                <div className="group flex items-center gap-3.5 px-4 py-3 rounded-lg bg-[#111111] border border-[#1e1e1e] hover:border-[#2a2a2a] transition-colors">
+                  <Icon
+                    className="w-4 h-4 text-[#3a3a3a] group-hover:text-[#525252] transition-colors shrink-0"
+                    strokeWidth={1.75}
+                  />
                   <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-medium">{item.label}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {item.desc}
+                    <p className="text-[13px] font-medium text-[#d4d4d4]">
+                      {item.label}
                     </p>
+                    <p className="text-[11px] text-[#3a3a3a]">{item.desc}</p>
                   </div>
-                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors shrink-0" />
+                  <ArrowUpRight className="w-3.5 h-3.5 text-[#1e1e1e] group-hover:text-[#3a3a3a] transition-colors shrink-0" />
                 </div>
               </Link>
             );

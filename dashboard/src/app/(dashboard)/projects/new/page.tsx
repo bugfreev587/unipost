@@ -20,7 +20,6 @@ export default function NewProjectPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-
     setLoading(true);
     setError("");
 
@@ -37,37 +36,35 @@ export default function NewProjectPage() {
   }
 
   return (
-    <div className="max-w-md mx-auto pt-8">
+    <div className="max-w-[420px] mx-auto pt-8">
       <Link
         href="/"
-        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors mb-6"
+        className="inline-flex items-center gap-1.5 text-[12px] text-[#3a3a3a] hover:text-[#737373] transition-colors mb-6"
       >
-        <ArrowLeft className="w-3.5 h-3.5" />
+        <ArrowLeft className="w-3 h-3" />
         Back to Projects
       </Link>
 
-      <div className="rounded-lg border border-border bg-card p-6 animate-fade-up">
+      <div className="rounded-lg bg-[#111111] border border-[#1e1e1e] p-6 animate-enter">
         <div className="mb-5">
-          <h1 className="text-lg font-semibold tracking-tight">
+          <h1 className="text-[16px] font-semibold text-[#e5e5e5] tracking-tight">
             New Project
           </h1>
-          <p className="text-[13px] text-muted-foreground mt-1">
-            Each project has its own API keys, accounts, and billing.
+          <p className="text-[13px] text-[#525252] mt-1">
+            Each project has isolated API keys, accounts, and billing.
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="name" className="text-[13px]">
-              Project Name
-            </Label>
+            <Label className="text-[12px] text-[#a3a3a3]">Project Name</Label>
             <Input
-              id="name"
               placeholder="My App"
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
               required
+              className="bg-[#0a0a0a] border-[#1e1e1e]"
             />
           </div>
           {error && (
@@ -79,6 +76,7 @@ export default function NewProjectPage() {
               variant="outline"
               size="sm"
               onClick={() => router.back()}
+              className="border-[#1e1e1e] text-[#737373] hover:text-[#e5e5e5] hover:border-[#2a2a2a]"
             >
               Cancel
             </Button>
@@ -86,6 +84,7 @@ export default function NewProjectPage() {
               type="submit"
               size="sm"
               disabled={loading || !name.trim()}
+              className="bg-emerald text-emerald-foreground hover:bg-emerald/90"
             >
               {loading ? "Creating..." : "Create Project"}
             </Button>

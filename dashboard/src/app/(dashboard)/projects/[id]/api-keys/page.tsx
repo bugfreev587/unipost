@@ -58,7 +58,6 @@ export default function ApiKeysPage() {
   async function handleCreate() {
     if (!keyName.trim()) return;
     setCreating(true);
-
     try {
       const token = await getToken();
       if (!token) return;
@@ -79,13 +78,7 @@ export default function ApiKeysPage() {
   }
 
   async function handleRevoke(keyId: string) {
-    if (
-      !confirm(
-        "Are you sure you want to revoke this API key? This cannot be undone."
-      )
-    )
-      return;
-
+    if (!confirm("Revoke this API key? This cannot be undone.")) return;
     try {
       const token = await getToken();
       if (!token) return;
@@ -106,221 +99,185 @@ export default function ApiKeysPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6 animate-fade-up">
+      <div className="flex items-center justify-between mb-6 animate-enter">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">API Keys</h1>
-          <p className="text-[13px] text-muted-foreground mt-1">
-            Manage API keys for this project.
+          <h1 className="text-[18px] font-semibold text-[#e5e5e5] tracking-tight">
+            API Keys
+          </h1>
+          <p className="text-[13px] text-[#525252] mt-0.5">
+            Create and manage API keys for this project.
           </p>
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger render={<Button size="sm" className="gap-1.5" />}>
+          <DialogTrigger render={<Button size="sm" className="gap-1.5 bg-emerald text-emerald-foreground hover:bg-emerald/90" />}>
             <Plus className="w-3.5 h-3.5" />
-            New Key
+            Create Key
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>New API Key</DialogTitle>
+              <DialogTitle>Create API Key</DialogTitle>
               <DialogDescription>
-                Create a new API key for this project.
+                Generate a new key for authenticating API requests.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
               <div className="space-y-1.5">
-                <Label htmlFor="key-name" className="text-[13px]">
-                  Name
-                </Label>
+                <Label className="text-[12px] text-[#a3a3a3]">Name</Label>
                 <Input
-                  id="key-name"
-                  placeholder="Production Key"
+                  placeholder="e.g. Production"
                   value={keyName}
                   onChange={(e) => setKeyName(e.target.value)}
+                  className="bg-[#111111] border-[#1e1e1e]"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-[13px]">Environment</Label>
+                <Label className="text-[12px] text-[#a3a3a3]">Environment</Label>
                 <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setKeyEnv("production")}
-                    className={`px-3 py-1.5 rounded-md border text-[12px] font-medium transition-all cursor-pointer ${
-                      keyEnv === "production"
-                        ? "border-foreground/20 bg-foreground/[0.04] text-foreground"
-                        : "border-border text-muted-foreground hover:border-foreground/10"
-                    }`}
-                  >
-                    Production
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setKeyEnv("test")}
-                    className={`px-3 py-1.5 rounded-md border text-[12px] font-medium transition-all cursor-pointer ${
-                      keyEnv === "test"
-                        ? "border-foreground/20 bg-foreground/[0.04] text-foreground"
-                        : "border-border text-muted-foreground hover:border-foreground/10"
-                    }`}
-                  >
-                    Test
-                  </button>
+                  {(["production", "test"] as const).map((env) => (
+                    <button
+                      key={env}
+                      type="button"
+                      onClick={() => setKeyEnv(env)}
+                      className={`px-3 py-1.5 rounded-md border text-[12px] font-medium transition-all cursor-pointer ${
+                        keyEnv === env
+                          ? "border-emerald/30 bg-emerald/5 text-emerald"
+                          : "border-[#1e1e1e] text-[#525252] hover:border-[#2a2a2a] hover:text-[#737373]"
+                      }`}
+                    >
+                      {env.charAt(0).toUpperCase() + env.slice(1)}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
             <DialogFooter>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCreateOpen(false)}
-              >
+              <Button variant="outline" size="sm" onClick={() => setCreateOpen(false)}>
                 Cancel
               </Button>
               <Button
                 size="sm"
                 onClick={handleCreate}
                 disabled={creating || !keyName.trim()}
+                className="bg-emerald text-emerald-foreground hover:bg-emerald/90"
               >
-                {creating ? "Creating..." : "Create Key"}
+                {creating ? "Creating..." : "Create"}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
 
-      {/* New key reveal */}
+      {/* New key reveal modal */}
       <Dialog
         open={!!newKey}
-        onOpenChange={(open) => {
-          if (!open) {
-            setNewKey(null);
-            setCopied(false);
-          }
-        }}
+        onOpenChange={(open) => { if (!open) { setNewKey(null); setCopied(false); } }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Copy your API key</DialogTitle>
+            <DialogTitle>Your new API key</DialogTitle>
             <DialogDescription>
-              This key won&apos;t be shown again. Store it securely.
+              Copy it now — it won&apos;t be shown again.
             </DialogDescription>
           </DialogHeader>
-          <div className="my-3">
-            <div className="flex items-center gap-2 p-3 rounded-md bg-muted border border-border">
-              <code className="flex-1 mono-data text-[12px] break-all select-all">
-                {newKey}
-              </code>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="shrink-0 h-7 w-7 p-0"
-                onClick={handleCopy}
-              >
-                {copied ? (
-                  <Check className="w-3.5 h-3.5 text-foreground/60" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5" />
-                )}
-              </Button>
-            </div>
+          <div className="my-2 flex items-center gap-2 p-3 rounded-md bg-[#0a0a0a] border border-[#1e1e1e]">
+            <code className="flex-1 mono text-[12px] text-emerald break-all select-all">
+              {newKey}
+            </code>
+            <button
+              onClick={handleCopy}
+              className="shrink-0 p-1.5 rounded hover:bg-[#1a1a1a] transition-colors cursor-pointer"
+            >
+              {copied ? (
+                <Check className="w-3.5 h-3.5 text-emerald" />
+              ) : (
+                <Copy className="w-3.5 h-3.5 text-[#525252]" />
+              )}
+            </button>
           </div>
           <DialogFooter>
-            <Button
-              size="sm"
-              onClick={() => {
-                setNewKey(null);
-                setCopied(false);
-              }}
-            >
+            <Button size="sm" onClick={() => { setNewKey(null); setCopied(false); }}>
               Done
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Keys list */}
+      {/* Keys table */}
       {loading ? (
-        <div className="space-y-2">
+        <div className="space-y-1">
           {[1, 2].map((i) => (
-            <div
-              key={i}
-              className="h-[68px] rounded-lg bg-muted/50 animate-pulse"
-            />
+            <div key={i} className="h-[52px] rounded-md bg-[#111111] animate-pulse" />
           ))}
         </div>
       ) : keys.length === 0 ? (
-        <div
-          className="border border-dashed border-border rounded-lg py-16 flex flex-col items-center animate-fade-up"
-          style={{ animationDelay: "60ms" }}
-        >
-          <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center mb-4">
-            <Key className="w-5 h-5 text-muted-foreground" />
+        <div className="border border-dashed border-[#1e1e1e] rounded-lg py-20 flex flex-col items-center animate-enter" style={{ animationDelay: "50ms" }}>
+          <div className="w-12 h-12 rounded-xl bg-[#111111] border border-[#1e1e1e] flex items-center justify-center mb-4">
+            <Key className="w-5 h-5 text-[#525252]" />
           </div>
-          <p className="text-[15px] font-medium mb-1">No API keys yet</p>
-          <p className="text-[13px] text-muted-foreground mb-5">
-            Create your first API key to start making requests.
+          <p className="text-[14px] font-medium text-[#d4d4d4] mb-1">No API keys</p>
+          <p className="text-[13px] text-[#525252] mb-6">
+            Create a key to start making API requests.
           </p>
-          <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
+          <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 bg-emerald text-emerald-foreground hover:bg-emerald/90">
             <Plus className="w-3.5 h-3.5" />
             Create Key
           </Button>
         </div>
       ) : (
-        <div className="space-y-1.5">
-          {keys.map((key, i) => (
+        <div className="rounded-lg border border-[#1e1e1e] overflow-hidden animate-enter" style={{ animationDelay: "50ms" }}>
+          {/* Table header */}
+          <div className="grid grid-cols-[1fr_140px_100px_100px_48px] gap-4 px-4 py-2.5 bg-[#0d0d0d] border-b border-[#1e1e1e]">
+            <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Name</span>
+            <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Prefix</span>
+            <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Created</span>
+            <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#3a3a3a]">Last Used</span>
+            <span />
+          </div>
+          {/* Table rows */}
+          {keys.map((key) => (
             <div
               key={key.id}
-              className="flex items-center justify-between px-4 py-3 rounded-lg border border-border bg-card animate-fade-up"
-              style={{ animationDelay: `${(i + 1) * 60}ms` }}
+              className="table-row grid grid-cols-[1fr_140px_100px_100px_48px] gap-4 items-center px-4 py-2.5 border-b border-[#1e1e1e] last:border-b-0"
             >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2.5">
-                  <p className="text-[13px] font-medium">{key.name}</p>
-                  <Badge
-                    variant={
-                      key.environment === "production" ? "default" : "secondary"
-                    }
-                    className="text-[10px]"
-                  >
-                    {key.environment}
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-4 mt-1">
-                  <span className="mono-data text-[11px] text-muted-foreground">
-                    {key.prefix}{"••••••••"}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Created{" "}
-                    {new Date(key.created_at).toLocaleDateString("en-US", {
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[13px] font-medium text-[#d4d4d4] truncate">
+                  {key.name}
+                </span>
+                <Badge
+                  variant="secondary"
+                  className={`text-[9px] border-0 shrink-0 ${
+                    key.environment === "production"
+                      ? "bg-emerald/10 text-emerald"
+                      : "bg-[#1a1a1a] text-[#525252]"
+                  }`}
+                >
+                  {key.environment}
+                </Badge>
+              </div>
+              <span className="mono text-[12px] text-[#525252] truncate">
+                {key.prefix}{"••••••••"}
+              </span>
+              <span className="mono text-[11px] text-[#3a3a3a]">
+                {new Date(key.created_at).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </span>
+              <span className="mono text-[11px] text-[#3a3a3a]">
+                {key.last_used_at
+                  ? new Date(key.last_used_at).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
-                    })}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Last used:{" "}
-                    {key.last_used_at
-                      ? new Date(key.last_used_at).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                        })
-                      : "Never"}
-                  </span>
-                  {key.expires_at && (
-                    <span className="text-[11px] text-muted-foreground">
-                      Expires{" "}
-                      {new Date(key.expires_at).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-destructive hover:text-destructive hover:bg-destructive/10 h-7 w-7 p-0 shrink-0"
+                    })
+                  : "Never"}
+              </span>
+              <button
                 onClick={() => handleRevoke(key.id)}
+                className="p-1.5 rounded hover:bg-destructive/10 transition-colors cursor-pointer"
+                title="Revoke"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
+                <Trash2 className="w-3.5 h-3.5 text-[#3a3a3a] hover:text-destructive transition-colors" />
+              </button>
             </div>
           ))}
         </div>
