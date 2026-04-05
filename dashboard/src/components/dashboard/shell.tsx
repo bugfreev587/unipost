@@ -3,34 +3,32 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useAuth, UserButton, useUser } from "@clerk/nextjs";
+import { useAuth, useUser, useClerk } from "@clerk/nextjs";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { listProjects, type Project } from "@/lib/api";
+import { listProjects, getBilling, type Project, type BillingInfo } from "@/lib/api";
 import {
   Key,
   Users,
   Send,
-  CreditCard,
+  ChevronDown,
   Settings,
-  ChevronRight,
-  Plus,
-  FolderOpen,
   Zap,
+  LogOut,
+  User,
+  CreditCard,
+  Mail,
 } from "lucide-react";
 
-const PROJECT_NAV = [
+const NAV_ITEMS = [
   { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/accounts", label: "Accounts", icon: Users },
   { href: "/posts", label: "Posts", icon: Send },
-  { href: "/billing", label: "Billing", icon: CreditCard },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -38,7 +36,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { getToken } = useAuth();
   const { user } = useUser();
+  const { signOut, openUserProfile } = useClerk();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [billing, setBilling] = useState<BillingInfo | null>(null);
 
   const projectMatch = pathname.match(/^\/projects\/([^/]+)/);
   const projectId = projectMatch?.[1];
@@ -59,13 +59,35 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     loadProjects();
   }, [loadProjects]);
 
+  // Load billing for current plan display
+  useEffect(() => {
+    async function loadBilling() {
+      if (!projectId) return;
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await getBilling(token, projectId);
+        setBilling(res.data);
+      } catch {
+        // silent
+      }
+    }
+    loadBilling();
+  }, [projectId, getToken]);
+
   function isActive(href: string) {
     if (!projectId) return false;
     const full = `/projects/${projectId}${href}`;
     return pathname.startsWith(full);
   }
 
-  const pageLabel = PROJECT_NAV.find((n) => isActive(n.href))?.label;
+  const pageLabel = NAV_ITEMS.find((n) => isActive(n.href))?.label
+    || (pathname.includes("/settings") ? "Settings" : undefined)
+    || (pathname.includes("/billing") ? "Billing" : undefined);
+
+  const displayName = user?.firstName || user?.username || "User";
+  const planName = billing?.plan_name || "Free";
+  const avatarUrl = user?.imageUrl;
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
@@ -81,112 +103,121 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           overflow: "hidden",
         }}
       >
-        {/* Logo */}
-        <Link
-          href="/"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            padding: "16px 16px 14px",
-            borderBottom: "1px solid var(--dborder)",
-            textDecoration: "none",
-          }}
-        >
-          <div
-            style={{
-              width: 26,
-              height: 26,
-              background: "var(--daccent)",
-              borderRadius: 6,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-              boxShadow: "0 0 12px var(--accent-dim)",
-            }}
-          >
-            <Zap style={{ width: 14, height: 14, color: "#000" }} strokeWidth={2.5} />
-          </div>
-          <span
-            style={{
-              fontSize: 14,
-              fontWeight: 600,
-              letterSpacing: -0.3,
-              color: "var(--dtext)",
-            }}
-          >
-            UniPost
-          </span>
-        </Link>
-
-        {/* Project selector */}
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<button className="project-selector" />}>
-            <div className="project-initial">
-              {currentProject?.name?.charAt(0).toUpperCase() || "P"}
-            </div>
-            <span
-              style={{
-                fontSize: 12.5,
-                fontWeight: 500,
-                color: "var(--dtext)",
-                flex: 1,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {currentProject?.name || "Select project"}
-            </span>
-            <ChevronRight
-              style={{ width: 12, height: 12, color: "var(--dmuted2)", flexShrink: 0 }}
-            />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            side="bottom"
-            align="start"
-            sideOffset={4}
-            className="w-[196px]"
-          >
-            <DropdownMenuLabel>Projects</DropdownMenuLabel>
-            {projects.map((p) => (
-              <DropdownMenuItem
-                key={p.id}
-                onSelect={() => router.push(`/projects/${p.id}`)}
-                className={p.id === projectId ? "bg-accent" : ""}
-              >
-                <span
+        {/* ── Top: User avatar + name + plan + dropdown ── */}
+        <div style={{ padding: "12px 10px", borderBottom: "1px solid var(--dborder)" }}>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <button
                   style={{
-                    width: 16,
-                    height: 16,
-                    borderRadius: 3,
-                    background: "var(--accent-dim)",
-                    display: "inline-flex",
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "6px 8px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    transition: "background 0.1s",
+                    textAlign: "left",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                />
+              }
+            >
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt=""
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    objectFit: "cover",
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: "50%",
+                    background: "linear-gradient(135deg, var(--daccent), #059669)",
+                    display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: 9,
+                    fontSize: 12,
                     fontWeight: 700,
-                    color: "var(--daccent)",
+                    color: "#000",
                     flexShrink: 0,
                   }}
                 >
-                  {p.name.charAt(0).toUpperCase()}
+                  {displayName.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "var(--dtext)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {displayName}
+                </div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: "var(--daccent)",
+                  }}
+                >
+                  {planName}
+                </div>
+              </div>
+              <ChevronDown
+                style={{ width: 14, height: 14, color: "var(--dmuted2)", flexShrink: 0 }}
+              />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="bottom" align="start" sideOffset={4} className="w-[200px]">
+              <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--dmuted)" }}>
+                Signed in as<br />
+                <span style={{ color: "var(--dtext)", fontWeight: 500 }}>
+                  {user?.primaryEmailAddress?.emailAddress || ""}
                 </span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {p.name}
-                </span>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => openUserProfile()}>
+                <User style={{ width: 14, height: 14 }} />
+                <span>Account</span>
               </DropdownMenuItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => router.push("/projects/new")}>
-              <Plus style={{ width: 14, height: 14, color: "var(--daccent)" }} />
-              <span>New Project</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {projectId && (
+                <DropdownMenuItem onSelect={() => router.push(`/projects/${projectId}/billing`)}>
+                  <CreditCard style={{ width: 14, height: 14 }} />
+                  <span>Billing</span>
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => window.location.href = "mailto:support@unipost.dev"}>
+                <Mail style={{ width: 14, height: 14 }} />
+                <span>Contact us</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => signOut({ redirectUrl: "https://unipost.dev" })}>
+                <LogOut style={{ width: 14, height: 14 }} />
+                <span>Log out</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
-        {/* Nav */}
+        {/* ── Middle: Nav items ── */}
         <nav
           style={{
             padding: "16px 10px 8px",
@@ -209,7 +240,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               >
                 Navigate
               </div>
-              {PROJECT_NAV.map((item) => {
+              {NAV_ITEMS.map((item) => {
                 const active = isActive(item.href);
                 const Icon = item.icon;
                 return (
@@ -231,45 +262,59 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               data-active={pathname === "/"}
               className="sidebar-nav-item"
             >
-              <FolderOpen style={{ width: 14, height: 14 }} strokeWidth={1.75} />
+              <Zap style={{ width: 14, height: 14 }} strokeWidth={1.75} />
               Projects
             </Link>
           )}
         </nav>
 
-        {/* User */}
-        <div
-          style={{
-            padding: 10,
-            borderTop: "1px solid var(--dborder)",
-          }}
-        >
+        {/* ── Bottom: Current project + settings gear ── */}
+        {currentProject && (
           <div
             style={{
+              padding: "10px 10px",
+              borderTop: "1px solid var(--dborder)",
               display: "flex",
               alignItems: "center",
-              gap: 9,
-              padding: "6px 8px",
-              borderRadius: 6,
+              gap: 8,
             }}
           >
-            <UserButton
-              appearance={{ elements: { avatarBox: "w-6 h-6" } }}
-            />
+            <div className="project-initial" style={{ width: 24, height: 24, fontSize: 10 }}>
+              {currentProject.name.charAt(0).toUpperCase()}
+            </div>
             <span
               style={{
-                fontSize: 12,
-                color: "var(--dmuted)",
                 flex: 1,
+                fontSize: 12,
+                fontWeight: 500,
+                color: "var(--dtext)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
               }}
             >
-              {user?.primaryEmailAddress?.emailAddress || "Account"}
+              {currentProject.name}
             </span>
+            <Link
+              href={`/projects/${projectId}/settings`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                color: "var(--dmuted)",
+                transition: "background 0.1s, color 0.1s",
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
+            >
+              <Settings style={{ width: 14, height: 14 }} strokeWidth={1.75} />
+            </Link>
           </div>
-        </div>
+        )}
       </aside>
 
       {/* ── MAIN ── */}
