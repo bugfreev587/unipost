@@ -190,7 +190,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                     <div style={{ display: "flex", alignItems: "center" }}>
                       <Link
                         href={`/projects/${projectId}${item.href}`}
-                        data-active={active && !pathname.includes("/native")}
+                        data-active={hasSubmenu ? false : active}
                         className="sidebar-nav-item"
                         style={{ flex: 1 }}
                       >
