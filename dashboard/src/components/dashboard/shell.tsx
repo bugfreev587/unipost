@@ -18,6 +18,7 @@ import {
   Users,
   Send,
   ChevronDown,
+  ChevronRight,
   ChevronsUpDown,
   Settings,
   Zap,
@@ -31,7 +32,10 @@ import {
 
 const NAV_ITEMS = [
   { href: "/api-keys", label: "API Keys", icon: Key },
-  { href: "/accounts", label: "Accounts", icon: Users },
+  { href: "/accounts", label: "Accounts", icon: Users, submenu: [
+    { href: "/accounts", label: "Quickstart Mode" },
+    { href: "/accounts/native", label: "Native Mode" },
+  ]},
   { href: "/posts", label: "Posts", icon: Send },
 ];
 
@@ -46,6 +50,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+  const [accountsExpanded, setAccountsExpanded] = useState(false);
 
   const projectMatch = pathname.match(/^\/projects\/([^/]+)/);
   const projectId = projectMatch?.[1];
@@ -177,11 +182,71 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               {NAV_ITEMS.map((item) => {
                 const active = isActive(item.href);
                 const Icon = item.icon;
+                const hasSubmenu = !!item.submenu;
+                const submenuOpen = hasSubmenu && (accountsExpanded || pathname.startsWith(`/projects/${projectId}/accounts`));
+
                 return (
-                  <Link key={item.href} href={`/projects/${projectId}${item.href}`} data-active={active} className="sidebar-nav-item">
-                    <Icon style={{ width: 18, height: 18 }} strokeWidth={1.75} />
-                    {item.label}
-                  </Link>
+                  <div key={item.href}>
+                    <div style={{ display: "flex", alignItems: "center" }}>
+                      <Link
+                        href={`/projects/${projectId}${item.href}`}
+                        data-active={active && !pathname.includes("/native")}
+                        className="sidebar-nav-item"
+                        style={{ flex: 1 }}
+                      >
+                        <Icon style={{ width: 18, height: 18 }} strokeWidth={1.75} />
+                        {item.label}
+                      </Link>
+                      {hasSubmenu && (
+                        <button
+                          onClick={(e) => { e.preventDefault(); setAccountsExpanded(!submenuOpen); }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            width: 28, height: 28, borderRadius: 6, border: "none",
+                            background: "transparent", color: "var(--dmuted)", cursor: "pointer",
+                            transition: "all 0.15s", flexShrink: 0, marginRight: 4,
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
+                        >
+                          <ChevronDown style={{
+                            width: 14, height: 14,
+                            transition: "transform 0.2s",
+                            transform: submenuOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                          }} />
+                        </button>
+                      )}
+                    </div>
+                    {hasSubmenu && submenuOpen && item.submenu && (
+                      <div style={{ paddingLeft: 28, marginBottom: 4 }}>
+                        {item.submenu.map((sub) => {
+                          const subActive = pathname === `/projects/${projectId}${sub.href}`;
+                          return (
+                            <Link
+                              key={sub.href}
+                              href={`/projects/${projectId}${sub.href}`}
+                              style={{
+                                display: "block",
+                                padding: "6px 12px",
+                                borderRadius: 6,
+                                fontSize: 13,
+                                fontWeight: subActive ? 600 : 400,
+                                color: subActive ? "var(--daccent)" : "#888",
+                                textDecoration: "none",
+                                transition: "all 0.1s",
+                                marginBottom: 2,
+                                background: subActive ? "var(--accent-dim)" : "transparent",
+                              }}
+                              onMouseEnter={(e) => { if (!subActive) { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--surface2)"; } }}
+                              onMouseLeave={(e) => { if (!subActive) { e.currentTarget.style.color = "#888"; e.currentTarget.style.background = "transparent"; } }}
+                            >
+                              {sub.label}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </>
