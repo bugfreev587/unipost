@@ -8,8 +8,7 @@ import {
   listSocialAccounts, listSocialPosts, createSocialPost, type SocialAccount, type SocialPost,
 } from "@/lib/api";
 import { Send, CheckCircle2, XCircle, Clock, AlertCircle } from "lucide-react";
-
-const PLATFORM_ICONS: Record<string, string> = { bluesky: "🦋", linkedin: "💼", instagram: "📸", threads: "🧵", tiktok: "🎵", youtube: "▶️", twitter: "𝕏" };
+import { PlatformIcon } from "@/components/platform-icons";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed";
 
@@ -102,7 +101,7 @@ export default function PostsPage() {
                       className={sel ? "dbtn dbtn-primary" : "dbtn dbtn-ghost"}
                       style={{ padding: "4px 10px", fontSize: 12, gap: 5 }}
                     >
-                      <span style={{ fontSize: 12 }}>{PLATFORM_ICONS[a.platform] || "🔗"}</span>
+                      <PlatformIcon platform={a.platform} size={12} />
                       {a.account_name || a.platform}
                     </button>
                   );
@@ -181,7 +180,7 @@ export default function PostsPage() {
                       <td>
                         <div style={{ display: "flex", gap: 4 }}>
                           {post.results?.map((r, i) => (
-                            <span key={i} style={{ fontSize: 14 }}>{PLATFORM_ICONS[r.platform || ""] || "🔗"}</span>
+                            <PlatformIcon key={i} platform={r.platform || ""} size={14} />
                           ))}
                         </div>
                       </td>

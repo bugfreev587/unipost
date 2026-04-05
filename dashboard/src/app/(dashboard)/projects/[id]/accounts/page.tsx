@@ -12,15 +12,16 @@ import {
   listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, type SocialAccount,
 } from "@/lib/api";
 import { Plus, Unplug, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
+import { PlatformIcon } from "@/components/platform-icons";
 
 const PLATFORMS = [
-  { id: "bluesky", name: "Bluesky", type: "credentials" as const, icon: "🦋" },
-  { id: "linkedin", name: "LinkedIn", type: "oauth" as const, icon: "💼" },
-  { id: "instagram", name: "Instagram", type: "oauth" as const, icon: "📸" },
-  { id: "threads", name: "Threads", type: "oauth" as const, icon: "🧵" },
-  { id: "tiktok", name: "TikTok", type: "oauth" as const, icon: "🎵" },
-  { id: "youtube", name: "YouTube", type: "oauth" as const, icon: "▶️" },
-  { id: "twitter", name: "X / Twitter", type: "oauth" as const, icon: "𝕏" },
+  { id: "bluesky", name: "Bluesky", type: "credentials" as const },
+  { id: "linkedin", name: "LinkedIn", type: "oauth" as const },
+  { id: "instagram", name: "Instagram", type: "oauth" as const },
+  { id: "threads", name: "Threads", type: "oauth" as const },
+  { id: "tiktok", name: "TikTok", type: "oauth" as const },
+  { id: "youtube", name: "YouTube", type: "oauth" as const },
+  { id: "twitter", name: "X / Twitter", type: "oauth" as const },
 ];
 
 export default function AccountsPage() {
@@ -91,9 +92,6 @@ export default function AccountsPage() {
     } catch (err) { console.error("Failed to disconnect:", err); }
   }
 
-  function getPlatformIcon(pid: string) {
-    return PLATFORMS.find((p) => p.id === pid)?.icon || "🔗";
-  }
 
   return (
     <>
@@ -135,7 +133,7 @@ export default function AccountsPage() {
                       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div className="platform-icon-wrap">{p.icon}</div>
+                        <div className="platform-icon-wrap"><PlatformIcon platform={p.id} /></div>
                         <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dtext)" }}>{p.name}</span>
                       </div>
                       {connected ? (
@@ -194,7 +192,7 @@ export default function AccountsPage() {
                 <tr key={a.id}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div className="platform-icon-wrap">{getPlatformIcon(a.platform)}</div>
+                      <div className="platform-icon-wrap"><PlatformIcon platform={a.platform} /></div>
                       <span style={{ fontWeight: 500 }}>{a.account_name || a.id}</span>
                     </div>
                   </td>
