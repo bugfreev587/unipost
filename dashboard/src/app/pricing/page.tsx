@@ -86,8 +86,14 @@ export default function PricingPage() {
       const pid = projects.data[0].id;
       setProjectId(pid);
       const billing = await getBilling(token, pid);
-      setCurrentPlan(billing.data.plan);
+      const plan = billing.data.plan;
+      setCurrentPlan(plan);
       setTrialEligible(billing.data.trial_eligible);
+      // Set dropdown to current plan if it's a paid tier
+      const tierIdx = TIERS.findIndex((t) => t.id === plan);
+      if (tierIdx !== -1) {
+        setSelectedTier(tierIdx);
+      }
     } catch {
       // CORS or network error on unipost.dev — no current plan info
     }
