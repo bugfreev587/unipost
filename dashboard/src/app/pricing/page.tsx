@@ -82,7 +82,7 @@ export default function PricingPage() {
       {/* NAV */}
       <nav className="pr-nav">
         <div className="pr-nav-inner">
-          <Link href="/marketing" className="pr-logo"><div className="pr-logo-mark"><ZapIcon /></div><span className="pr-logo-name">UniPost</span></Link>
+          <Link href="/" className="pr-logo"><div className="pr-logo-mark"><ZapIcon /></div><span className="pr-logo-name">UniPost</span></Link>
           <div className="pr-nav-links">
             <Link href="/docs" className="pr-nav-link">Docs</Link>
             <Link href="/pricing" className="pr-nav-link active">Pricing</Link>
