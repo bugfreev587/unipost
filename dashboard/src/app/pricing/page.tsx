@@ -1,20 +1,21 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { PricingNav, PricingCTA } from "@/components/marketing/nav";
+import { listProjects, getBilling } from "@/lib/api";
 
 // ── Data ──
 const TIERS = [
-  { label: "1,000 Social Posts", posts: "1,000", price: 10 },
-  { label: "2,500 Social Posts", posts: "2,500", price: 25 },
-  { label: "5,000 Social Posts", posts: "5,000", price: 50 },
-  { label: "10,000 Social Posts", posts: "10,000", price: 75 },
-  { label: "20,000 Social Posts", posts: "20,000", price: 150 },
-  { label: "40,000 Social Posts", posts: "40,000", price: 300 },
-  { label: "100,000 Social Posts", posts: "100,000", price: 500 },
-  { label: "200,000 Social Posts", posts: "200,000", price: 1000 },
+  { id: "p10",   label: "1,000 Social Posts", posts: "1,000", price: 10 },
+  { id: "p25",   label: "2,500 Social Posts", posts: "2,500", price: 25 },
+  { id: "p50",   label: "5,000 Social Posts", posts: "5,000", price: 50 },
+  { id: "p75",   label: "10,000 Social Posts", posts: "10,000", price: 75 },
+  { id: "p150",  label: "20,000 Social Posts", posts: "20,000", price: 150 },
+  { id: "p300",  label: "40,000 Social Posts", posts: "40,000", price: 300 },
+  { id: "p500",  label: "100,000 Social Posts", posts: "100,000", price: 500 },
+  { id: "p1000", label: "200,000 Social Posts", posts: "200,000", price: 1000 },
 ];
 const FEATURES_FREE = [
   { text: "100 posts per month", included: true }, { text: "Unlimited social accounts", included: true },
@@ -65,10 +66,34 @@ const CSS = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,
 export default function PricingPage() {
   const [selectedTier, setSelectedTier] = useState(0);
   const [dropOpen, setDropOpen] = useState(false);
-  const trialEligible = true;
+  const [currentPlan, setCurrentPlan] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [trialEligible, setTrialEligible] = useState(true);
   const dropRef = useRef<HTMLDivElement>(null);
   const tier = TIERS[selectedTier];
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, getToken } = useAuth();
+
+  const APP_URL = "https://app.unipost.dev";
+
+  // Fetch current plan if signed in (fails silently on marketing domain due to CORS)
+  const loadPlan = useCallback(async () => {
+    if (!isSignedIn) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const projects = await listProjects(token);
+      if (!projects.data || projects.data.length === 0) return;
+      const pid = projects.data[0].id;
+      setProjectId(pid);
+      const billing = await getBilling(token, pid);
+      setCurrentPlan(billing.data.plan);
+      setTrialEligible(billing.data.trial_eligible);
+    } catch {
+      // CORS or network error on unipost.dev — no current plan info
+    }
+  }, [isSignedIn, getToken]);
+
+  useEffect(() => { loadPlan(); }, [loadPlan]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -104,8 +129,8 @@ export default function PricingPage() {
         {/* CARDS */}
         <div className="pr-cards">
           {/* Free */}
-          <div className={`pr-card ${isSignedIn ? "current-plan" : ""}`}>
-            {isSignedIn && <div className="pr-current-badge">Current Plan</div>}
+          <div className={`pr-card ${currentPlan === "free" ? "current-plan" : ""}`}>
+            {currentPlan === "free" && <div className="pr-current-badge">Current Plan</div>}
             <div className="pr-card-top"><div className="pr-price">$0<span className="mo">/mo</span></div></div>
             <div className="pr-card-sub">Everything you need to get started.</div>
             <div className="pr-divider" />
@@ -117,21 +142,38 @@ export default function PricingPage() {
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: "auto", paddingTop: 8 }}><PricingCTA className="pr-btn-free" /></div>
+            <div style={{ marginTop: "auto", paddingTop: 8 }}>
+              {currentPlan === "free" ? (
+                <PricingCTA className="pr-btn-free" label="Go to Dashboard" href={APP_URL} />
+              ) : (
+                <PricingCTA className="pr-btn-free" />
+              )}
+            </div>
           </div>
           {/* Paid */}
-          <div className="pr-card paid">
+          <div className={`pr-card paid ${currentPlan === tier.id ? "current-plan" : ""}`}>
+            {currentPlan === tier.id && <div className="pr-current-badge">Current Plan</div>}
             <div className="pr-card-top">
               <div className="pr-price">${tier.price}<span className="mo">/mo</span></div>
               <div className="pr-sel-wrap" ref={dropRef}>
                 <button className={`pr-sel-btn ${dropOpen ? "open" : ""}`} onClick={() => setDropOpen(!dropOpen)}>
-                  <span>{tier.label}</span><ChevronIcon />
+                  <span>{tier.label}</span>
+                  {TIERS.some((t) => t.id === currentPlan) && (
+                    <span style={{ fontSize: 10, color: "var(--accent)", marginRight: 2 }}>
+                      {TIERS.find((t) => t.id === currentPlan)?.id === tier.id ? "✓" : ""}
+                    </span>
+                  )}
+                  <ChevronIcon />
                 </button>
                 {dropOpen && (
                   <div className="pr-dropdown">
                     {TIERS.map((t, i) => (
                       <div key={t.label} className={`pr-drop-item ${i === selectedTier ? "active" : ""}`} onClick={() => { setSelectedTier(i); setDropOpen(false); }}>
-                        <span>{t.label}</span>{i === selectedTier && <CheckIcon />}
+                        <span>{t.label}</span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          {t.id === currentPlan && <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)" }}>Current</span>}
+                          {i === selectedTier && <CheckIcon />}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -148,12 +190,20 @@ export default function PricingPage() {
                 </div>
               ))}
             </div>
-            {trialEligible && (
+            {trialEligible && currentPlan !== tier.id && (
               <div style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600, textAlign: "center", marginBottom: 8, fontFamily: "var(--mono)" }}>
                 14-day free trial included
               </div>
             )}
-            <div style={{ marginTop: "auto", paddingTop: 8 }}><PricingCTA className="pr-btn-paid" /></div>
+            <div style={{ marginTop: "auto", paddingTop: 8 }}>
+              {currentPlan === tier.id ? (
+                <PricingCTA className="pr-btn-paid" label="Go to Dashboard" href={projectId ? `${APP_URL}/projects/${projectId}/billing` : APP_URL} />
+              ) : projectId ? (
+                <PricingCTA className="pr-btn-paid" label="Get Started" href={`${APP_URL}/projects/${projectId}/billing?upgrade=${tier.id}`} />
+              ) : (
+                <PricingCTA className="pr-btn-paid" />
+              )}
+            </div>
           </div>
         </div>
 

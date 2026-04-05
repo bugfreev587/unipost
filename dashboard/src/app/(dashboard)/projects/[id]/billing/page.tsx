@@ -38,6 +38,19 @@ export default function BillingPage() {
 
   useEffect(() => { loadBilling(); }, [loadBilling]);
 
+  // Auto-trigger checkout if ?upgrade=planId is in URL
+  const upgradePlan = searchParams.get("upgrade");
+  const [autoUpgradeTriggered, setAutoUpgradeTriggered] = useState(false);
+  useEffect(() => {
+    if (upgradePlan && !loading && billing && !autoUpgradeTriggered) {
+      setAutoUpgradeTriggered(true);
+      if (billing.plan !== upgradePlan) {
+        handleUpgrade(upgradePlan);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upgradePlan, loading, billing, autoUpgradeTriggered]);
+
   async function handleUpgrade(planId: string) {
     setUpgrading(planId);
     try {
