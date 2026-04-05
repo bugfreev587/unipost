@@ -62,10 +62,10 @@ export default function PostsPage() {
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: -0.4, color: "var(--dtext)" }}>Posts</div>
-          <div style={{ fontSize: 12.5, color: "var(--dmuted)", marginTop: 3 }}>Published and scheduled social media posts</div>
+          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Posts</div>
+          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Published and scheduled social media posts</div>
         </div>
       </div>
 

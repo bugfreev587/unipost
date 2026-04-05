@@ -80,12 +80,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return pathname.startsWith(`/projects/${projectId}${href}`);
   }
 
-  const pageLabel = NAV_ITEMS.find((n) => isActive(n.href))?.label
-    || (pathname.includes("/settings") ? "Settings" : undefined)
-    || (pathname.includes("/billing") ? "Billing" : undefined)
-    || (pathname === "/account" ? "Account" : undefined)
-    || (pathname === "/contact" ? "Contact" : undefined);
-
   const displayName = user?.firstName || user?.username || "User";
   const planName = billing?.plan_name || "Free";
   const avatarUrl = user?.imageUrl;
@@ -382,16 +376,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
       {/* ── MAIN ── */}
       <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div
-          style={{
-            height: 44, borderBottom: "1px solid var(--dborder)",
-            display: "flex", alignItems: "center",
-            padding: "0 24px", gap: 6, flexShrink: 0,
-          }}
-        >
-          <Breadcrumb pathname={pathname} projectName={currentProject?.name} pageLabel={pageLabel} />
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: "40px 48px" }}>
           {children}
         </div>
       </main>
@@ -399,29 +384,3 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Breadcrumb({ pathname, projectName, pageLabel }: { pathname: string; projectName?: string; pageLabel?: string }) {
-  const segments = pathname.split("/").filter(Boolean);
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--dmuted)" }}>
-      <Link href="/" style={{ color: "var(--dmuted)", textDecoration: "none" }}>Projects</Link>
-      {segments[0] === "projects" && segments[1] && (
-        <>
-          <span style={{ color: "var(--dmuted2)" }}>/</span>
-          <Link href={`/projects/${segments[1]}`} style={{ color: "var(--dmuted)", textDecoration: "none" }}>
-            {projectName || segments[1].slice(0, 8)}
-          </Link>
-          {(segments[2] || pageLabel) && (
-            <>
-              <span style={{ color: "var(--dmuted2)" }}>/</span>
-              <span style={{ color: "var(--dtext)", fontWeight: 500 }}>{pageLabel || capitalize(segments[2])}</span>
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function capitalize(s: string) {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, " ") : "";
-}

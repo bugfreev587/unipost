@@ -106,10 +106,10 @@ export default function AccountsPage() {
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: -0.4, color: "var(--dtext)" }}>Connected Accounts</div>
-          <div style={{ fontSize: 12.5, color: "var(--dmuted)", marginTop: 3 }}>Social media accounts authorized to post</div>
+          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Connected Accounts</div>
+          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Social media accounts authorized to post</div>
         </div>
         <Dialog open={connectOpen} onOpenChange={(open) => { setConnectOpen(open); if (!open) { setSelectedPlatform(null); setConnectError(""); } }}>
           <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
