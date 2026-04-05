@@ -11,18 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimScheduledPost = `-- name: ClaimScheduledPost :one
+UPDATE social_posts SET status = 'publishing'
+WHERE id = $1 AND status = 'scheduled'
+RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata
+`
+
+func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, claimScheduledPost, id)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+	)
+	return i, err
+}
+
 const createSocialPost = `-- name: CreateSocialPost :one
-INSERT INTO social_posts (project_id, caption, media_urls, status, metadata)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO social_posts (project_id, caption, media_urls, status, metadata, scheduled_at)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata
 `
 
 type CreateSocialPostParams struct {
-	ProjectID string      `json:"project_id"`
-	Caption   pgtype.Text `json:"caption"`
-	MediaUrls []string    `json:"media_urls"`
-	Status    string      `json:"status"`
-	Metadata  []byte      `json:"metadata"`
+	ProjectID   string             `json:"project_id"`
+	Caption     pgtype.Text        `json:"caption"`
+	MediaUrls   []string           `json:"media_urls"`
+	Status      string             `json:"status"`
+	Metadata    []byte             `json:"metadata"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostParams) (SocialPost, error) {
@@ -32,6 +56,7 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 		arg.MediaUrls,
 		arg.Status,
 		arg.Metadata,
+		arg.ScheduledAt,
 	)
 	var i SocialPost
 	err := row.Scan(
@@ -55,6 +80,79 @@ DELETE FROM social_posts WHERE id = $1
 func (q *Queries) DeleteSocialPost(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, deleteSocialPost, id)
 	return err
+}
+
+const getDueScheduledPosts = `-- name: GetDueScheduledPosts :many
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata FROM social_posts
+WHERE status = 'scheduled' AND scheduled_at <= NOW()
+ORDER BY scheduled_at ASC
+LIMIT 100
+`
+
+func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error) {
+	rows, err := q.db.Query(ctx, getDueScheduledPosts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialPost{}
+	for rows.Next() {
+		var i SocialPost
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Caption,
+			&i.MediaUrls,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.PublishedAt,
+			&i.CreatedAt,
+			&i.Metadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getScheduledPostsByProject = `-- name: GetScheduledPostsByProject :many
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata FROM social_posts
+WHERE project_id = $1 AND status = 'scheduled'
+ORDER BY scheduled_at ASC
+`
+
+func (q *Queries) GetScheduledPostsByProject(ctx context.Context, projectID string) ([]SocialPost, error) {
+	rows, err := q.db.Query(ctx, getScheduledPostsByProject, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialPost{}
+	for rows.Next() {
+		var i SocialPost
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Caption,
+			&i.MediaUrls,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.PublishedAt,
+			&i.CreatedAt,
+			&i.Metadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getSocialPostByIDAndProject = `-- name: GetSocialPostByIDAndProject :one

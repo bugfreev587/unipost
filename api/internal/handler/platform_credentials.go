@@ -46,6 +46,13 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Native mode requires a paid plan
+	sub, _ := h.queries.GetSubscriptionByProject(r.Context(), projectID)
+	if sub.PlanID == "free" || sub.PlanID == "" {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "Native mode requires a paid plan. Please upgrade to use your own platform credentials.")
+		return
+	}
+
 	var body struct {
 		Platform     string `json:"platform"`
 		ClientID     string `json:"client_id"`

@@ -44,6 +44,7 @@ type socialPostResponse struct {
 	Caption     *string              `json:"caption"`
 	Status      string               `json:"status"`
 	CreatedAt   time.Time            `json:"created_at"`
+	ScheduledAt *time.Time           `json:"scheduled_at,omitempty"`
 	PublishedAt *time.Time           `json:"published_at,omitempty"`
 	Results     []postResultResponse `json:"results,omitempty"`
 }
@@ -57,9 +58,10 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Caption    string   `json:"caption"`
-		MediaURLs  []string `json:"media_urls"`
-		AccountIDs []string `json:"account_ids"`
+		Caption     string   `json:"caption"`
+		MediaURLs   []string `json:"media_urls"`
+		AccountIDs  []string `json:"account_ids"`
+		ScheduledAt *string  `json:"scheduled_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -80,6 +82,56 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", quotaStatus.Usage, quotaStatus.Limit))
 	if quotaStatus.Warning != "" {
 		w.Header().Set("X-UniPost-Warning", quotaStatus.Warning)
+	}
+
+	// Handle scheduled posts
+	if body.ScheduledAt != nil && *body.ScheduledAt != "" {
+		scheduledTime, err := time.Parse(time.RFC3339, *body.ScheduledAt)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid scheduled_at format, use RFC3339")
+			return
+		}
+		if scheduledTime.Before(time.Now()) {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "scheduled_at must be in the future")
+			return
+		}
+
+		mediaURLs := body.MediaURLs
+		if mediaURLs == nil {
+			mediaURLs = []string{}
+		}
+
+		metadataJSON, _ := json.Marshal(map[string]any{
+			"account_ids": body.AccountIDs,
+		})
+
+		post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
+			ProjectID:   projectID,
+			Caption:     pgtype.Text{String: body.Caption, Valid: true},
+			MediaUrls:   mediaURLs,
+			Status:      "scheduled",
+			Metadata:    metadataJSON,
+			ScheduledAt: pgtype.Timestamptz{Time: scheduledTime, Valid: true},
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create scheduled post")
+			return
+		}
+
+		var caption *string
+		if post.Caption.Valid {
+			caption = &post.Caption.String
+		}
+		scheduledAt := post.ScheduledAt.Time
+
+		writeCreated(w, socialPostResponse{
+			ID:          post.ID,
+			Caption:     caption,
+			Status:      "scheduled",
+			CreatedAt:   post.CreatedAt.Time,
+			ScheduledAt: &scheduledAt,
+		})
+		return
 	}
 
 	// Validate accounts belong to project — disconnected accounts are included
@@ -123,11 +175,12 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		ProjectID: projectID,
-		Caption:   pgtype.Text{String: body.Caption, Valid: true},
-		MediaUrls: mediaURLs,
-		Status:    "publishing",
-		Metadata:  nil,
+		ProjectID:   projectID,
+		Caption:     pgtype.Text{String: body.Caption, Valid: true},
+		MediaUrls:   mediaURLs,
+		Status:      "publishing",
+		Metadata:    nil,
+		ScheduledAt: pgtype.Timestamptz{},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create post")

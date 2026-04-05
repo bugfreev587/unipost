@@ -49,6 +49,20 @@ type PlatformCredential struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
+type PostAnalytic struct {
+	ID                 string             `json:"id"`
+	SocialPostResultID string             `json:"social_post_result_id"`
+	Views              pgtype.Int8        `json:"views"`
+	Likes              pgtype.Int8        `json:"likes"`
+	Comments           pgtype.Int8        `json:"comments"`
+	Shares             pgtype.Int8        `json:"shares"`
+	Reach              pgtype.Int8        `json:"reach"`
+	Impressions        pgtype.Int8        `json:"impressions"`
+	EngagementRate     pgtype.Numeric     `json:"engagement_rate"`
+	RawData            []byte             `json:"raw_data"`
+	FetchedAt          pgtype.Timestamptz `json:"fetched_at"`
+}
+
 type Project struct {
 	ID        string             `json:"id"`
 	OwnerID   string             `json:"owner_id"`

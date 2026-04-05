@@ -294,6 +294,52 @@ func (b *BlueskyAdapter) uploadImage(ctx context.Context, accessToken string, im
 	return result.Blob, nil
 }
 
+// GetAnalytics fetches post metrics from Bluesky.
+func (b *BlueskyAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		b.baseURL+"/xrpc/app.bsky.feed.getPostThread?uri="+externalID+"&depth=0", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &PostMetrics{}, nil
+	}
+
+	var result struct {
+		Thread struct {
+			Post struct {
+				LikeCount   int64 `json:"likeCount"`
+				ReplyCount  int64 `json:"replyCount"`
+				RepostCount int64 `json:"repostCount"`
+				QuoteCount  int64 `json:"quoteCount"`
+			} `json:"post"`
+		} `json:"thread"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	p := result.Thread.Post
+	total := p.LikeCount + p.ReplyCount + p.RepostCount
+	var engRate float64
+	if total > 0 {
+		engRate = float64(total) / 100 // Simplified — Bluesky doesn't provide impressions
+	}
+
+	return &PostMetrics{
+		Likes:          p.LikeCount,
+		Comments:       p.ReplyCount,
+		Shares:         p.RepostCount + p.QuoteCount,
+		EngagementRate: engRate,
+	}, nil
+}
+
 // parseJWTSub extracts the "sub" claim from a JWT without verification.
 func parseJWTSub(token string) (string, error) {
 	claims, err := parseJWTClaims(token)

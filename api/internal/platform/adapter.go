@@ -22,6 +22,22 @@ type PostResult struct {
 	URL        string // Public URL to view the post
 }
 
+// PostMetrics holds unified analytics metrics across all platforms.
+type PostMetrics struct {
+	Views          int64   `json:"views"`
+	Likes          int64   `json:"likes"`
+	Comments       int64   `json:"comments"`
+	Shares         int64   `json:"shares"`
+	Reach          int64   `json:"reach"`
+	Impressions    int64   `json:"impressions"`
+	EngagementRate float64 `json:"engagement_rate"`
+}
+
+// AnalyticsAdapter is optionally implemented by platforms that support analytics.
+type AnalyticsAdapter interface {
+	GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error)
+}
+
 // PlatformAdapter defines the interface all platform integrations must implement.
 type PlatformAdapter interface {
 	// Platform returns the platform identifier (e.g., "bluesky").

@@ -38,6 +38,7 @@ const PLATFORMS = [
   { id: "threads", name: "Threads", type: "oauth" as const },
   { id: "tiktok", name: "TikTok", type: "oauth" as const },
   { id: "youtube", name: "YouTube", type: "oauth" as const },
+  { id: "twitter", name: "X / Twitter", type: "oauth" as const },
 ];
 
 export default function AccountsPage() {

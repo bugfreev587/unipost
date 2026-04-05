@@ -1,0 +1,23 @@
+{
+  "name": "@unipost/mcp-server",
+  "version": "0.1.0",
+  "description": "UniPost MCP Server — Let AI agents post to social media",
+  "main": "dist/index.js",
+  "bin": {
+    "unipost-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "keywords": ["mcp", "social-media", "unipost", "claude", "ai-agent"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}

@@ -82,6 +82,8 @@ func main() {
 	platform.Register(platform.NewInstagramAdapter())
 	platform.Register(platform.NewThreadsAdapter())
 
+	platform.Register(platform.NewTwitterAdapter()) // Native mode only — requires user's own API credentials
+
 	// Conditionally register adapters that need credentials
 	if os.Getenv("TIKTOK_CLIENT_KEY") != "" {
 		platform.Register(platform.NewTikTokAdapter())
@@ -129,6 +131,9 @@ func main() {
 	webhookWorker := worker.NewWebhookDeliveryWorker(queries)
 	go webhookWorker.Start(workerCtx)
 
+	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor)
+	go schedulerWorker.Start(workerCtx)
+
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -155,6 +160,7 @@ func main() {
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries)
+	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -215,6 +221,7 @@ func main() {
 		r.Get("/v1/social-posts", socialPostHandler.List)
 		r.Post("/v1/social-posts", socialPostHandler.Create)
 		r.Get("/v1/social-posts/{id}", socialPostHandler.Get)
+		r.Get("/v1/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
 		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
 
 		r.Post("/v1/webhooks", webhookSubHandler.Create)

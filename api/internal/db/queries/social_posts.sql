@@ -1,6 +1,6 @@
 -- name: CreateSocialPost :one
-INSERT INTO social_posts (project_id, caption, media_urls, status, metadata)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO social_posts (project_id, caption, media_urls, status, metadata, scheduled_at)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetSocialPostByIDAndProject :one
@@ -18,3 +18,19 @@ WHERE id = $1;
 
 -- name: DeleteSocialPost :exec
 DELETE FROM social_posts WHERE id = $1;
+
+-- name: GetDueScheduledPosts :many
+SELECT * FROM social_posts
+WHERE status = 'scheduled' AND scheduled_at <= NOW()
+ORDER BY scheduled_at ASC
+LIMIT 100;
+
+-- name: ClaimScheduledPost :one
+UPDATE social_posts SET status = 'publishing'
+WHERE id = $1 AND status = 'scheduled'
+RETURNING *;
+
+-- name: GetScheduledPostsByProject :many
+SELECT * FROM social_posts
+WHERE project_id = $1 AND status = 'scheduled'
+ORDER BY scheduled_at ASC;
