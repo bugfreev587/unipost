@@ -1,10 +1,8 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useAuth } from "@clerk/nextjs";
 import { PricingNav, PricingCTA } from "@/components/marketing/nav";
-import { getBilling } from "@/lib/api";
 
 // ── Data ──
 const TIERS = [
@@ -66,30 +64,9 @@ const CSS = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,
 export default function PricingPage() {
   const [selectedTier, setSelectedTier] = useState(0);
   const [dropOpen, setDropOpen] = useState(false);
-  const [trialEligible, setTrialEligible] = useState(true);
+  const trialEligible = true; // Always show trial on public pricing page; dashboard billing checks actual eligibility
   const dropRef = useRef<HTMLDivElement>(null);
   const tier = TIERS[selectedTier];
-  const { getToken, isSignedIn } = useAuth();
-
-  // Check trial eligibility if signed in
-  const checkTrial = useCallback(async () => {
-    if (!isSignedIn) { setTrialEligible(true); return; }
-    try {
-      const token = await getToken();
-      if (!token) return;
-      // Fetch projects to find the first one
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/v1/projects`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const projects = await res.json();
-      if (projects.data && projects.data.length > 0) {
-        const billing = await getBilling(token, projects.data[0].id);
-        setTrialEligible(billing.data.trial_eligible);
-      }
-    } catch { /* default to showing trial */ }
-  }, [isSignedIn, getToken]);
-
-  useEffect(() => { checkTrial(); }, [checkTrial]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
