@@ -188,15 +188,15 @@
 .sidebar-nav-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
   cursor: pointer;
-  color: var(--dmuted);
-  font-size: 13px;
-  font-weight: 400;
-  transition: all 0.1s;
-  margin-bottom: 1px;
+  color: #999;
+  font-size: 14.5px;
+  font-weight: 500;
+  transition: all 0.15s;
+  margin-bottom: 4px;
   border: 1px solid transparent;
   text-decoration: none;
 }
@@ -204,10 +204,10 @@
 .sidebar-nav-item[data-active="true"] {
   background: var(--accent-dim);
   color: var(--daccent);
-  border-color: #10b98120;
-  font-weight: 500;
+  border-color: #10b98125;
+  font-weight: 600;
 }
-.sidebar-nav-item svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.7; }
+.sidebar-nav-item svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.6; }
 .sidebar-nav-item[data-active="true"] svg { opacity: 1; }
 
 /* ── Tables ── */

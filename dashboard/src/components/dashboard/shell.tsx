@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
+// useClerk kept for signOut
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -81,7 +82,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   const pageLabel = NAV_ITEMS.find((n) => isActive(n.href))?.label
     || (pathname.includes("/settings") ? "Settings" : undefined)
-    || (pathname.includes("/billing") ? "Billing" : undefined);
+    || (pathname.includes("/billing") ? "Billing" : undefined)
+    || (pathname === "/account" ? "Account" : undefined)
+    || (pathname === "/contact" ? "Contact" : undefined);
 
   const displayName = user?.firstName || user?.username || "User";
   const planName = billing?.plan_name || "Free";
@@ -150,7 +153,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 <span style={{ color: "var(--dtext)", fontWeight: 500 }}>{user?.primaryEmailAddress?.emailAddress || ""}</span>
               </div>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => openUserProfile()} style={{ padding: "10px 14px" }}>
+              <DropdownMenuItem onSelect={() => router.push("/account")} style={{ padding: "10px 14px" }}>
                 <User style={{ width: 14, height: 14 }} /><span>Account</span>
               </DropdownMenuItem>
               {projectId && (
@@ -159,7 +162,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => { window.location.href = "mailto:support@unipost.dev"; }} style={{ padding: "10px 14px" }}>
+              <DropdownMenuItem onSelect={() => router.push("/contact")} style={{ padding: "10px 14px" }}>
                 <Mail style={{ width: 14, height: 14 }} /><span>Contact us</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -182,7 +185,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 const Icon = item.icon;
                 return (
                   <Link key={item.href} href={`/projects/${projectId}${item.href}`} data-active={active} className="sidebar-nav-item">
-                    <Icon style={{ width: 14, height: 14 }} strokeWidth={1.75} />
+                    <Icon style={{ width: 18, height: 18 }} strokeWidth={1.75} />
                     {item.label}
                   </Link>
                 );
