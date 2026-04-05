@@ -122,7 +122,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Project selector */}
         <DropdownMenu>
-          <DropdownMenuTrigger className="project-selector">
+          <DropdownMenuTrigger render={<button className="project-selector" />}>
             <div className="project-initial">
               {currentProject?.name?.charAt(0).toUpperCase() || "P"}
             </div>
