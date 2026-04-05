@@ -8,16 +8,6 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const userButtonAppearance = {
   elements: {
     avatarBox: "w-8 h-8",
-    userButtonPopoverCard: "!bg-[#141414] !border !border-[#242424] !w-[240px]",
-    userButtonPopoverMain: "!w-[240px]",
-    userButtonPopoverActions: "!bg-transparent",
-    userButtonPopoverActionButton: "!text-[#e5e5e5] hover:!bg-[#1a1a1a]",
-    userButtonPopoverActionButtonText: "!text-[#e5e5e5]",
-    userButtonPopoverActionButtonIcon: "!text-[#888]",
-    userButtonPopoverFooter: "!hidden",
-    userPreviewMainIdentifier: "!text-[#f0f0f0]",
-    userPreviewSecondaryIdentifier: "!text-[#666]",
-    userPreviewAvatarContainer: "w-10 h-10",
   },
 };
 
