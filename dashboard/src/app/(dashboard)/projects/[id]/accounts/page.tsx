@@ -108,8 +108,8 @@ export default function AccountsPage() {
 
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Connected Accounts</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Social media accounts authorized to post</div>
+          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Quickstart Mode</div>
+          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6, maxWidth: 520, lineHeight: 1.6 }}>Connect social accounts instantly — no developer approvals or platform credentials needed. UniPost handles OAuth so you can start posting in minutes.</div>
         </div>
         <Dialog open={connectOpen} onOpenChange={(open) => { setConnectOpen(open); if (!open) { setSelectedPlatform(null); setConnectError(""); } }}>
           <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
