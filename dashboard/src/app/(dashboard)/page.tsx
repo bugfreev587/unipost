@@ -4,14 +4,9 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { listProjects, type Project } from "@/lib/api";
+import { Plus, FolderOpen, ArrowRight } from "lucide-react";
 
 export default function DashboardPage() {
   const { getToken } = useAuth();
@@ -37,36 +32,84 @@ export default function DashboardPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold">My Projects</h1>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Projects</h1>
+          <p className="text-[13px] text-muted-foreground mt-1">
+            Each project has its own API keys, accounts, and billing.
+          </p>
+        </div>
         <Link href="/projects/new">
-          <Button>+ New Project</Button>
+          <Button size="sm" className="gap-1.5">
+            <Plus className="w-3.5 h-3.5" />
+            New Project
+          </Button>
         </Link>
       </div>
 
       {loading ? (
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="h-[72px] rounded-lg border border-border bg-muted/30 animate-pulse"
+              style={{ animationDelay: `${i * 100}ms` }}
+            />
+          ))}
+        </div>
       ) : projects.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <p className="text-muted-foreground mb-4">No projects yet</p>
-            <Link href="/projects/new">
-              <Button>Create your first project</Button>
-            </Link>
-          </CardContent>
-        </Card>
+        <div className="border border-dashed border-border rounded-lg py-16 flex flex-col items-center animate-fade-up">
+          <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center mb-4">
+            <FolderOpen className="w-5 h-5 text-muted-foreground" />
+          </div>
+          <p className="text-[15px] font-medium mb-1">No projects yet</p>
+          <p className="text-[13px] text-muted-foreground mb-5">
+            Create your first project to get started with UniPost.
+          </p>
+          <Link href="/projects/new">
+            <Button size="sm" className="gap-1.5">
+              <Plus className="w-3.5 h-3.5" />
+              Create Project
+            </Button>
+          </Link>
+        </div>
       ) : (
-        <div className="grid gap-4">
-          {projects.map((project) => (
-            <Link key={project.id} href={`/projects/${project.id}`}>
-              <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-                <CardHeader>
-                  <CardTitle>{project.name}</CardTitle>
-                  <CardDescription>
-                    {project.mode} &middot; Created{" "}
-                    {new Date(project.created_at).toLocaleDateString()}
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+        <div className="space-y-2">
+          {projects.map((project, i) => (
+            <Link
+              key={project.id}
+              href={`/projects/${project.id}`}
+              className="group animate-fade-up"
+              style={{ animationDelay: `${i * 60}ms` }}
+            >
+              <div className="card-hover flex items-center justify-between px-4 py-3.5 rounded-lg border border-border bg-card hover:border-foreground/15">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="w-8 h-8 rounded-md bg-foreground/[0.04] border border-border flex items-center justify-center shrink-0">
+                    <span className="text-xs font-semibold text-foreground/60">
+                      {project.name.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[14px] font-medium truncate">
+                      {project.name}
+                    </p>
+                    <p className="mono-data text-muted-foreground text-[11px] mt-0.5">
+                      {project.id}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Badge variant="secondary" className="text-[11px] font-normal">
+                    {project.mode}
+                  </Badge>
+                  <span className="mono-data text-[11px] text-muted-foreground">
+                    {new Date(project.created_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-foreground/50 transition-colors" />
+                </div>
+              </div>
             </Link>
           ))}
         </div>

@@ -7,13 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { ExternalLink, Trash2, ShieldCheck, ChevronDown, ChevronUp } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -40,6 +34,7 @@ export default function CredentialsPage() {
   const [forms, setForms] = useState<Record<string, { clientId: string; clientSecret: string }>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const loadCreds = useCallback(async () => {
     try {
@@ -92,8 +87,9 @@ export default function CredentialsPage() {
         return;
       }
       setForms((prev) => ({ ...prev, [platform]: { clientId: "", clientSecret: "" } }));
+      setExpanded(null);
       loadCreds();
-    } catch (err) {
+    } catch {
       setError("Failed to save credentials");
     } finally {
       setSaving(null);
@@ -117,93 +113,147 @@ export default function CredentialsPage() {
 
   const configuredPlatforms = new Set(creds.map((c) => c.platform));
 
-  if (loading) return <div className="text-muted-foreground">Loading...</div>;
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="h-6 w-48 bg-muted rounded animate-pulse" />
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-14 rounded-lg bg-muted/50 animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-2">Native Mode Credentials</h1>
-      <p className="text-muted-foreground text-sm mb-6">
-        Use your own platform app credentials for full brand ownership. OAuth pages will show your app name instead of UniPost&apos;s.
-        Requires a paid plan.
-      </p>
+      <div className="mb-6 animate-fade-up">
+        <h1 className="text-xl font-semibold tracking-tight">Credentials</h1>
+        <p className="text-[13px] text-muted-foreground mt-1">
+          Bring your own platform app credentials for native mode. OAuth pages
+          will show your app name instead of UniPost&apos;s.
+        </p>
+      </div>
 
       {error && (
-        <div className="mb-4 p-3 rounded-md bg-red-50 border border-red-200 text-red-800 text-sm">
+        <div className="mb-4 px-4 py-3 rounded-lg border border-destructive/20 bg-destructive/5 text-[13px] text-destructive animate-fade-up">
           {error}
         </div>
       )}
 
-      <div className="space-y-4">
-        {PLATFORMS.map((p) => {
+      <div className="space-y-1.5">
+        {PLATFORMS.map((p, i) => {
           const configured = configuredPlatforms.has(p.id);
           const cred = creds.find((c) => c.platform === p.id);
           const form = forms[p.id] || { clientId: "", clientSecret: "" };
+          const isExpanded = expanded === p.id;
 
           return (
-            <Card key={p.id}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <div>
-                  <CardTitle className="text-base">{p.name}</CardTitle>
-                  <CardDescription>
-                    {configured
-                      ? `Configured (${cred?.client_id})`
-                      : "Using Quickstart mode"}
-                  </CardDescription>
+            <div
+              key={p.id}
+              className="rounded-lg border border-border bg-card overflow-hidden animate-fade-up"
+              style={{ animationDelay: `${(i + 1) * 40}ms` }}
+            >
+              {/* Header row */}
+              <div className="flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      configured ? "bg-foreground/60" : "bg-muted-foreground/20"
+                    }`}
+                  />
+                  <div>
+                    <p className="text-[13px] font-medium">{p.name}</p>
+                    <p className="mono-data text-[11px] text-muted-foreground">
+                      {configured
+                        ? cred?.client_id
+                        : "Quickstart mode"}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
+                  <Badge
+                    variant={configured ? "default" : "secondary"}
+                    className="text-[10px]"
+                  >
+                    {configured ? "Native" : "Quickstart"}
+                  </Badge>
                   {configured ? (
-                    <>
-                      <Badge variant="default">Native</Badge>
-                      <Button size="sm" variant="destructive" onClick={() => handleDelete(p.id)}>
-                        Remove
-                      </Button>
-                    </>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10 h-7 w-7 p-0"
+                      onClick={() => handleDelete(p.id)}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
                   ) : (
-                    <Badge variant="secondary">Quickstart</Badge>
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(isExpanded ? null : p.id)}
+                      className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors cursor-pointer"
+                    >
+                      {isExpanded ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                      )}
+                    </button>
                   )}
                 </div>
-              </CardHeader>
-              {!configured && (
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">{p.idLabel}</Label>
+              </div>
+
+              {/* Expanded form */}
+              {!configured && isExpanded && (
+                <div className="px-4 pb-4 pt-1 border-t border-border">
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px] text-muted-foreground">
+                        {p.idLabel}
+                      </Label>
                       <Input
                         placeholder={p.idLabel}
                         value={form.clientId}
                         onChange={(e) => updateForm(p.id, "clientId", e.target.value)}
+                        className="h-8 text-[13px]"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{p.secretLabel}</Label>
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px] text-muted-foreground">
+                        {p.secretLabel}
+                      </Label>
                       <Input
                         type="password"
                         placeholder={p.secretLabel}
                         value={form.clientSecret}
                         onChange={(e) => updateForm(p.id, "clientSecret", e.target.value)}
+                        className="h-8 text-[13px]"
                       />
                     </div>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between mt-3">
                     <a
                       href={p.docs}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-blue-600 hover:underline"
+                      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
                     >
-                      Get credentials from {p.name} Developer Portal
+                      Developer Portal
+                      <ExternalLink className="w-3 h-3" />
                     </a>
                     <Button
                       size="sm"
+                      className="h-7 text-[12px]"
                       onClick={() => handleSave(p.id)}
                       disabled={saving === p.id || !form.clientId || !form.clientSecret}
                     >
                       {saving === p.id ? "Saving..." : "Save"}
                     </Button>
                   </div>
-                </CardContent>
+                </div>
               )}
-            </Card>
+            </div>
           );
         })}
       </div>

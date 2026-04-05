@@ -8,13 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -30,6 +23,7 @@ import {
   getOAuthConnectURL,
   type SocialAccount,
 } from "@/lib/api";
+import { Plus, ExternalLink, Unplug, CheckCircle2, XCircle } from "lucide-react";
 
 const PLATFORMS = [
   { id: "bluesky", name: "Bluesky", type: "credentials" as const },
@@ -48,7 +42,6 @@ export default function AccountsPage() {
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Connect dialog state
   const [connectOpen, setConnectOpen] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
@@ -56,7 +49,6 @@ export default function AccountsPage() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
 
-  // OAuth callback status
   const callbackStatus = searchParams.get("status");
   const callbackAccount = searchParams.get("account_name");
 
@@ -114,7 +106,12 @@ export default function AccountsPage() {
       const token = await getToken();
       if (!token) return;
       const redirectUrl = window.location.href.split("?")[0];
-      const res = await getOAuthConnectURL(token, projectId, platform, redirectUrl);
+      const res = await getOAuthConnectURL(
+        token,
+        projectId,
+        platform,
+        redirectUrl
+      );
       window.location.href = res.data.auth_url;
     } catch (err) {
       setConnectError(
@@ -139,23 +136,25 @@ export default function AccountsPage() {
 
   return (
     <div>
-      {/* OAuth callback notification */}
+      {/* Callback notifications */}
       {callbackStatus === "success" && (
-        <div className="mb-6 p-4 rounded-md bg-green-50 border border-green-200 text-green-800 text-sm">
-          Successfully connected {callbackAccount || "account"}!
+        <div className="mb-6 flex items-center gap-2 px-4 py-3 rounded-lg border border-foreground/10 bg-foreground/[0.02] text-[13px] animate-fade-up">
+          <CheckCircle2 className="w-4 h-4 text-foreground/60 shrink-0" />
+          Successfully connected {callbackAccount || "account"}.
         </div>
       )}
       {callbackStatus === "error" && (
-        <div className="mb-6 p-4 rounded-md bg-red-50 border border-red-200 text-red-800 text-sm">
+        <div className="mb-6 flex items-center gap-2 px-4 py-3 rounded-lg border border-destructive/20 bg-destructive/5 text-[13px] text-destructive animate-fade-up">
+          <XCircle className="w-4 h-4 shrink-0" />
           Failed to connect account. Please try again.
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 animate-fade-up">
         <div>
-          <h1 className="text-2xl font-bold">Connected Accounts</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Connect social media accounts to start posting
+          <h1 className="text-xl font-semibold tracking-tight">Accounts</h1>
+          <p className="text-[13px] text-muted-foreground mt-1">
+            Connect social media accounts to start posting.
           </p>
         </div>
         <Dialog
@@ -168,7 +167,10 @@ export default function AccountsPage() {
             }
           }}
         >
-          <DialogTrigger render={<Button />}>+ Connect</DialogTrigger>
+          <DialogTrigger render={<Button size="sm" className="gap-1.5" />}>
+            <Plus className="w-3.5 h-3.5" />
+            Connect
+          </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
@@ -186,7 +188,7 @@ export default function AccountsPage() {
             </DialogHeader>
 
             {!selectedPlatform ? (
-              <div className="space-y-2 py-4">
+              <div className="space-y-1 py-2">
                 {PLATFORMS.map((p) => {
                   const connected = accounts.some((a) => a.platform === p.id);
                   return (
@@ -200,11 +202,22 @@ export default function AccountsPage() {
                         }
                       }}
                       disabled={connecting}
-                      className="w-full flex items-center justify-between px-4 py-3 rounded-md border hover:bg-muted/50 transition-colors text-left cursor-pointer disabled:opacity-50"
+                      className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-md border border-border hover:border-foreground/15 hover:bg-muted/50 transition-all text-left cursor-pointer disabled:opacity-50"
                     >
-                      <span className="font-medium text-sm">{p.name}</span>
-                      {connected && (
-                        <Badge variant="secondary">Connected</Badge>
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`w-2 h-2 rounded-full ${
+                            connected ? "bg-foreground/60" : "bg-muted-foreground/20"
+                          }`}
+                        />
+                        <span className="text-[13px] font-medium">{p.name}</span>
+                      </div>
+                      {connected ? (
+                        <Badge variant="secondary" className="text-[10px]">
+                          Connected
+                        </Badge>
+                      ) : (
+                        <ExternalLink className="w-3.5 h-3.5 text-muted-foreground/40" />
                       )}
                     </button>
                   );
@@ -212,9 +225,11 @@ export default function AccountsPage() {
               </div>
             ) : selectedPlatform === "bluesky" ? (
               <>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="handle">Handle</Label>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="handle" className="text-[13px]">
+                      Handle
+                    </Label>
                     <Input
                       id="handle"
                       placeholder="alice.bsky.social"
@@ -222,8 +237,10 @@ export default function AccountsPage() {
                       onChange={(e) => setHandle(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="app-password">App Password</Label>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="app-password" className="text-[13px]">
+                      App Password
+                    </Label>
                     <Input
                       id="app-password"
                       type="password"
@@ -232,21 +249,23 @@ export default function AccountsPage() {
                       onChange={(e) => setAppPassword(e.target.value)}
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-[11px] text-muted-foreground">
                     Generate at bsky.app &rarr; Settings &rarr; App Passwords
                   </p>
                   {connectError && (
-                    <p className="text-sm text-destructive">{connectError}</p>
+                    <p className="text-[12px] text-destructive">{connectError}</p>
                   )}
                 </div>
                 <DialogFooter>
                   <Button
                     variant="outline"
+                    size="sm"
                     onClick={() => setSelectedPlatform(null)}
                   >
                     Back
                   </Button>
                   <Button
+                    size="sm"
                     onClick={handleBlueskyConnect}
                     disabled={
                       connecting || !handle.trim() || !appPassword.trim()
@@ -259,7 +278,7 @@ export default function AccountsPage() {
             ) : null}
 
             {connectError && !selectedPlatform && (
-              <p className="text-sm text-destructive px-4">{connectError}</p>
+              <p className="text-[12px] text-destructive px-1">{connectError}</p>
             )}
           </DialogContent>
         </Dialog>
@@ -267,53 +286,80 @@ export default function AccountsPage() {
 
       {/* Accounts list */}
       {loading ? (
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="space-y-2">
+          {[1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-16 rounded-lg bg-muted/50 animate-pulse"
+            />
+          ))}
+        </div>
       ) : accounts.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <p className="font-medium mb-1">No accounts connected yet</p>
-            <p className="text-sm text-muted-foreground mb-6">
-              Connect your first social account to start posting.
-            </p>
-            <Button onClick={() => setConnectOpen(true)}>
-              Connect Account
-            </Button>
-          </CardContent>
-        </Card>
+        <div
+          className="border border-dashed border-border rounded-lg py-16 flex flex-col items-center animate-fade-up"
+          style={{ animationDelay: "60ms" }}
+        >
+          <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center mb-4">
+            <Unplug className="w-5 h-5 text-muted-foreground" />
+          </div>
+          <p className="text-[15px] font-medium mb-1">No accounts connected</p>
+          <p className="text-[13px] text-muted-foreground mb-5">
+            Connect your first social account to start posting.
+          </p>
+          <Button size="sm" onClick={() => setConnectOpen(true)} className="gap-1.5">
+            <Plus className="w-3.5 h-3.5" />
+            Connect Account
+          </Button>
+        </div>
       ) : (
-        <div className="space-y-3">
-          {accounts.map((account) => (
-            <Card key={account.id}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <div>
-                  <CardTitle className="text-base font-medium">
+        <div className="space-y-1.5">
+          {accounts.map((account, i) => (
+            <div
+              key={account.id}
+              className="flex items-center justify-between px-4 py-3 rounded-lg border border-border bg-card animate-fade-up"
+              style={{ animationDelay: `${(i + 1) * 60}ms` }}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    account.status === "active"
+                      ? "bg-foreground/60"
+                      : "bg-destructive/60"
+                  }`}
+                />
+                <div className="min-w-0">
+                  <p className="text-[13px] font-medium truncate">
                     {account.account_name || account.id}
-                  </CardTitle>
-                  <CardDescription className="mt-1">
-                    {account.platform} &middot; Connected{" "}
-                    {new Date(account.connected_at).toLocaleDateString()}
-                  </CardDescription>
+                  </p>
+                  <p className="mono-data text-[11px] text-muted-foreground">
+                    {account.platform} &middot;{" "}
+                    {new Date(account.connected_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Badge
-                    variant={
-                      account.status === "active" ? "default" : "destructive"
-                    }
-                  >
-                    {account.status === "active"
-                      ? "Active"
-                      : "Reconnect Required"}
-                  </Badge>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => handleDisconnect(account.id)}
-                  >
-                    Disconnect
-                  </Button>
-                </div>
-              </CardHeader>
-            </Card>
+              </div>
+              <div className="flex items-center gap-2.5 shrink-0">
+                <Badge
+                  variant={
+                    account.status === "active" ? "secondary" : "destructive"
+                  }
+                  className="text-[10px]"
+                >
+                  {account.status === "active" ? "Active" : "Reconnect"}
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10 text-[12px] h-7 px-2"
+                  onClick={() => handleDisconnect(account.id)}
+                >
+                  Disconnect
+                </Button>
+              </div>
+            </div>
           ))}
         </div>
       )}

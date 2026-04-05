@@ -4,13 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   getBilling,
@@ -19,6 +12,7 @@ import {
   type BillingInfo,
   type Plan,
 } from "@/lib/api";
+import { Activity, CheckCircle2, ExternalLink } from "lucide-react";
 
 const PLANS: Plan[] = [
   { id: "free", name: "Free", price_cents: 0, post_limit: 100 },
@@ -84,113 +78,153 @@ export default function BillingPage() {
   }
 
   if (loading) {
-    return <div className="text-muted-foreground">Loading...</div>;
+    return (
+      <div className="space-y-4">
+        <div className="h-6 w-32 bg-muted rounded animate-pulse" />
+        <div className="h-32 rounded-lg bg-muted/50 animate-pulse" />
+      </div>
+    );
   }
 
   const usagePct = billing ? Math.min(billing.percentage, 100) : 0;
-  const barColor =
-    (billing?.percentage ?? 0) >= 100
-      ? "bg-red-500"
-      : (billing?.percentage ?? 0) >= 80
-        ? "bg-yellow-500"
-        : "bg-green-500";
 
   return (
     <div>
       {callbackStatus === "success" && (
-        <div className="mb-6 p-4 rounded-md bg-green-50 border border-green-200 text-green-800 text-sm">
-          Subscription updated successfully!
+        <div className="mb-6 flex items-center gap-2 px-4 py-3 rounded-lg border border-foreground/10 bg-foreground/[0.02] text-[13px] animate-fade-up">
+          <CheckCircle2 className="w-4 h-4 text-foreground/60 shrink-0" />
+          Subscription updated successfully.
         </div>
       )}
 
-      <h1 className="text-2xl font-bold mb-6">Billing</h1>
+      <div className="flex items-center justify-between mb-6 animate-fade-up">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Billing</h1>
+          <p className="text-[13px] text-muted-foreground mt-1">
+            Manage your plan and track usage.
+          </p>
+        </div>
+        {billing?.plan !== "free" && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleManage}
+            className="gap-1.5"
+          >
+            Manage Subscription
+            <ExternalLink className="w-3 h-3" />
+          </Button>
+        )}
+      </div>
 
       {/* Current plan + usage */}
-      <Card className="mb-8">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Current Plan</CardTitle>
-              <CardDescription className="mt-1">
-                {billing?.plan_name || "Free"} &middot; {billing?.period}
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant={billing?.plan === "free" ? "secondary" : "default"}>
-                {billing?.plan_name || "Free"}
-              </Badge>
-              {billing?.plan !== "free" && (
-                <Button size="sm" variant="outline" onClick={handleManage}>
-                  Manage Subscription
-                </Button>
-              )}
-            </div>
+      <div
+        className="rounded-lg border border-border bg-card p-5 mb-8 animate-fade-up"
+        style={{ animationDelay: "60ms" }}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2.5">
+            <Activity className="w-4 h-4 text-muted-foreground" />
+            <span className="text-[13px] font-medium">Current Plan</span>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span>
-                Posts this month: {billing?.usage ?? 0} / {billing?.limit ?? 100}
+          <div className="flex items-center gap-2">
+            <Badge
+              variant={billing?.plan === "free" ? "secondary" : "default"}
+              className="text-[11px]"
+            >
+              {billing?.plan_name || "Free"}
+            </Badge>
+            {billing?.period && (
+              <span className="mono-data text-[11px] text-muted-foreground">
+                {billing.period}
               </span>
+            )}
+          </div>
+        </div>
+
+        {/* Usage bar */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="text-muted-foreground">
+              Posts this month
+            </span>
+            <span className="mono-data">
+              {billing?.usage ?? 0}{" "}
               <span className="text-muted-foreground">
-                {Math.round(billing?.percentage ?? 0)}%
+                / {billing?.limit ?? 100}
               </span>
-            </div>
-            <div className="w-full bg-muted rounded-full h-3">
-              <div
-                className={`h-3 rounded-full transition-all ${barColor}`}
-                style={{ width: `${usagePct}%` }}
-              />
-            </div>
-            {billing?.warning === "approaching_limit" && (
-              <p className="text-sm text-yellow-600">
-                You&apos;ve used {Math.round(billing.percentage)}% of your monthly
-                posts. Upgrade to avoid interruption.
-              </p>
-            )}
-            {billing?.warning === "over_limit" && (
-              <p className="text-sm text-red-600">
-                You&apos;ve exceeded your monthly limit. We&apos;re still processing
-                your posts. Upgrade now to stay on track.
-              </p>
-            )}
+            </span>
           </div>
-        </CardContent>
-      </Card>
+          <div className="w-full bg-muted rounded-full h-1.5">
+            <div
+              className={`h-1.5 rounded-full transition-all duration-500 ${
+                usagePct >= 100
+                  ? "bg-destructive"
+                  : usagePct >= 80
+                    ? "bg-amber"
+                    : "bg-foreground/70"
+              }`}
+              style={{ width: `${usagePct}%` }}
+            />
+          </div>
+          {billing?.warning === "approaching_limit" && (
+            <p className="text-[12px] text-amber">
+              {Math.round(billing.percentage)}% of your monthly limit used.
+              Consider upgrading.
+            </p>
+          )}
+          {billing?.warning === "over_limit" && (
+            <p className="text-[12px] text-destructive">
+              Monthly limit exceeded. Upgrade now to continue posting.
+            </p>
+          )}
+        </div>
+      </div>
 
       {/* Plans */}
-      <h2 className="text-lg font-semibold mb-4">Plans</h2>
-      <div className="grid gap-3">
-        {PLANS.map((plan) => {
-          const isCurrent = billing?.plan === plan.id;
-          return (
-            <Card
-              key={plan.id}
-              className={isCurrent ? "border-primary" : ""}
-            >
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 py-4">
-                <div>
-                  <CardTitle className="text-base">{plan.name}</CardTitle>
-                  <CardDescription>
-                    {plan.post_limit.toLocaleString()} posts/month
-                  </CardDescription>
+      <div className="animate-fade-up" style={{ animationDelay: "120ms" }}>
+        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-3">
+          Plans
+        </p>
+        <div className="space-y-1.5">
+          {PLANS.map((plan) => {
+            const isCurrent = billing?.plan === plan.id;
+            return (
+              <div
+                key={plan.id}
+                className={`flex items-center justify-between px-4 py-3 rounded-lg border bg-card ${
+                  isCurrent
+                    ? "border-foreground/20"
+                    : "border-border"
+                }`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="min-w-[80px]">
+                    <p className="text-[13px] font-medium">{plan.name}</p>
+                  </div>
+                  <span className="mono-data text-[12px] text-muted-foreground">
+                    {plan.post_limit.toLocaleString()} posts/mo
+                  </span>
                 </div>
                 {isCurrent ? (
-                  <Badge>Current</Badge>
+                  <Badge variant="secondary" className="text-[10px]">
+                    Current
+                  </Badge>
                 ) : plan.id === "free" ? null : (
                   <Button
                     size="sm"
+                    variant="outline"
+                    className="h-7 text-[12px]"
                     onClick={() => handleUpgrade(plan.id)}
                     disabled={upgrading === plan.id}
                   >
                     {upgrading === plan.id ? "..." : "Select"}
                   </Button>
                 )}
-              </CardHeader>
-            </Card>
-          );
-        })}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
