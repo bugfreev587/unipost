@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth, SignInButton, SignUpButton } from "@clerk/nextjs";
+import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
@@ -14,9 +14,23 @@ export function MarketingNav() {
 
   if (isSignedIn) {
     return (
-      <a href={APP_URL} className="lp-btn lp-btn-primary">
-        Go to Dashboard
-      </a>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <a href={APP_URL} className="lp-btn lp-btn-primary">
+          Go to Dashboard
+        </a>
+        <UserButton
+          appearance={{
+            elements: {
+              avatarBox: "w-8 h-8",
+              userButtonPopoverCard: "bg-[#111] border border-[#242424]",
+              userButtonPopoverActionButton: "text-[#f0f0f0] hover:bg-[#1a1a1a]",
+              userButtonPopoverActionButtonText: "text-[#f0f0f0]",
+              userButtonPopoverActionButtonIcon: "text-[#666]",
+              userButtonPopoverFooter: "hidden",
+            },
+          }}
+        />
+      </div>
     );
   }
 
@@ -90,9 +104,23 @@ export function PricingNav() {
 
   if (isSignedIn) {
     return (
-      <a href={APP_URL} className="pr-btn pr-btn-primary">
-        Go to Dashboard
-      </a>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <a href={APP_URL} className="pr-btn pr-btn-primary">
+          Go to Dashboard
+        </a>
+        <UserButton
+          appearance={{
+            elements: {
+              avatarBox: "w-8 h-8",
+              userButtonPopoverCard: "bg-[#111] border border-[#242424]",
+              userButtonPopoverActionButton: "text-[#f0f0f0] hover:bg-[#1a1a1a]",
+              userButtonPopoverActionButtonText: "text-[#f0f0f0]",
+              userButtonPopoverActionButtonIcon: "text-[#666]",
+              userButtonPopoverFooter: "hidden",
+            },
+          }}
+        />
+      </div>
     );
   }
 
