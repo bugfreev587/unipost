@@ -121,7 +121,7 @@ export default function LandingPage() {
           <div className="lp-integ-grid">
             {/* Left: title + integration cards */}
             <div className="lp-integ-left">
-              <h2 className="lp-integ-title">Building native social media integrations shouldn&apos;t drain dev resources.</h2>
+              <h2 className="lp-integ-title">One API call. Six platforms. Zero token headaches.</h2>
 
               <div className="lp-integ-cards">
                 <div className="lp-integ-card">
