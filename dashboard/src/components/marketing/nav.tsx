@@ -112,15 +112,24 @@ export function PricingNav() {
   );
 }
 
-export function PricingCTA({ className = "pr-btn-free" }: { className?: string }) {
+export function PricingCTA({ className = "pr-btn-free", label, href }: { className?: string; label?: string; href?: string }) {
   const { isSignedIn, isLoaded } = useAuth();
 
   if (!isLoaded) return <div style={{ height: 44 }} />;
 
+  // If explicit label + href provided, use them directly
+  if (label && href) {
+    return (
+      <a href={href} className={`pr-btn ${className}`}>
+        {label}
+      </a>
+    );
+  }
+
   if (isSignedIn) {
     return (
       <a href={APP_URL} className={`pr-btn ${className}`}>
-        Go to Dashboard
+        {className.includes("paid") ? "Upgrade" : "Go to Dashboard"}
       </a>
     );
   }
