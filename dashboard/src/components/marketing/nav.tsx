@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth, SignInButton, SignUpButton } from "@clerk/nextjs";
+import Link from "next/link";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 
@@ -8,30 +9,27 @@ export function MarketingNav() {
   const { isSignedIn, isLoaded } = useAuth();
 
   if (!isLoaded) {
-    return <div className="flex items-center gap-4 h-9" />;
+    return <div style={{ display: "flex", alignItems: "center", gap: 8, height: 36 }} />;
   }
 
   if (isSignedIn) {
     return (
-      <a
-        href={APP_URL}
-        className="inline-flex items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 transition-colors"
-      >
+      <a href={APP_URL} className="lp-btn lp-btn-primary">
         Go to Dashboard
       </a>
     );
   }
 
   return (
-    <div className="flex items-center gap-4">
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <SignInButton mode="redirect" fallbackRedirectUrl={APP_URL}>
-        <button className="text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors cursor-pointer">
-          Log in
+        <button className="lp-btn lp-btn-ghost" style={{ cursor: "pointer" }}>
+          Sign in
         </button>
       </SignInButton>
       <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
-        <button className="inline-flex items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 transition-colors cursor-pointer">
-          Get Started
+        <button className="lp-btn lp-btn-primary" style={{ cursor: "pointer" }}>
+          Get Started Free
         </button>
       </SignUpButton>
     </div>
@@ -41,16 +39,11 @@ export function MarketingNav() {
 export function MarketingCTA() {
   const { isSignedIn, isLoaded } = useAuth();
 
-  if (!isLoaded) {
-    return <div className="h-12" />;
-  }
+  if (!isLoaded) return <div style={{ height: 48 }} />;
 
   if (isSignedIn) {
     return (
-      <a
-        href={APP_URL}
-        className="inline-flex items-center justify-center rounded-md bg-zinc-900 px-8 py-3 text-base font-medium text-white hover:bg-zinc-800 transition-colors"
-      >
+      <a href={APP_URL} className="lp-btn lp-btn-primary lp-btn-lg">
         Go to Dashboard
       </a>
     );
@@ -58,7 +51,7 @@ export function MarketingCTA() {
 
   return (
     <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
-      <button className="inline-flex items-center justify-center rounded-md bg-zinc-900 px-8 py-3 text-base font-medium text-white hover:bg-zinc-800 transition-colors cursor-pointer">
+      <button className="lp-btn lp-btn-primary lp-btn-lg" style={{ cursor: "pointer" }}>
         Get Started Free
       </button>
     </SignUpButton>
@@ -68,16 +61,11 @@ export function MarketingCTA() {
 export function MarketingCTALight() {
   const { isSignedIn, isLoaded } = useAuth();
 
-  if (!isLoaded) {
-    return <div className="h-12" />;
-  }
+  if (!isLoaded) return <div style={{ height: 48 }} />;
 
   if (isSignedIn) {
     return (
-      <a
-        href={APP_URL}
-        className="inline-flex items-center justify-center rounded-md bg-white px-8 py-3 text-base font-medium text-zinc-900 hover:bg-zinc-100 transition-colors"
-      >
+      <a href={APP_URL} className="lp-btn lp-btn-outline lp-btn-lg">
         Go to Dashboard
       </a>
     );
@@ -85,8 +73,62 @@ export function MarketingCTALight() {
 
   return (
     <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
-      <button className="inline-flex items-center justify-center rounded-md bg-white px-8 py-3 text-base font-medium text-zinc-900 hover:bg-zinc-100 transition-colors cursor-pointer">
+      <button className="lp-btn lp-btn-outline lp-btn-lg" style={{ cursor: "pointer" }}>
         Sign Up Free
+      </button>
+    </SignUpButton>
+  );
+}
+
+/* Pricing page variants — same logic, pr- prefix classes */
+export function PricingNav() {
+  const { isSignedIn, isLoaded } = useAuth();
+
+  if (!isLoaded) {
+    return <div style={{ display: "flex", alignItems: "center", gap: 8, height: 36 }} />;
+  }
+
+  if (isSignedIn) {
+    return (
+      <a href={APP_URL} className="pr-btn pr-btn-primary">
+        Go to Dashboard
+      </a>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <SignInButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+        <button className="pr-btn pr-btn-ghost" style={{ cursor: "pointer" }}>
+          Sign in
+        </button>
+      </SignInButton>
+      <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+        <button className="pr-btn pr-btn-primary" style={{ cursor: "pointer" }}>
+          Get Started Free
+        </button>
+      </SignUpButton>
+    </div>
+  );
+}
+
+export function PricingCTA({ className = "pr-btn-free" }: { className?: string }) {
+  const { isSignedIn, isLoaded } = useAuth();
+
+  if (!isLoaded) return <div style={{ height: 44 }} />;
+
+  if (isSignedIn) {
+    return (
+      <a href={APP_URL} className={`pr-btn ${className}`}>
+        Go to Dashboard
+      </a>
+    );
+  }
+
+  return (
+    <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+      <button className={`pr-btn ${className}`} style={{ cursor: "pointer" }}>
+        {className.includes("paid") ? "Get Started" : "Get Started Free"}
       </button>
     </SignUpButton>
   );
