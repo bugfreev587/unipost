@@ -42,3 +42,6 @@ UPDATE subscriptions
 SET plan_id = 'free', status = 'active', stripe_subscription_id = NULL,
     cancel_at_period_end = FALSE, updated_at = NOW()
 WHERE stripe_subscription_id = $1;
+
+-- name: MarkTrialUsed :exec
+UPDATE subscriptions SET trial_used = TRUE, updated_at = NOW() WHERE project_id = $1;

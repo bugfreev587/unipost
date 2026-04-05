@@ -239,6 +239,7 @@ export interface BillingInfo {
   period: string;
   warning?: string;
   cancel_at_period_end: boolean;
+  trial_eligible: boolean;
 }
 
 export interface Plan {

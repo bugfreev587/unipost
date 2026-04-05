@@ -32,7 +32,7 @@ SET plan_id = EXCLUDED.plan_id,
     stripe_subscription_id = EXCLUDED.stripe_subscription_id,
     status = EXCLUDED.status,
     updated_at = NOW()
-RETURNING id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at
+RETURNING id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used
 `
 
 type CreateSubscriptionParams struct {
@@ -64,6 +64,7 @@ func (q *Queries) CreateSubscription(ctx context.Context, arg CreateSubscription
 		&i.CancelAtPeriodEnd,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TrialUsed,
 	)
 	return i, err
 }
@@ -80,7 +81,7 @@ func (q *Queries) EnsureSubscription(ctx context.Context, projectID string) erro
 }
 
 const getSubscriptionByProject = `-- name: GetSubscriptionByProject :one
-SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at FROM subscriptions WHERE project_id = $1
+SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used FROM subscriptions WHERE project_id = $1
 `
 
 func (q *Queries) GetSubscriptionByProject(ctx context.Context, projectID string) (Subscription, error) {
@@ -98,12 +99,13 @@ func (q *Queries) GetSubscriptionByProject(ctx context.Context, projectID string
 		&i.CancelAtPeriodEnd,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TrialUsed,
 	)
 	return i, err
 }
 
 const getSubscriptionByStripeCustomer = `-- name: GetSubscriptionByStripeCustomer :one
-SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at FROM subscriptions WHERE stripe_customer_id = $1
+SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used FROM subscriptions WHERE stripe_customer_id = $1
 `
 
 func (q *Queries) GetSubscriptionByStripeCustomer(ctx context.Context, stripeCustomerID pgtype.Text) (Subscription, error) {
@@ -121,12 +123,13 @@ func (q *Queries) GetSubscriptionByStripeCustomer(ctx context.Context, stripeCus
 		&i.CancelAtPeriodEnd,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TrialUsed,
 	)
 	return i, err
 }
 
 const getSubscriptionByStripeSubscription = `-- name: GetSubscriptionByStripeSubscription :one
-SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at FROM subscriptions WHERE stripe_subscription_id = $1
+SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used FROM subscriptions WHERE stripe_subscription_id = $1
 `
 
 func (q *Queries) GetSubscriptionByStripeSubscription(ctx context.Context, stripeSubscriptionID pgtype.Text) (Subscription, error) {
@@ -144,8 +147,18 @@ func (q *Queries) GetSubscriptionByStripeSubscription(ctx context.Context, strip
 		&i.CancelAtPeriodEnd,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TrialUsed,
 	)
 	return i, err
+}
+
+const markTrialUsed = `-- name: MarkTrialUsed :exec
+UPDATE subscriptions SET trial_used = TRUE, updated_at = NOW() WHERE project_id = $1
+`
+
+func (q *Queries) MarkTrialUsed(ctx context.Context, projectID string) error {
+	_, err := q.db.Exec(ctx, markTrialUsed, projectID)
+	return err
 }
 
 const updateSubscriptionPlan = `-- name: UpdateSubscriptionPlan :exec

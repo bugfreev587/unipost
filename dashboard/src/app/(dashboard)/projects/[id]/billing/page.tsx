@@ -122,7 +122,12 @@ export default function BillingPage() {
 
       {/* Plans */}
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--dtext)", marginBottom: 4 }}>Upgrade Plan</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--dtext)" }}>Upgrade Plan</div>
+          {billing?.trial_eligible && billing?.plan === "free" && (
+            <span className="dbadge dbadge-green" style={{ fontSize: 10 }}>14-day free trial</span>
+          )}
+        </div>
         <div style={{ color: "var(--dmuted)", fontSize: 12.5 }}>All plans include the same features. Only post volume differs.</div>
       </div>
       <div className="plan-cards">

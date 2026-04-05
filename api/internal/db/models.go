@@ -122,6 +122,7 @@ type Subscription struct {
 	CancelAtPeriodEnd    pgtype.Bool        `json:"cancel_at_period_end"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	TrialUsed            bool               `json:"trial_used"`
 }
 
 type Usage struct {

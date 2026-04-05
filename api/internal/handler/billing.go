@@ -26,15 +26,16 @@ func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker) *Billin
 }
 
 type billingResponse struct {
-	Plan        string  `json:"plan"`
-	PlanName    string  `json:"plan_name"`
-	Status      string  `json:"status"`
-	Usage       int     `json:"usage"`
-	Limit       int     `json:"limit"`
-	Percentage  float64 `json:"percentage"`
-	Period      string  `json:"period"`
-	Warning     string  `json:"warning,omitempty"`
-	CancelAtEnd bool    `json:"cancel_at_period_end"`
+	Plan           string  `json:"plan"`
+	PlanName       string  `json:"plan_name"`
+	Status         string  `json:"status"`
+	Usage          int     `json:"usage"`
+	Limit          int     `json:"limit"`
+	Percentage     float64 `json:"percentage"`
+	Period         string  `json:"period"`
+	Warning        string  `json:"warning,omitempty"`
+	CancelAtEnd    bool    `json:"cancel_at_period_end"`
+	TrialEligible  bool    `json:"trial_eligible"`
 }
 
 // GetBilling handles GET /v1/billing (Clerk auth, project-scoped)
@@ -57,15 +58,16 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 	status := h.quota.Check(r.Context(), projectID)
 
 	writeSuccess(w, billingResponse{
-		Plan:        sub.PlanID,
-		PlanName:    plan.Name,
-		Status:      sub.Status,
-		Usage:       status.Usage,
-		Limit:       status.Limit,
-		Percentage:  status.Percentage,
-		Period:      status.Period(),
-		Warning:     status.Warning,
-		CancelAtEnd: sub.CancelAtPeriodEnd.Bool,
+		Plan:          sub.PlanID,
+		PlanName:      plan.Name,
+		Status:        sub.Status,
+		Usage:         status.Usage,
+		Limit:         status.Limit,
+		Percentage:    status.Percentage,
+		Period:        status.Period(),
+		Warning:       status.Warning,
+		CancelAtEnd:   sub.CancelAtPeriodEnd.Bool,
+		TrialEligible: !sub.TrialUsed,
 	})
 }
 
@@ -140,6 +142,14 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 				"plan_id":    body.PlanID,
 			},
 		},
+	}
+
+	// Add 14-day free trial if user hasn't used it yet
+	if !sub.TrialUsed {
+		checkoutParams.SubscriptionData = &stripe.CheckoutSessionSubscriptionDataParams{
+			TrialPeriodDays: stripe.Int64(14),
+		}
+		_ = h.queries.MarkTrialUsed(r.Context(), projectID)
 	}
 
 	s, err := checkoutsession.New(checkoutParams)
