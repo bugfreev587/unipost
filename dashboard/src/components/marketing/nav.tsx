@@ -5,6 +5,22 @@ import Link from "next/link";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 
+const userButtonAppearance = {
+  elements: {
+    avatarBox: "w-8 h-8",
+    userButtonPopoverCard: "!bg-[#141414] !border !border-[#242424] !w-[240px]",
+    userButtonPopoverMain: "!w-[240px]",
+    userButtonPopoverActions: "!bg-transparent",
+    userButtonPopoverActionButton: "!text-[#e5e5e5] hover:!bg-[#1a1a1a]",
+    userButtonPopoverActionButtonText: "!text-[#e5e5e5]",
+    userButtonPopoverActionButtonIcon: "!text-[#888]",
+    userButtonPopoverFooter: "!hidden",
+    userPreviewMainIdentifier: "!text-[#f0f0f0]",
+    userPreviewSecondaryIdentifier: "!text-[#666]",
+    userPreviewAvatarContainer: "w-10 h-10",
+  },
+};
+
 export function MarketingNav() {
   const { isSignedIn, isLoaded } = useAuth();
 
@@ -18,18 +34,7 @@ export function MarketingNav() {
         <a href={APP_URL} className="lp-btn lp-btn-primary">
           Go to Dashboard
         </a>
-        <UserButton
-          appearance={{
-            elements: {
-              avatarBox: "w-8 h-8",
-              userButtonPopoverCard: "bg-[#111] border border-[#242424]",
-              userButtonPopoverActionButton: "text-[#f0f0f0] hover:bg-[#1a1a1a]",
-              userButtonPopoverActionButtonText: "text-[#f0f0f0]",
-              userButtonPopoverActionButtonIcon: "text-[#666]",
-              userButtonPopoverFooter: "hidden",
-            },
-          }}
-        />
+        <UserButton appearance={userButtonAppearance} />
       </div>
     );
   }
@@ -108,18 +113,7 @@ export function PricingNav() {
         <a href={APP_URL} className="pr-btn pr-btn-primary">
           Go to Dashboard
         </a>
-        <UserButton
-          appearance={{
-            elements: {
-              avatarBox: "w-8 h-8",
-              userButtonPopoverCard: "bg-[#111] border border-[#242424]",
-              userButtonPopoverActionButton: "text-[#f0f0f0] hover:bg-[#1a1a1a]",
-              userButtonPopoverActionButtonText: "text-[#f0f0f0]",
-              userButtonPopoverActionButtonIcon: "text-[#666]",
-              userButtonPopoverFooter: "hidden",
-            },
-          }}
-        />
+        <UserButton appearance={userButtonAppearance} />
       </div>
     );
   }
