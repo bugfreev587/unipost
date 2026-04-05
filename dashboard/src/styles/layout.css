@@ -1,0 +1,30 @@
+/* ============================================================
+   UniPost Shared Layout System
+   Import this in any new marketing/public page for consistent widths.
+   Usage: add class "unipost-nav-inner" / "unipost-page" / "unipost-footer-inner"
+   ============================================================ */
+
+:root {
+  --nav-max: 1480px;
+  --content-max: 1320px;
+  --text-max: 720px;
+  --px: 32px;
+  --section-py: 112px;
+}
+
+@media (min-width: 1600px) {
+  :root {
+    --nav-max: 1560px;
+    --content-max: 1360px;
+    --px: 40px;
+  }
+}
+
+@media (max-width: 1024px) {
+  :root {
+    --nav-max: 100%;
+    --content-max: 100%;
+    --px: 24px;
+    --section-py: 80px;
+  }
+}
