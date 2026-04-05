@@ -101,10 +101,8 @@ export default function NativeModePage() {
               <div className="settings-section-header">
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{ fontSize: 14, fontWeight: 600, color: "var(--dtext)" }}>{p.name}</span>
-                  {configured ? (
-                    <span className="dbadge dbadge-green" style={{ fontSize: 10 }}>Native</span>
-                  ) : (
-                    <span className="dbadge dbadge-amber" style={{ fontSize: 10 }}>Quickstart</span>
+                  {configured && (
+                    <span className="dbadge dbadge-green" style={{ fontSize: 10 }}>Configured</span>
                   )}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

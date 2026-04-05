@@ -123,7 +123,7 @@ export default function AccountsPage() {
             {!selectedPlatform ? (
               <div style={{ padding: "8px 0" }}>
                 {PLATFORMS.map((p) => {
-                  const connected = accounts.some((a) => a.platform === p.id);
+                  const connectedCount = accounts.filter((a) => a.platform === p.id).length;
                   return (
                     <div
                       key={p.id}
@@ -136,11 +136,14 @@ export default function AccountsPage() {
                         <div className="platform-icon-wrap"><PlatformIcon platform={p.id} /></div>
                         <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dtext)" }}>{p.name}</span>
                       </div>
-                      {connected ? (
-                        <span className="dbadge dbadge-green" style={{ fontSize: 10 }}>Connected</span>
-                      ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {connectedCount > 0 && (
+                          <span style={{ fontSize: 11, color: "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>
+                            {connectedCount} connected
+                          </span>
+                        )}
                         <ExternalLink style={{ width: 12, height: 12, color: "var(--dmuted2)" }} />
-                      )}
+                      </div>
                     </div>
                   );
                 })}
