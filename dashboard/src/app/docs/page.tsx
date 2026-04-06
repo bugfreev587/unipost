@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   ["overview", "Overview"],
   ["authentication", "Authentication"],
   ["quick-start", "Quick Start"],
+  ["mcp", "MCP / AI Agents"],
   ["social-accounts", "Social Accounts"],
   ["social-posts", "Social Posts"],
   ["webhooks", "Webhooks"],
@@ -173,6 +174,104 @@ export default function DocsPage() {
             <Code>{`{\n  "data": {\n    "id": "sa_abc123",\n    "platform": "bluesky",\n    "account_name": "yourname.bsky.social",\n    "status": "active"\n  }\n}`}</Code>
             <p className="doc-p"><strong>3. Create a post</strong></p>
             <Code>{`curl -X POST ${BASE}/v1/social-posts \\\n  -H "Authorization: Bearer up_live_your_key" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "caption": "Hello from UniPost!",\n    "account_ids": ["sa_abc123"]\n  }'`}</Code>
+          </Section>
+
+          <Section id="mcp" title="MCP / AI Agents">
+            <p className="doc-p">
+              UniPost provides a native <a href="https://modelcontextprotocol.io">Model Context Protocol (MCP)</a> server
+              that lets AI agents — like Claude, GPT, or any MCP-compatible client — post to social media, check analytics,
+              and manage your accounts through natural language.
+            </p>
+
+            <div className="doc-grid-2">
+              <div className="doc-grid-card">
+                <div className="doc-grid-card-title">MCP Endpoint</div>
+                <div className="doc-grid-card-val">https://mcp.unipost.dev/mcp</div>
+              </div>
+              <div className="doc-grid-card">
+                <div className="doc-grid-card-title">Transport</div>
+                <div className="doc-grid-card-val">Streamable HTTP</div>
+              </div>
+            </div>
+
+            <p className="doc-p"><strong>Available Tools</strong></p>
+            <table className="doc-table">
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                {[
+                  ["unipost_list_accounts", "List all connected social media accounts"],
+                  ["unipost_create_post", "Create and publish a post to one or more accounts"],
+                  ["unipost_get_post", "Get the status and details of a published post"],
+                  ["unipost_get_analytics", "Get engagement metrics for a published post"],
+                  ["unipost_list_posts", "List recent posts filtered by status"],
+                ].map(([tool, desc]) => (
+                  <tr key={tool}><td><code>{tool}</code></td><td>{desc}</td></tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p className="doc-p"><strong>Claude Desktop</strong></p>
+            <p className="doc-p">
+              Add to your <code>claude_desktop_config.json</code>. Requires the <code>mcp-remote</code> bridge
+              (auto-installed via npx). If <code>npx</code> is not found, replace with the full path
+              (e.g. <code>/opt/homebrew/bin/npx</code>).
+            </p>
+            <Code>{`{
+  "mcpServers": {
+    "unipost": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.unipost.dev/mcp",
+        "--header",
+        "Authorization:Bearer YOUR_API_KEY",
+        "--transport",
+        "http-only"
+      ]
+    }
+  }
+}`}</Code>
+
+            <p className="doc-p"><strong>Claude Code</strong></p>
+            <Code>{`claude mcp add unipost \\
+  -t http \\
+  --header "Authorization:Bearer YOUR_API_KEY" \\
+  -- "https://mcp.unipost.dev/mcp"`}</Code>
+
+            <p className="doc-p"><strong>Cursor / Windsurf</strong></p>
+            <p className="doc-p">Add to your MCP settings JSON:</p>
+            <Code>{`{
+  "mcpServers": {
+    "unipost": {
+      "url": "https://mcp.unipost.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}`}</Code>
+
+            <p className="doc-p"><strong>Test with cURL</strong></p>
+            <Code>{`curl -X POST https://mcp.unipost.dev/mcp \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-03-26",
+      "capabilities": {},
+      "clientInfo": { "name": "test", "version": "0.1.0" }
+    }
+  }'`}</Code>
+
+            <div className="doc-callout doc-callout-info">
+              <strong>Legacy SSE endpoint:</strong> <code>https://mcp.unipost.dev/sse</code> is also available
+              for clients that only support SSE transport. The Streamable HTTP endpoint (<code>/mcp</code>) is recommended.
+            </div>
           </Section>
 
           <Section id="social-accounts" title="Social Accounts">

@@ -18,7 +18,6 @@ import {
   Users,
   Send,
   BarChart3,
-  Bot,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
@@ -40,7 +39,6 @@ const NAV_ITEMS = [
   ]},
   { href: "/posts", label: "Posts", icon: Send },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/ai-agents", label: "AI Agents", icon: Bot },
 ];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
