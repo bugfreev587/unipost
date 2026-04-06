@@ -8,16 +8,20 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "start": "node dist/server.js",
+    "start:stdio": "node dist/index.js",
+    "dev": "npx tsx src/server.ts",
+    "dev:stdio": "npx tsx src/index.ts"
   },
   "keywords": ["mcp", "social-media", "unipost", "claude", "ai-agent"],
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1"
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0"
   }
 }
