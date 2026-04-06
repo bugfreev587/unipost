@@ -75,10 +75,6 @@ export default function SettingsPage() {
             </div>
           </form>
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Mode</span>
-            <span className="dbadge dbadge-green"><span className="dbadge-dot" />{project.mode}</span>
-          </div>
-          <div className="settings-row">
             <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Project ID</span>
             <span className="mono">{project.id}</span>
           </div>
