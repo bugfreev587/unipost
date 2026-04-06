@@ -187,36 +187,32 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
                 return (
                   <div key={item.href}>
-                    <div style={{ display: "flex", alignItems: "center" }}>
+                    {hasSubmenu ? (
+                      <button
+                        onClick={() => setAccountsExpanded(!submenuOpen)}
+                        className="sidebar-nav-item"
+                        style={{ width: "100%", border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", justifyContent: "space-between" }}
+                      >
+                        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <Icon style={{ width: 18, height: 18 }} strokeWidth={1.75} />
+                          {item.label}
+                        </span>
+                        <ChevronDown style={{
+                          width: 14, height: 14, color: "var(--dmuted)",
+                          transition: "transform 0.2s",
+                          transform: submenuOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                        }} />
+                      </button>
+                    ) : (
                       <Link
                         href={`/projects/${projectId}${item.href}`}
-                        data-active={hasSubmenu ? false : active}
+                        data-active={active}
                         className="sidebar-nav-item"
-                        style={{ flex: 1 }}
                       >
                         <Icon style={{ width: 18, height: 18 }} strokeWidth={1.75} />
                         {item.label}
                       </Link>
-                      {hasSubmenu && (
-                        <button
-                          onClick={(e) => { e.preventDefault(); setAccountsExpanded(!submenuOpen); }}
-                          style={{
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            width: 28, height: 28, borderRadius: 6, border: "none",
-                            background: "transparent", color: "var(--dmuted)", cursor: "pointer",
-                            transition: "all 0.15s", flexShrink: 0, marginRight: 4,
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
-                        >
-                          <ChevronDown style={{
-                            width: 14, height: 14,
-                            transition: "transform 0.2s",
-                            transform: submenuOpen ? "rotate(0deg)" : "rotate(-90deg)",
-                          }} />
-                        </button>
-                      )}
-                    </div>
+                    )}
                     {hasSubmenu && submenuOpen && item.submenu && (
                       <div style={{ paddingLeft: 28, marginBottom: 4 }}>
                         {item.submenu.map((sub) => {
