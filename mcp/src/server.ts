@@ -1,10 +1,23 @@
 #!/usr/bin/env node
 
 /**
- * UniPost Remote MCP Server (SSE Transport)
+ * UniPost Remote MCP Server (SSE + Streamable HTTP)
  *
  * Deployment: mcp.unipost.dev
- * Usage in Claude Desktop config:
+ *
+ * Claude Desktop config (Streamable HTTP — recommended):
+ *   {
+ *     "mcpServers": {
+ *       "unipost": {
+ *         "url": "https://mcp.unipost.dev/mcp",
+ *         "headers": {
+ *           "Authorization": "Bearer up_live_xxx"
+ *         }
+ *       }
+ *     }
+ *   }
+ *
+ * Legacy SSE config:
  *   {
  *     "mcpServers": {
  *       "unipost": {
@@ -18,8 +31,10 @@
  */
 
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
@@ -128,12 +143,20 @@ function createMcpServer(apiKey: string): McpServer {
 // via the `endpoint` event. The client then includes it in POST /messages?sessionId=xxx.
 // We track transports by matching the sessionId from the query param.
 const transports = new Set<SSEServerTransport>();
+const streamableSessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
+
+function extractApiKey(req: http.IncomingMessage): string | null {
+  const authHeader = req.headers.authorization || "";
+  const apiKey = authHeader.replace(/^Bearer\s+/i, "").trim();
+  return apiKey || null;
+}
 
 const httpServer = http.createServer(async (req, res) => {
   // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, mcp-session-id");
+  res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -150,6 +173,50 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Streamable HTTP endpoint (recommended for Claude Desktop) ──
+  if (url.pathname === "/mcp") {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Authorization header with Bearer token required" }));
+      return;
+    }
+
+    // Existing session
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    if (sessionId && streamableSessions.has(sessionId)) {
+      const session = streamableSessions.get(sessionId)!;
+      await session.transport.handleRequest(req, res);
+      return;
+    }
+
+    // New session (must be a POST with initialize)
+    if (req.method === "POST") {
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (newSessionId) => {
+          streamableSessions.set(newSessionId, { transport, server });
+        },
+      });
+
+      transport.onclose = () => {
+        if (transport.sessionId) {
+          streamableSessions.delete(transport.sessionId);
+        }
+      };
+
+      const server = createMcpServer(apiKey);
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+      return;
+    }
+
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid or missing session. Send an initialize request first." }));
+    return;
+  }
+
+  // ── Legacy SSE endpoint ──
   // SSE connection endpoint
   if (url.pathname === "/sse" && req.method === "GET") {
     const authHeader = req.headers.authorization || "";
@@ -209,6 +276,7 @@ const httpServer = http.createServer(async (req, res) => {
 
 httpServer.listen(PORT, () => {
   console.log(`UniPost MCP Server (SSE) listening on port ${PORT}`);
-  console.log(`  SSE endpoint: http://localhost:${PORT}/sse`);
-  console.log(`  Health check: http://localhost:${PORT}/health`);
+  console.log(`  Streamable HTTP: http://localhost:${PORT}/mcp`);
+  console.log(`  SSE (legacy):    http://localhost:${PORT}/sse`);
+  console.log(`  Health check:    http://localhost:${PORT}/health`);
 });
