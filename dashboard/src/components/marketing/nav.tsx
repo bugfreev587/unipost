@@ -8,6 +8,9 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const userButtonAppearance = {
   elements: {
     avatarBox: "w-8 h-8",
+    userButtonPopoverCard: {
+      color: "#1f2937",
+    },
   },
 };
 
