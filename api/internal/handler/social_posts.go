@@ -409,17 +409,20 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 			rr.PublishedAt = &t
 		}
 
+		// Resolve platform from social account
+		acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID)
+		if accErr == nil {
+			rr.Platform = acc.Platform
+		}
+
 		// For TikTok, check real-time publish status
-		if res.ExternalID.Valid {
-			acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID)
-			if accErr == nil && acc.Platform == "tiktok" {
-				if adapter, adErr := platform.Get("tiktok"); adErr == nil {
-					if tiktokAdapter, ok := adapter.(*platform.TikTokAdapter); ok {
-						accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
-						if decErr == nil {
-							if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
-								rr.PublishStatus = status
-							}
+		if res.ExternalID.Valid && accErr == nil && acc.Platform == "tiktok" {
+			if adapter, adErr := platform.Get("tiktok"); adErr == nil {
+				if tiktokAdapter, ok := adapter.(*platform.TikTokAdapter); ok {
+					accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
+					if decErr == nil {
+						if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
+							rr.PublishStatus = status
 						}
 					}
 				}
@@ -458,12 +461,19 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	posts, err := h.queries.ListSocialPostsByProject(r.Context(), db.ListSocialPostsByProjectParams{
 		ProjectID: projectID,
-		Limit:     20,
+		Limit:     100,
 		Offset:    0,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list posts")
 		return
+	}
+
+	// Pre-load all social accounts for this project to resolve platform names
+	allAccounts, _ := h.queries.ListSocialAccountsByProject(r.Context(), projectID)
+	accountMap := make(map[string]string, len(allAccounts))
+	for _, acc := range allAccounts {
+		accountMap[acc.ID] = acc.Platform
 	}
 
 	var result []socialPostResponse
@@ -472,11 +482,45 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		if p.Caption.Valid {
 			caption = &p.Caption.String
 		}
+		var scheduledAt *time.Time
+		if p.ScheduledAt.Valid {
+			scheduledAt = &p.ScheduledAt.Time
+		}
+		var publishedAt *time.Time
+		if p.PublishedAt.Valid {
+			publishedAt = &p.PublishedAt.Time
+		}
+
+		// Fetch results for this post
+		postResults, _ := h.queries.ListSocialPostResultsByPost(r.Context(), p.ID)
+		var responseResults []postResultResponse
+		for _, res := range postResults {
+			rr := postResultResponse{
+				SocialAccountID: res.SocialAccountID,
+				Platform:        accountMap[res.SocialAccountID],
+				Status:          res.Status,
+			}
+			if res.ExternalID.Valid {
+				rr.ExternalID = &res.ExternalID.String
+			}
+			if res.ErrorMessage.Valid {
+				rr.ErrorMessage = &res.ErrorMessage.String
+			}
+			if res.PublishedAt.Valid {
+				t := res.PublishedAt.Time.Format(time.RFC3339)
+				rr.PublishedAt = &t
+			}
+			responseResults = append(responseResults, rr)
+		}
+
 		result = append(result, socialPostResponse{
-			ID:        p.ID,
-			Caption:   caption,
-			Status:    p.Status,
-			CreatedAt: p.CreatedAt.Time,
+			ID:          p.ID,
+			Caption:     caption,
+			Status:      p.Status,
+			CreatedAt:   p.CreatedAt.Time,
+			ScheduledAt: scheduledAt,
+			PublishedAt: publishedAt,
+			Results:     responseResults,
 		})
 	}
 	if result == nil {
