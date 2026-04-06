@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { ExternalLink, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import { ExternalLink } from "lucide-react";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -25,6 +26,7 @@ export default function NativeModePage() {
   const [credForms, setCredForms] = useState<Record<string, { clientId: string; clientSecret: string }>>({});
   const [credSaving, setCredSaving] = useState<string | null>(null);
   const [credError, setCredError] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
   const loadCreds = useCallback(async () => {
     try {
@@ -61,13 +63,13 @@ export default function NativeModePage() {
   }
 
   async function handleCredDelete(platform: string) {
-    if (!confirm(`Remove ${platform} credentials?`)) return;
     try {
       const token = await getToken();
       if (!token) return;
       await fetch(`${API_URL}/v1/projects/${projectId}/platform-credentials/${platform}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       loadCreds();
     } catch { /* silent */ }
+    finally { setRemoveTarget(null); }
   }
 
   const configuredPlatforms = new Set(creds.map((c) => c.platform));
@@ -110,7 +112,7 @@ export default function NativeModePage() {
                     Docs <ExternalLink style={{ width: 11, height: 11 }} />
                   </a>
                   {configured && (
-                    <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 11 }} onClick={() => handleCredDelete(p.id)}>Remove</button>
+                    <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 11 }} onClick={() => setRemoveTarget(p.id)}>Remove</button>
                   )}
                 </div>
               </div>
@@ -133,6 +135,16 @@ export default function NativeModePage() {
           );
         })}
       </div>
+
+      <ConfirmModal
+        open={!!removeTarget}
+        title="Remove Credentials"
+        message="Remove these platform credentials? New account connections will use Quickstart mode (UniPost credentials) for this platform."
+        confirmLabel="Remove"
+        variant="danger"
+        onConfirm={() => removeTarget && handleCredDelete(removeTarget)}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </>
   );
 }

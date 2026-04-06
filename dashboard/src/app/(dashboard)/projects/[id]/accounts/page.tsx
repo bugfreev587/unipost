@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { Plus, Unplug, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 const PLATFORMS = [
   { id: "bluesky", name: "Bluesky", type: "credentials" as const },
@@ -31,6 +32,7 @@ export default function AccountsPage() {
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
   const [appPassword, setAppPassword] = useState("");
@@ -83,13 +85,13 @@ export default function AccountsPage() {
   }
 
   async function handleDisconnect(accountId: string) {
-    if (!confirm("Disconnect this account?")) return;
     try {
       const token = await getToken();
       if (!token) return;
       await disconnectSocialAccount(token, projectId, accountId);
       loadAccounts();
     } catch (err) { console.error("Failed to disconnect:", err); }
+    finally { setDisconnectTarget(null); }
   }
 
 
@@ -210,7 +212,7 @@ export default function AccountsPage() {
                     </span>
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 11.5 }} onClick={() => handleDisconnect(a.id)}>
+                    <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 11.5 }} onClick={() => setDisconnectTarget(a.id)}>
                       Disconnect
                     </button>
                   </td>
@@ -220,6 +222,16 @@ export default function AccountsPage() {
           </table>
         </div>
       )}
+
+      <ConfirmModal
+        open={!!disconnectTarget}
+        title="Disconnect Account"
+        message="Are you sure you want to disconnect this social account? You can reconnect it later."
+        confirmLabel="Disconnect"
+        variant="danger"
+        onConfirm={() => disconnectTarget && handleDisconnect(disconnectTarget)}
+        onCancel={() => setDisconnectTarget(null)}
+      />
     </>
   );
 }

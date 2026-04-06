@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { getProject, updateProject, deleteProject, type Project } from "@/lib/api";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function SettingsPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -13,6 +14,7 @@ export default function SettingsPage() {
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -39,14 +41,13 @@ export default function SettingsPage() {
   }
 
   async function handleDelete() {
-    if (!confirm("Delete this project? All data will be permanently removed.")) return;
     setDeleting(true);
     try {
       const token = await getToken();
       if (!token) return;
       await deleteProject(token, projectId);
       router.push("/");
-    } catch (err) { console.error("Failed:", err); } finally { setDeleting(false); }
+    } catch (err) { console.error("Failed:", err); } finally { setDeleting(false); setShowDeleteConfirm(false); }
   }
 
   if (!project) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
@@ -99,12 +100,22 @@ export default function SettingsPage() {
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, color: "var(--dtext)" }}>Delete Project</div>
               <div style={{ fontSize: 13, color: "var(--dmuted)" }}>Permanently delete this project and all associated data.</div>
             </div>
-            <button className="dbtn dbtn-danger" onClick={handleDelete} disabled={deleting}>
+            <button className="dbtn dbtn-danger" onClick={() => setShowDeleteConfirm(true)} disabled={deleting}>
               {deleting ? "Deleting..." : "Delete Project"}
             </button>
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Delete Project"
+        message="Are you sure you want to delete this project? All API keys, connected accounts, and associated data will be permanently removed. This action cannot be undone."
+        confirmLabel="Delete Project"
+        variant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </>
   );
 }

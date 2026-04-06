@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { listApiKeys, createApiKey, revokeApiKey, type ApiKey } from "@/lib/api";
 import { Plus, Key, AlertTriangle } from "lucide-react";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ApiKeysPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -26,6 +27,7 @@ export default function ApiKeysPage() {
   const [creating, setCreating] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
 
   const loadKeys = useCallback(async () => {
     try {
@@ -62,7 +64,6 @@ export default function ApiKeysPage() {
   }
 
   async function handleRevoke(keyId: string) {
-    if (!confirm("Revoke this API key? This cannot be undone.")) return;
     try {
       const token = await getToken();
       if (!token) return;
@@ -70,6 +71,8 @@ export default function ApiKeysPage() {
       loadKeys();
     } catch (err) {
       console.error("Failed to revoke:", err);
+    } finally {
+      setRevokeTarget(null);
     }
   }
 
@@ -210,7 +213,7 @@ export default function ApiKeysPage() {
                     <button
                       className="dbtn dbtn-danger"
                       style={{ padding: "4px 10px", fontSize: 11.5 }}
-                      onClick={() => handleRevoke(key.id)}
+                      onClick={() => setRevokeTarget(key.id)}
                     >
                       Revoke
                     </button>
@@ -221,6 +224,16 @@ export default function ApiKeysPage() {
           </table>
         </div>
       )}
+
+      <ConfirmModal
+        open={!!revokeTarget}
+        title="Revoke API Key"
+        message="Are you sure you want to revoke this API key? This action cannot be undone. Any applications using this key will lose access immediately."
+        confirmLabel="Revoke"
+        variant="danger"
+        onConfirm={() => revokeTarget && handleRevoke(revokeTarget)}
+        onCancel={() => setRevokeTarget(null)}
+      />
     </>
   );
 }
