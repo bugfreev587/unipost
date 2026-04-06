@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
@@ -8,7 +8,7 @@ import {
   type SocialPost, type SocialAccount, type PostAnalytics,
 } from "@/lib/api";
 import { PlatformIcon } from "@/components/platform-icons";
-import { BarChart3, Eye, Heart, MessageCircle, Share2, TrendingUp, RefreshCw } from "lucide-react";
+import { BarChart3, Eye, Heart, MessageCircle, Share2, TrendingUp, RefreshCw, Filter } from "lucide-react";
 
 type PlatformStats = {
   platform: string;
@@ -20,6 +20,39 @@ type PlatformStats = {
   engagementRate: number;
 };
 
+type TimeRange = "24h" | "7d" | "30d" | "this_month" | "last_month" | "custom";
+
+function getTimeRangeStart(range: TimeRange, customFrom: string): Date | null {
+  const now = new Date();
+  switch (range) {
+    case "24h": return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    case "7d": return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    case "30d": return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    case "this_month": return new Date(now.getFullYear(), now.getMonth(), 1);
+    case "last_month": return new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    case "custom": return customFrom ? new Date(customFrom) : null;
+  }
+}
+
+function getTimeRangeEnd(range: TimeRange, customTo: string): Date | null {
+  if (range === "last_month") {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+  }
+  if (range === "custom" && customTo) return new Date(customTo + "T23:59:59");
+  return null;
+}
+
+// Infer content type from platform + results
+function inferPostType(post: SocialPost): "text" | "image" | "video" {
+  const platforms = post.results?.map((r) => r.platform) || [];
+  if (platforms.some((p) => p === "tiktok" || p === "youtube")) return "video";
+  if (platforms.some((p) => p === "instagram")) return "image";
+  return "text";
+}
+
+const PLATFORMS = ["bluesky", "linkedin", "instagram", "threads", "tiktok", "youtube", "twitter"];
+
 export default function AnalyticsPage() {
   const { id: projectId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
@@ -29,6 +62,14 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
+
+  // Filters
+  const [filterPlatform, setFilterPlatform] = useState("all");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterType, setFilterType] = useState("all");
+  const [timeRange, setTimeRange] = useState<TimeRange>("30d");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
 
   const loadData = useCallback(async () => {
     try {
@@ -67,18 +108,58 @@ export default function AnalyticsPage() {
     finally { setLoadingAnalytics(false); }
   }
 
-  // Derived stats
-  const totalPosts = posts.length;
-  const published = posts.filter((p) => p.status === "published").length;
-  const scheduled = posts.filter((p) => p.status === "scheduled").length;
-  const failed = posts.filter((p) => p.status === "failed").length;
-  const partial = posts.filter((p) => p.status === "partial").length;
+  // Apply filters
+  const filteredPosts = useMemo(() => {
+    const rangeStart = getTimeRangeStart(timeRange, customFrom);
+    const rangeEnd = getTimeRangeEnd(timeRange, customTo);
 
-  // Platform post counts from results
+    return posts.filter((p) => {
+      // Status filter
+      if (filterStatus !== "all" && p.status !== filterStatus) return false;
+
+      // Platform filter
+      if (filterPlatform !== "all") {
+        const hasPlatform = p.results?.some((r) => r.platform === filterPlatform);
+        if (!hasPlatform) return false;
+      }
+
+      // Type filter
+      if (filterType !== "all") {
+        const type = inferPostType(p);
+        if (type !== filterType) return false;
+      }
+
+      // Time range filter
+      const postDate = new Date(p.created_at);
+      if (rangeStart && postDate < rangeStart) return false;
+      if (rangeEnd && postDate > rangeEnd) return false;
+
+      return true;
+    });
+  }, [posts, filterPlatform, filterStatus, filterType, timeRange, customFrom, customTo]);
+
+  // Filter analytics to match filtered posts
+  const filteredAnalytics = useMemo(() => {
+    const postIds = new Set(filteredPosts.map((p) => p.id));
+    let analytics = allAnalytics.filter((a) => postIds.has(a.post_id));
+    if (filterPlatform !== "all") {
+      analytics = analytics.filter((a) => a.platform === filterPlatform);
+    }
+    return analytics;
+  }, [allAnalytics, filteredPosts, filterPlatform]);
+
+  // Derived stats from filtered data
+  const totalPosts = filteredPosts.length;
+  const published = filteredPosts.filter((p) => p.status === "published").length;
+  const scheduled = filteredPosts.filter((p) => p.status === "scheduled").length;
+  const failed = filteredPosts.filter((p) => p.status === "failed").length;
+  const partial = filteredPosts.filter((p) => p.status === "partial").length;
+
+  // Platform post counts from filtered results
   const platformPostCounts: Record<string, number> = {};
-  posts.forEach((p) => {
+  filteredPosts.forEach((p) => {
     p.results?.forEach((r) => {
-      if (r.platform) {
+      if (r.platform && (filterPlatform === "all" || r.platform === filterPlatform)) {
         platformPostCounts[r.platform] = (platformPostCounts[r.platform] || 0) + 1;
       }
     });
@@ -88,7 +169,7 @@ export default function AnalyticsPage() {
   const platformStats: PlatformStats[] = [];
   if (analyticsLoaded) {
     const byPlatform: Record<string, { views: number; likes: number; comments: number; shares: number; count: number }> = {};
-    allAnalytics.forEach((a) => {
+    filteredAnalytics.forEach((a) => {
       if (!byPlatform[a.platform]) {
         byPlatform[a.platform] = { views: 0, likes: 0, comments: 0, shares: 0, count: 0 };
       }
@@ -114,26 +195,35 @@ export default function AnalyticsPage() {
     platformStats.sort((a, b) => b.views - a.views);
   }
 
-  // Totals
-  const totalViews = allAnalytics.reduce((s, a) => s + a.views, 0);
-  const totalLikes = allAnalytics.reduce((s, a) => s + a.likes, 0);
-  const totalComments = allAnalytics.reduce((s, a) => s + a.comments, 0);
-  const totalShares = allAnalytics.reduce((s, a) => s + a.shares, 0);
+  // Totals from filtered analytics
+  const totalViews = filteredAnalytics.reduce((s, a) => s + a.views, 0);
+  const totalLikes = filteredAnalytics.reduce((s, a) => s + a.likes, 0);
+  const totalComments = filteredAnalytics.reduce((s, a) => s + a.comments, 0);
+  const totalShares = filteredAnalytics.reduce((s, a) => s + a.shares, 0);
   const totalEngagement = totalViews > 0 ? (totalLikes + totalComments + totalShares) / totalViews : 0;
 
   // Per-post analytics (for the table)
   const postAnalyticsMap: Record<string, PostAnalytics[]> = {};
-  allAnalytics.forEach((a) => {
+  filteredAnalytics.forEach((a) => {
     if (!postAnalyticsMap[a.post_id]) postAnalyticsMap[a.post_id] = [];
     postAnalyticsMap[a.post_id].push(a);
   });
+
+  // Unique platforms in current data for filter dropdown
+  const activePlatforms = useMemo(() => {
+    const set = new Set<string>();
+    posts.forEach((p) => p.results?.forEach((r) => { if (r.platform) set.add(r.platform); }));
+    return PLATFORMS.filter((p) => set.has(p));
+  }, [posts]);
+
+  const hasActiveFilters = filterPlatform !== "all" || filterStatus !== "all" || filterType !== "all" || timeRange !== "30d";
 
   if (loading) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
 
   return (
     <>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Analytics</div>
           <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Post performance and engagement metrics</div>
@@ -158,6 +248,78 @@ export default function AnalyticsPage() {
           >
             <RefreshCw style={{ width: 13, height: 13, animation: loadingAnalytics ? "spin 1s linear infinite" : "none" }} />
             Refresh
+          </button>
+        )}
+      </div>
+
+      {/* Filter Toolbar */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        padding: "10px 14px", marginBottom: 24,
+        background: "var(--surface)", border: "1px solid var(--dborder)", borderRadius: 8,
+      }}>
+        <Filter style={{ width: 13, height: 13, color: "var(--dmuted2)", flexShrink: 0 }} />
+
+        <FilterSelect label="Range" value={timeRange} onChange={(v) => setTimeRange(v as TimeRange)} options={[
+          { value: "24h", label: "Last 24h" },
+          { value: "7d", label: "Last 7 days" },
+          { value: "30d", label: "Last 30 days" },
+          { value: "this_month", label: "This month" },
+          { value: "last_month", label: "Last month" },
+          { value: "custom", label: "Custom" },
+        ]} />
+
+        {timeRange === "custom" && (
+          <>
+            <input
+              type="date"
+              className="dform-input"
+              style={{ width: "auto", fontSize: 12, padding: "5px 8px" }}
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              max={customTo || undefined}
+            />
+            <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>to</span>
+            <input
+              type="date"
+              className="dform-input"
+              style={{ width: "auto", fontSize: 12, padding: "5px 8px" }}
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              min={customFrom || undefined}
+            />
+          </>
+        )}
+
+        <div style={{ width: 1, height: 20, background: "var(--dborder)" }} />
+
+        <FilterSelect label="Platform" value={filterPlatform} onChange={setFilterPlatform} options={[
+          { value: "all", label: "All platforms" },
+          ...activePlatforms.map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) })),
+        ]} />
+
+        <FilterSelect label="Status" value={filterStatus} onChange={setFilterStatus} options={[
+          { value: "all", label: "All statuses" },
+          { value: "published", label: "Published" },
+          { value: "scheduled", label: "Scheduled" },
+          { value: "failed", label: "Failed" },
+          { value: "partial", label: "Partial" },
+        ]} />
+
+        <FilterSelect label="Type" value={filterType} onChange={setFilterType} options={[
+          { value: "all", label: "All types" },
+          { value: "text", label: "Text" },
+          { value: "image", label: "Image" },
+          { value: "video", label: "Video" },
+        ]} />
+
+        {hasActiveFilters && (
+          <button
+            className="dbtn dbtn-ghost"
+            style={{ fontSize: 11, padding: "4px 8px", marginLeft: "auto" }}
+            onClick={() => { setFilterPlatform("all"); setFilterStatus("all"); setFilterType("all"); setTimeRange("30d"); setCustomFrom(""); setCustomTo(""); }}
+          >
+            Clear filters
           </button>
         )}
       </div>
@@ -388,6 +550,34 @@ function KPICard({ label, value, color, icon, format, percent }: {
       }}>
         {display}
       </div>
+    </div>
+  );
+}
+
+function FilterSelect({ label, value, onChange, options }: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      <span style={{ fontSize: 10, fontWeight: 600, color: "var(--dmuted2)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          fontSize: 12, padding: "5px 8px",
+          background: "var(--surface2)", color: "var(--dtext)",
+          border: "1px solid var(--dborder2)", borderRadius: 6,
+          cursor: "pointer", outline: "none",
+          fontFamily: "inherit",
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
     </div>
   );
 }
