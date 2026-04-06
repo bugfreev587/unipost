@@ -17,6 +17,7 @@ import {
   Key,
   Users,
   Send,
+  BarChart3,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
@@ -37,6 +38,7 @@ const NAV_ITEMS = [
     { href: "/accounts/native", label: "Native Mode" },
   ]},
   { href: "/posts", label: "Posts", icon: Send },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
