@@ -296,6 +296,66 @@ func (a *InstagramAdapter) getIGUserID(ctx context.Context, accessToken string) 
 	return result.ID, nil
 }
 
+// GetAnalytics fetches post metrics from Instagram Insights API.
+func (a *InstagramAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
+	metricsURL := fmt.Sprintf(
+		"https://graph.instagram.com/v21.0/%s/insights?metric=impressions,reach,likes,comments,shares,saved&access_token=%s",
+		externalID, accessToken)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &PostMetrics{}, nil
+	}
+
+	var result struct {
+		Data []struct {
+			Name   string `json:"name"`
+			Values []struct {
+				Value int64 `json:"value"`
+			} `json:"values"`
+		} `json:"data"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	m := &PostMetrics{}
+	for _, metric := range result.Data {
+		val := int64(0)
+		if len(metric.Values) > 0 {
+			val = metric.Values[0].Value
+		}
+		switch metric.Name {
+		case "impressions":
+			m.Impressions = val
+			m.Views = val
+		case "reach":
+			m.Reach = val
+		case "likes":
+			m.Likes = val
+		case "comments":
+			m.Comments = val
+		case "shares":
+			m.Shares = val
+		}
+	}
+
+	total := m.Likes + m.Comments + m.Shares
+	if m.Impressions > 0 {
+		m.EngagementRate = float64(total) / float64(m.Impressions)
+	}
+
+	return m, nil
+}
+
 func (a *InstagramAdapter) waitForContainer(ctx context.Context, accessToken string, containerID string) error {
 	for i := 0; i < 30; i++ {
 		select {

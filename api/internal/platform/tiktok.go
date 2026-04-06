@@ -357,6 +357,66 @@ func (a *TikTokAdapter) RefreshToken(ctx context.Context, refreshToken string) (
 		time.Now().Add(time.Duration(tokenResp.Data.ExpiresIn) * time.Second), nil
 }
 
+// GetAnalytics fetches video metrics from TikTok.
+func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
+	// TikTok externalID is a publish_id; query video list to get stats
+	body, _ := json.Marshal(map[string]any{
+		"filters": map[string]any{
+			"video_ids": []string{externalID},
+		},
+	})
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		"https://open.tiktokapis.com/v2/video/query/?fields=id,like_count,comment_count,share_count,view_count",
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &PostMetrics{}, nil
+	}
+
+	var result struct {
+		Data struct {
+			Videos []struct {
+				ViewCount    int64 `json:"view_count"`
+				LikeCount    int64 `json:"like_count"`
+				CommentCount int64 `json:"comment_count"`
+				ShareCount   int64 `json:"share_count"`
+			} `json:"videos"`
+		} `json:"data"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	if len(result.Data.Videos) == 0 {
+		return &PostMetrics{}, nil
+	}
+
+	v := result.Data.Videos[0]
+	total := v.LikeCount + v.CommentCount + v.ShareCount
+	var engRate float64
+	if v.ViewCount > 0 {
+		engRate = float64(total) / float64(v.ViewCount)
+	}
+
+	return &PostMetrics{
+		Views:          v.ViewCount,
+		Likes:          v.LikeCount,
+		Comments:       v.CommentCount,
+		Shares:         v.ShareCount,
+		EngagementRate: engRate,
+	}, nil
+}
+
 type tiktokUserInfo struct {
 	openID      string
 	displayName string

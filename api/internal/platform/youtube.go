@@ -229,6 +229,66 @@ func (a *YouTubeAdapter) RefreshToken(ctx context.Context, refreshToken string) 
 	return tokenResp.AccessToken, refreshToken, time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second), nil
 }
 
+// GetAnalytics fetches video statistics from YouTube Data API.
+func (a *YouTubeAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://www.googleapis.com/youtube/v3/videos?part=statistics&id="+externalID, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &PostMetrics{}, nil
+	}
+
+	var result struct {
+		Items []struct {
+			Statistics struct {
+				ViewCount     string `json:"viewCount"`
+				LikeCount     string `json:"likeCount"`
+				CommentCount  string `json:"commentCount"`
+				FavoriteCount string `json:"favoriteCount"`
+			} `json:"statistics"`
+		} `json:"items"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	if len(result.Items) == 0 {
+		return &PostMetrics{}, nil
+	}
+
+	s := result.Items[0].Statistics
+	views := parseInt64(s.ViewCount)
+	likes := parseInt64(s.LikeCount)
+	comments := parseInt64(s.CommentCount)
+
+	total := likes + comments
+	var engRate float64
+	if views > 0 {
+		engRate = float64(total) / float64(views)
+	}
+
+	return &PostMetrics{
+		Views:          views,
+		Likes:          likes,
+		Comments:       comments,
+		EngagementRate: engRate,
+	}, nil
+}
+
+func parseInt64(s string) int64 {
+	var n int64
+	fmt.Sscanf(s, "%d", &n)
+	return n
+}
+
 type ytChannel struct {
 	id           string
 	title        string

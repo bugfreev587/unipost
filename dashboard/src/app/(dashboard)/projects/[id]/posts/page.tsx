@@ -5,9 +5,10 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Label } from "@/components/ui/label";
 import {
-  listSocialAccounts, listSocialPosts, createSocialPost, type SocialAccount, type SocialPost,
+  listSocialAccounts, listSocialPosts, createSocialPost, getPostAnalytics,
+  type SocialAccount, type SocialPost, type PostAnalytics,
 } from "@/lib/api";
-import { Send, CheckCircle2, XCircle, Clock, AlertCircle } from "lucide-react";
+import { Send, CheckCircle2, XCircle, Clock, AlertCircle, BarChart3, Calendar } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed";
@@ -24,6 +25,11 @@ export default function PostsPage() {
   const [postResult, setPostResult] = useState<SocialPost | null>(null);
   const [filter, setFilter] = useState<FilterTab>("all");
   const [expandedPost, setExpandedPost] = useState<string | null>(null);
+  const [scheduleMode, setScheduleMode] = useState<"now" | "later">("now");
+  const [scheduledDate, setScheduledDate] = useState("");
+  const [scheduledTime, setScheduledTime] = useState("");
+  const [analyticsData, setAnalyticsData] = useState<Record<string, PostAnalytics[]>>({});
+  const [loadingAnalytics, setLoadingAnalytics] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -46,9 +52,29 @@ export default function PostsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await createSocialPost(token, projectId, { caption: caption.trim(), account_ids: selectedAccounts });
-      setPostResult(res.data); setCaption(""); setSelectedAccounts([]); loadData();
+      const payload: { caption: string; account_ids: string[]; scheduled_at?: string } = {
+        caption: caption.trim(), account_ids: selectedAccounts,
+      };
+      if (scheduleMode === "later" && scheduledDate && scheduledTime) {
+        payload.scheduled_at = new Date(`${scheduledDate}T${scheduledTime}:00`).toISOString();
+      }
+      const res = await createSocialPost(token, projectId, payload);
+      setPostResult(res.data); setCaption(""); setSelectedAccounts([]);
+      setScheduleMode("now"); setScheduledDate(""); setScheduledTime("");
+      loadData();
     } catch (err) { console.error("Failed to post:", err); } finally { setPosting(false); }
+  }
+
+  async function fetchAnalytics(postId: string) {
+    if (analyticsData[postId]) return;
+    setLoadingAnalytics(postId);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await getPostAnalytics(token, projectId, postId);
+      setAnalyticsData((prev) => ({ ...prev, [postId]: res.data || [] }));
+    } catch (err) { console.error("Failed to fetch analytics:", err); }
+    finally { setLoadingAnalytics(null); }
   }
 
   const filtered = filter === "all" ? posts : posts.filter((p) => p.status === filter);
@@ -109,10 +135,48 @@ export default function PostsPage() {
               </div>
             </>
           )}
+          {/* Schedule options */}
+          <div style={{ marginBottom: 12 }}>
+            <Label className="dform-label">Publish</Label>
+            <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, color: "var(--dtext)", cursor: "pointer" }}>
+                <input type="radio" name="scheduleMode" checked={scheduleMode === "now"} onChange={() => setScheduleMode("now")} />
+                Immediately
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, color: "var(--dtext)", cursor: "pointer" }}>
+                <input type="radio" name="scheduleMode" checked={scheduleMode === "later"} onChange={() => setScheduleMode("later")} />
+                <Calendar style={{ width: 12, height: 12 }} /> Schedule for later
+              </label>
+            </div>
+            {scheduleMode === "later" && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="date"
+                  className="dform-input"
+                  style={{ width: "auto" }}
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  min={new Date().toISOString().split("T")[0]}
+                />
+                <input
+                  type="time"
+                  className="dform-input"
+                  style={{ width: "auto" }}
+                  value={scheduledTime}
+                  onChange={(e) => setScheduledTime(e.target.value)}
+                />
+                <span style={{ fontSize: 11, color: "var(--dmuted2)", alignSelf: "center" }}>Local time</span>
+              </div>
+            )}
+          </div>
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button className="dbtn dbtn-primary" onClick={handlePost} disabled={posting || !caption.trim() || selectedAccounts.length === 0}>
-              <Send style={{ width: 13, height: 13 }} />
-              {posting ? "Sending..." : "Send Post"}
+            <button
+              className="dbtn dbtn-primary"
+              onClick={handlePost}
+              disabled={posting || !caption.trim() || selectedAccounts.length === 0 || (scheduleMode === "later" && (!scheduledDate || !scheduledTime))}
+            >
+              {scheduleMode === "later" ? <Calendar style={{ width: 13, height: 13 }} /> : <Send style={{ width: 13, height: 13 }} />}
+              {posting ? "Sending..." : scheduleMode === "later" ? "Schedule Post" : "Send Post"}
             </button>
           </div>
         </div>
@@ -163,6 +227,11 @@ export default function PostsPage() {
                         {expandedPost === post.id && (
                           <div style={{ marginTop: 8, padding: 10, background: "var(--bg)", border: "1px solid var(--dborder)", borderRadius: 6, whiteSpace: "pre-wrap", fontSize: 12, color: "var(--dmuted)" }}>
                             {post.caption}
+                            {post.scheduled_at && (
+                              <div style={{ marginTop: 6, fontSize: 11, color: "var(--dmuted2)" }}>
+                                Scheduled: {new Date(post.scheduled_at).toLocaleString()}
+                              </div>
+                            )}
                             {post.results && post.results.length > 0 && (
                               <div style={{ marginTop: 8, borderTop: "1px solid var(--dborder)", paddingTop: 8 }}>
                                 {post.results.map((r, i) => (
@@ -172,6 +241,42 @@ export default function PostsPage() {
                                     {r.error_message && <span style={{ color: "var(--danger)", fontSize: 11 }}>{r.error_message}</span>}
                                   </div>
                                 ))}
+                              </div>
+                            )}
+                            {/* Analytics */}
+                            {post.status === "published" && (
+                              <div style={{ marginTop: 8, borderTop: "1px solid var(--dborder)", paddingTop: 8 }}>
+                                {!analyticsData[post.id] ? (
+                                  <button
+                                    className="dbtn dbtn-ghost"
+                                    style={{ fontSize: 11, padding: "3px 8px", gap: 4 }}
+                                    onClick={(e) => { e.stopPropagation(); fetchAnalytics(post.id); }}
+                                    disabled={loadingAnalytics === post.id}
+                                  >
+                                    <BarChart3 style={{ width: 11, height: 11 }} />
+                                    {loadingAnalytics === post.id ? "Loading..." : "View Analytics"}
+                                  </button>
+                                ) : analyticsData[post.id].length === 0 ? (
+                                  <div style={{ fontSize: 11, color: "var(--dmuted2)" }}>No analytics data available yet.</div>
+                                ) : (
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                    {analyticsData[post.id].map((a, i) => (
+                                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11 }}>
+                                        <PlatformIcon platform={a.platform} size={12} />
+                                        <span style={{ color: "var(--dtext)", fontWeight: 500 }}>{a.platform}</span>
+                                        <span title="Views">{a.views.toLocaleString()} views</span>
+                                        <span title="Likes">{a.likes.toLocaleString()} likes</span>
+                                        <span title="Comments">{a.comments.toLocaleString()} comments</span>
+                                        <span title="Shares">{a.shares.toLocaleString()} shares</span>
+                                        {a.engagement_rate > 0 && (
+                                          <span title="Engagement rate" style={{ color: "var(--daccent)" }}>
+                                            {(a.engagement_rate * 100).toFixed(1)}% eng
+                                          </span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

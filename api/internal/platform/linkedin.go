@@ -241,6 +241,57 @@ func (a *LinkedInAdapter) RefreshToken(ctx context.Context, refreshToken string)
 	return tokenResp.AccessToken, newRefresh, time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second), nil
 }
 
+// GetAnalytics fetches post metrics from LinkedIn.
+func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
+	// Use the socialMetadata endpoint for UGC posts
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://api.linkedin.com/v2/socialMetadata/"+url.PathEscape(externalID), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Restli-Protocol-Version", "2.0.0")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &PostMetrics{}, nil
+	}
+
+	var result struct {
+		TotalShareStatistics struct {
+			ShareCount       int64 `json:"shareCount"`
+			LikeCount        int64 `json:"likeCount"`
+			CommentCount     int64 `json:"commentCount"`
+			ImpressionCount  int64 `json:"impressionCount"`
+			UniqueImpression int64 `json:"uniqueImpressionsCount"`
+			ClickCount       int64 `json:"clickCount"`
+		} `json:"totalShareStatistics"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	s := result.TotalShareStatistics
+	total := s.LikeCount + s.CommentCount + s.ShareCount
+	var engRate float64
+	if s.ImpressionCount > 0 {
+		engRate = float64(total) / float64(s.ImpressionCount)
+	}
+
+	return &PostMetrics{
+		Views:          s.ImpressionCount,
+		Likes:          s.LikeCount,
+		Comments:       s.CommentCount,
+		Shares:         s.ShareCount,
+		Reach:          s.UniqueImpression,
+		Impressions:    s.ImpressionCount,
+		EngagementRate: engRate,
+	}, nil
+}
+
 type linkedInUserInfo struct {
 	sub     string
 	name    string

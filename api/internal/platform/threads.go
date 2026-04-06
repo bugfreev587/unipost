@@ -189,7 +189,67 @@ func (a *ThreadsAdapter) RefreshToken(ctx context.Context, refreshToken string) 
 	return result.AccessToken, result.AccessToken, time.Now().Add(time.Duration(result.ExpiresIn) * time.Second), nil
 }
 
-func (a *ThreadsAdapter) exchangeForLongLivedToken(ctx context.Context, config OAuthConfig, shortToken string) (string, int, error) {
+// GetAnalytics fetches post metrics from Threads Insights API.
+func (a *ThreadsAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
+	insightsURL := fmt.Sprintf(
+		"https://graph.threads.net/v1.0/%s/insights?metric=views,likes,replies,reposts,quotes&access_token=%s",
+		externalID, accessToken)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", insightsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &PostMetrics{}, nil
+	}
+
+	var result struct {
+		Data []struct {
+			Name   string `json:"name"`
+			Values []struct {
+				Value int64 `json:"value"`
+			} `json:"values"`
+		} `json:"data"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	m := &PostMetrics{}
+	for _, metric := range result.Data {
+		val := int64(0)
+		if len(metric.Values) > 0 {
+			val = metric.Values[0].Value
+		}
+		switch metric.Name {
+		case "views":
+			m.Views = val
+			m.Impressions = val
+		case "likes":
+			m.Likes = val
+		case "replies":
+			m.Comments = val
+		case "reposts":
+			m.Shares = val
+		case "quotes":
+			m.Shares += val
+		}
+	}
+
+	total := m.Likes + m.Comments + m.Shares
+	if m.Views > 0 {
+		m.EngagementRate = float64(total) / float64(m.Views)
+	}
+
+	return m, nil
+}
+
+func (a *ThreadsAdapter) exchangeForLongLivedToken(_ context.Context, config OAuthConfig, shortToken string) (string, int, error) {
 	params := url.Values{
 		"grant_type":   {"th_exchange_token"},
 		"client_secret": {config.ClientSecret},

@@ -198,6 +198,56 @@ func (a *TwitterAdapter) RefreshToken(ctx context.Context, refreshToken string) 
 	return tokenResp.AccessToken, newRefresh, time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second), nil
 }
 
+// GetAnalytics fetches tweet metrics from X/Twitter API v2.
+func (a *TwitterAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://api.x.com/2/tweets/"+externalID+"?tweet.fields=public_metrics", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &PostMetrics{}, nil
+	}
+
+	var result struct {
+		Data struct {
+			PublicMetrics struct {
+				ImpressionCount int64 `json:"impression_count"`
+				LikeCount       int64 `json:"like_count"`
+				ReplyCount      int64 `json:"reply_count"`
+				RetweetCount    int64 `json:"retweet_count"`
+				QuoteCount      int64 `json:"quote_count"`
+				BookmarkCount   int64 `json:"bookmark_count"`
+			} `json:"public_metrics"`
+		} `json:"data"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	pm := result.Data.PublicMetrics
+	total := pm.LikeCount + pm.ReplyCount + pm.RetweetCount
+	var engRate float64
+	if pm.ImpressionCount > 0 {
+		engRate = float64(total) / float64(pm.ImpressionCount)
+	}
+
+	return &PostMetrics{
+		Views:          pm.ImpressionCount,
+		Likes:          pm.LikeCount,
+		Comments:       pm.ReplyCount,
+		Shares:         pm.RetweetCount + pm.QuoteCount,
+		Impressions:    pm.ImpressionCount,
+		EngagementRate: engRate,
+	}, nil
+}
+
 type twitterUserInfo struct {
 	id              string
 	username        string

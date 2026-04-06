@@ -215,6 +215,7 @@ export interface SocialPost {
   id: string;
   caption: string | null;
   status: string;
+  scheduled_at?: string;
   created_at: string;
   published_at?: string;
   results?: SocialPostResult[];
@@ -284,10 +285,35 @@ export async function listPlans(): Promise<ApiResponse<Plan[]>> {
 export async function createSocialPost(
   token: string,
   projectId: string,
-  data: { caption: string; account_ids: string[]; media_urls?: string[] }
+  data: { caption: string; account_ids: string[]; media_urls?: string[]; scheduled_at?: string }
 ): Promise<ApiResponse<SocialPost>> {
   return request(`/v1/projects/${projectId}/social-posts`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+// Analytics
+
+export interface PostAnalytics {
+  post_id: string;
+  social_account_id: string;
+  platform: string;
+  external_id: string;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  reach: number;
+  impressions: number;
+  engagement_rate: number;
+  fetched_at: string;
+}
+
+export async function getPostAnalytics(
+  token: string,
+  projectId: string,
+  postId: string
+): Promise<ApiResponse<PostAnalytics[]>> {
+  return request(`/v1/projects/${projectId}/social-posts/${postId}/analytics`, token);
 }
