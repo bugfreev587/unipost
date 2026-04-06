@@ -36,54 +36,54 @@ export default function RootLayout({
       afterSignOutUrl={process.env.NEXT_PUBLIC_LANDING_URL || "https://unipost.dev"}
       appearance={{
         variables: {
-          colorBackground: "#111111",
-          colorInputBackground: "#1a1a1a",
-          colorText: "#ededed",
-          colorTextSecondary: "#888888",
-          colorTextOnPrimaryBackground: "#000000",
+          colorBackground: "#ffffff",
+          colorInputBackground: "#f5f5f5",
+          colorText: "#1a1a1a",
+          colorTextSecondary: "#666666",
+          colorTextOnPrimaryBackground: "#ffffff",
           colorPrimary: "#10b981",
           colorDanger: "#ef4444",
-          colorNeutral: "#ededed",
-          colorInputText: "#ededed",
+          colorNeutral: "#1a1a1a",
+          colorInputText: "#1a1a1a",
           borderRadius: "8px",
         },
         elements: {
-          // Modal / card backgrounds
-          card: "!bg-[#111111] !border !border-[#1e1e1e] !shadow-2xl",
+          // Modal / card — white background, dark text
+          card: "!bg-white !shadow-2xl",
           modalBackdrop: "!bg-black/60 !backdrop-blur-sm",
-          // Nav tabs in profile
-          navbar: "!bg-[#0a0a0a] !border-r !border-[#1e1e1e]",
-          navbarButton: "!text-[#888] hover:!text-[#ededed] hover:!bg-[#1a1a1a]",
-          "navbarButton__active": "!text-[#10b981] !bg-[#10b98115]",
+          // Nav tabs in profile modal
+          navbar: "!bg-[#f8f8f8] !border-r !border-[#e5e5e5]",
+          navbarButton: "!text-[#666] hover:!text-[#1a1a1a] hover:!bg-[#f0f0f0]",
+          "navbarButton__active": "!text-[#10b981] !bg-[#10b98110]",
           // Page content
-          pageScrollBox: "!bg-[#111111]",
-          page: "!bg-[#111111]",
+          pageScrollBox: "!bg-white",
+          page: "!bg-white",
           // Header text
-          headerTitle: "!text-[#ededed]",
-          headerSubtitle: "!text-[#666]",
+          headerTitle: "!text-[#1a1a1a]",
+          headerSubtitle: "!text-[#888]",
           // Profile details
-          profileSectionTitle: "!text-[#ededed]",
-          profileSectionTitleText: "!text-[#ededed]",
-          profileSectionContent: "!text-[#aaa]",
+          profileSectionTitle: "!text-[#1a1a1a]",
+          profileSectionTitleText: "!text-[#1a1a1a]",
+          profileSectionContent: "!text-[#444]",
           profileSectionPrimaryButton: "!text-[#10b981]",
           // Form labels & inputs
-          formFieldLabel: "!text-[#aaa]",
-          formFieldInput: "!bg-[#1a1a1a] !border-[#242424] !text-[#ededed]",
-          formButtonPrimary: "!bg-[#10b981] !text-[#000]",
-          formButtonReset: "!text-[#888] hover:!text-[#ededed]",
+          formFieldLabel: "!text-[#444]",
+          formFieldInput: "!bg-[#f5f5f5] !border-[#e0e0e0] !text-[#1a1a1a]",
+          formButtonPrimary: "!bg-[#10b981] !text-white",
+          formButtonReset: "!text-[#888] hover:!text-[#1a1a1a]",
           // Accordion / sections
-          accordionTriggerButton: "!text-[#ededed]",
-          accordionContent: "!text-[#aaa]",
+          accordionTriggerButton: "!text-[#1a1a1a]",
+          accordionContent: "!text-[#444]",
           // Badges
-          badge: "!text-[#aaa] !bg-[#1a1a1a] !border-[#242424]",
-          badgePrimary: "!text-[#10b981] !bg-[#10b98115]",
+          badge: "!text-[#666] !bg-[#f0f0f0] !border-[#e0e0e0]",
+          badgePrimary: "!text-[#10b981] !bg-[#10b98110]",
           // Table rows
-          tableHead: "!text-[#666]",
+          tableHead: "!text-[#888]",
           // Footer
-          footer: "!bg-[#0a0a0a] !border-t !border-[#1e1e1e]",
-          footerAction: "!text-[#666]",
-          footerActionLink: "!text-[#666]",
-          // User button popover (dropdown)
+          footer: "!bg-[#f8f8f8] !border-t !border-[#e5e5e5]",
+          footerAction: "!text-[#888]",
+          footerActionLink: "!text-[#888]",
+          // User button popover (small dropdown) — keep dark
           userButtonPopoverCard: "!bg-[#141414] !border !border-[#242424] !w-[240px]",
           userButtonPopoverMain: "!w-[240px]",
           userButtonPopoverActions: "!bg-transparent",
