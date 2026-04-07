@@ -65,6 +65,36 @@ WHERE sp.project_id = $1
 GROUP BY day
 ORDER BY day ASC;
 
+-- name: GetDuePostAnalyticsRefresh :many
+-- Returns published results whose cached analytics are stale per the PRD §9.3
+-- tier policy. NULL fetched_at (never fetched) is always due. Older-than-90-day
+-- posts are excluded so the worker doesn't spin forever on a long backfill.
+-- LIMIT bounds the work per tick.
+SELECT
+  spr.id                  AS social_post_result_id,
+  spr.social_account_id,
+  spr.external_id,
+  sa.platform,
+  sa.access_token,
+  sa.refresh_token,
+  sa.token_expires_at
+FROM social_post_results spr
+JOIN social_accounts sa     ON sa.id = spr.social_account_id
+LEFT JOIN post_analytics pa ON pa.social_post_result_id = spr.id
+WHERE spr.status = 'published'
+  AND spr.external_id IS NOT NULL
+  AND spr.published_at IS NOT NULL
+  AND spr.published_at > NOW() - INTERVAL '90 days'
+  AND sa.disconnected_at IS NULL
+  AND (
+    pa.fetched_at IS NULL
+    OR (spr.published_at >  NOW() - INTERVAL '24 hours' AND pa.fetched_at < NOW() - INTERVAL '1 hour')
+    OR (spr.published_at <= NOW() - INTERVAL '24 hours' AND spr.published_at > NOW() - INTERVAL '7 days' AND pa.fetched_at < NOW() - INTERVAL '6 hours')
+    OR (spr.published_at <= NOW() - INTERVAL '7 days'  AND pa.fetched_at < NOW() - INTERVAL '24 hours')
+  )
+ORDER BY pa.fetched_at NULLS FIRST
+LIMIT 200;
+
 -- name: GetAnalyticsByPlatformByProject :many
 -- Per-platform aggregates. Inner-joins social_accounts so that posts with
 -- no results (still publishing or all-failed at validation) are excluded —

@@ -58,12 +58,18 @@ func computeEngagementRate(m *platform.PostMetrics) float64 {
 }
 
 // GetAnalytics handles GET /v1/social-posts/{id}/analytics
+// (and the project-scoped /v1/projects/{projectID}/social-posts/{id}/analytics).
+//
+// Pass ?refresh=1 to bypass the 1-hour cache and force a live fetch from each
+// platform. Without it, cached rows are served whenever fresh — the
+// AnalyticsRefreshWorker keeps them up to date in the background.
 func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
 	projectID := h.getProjectID(r)
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
 	}
+	forceRefresh := r.URL.Query().Get("refresh") == "1"
 
 	post, err := h.queries.GetSocialPostByIDAndProject(r.Context(), db.GetSocialPostByIDAndProjectParams{
 		ID: postID, ProjectID: projectID,
@@ -85,9 +91,9 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Check cache (1 hour)
+		// Check cache (1 hour) unless forceRefresh is set.
 		cached, err := h.queries.GetPostAnalytics(r.Context(), res.ID)
-		if err == nil && cached.FetchedAt.Time.After(time.Now().Add(-1*time.Hour)) {
+		if !forceRefresh && err == nil && cached.FetchedAt.Time.After(time.Now().Add(-1*time.Hour)) {
 			var ps map[string]any
 			if len(cached.PlatformSpecific) > 0 {
 				_ = json.Unmarshal(cached.PlatformSpecific, &ps)

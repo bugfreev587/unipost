@@ -217,6 +217,75 @@ func (q *Queries) GetAnalyticsTrendByProject(ctx context.Context, arg GetAnalyti
 	return items, nil
 }
 
+const getDuePostAnalyticsRefresh = `-- name: GetDuePostAnalyticsRefresh :many
+SELECT
+  spr.id                  AS social_post_result_id,
+  spr.social_account_id,
+  spr.external_id,
+  sa.platform,
+  sa.access_token,
+  sa.refresh_token,
+  sa.token_expires_at
+FROM social_post_results spr
+JOIN social_accounts sa     ON sa.id = spr.social_account_id
+LEFT JOIN post_analytics pa ON pa.social_post_result_id = spr.id
+WHERE spr.status = 'published'
+  AND spr.external_id IS NOT NULL
+  AND spr.published_at IS NOT NULL
+  AND spr.published_at > NOW() - INTERVAL '90 days'
+  AND sa.disconnected_at IS NULL
+  AND (
+    pa.fetched_at IS NULL
+    OR (spr.published_at >  NOW() - INTERVAL '24 hours' AND pa.fetched_at < NOW() - INTERVAL '1 hour')
+    OR (spr.published_at <= NOW() - INTERVAL '24 hours' AND spr.published_at > NOW() - INTERVAL '7 days' AND pa.fetched_at < NOW() - INTERVAL '6 hours')
+    OR (spr.published_at <= NOW() - INTERVAL '7 days'  AND pa.fetched_at < NOW() - INTERVAL '24 hours')
+  )
+ORDER BY pa.fetched_at NULLS FIRST
+LIMIT 200
+`
+
+type GetDuePostAnalyticsRefreshRow struct {
+	SocialPostResultID string             `json:"social_post_result_id"`
+	SocialAccountID    string             `json:"social_account_id"`
+	ExternalID         pgtype.Text        `json:"external_id"`
+	Platform           string             `json:"platform"`
+	AccessToken        string             `json:"access_token"`
+	RefreshToken       pgtype.Text        `json:"refresh_token"`
+	TokenExpiresAt     pgtype.Timestamptz `json:"token_expires_at"`
+}
+
+// Returns published results whose cached analytics are stale per the PRD §9.3
+// tier policy. NULL fetched_at (never fetched) is always due. Older-than-90-day
+// posts are excluded so the worker doesn't spin forever on a long backfill.
+// LIMIT bounds the work per tick.
+func (q *Queries) GetDuePostAnalyticsRefresh(ctx context.Context) ([]GetDuePostAnalyticsRefreshRow, error) {
+	rows, err := q.db.Query(ctx, getDuePostAnalyticsRefresh)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetDuePostAnalyticsRefreshRow{}
+	for rows.Next() {
+		var i GetDuePostAnalyticsRefreshRow
+		if err := rows.Scan(
+			&i.SocialPostResultID,
+			&i.SocialAccountID,
+			&i.ExternalID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPostAnalytics = `-- name: GetPostAnalytics :one
 SELECT id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific FROM post_analytics WHERE social_post_result_id = $1
 `

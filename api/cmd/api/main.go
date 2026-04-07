@@ -134,6 +134,9 @@ func main() {
 	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor)
 	go schedulerWorker.Start(workerCtx)
 
+	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor)
+	go analyticsRefreshWorker.Start(workerCtx)
+
 	r := chi.NewRouter()
 
 	// Global middleware
