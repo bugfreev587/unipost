@@ -61,6 +61,10 @@ type PostAnalytic struct {
 	EngagementRate     pgtype.Numeric     `json:"engagement_rate"`
 	RawData            []byte             `json:"raw_data"`
 	FetchedAt          pgtype.Timestamptz `json:"fetched_at"`
+	Saves              pgtype.Int8        `json:"saves"`
+	Clicks             pgtype.Int8        `json:"clicks"`
+	VideoViews         pgtype.Int8        `json:"video_views"`
+	PlatformSpecific   []byte             `json:"platform_specific"`
 }
 
 type Project struct {

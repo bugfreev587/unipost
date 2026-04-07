@@ -229,8 +229,10 @@ func (a *ThreadsAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 		}
 		switch metric.Name {
 		case "views":
-			m.Views = val
+			// Threads "views" represents post impressions (text + media), not
+			// just video plays. Map to Impressions and keep legacy Views alias.
 			m.Impressions = val
+			m.Views = val
 		case "likes":
 			m.Likes = val
 		case "replies":
@@ -242,11 +244,7 @@ func (a *ThreadsAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 		}
 	}
 
-	total := m.Likes + m.Comments + m.Shares
-	if m.Views > 0 {
-		m.EngagementRate = float64(total) / float64(m.Views)
-	}
-
+	// EngagementRate is computed by the analytics handler.
 	return m, nil
 }
 

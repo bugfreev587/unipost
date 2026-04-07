@@ -12,7 +12,7 @@ import (
 )
 
 const getPostAnalytics = `-- name: GetPostAnalytics :one
-SELECT id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at FROM post_analytics WHERE social_post_result_id = $1
+SELECT id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific FROM post_analytics WHERE social_post_result_id = $1
 `
 
 func (q *Queries) GetPostAnalytics(ctx context.Context, socialPostResultID string) (PostAnalytic, error) {
@@ -30,18 +30,35 @@ func (q *Queries) GetPostAnalytics(ctx context.Context, socialPostResultID strin
 		&i.EngagementRate,
 		&i.RawData,
 		&i.FetchedAt,
+		&i.Saves,
+		&i.Clicks,
+		&i.VideoViews,
+		&i.PlatformSpecific,
 	)
 	return i, err
 }
 
 const upsertPostAnalytics = `-- name: UpsertPostAnalytics :one
-INSERT INTO post_analytics (social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO post_analytics (
+  social_post_result_id, views, likes, comments, shares, reach, impressions,
+  saves, clicks, video_views, platform_specific, engagement_rate, raw_data
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (social_post_result_id) DO UPDATE
-SET views = EXCLUDED.views, likes = EXCLUDED.likes, comments = EXCLUDED.comments,
-    shares = EXCLUDED.shares, reach = EXCLUDED.reach, impressions = EXCLUDED.impressions,
-    engagement_rate = EXCLUDED.engagement_rate, raw_data = EXCLUDED.raw_data, fetched_at = NOW()
-RETURNING id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at
+SET views             = EXCLUDED.views,
+    likes             = EXCLUDED.likes,
+    comments          = EXCLUDED.comments,
+    shares            = EXCLUDED.shares,
+    reach             = EXCLUDED.reach,
+    impressions       = EXCLUDED.impressions,
+    saves             = EXCLUDED.saves,
+    clicks            = EXCLUDED.clicks,
+    video_views       = EXCLUDED.video_views,
+    platform_specific = EXCLUDED.platform_specific,
+    engagement_rate   = EXCLUDED.engagement_rate,
+    raw_data          = EXCLUDED.raw_data,
+    fetched_at        = NOW()
+RETURNING id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific
 `
 
 type UpsertPostAnalyticsParams struct {
@@ -52,6 +69,10 @@ type UpsertPostAnalyticsParams struct {
 	Shares             pgtype.Int8    `json:"shares"`
 	Reach              pgtype.Int8    `json:"reach"`
 	Impressions        pgtype.Int8    `json:"impressions"`
+	Saves              pgtype.Int8    `json:"saves"`
+	Clicks             pgtype.Int8    `json:"clicks"`
+	VideoViews         pgtype.Int8    `json:"video_views"`
+	PlatformSpecific   []byte         `json:"platform_specific"`
 	EngagementRate     pgtype.Numeric `json:"engagement_rate"`
 	RawData            []byte         `json:"raw_data"`
 }
@@ -65,6 +86,10 @@ func (q *Queries) UpsertPostAnalytics(ctx context.Context, arg UpsertPostAnalyti
 		arg.Shares,
 		arg.Reach,
 		arg.Impressions,
+		arg.Saves,
+		arg.Clicks,
+		arg.VideoViews,
+		arg.PlatformSpecific,
 		arg.EngagementRate,
 		arg.RawData,
 	)
@@ -81,6 +106,10 @@ func (q *Queries) UpsertPostAnalytics(ctx context.Context, arg UpsertPostAnalyti
 		&i.EngagementRate,
 		&i.RawData,
 		&i.FetchedAt,
+		&i.Saves,
+		&i.Clicks,
+		&i.VideoViews,
+		&i.PlatformSpecific,
 	)
 	return i, err
 }

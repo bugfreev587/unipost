@@ -23,14 +23,26 @@ type PostResult struct {
 }
 
 // PostMetrics holds unified analytics metrics across all platforms.
+//
+// Adapters return raw counts; the handler computes EngagementRate per the
+// PRD §9.1 formula: (likes + comments + shares + saves + clicks) / impressions.
+// Adapters MUST leave EngagementRate at 0 — it will be overwritten downstream.
+//
+// Views is a legacy alias for VideoViews and is being phased out; new code
+// should populate VideoViews. Both are emitted in JSON during the transition
+// so existing dashboard code that reads `views` keeps working.
 type PostMetrics struct {
-	Views          int64   `json:"views"`
-	Likes          int64   `json:"likes"`
-	Comments       int64   `json:"comments"`
-	Shares         int64   `json:"shares"`
-	Reach          int64   `json:"reach"`
-	Impressions    int64   `json:"impressions"`
-	EngagementRate float64 `json:"engagement_rate"`
+	Impressions      int64          `json:"impressions"`
+	Reach            int64          `json:"reach"`
+	Likes            int64          `json:"likes"`
+	Comments         int64          `json:"comments"`
+	Shares           int64          `json:"shares"`
+	Saves            int64          `json:"saves"`
+	Clicks           int64          `json:"clicks"`
+	VideoViews       int64          `json:"video_views"`
+	Views            int64          `json:"views"` // legacy alias for VideoViews; remove once dashboard migrated
+	EngagementRate   float64        `json:"engagement_rate"`
+	PlatformSpecific map[string]any `json:"platform_specific,omitempty"`
 }
 
 // AnalyticsAdapter is optionally implemented by platforms that support analytics.

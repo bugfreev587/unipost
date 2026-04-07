@@ -276,20 +276,15 @@ func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, 
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	s := result.TotalShareStatistics
-	total := s.LikeCount + s.CommentCount + s.ShareCount
-	var engRate float64
-	if s.ImpressionCount > 0 {
-		engRate = float64(total) / float64(s.ImpressionCount)
-	}
-
+	// EngagementRate is computed by the analytics handler.
 	return &PostMetrics{
-		Views:          s.ImpressionCount,
-		Likes:          s.LikeCount,
-		Comments:       s.CommentCount,
-		Shares:         s.ShareCount,
-		Reach:          s.UniqueImpression,
-		Impressions:    s.ImpressionCount,
-		EngagementRate: engRate,
+		Impressions: s.ImpressionCount,
+		Reach:       s.UniqueImpression,
+		Likes:       s.LikeCount,
+		Comments:    s.CommentCount,
+		Shares:      s.ShareCount,
+		Clicks:      s.ClickCount,
+		Views:       s.ImpressionCount, // legacy alias
 	}, nil
 }
 

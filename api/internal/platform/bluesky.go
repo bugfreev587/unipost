@@ -327,17 +327,15 @@ func (b *BlueskyAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	p := result.Thread.Post
-	total := p.LikeCount + p.ReplyCount + p.RepostCount
-	var engRate float64
-	if total > 0 {
-		engRate = float64(total) / 100 // Simplified — Bluesky doesn't provide impressions
-	}
-
+	// Bluesky doesn't expose impressions. EngagementRate is computed by the
+	// analytics handler (will be 0 with no impressions denominator).
 	return &PostMetrics{
-		Likes:          p.LikeCount,
-		Comments:       p.ReplyCount,
-		Shares:         p.RepostCount + p.QuoteCount,
-		EngagementRate: engRate,
+		Likes:    p.LikeCount,
+		Comments: p.ReplyCount,
+		Shares:   p.RepostCount + p.QuoteCount,
+		PlatformSpecific: map[string]any{
+			"quote_count": p.QuoteCount,
+		},
 	}, nil
 }
 

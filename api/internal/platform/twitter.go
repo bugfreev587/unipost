@@ -233,19 +233,14 @@ func (a *TwitterAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	pm := result.Data.PublicMetrics
-	total := pm.LikeCount + pm.ReplyCount + pm.RetweetCount
-	var engRate float64
-	if pm.ImpressionCount > 0 {
-		engRate = float64(total) / float64(pm.ImpressionCount)
-	}
-
+	// EngagementRate is computed by the analytics handler.
 	return &PostMetrics{
-		Views:          pm.ImpressionCount,
-		Likes:          pm.LikeCount,
-		Comments:       pm.ReplyCount,
-		Shares:         pm.RetweetCount + pm.QuoteCount,
-		Impressions:    pm.ImpressionCount,
-		EngagementRate: engRate,
+		Impressions: pm.ImpressionCount,
+		Views:       pm.ImpressionCount, // legacy alias
+		Likes:       pm.LikeCount,
+		Comments:    pm.ReplyCount,
+		Shares:      pm.RetweetCount + pm.QuoteCount,
+		Saves:       pm.BookmarkCount,
 	}, nil
 }
 

@@ -337,7 +337,7 @@ func (a *InstagramAdapter) GetAnalytics(ctx context.Context, accessToken string,
 		switch metric.Name {
 		case "impressions":
 			m.Impressions = val
-			m.Views = val
+			m.Views = val // legacy alias
 		case "reach":
 			m.Reach = val
 		case "likes":
@@ -346,14 +346,13 @@ func (a *InstagramAdapter) GetAnalytics(ctx context.Context, accessToken string,
 			m.Comments = val
 		case "shares":
 			m.Shares = val
+		case "saved":
+			m.Saves = val
 		}
 	}
 
-	total := m.Likes + m.Comments + m.Shares
-	if m.Impressions > 0 {
-		m.EngagementRate = float64(total) / float64(m.Impressions)
-	}
-
+	// EngagementRate is computed by the analytics handler from the unified
+	// formula in PRD §9.1; do not set it here.
 	return m, nil
 }
 

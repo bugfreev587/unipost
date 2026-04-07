@@ -424,18 +424,14 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 	}
 
 	v := result.Data.Videos[0]
-	total := v.LikeCount + v.CommentCount + v.ShareCount
-	var engRate float64
-	if v.ViewCount > 0 {
-		engRate = float64(total) / float64(v.ViewCount)
-	}
-
+	// TikTok exposes view_count (= video plays) but not display impressions in
+	// the basic video query. EngagementRate is computed by the analytics handler.
 	return &PostMetrics{
-		Views:          v.ViewCount,
-		Likes:          v.LikeCount,
-		Comments:       v.CommentCount,
-		Shares:         v.ShareCount,
-		EngagementRate: engRate,
+		VideoViews: v.ViewCount,
+		Views:      v.ViewCount, // legacy alias
+		Likes:      v.LikeCount,
+		Comments:   v.CommentCount,
+		Shares:     v.ShareCount,
 	}, nil
 }
 

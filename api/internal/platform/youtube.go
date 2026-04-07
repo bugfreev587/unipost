@@ -281,20 +281,13 @@ func (a *YouTubeAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 
 	s := result.Items[0].Statistics
 	views := parseInt64(s.ViewCount)
-	likes := parseInt64(s.LikeCount)
-	comments := parseInt64(s.CommentCount)
-
-	total := likes + comments
-	var engRate float64
-	if views > 0 {
-		engRate = float64(total) / float64(views)
-	}
-
+	// YouTube Data API doesn't expose impressions; EngagementRate is computed
+	// by the analytics handler.
 	return &PostMetrics{
-		Views:          views,
-		Likes:          likes,
-		Comments:       comments,
-		EngagementRate: engRate,
+		VideoViews: views,
+		Views:      views, // legacy alias
+		Likes:      parseInt64(s.LikeCount),
+		Comments:   parseInt64(s.CommentCount),
 	}, nil
 }
 
