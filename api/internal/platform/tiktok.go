@@ -12,14 +12,25 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/mediaproxy"
 )
 
 type TikTokAdapter struct {
-	client *http.Client
+	client     *http.Client
+	mediaProxy *mediaproxy.Client // optional; required only for photo posts
 }
 
 func NewTikTokAdapter() *TikTokAdapter {
 	return &TikTokAdapter{client: &http.Client{Timeout: 120 * time.Second}}
+}
+
+// SetMediaProxy attaches an R2-backed media proxy. Photo posts require it
+// because TikTok's photo Direct Post only accepts PULL_FROM_URL from
+// developer-verified domains — see internal/mediaproxy for the rationale.
+// Safe to call with nil to "unset", though that means photo posts will fail.
+func (a *TikTokAdapter) SetMediaProxy(c *mediaproxy.Client) {
+	a.mediaProxy = c
 }
 
 func (a *TikTokAdapter) Platform() string { return "tiktok" }
@@ -207,14 +218,16 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 		privacyLevel = "SELF_ONLY"
 	}
 
-	// Default to PULL_FROM_URL: TikTok fetches the video from the caller's
-	// CDN, saving us a download/re-upload round trip and the bandwidth cost.
-	// Caller can force the legacy proxy path by setting platform_options
-	// {"upload_mode": "file_upload"}, which is useful when the source URL is
-	// not on a verified domain or is unreachable from TikTok's network.
+	// Default to FILE_UPLOAD: TikTok hands back an upload URL and we PUT the
+	// video bytes to it directly. Unlike PULL_FROM_URL this works for any
+	// source domain — TikTok doesn't require URL prefix verification when
+	// the developer is the one uploading. The cost is bandwidth: every
+	// video transits this server. Callers who have registered their CDN
+	// with their TikTok dev portal can opt in to the faster path with
+	// platform_options.tiktok.upload_mode = "pull_from_url".
 	uploadMode := strings.ToLower(optString(opts, "upload_mode"))
 	if uploadMode == "" {
-		uploadMode = "pull_from_url"
+		uploadMode = "file_upload"
 	}
 
 	var (
@@ -298,7 +311,24 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 		privacyLevel = "SELF_ONLY"
 	}
 
-	urls := URLs(images)
+	// TikTok photo Direct Post only accepts PULL_FROM_URL, and the source
+	// domain must be verified in the developer portal. Since we can't ask
+	// every UniPost customer to register their CDN with us, we stage each
+	// image on our own R2 bucket (whose URL prefix is registered once)
+	// and hand TikTok the proxied URLs. See internal/mediaproxy.
+	if a.mediaProxy == nil {
+		return nil, fmt.Errorf("tiktok photo posts require the mediaproxy R2 client to be configured (set R2_* env vars)")
+	}
+
+	urls := make([]string, 0, len(images))
+	for _, item := range images {
+		proxied, err := a.mediaProxy.Upload(ctx, item.URL)
+		if err != nil {
+			return nil, fmt.Errorf("tiktok photo: stage to R2: %w", err)
+		}
+		urls = append(urls, proxied)
+	}
+
 	cover := 0
 	if v, ok := opts["photo_cover_index"].(float64); ok {
 		cover = int(v)

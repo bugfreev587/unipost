@@ -24,6 +24,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
+	"github.com/xiaoboyu/unipost-api/internal/mediaproxy"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -84,17 +85,43 @@ func main() {
 
 	platform.Register(platform.NewTwitterAdapter()) // Native mode only — requires user's own API credentials
 
+	ctx := context.Background()
+
+	// Optional R2-backed media proxy. Required for TikTok photo posts
+	// (TikTok's photo Direct Post only accepts PULL_FROM_URL from
+	// developer-verified domains, so we stage user-supplied images on a
+	// single bucket whose URL prefix is registered in our TikTok dev
+	// portal). Other adapters can use it later if needed.
+	var mediaProxyClient *mediaproxy.Client
+	if os.Getenv("R2_ACCOUNT_ID") != "" {
+		mp, mpErr := mediaproxy.New(ctx, mediaproxy.Config{
+			AccountID:       os.Getenv("R2_ACCOUNT_ID"),
+			AccessKeyID:     os.Getenv("R2_ACCESS_KEY_ID"),
+			SecretAccessKey: os.Getenv("R2_SECRET_ACCESS_KEY"),
+			Bucket:          os.Getenv("R2_BUCKET_NAME"),
+			PublicDomain:    os.Getenv("R2_PUBLIC_DOMAIN"),
+		})
+		if mpErr != nil {
+			slog.Error("media proxy init failed; tiktok photo posts will be disabled", "error", mpErr)
+		} else {
+			mediaProxyClient = mp
+			slog.Info("media proxy initialized", "bucket", os.Getenv("R2_BUCKET_NAME"))
+		}
+	} else {
+		slog.Info("R2_ACCOUNT_ID not set; tiktok photo posts will be disabled")
+	}
+
 	// Conditionally register adapters that need credentials
 	if os.Getenv("TIKTOK_CLIENT_KEY") != "" {
-		platform.Register(platform.NewTikTokAdapter())
-		slog.Info("tiktok adapter registered")
+		tiktokAdapter := platform.NewTikTokAdapter()
+		tiktokAdapter.SetMediaProxy(mediaProxyClient)
+		platform.Register(tiktokAdapter)
+		slog.Info("tiktok adapter registered", "media_proxy", mediaProxyClient != nil)
 	}
 	if os.Getenv("YOUTUBE_CLIENT_ID") != "" {
 		platform.Register(platform.NewYouTubeAdapter())
 		slog.Info("youtube adapter registered")
 	}
-
-	ctx := context.Background()
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
