@@ -8,6 +8,23 @@ export default function TermsPage() {
   return (
     <div className="min-h-screen bg-white">
       <div className="max-w-3xl mx-auto px-6 py-16">
+        {/*
+          UniPost app icon. TikTok's developer review compares the icon
+          shown on the linked Privacy / Terms pages against the one
+          uploaded to the dev portal — if they don't match, production
+          access is rejected. The file under /public/unipost-logo.png is
+          byte-identical to the asset uploaded to TikTok.
+        */}
+        <a href="/" aria-label="UniPost home" className="inline-block mb-8">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/unipost-logo.png"
+            alt="UniPost"
+            width={96}
+            height={96}
+            className="block rounded-2xl"
+          />
+        </a>
         <h1 className="text-3xl font-bold text-zinc-900 mb-2">
           Terms of Service
         </h1>
