@@ -30,7 +30,10 @@ func (a *TikTokAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 		AuthURL:      "https://www.tiktok.com/v2/auth/authorize/",
 		TokenURL:     "https://open.tiktokapis.com/v2/oauth/token/",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/tiktok",
-		Scopes:       []string{"video.publish", "video.upload", "user.info.basic"},
+		// video.list is required by /v2/video/query/, which powers analytics.
+		// Existing connected accounts predate this scope and must reconnect
+		// for analytics to work — old access tokens don't carry it.
+		Scopes:       []string{"video.publish", "video.upload", "video.list", "user.info.basic"},
 	}
 }
 
@@ -40,7 +43,7 @@ func (a *TikTokAdapter) GetAuthURL(config OAuthConfig, state string) string {
 		"client_key":    {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
 		"response_type": {"code"},
-		"scope":         {"video.publish,video.upload,user.info.basic"},
+		"scope":         {"video.publish,video.upload,video.list,user.info.basic"},
 		"state":         {state},
 	}
 	return config.AuthURL + "?" + params.Encode()
@@ -380,11 +383,48 @@ func (a *TikTokAdapter) RefreshToken(ctx context.Context, refreshToken string) (
 }
 
 // GetAnalytics fetches video metrics from TikTok.
+//
+// Two-step flow because the externalID we store is a publish_id (the token
+// returned by /v2/post/publish/video/init/), NOT a real TikTok video ID.
+// The /v2/video/query/ endpoint expects the 19-digit public video ID.
+//
+//  1. Call /v2/post/publish/status/fetch/ with the publish_id to resolve it
+//     to a public post ID. The field is misspelled in TikTok's API as
+//     "publicaly_available_post_id" (their typo, not ours).
+//  2. Call /v2/video/query/ with the resolved video_id to get stats.
+//
+// Requires the video.list OAuth scope on the connected account. Accounts
+// connected before video.list was added to the scope list will get 401 here
+// and must reconnect — there's no way to upgrade an existing token in place.
 func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
-	// TikTok externalID is a publish_id; query video list to get stats
+	// Step 1: resolve publish_id → video_id via the publish status endpoint.
+	statusResp, err := a.CheckPublishStatus(ctx, accessToken, externalID)
+	if err != nil {
+		return nil, fmt.Errorf("tiktok analytics: status fetch failed: %w", err)
+	}
+	data, _ := statusResp["data"].(map[string]any)
+	if data == nil {
+		return nil, fmt.Errorf("tiktok analytics: publish status returned no data")
+	}
+	publishStatus, _ := data["status"].(string)
+	if publishStatus != "PUBLISH_COMPLETE" {
+		// Post isn't fully published yet (still uploading, processing, or
+		// failed). Nothing to fetch. Return zero metrics with no error so the
+		// handler caches this and tries again on the next refresh.
+		slog.Info("tiktok analytics: post not yet published",
+			"publish_id", externalID, "status", publishStatus)
+		return &PostMetrics{}, nil
+	}
+
+	videoID := tiktokExtractPublicPostID(data)
+	if videoID == "" {
+		return nil, fmt.Errorf("tiktok analytics: no public post ID in publish status response")
+	}
+
+	// Step 2: query the video for stats.
 	body, _ := json.Marshal(map[string]any{
 		"filters": map[string]any{
-			"video_ids": []string{externalID},
+			"video_ids": []string{videoID},
 		},
 	})
 
@@ -399,12 +439,23 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tiktok analytics: video query request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return &PostMetrics{}, nil
+		slog.Warn("tiktok analytics: video query non-200",
+			"status", resp.StatusCode,
+			"video_id", videoID,
+			"body", string(respBody))
+		// 401 here almost always means the account was connected before the
+		// video.list scope was added — surface a clearer error so the user
+		// knows to reconnect.
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("tiktok analytics: missing video.list scope (reconnect the account)")
+		}
+		return nil, fmt.Errorf("tiktok analytics: video query returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
@@ -417,9 +468,15 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 			} `json:"videos"`
 		} `json:"data"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("tiktok analytics: decode failed: %w", err)
+	}
 
 	if len(result.Data.Videos) == 0 {
+		// Video query succeeded but returned no rows — usually means the video
+		// is private or was deleted. Cache zeros to avoid retry storms.
+		slog.Warn("tiktok analytics: video not found in query response",
+			"video_id", videoID)
 		return &PostMetrics{}, nil
 	}
 
@@ -432,7 +489,36 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 		Likes:      v.LikeCount,
 		Comments:   v.CommentCount,
 		Shares:     v.ShareCount,
+		PlatformSpecific: map[string]any{
+			"tiktok_video_id": videoID,
+		},
 	}, nil
+}
+
+// tiktokExtractPublicPostID pulls the public post ID out of a publish status
+// response. TikTok's field name is "publicaly_available_post_id" (their typo);
+// we also check spellings they might fix it to. Values can come back as
+// numbers or strings depending on API version.
+func tiktokExtractPublicPostID(data map[string]any) string {
+	for _, key := range []string{
+		"publicaly_available_post_id",  // TikTok's current (typo'd) spelling
+		"publically_available_post_id", // possible future fix
+		"publicly_available_post_id",   // another possible future fix
+	} {
+		arr, ok := data[key].([]any)
+		if !ok || len(arr) == 0 {
+			continue
+		}
+		switch v := arr[0].(type) {
+		case string:
+			if v != "" {
+				return v
+			}
+		case float64:
+			return fmt.Sprintf("%.0f", v)
+		}
+	}
+	return ""
 }
 
 type tiktokUserInfo struct {
