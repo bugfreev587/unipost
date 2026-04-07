@@ -326,6 +326,9 @@ func main() {
 // internal/billing.Manager (which holds separate live + sandbox maps in
 // memory). The DB sync stays for now in case other tooling reads the column
 // for inspection; it does NOT touch the sandbox env vars by design.
+//
+// Env var naming mirrors internal/billing.Manager: STRIPE_PRICE_ID_<amount>
+// where the amount is the monthly dollar price.
 func syncStripePriceIDs(ctx context.Context, queries *db.Queries) {
 	planEnvMap := map[string]string{
 		"p10":   "STRIPE_PRICE_ID_10",

@@ -32,19 +32,19 @@ import (
 )
 
 // Mode is one Stripe environment (live or sandbox/test) — its own API
-// client, its own webhook signing secret, and its own price-ID and
-// product-ID maps for the per-plan checkout flow.
+// client, its own webhook signing secret, and its own price-ID map for
+// the per-plan checkout flow.
 //
-// Stripe checkout itself only needs the price ID; product IDs are kept
-// alongside so future flows that need a product reference (e.g. customer
-// portal upgrade/downgrade configuration, listing plans via the Stripe
-// API) can resolve them without hard-coding values in the codebase.
+// We deliberately don't store product IDs here. Stripe checkout only
+// needs the price ID, and the product is resolved server-side from the
+// price → product link. If a future flow ever needs an explicit product
+// reference, fetch it lazily from the Stripe API rather than carrying
+// dead env vars.
 type Mode struct {
 	Name          string // "live" or "sandbox" — used in logs only
 	Client        *client.API
 	WebhookSecret string
 	priceIDs      map[string]string // plan ID → Stripe price ID
-	productIDs    map[string]string // plan ID → Stripe product ID
 }
 
 // PriceID returns the Stripe price ID for the given plan in this mode.
@@ -57,16 +57,6 @@ func (m *Mode) PriceID(planID string) string {
 	return m.priceIDs[planID]
 }
 
-// ProductID returns the Stripe product ID for the given plan in this
-// mode. Currently informational — checkout doesn't need it — but
-// available for portal config and similar lookups.
-func (m *Mode) ProductID(planID string) string {
-	if m == nil || m.productIDs == nil {
-		return ""
-	}
-	return m.productIDs[planID]
-}
-
 // Manager owns one Live mode and an optional Sandbox mode plus the
 // SUPER_ADMINS allowlist that decides which one a given user gets.
 type Manager struct {
@@ -75,10 +65,15 @@ type Manager struct {
 	superAdmins map[string]bool
 }
 
-// planEnvSuffixes maps internal plan IDs to the env-var suffix used when
-// looking up the Stripe price ID for that plan. Mirrors syncStripePriceIDs
-// in cmd/api/main.go — keep in sync if you add a plan tier.
-var planEnvSuffixes = map[string]string{
+// planEnvNames maps internal plan IDs to the dollar-amount token used in
+// env-var names. The full var name format is:
+//
+//	STRIPE_PRICE_ID_<token>          (live)
+//	STRIPE_SANDBOX_PRICE_ID_<token>  (sandbox)
+//
+// Mirrors syncStripePriceIDs in cmd/api/main.go — keep in sync if you
+// add a plan tier.
+var planEnvNames = map[string]string{
 	"p10":   "10",
 	"p25":   "25",
 	"p50":   "50",
@@ -99,7 +94,7 @@ func NewManager() (*Manager, error) {
 		return nil, fmt.Errorf("billing: STRIPE_SECRET_KEY is required")
 	}
 
-	live := newMode("live", liveKey, os.Getenv("STRIPE_WEBHOOK_SECRET"), readPriceIDs(""), readProductIDs(""))
+	live := newMode("live", liveKey, os.Getenv("STRIPE_WEBHOOK_SECRET"), readPriceIDs(""))
 
 	// Set the global stripe.Key as a fallback so any code path that still
 	// calls package-level stripe-go functions (e.g. legacy customer
@@ -113,13 +108,13 @@ func NewManager() (*Manager, error) {
 	}
 
 	if sandboxKey := os.Getenv("STRIPE_SANDBOX_SECRET_KEY"); sandboxKey != "" {
-		mgr.Sandbox = newMode("sandbox", sandboxKey, os.Getenv("STRIPE_SANDBOX_WEBHOOK_SECRET"), readPriceIDs("SANDBOX_"), readProductIDs("SANDBOX_"))
+		mgr.Sandbox = newMode("sandbox", sandboxKey, os.Getenv("STRIPE_SANDBOX_WEBHOOK_SECRET"), readPriceIDs("SANDBOX_"))
 	}
 
 	return mgr, nil
 }
 
-func newMode(name, key, webhookSecret string, priceIDs, productIDs map[string]string) *Mode {
+func newMode(name, key, webhookSecret string, priceIDs map[string]string) *Mode {
 	c := &client.API{}
 	c.Init(key, nil)
 	return &Mode{
@@ -127,31 +122,17 @@ func newMode(name, key, webhookSecret string, priceIDs, productIDs map[string]st
 		Client:        c,
 		WebhookSecret: webhookSecret,
 		priceIDs:      priceIDs,
-		productIDs:    productIDs,
 	}
 }
 
-// readPriceIDs scans STRIPE_PRICE_ID_* (live) or STRIPE_SANDBOX_PRICE_ID_*
-// env vars and returns a plan_id → price_id map. Missing entries are
-// simply absent from the map; the caller decides what to do.
+// readPriceIDs walks planEnvNames and reads STRIPE_<prefix>PRICE_ID_<token>
+// for each plan. The returned map only contains keys whose env var is
+// non-empty. prefix is "" for live, "SANDBOX_" for sandbox.
 func readPriceIDs(prefix string) map[string]string {
-	return readEnvIDMap("STRIPE_" + prefix + "PRICE_ID_")
-}
-
-// readProductIDs is the same shape but for STRIPE_PRODUCT_ID_* /
-// STRIPE_SANDBOX_PRODUCT_ID_* env vars. Kept symmetric so adding a new
-// plan tier means adding two env-var sets to Railway and one entry to
-// planEnvSuffixes.
-func readProductIDs(prefix string) map[string]string {
-	return readEnvIDMap("STRIPE_" + prefix + "PRODUCT_ID_")
-}
-
-// readEnvIDMap walks planEnvSuffixes and reads {envPrefix}{suffix} for
-// each. The returned map only contains keys whose env var is non-empty.
-func readEnvIDMap(envPrefix string) map[string]string {
-	out := make(map[string]string, len(planEnvSuffixes))
-	for planID, suffix := range planEnvSuffixes {
-		if v := os.Getenv(envPrefix + suffix); v != "" {
+	out := make(map[string]string, len(planEnvNames))
+	for planID, token := range planEnvNames {
+		envVar := "STRIPE_" + prefix + "PRICE_ID_" + token
+		if v := os.Getenv(envVar); v != "" {
 			out[planID] = v
 		}
 	}
