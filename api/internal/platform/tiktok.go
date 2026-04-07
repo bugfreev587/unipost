@@ -307,11 +307,21 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 		cover = 0
 	}
 
+	// TikTok's photo Direct Post requires every "toggle" field to be present
+	// in the request body — omitting any of disable_comment, auto_add_music,
+	// brand_content_toggle, or brand_organic_toggle returns a misleading
+	// 400 "Invalid authorization header" error rather than a sensible
+	// validation message. Defaults match the most permissive choice:
+	// comments enabled, music enabled, no brand disclosures.
 	body, _ := json.Marshal(map[string]any{
 		"post_info": map[string]any{
-			"title":         text,
-			"description":   text,
-			"privacy_level": privacyLevel,
+			"title":                 text,
+			"description":           text,
+			"privacy_level":         privacyLevel,
+			"disable_comment":       optBool(opts, "disable_comment"),
+			"auto_add_music":        true,
+			"brand_content_toggle":  optBool(opts, "brand_content_toggle"),
+			"brand_organic_toggle":  optBool(opts, "brand_organic_toggle"),
 		},
 		"source_info": map[string]any{
 			"source":            "PULL_FROM_URL",
