@@ -21,7 +21,7 @@ const NAV_ITEMS = [
 ];
 
 // ── Styles ──
-const CSS = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&family=Fira+Code:wght@400;500&display=swap');:root{--bg:#000;--s1:#0a0a0a;--s2:#111;--s3:#1a1a1a;--border:#1a1a1a;--b2:#242424;--b3:#2e2e2e;--text:#f0f0f0;--muted:#666;--muted2:#333;--accent:#10b981;--blue:#0ea5e9;--r:8px;--mono:'Fira Code',monospace;--ui:'DM Sans',system-ui,sans-serif;--nav-max:1480px;--content-max:1320px;--px:32px}*{box-sizing:border-box;margin:0;padding:0}body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}.doc-nav{position:sticky;top:0;z-index:50;border-bottom:1px solid var(--border);background:#00000095;backdrop-filter:blur(12px)}.doc-nav-inner{max-width:var(--nav-max);margin:0 auto;padding:0 var(--px);height:56px;display:flex;align-items:center;justify-content:space-between}.doc-logo{display:flex;align-items:center;gap:10px;text-decoration:none}.doc-logo-mark{width:28px;height:28px;background:var(--accent);border-radius:7px;display:flex;align-items:center;justify-content:center}.doc-logo-mark svg{width:14px;height:14px;color:#000}.doc-logo-name{font-size:16px;font-weight:700;letter-spacing:-.4px;color:var(--text)}.doc-nav-links{display:flex;gap:4px}.doc-nav-link{padding:6px 12px;font-size:13.5px;color:var(--muted);border-radius:var(--r);transition:color .1s;text-decoration:none}.doc-nav-link:hover{color:var(--text)}.doc-nav-link.active{color:var(--text);font-weight:500}.doc-layout{max-width:var(--content-max);margin:0 auto;padding:0 var(--px);display:flex;gap:48px;padding-top:40px;padding-bottom:96px}.doc-sidebar{width:200px;flex-shrink:0;position:sticky;top:96px;align-self:flex-start;max-height:calc(100vh - 120px);overflow-y:auto}.doc-sidebar-list{list-style:none}.doc-sidebar-item{margin-bottom:2px}.doc-sidebar-link{display:block;padding:6px 12px;font-size:13.5px;color:#999;border-radius:6px;text-decoration:none;transition:all .1s}.doc-sidebar-link:hover{color:var(--text);background:var(--s2)}.doc-sidebar-link.active{color:var(--accent);background:var(--s2);font-weight:500}.doc-main{flex:1;min-width:0}.doc-title{font-size:36px;font-weight:800;letter-spacing:-.8px;margin-bottom:8px;color:var(--text)}.doc-subtitle{font-size:17px;color:#aaa;margin-bottom:48px;line-height:1.7}.doc-section{scroll-margin-top:96px;margin-bottom:56px}.doc-section-title{font-size:24px;font-weight:700;letter-spacing:-.4px;margin-bottom:18px;color:var(--text)}.doc-section-title a{color:inherit;text-decoration:none}.doc-section-title a:hover{color:var(--accent)}.doc-p{font-size:15px;color:#bbb;line-height:1.8;margin-bottom:18px}.doc-p a{color:var(--blue);text-decoration:none}.doc-p a:hover{text-decoration:underline}.doc-p code{font-family:var(--mono);font-size:12.5px;background:var(--s2);border:1px solid var(--border);padding:1px 6px;border-radius:4px;color:var(--text)}.doc-endpoint{border:1px solid var(--border);border-radius:10px;margin-bottom:24px;overflow:hidden}.doc-endpoint-header{display:flex;align-items:center;gap:10px;padding:12px 18px;background:var(--s2);border-bottom:1px solid var(--border)}.doc-method{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:var(--mono)}.doc-method-get{background:#10b98120;color:var(--accent)}.doc-method-post{background:#0ea5e920;color:var(--blue)}.doc-method-patch{background:#f59e0b20;color:#f59e0b}.doc-method-delete{background:#ef444420;color:#ef4444}.doc-endpoint-path{font-family:var(--mono);font-size:13px;color:var(--text)}.doc-endpoint-auth{font-size:11px;color:var(--muted);margin-left:auto}.doc-endpoint-body{padding:20px;font-size:15px;color:#bbb;line-height:1.75}.doc-code-wrap{margin:12px 0}.doc-code-label{font-size:11px;color:var(--muted);margin-bottom:4px}.doc-code-box{position:relative}.doc-code{display:flex;background:#161616;border:1px solid var(--b2);border-radius:8px;padding:18px 0;font-family:var(--mono);font-size:13px;line-height:1.75;color:#d4d4d4;overflow-x:auto;white-space:pre;margin:0}.doc-code-gutter{display:flex;flex-direction:column;flex-shrink:0;padding:0 14px 0 18px;color:#555;text-align:right;user-select:none;border-right:1px solid #242424;margin-right:16px}.doc-code-ln{display:block}.doc-code-content{display:block;padding-right:22px;flex:1;min-width:0}.doc-code-copy{position:absolute;top:10px;right:10px;z-index:1;background:#1f1f1f;border:1px solid var(--b2);color:#aaa;font-family:var(--ui);font-size:11px;font-weight:500;padding:5px 10px;border-radius:6px;cursor:pointer;transition:all .12s;letter-spacing:.02em}.doc-code-copy:hover{color:var(--text);background:#2a2a2a;border-color:var(--b3)}.doc-param{display:flex;gap:8px;padding:5px 0;font-size:14px;align-items:baseline;flex-wrap:wrap}.doc-param-name{font-family:var(--mono);color:var(--blue);white-space:nowrap}.doc-param-type{font-size:11px;color:var(--muted2)}.doc-param-req{font-size:11px;color:#ef4444}.doc-param-desc{color:#aaa}.doc-param-desc code{font-family:var(--mono);font-size:11.5px;background:var(--s2);border:1px solid var(--border);padding:0 5px;border-radius:3px;color:var(--text)}.doc-callout{padding:16px 20px;border-radius:8px;font-size:14px;line-height:1.7;margin:18px 0}.doc-callout-info{background:var(--s2);border:1px solid var(--border);color:#aaa}.doc-callout-warn{background:#f59e0b08;border:1px solid #f59e0b20;color:#f59e0b}.doc-callout strong{color:var(--text)}.doc-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}.doc-grid-card{border:1px solid var(--border);border-radius:8px;padding:14px 18px}.doc-grid-card-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px}.doc-grid-card-val{font-family:var(--mono);font-size:13px;color:var(--blue)}.doc-table{width:100%;border-collapse:collapse;margin:16px 0}.doc-table th{text-align:left;padding:10px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:var(--s2);border-bottom:1px solid var(--border)}.doc-table td{padding:12px 18px;font-size:14px;border-bottom:1px solid var(--border);color:#bbb}.doc-table td code{font-family:var(--mono);color:#ef4444;font-size:12px}.doc-platform{border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:8px}.doc-platform-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}.doc-platform-name{font-size:14px;font-weight:600;color:var(--text)}.doc-platform-auth{font-size:11px;color:var(--muted)}.doc-platform-content{font-size:14px;color:#aaa}.doc-platform-note{font-size:12px;color:#888;margin-top:4px}.doc-footer{border-top:1px solid var(--border);padding:32px 0}.doc-footer-inner{max-width:1100px;margin:0 auto;padding:0 32px;font-size:13px;color:var(--muted)}.doc-footer-inner a{color:var(--blue);text-decoration:none}.doc-footer-inner a:hover{text-decoration:underline}::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}.doc-sidebar-link.active{color:var(--accent);background:var(--s2);font-weight:500;border-left:2px solid var(--accent);border-radius:0 6px 6px 0;padding-left:8px}@media(min-width:1600px){:root{--nav-max:1560px;--content-max:1360px;--px:40px}}@media(max-width:1024px){:root{--nav-max:100%;--content-max:100%;--px:24px}}`;
+const CSS = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&family=Fira+Code:wght@400;500&display=swap');:root{--bg:#000;--s1:#0a0a0a;--s2:#111;--s3:#1a1a1a;--border:#1a1a1a;--b2:#242424;--b3:#2e2e2e;--text:#f0f0f0;--muted:#666;--muted2:#333;--accent:#10b981;--blue:#0ea5e9;--r:8px;--mono:'Fira Code',monospace;--ui:'DM Sans',system-ui,sans-serif;--nav-max:1480px;--content-max:1320px;--px:32px}*{box-sizing:border-box;margin:0;padding:0}body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}.doc-nav{position:sticky;top:0;z-index:50;border-bottom:1px solid var(--border);background:#00000095;backdrop-filter:blur(12px)}.doc-nav-inner{max-width:var(--nav-max);margin:0 auto;padding:0 var(--px);height:56px;display:flex;align-items:center;justify-content:space-between}.doc-logo{display:flex;align-items:center;gap:10px;text-decoration:none}.doc-logo-mark{width:28px;height:28px;background:var(--accent);border-radius:7px;display:flex;align-items:center;justify-content:center}.doc-logo-mark svg{width:14px;height:14px;color:#000}.doc-logo-name{font-size:16px;font-weight:700;letter-spacing:-.4px;color:var(--text)}.doc-nav-links{display:flex;gap:4px}.doc-nav-link{padding:6px 12px;font-size:13.5px;color:var(--muted);border-radius:var(--r);transition:color .1s;text-decoration:none}.doc-nav-link:hover{color:var(--text)}.doc-nav-link.active{color:var(--text);font-weight:500}.doc-layout{max-width:var(--content-max);margin:0 auto;padding:0 var(--px);display:flex;gap:48px;padding-top:40px;padding-bottom:96px}.doc-sidebar{width:200px;flex-shrink:0;position:sticky;top:96px;align-self:flex-start;max-height:calc(100vh - 120px);overflow-y:auto}.doc-sidebar-list{list-style:none}.doc-sidebar-item{margin-bottom:2px}.doc-sidebar-link{display:block;padding:6px 12px;font-size:13.5px;color:#999;border-radius:6px;text-decoration:none;transition:all .1s}.doc-sidebar-link:hover{color:var(--text);background:var(--s2)}.doc-sidebar-link.active{color:var(--accent);background:var(--s2);font-weight:500}.doc-main{flex:1;min-width:0}.doc-title{font-size:36px;font-weight:800;letter-spacing:-.8px;margin-bottom:8px;color:var(--text)}.doc-subtitle{font-size:17px;color:#aaa;margin-bottom:48px;line-height:1.7}.doc-section{scroll-margin-top:96px;margin-bottom:56px}.doc-section-title{font-size:24px;font-weight:700;letter-spacing:-.4px;margin-bottom:18px;color:var(--text)}.doc-section-title a{color:inherit;text-decoration:none}.doc-section-title a:hover{color:var(--accent)}.doc-p{font-size:15px;color:#bbb;line-height:1.8;margin-bottom:18px}.doc-p a{color:var(--blue);text-decoration:none}.doc-p a:hover{text-decoration:underline}.doc-p code{font-family:var(--mono);font-size:12.5px;background:var(--s2);border:1px solid var(--border);padding:1px 6px;border-radius:4px;color:var(--text)}.doc-endpoint{border:1px solid var(--border);border-radius:10px;margin-bottom:24px;overflow:hidden}.doc-endpoint-header{display:flex;align-items:center;gap:10px;padding:12px 18px;background:var(--s2);border-bottom:1px solid var(--border)}.doc-method{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:var(--mono)}.doc-method-get{background:#10b98120;color:var(--accent)}.doc-method-post{background:#0ea5e920;color:var(--blue)}.doc-method-patch{background:#f59e0b20;color:#f59e0b}.doc-method-delete{background:#ef444420;color:#ef4444}.doc-endpoint-path{font-family:var(--mono);font-size:13px;color:var(--text)}.doc-endpoint-auth{font-size:11px;color:var(--muted);margin-left:auto}.doc-endpoint-body{padding:20px;font-size:15px;color:#bbb;line-height:1.75}.doc-code-wrap{margin:12px 0}.doc-code-label{font-size:11px;color:var(--muted);margin-bottom:4px}.doc-code-box{position:relative}.doc-code{display:flex;background:#161616;border:1px solid var(--b2);border-radius:8px;padding:18px 0;font-family:var(--mono);font-size:13px;line-height:1.75;color:#d4d4d4;overflow-x:auto;white-space:pre;margin:0}.doc-code-box-tabbed .doc-code{border-top:none;border-radius:0 0 8px 8px}.doc-code-gutter{display:flex;flex-direction:column;flex-shrink:0;padding:0 14px 0 18px;color:#555;text-align:right;user-select:none;border-right:1px solid #242424;margin-right:16px}.doc-code-ln{display:block}.doc-code-content{display:block;padding-right:22px;flex:1;min-width:0}.doc-code-copy{position:absolute;top:10px;right:10px;z-index:2;background:#1f1f1f;border:1px solid var(--b2);color:#aaa;font-family:var(--ui);font-size:11px;font-weight:500;padding:5px 10px;border-radius:6px;cursor:pointer;transition:all .12s;letter-spacing:.02em}.doc-code-copy:hover{color:var(--text);background:#2a2a2a;border-color:var(--b3)}.doc-code-tabs-bar{display:flex;gap:2px;background:#161616;border:1px solid var(--b2);border-bottom:1px solid #242424;border-radius:8px 8px 0 0;padding:8px 10px}.doc-code-tab{padding:5px 12px;border-radius:5px;font-size:12px;font-weight:500;color:#888;cursor:pointer;font-family:var(--mono);transition:all .12s;border:1px solid transparent;background:none}.doc-code-tab:hover{color:var(--text)}.doc-code-tab.active{background:#262626;color:var(--text);border-color:#2e2e2e}.doc-param{display:flex;gap:8px;padding:5px 0;font-size:14px;align-items:baseline;flex-wrap:wrap}.doc-param-name{font-family:var(--mono);color:var(--blue);white-space:nowrap}.doc-param-type{font-size:11px;color:var(--muted2)}.doc-param-req{font-size:11px;color:#ef4444}.doc-param-desc{color:#aaa}.doc-param-desc code{font-family:var(--mono);font-size:11.5px;background:var(--s2);border:1px solid var(--border);padding:0 5px;border-radius:3px;color:var(--text)}.doc-callout{padding:16px 20px;border-radius:8px;font-size:14px;line-height:1.7;margin:18px 0}.doc-callout-info{background:var(--s2);border:1px solid var(--border);color:#aaa}.doc-callout-warn{background:#f59e0b08;border:1px solid #f59e0b20;color:#f59e0b}.doc-callout strong{color:var(--text)}.doc-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}.doc-grid-card{border:1px solid var(--border);border-radius:8px;padding:14px 18px}.doc-grid-card-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px}.doc-grid-card-val{font-family:var(--mono);font-size:13px;color:var(--blue)}.doc-table{width:100%;border-collapse:collapse;margin:16px 0}.doc-table th{text-align:left;padding:10px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:var(--s2);border-bottom:1px solid var(--border)}.doc-table td{padding:12px 18px;font-size:14px;border-bottom:1px solid var(--border);color:#bbb}.doc-table td code{font-family:var(--mono);color:#ef4444;font-size:12px}.doc-platform{border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:8px}.doc-platform-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}.doc-platform-name{font-size:14px;font-weight:600;color:var(--text)}.doc-platform-auth{font-size:11px;color:var(--muted)}.doc-platform-content{font-size:14px;color:#aaa}.doc-platform-note{font-size:12px;color:#888;margin-top:4px}.doc-footer{border-top:1px solid var(--border);padding:32px 0}.doc-footer-inner{max-width:1100px;margin:0 auto;padding:0 32px;font-size:13px;color:var(--muted)}.doc-footer-inner a{color:var(--blue);text-decoration:none}.doc-footer-inner a:hover{text-decoration:underline}::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--b2);border-radius:3px}.doc-sidebar-link.active{color:var(--accent);background:var(--s2);font-weight:500;border-left:2px solid var(--accent);border-radius:0 6px 6px 0;padding-left:8px}@media(min-width:1600px){:root{--nav-max:1560px;--content-max:1360px;--px:40px}}@media(max-width:1024px){:root{--nav-max:100%;--content-max:100%;--px:24px}}`;
 
 function ZapIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="14" height="14"><path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" /></svg>; }
 
@@ -44,6 +44,96 @@ function Endpoint({ method, path, auth, children }: { method: string; path: stri
         <span className="doc-endpoint-auth">{auth}</span>
       </div>
       <div className="doc-endpoint-body">{children}</div>
+    </div>
+  );
+}
+
+type LangId = "js" | "python" | "go" | "curl";
+const LANGS: { id: LangId; label: string }[] = [
+  { id: "js", label: "JavaScript" },
+  { id: "python", label: "Python" },
+  { id: "go", label: "Go" },
+  { id: "curl", label: "cURL" },
+];
+
+type Snippets = Record<LangId, string>;
+
+// ── API request snippets (one set per example) ──
+const SN_LIST_ACCOUNTS: Snippets = {
+  js: `const response = await fetch(\n  '${BASE}/v1/social-accounts',\n  {\n    headers: {\n      'Authorization': 'Bearer up_live_your_key',\n    },\n  }\n);\n\nconst { data } = await response.json();`,
+  python: `import requests\n\nresponse = requests.get(\n    '${BASE}/v1/social-accounts',\n    headers={\n        'Authorization': 'Bearer up_live_your_key',\n    },\n)\n\ndata = response.json()['data']`,
+  go: `req, _ := http.NewRequest("GET",\n    "${BASE}/v1/social-accounts", nil)\nreq.Header.Set("Authorization", "Bearer up_live_your_key")\n\nresp, _ := http.DefaultClient.Do(req)`,
+  curl: `curl ${BASE}/v1/social-accounts \\\n  -H "Authorization: Bearer up_live_your_key"`,
+};
+
+const SN_CONNECT_BLUESKY: Snippets = {
+  js: `const response = await fetch(\n  '${BASE}/v1/social-accounts/connect',\n  {\n    method: 'POST',\n    headers: {\n      'Authorization': 'Bearer up_live_your_key',\n      'Content-Type':  'application/json',\n    },\n    body: JSON.stringify({\n      platform: 'bluesky',\n      credentials: {\n        handle:       'alice.bsky.social',\n        app_password: 'xxxx-xxxx-xxxx-xxxx',\n      },\n    }),\n  }\n);\n\nconst { data } = await response.json();`,
+  python: `import requests\n\nresponse = requests.post(\n    '${BASE}/v1/social-accounts/connect',\n    headers={\n        'Authorization': 'Bearer up_live_your_key',\n        'Content-Type':  'application/json',\n    },\n    json={\n        'platform': 'bluesky',\n        'credentials': {\n            'handle':       'alice.bsky.social',\n            'app_password': 'xxxx-xxxx-xxxx-xxxx',\n        },\n    },\n)\n\ndata = response.json()['data']`,
+  go: `body := strings.NewReader(\`{\n  "platform": "bluesky",\n  "credentials": {\n    "handle":       "alice.bsky.social",\n    "app_password": "xxxx-xxxx-xxxx-xxxx"\n  }\n}\`)\n\nreq, _ := http.NewRequest("POST",\n    "${BASE}/v1/social-accounts/connect", body)\nreq.Header.Set("Authorization", "Bearer up_live_your_key")\nreq.Header.Set("Content-Type",  "application/json")\n\nresp, _ := http.DefaultClient.Do(req)`,
+  curl: `curl -X POST ${BASE}/v1/social-accounts/connect \\\n  -H "Authorization: Bearer up_live_your_key" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "platform": "bluesky",\n    "credentials": {\n      "handle":       "alice.bsky.social",\n      "app_password": "xxxx-xxxx-xxxx-xxxx"\n    }\n  }'`,
+};
+
+const SN_DELETE_ACCOUNT: Snippets = {
+  js: `const response = await fetch(\n  '${BASE}/v1/social-accounts/sa_abc123',\n  {\n    method: 'DELETE',\n    headers: {\n      'Authorization': 'Bearer up_live_your_key',\n    },\n  }\n);`,
+  python: `import requests\n\nresponse = requests.delete(\n    '${BASE}/v1/social-accounts/sa_abc123',\n    headers={\n        'Authorization': 'Bearer up_live_your_key',\n    },\n)`,
+  go: `req, _ := http.NewRequest("DELETE",\n    "${BASE}/v1/social-accounts/sa_abc123", nil)\nreq.Header.Set("Authorization", "Bearer up_live_your_key")\n\nresp, _ := http.DefaultClient.Do(req)`,
+  curl: `curl -X DELETE ${BASE}/v1/social-accounts/sa_abc123 \\\n  -H "Authorization: Bearer up_live_your_key"`,
+};
+
+const SN_CREATE_POST: Snippets = {
+  js: `const response = await fetch(\n  '${BASE}/v1/social-posts',\n  {\n    method: 'POST',\n    headers: {\n      'Authorization': 'Bearer up_live_xxxx',\n      'Content-Type':  'application/json',\n    },\n    body: JSON.stringify({\n      caption:     'Hello from UniPost! 🚀',\n      account_ids: ['sa_instagram_123', 'sa_linkedin_456'],\n    }),\n  }\n);\n\nconst { data } = await response.json();\nconsole.log(data.id); // post_abc123`,
+  python: `import requests\n\nresponse = requests.post(\n    '${BASE}/v1/social-posts',\n    headers={\n        'Authorization': 'Bearer up_live_xxxx',\n        'Content-Type':  'application/json',\n    },\n    json={\n        'caption':     'Hello from UniPost! 🚀',\n        'account_ids': ['sa_instagram_123', 'sa_linkedin_456'],\n    },\n)\n\ndata = response.json()['data']\nprint(data['id'])  # post_abc123`,
+  go: `body := strings.NewReader(\`{\n  "caption":     "Hello from UniPost! 🚀",\n  "account_ids": ["sa_instagram_123", "sa_linkedin_456"]\n}\`)\n\nreq, _ := http.NewRequest("POST",\n    "${BASE}/v1/social-posts", body)\nreq.Header.Set("Authorization", "Bearer up_live_xxxx")\nreq.Header.Set("Content-Type",  "application/json")\n\nresp, _ := http.DefaultClient.Do(req)\n// resp.StatusCode == 200 ✓`,
+  curl: `curl -X POST ${BASE}/v1/social-posts \\\n  -H "Authorization: Bearer up_live_xxxx" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "caption":     "Hello from UniPost! 🚀",\n    "account_ids": ["sa_instagram_123", "sa_linkedin_456"]\n  }'`,
+};
+
+const SN_CREATE_VIDEO_POST: Snippets = {
+  js: `const response = await fetch(\n  '${BASE}/v1/social-posts',\n  {\n    method: 'POST',\n    headers: {\n      'Authorization': 'Bearer up_live_your_key',\n      'Content-Type':  'application/json',\n    },\n    body: JSON.stringify({\n      caption:     'Launch day 🎬',\n      account_ids: ['sa_youtube_123', 'sa_tiktok_456'],\n      media_urls:  ['https://example.com/video.mp4'],\n      platform_options: {\n        youtube: { privacy_status: 'public' },\n        tiktok:  { privacy_level:  'PUBLIC_TO_EVERYONE' },\n      },\n    }),\n  }\n);`,
+  python: `import requests\n\nresponse = requests.post(\n    '${BASE}/v1/social-posts',\n    headers={\n        'Authorization': 'Bearer up_live_your_key',\n        'Content-Type':  'application/json',\n    },\n    json={\n        'caption':     'Launch day 🎬',\n        'account_ids': ['sa_youtube_123', 'sa_tiktok_456'],\n        'media_urls':  ['https://example.com/video.mp4'],\n        'platform_options': {\n            'youtube': {'privacy_status': 'public'},\n            'tiktok':  {'privacy_level':  'PUBLIC_TO_EVERYONE'},\n        },\n    },\n)`,
+  go: `body := strings.NewReader(\`{\n  "caption":     "Launch day 🎬",\n  "account_ids": ["sa_youtube_123", "sa_tiktok_456"],\n  "media_urls":  ["https://example.com/video.mp4"],\n  "platform_options": {\n    "youtube": { "privacy_status": "public" },\n    "tiktok":  { "privacy_level":  "PUBLIC_TO_EVERYONE" }\n  }\n}\`)\n\nreq, _ := http.NewRequest("POST",\n    "${BASE}/v1/social-posts", body)\nreq.Header.Set("Authorization", "Bearer up_live_your_key")\nreq.Header.Set("Content-Type",  "application/json")\n\nresp, _ := http.DefaultClient.Do(req)`,
+  curl: `curl -X POST ${BASE}/v1/social-posts \\\n  -H "Authorization: Bearer up_live_your_key" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "caption": "Launch day 🎬",\n    "account_ids": ["sa_youtube_123", "sa_tiktok_456"],\n    "media_urls": ["https://example.com/video.mp4"],\n    "platform_options": {\n      "youtube": { "privacy_status": "public" },\n      "tiktok":  { "privacy_level": "PUBLIC_TO_EVERYONE" }\n    }\n  }'`,
+};
+
+function CodeTabs({ snippets, title }: { snippets: Snippets; title?: string }) {
+  const [lang, setLang] = useState<LangId>("js");
+  const [copied, setCopied] = useState(false);
+  const code = snippets[lang];
+  const lines = code.split("\n");
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
+  return (
+    <div className="doc-code-wrap">
+      {title && <div className="doc-code-label">{title}</div>}
+      <div className="doc-code-tabs-bar">
+        {LANGS.map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            className={`doc-code-tab ${lang === l.id ? "active" : ""}`}
+            onClick={() => setLang(l.id)}
+          >
+            {l.label}
+          </button>
+        ))}
+      </div>
+      <div className="doc-code-box doc-code-box-tabbed">
+        <button type="button" className="doc-code-copy" onClick={onCopy} aria-label="Copy code">
+          {copied ? "Copied" : "Copy"}
+        </button>
+        <pre className="doc-code">
+          <span className="doc-code-gutter" aria-hidden="true">
+            {lines.map((_, i) => (
+              <span key={i} className="doc-code-ln">{i + 1}</span>
+            ))}
+          </span>
+          <code className="doc-code-content">{code}</code>
+        </pre>
+      </div>
     </div>
   );
 }
@@ -182,7 +272,7 @@ export default function DocsPage() {
               All API requests require a Bearer token in the <code>Authorization</code> header.
               Create API keys in your project dashboard at <a href="https://app.unipost.dev">app.unipost.dev</a>.
             </p>
-            <Code title="Example">{`curl ${BASE}/v1/social-accounts \\\n  -H "Authorization: Bearer up_live_your_api_key_here"`}</Code>
+            <CodeTabs title="Example" snippets={SN_LIST_ACCOUNTS} />
             <p className="doc-p"><strong>Key format:</strong> <code>up_live_</code> (production) or <code>up_test_</code> (test)</p>
             <p className="doc-p"><strong>Security:</strong> Keys are shown only once at creation. Store them securely — never commit to version control.</p>
           </Section>
@@ -190,11 +280,11 @@ export default function DocsPage() {
           <Section id="quick-start" title="Quick Start">
             <p className="doc-p">Get posting in 3 steps:</p>
             <p className="doc-p"><strong>1. Connect a social account</strong></p>
-            <Code>{`curl -X POST ${BASE}/v1/social-accounts/connect \\\n  -H "Authorization: Bearer up_live_your_key" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "platform": "bluesky",\n    "credentials": {\n      "handle": "yourname.bsky.social",\n      "app_password": "xxxx-xxxx-xxxx-xxxx"\n    }\n  }'`}</Code>
+            <CodeTabs snippets={SN_CONNECT_BLUESKY} />
             <p className="doc-p"><strong>2. Get your account ID from the response</strong></p>
             <Code>{`{\n  "data": {\n    "id": "sa_abc123",\n    "platform": "bluesky",\n    "account_name": "yourname.bsky.social",\n    "status": "active"\n  }\n}`}</Code>
             <p className="doc-p"><strong>3. Create a post</strong></p>
-            <Code>{`curl -X POST ${BASE}/v1/social-posts \\\n  -H "Authorization: Bearer up_live_your_key" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "caption": "Hello from UniPost!",\n    "account_ids": ["sa_abc123"]\n  }'`}</Code>
+            <CodeTabs snippets={SN_CREATE_POST} />
           </Section>
 
           <Section id="mcp" title="MCP / AI Agents">
@@ -301,16 +391,16 @@ export default function DocsPage() {
               <p className="doc-p">Connect a new social media account. For Bluesky, provide credentials directly. For OAuth platforms, use the <a href="#oauth">OAuth flow</a>.</p>
               <Param name="platform" type="string" required>Platform: <code>bluesky</code></Param>
               <Param name="credentials" type="object" required>Platform-specific credentials</Param>
-              <Code title="Example: Connect Bluesky">{`curl -X POST ${BASE}/v1/social-accounts/connect \\\n  -H "Authorization: Bearer up_live_your_key" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "platform": "bluesky",\n    "credentials": {\n      "handle": "alice.bsky.social",\n      "app_password": "xxxx-xxxx-xxxx-xxxx"\n    }\n  }'`}</Code>
+              <CodeTabs title="Example: Connect Bluesky" snippets={SN_CONNECT_BLUESKY} />
               <Code title="Response (201)">{`{\n  "data": {\n    "id": "sa_abc123",\n    "platform": "bluesky",\n    "account_name": "alice.bsky.social",\n    "connected_at": "2026-04-02T10:00:00Z",\n    "status": "active"\n  }\n}`}</Code>
             </Endpoint>
             <Endpoint method="GET" path="/v1/social-accounts" auth="API Key">
               <p className="doc-p">List all connected social accounts.</p>
-              <Code title="Example">{`curl ${BASE}/v1/social-accounts \\\n  -H "Authorization: Bearer up_live_your_key"`}</Code>
+              <CodeTabs title="Example" snippets={SN_LIST_ACCOUNTS} />
             </Endpoint>
             <Endpoint method="DELETE" path="/v1/social-accounts/{id}" auth="API Key">
               <p className="doc-p">Disconnect a social account and invalidate its tokens.</p>
-              <Code title="Example">{`curl -X DELETE ${BASE}/v1/social-accounts/sa_abc123 \\\n  -H "Authorization: Bearer up_live_your_key"`}</Code>
+              <CodeTabs title="Example" snippets={SN_DELETE_ACCOUNT} />
             </Endpoint>
           </Section>
 
@@ -334,8 +424,8 @@ export default function DocsPage() {
               <p className="doc-p"><strong>Response Headers</strong></p>
               <Param name="X-UniPost-Usage" type="header">Current usage, e.g. <code>450/1000</code></Param>
               <Param name="X-UniPost-Warning" type="header">Warning: <code>approaching_limit</code> or <code>over_limit</code></Param>
-              <Code title="Example">{`const response = await fetch(\n  '${BASE}/v1/social-posts',\n  {\n    method: 'POST',\n    headers: {\n      'Authorization': 'Bearer up_live_xxxx',\n      'Content-Type':  'application/json',\n    },\n    body: JSON.stringify({\n      caption:     'Hello from UniPost! 🚀',\n      account_ids: ['sa_instagram_123', 'sa_linkedin_456'],\n    }),\n  }\n);\n\nconst { data } = await response.json();\nconsole.log(data.id); // post_abc123`}</Code>
-              <Code title="Example: video to YouTube as public + TikTok">{`curl -X POST ${BASE}/v1/social-posts \\\n  -H "Authorization: Bearer up_live_your_key" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "caption": "Launch day 🎬",\n    "account_ids": ["sa_youtube_123", "sa_tiktok_456"],\n    "media_urls": ["https://example.com/video.mp4"],\n    "platform_options": {\n      "youtube": { "privacy_status": "public" },\n      "tiktok":  { "privacy_level": "PUBLIC_TO_EVERYONE" }\n    }\n  }'`}</Code>
+              <CodeTabs title="Example" snippets={SN_CREATE_POST} />
+              <CodeTabs title="Example: video to YouTube as public + TikTok" snippets={SN_CREATE_VIDEO_POST} />
               <Code title="Response (200)">{`{\n  "data": {\n    "id": "post_xyz789",\n    "caption": "Hello from UniPost! 🚀",\n    "status": "published",\n    "results": [\n      { "platform": "bluesky", "status": "published", "external_id": "at://..." },\n      { "platform": "linkedin", "status": "published", "external_id": "urn:li:share:..." }\n    ]\n  }\n}`}</Code>
               <div className="doc-callout doc-callout-warn">
                 <strong>Post status values:</strong> <code>published</code> (all succeeded), <code>partial</code> (some failed), <code>failed</code> (all failed)
