@@ -46,8 +46,9 @@ type PlatformAdapter interface {
 	// Connect authenticates with the platform and returns account info + tokens.
 	Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error)
 
-	// Post publishes content to the platform.
-	Post(ctx context.Context, accessToken string, text string, imageURLs []string) (*PostResult, error)
+	// Post publishes content to the platform. opts carries per-platform options
+	// (e.g. {"privacy_status": "public"} for YouTube). May be nil.
+	Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error)
 
 	// DeletePost removes a post from the platform.
 	DeletePost(ctx context.Context, accessToken string, externalID string) error

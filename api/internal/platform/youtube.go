@@ -98,10 +98,25 @@ func (a *YouTubeAdapter) Connect(ctx context.Context, credentials map[string]str
 	return nil, fmt.Errorf("youtube requires OAuth flow, use /v1/oauth/connect/youtube")
 }
 
+// YouTubePrivacyValues is the set of allowed values for opts["privacy_status"].
+// Mirrors the YouTube Data API videos.insert status.privacyStatus enum.
+var YouTubePrivacyValues = []string{"private", "public", "unlisted"}
+
 // Post uploads a video to YouTube. Requires video URL in imageURLs[0].
-func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string) (*PostResult, error) {
+//
+// Supported opts:
+//   - privacy_status: "private" (default), "public", or "unlisted"
+func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
 	if len(imageURLs) == 0 {
 		return nil, fmt.Errorf("youtube requires a video URL")
+	}
+
+	privacyStatus := optString(opts, "privacy_status")
+	if err := validateEnum("youtube", "privacy_status", privacyStatus, YouTubePrivacyValues); err != nil {
+		return nil, err
+	}
+	if privacyStatus == "" {
+		privacyStatus = "private"
 	}
 
 	// Download video
@@ -123,7 +138,7 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 			"description": text,
 		},
 		"status": map[string]any{
-			"privacyStatus": "private", // Default to private
+			"privacyStatus": privacyStatus,
 		},
 	})
 

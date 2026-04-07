@@ -87,7 +87,8 @@ func (b *BlueskyAdapter) Connect(ctx context.Context, credentials map[string]str
 }
 
 // Post publishes a text post (with optional images) to Bluesky.
-func (b *BlueskyAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string) (*PostResult, error) {
+func (b *BlueskyAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+	_ = opts // bluesky has no per-post options today
 	did, err := parseJWTSub(accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse DID from token: %w", err)

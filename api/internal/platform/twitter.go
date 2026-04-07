@@ -108,7 +108,8 @@ func (a *TwitterAdapter) Connect(ctx context.Context, credentials map[string]str
 }
 
 // Post creates a tweet.
-func (a *TwitterAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string) (*PostResult, error) {
+func (a *TwitterAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+	_ = opts
 	body, _ := json.Marshal(map[string]any{
 		"text": text,
 	})

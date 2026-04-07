@@ -98,7 +98,8 @@ func (a *InstagramAdapter) Connect(ctx context.Context, credentials map[string]s
 }
 
 // Post publishes to Instagram using the two-step container flow.
-func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string) (*PostResult, error) {
+func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+	_ = opts
 	// Get IG user ID from token
 	igUserID, err := a.getIGUserID(ctx, accessToken)
 	if err != nil {

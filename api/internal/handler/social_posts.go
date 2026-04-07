@@ -58,10 +58,11 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Caption     string   `json:"caption"`
-		MediaURLs   []string `json:"media_urls"`
-		AccountIDs  []string `json:"account_ids"`
-		ScheduledAt *string  `json:"scheduled_at"`
+		Caption         string                    `json:"caption"`
+		MediaURLs       []string                  `json:"media_urls"`
+		AccountIDs      []string                  `json:"account_ids"`
+		ScheduledAt     *string                   `json:"scheduled_at"`
+		PlatformOptions map[string]map[string]any `json:"platform_options"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -101,9 +102,13 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 			mediaURLs = []string{}
 		}
 
-		metadataJSON, _ := json.Marshal(map[string]any{
+		metaMap := map[string]any{
 			"account_ids": body.AccountIDs,
-		})
+		}
+		if len(body.PlatformOptions) > 0 {
+			metaMap["platform_options"] = body.PlatformOptions
+		}
+		metadataJSON, _ := json.Marshal(metaMap)
 
 		post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
 			ProjectID:   projectID,
@@ -234,7 +239,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			postResult, err := adapter.Post(r.Context(), accessToken, body.Caption, body.MediaURLs)
+			postResult, err := adapter.Post(r.Context(), accessToken, body.Caption, body.MediaURLs, body.PlatformOptions[account.Platform])
 			results[idx] = accountResult{
 				accountID: account.ID,
 				platform:  account.Platform,

@@ -95,7 +95,8 @@ func (a *ThreadsAdapter) Connect(ctx context.Context, credentials map[string]str
 }
 
 // Post publishes a text post (with optional image) to Threads.
-func (a *ThreadsAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string) (*PostResult, error) {
+func (a *ThreadsAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+	_ = opts
 	userID, err := a.getUserID(ctx, accessToken)
 	if err != nil {
 		return nil, err

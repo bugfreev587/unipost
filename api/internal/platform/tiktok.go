@@ -153,10 +153,32 @@ func (a *TikTokAdapter) Connect(ctx context.Context, credentials map[string]stri
 	return nil, fmt.Errorf("tiktok requires OAuth flow, use /v1/oauth/connect/tiktok")
 }
 
+// TikTokPrivacyValues is the set of allowed values for opts["privacy_level"].
+// Mirrors TikTok Content Posting API post_info.privacy_level. Note: which of
+// these are actually accepted depends on whether the connected app is in
+// sandbox/unaudited mode (TikTok forces SELF_ONLY in that case).
+var TikTokPrivacyValues = []string{
+	"PUBLIC_TO_EVERYONE",
+	"MUTUAL_FOLLOW_FRIENDS",
+	"FOLLOWER_OF_CREATOR",
+	"SELF_ONLY",
+}
+
 // Post publishes a video to TikTok using direct file upload.
-func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string) (*PostResult, error) {
+//
+// Supported opts:
+//   - privacy_level: one of TikTokPrivacyValues. Defaults to "SELF_ONLY".
+func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
 	if len(imageURLs) == 0 {
 		return nil, fmt.Errorf("tiktok requires a video URL")
+	}
+
+	privacyLevel := optString(opts, "privacy_level")
+	if err := validateEnum("tiktok", "privacy_level", privacyLevel, TikTokPrivacyValues); err != nil {
+		return nil, err
+	}
+	if privacyLevel == "" {
+		privacyLevel = "SELF_ONLY"
 	}
 
 	// Step 1: Download the video
@@ -178,7 +200,7 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 	initBody, _ := json.Marshal(map[string]any{
 		"post_info": map[string]any{
 			"title":         text,
-			"privacy_level": "SELF_ONLY",
+			"privacy_level": privacyLevel,
 		},
 		"source_info": map[string]any{
 			"source":     "FILE_UPLOAD",

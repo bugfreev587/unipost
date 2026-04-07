@@ -68,15 +68,18 @@ func (w *SchedulerWorker) publishDue(ctx context.Context) {
 func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 	slog.Info("scheduler: publishing post", "post_id", post.ID)
 
-	// Get accounts for this post from metadata
-	// The account_ids are stored when the post was created
+	// Get accounts and per-platform options for this post from metadata.
+	// Both are stored when the post was created.
 	var accountIDs []string
+	var platformOptions map[string]map[string]any
 	if post.Metadata != nil {
 		var meta struct {
-			AccountIDs []string `json:"account_ids"`
+			AccountIDs      []string                    `json:"account_ids"`
+			PlatformOptions map[string]map[string]any   `json:"platform_options"`
 		}
 		if err := json.Unmarshal(post.Metadata, &meta); err == nil {
 			accountIDs = meta.AccountIDs
+			platformOptions = meta.PlatformOptions
 		}
 	}
 
@@ -145,7 +148,7 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 				caption = post.Caption.String
 			}
 
-			pr, err := adapter.Post(ctx, accessToken, caption, post.MediaUrls)
+			pr, err := adapter.Post(ctx, accessToken, caption, post.MediaUrls, platformOptions[acc.Platform])
 			results = append(results, result{accountID: accountID, platform: acc.Platform, postResult: pr, err: err})
 		}(accID)
 	}

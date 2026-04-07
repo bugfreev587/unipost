@@ -101,7 +101,8 @@ func (a *LinkedInAdapter) Connect(ctx context.Context, credentials map[string]st
 }
 
 // Post publishes a text post to LinkedIn.
-func (a *LinkedInAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string) (*PostResult, error) {
+func (a *LinkedInAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+	_ = opts
 	// Get person URN from userinfo
 	userInfo, err := a.getUserInfo(ctx, accessToken)
 	if err != nil {
