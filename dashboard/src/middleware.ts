@@ -14,7 +14,7 @@ export default clerkMiddleware(async (auth, request) => {
     hostname.startsWith("localhost:");
 
   // Public pages (no auth, available on both domains)
-  if (pathname === "/terms" || pathname === "/privacy" || pathname === "/docs" || pathname === "/pricing") {
+  if (pathname === "/terms" || pathname === "/privacy" || pathname === "/docs" || pathname === "/pricing" || pathname === "/solutions") {
     return NextResponse.next();
   }
 

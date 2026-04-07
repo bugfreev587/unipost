@@ -215,6 +215,7 @@ export default function DocsPage() {
             <span className="doc-logo-name">UniPost</span>
           </Link>
           <div className="doc-nav-links">
+            <Link href="/solutions" className="doc-nav-link">Solutions</Link>
             <Link href="/docs" className="doc-nav-link active">Docs</Link>
             <Link href="/pricing" className="doc-nav-link">Pricing</Link>
           </div>

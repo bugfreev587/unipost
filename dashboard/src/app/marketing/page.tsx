@@ -89,6 +89,7 @@ export default function LandingPage() {
             <span className="lp-logo-name">UniPost</span>
           </Link>
           <div className="lp-nav-links">
+            <Link href="/solutions" className="lp-nav-link">Solutions</Link>
             <Link href="/docs" className="lp-nav-link">Docs</Link>
             <Link href="/pricing" className="lp-nav-link">Pricing</Link>
           </div>
