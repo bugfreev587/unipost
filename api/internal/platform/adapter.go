@@ -2,8 +2,104 @@ package platform
 
 import (
 	"context"
+	"path"
+	"strings"
 	"time"
 )
+
+// MediaKind classifies a single piece of media that an adapter receives.
+// Adapters use this to decide which API path to take (e.g. Instagram chooses
+// between IMAGE and REELS containers based on Kind).
+type MediaKind string
+
+const (
+	MediaKindImage   MediaKind = "image"
+	MediaKindVideo   MediaKind = "video"
+	MediaKindGIF     MediaKind = "gif"
+	MediaKindUnknown MediaKind = ""
+)
+
+// MediaItem is one piece of media to publish. The handler builds these from
+// the request payload (which still accepts a flat media_urls []string for
+// backward compatibility) and passes them to the adapter, which is then free
+// to interpret them per platform conventions.
+type MediaItem struct {
+	URL  string    `json:"url"`
+	Kind MediaKind `json:"kind"`
+	// Alt text / caption for accessibility (Bluesky alt, IG alt, etc.).
+	// Optional — adapters may ignore.
+	Alt string `json:"alt,omitempty"`
+}
+
+// SniffMediaKind guesses the kind from a URL's file extension. Used as a
+// fallback when the caller didn't explicitly classify the media. Errs on the
+// side of "image" because that's the most common case and the safest default
+// for adapters that don't support video.
+func SniffMediaKind(rawURL string) MediaKind {
+	// Strip query string and fragment so foo.mp4?token=abc still detects.
+	clean := rawURL
+	if i := strings.IndexAny(clean, "?#"); i >= 0 {
+		clean = clean[:i]
+	}
+	ext := strings.ToLower(path.Ext(clean))
+	switch ext {
+	case ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi":
+		return MediaKindVideo
+	case ".gif":
+		return MediaKindGIF
+	case ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif":
+		return MediaKindImage
+	}
+	return MediaKindUnknown
+}
+
+// MediaFromURLs builds a MediaItem slice from a flat URL list, sniffing each
+// kind from the extension. Convenience helper used by the request handler so
+// existing API consumers (which send media_urls as []string) keep working
+// without having to specify a kind.
+func MediaFromURLs(urls []string) []MediaItem {
+	if len(urls) == 0 {
+		return nil
+	}
+	out := make([]MediaItem, 0, len(urls))
+	for _, u := range urls {
+		out = append(out, MediaItem{URL: u, Kind: SniffMediaKind(u)})
+	}
+	return out
+}
+
+// FilterByKind returns only the items whose Kind matches one of the provided
+// kinds. Adapters use it to split a heterogeneous media list into image-only
+// and video-only halves when the platform requires separate API paths.
+func FilterByKind(items []MediaItem, kinds ...MediaKind) []MediaItem {
+	if len(items) == 0 {
+		return nil
+	}
+	allowed := make(map[MediaKind]bool, len(kinds))
+	for _, k := range kinds {
+		allowed[k] = true
+	}
+	out := make([]MediaItem, 0, len(items))
+	for _, it := range items {
+		if allowed[it.Kind] {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// URLs returns just the URL strings from a MediaItem slice. Convenience for
+// adapters that don't yet care about per-item kind.
+func URLs(items []MediaItem) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = it.URL
+	}
+	return out
+}
 
 // ConnectResult holds the result of connecting a social account.
 type ConnectResult struct {
@@ -58,9 +154,11 @@ type PlatformAdapter interface {
 	// Connect authenticates with the platform and returns account info + tokens.
 	Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error)
 
-	// Post publishes content to the platform. opts carries per-platform options
-	// (e.g. {"privacy_status": "public"} for YouTube). May be nil.
-	Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error)
+	// Post publishes content to the platform. media is a structured slice of
+	// MediaItem so each adapter can decide per-item how to handle image vs.
+	// video vs. gif. opts carries per-platform options (e.g.
+	// {"privacy_status": "public"} for YouTube). Both may be nil/empty.
+	Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error)
 
 	// DeletePost removes a post from the platform.
 	DeletePost(ctx context.Context, accessToken string, externalID string) error

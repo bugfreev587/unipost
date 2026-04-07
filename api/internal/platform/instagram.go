@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -99,50 +100,45 @@ func (a *InstagramAdapter) Connect(ctx context.Context, credentials map[string]s
 }
 
 // Post publishes to Instagram using the two-step container flow.
-func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
 	_ = opts
-	// Get IG user ID from token
 	igUserID, err := a.getIGUserID(ctx, accessToken)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(imageURLs) == 0 {
-		return nil, fmt.Errorf("instagram requires at least one image")
+	if len(media) == 0 {
+		return nil, fmt.Errorf("instagram requires at least one media item")
+	}
+	if len(media) > 10 {
+		return nil, fmt.Errorf("instagram carousels accept at most 10 items")
 	}
 
-	// Step 1: Create media container
-	params := url.Values{
-		"image_url":    {imageURLs[0]},
-		"caption":      {text},
-		"access_token": {accessToken},
+	// Build a creation container per the IG Graph API rules:
+	//   - 1 image    → media_type=IMAGE (default), image_url
+	//   - 1 video    → media_type=REELS, video_url, is_reel=true
+	//   - 2+ items   → media_type=CAROUSEL, children=[item1,item2,...] where
+	//                  each child container is created beforehand with
+	//                  is_carousel_item=true.
+	var creationID string
+	switch {
+	case len(media) == 1 && media[0].Kind == MediaKindVideo:
+		creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false)
+	case len(media) == 1:
+		creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false)
+	default:
+		creationID, err = a.createCarouselContainer(ctx, accessToken, igUserID, text, media)
 	}
-
-	containerURL := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/media?%s", igUserID, params.Encode())
-	resp, err := a.client.Post(containerURL, "application/x-www-form-urlencoded", nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create container: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("container creation failed (%d): %s", resp.StatusCode, string(body))
-	}
-
-	var container struct {
-		ID string `json:"id"`
-	}
-	json.NewDecoder(resp.Body).Decode(&container)
-
-	// Wait for container to be ready (poll)
-	if err := a.waitForContainer(ctx, accessToken, container.ID); err != nil {
 		return nil, err
 	}
 
-	// Step 2: Publish container
+	if err := a.waitForContainer(ctx, accessToken, creationID); err != nil {
+		return nil, err
+	}
+
+	// Publish the (parent) container.
 	publishURL := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/media_publish?creation_id=%s&access_token=%s",
-		igUserID, container.ID, accessToken)
+		igUserID, creationID, accessToken)
 	pubResp, err := a.client.Post(publishURL, "application/x-www-form-urlencoded", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to publish: %w", err)
@@ -163,6 +159,98 @@ func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text st
 		ExternalID: published.ID,
 		URL:        fmt.Sprintf("https://www.instagram.com/p/%s/", published.ID),
 	}, nil
+}
+
+// createSingleContainer creates a non-carousel media container. caption is
+// only attached when isCarouselChild is false (children inherit it from the
+// parent CAROUSEL container).
+func (a *InstagramAdapter) createSingleContainer(ctx context.Context, accessToken, igUserID, caption string, item MediaItem, isCarouselChild bool) (string, error) {
+	params := url.Values{
+		"access_token": {accessToken},
+	}
+	if !isCarouselChild {
+		params.Set("caption", caption)
+	} else {
+		params.Set("is_carousel_item", "true")
+	}
+
+	kind := item.Kind
+	if kind == MediaKindUnknown {
+		kind = SniffMediaKind(item.URL)
+	}
+
+	switch kind {
+	case MediaKindVideo:
+		// Single video → Reels (Meta no longer supports plain VIDEO container).
+		params.Set("media_type", "REELS")
+		params.Set("video_url", item.URL)
+	default:
+		params.Set("image_url", item.URL)
+	}
+
+	containerURL := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/media?%s", igUserID, params.Encode())
+	resp, err := a.client.Post(containerURL, "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create container: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("container creation failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var container struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&container); err != nil {
+		return "", err
+	}
+	return container.ID, nil
+}
+
+// createCarouselContainer builds the per-child containers (waiting for each
+// to finish), then assembles them into a CAROUSEL parent container.
+func (a *InstagramAdapter) createCarouselContainer(ctx context.Context, accessToken, igUserID, caption string, items []MediaItem) (string, error) {
+	childIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		id, err := a.createSingleContainer(ctx, accessToken, igUserID, caption, item, true)
+		if err != nil {
+			return "", err
+		}
+		// IG requires each child container to be ready before the parent can
+		// reference it.
+		if err := a.waitForContainer(ctx, accessToken, id); err != nil {
+			return "", err
+		}
+		childIDs = append(childIDs, id)
+	}
+
+	params := url.Values{
+		"access_token": {accessToken},
+		"caption":      {caption},
+		"media_type":   {"CAROUSEL"},
+		"children":     {strings.Join(childIDs, ",")},
+	}
+	carouselURL := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/media?%s", igUserID, params.Encode())
+	resp, err := a.client.Post(carouselURL, "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create carousel: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("carousel creation failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var container struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&container); err != nil {
+		return "", err
+	}
+	return container.ID, nil
 }
 
 func (a *InstagramAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {

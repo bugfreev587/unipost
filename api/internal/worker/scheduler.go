@@ -148,7 +148,7 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 				caption = post.Caption.String
 			}
 
-			pr, err := adapter.Post(ctx, accessToken, caption, post.MediaUrls, platformOptions[acc.Platform])
+			pr, err := adapter.Post(ctx, accessToken, caption, platform.MediaFromURLs(post.MediaUrls), platformOptions[acc.Platform])
 			results = append(results, result{accountID: accountID, platform: acc.Platform, postResult: pr, err: err})
 		}(accID)
 	}

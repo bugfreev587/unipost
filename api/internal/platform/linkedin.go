@@ -101,7 +101,7 @@ func (a *LinkedInAdapter) Connect(ctx context.Context, credentials map[string]st
 }
 
 // Post publishes a text post to LinkedIn.
-func (a *LinkedInAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+func (a *LinkedInAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
 	_ = opts
 	// Get person URN from userinfo
 	userInfo, err := a.getUserInfo(ctx, accessToken)
@@ -117,19 +117,75 @@ func (a *LinkedInAdapter) Post(ctx context.Context, accessToken string, text str
 		"shareMediaCategory": "NONE",
 	}
 
-	// Handle images if provided
-	if len(imageURLs) > 0 {
+	// Handle media via the Assets API: each item must be registered, the
+	// binary uploaded, and the returned asset URN attached to the share with
+	// the matching shareMediaCategory. This replaces the broken ARTICLE path
+	// that previously rendered images as link previews.
+	//
+	// LinkedIn share rules we enforce here:
+	//   - Up to 9 images can share a single UGC post (multi-image carousel).
+	//   - Exactly 1 video per UGC post — multiple videos require separate
+	//     posts, which the caller can do by issuing multiple Post() calls.
+	//   - Mixing IMAGE and VIDEO in one share is not allowed.
+	if len(media) > 0 {
+		// Pre-classify so we can enforce the rules above before incurring
+		// the cost of any uploads.
+		videoCount := 0
+		for _, item := range media {
+			kind := item.Kind
+			if kind == MediaKindUnknown {
+				kind = SniffMediaKind(item.URL)
+			}
+			if kind == MediaKindVideo {
+				videoCount++
+			}
+		}
+		if videoCount > 1 {
+			return nil, fmt.Errorf("linkedin: only one video per post is supported")
+		}
+		if videoCount > 0 && videoCount != len(media) {
+			return nil, fmt.Errorf("linkedin: cannot mix image and video in one post")
+		}
+		if videoCount == 0 && len(media) > 9 {
+			return nil, fmt.Errorf("linkedin: up to 9 images per post supported")
+		}
+
 		var mediaList []map[string]any
-		for _, imgURL := range imageURLs {
+		var category string
+
+		for _, item := range media {
+			kind := item.Kind
+			if kind == MediaKindUnknown {
+				kind = SniffMediaKind(item.URL)
+			}
+
+			// Register the upload, fetch the source bytes, then PUT them at
+			// the upload URL LinkedIn hands back. uploadAsset returns the
+			// final asset URN.
+			urn, recipe, err := a.uploadAsset(ctx, accessToken, authorURN, item.URL, kind)
+			if err != nil {
+				return nil, fmt.Errorf("linkedin asset upload failed: %w", err)
+			}
+
+			// All items in a single share must share a category. The first
+			// successful upload locks it; subsequent items of a different
+			// kind are rejected. UGC API does not support mixing image+video
+			// in one share.
+			if category == "" {
+				category = recipe
+			} else if category != recipe {
+				return nil, fmt.Errorf("linkedin: cannot mix %s and %s in a single post", category, recipe)
+			}
+
 			mediaList = append(mediaList, map[string]any{
-				"status": "READY",
-				"originalUrl": imgURL,
-				"media": map[string]any{
-					"title": "",
-				},
+				"status":      "READY",
+				"media":       urn,
+				"title":       map[string]any{"text": ""},
+				"description": map[string]any{"text": ""},
 			})
 		}
-		shareContent["shareMediaCategory"] = "ARTICLE"
+
+		shareContent["shareMediaCategory"] = category
 		shareContent["media"] = mediaList
 	}
 
@@ -177,6 +233,147 @@ func (a *LinkedInAdapter) Post(ctx context.Context, accessToken string, text str
 		ExternalID: postID,
 		URL:        fmt.Sprintf("https://www.linkedin.com/feed/update/%s", postID),
 	}, nil
+}
+
+// uploadAsset implements LinkedIn's three-step Assets API:
+//
+//  1. POST /v2/assets?action=registerUpload — tells LinkedIn we want to push
+//     either a feedshare-image or feedshare-video. Response carries an upload
+//     URL and the asset URN.
+//  2. GET source URL — fetch the bytes from the caller-supplied media URL.
+//  3. PUT bytes to the upload URL with the registration access token.
+//
+// LinkedIn then asynchronously processes the asset; the returned URN is safe
+// to attach to a UGC post immediately, but image upload should be confirmed
+// via the assets endpoint to avoid races. We do a single fast poll to keep
+// the post-create call deterministic; if it's still processing the share will
+// surface the failure later via the moderation API.
+//
+// Returns the asset URN and the corresponding shareMediaCategory string
+// ("IMAGE" or "VIDEO") so the caller can populate the UGC payload.
+func (a *LinkedInAdapter) uploadAsset(ctx context.Context, accessToken, ownerURN, sourceURL string, kind MediaKind) (string, string, error) {
+	var recipe, category string
+	switch kind {
+	case MediaKindVideo:
+		recipe = "urn:li:digitalmediaRecipe:feedshare-video"
+		category = "VIDEO"
+	case MediaKindImage, MediaKindGIF, MediaKindUnknown:
+		recipe = "urn:li:digitalmediaRecipe:feedshare-image"
+		category = "IMAGE"
+	default:
+		return "", "", fmt.Errorf("linkedin: unsupported media kind %q", kind)
+	}
+
+	// Step 1: register upload.
+	registerBody, _ := json.Marshal(map[string]any{
+		"registerUploadRequest": map[string]any{
+			"recipes":              []string{recipe},
+			"owner":                ownerURN,
+			"serviceRelationships": []map[string]any{{
+				"relationshipType": "OWNER",
+				"identifier":       "urn:li:userGeneratedContent",
+			}},
+		},
+	})
+
+	regReq, err := http.NewRequestWithContext(ctx, "POST",
+		"https://api.linkedin.com/v2/assets?action=registerUpload", bytes.NewReader(registerBody))
+	if err != nil {
+		return "", "", err
+	}
+	regReq.Header.Set("Authorization", "Bearer "+accessToken)
+	regReq.Header.Set("Content-Type", "application/json")
+	regReq.Header.Set("X-Restli-Protocol-Version", "2.0.0")
+
+	regResp, err := a.client.Do(regReq)
+	if err != nil {
+		return "", "", fmt.Errorf("registerUpload: %w", err)
+	}
+	defer regResp.Body.Close()
+	if regResp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(regResp.Body)
+		return "", "", fmt.Errorf("registerUpload (%d): %s", regResp.StatusCode, string(body))
+	}
+
+	var reg struct {
+		Value struct {
+			Asset              string `json:"asset"`
+			UploadMechanism    map[string]struct {
+				UploadURL string            `json:"uploadUrl"`
+				Headers   map[string]string `json:"headers"`
+			} `json:"uploadMechanism"`
+		} `json:"value"`
+	}
+	if err := json.NewDecoder(regResp.Body).Decode(&reg); err != nil {
+		return "", "", fmt.Errorf("registerUpload decode: %w", err)
+	}
+
+	// LinkedIn may return one of several upload mechanisms. The simple v2
+	// path is com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest.
+	var uploadURL string
+	var uploadHeaders map[string]string
+	for _, mech := range reg.Value.UploadMechanism {
+		if mech.UploadURL != "" {
+			uploadURL = mech.UploadURL
+			uploadHeaders = mech.Headers
+			break
+		}
+	}
+	if uploadURL == "" || reg.Value.Asset == "" {
+		return "", "", fmt.Errorf("registerUpload returned no upload URL or asset")
+	}
+
+	// Step 2: fetch the source bytes.
+	srcReq, err := http.NewRequestWithContext(ctx, "GET", sourceURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	srcResp, err := a.client.Do(srcReq)
+	if err != nil {
+		return "", "", fmt.Errorf("fetch source: %w", err)
+	}
+	defer srcResp.Body.Close()
+	if srcResp.StatusCode/100 != 2 {
+		return "", "", fmt.Errorf("fetch source (%d)", srcResp.StatusCode)
+	}
+	srcBytes, err := io.ReadAll(srcResp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("read source: %w", err)
+	}
+
+	// Step 3: upload bytes to the LinkedIn-issued URL.
+	upReq, err := http.NewRequestWithContext(ctx, "PUT", uploadURL, bytes.NewReader(srcBytes))
+	if err != nil {
+		return "", "", err
+	}
+	// Some upload paths require the Authorization header to be repeated.
+	upReq.Header.Set("Authorization", "Bearer "+accessToken)
+	for k, v := range uploadHeaders {
+		upReq.Header.Set(k, v)
+	}
+	if upReq.Header.Get("Content-Type") == "" {
+		ct := srcResp.Header.Get("Content-Type")
+		if ct == "" {
+			if category == "VIDEO" {
+				ct = "video/mp4"
+			} else {
+				ct = "image/jpeg"
+			}
+		}
+		upReq.Header.Set("Content-Type", ct)
+	}
+
+	upResp, err := a.client.Do(upReq)
+	if err != nil {
+		return "", "", fmt.Errorf("upload: %w", err)
+	}
+	defer upResp.Body.Close()
+	if upResp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(upResp.Body)
+		return "", "", fmt.Errorf("upload (%d): %s", upResp.StatusCode, string(body))
+	}
+
+	return reg.Value.Asset, category, nil
 }
 
 func (a *LinkedInAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {

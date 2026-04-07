@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -106,10 +107,14 @@ var YouTubePrivacyValues = []string{"private", "public", "unlisted"}
 //
 // Supported opts:
 //   - privacy_status: "private" (default), "public", or "unlisted"
-func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
-	if len(imageURLs) == 0 {
+func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
+	if len(media) == 0 {
 		return nil, fmt.Errorf("youtube requires a video URL")
 	}
+	if len(media) > 1 {
+		return nil, fmt.Errorf("youtube accepts exactly one video per upload")
+	}
+	videoURL := media[0].URL
 
 	privacyStatus := optString(opts, "privacy_status")
 	if err := validateEnum("youtube", "privacy_status", privacyStatus, YouTubePrivacyValues); err != nil {
@@ -119,8 +124,35 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 		privacyStatus = "private"
 	}
 
+	// Shorts hint: when true, append #Shorts to the title (and description if
+	// missing). YouTube uses the hashtag as the primary signal that a vertical
+	// short-form video should be surfaced in the Shorts shelf — combined with
+	// 9:16 aspect ratio + < 60 s duration, both of which are caller-controlled
+	// at the source video level.
+	shorts := optBool(opts, "shorts")
+	title, description := text, text
+	if shorts {
+		if !strings.Contains(strings.ToLower(title), "#shorts") {
+			title = strings.TrimSpace(title + " #Shorts")
+		}
+		if !strings.Contains(strings.ToLower(description), "#shorts") {
+			description = strings.TrimSpace(description + "\n#Shorts")
+		}
+	}
+
+	// Optional category id (e.g. "22" for People & Blogs) and tag list.
+	categoryID := optString(opts, "category_id")
+	var tags []string
+	if rawTags, ok := opts["tags"].([]any); ok {
+		for _, t := range rawTags {
+			if s, ok := t.(string); ok && s != "" {
+				tags = append(tags, s)
+			}
+		}
+	}
+
 	// Download video
-	videoResp, err := a.client.Get(imageURLs[0])
+	videoResp, err := a.client.Get(videoURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download video: %w", err)
 	}
@@ -132,11 +164,19 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	}
 
 	// Initialize resumable upload
+	snippet := map[string]any{
+		"title":       title,
+		"description": description,
+	}
+	if categoryID != "" {
+		snippet["categoryId"] = categoryID
+	}
+	if len(tags) > 0 {
+		snippet["tags"] = tags
+	}
+
 	metadata, _ := json.Marshal(map[string]any{
-		"snippet": map[string]any{
-			"title":       text,
-			"description": text,
-		},
+		"snippet": snippet,
 		"status": map[string]any{
 			"privacyStatus": privacyStatus,
 		},

@@ -87,7 +87,7 @@ func (b *BlueskyAdapter) Connect(ctx context.Context, credentials map[string]str
 }
 
 // Post publishes a text post (with optional images) to Bluesky.
-func (b *BlueskyAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+func (b *BlueskyAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
 	_ = opts // bluesky has no per-post options today
 	did, err := parseJWTSub(accessToken)
 	if err != nil {
@@ -101,22 +101,49 @@ func (b *BlueskyAdapter) Post(ctx context.Context, accessToken string, text stri
 		"createdAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
-	// Upload images if provided
-	if len(imageURLs) > 0 {
-		var images []map[string]any
-		for _, url := range imageURLs {
-			blob, err := b.uploadImage(ctx, accessToken, url)
+	// Split media into images vs. video — Bluesky requires distinct embed
+	// types and forbids mixing the two in a single post.
+	images := FilterByKind(media, MediaKindImage, MediaKindGIF, MediaKindUnknown)
+	videos := FilterByKind(media, MediaKindVideo)
+
+	if len(videos) > 1 {
+		return nil, fmt.Errorf("bluesky supports only one video per post")
+	}
+	if len(videos) == 1 && len(images) > 0 {
+		return nil, fmt.Errorf("bluesky cannot mix images and video in one post")
+	}
+
+	switch {
+	case len(videos) == 1:
+		blob, err := b.uploadVideo(ctx, accessToken, videos[0].URL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload video %s: %w", videos[0].URL, err)
+		}
+		record["embed"] = map[string]any{
+			"$type": "app.bsky.embed.video",
+			"video": blob,
+			"alt":   videos[0].Alt,
+		}
+
+	case len(images) > 0:
+		// Bluesky caps image embeds at 4.
+		if len(images) > 4 {
+			images = images[:4]
+		}
+		var imgEmbeds []map[string]any
+		for _, item := range images {
+			blob, err := b.uploadImage(ctx, accessToken, item.URL)
 			if err != nil {
-				return nil, fmt.Errorf("failed to upload image %s: %w", url, err)
+				return nil, fmt.Errorf("failed to upload image %s: %w", item.URL, err)
 			}
-			images = append(images, map[string]any{
-				"alt":   "",
+			imgEmbeds = append(imgEmbeds, map[string]any{
+				"alt":   item.Alt,
 				"image": blob,
 			})
 		}
 		record["embed"] = map[string]any{
 			"$type":  "app.bsky.embed.images",
-			"images": images,
+			"images": imgEmbeds,
 		}
 	}
 
@@ -290,6 +317,61 @@ func (b *BlueskyAdapter) uploadImage(ctx context.Context, accessToken string, im
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode blob result: %w", err)
+	}
+
+	return result.Blob, nil
+}
+
+// uploadVideo downloads a video from a URL and uploads it to the user's PDS
+// via uploadBlob. Bluesky's app.bsky.video.uploadVideo lexicon adds extra
+// abuse-prevention plumbing around this, but the underlying repo blob is the
+// same — the embed.video record references it by CID. Service tokens that
+// some PDSes require for video are out of scope here; if a PDS rejects the
+// blob upload we surface the error directly.
+func (b *BlueskyAdapter) uploadVideo(ctx context.Context, accessToken string, videoURL string) (map[string]any, error) {
+	vidReq, err := http.NewRequestWithContext(ctx, "GET", videoURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	vidResp, err := b.client.Do(vidReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download video: %w", err)
+	}
+	defer vidResp.Body.Close()
+
+	vidData, err := io.ReadAll(vidResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read video: %w", err)
+	}
+
+	contentType := vidResp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", b.baseURL+"/xrpc/com.atproto.repo.uploadBlob", bytes.NewReader(vidData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload video blob: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("video blob upload failed (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Blob map[string]any `json:"blob"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode video blob result: %w", err)
 	}
 
 	return result.Blob, nil

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -175,10 +176,24 @@ var TikTokPrivacyValues = []string{
 //
 // Supported opts:
 //   - privacy_level: one of TikTokPrivacyValues. Defaults to "SELF_ONLY".
-func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
-	if len(imageURLs) == 0 {
-		return nil, fmt.Errorf("tiktok requires a video URL")
+func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
+	if len(media) == 0 {
+		return nil, fmt.Errorf("tiktok requires at least one media item")
 	}
+
+	// Photo carousels go down a separate API path. If the first item is an
+	// image (or all of them are), dispatch to the PHOTO uploader.
+	images := FilterByKind(media, MediaKindImage, MediaKindGIF, MediaKindUnknown)
+	if len(images) == len(media) && images[0].Kind == MediaKindImage {
+		return a.postPhoto(ctx, accessToken, text, images, opts)
+	}
+
+	// Otherwise expect a single video. TikTok doesn't accept mixed media
+	// or multi-video posts.
+	if len(media) > 1 {
+		return nil, fmt.Errorf("tiktok video posts accept exactly one video")
+	}
+	videoURL := media[0].URL
 
 	privacyLevel := optString(opts, "privacy_level")
 	if err := validateEnum("tiktok", "privacy_level", privacyLevel, TikTokPrivacyValues); err != nil {
@@ -188,100 +203,38 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 		privacyLevel = "SELF_ONLY"
 	}
 
-	// Step 1: Download the video
-	videoResp, err := a.client.Get(imageURLs[0])
-	if err != nil {
-		return nil, fmt.Errorf("failed to download video: %w", err)
-	}
-	defer videoResp.Body.Close()
-
-	videoData, err := io.ReadAll(videoResp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read video: %w", err)
+	// Default to PULL_FROM_URL: TikTok fetches the video from the caller's
+	// CDN, saving us a download/re-upload round trip and the bandwidth cost.
+	// Caller can force the legacy proxy path by setting platform_options
+	// {"upload_mode": "file_upload"}, which is useful when the source URL is
+	// not on a verified domain or is unreachable from TikTok's network.
+	uploadMode := strings.ToLower(optString(opts, "upload_mode"))
+	if uploadMode == "" {
+		uploadMode = "pull_from_url"
 	}
 
-	videoSize := len(videoData)
-	slog.Info("tiktok post: downloaded video", "size", videoSize)
-
-	// Step 2: Initialize upload with FILE_UPLOAD source
-	initBody, _ := json.Marshal(map[string]any{
-		"post_info": map[string]any{
-			"title":         text,
-			"privacy_level": privacyLevel,
-		},
-		"source_info": map[string]any{
-			"source":     "FILE_UPLOAD",
-			"video_size": videoSize,
-			"chunk_size": videoSize,
-			"total_chunk_count": 1,
-		},
-	})
-
-	initReq, err := http.NewRequestWithContext(ctx, "POST",
-		"https://open.tiktokapis.com/v2/post/publish/video/init/", bytes.NewReader(initBody))
-	if err != nil {
-		return nil, err
+	var (
+		publishID string
+		initErr   error
+	)
+	if uploadMode == "pull_from_url" {
+		publishID, initErr = a.initVideoPull(ctx, accessToken, text, privacyLevel, videoURL)
+	} else {
+		publishID, initErr = a.initAndPushVideoFile(ctx, accessToken, text, privacyLevel, videoURL)
 	}
-	initReq.Header.Set("Content-Type", "application/json; charset=UTF-8")
-	initReq.Header.Set("Authorization", "Bearer "+accessToken)
-
-	initResp, err := a.client.Do(initReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to init upload: %w", err)
-	}
-	defer initResp.Body.Close()
-
-	initRespBody, _ := io.ReadAll(initResp.Body)
-
-	if initResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tiktok upload init failed (%d): %s", initResp.StatusCode, string(initRespBody))
+	if initErr != nil {
+		return nil, initErr
 	}
 
-	var initResult struct {
+	slog.Info("tiktok post: video submitted, polling status", "publish_id", publishID)
+	// Local stand-in so the existing polling block (which references
+	// initResult.Data.PublishID) keeps working without further edits.
+	initResult := struct {
 		Data struct {
-			PublishID string `json:"publish_id"`
-			UploadURL string `json:"upload_url"`
-		} `json:"data"`
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	json.Unmarshal(initRespBody, &initResult)
-
-	if initResult.Error.Code != "" && initResult.Error.Code != "ok" {
-		return nil, fmt.Errorf("tiktok error: %s", initResult.Error.Message)
-	}
-
-	if initResult.Data.UploadURL == "" {
-		return nil, fmt.Errorf("tiktok returned no upload URL")
-	}
-
-	slog.Info("tiktok post: uploading video", "publish_id", initResult.Data.PublishID)
-
-	// Step 3: Upload the video to the upload URL
-	uploadReq, err := http.NewRequestWithContext(ctx, "PUT", initResult.Data.UploadURL, bytes.NewReader(videoData))
-	if err != nil {
-		return nil, err
-	}
-	uploadReq.Header.Set("Content-Type", "application/octet-stream")
-	uploadReq.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", videoSize-1, videoSize))
-	uploadReq.Header.Set("Content-Length", fmt.Sprintf("%d", videoSize))
-
-	uploadResp, err := a.client.Do(uploadReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to upload video: %w", err)
-	}
-	defer uploadResp.Body.Close()
-
-	uploadRespBody, _ := io.ReadAll(uploadResp.Body)
-	slog.Info("tiktok post: upload response", "status", uploadResp.StatusCode, "body", string(uploadRespBody))
-
-	if uploadResp.StatusCode != http.StatusOK && uploadResp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("tiktok upload failed (%d): %s", uploadResp.StatusCode, string(uploadRespBody))
-	}
-
-	slog.Info("tiktok post: video uploaded, polling status", "publish_id", initResult.Data.PublishID)
+			PublishID string
+		}
+	}{}
+	initResult.Data.PublishID = publishID
 
 	// Step 4: Poll publish status until complete or failed (max 60 seconds)
 	for i := 0; i < 12; i++ {
@@ -321,6 +274,235 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 		ExternalID: initResult.Data.PublishID,
 		URL:        "https://www.tiktok.com",
 	}, nil
+}
+
+// postPhoto handles TikTok photo carousels via the content/init endpoint.
+// Unlike the video path this uses PULL_FROM_URL — TikTok pulls each image
+// from the caller's CDN, so we don't have to download/re-upload bytes here.
+// All image URLs must already be hosted on a verified domain or URL prefix
+// in the developer portal; otherwise TikTok rejects the init call.
+func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string, images []MediaItem, opts map[string]any) (*PostResult, error) {
+	if len(images) == 0 {
+		return nil, fmt.Errorf("tiktok photo post requires at least one image")
+	}
+
+	privacyLevel := optString(opts, "privacy_level")
+	if err := validateEnum("tiktok", "privacy_level", privacyLevel, TikTokPrivacyValues); err != nil {
+		return nil, err
+	}
+	if privacyLevel == "" {
+		privacyLevel = "SELF_ONLY"
+	}
+
+	urls := URLs(images)
+	cover := 0
+	if v, ok := opts["photo_cover_index"].(float64); ok {
+		cover = int(v)
+	}
+	if cover < 0 || cover >= len(urls) {
+		cover = 0
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"post_info": map[string]any{
+			"title":         text,
+			"description":   text,
+			"privacy_level": privacyLevel,
+		},
+		"source_info": map[string]any{
+			"source":            "PULL_FROM_URL",
+			"photo_cover_index": cover,
+			"photo_images":      urls,
+		},
+		"post_mode":  "DIRECT_POST",
+		"media_type": "PHOTO",
+	})
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		"https://open.tiktokapis.com/v2/post/publish/content/init/", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tiktok photo init: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tiktok photo init (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Data struct {
+			PublishID string `json:"publish_id"`
+		} `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	json.Unmarshal(respBody, &result)
+	if result.Error.Code != "" && result.Error.Code != "ok" {
+		return nil, fmt.Errorf("tiktok photo error: %s", result.Error.Message)
+	}
+
+	return &PostResult{
+		ExternalID: result.Data.PublishID,
+		URL:        "https://www.tiktok.com",
+	}, nil
+}
+
+// initVideoPull asks TikTok to pull the video itself from the source URL.
+// This is the preferred path: it skips a download/re-upload round-trip on our
+// side and means the video bytes never touch the API server. The source URL
+// must be on a domain registered with TikTok's developer portal.
+func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, privacyLevel, videoURL string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"post_info": map[string]any{
+			"title":         text,
+			"privacy_level": privacyLevel,
+		},
+		"source_info": map[string]any{
+			"source":        "PULL_FROM_URL",
+			"video_url":     videoURL,
+		},
+	})
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		"https://open.tiktokapis.com/v2/post/publish/video/init/", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("tiktok pull init: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("tiktok pull init (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Data struct {
+			PublishID string `json:"publish_id"`
+		} `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	json.Unmarshal(respBody, &result)
+	if result.Error.Code != "" && result.Error.Code != "ok" {
+		return "", fmt.Errorf("tiktok error: %s", result.Error.Message)
+	}
+	if result.Data.PublishID == "" {
+		return "", fmt.Errorf("tiktok pull init: empty publish_id")
+	}
+	return result.Data.PublishID, nil
+}
+
+// initAndPushVideoFile is the legacy FILE_UPLOAD flow: download the video
+// bytes locally, INIT with TikTok asking for an upload URL, then PUT the
+// bytes to that URL. Used as a fallback when PULL_FROM_URL isn't viable
+// (source not on a verified domain, intranet URLs, etc.).
+func (a *TikTokAdapter) initAndPushVideoFile(ctx context.Context, accessToken, text, privacyLevel, videoURL string) (string, error) {
+	videoResp, err := a.client.Get(videoURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download video: %w", err)
+	}
+	defer videoResp.Body.Close()
+
+	videoData, err := io.ReadAll(videoResp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read video: %w", err)
+	}
+
+	videoSize := len(videoData)
+	slog.Info("tiktok post: downloaded video", "size", videoSize)
+
+	initBody, _ := json.Marshal(map[string]any{
+		"post_info": map[string]any{
+			"title":         text,
+			"privacy_level": privacyLevel,
+		},
+		"source_info": map[string]any{
+			"source":            "FILE_UPLOAD",
+			"video_size":        videoSize,
+			"chunk_size":        videoSize,
+			"total_chunk_count": 1,
+		},
+	})
+
+	initReq, err := http.NewRequestWithContext(ctx, "POST",
+		"https://open.tiktokapis.com/v2/post/publish/video/init/", bytes.NewReader(initBody))
+	if err != nil {
+		return "", err
+	}
+	initReq.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	initReq.Header.Set("Authorization", "Bearer "+accessToken)
+
+	initResp, err := a.client.Do(initReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to init upload: %w", err)
+	}
+	defer initResp.Body.Close()
+
+	initRespBody, _ := io.ReadAll(initResp.Body)
+	if initResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("tiktok upload init failed (%d): %s", initResp.StatusCode, string(initRespBody))
+	}
+
+	var initResult struct {
+		Data struct {
+			PublishID string `json:"publish_id"`
+			UploadURL string `json:"upload_url"`
+		} `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	json.Unmarshal(initRespBody, &initResult)
+	if initResult.Error.Code != "" && initResult.Error.Code != "ok" {
+		return "", fmt.Errorf("tiktok error: %s", initResult.Error.Message)
+	}
+	if initResult.Data.UploadURL == "" {
+		return "", fmt.Errorf("tiktok returned no upload URL")
+	}
+
+	slog.Info("tiktok post: uploading video", "publish_id", initResult.Data.PublishID)
+
+	uploadReq, err := http.NewRequestWithContext(ctx, "PUT", initResult.Data.UploadURL, bytes.NewReader(videoData))
+	if err != nil {
+		return "", err
+	}
+	uploadReq.Header.Set("Content-Type", "application/octet-stream")
+	uploadReq.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", videoSize-1, videoSize))
+	uploadReq.Header.Set("Content-Length", fmt.Sprintf("%d", videoSize))
+
+	uploadResp, err := a.client.Do(uploadReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload video: %w", err)
+	}
+	defer uploadResp.Body.Close()
+
+	uploadRespBody, _ := io.ReadAll(uploadResp.Body)
+	slog.Info("tiktok post: upload response", "status", uploadResp.StatusCode, "body", string(uploadRespBody))
+	if uploadResp.StatusCode != http.StatusOK && uploadResp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("tiktok upload failed (%d): %s", uploadResp.StatusCode, string(uploadRespBody))
+	}
+
+	return initResult.Data.PublishID, nil
 }
 
 // CheckPublishStatus queries TikTok for the publish status of a video.

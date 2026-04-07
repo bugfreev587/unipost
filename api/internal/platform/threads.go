@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -95,49 +96,52 @@ func (a *ThreadsAdapter) Connect(ctx context.Context, credentials map[string]str
 }
 
 // Post publishes a text post (with optional image) to Threads.
-func (a *ThreadsAdapter) Post(ctx context.Context, accessToken string, text string, imageURLs []string, opts map[string]any) (*PostResult, error) {
+func (a *ThreadsAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
 	_ = opts
 	userID, err := a.getUserID(ctx, accessToken)
 	if err != nil {
 		return nil, err
 	}
-
-	// Step 1: Create container
-	params := url.Values{
-		"text":         {text},
-		"access_token": {accessToken},
+	if len(media) > 20 {
+		return nil, fmt.Errorf("threads carousels accept at most 20 items")
 	}
 
-	mediaType := "TEXT"
-	if len(imageURLs) > 0 {
-		mediaType = "IMAGE"
-		params.Set("image_url", imageURLs[0])
+	// Threads container shape rules:
+	//   - 0 items   → media_type=TEXT
+	//   - 1 image   → media_type=IMAGE, image_url
+	//   - 1 video   → media_type=VIDEO, video_url
+	//   - 2+ items  → media_type=CAROUSEL, children=[...] where each child is
+	//                 created up-front with is_carousel_item=true.
+	var creationID string
+	switch {
+	case len(media) == 0:
+		creationID, err = a.createTextContainer(ctx, accessToken, userID, text)
+	case len(media) == 1:
+		creationID, err = a.createMediaContainer(ctx, accessToken, userID, text, media[0], false)
+	default:
+		creationID, err = a.createCarouselContainer(ctx, accessToken, userID, text, media)
 	}
-	params.Set("media_type", mediaType)
-
-	containerURL := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads?%s", userID, params.Encode())
-	resp, err := a.client.Post(containerURL, "application/x-www-form-urlencoded", nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create container: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("container creation failed (%d): %s", resp.StatusCode, string(body))
+		return nil, err
 	}
 
-	var container struct {
-		ID string `json:"id"`
+	// Wait at least 30s for video, less for image/text. Threads recommends
+	// 30s for video before calling threads_publish.
+	hasVideo := false
+	for _, m := range media {
+		if m.Kind == MediaKindVideo {
+			hasVideo = true
+			break
+		}
 	}
-	json.NewDecoder(resp.Body).Decode(&container)
+	if hasVideo {
+		time.Sleep(30 * time.Second)
+	} else {
+		time.Sleep(3 * time.Second)
+	}
 
-	// Wait briefly for processing
-	time.Sleep(3 * time.Second)
-
-	// Step 2: Publish
 	publishURL := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads_publish?creation_id=%s&access_token=%s",
-		userID, container.ID, accessToken)
+		userID, creationID, accessToken)
 	pubResp, err := a.client.Post(publishURL, "application/x-www-form-urlencoded", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to publish: %w", err)
@@ -158,6 +162,88 @@ func (a *ThreadsAdapter) Post(ctx context.Context, accessToken string, text stri
 		ExternalID: published.ID,
 		URL:        fmt.Sprintf("https://www.threads.net/@%s/post/%s", userID, published.ID),
 	}, nil
+}
+
+func (a *ThreadsAdapter) createTextContainer(ctx context.Context, accessToken, userID, text string) (string, error) {
+	params := url.Values{
+		"media_type":   {"TEXT"},
+		"text":         {text},
+		"access_token": {accessToken},
+	}
+	return a.postContainer(ctx, userID, params)
+}
+
+func (a *ThreadsAdapter) createMediaContainer(ctx context.Context, accessToken, userID, text string, item MediaItem, isCarouselChild bool) (string, error) {
+	params := url.Values{
+		"access_token": {accessToken},
+	}
+	if !isCarouselChild {
+		params.Set("text", text)
+	} else {
+		params.Set("is_carousel_item", "true")
+	}
+
+	kind := item.Kind
+	if kind == MediaKindUnknown {
+		kind = SniffMediaKind(item.URL)
+	}
+
+	switch kind {
+	case MediaKindVideo:
+		params.Set("media_type", "VIDEO")
+		params.Set("video_url", item.URL)
+	default:
+		params.Set("media_type", "IMAGE")
+		params.Set("image_url", item.URL)
+	}
+	return a.postContainer(ctx, userID, params)
+}
+
+func (a *ThreadsAdapter) createCarouselContainer(ctx context.Context, accessToken, userID, text string, items []MediaItem) (string, error) {
+	childIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		id, err := a.createMediaContainer(ctx, accessToken, userID, text, item, true)
+		if err != nil {
+			return "", err
+		}
+		childIDs = append(childIDs, id)
+	}
+	// Children need a moment to finish processing, especially videos.
+	time.Sleep(5 * time.Second)
+
+	params := url.Values{
+		"access_token": {accessToken},
+		"text":         {text},
+		"media_type":   {"CAROUSEL"},
+		"children":     {strings.Join(childIDs, ",")},
+	}
+	return a.postContainer(ctx, userID, params)
+}
+
+func (a *ThreadsAdapter) postContainer(ctx context.Context, userID string, params url.Values) (string, error) {
+	containerURL := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads?%s", userID, params.Encode())
+	req, err := http.NewRequestWithContext(ctx, "POST", containerURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to create container: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("container creation failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var container struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&container); err != nil {
+		return "", err
+	}
+	return container.ID, nil
 }
 
 func (a *ThreadsAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {

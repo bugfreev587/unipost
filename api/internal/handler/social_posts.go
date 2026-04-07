@@ -239,7 +239,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			postResult, err := adapter.Post(r.Context(), accessToken, body.Caption, body.MediaURLs, body.PlatformOptions[account.Platform])
+			postResult, err := adapter.Post(r.Context(), accessToken, body.Caption, platform.MediaFromURLs(body.MediaURLs), body.PlatformOptions[account.Platform])
 			results[idx] = accountResult{
 				accountID: account.ID,
 				platform:  account.Platform,
