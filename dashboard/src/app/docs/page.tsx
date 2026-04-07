@@ -415,13 +415,47 @@ export default function DocsPage() {
               <Param name="media_urls" type="string[]">Array of media URLs. For TikTok and YouTube this must be a single, publicly downloadable video URL.</Param>
               <Param name="scheduled_at" type="string">RFC3339 timestamp. If set, the post is queued and published by the scheduler at that time. Must be in the future.</Param>
               <Param name="platform_options" type="object">Per-platform overrides, keyed by platform name. Unknown keys are ignored. See <strong>Platform options</strong> below.</Param>
+              <p className="doc-p"><strong>Media handling</strong></p>
+              <p className="doc-p">
+                <code>media_urls</code> is a flat list of publicly reachable URLs.
+                The API sniffs each item&apos;s kind from its file extension
+                (<code>.jpg</code>, <code>.png</code>, <code>.webp</code>, <code>.heic</code> →
+                image; <code>.mp4</code>, <code>.mov</code>, <code>.webm</code> → video; <code>.gif</code> → gif).
+                Each adapter then decides how to use the items — single image, carousel, video, etc. See{" "}
+                <a href="#platforms">Supported Platforms</a> below for what each network accepts and how many items.
+              </p>
+
               <p className="doc-p"><strong>Platform options</strong></p>
-              <p className="doc-p">Pass overrides under <code>platform_options.&lt;platform&gt;</code>. Today the following keys are supported:</p>
+              <p className="doc-p">Pass overrides under <code>platform_options.&lt;platform&gt;</code>. Unknown keys are ignored.</p>
+
+              <p className="doc-p"><em>YouTube</em></p>
               <Param name="platform_options.youtube.privacy_status" type="string">
-                <code>private</code> (default), <code>public</code>, or <code>unlisted</code>
+                <code>private</code> (default), <code>public</code>, or <code>unlisted</code>.
               </Param>
+              <Param name="platform_options.youtube.shorts" type="boolean">
+                When <code>true</code>, appends <code>#Shorts</code> to the title and description so YouTube
+                surfaces the upload in the Shorts shelf. Combine with a 9:16 source video under 60 seconds.
+              </Param>
+              <Param name="platform_options.youtube.category_id" type="string">
+                YouTube category id (e.g. <code>22</code> for People &amp; Blogs, <code>10</code> for Music).
+              </Param>
+              <Param name="platform_options.youtube.tags" type="string[]">
+                Tag list set on <code>snippet.tags</code>.
+              </Param>
+
+              <p className="doc-p"><em>TikTok</em></p>
               <Param name="platform_options.tiktok.privacy_level" type="string">
                 <code>SELF_ONLY</code> (default), <code>PUBLIC_TO_EVERYONE</code>, <code>MUTUAL_FOLLOW_FRIENDS</code>, or <code>FOLLOWER_OF_CREATOR</code>. Note: TikTok forces <code>SELF_ONLY</code> for apps that are still in sandbox/unaudited mode regardless of what you send.
+              </Param>
+              <Param name="platform_options.tiktok.upload_mode" type="string">
+                <code>pull_from_url</code> (default — TikTok pulls the video from your CDN, no proxy)
+                or <code>file_upload</code> (we download then push the bytes to TikTok). Use{" "}
+                <code>file_upload</code> only when the source URL isn&apos;t on a domain registered with your
+                TikTok developer portal.
+              </Param>
+              <Param name="platform_options.tiktok.photo_cover_index" type="number">
+                Zero-based index into <code>media_urls</code> selecting which image is shown as the carousel cover.
+                Defaults to <code>0</code>.
               </Param>
               <p className="doc-p"><strong>Response Headers</strong></p>
               <Param name="X-UniPost-Usage" type="header">Current usage, e.g. <code>450/1000</code></Param>
@@ -598,23 +632,373 @@ export default function DocsPage() {
           </Section>
 
           <Section id="platforms" title="Supported Platforms">
-            {[
-              { name: "Bluesky", auth: "App Password", content: "Text, Images", notes: "Generate at bsky.app → Settings → App Passwords" },
-              { name: "LinkedIn", auth: "OAuth", content: "Text, Links", notes: "Requires Share on LinkedIn product" },
-              { name: "Instagram", auth: "OAuth", content: "Images (required)", notes: "Business or Creator account required" },
-              { name: "Threads", auth: "OAuth", content: "Text, Images", notes: "Uses Meta developer app" },
-              { name: "TikTok", auth: "OAuth", content: "Video (required)", notes: "MP4/H.264, min 3 seconds" },
-              { name: "YouTube", auth: "OAuth", content: "Video (required)", notes: "YouTube Data API v3" },
-            ].map((p) => (
-              <div key={p.name} className="doc-platform">
-                <div className="doc-platform-header">
-                  <span className="doc-platform-name">{p.name}</span>
-                  <span className="doc-platform-auth">{p.auth}</span>
-                </div>
-                <div className="doc-platform-content">Content: {p.content}</div>
-                <div className="doc-platform-note">{p.notes}</div>
-              </div>
-            ))}
+            <p className="doc-p">
+              Each platform&apos;s adapter decides how to use the items in <code>media_urls</code>.
+              The matrix below summarises what every network accepts in a single
+              <code> POST /v1/social-posts </code> call. Symbols: <strong>✅</strong> supported,{" "}
+              <strong>❌</strong> not supported, <strong>—</strong> not applicable.
+            </p>
+
+            <table className="doc-table">
+              <thead>
+                <tr>
+                  <th>Platform</th>
+                  <th>Auth</th>
+                  <th>Text&nbsp;only</th>
+                  <th>Image</th>
+                  <th>Multi&#8209;image</th>
+                  <th>Video</th>
+                  <th>Mix img+vid</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Bluesky</strong></td>
+                  <td>App password</td>
+                  <td>✅</td>
+                  <td>✅</td>
+                  <td>✅ (≤4)</td>
+                  <td>✅ (1)</td>
+                  <td>❌</td>
+                </tr>
+                <tr>
+                  <td><strong>Twitter / X</strong></td>
+                  <td>OAuth 2.0 (PKCE)</td>
+                  <td>✅</td>
+                  <td>✅</td>
+                  <td>✅ (≤4)</td>
+                  <td>✅ (1)</td>
+                  <td>❌</td>
+                </tr>
+                <tr>
+                  <td><strong>LinkedIn</strong></td>
+                  <td>OAuth</td>
+                  <td>✅</td>
+                  <td>✅ native</td>
+                  <td>✅ (≤9)</td>
+                  <td>✅ (1)</td>
+                  <td>❌</td>
+                </tr>
+                <tr>
+                  <td><strong>Instagram</strong></td>
+                  <td>OAuth</td>
+                  <td>❌</td>
+                  <td>✅</td>
+                  <td>✅ Carousel (≤10)</td>
+                  <td>✅ Reels (1)</td>
+                  <td>✅ in carousel</td>
+                </tr>
+                <tr>
+                  <td><strong>Threads</strong></td>
+                  <td>OAuth</td>
+                  <td>✅</td>
+                  <td>✅</td>
+                  <td>✅ Carousel (≤20)</td>
+                  <td>✅ (1)</td>
+                  <td>✅ in carousel</td>
+                </tr>
+                <tr>
+                  <td><strong>TikTok</strong></td>
+                  <td>OAuth</td>
+                  <td>❌</td>
+                  <td>✅ Photo (≤35)</td>
+                  <td>✅ Photo (≤35)</td>
+                  <td>✅ (1)</td>
+                  <td>❌</td>
+                </tr>
+                <tr>
+                  <td><strong>YouTube</strong></td>
+                  <td>OAuth</td>
+                  <td>❌</td>
+                  <td>❌</td>
+                  <td>❌</td>
+                  <td>✅ (1)</td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div className="doc-callout doc-callout-info">
+              <strong>Mixing rules.</strong> Most networks reject mixed image+video in a single post.
+              Instagram and Threads allow mixing only inside their carousel containers (<code>media_type=CAROUSEL</code>).
+              All limits above are enforced server-side — sending more items than the cap returns a <code>VALIDATION_ERROR</code>.
+            </div>
+
+            <p className="doc-p">
+              Below: per-platform request examples and the response shape you should expect. All examples assume
+              <code> POST /v1/social-posts </code> with <code>Authorization: Bearer up_live_xxx</code> and
+              <code> Content-Type: application/json</code>; only the JSON body is shown for brevity.
+            </p>
+
+            <h3 className="doc-section-title" style={{ fontSize: 18, marginTop: 32, marginBottom: 12 }}>Bluesky</h3>
+            <p className="doc-p">App-password auth. Up to 4 images per post or exactly 1 video. Text-only posts are allowed.</p>
+            <Code title="Image post (1–4 images)">{`{
+  "caption": "Photos from the trip ✈️",
+  "account_ids": ["sa_bluesky_1"],
+  "media_urls": [
+    "https://cdn.example.com/photo1.jpg",
+    "https://cdn.example.com/photo2.jpg"
+  ]
+}`}</Code>
+            <Code title="Video post">{`{
+  "caption": "Behind the scenes",
+  "account_ids": ["sa_bluesky_1"],
+  "media_urls": ["https://cdn.example.com/clip.mp4"]
+}`}</Code>
+            <Code title="Response">{`{
+  "data": {
+    "id": "post_xyz789",
+    "status": "published",
+    "results": [
+      {
+        "platform": "bluesky",
+        "status": "published",
+        "external_id": "at://did:plc:abc/app.bsky.feed.post/3kxyz123"
+      }
+    ]
+  }
+}`}</Code>
+
+            <h3 className="doc-section-title" style={{ fontSize: 18, marginTop: 32, marginBottom: 12 }}>Twitter / X</h3>
+            <p className="doc-p">
+              OAuth 2.0. Up to 4 images per tweet, or 1 video, or 1 GIF. Requires the <code>media.write</code> scope.
+              Video uploads use the chunked <code>/2/media/upload</code> path; large files may take several seconds to process.
+            </p>
+            <Code title="Image post (1–4 images)">{`{
+  "caption": "Launching today 🚀",
+  "account_ids": ["sa_twitter_1"],
+  "media_urls": [
+    "https://cdn.example.com/hero.jpg",
+    "https://cdn.example.com/screenshot.png"
+  ]
+}`}</Code>
+            <Code title="Video post">{`{
+  "caption": "Watch the demo 👇",
+  "account_ids": ["sa_twitter_1"],
+  "media_urls": ["https://cdn.example.com/demo.mp4"]
+}`}</Code>
+            <Code title="Response">{`{
+  "data": {
+    "id": "post_xyz789",
+    "status": "published",
+    "results": [
+      {
+        "platform": "twitter",
+        "status": "published",
+        "external_id": "1789012345678901234"
+      }
+    ]
+  }
+}`}</Code>
+
+            <h3 className="doc-section-title" style={{ fontSize: 18, marginTop: 32, marginBottom: 12 }}>LinkedIn</h3>
+            <p className="doc-p">
+              OAuth. Native uploads via the Assets API: up to 9 images per post, OR exactly 1 video. Mixing image
+              and video in a single share is not allowed. Plain text posts are supported by omitting <code>media_urls</code>.
+            </p>
+            <Code title="Multi-image post (≤9)">{`{
+  "caption": "Recap of our launch event",
+  "account_ids": ["sa_linkedin_1"],
+  "media_urls": [
+    "https://cdn.example.com/event-1.jpg",
+    "https://cdn.example.com/event-2.jpg",
+    "https://cdn.example.com/event-3.jpg"
+  ]
+}`}</Code>
+            <Code title="Video post">{`{
+  "caption": "Customer story 🎬",
+  "account_ids": ["sa_linkedin_1"],
+  "media_urls": ["https://cdn.example.com/story.mp4"]
+}`}</Code>
+            <Code title="Response">{`{
+  "data": {
+    "id": "post_xyz789",
+    "status": "published",
+    "results": [
+      {
+        "platform": "linkedin",
+        "status": "published",
+        "external_id": "urn:li:share:7180000000000000000"
+      }
+    ]
+  }
+}`}</Code>
+
+            <h3 className="doc-section-title" style={{ fontSize: 18, marginTop: 32, marginBottom: 12 }}>Instagram</h3>
+            <p className="doc-p">
+              OAuth. Business or Creator account required. Single image, single video as <strong>Reels</strong>,
+              or 2–10 items as a <strong>carousel</strong> (images, videos, or a mix). Text-only posts are not allowed.
+            </p>
+            <Code title="Single image">{`{
+  "caption": "Sunset 🌅",
+  "account_ids": ["sa_instagram_1"],
+  "media_urls": ["https://cdn.example.com/sunset.jpg"]
+}`}</Code>
+            <Code title="Reels (single video)">{`{
+  "caption": "30-second intro 🎬",
+  "account_ids": ["sa_instagram_1"],
+  "media_urls": ["https://cdn.example.com/intro.mp4"]
+}`}</Code>
+            <Code title="Carousel (2–10 mixed items)">{`{
+  "caption": "Product walkthrough",
+  "account_ids": ["sa_instagram_1"],
+  "media_urls": [
+    "https://cdn.example.com/cover.jpg",
+    "https://cdn.example.com/detail.jpg",
+    "https://cdn.example.com/clip.mp4"
+  ]
+}`}</Code>
+            <Code title="Response">{`{
+  "data": {
+    "id": "post_xyz789",
+    "status": "published",
+    "results": [
+      {
+        "platform": "instagram",
+        "status": "published",
+        "external_id": "17900000000000000"
+      }
+    ]
+  }
+}`}</Code>
+
+            <h3 className="doc-section-title" style={{ fontSize: 18, marginTop: 32, marginBottom: 12 }}>Threads</h3>
+            <p className="doc-p">
+              OAuth (Meta developer app). Text-only, single image, single video, or 2–20 items in a carousel
+              (mixed image+video allowed inside the carousel container). Video posts wait ~30 seconds before
+              publishing per Meta&apos;s recommendation.
+            </p>
+            <Code title="Text-only">{`{
+  "caption": "Just shipped a new release ✨",
+  "account_ids": ["sa_threads_1"]
+}`}</Code>
+            <Code title="Single video">{`{
+  "caption": "Behind the scenes",
+  "account_ids": ["sa_threads_1"],
+  "media_urls": ["https://cdn.example.com/bts.mp4"]
+}`}</Code>
+            <Code title="Carousel (2–20 items)">{`{
+  "caption": "Conference highlights",
+  "account_ids": ["sa_threads_1"],
+  "media_urls": [
+    "https://cdn.example.com/talk-1.jpg",
+    "https://cdn.example.com/talk-2.jpg",
+    "https://cdn.example.com/keynote.mp4"
+  ]
+}`}</Code>
+            <Code title="Response">{`{
+  "data": {
+    "id": "post_xyz789",
+    "status": "published",
+    "results": [
+      {
+        "platform": "threads",
+        "status": "published",
+        "external_id": "17900000000000000"
+      }
+    ]
+  }
+}`}</Code>
+
+            <h3 className="doc-section-title" style={{ fontSize: 18, marginTop: 32, marginBottom: 12 }}>TikTok</h3>
+            <p className="doc-p">
+              OAuth. Either a single video (default flow uses <code>PULL_FROM_URL</code> so TikTok pulls from your CDN)
+              or a photo carousel of up to 35 images. Text-only posts and image+video mixing are not supported.
+              Source URLs must be on a domain registered in your TikTok developer portal — otherwise set
+              <code> upload_mode: "file_upload" </code> in <code>platform_options.tiktok</code> to fall back to the
+              proxy upload path.
+            </p>
+            <Code title="Video post">{`{
+  "caption": "How we built it",
+  "account_ids": ["sa_tiktok_1"],
+  "media_urls": ["https://cdn.example.com/build.mp4"],
+  "platform_options": {
+    "tiktok": {
+      "privacy_level": "PUBLIC_TO_EVERYONE"
+    }
+  }
+}`}</Code>
+            <Code title="Photo carousel">{`{
+  "caption": "Lookbook 📸",
+  "account_ids": ["sa_tiktok_1"],
+  "media_urls": [
+    "https://cdn.example.com/look-1.jpg",
+    "https://cdn.example.com/look-2.jpg",
+    "https://cdn.example.com/look-3.jpg"
+  ],
+  "platform_options": {
+    "tiktok": {
+      "privacy_level": "PUBLIC_TO_EVERYONE",
+      "photo_cover_index": 0
+    }
+  }
+}`}</Code>
+            <Code title="Response">{`{
+  "data": {
+    "id": "post_xyz789",
+    "status": "published",
+    "results": [
+      {
+        "platform": "tiktok",
+        "status": "published",
+        "external_id": "v0..."
+      }
+    ]
+  }
+}`}</Code>
+
+            <h3 className="doc-section-title" style={{ fontSize: 18, marginTop: 32, marginBottom: 12 }}>YouTube</h3>
+            <p className="doc-p">
+              OAuth. Exactly 1 video per post (long-form or Shorts). The default privacy is <code>private</code> —
+              set <code>privacy_status: &quot;public&quot;</code> to publish immediately. The <code>shorts: true</code>
+              flag appends <code>#Shorts</code> to the title and description so YouTube routes the upload into the
+              Shorts shelf (the actual 9:16 / &lt;60 s constraint must be satisfied by the source video).
+            </p>
+            <Code title="Long-form video">{`{
+  "caption": "Quarterly product update",
+  "account_ids": ["sa_youtube_1"],
+  "media_urls": ["https://cdn.example.com/update.mp4"],
+  "platform_options": {
+    "youtube": {
+      "privacy_status": "public",
+      "category_id": "22",
+      "tags": ["product", "quarterly", "update"]
+    }
+  }
+}`}</Code>
+            <Code title="Shorts">{`{
+  "caption": "30s feature demo",
+  "account_ids": ["sa_youtube_1"],
+  "media_urls": ["https://cdn.example.com/demo-vertical.mp4"],
+  "platform_options": {
+    "youtube": {
+      "privacy_status": "public",
+      "shorts": true
+    }
+  }
+}`}</Code>
+            <Code title="Response">{`{
+  "data": {
+    "id": "post_xyz789",
+    "status": "published",
+    "results": [
+      {
+        "platform": "youtube",
+        "status": "published",
+        "external_id": "dQw4w9WgXcQ"
+      }
+    ]
+  }
+}`}</Code>
+
+            <div className="doc-callout doc-callout-warn">
+              <strong>Multi-platform fan-out.</strong> When <code>account_ids</code> spans accounts on multiple
+              networks, the API publishes to each one concurrently and returns a single <code>results</code> array
+              with one entry per account. Per-account failures don&apos;t block the others — the post status will be
+              <code> published</code>, <code>partial</code>, or <code>failed</code> depending on the mix.
+              If you need to send platform-specific media (e.g. a horizontal video for YouTube and a vertical clip
+              for TikTok), issue separate <code>POST /v1/social-posts</code> calls.
+            </div>
           </Section>
 
           {/* Footer */}
