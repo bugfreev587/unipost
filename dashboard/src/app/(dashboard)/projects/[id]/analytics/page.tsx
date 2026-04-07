@@ -208,6 +208,30 @@ export default function AnalyticsPage() {
         if (forceRefresh) setRefreshing(true);
         else setLoading(true);
 
+        // On a forceRefresh we MUST live-fetch per-post analytics BEFORE the
+        // aggregation endpoints — the per-post `?refresh=1` calls update
+        // post_analytics, which is what /summary, /trend, and /by-platform
+        // read from. Doing it the other way leaves the user staring at stale
+        // aggregations until they click Refresh again.
+        //
+        // On a normal load we don't need this ordering, since aggregations
+        // and per-post both serve from the same cached table.
+        if (forceRefresh) {
+          const postsRes = await listSocialPosts(token, projectId);
+          const published = (postsRes.data || []).filter((p) => p.status === "published");
+          const results = await Promise.allSettled(
+            published.map((p) => getPostAnalytics(token, projectId, p.id, { refresh: true }))
+          );
+          const map: Record<string, PostAnalytics[]> = {};
+          results.forEach((r, i) => {
+            if (r.status === "fulfilled" && r.value.data) {
+              map[published[i].id] = r.value.data;
+            }
+          });
+          setPosts(postsRes.data || []);
+          setPostAnalytics(map);
+        }
+
         const [summaryRes, trendRes, byPlatformRes, postsRes] = await Promise.all([
           getAnalyticsSummary(token, projectId, apiRange),
           getAnalyticsTrend(token, projectId, {
@@ -224,21 +248,21 @@ export default function AnalyticsPage() {
         setPosts(postsRes.data || []);
         setLastLoadedAt(new Date());
 
-        // Fire per-post analytics in the background. Cache hits keep this
-        // cheap; the AnalyticsRefreshWorker keeps backend cache fresh.
-        const published = (postsRes.data || []).filter((p) => p.status === "published");
-        const results = await Promise.allSettled(
-          published.map((p) =>
-            getPostAnalytics(token, projectId, p.id, forceRefresh ? { refresh: true } : undefined)
-          )
-        );
-        const map: Record<string, PostAnalytics[]> = {};
-        results.forEach((r, i) => {
-          if (r.status === "fulfilled" && r.value.data) {
-            map[published[i].id] = r.value.data;
-          }
-        });
-        setPostAnalytics(map);
+        // For non-refresh loads, fetch per-post analytics from cache after the
+        // aggregations so the posts table can render the expand panels.
+        if (!forceRefresh) {
+          const published = (postsRes.data || []).filter((p) => p.status === "published");
+          const results = await Promise.allSettled(
+            published.map((p) => getPostAnalytics(token, projectId, p.id))
+          );
+          const map: Record<string, PostAnalytics[]> = {};
+          results.forEach((r, i) => {
+            if (r.status === "fulfilled" && r.value.data) {
+              map[published[i].id] = r.value.data;
+            }
+          });
+          setPostAnalytics(map);
+        }
       } catch (err) {
         console.error("analytics: failed to load", err);
       } finally {

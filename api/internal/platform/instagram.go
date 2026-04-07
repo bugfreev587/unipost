@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -298,9 +299,20 @@ func (a *InstagramAdapter) getIGUserID(ctx context.Context, accessToken string) 
 }
 
 // GetAnalytics fetches post metrics from Instagram Insights API.
+//
+// Important: as of Instagram Graph API v22 (April 2024), the `impressions`
+// metric was removed for IMAGE / CAROUSEL_ALBUM media. Requesting it returns
+// HTTP 400 for the WHOLE call (not just the bad metric), which previously
+// caused every image-post fetch to fail silently and write all-zero rows.
+//
+// We now request only the metric set that works across all media types in
+// v22+, and return a real error on non-200 so the handler/worker skips the
+// upsert instead of poisoning the cache. Impressions stay at 0 for IG (Meta
+// no longer exposes them at the media level for organic content), which the
+// dashboard renders as "--".
 func (a *InstagramAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
 	metricsURL := fmt.Sprintf(
-		"https://graph.instagram.com/v21.0/%s/insights?metric=impressions,reach,likes,comments,shares,saved&access_token=%s",
+		"https://graph.instagram.com/v22.0/%s/insights?metric=reach,likes,comments,shares,saved&access_token=%s",
 		externalID, accessToken)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
@@ -310,12 +322,17 @@ func (a *InstagramAdapter) GetAnalytics(ctx context.Context, accessToken string,
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("instagram insights request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return &PostMetrics{}, nil
+		slog.Warn("instagram insights non-200",
+			"status", resp.StatusCode,
+			"external_id", externalID,
+			"body", string(body))
+		return nil, fmt.Errorf("instagram insights returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {
@@ -326,7 +343,9 @@ func (a *InstagramAdapter) GetAnalytics(ctx context.Context, accessToken string,
 			} `json:"values"`
 		} `json:"data"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("instagram insights decode failed: %w", err)
+	}
 
 	m := &PostMetrics{}
 	for _, metric := range result.Data {
@@ -335,9 +354,6 @@ func (a *InstagramAdapter) GetAnalytics(ctx context.Context, accessToken string,
 			val = metric.Values[0].Value
 		}
 		switch metric.Name {
-		case "impressions":
-			m.Impressions = val
-			m.Views = val // legacy alias
 		case "reach":
 			m.Reach = val
 		case "likes":
