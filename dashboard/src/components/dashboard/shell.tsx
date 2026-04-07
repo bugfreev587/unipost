@@ -154,20 +154,25 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 <span style={{ color: "var(--dtext)", fontWeight: 500 }}>{user?.primaryEmailAddress?.emailAddress || ""}</span>
               </div>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => router.push("/account")} style={{ padding: "10px 14px" }}>
+              {/*
+                Base UI's Menu.Item exposes onClick (NOT onSelect — that's
+                Radix). Earlier handlers used onSelect and were silently
+                ignored, which is why these items did nothing on click.
+              */}
+              <DropdownMenuItem onClick={() => router.push("/account")} style={{ padding: "10px 14px" }}>
                 <User style={{ width: 14, height: 14 }} /><span>Account</span>
               </DropdownMenuItem>
               {projectId && (
-                <DropdownMenuItem onSelect={() => router.push(`/projects/${projectId}/billing`)} style={{ padding: "10px 14px" }}>
+                <DropdownMenuItem onClick={() => router.push(`/projects/${projectId}/billing`)} style={{ padding: "10px 14px" }}>
                   <CreditCard style={{ width: 14, height: 14 }} /><span>Billing</span>
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => router.push("/contact")} style={{ padding: "10px 14px" }}>
+              <DropdownMenuItem onClick={() => router.push("/contact")} style={{ padding: "10px 14px" }}>
                 <Mail style={{ width: 14, height: 14 }} /><span>Contact us</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => signOut({ redirectUrl: "https://unipost.dev" })} style={{ padding: "10px 14px" }}>
+              <DropdownMenuItem onClick={() => signOut({ redirectUrl: "https://unipost.dev" })} style={{ padding: "10px 14px" }}>
                 <LogOut style={{ width: 14, height: 14 }} /><span>Log out</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
