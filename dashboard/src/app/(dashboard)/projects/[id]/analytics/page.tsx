@@ -1119,8 +1119,12 @@ function PostExpandPanel({
     metricsByAccount.set(m.social_account_id, m);
   }
 
+  // Cards are capped at a max width so a single-platform post doesn't blow
+  // up to fill the whole row. auto-fill keeps the column count tied to the
+  // available width (typically 3 across on desktop, wrapping below) instead
+  // of stretching one card edge-to-edge.
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 360px))", gap: 16 }}>
       {results.map((res) => {
         const platform = res.platform || "";
         const metrics = metricsByAccount.get(res.social_account_id);
