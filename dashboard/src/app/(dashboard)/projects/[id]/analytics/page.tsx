@@ -908,6 +908,33 @@ function PostsTable({
     setExpanded(next);
   };
 
+  // Measure the table body so every expanded row's cards share the same
+  // column width. We pick the largest column count whose per-card width stays
+  // within [MIN, MAX], so single-platform rows align with multi-platform rows
+  // and multi-platform rows fill the available width without leftover gutter.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [cardWidth, setCardWidth] = useState<number>(320);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const MIN = 260, MAX = 360, GAP = 16;
+    // bodyEl has 18px padding all around (.settings-section-body) and the
+    // expand row's <td> adds 24px horizontal padding, so the cards' content
+    // box is body.clientWidth - 18*2 - 24*2 = body.clientWidth - 84.
+    const compute = () => {
+      const W = el.clientWidth - 84;
+      if (W <= 0) return;
+      let cols = Math.max(1, Math.floor((W + GAP) / (MIN + GAP)));
+      while ((W - GAP * (cols - 1)) / cols > MAX) cols++;
+      const w = Math.max(MIN, (W - GAP * (cols - 1)) / cols);
+      setCardWidth(Math.floor(w));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -937,7 +964,7 @@ function PostsTable({
       </div>
 
       <div className="settings-section">
-        <div className="settings-section-body">
+        <div className="settings-section-body" ref={bodyRef}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr>
@@ -964,6 +991,7 @@ function PostsTable({
                     platforms={platforms}
                     isExpanded={isExpanded}
                     onToggle={() => toggleRow(post.id)}
+                    cardWidth={cardWidth}
                   />
                 );
               })}
@@ -1010,7 +1038,7 @@ function PostsTable({
 }
 
 function FragmentRow({
-  post, metrics, perAccount, platforms, isExpanded, onToggle,
+  post, metrics, perAccount, platforms, isExpanded, onToggle, cardWidth,
 }: {
   post: SocialPost;
   metrics: ReturnType<typeof sumPostMetrics>;
@@ -1018,6 +1046,7 @@ function FragmentRow({
   platforms: string[];
   isExpanded: boolean;
   onToggle: () => void;
+  cardWidth: number;
 }) {
   const failed = post.status === "failed";
   const noImpressionPlatform = platforms.length > 0 && !anyPlatformSupports(platforms, "impressions");
@@ -1085,7 +1114,7 @@ function FragmentRow({
       {isExpanded && (
         <tr>
           <td colSpan={8} style={{ background: "var(--surface)", padding: "16px 24px", borderBottom: "1px solid var(--dborder)" }}>
-            <PostExpandPanel results={post.results || []} perAccount={perAccount} />
+            <PostExpandPanel results={post.results || []} perAccount={perAccount} cardWidth={cardWidth} />
           </td>
         </tr>
       )}
@@ -1104,9 +1133,11 @@ function FragmentRow({
 function PostExpandPanel({
   results,
   perAccount,
+  cardWidth,
 }: {
   results: SocialPostResult[];
   perAccount: PostAnalytics[];
+  cardWidth: number;
 }) {
   if (results.length === 0) {
     return <div style={{ fontSize: 12, color: "var(--dmuted2)" }}>No accounts attached to this post.</div>;
@@ -1119,12 +1150,12 @@ function PostExpandPanel({
     metricsByAccount.set(m.social_account_id, m);
   }
 
-  // Cards are capped at a max width so a single-platform post doesn't blow
-  // up to fill the whole row. auto-fill keeps the column count tied to the
-  // available width (typically 3 across on desktop, wrapping below) instead
-  // of stretching one card edge-to-edge.
+  // cardWidth is computed once at the table level (see PostsTable) so every
+  // expanded row uses the same column width — single-platform rows align
+  // exactly with multi-platform rows, and multi-platform rows fill the
+  // available width without leaving a trailing gutter.
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 360px))", gap: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, ${cardWidth}px)`, gap: 16 }}>
       {results.map((res) => {
         const platform = res.platform || "";
         const metrics = metricsByAccount.get(res.social_account_id);
