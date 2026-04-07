@@ -7,11 +7,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stripe/stripe-go/v82"
-	"github.com/stripe/stripe-go/v82/billingportal/session"
-	checkoutsession "github.com/stripe/stripe-go/v82/checkout/session"
-	stripecustomer "github.com/stripe/stripe-go/v82/customer"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
@@ -19,10 +17,11 @@ import (
 type BillingHandler struct {
 	queries *db.Queries
 	quota   *quota.Checker
+	stripe  *billing.Manager
 }
 
-func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker) *BillingHandler {
-	return &BillingHandler{queries: queries, quota: quotaChecker}
+func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker, stripeMgr *billing.Manager) *BillingHandler {
+	return &BillingHandler{queries: queries, quota: quotaChecker, stripe: stripeMgr}
 }
 
 type billingResponse struct {
@@ -92,13 +91,34 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	plan, err := h.queries.GetPlan(r.Context(), body.PlanID)
-	if err != nil || plan.StripePriceID.String == "" {
+	// Pick the Stripe mode (live or sandbox) based on whether the project
+	// owner is a superadmin. The price ID for the requested plan must
+	// exist *in that mode* — if a sandbox user requests a plan whose
+	// sandbox price ID isn't configured we reject with a clear message
+	// instead of falling back to live and accidentally charging real money.
+	mode := h.stripe.For(userID)
+	if mode == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Stripe is not configured")
+		return
+	}
+	priceID := mode.PriceID(body.PlanID)
+	if priceID == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid plan or plan not configured for this mode")
+		return
+	}
+
+	// Verify the plan exists in our DB (used for display name + post limit
+	// elsewhere). We don't read plan.StripePriceID anymore — that's mode-
+	// specific now and lives in the billing.Manager price map.
+	if _, err := h.queries.GetPlan(r.Context(), body.PlanID); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid plan")
 		return
 	}
 
-	// Get or create Stripe customer
+	// Get or create Stripe customer in the chosen mode. NB: customer IDs
+	// from live and sandbox don't overlap, so even if a project changes
+	// modes (user added/removed from SUPER_ADMINS), the previous mode's
+	// customer ID will be invalid in the new mode and we'll mint a new one.
 	sub, _ := h.queries.GetSubscriptionByProject(r.Context(), projectID)
 	customerID := ""
 	if sub.StripeCustomerID.String != "" {
@@ -112,10 +132,11 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 				Metadata: map[string]string{
 					"project_id": projectID,
 					"user_id":    userID,
+					"mode":       mode.Name,
 				},
 			},
 		}
-		c, err := stripecustomer.New(params)
+		c, err := mode.Client.Customers.New(params)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create customer")
 			return
@@ -132,7 +153,7 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		Customer: stripe.String(customerID),
 		Mode:     stripe.String(string(stripe.CheckoutSessionModeSubscription)),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
-			{Price: stripe.String(plan.StripePriceID.String), Quantity: stripe.Int64(1)},
+			{Price: stripe.String(priceID), Quantity: stripe.Int64(1)},
 		},
 		SuccessURL: stripe.String(appURL + "/projects/" + projectID + "/billing?status=success"),
 		CancelURL:  stripe.String(appURL + "/projects/" + projectID + "/billing?status=canceled"),
@@ -140,6 +161,10 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 			Metadata: map[string]string{
 				"project_id": projectID,
 				"plan_id":    body.PlanID,
+				// Stamp the mode on the session so the webhook handler can
+				// double-check which mode it came from when both signing
+				// secrets are valid (e.g. test events sent during setup).
+				"mode": mode.Name,
 			},
 		},
 	}
@@ -152,7 +177,7 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		_ = h.queries.MarkTrialUsed(r.Context(), projectID)
 	}
 
-	s, err := checkoutsession.New(checkoutParams)
+	s, err := mode.Client.CheckoutSessions.New(checkoutParams)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create checkout session")
 		return
@@ -180,6 +205,12 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mode := h.stripe.For(userID)
+	if mode == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Stripe is not configured")
+		return
+	}
+
 	appURL := os.Getenv("NEXT_PUBLIC_APP_URL")
 	if appURL == "" {
 		appURL = "https://app.unipost.dev"
@@ -190,7 +221,7 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 		ReturnURL: stripe.String(appURL + "/projects/" + projectID + "/billing"),
 	}
 
-	s, err := session.New(params)
+	s, err := mode.Client.BillingPortalSessions.New(params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create portal session")
 		return

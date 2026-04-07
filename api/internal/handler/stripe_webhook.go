@@ -5,24 +5,30 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stripe/stripe-go/v82"
-	"github.com/stripe/stripe-go/v82/webhook"
 
+	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
 type StripeWebhookHandler struct {
 	queries *db.Queries
+	stripe  *billing.Manager
 }
 
-func NewStripeWebhookHandler(queries *db.Queries) *StripeWebhookHandler {
-	return &StripeWebhookHandler{queries: queries}
+func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager) *StripeWebhookHandler {
+	return &StripeWebhookHandler{queries: queries, stripe: stripeMgr}
 }
 
 // HandleStripe handles POST /webhooks/stripe
+//
+// Verifies the incoming signature against BOTH live and sandbox secrets via
+// billing.Manager so the same endpoint can serve both modes. The matching
+// mode is logged but not otherwise needed downstream because all webhook
+// events carry their own metadata (project_id, etc.) — we don't need to
+// make any further Stripe API calls in this handler.
 func (h *StripeWebhookHandler) HandleStripe(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -30,17 +36,14 @@ func (h *StripeWebhookHandler) HandleStripe(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	secret := os.Getenv("STRIPE_WEBHOOK_SECRET")
-	event, err := webhook.ConstructEventWithOptions(body, r.Header.Get("Stripe-Signature"), secret, webhook.ConstructEventOptions{
-		IgnoreAPIVersionMismatch: true,
-	})
+	event, mode, err := h.stripe.VerifyWebhook(body, r.Header.Get("Stripe-Signature"))
 	if err != nil {
 		slog.Error("stripe webhook: signature verification failed", "error", err)
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid signature")
 		return
 	}
 
-	slog.Info("stripe webhook received", "type", event.Type)
+	slog.Info("stripe webhook received", "type", event.Type, "mode", mode.Name)
 
 	switch event.Type {
 	case "checkout.session.completed":

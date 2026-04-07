@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,9 +19,9 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 	slogbetterstack "github.com/samber/slog-betterstack"
-	"github.com/stripe/stripe-go/v82"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
@@ -71,10 +72,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize Stripe
-	if sk := os.Getenv("STRIPE_SECRET_KEY"); sk != "" {
-		stripe.Key = sk
-		slog.Info("stripe initialized")
+	// Initialize Stripe billing manager. Holds two parallel Stripe modes
+	// (live + sandbox/test) so superadmins can run internal QA against
+	// test mode without touching the live customer account. The mode for
+	// any given checkout is picked at request time based on whether the
+	// project owner is in SUPER_ADMINS. See internal/billing/manager.go.
+	var stripeMgr *billing.Manager
+	if os.Getenv("STRIPE_SECRET_KEY") != "" {
+		mgr, mgrErr := billing.NewManager()
+		if mgrErr != nil {
+			slog.Error("stripe billing manager init failed", "error", mgrErr)
+			os.Exit(1)
+		}
+		stripeMgr = mgr
+		slog.Info("stripe billing manager initialized",
+			"sandbox_enabled", stripeMgr.Sandbox != nil,
+			"super_admins_count", len(strings.Split(os.Getenv("SUPER_ADMINS"), ",")))
 	}
 
 	// Register platform adapters
@@ -188,8 +201,8 @@ func main() {
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)
-	billingHandler := handler.NewBillingHandler(queries, quotaChecker)
-	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries)
+	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
+	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 
 	// Public routes
@@ -307,8 +320,12 @@ func main() {
 	slog.Info("server stopped")
 }
 
-// syncStripePriceIDs reads Stripe price IDs from env vars and updates the plans table.
-// Env var format: STRIPE_PRICE_ID_10, STRIPE_PRICE_ID_25, etc.
+// syncStripePriceIDs writes the LIVE Stripe price IDs from env vars into the
+// plans.stripe_price_id column on startup. The column is now a legacy cache —
+// the actual price ID used at checkout time is resolved per-mode by
+// internal/billing.Manager (which holds separate live + sandbox maps in
+// memory). The DB sync stays for now in case other tooling reads the column
+// for inspection; it does NOT touch the sandbox env vars by design.
 func syncStripePriceIDs(ctx context.Context, queries *db.Queries) {
 	planEnvMap := map[string]string{
 		"p10":   "STRIPE_PRICE_ID_10",
