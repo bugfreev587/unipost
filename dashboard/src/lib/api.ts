@@ -376,6 +376,8 @@ export interface PlatformAnalytics {
 export interface AnalyticsRangeParams {
   start_date?: string; // YYYY-MM-DD
   end_date?: string;   // YYYY-MM-DD
+  platform?: string;   // platform key, omit or "all" to disable
+  status?: string;     // post status, omit or "all" to disable
 }
 
 function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string {
@@ -383,6 +385,8 @@ function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string
   const qs = new URLSearchParams();
   if (params.start_date) qs.set("start_date", params.start_date);
   if (params.end_date) qs.set("end_date", params.end_date);
+  if (params.platform && params.platform !== "all") qs.set("platform", params.platform);
+  if (params.status && params.status !== "all") qs.set("status", params.status);
   if (params.metric) qs.set("metric", params.metric);
   const s = qs.toString();
   return s ? `?${s}` : "";

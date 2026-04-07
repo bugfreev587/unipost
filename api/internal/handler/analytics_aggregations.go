@@ -51,6 +51,26 @@ func tsParam(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
+// platformFilter normalizes the ?platform= query param. "all" or empty maps
+// to the empty-string sentinel that disables the filter in the SQL query.
+// Unknown values are passed through verbatim — they'll just match nothing.
+func platformFilter(r *http.Request) string {
+	v := strings.TrimSpace(r.URL.Query().Get("platform"))
+	if v == "" || v == "all" {
+		return ""
+	}
+	return v
+}
+
+// statusFilter normalizes the ?status= query param the same way.
+func statusFilter(r *http.Request) string {
+	v := strings.TrimSpace(r.URL.Query().Get("status"))
+	if v == "" || v == "all" {
+		return ""
+	}
+	return v
+}
+
 // percentChange returns (curr - prev) / prev. When prev is 0 it returns 0
 // (the dashboard renders "--" for the first period to avoid divide-by-zero
 // or misleading "+∞%" labels).
@@ -126,6 +146,8 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	platform := platformFilter(r)
+	status := statusFilter(r)
 
 	// Previous period: same length, immediately preceding.
 	windowLen := end.Sub(start)
@@ -136,6 +158,8 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		ProjectID:   projectID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
+		Column4:     platform,
+		Column5:     status,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load summary")
@@ -145,6 +169,8 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		ProjectID:   projectID,
 		CreatedAt:   tsParam(prevStart),
 		CreatedAt_2: tsParam(prevEnd),
+		Column4:     platform,
+		Column5:     status,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load previous-period summary")
@@ -248,6 +274,8 @@ func (h *AnalyticsHandler) GetTrend(w http.ResponseWriter, r *http.Request) {
 		ProjectID:   projectID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
+		Column4:     platformFilter(r),
+		Column5:     statusFilter(r),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load trend")
@@ -326,6 +354,8 @@ func (h *AnalyticsHandler) GetByPlatform(w http.ResponseWriter, r *http.Request)
 		ProjectID:   projectID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
+		Column4:     platformFilter(r),
+		Column5:     statusFilter(r),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load by-platform breakdown")

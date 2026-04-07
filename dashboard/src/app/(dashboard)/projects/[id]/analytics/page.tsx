@@ -182,10 +182,16 @@ export default function AnalyticsPage() {
     [range, customRange]
   );
 
-  // API uses snake_case start_date / end_date.
+  // API params: snake_case dates plus platform/status filters that the
+  // backend aggregation queries honor (empty / "all" disables them).
   const apiRange = useMemo(
-    () => ({ start_date: dateRange.start, end_date: dateRange.end }),
-    [dateRange]
+    () => ({
+      start_date: dateRange.start,
+      end_date: dateRange.end,
+      platform: platformFilter,
+      status: statusFilter,
+    }),
+    [dateRange, platformFilter, statusFilter]
   );
 
   const reloadAll = useCallback(

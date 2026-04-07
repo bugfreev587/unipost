@@ -26,6 +26,10 @@ SELECT * FROM post_analytics WHERE social_post_result_id = $1;
 -- name: GetAnalyticsSummaryByProject :one
 -- Aggregate post counts and engagement totals for a project over a date range.
 -- Filtering uses social_posts.created_at; analytics rows are joined via results.
+-- Empty-string sentinel for the platform/status params disables that filter.
+-- LEFT JOIN to social_accounts ensures posts with no results still count when
+-- the platform filter is unset, but are correctly excluded when it is set
+-- (NULL platform fails the equality test).
 SELECT
   COUNT(DISTINCT sp.id)::BIGINT                                              AS total_posts,
   COUNT(DISTINCT sp.id) FILTER (WHERE sp.status = 'published')::BIGINT       AS published_posts,
@@ -41,14 +45,18 @@ SELECT
   COALESCE(SUM(pa.video_views), 0)::BIGINT                                   AS video_views
 FROM social_posts sp
 LEFT JOIN social_post_results spr ON spr.post_id = sp.id
+LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
 WHERE sp.project_id = $1
   AND sp.created_at >= $2
-  AND sp.created_at <  $3;
+  AND sp.created_at <  $3
+  AND ($4::text = '' OR sa.platform = $4)
+  AND ($5::text = '' OR sp.status   = $5);
 
 -- name: GetAnalyticsTrendByProject :many
 -- Daily time series. Days with no posts are NOT returned by SQL — the
--- handler zero-fills them in Go to keep the query simple.
+-- handler zero-fills them in Go to keep the query simple. Same platform/status
+-- filter convention as the summary query.
 SELECT
   date_trunc('day', sp.created_at)::TIMESTAMPTZ                              AS day,
   COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
@@ -58,10 +66,13 @@ SELECT
   COALESCE(SUM(pa.shares), 0)::BIGINT                                        AS shares
 FROM social_posts sp
 LEFT JOIN social_post_results spr ON spr.post_id = sp.id
+LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
 WHERE sp.project_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
+  AND ($4::text = '' OR sa.platform = $4)
+  AND ($5::text = '' OR sp.status   = $5)
 GROUP BY day
 ORDER BY day ASC;
 
@@ -99,6 +110,8 @@ LIMIT 200;
 -- Per-platform aggregates. Inner-joins social_accounts so that posts with
 -- no results (still publishing or all-failed at validation) are excluded —
 -- a post can't have a platform breakdown without a result.
+-- platform/status filters use the same empty-string sentinel as the other
+-- aggregation queries; passing platform='tiktok' degenerates to a single row.
 SELECT
   sa.platform::TEXT                                                          AS platform,
   COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
@@ -118,5 +131,7 @@ LEFT JOIN post_analytics pa  ON pa.social_post_result_id = spr.id
 WHERE sp.project_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
+  AND ($4::text = '' OR sa.platform = $4)
+  AND ($5::text = '' OR sp.status   = $5)
 GROUP BY sa.platform
 ORDER BY sa.platform ASC;
