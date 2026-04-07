@@ -474,8 +474,11 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-load all social accounts for this project to resolve platform names
-	allAccounts, _ := h.queries.ListSocialAccountsByProject(r.Context(), projectID)
+	// Pre-load ALL social accounts (including disconnected) for this project
+	// to resolve platform names. Historical post results may reference accounts
+	// that have since been disconnected — we still want their platform to show
+	// up in the analytics list.
+	allAccounts, _ := h.queries.ListAllSocialAccountsByProject(r.Context(), projectID)
 	accountMap := make(map[string]string, len(allAccounts))
 	for _, acc := range allAccounts {
 		accountMap[acc.ID] = acc.Platform

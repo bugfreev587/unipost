@@ -228,6 +228,49 @@ func (q *Queries) ListSocialAccountsByProject(ctx context.Context, projectID str
 	return items, nil
 }
 
+const listAllSocialAccountsByProject = `-- name: ListAllSocialAccountsByProject :many
+SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope FROM social_accounts
+WHERE project_id = $1
+ORDER BY connected_at DESC
+`
+
+// ListAllSocialAccountsByProject returns every account for a project, including
+// disconnected ones. Used when resolving the platform for historical post
+// results whose originating account may have been disconnected after publish.
+func (q *Queries) ListAllSocialAccountsByProject(ctx context.Context, projectID string) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listAllSocialAccountsByProject, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateSocialAccountTokens = `-- name: UpdateSocialAccountTokens :exec
 UPDATE social_accounts
 SET access_token = $2, refresh_token = $3, token_expires_at = $4

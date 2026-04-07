@@ -8,6 +8,14 @@ SELECT * FROM social_accounts
 WHERE project_id = $1 AND disconnected_at IS NULL
 ORDER BY connected_at DESC;
 
+-- name: ListAllSocialAccountsByProject :many
+-- Includes disconnected accounts. Used when resolving the platform for
+-- historical post results, where the originating account may have been
+-- disconnected after publishing.
+SELECT * FROM social_accounts
+WHERE project_id = $1
+ORDER BY connected_at DESC;
+
 -- name: GetSocialAccount :one
 SELECT * FROM social_accounts WHERE id = $1;
 
