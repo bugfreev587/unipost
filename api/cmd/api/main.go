@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -72,23 +71,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize Stripe billing manager. Holds two parallel Stripe modes
-	// (live + sandbox/test) so superadmins can run internal QA against
-	// test mode without touching the live customer account. The mode for
-	// any given checkout is picked at request time based on whether the
-	// project owner is in SUPER_ADMINS. See internal/billing/manager.go.
+	// Stripe billing manager is constructed below, after the DB pool is
+	// ready, because SUPER_ADMINS entries can be email addresses that
+	// the manager resolves via a DB lookup.
 	var stripeMgr *billing.Manager
-	if os.Getenv("STRIPE_SECRET_KEY") != "" {
-		mgr, mgrErr := billing.NewManager()
-		if mgrErr != nil {
-			slog.Error("stripe billing manager init failed", "error", mgrErr)
-			os.Exit(1)
-		}
-		stripeMgr = mgr
-		slog.Info("stripe billing manager initialized",
-			"sandbox_enabled", stripeMgr.Sandbox != nil,
-			"super_admins_count", len(strings.Split(os.Getenv("SUPER_ADMINS"), ",")))
-	}
 
 	// Register platform adapters
 	platform.Register(platform.NewBlueskyAdapter())
@@ -156,6 +142,25 @@ func main() {
 	}
 
 	queries := db.New(pool)
+
+	// Build the Stripe billing manager now that the DB is ready. The
+	// SUPER_ADMINS list may contain email addresses, which the manager
+	// resolves to Clerk user IDs lazily via a closure over queries.GetUser.
+	if os.Getenv("STRIPE_SECRET_KEY") != "" {
+		userLookup := func(ctx context.Context, userID string) (string, error) {
+			user, err := queries.GetUser(ctx, userID)
+			if err != nil {
+				return "", err
+			}
+			return user.Email, nil
+		}
+		mgr, mgrErr := billing.NewManager(userLookup)
+		if mgrErr != nil {
+			slog.Error("stripe billing manager init failed", "error", mgrErr)
+			os.Exit(1)
+		}
+		stripeMgr = mgr
+	}
 
 	// Sync Stripe price IDs from env vars into plans table
 	syncStripePriceIDs(ctx, queries)

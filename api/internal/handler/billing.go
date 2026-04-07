@@ -96,7 +96,7 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 	// exist *in that mode* — if a sandbox user requests a plan whose
 	// sandbox price ID isn't configured we reject with a clear message
 	// instead of falling back to live and accidentally charging real money.
-	mode := h.stripe.For(userID)
+	mode := h.stripe.For(r.Context(), userID)
 	if mode == nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Stripe is not configured")
 		return
@@ -205,7 +205,7 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode := h.stripe.For(userID)
+	mode := h.stripe.For(r.Context(), userID)
 	if mode == nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Stripe is not configured")
 		return

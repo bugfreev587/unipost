@@ -22,14 +22,23 @@
 package billing
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/stripe/stripe-go/v82"
 	"github.com/stripe/stripe-go/v82/client"
 	"github.com/stripe/stripe-go/v82/webhook"
 )
+
+// UserLookupFunc returns the email address for a Clerk user ID. Used by
+// Manager.IsSuperAdmin to resolve email entries in SUPER_ADMINS to the
+// underlying user ID at request time. main.go wires this to a closure
+// that calls the DB queries.GetUser helper.
+type UserLookupFunc func(ctx context.Context, userID string) (email string, err error)
 
 // Mode is one Stripe environment (live or sandbox/test) — its own API
 // client, its own webhook signing secret, and its own price-ID map for
@@ -59,10 +68,32 @@ func (m *Mode) PriceID(planID string) string {
 
 // Manager owns one Live mode and an optional Sandbox mode plus the
 // SUPER_ADMINS allowlist that decides which one a given user gets.
+//
+// SUPER_ADMINS entries can be either Clerk user IDs (matched directly) or
+// email addresses (resolved to a user ID via userLookup at request time
+// and then cached). Mixing both formats in one comma-separated list is
+// supported. Email matching is case-insensitive.
 type Manager struct {
-	Live        *Mode
-	Sandbox     *Mode
-	superAdmins map[string]bool
+	Live    *Mode
+	Sandbox *Mode
+
+	// Direct Clerk user ID entries from SUPER_ADMINS — matched without
+	// touching the DB.
+	superAdminUserIDs map[string]bool
+
+	// Lower-cased email entries from SUPER_ADMINS — resolved on demand.
+	superAdminEmails map[string]bool
+
+	// Cache populated by IsSuperAdmin after the first email-resolution
+	// hit for a given userID. Stores both positive and negative results
+	// so non-admins don't keep paying for repeated DB lookups.
+	mu            sync.RWMutex
+	resolvedCache map[string]bool
+
+	// Optional user lookup. When nil, only direct user ID entries in
+	// SUPER_ADMINS are honored — email entries silently degrade to a
+	// no-op. main.go always wires this up after the DB pool is ready.
+	userLookup UserLookupFunc
 }
 
 // planEnvNames maps internal plan IDs to the dollar-amount token used in
@@ -86,9 +117,11 @@ var planEnvNames = map[string]string{
 
 // NewManager reads STRIPE_*, STRIPE_SANDBOX_*, and SUPER_ADMINS from the
 // environment and assembles both modes. Live is required; sandbox is
-// optional. Returns an error if the live key is missing — without it the
-// API can't create checkouts at all.
-func NewManager() (*Manager, error) {
+// optional. userLookup may be nil — in that case, email entries in
+// SUPER_ADMINS are dropped (with a startup warning) and only direct
+// Clerk user IDs are honored. Returns an error if the live key is
+// missing.
+func NewManager(userLookup UserLookupFunc) (*Manager, error) {
 	liveKey := os.Getenv("STRIPE_SECRET_KEY")
 	if liveKey == "" {
 		return nil, fmt.Errorf("billing: STRIPE_SECRET_KEY is required")
@@ -102,14 +135,28 @@ func NewManager() (*Manager, error) {
 	// the refactored handlers use the per-mode client.API directly.
 	stripe.Key = liveKey
 
+	userIDs, emails := parseSuperAdmins(os.Getenv("SUPER_ADMINS"))
+	if len(emails) > 0 && userLookup == nil {
+		slog.Warn("billing: SUPER_ADMINS contains email entries but no userLookup was provided; emails will be ignored",
+			"email_count", len(emails))
+	}
+
 	mgr := &Manager{
-		Live:        live,
-		superAdmins: parseSuperAdmins(os.Getenv("SUPER_ADMINS")),
+		Live:              live,
+		superAdminUserIDs: userIDs,
+		superAdminEmails:  emails,
+		resolvedCache:     make(map[string]bool),
+		userLookup:        userLookup,
 	}
 
 	if sandboxKey := os.Getenv("STRIPE_SANDBOX_SECRET_KEY"); sandboxKey != "" {
 		mgr.Sandbox = newMode("sandbox", sandboxKey, os.Getenv("STRIPE_SANDBOX_WEBHOOK_SECRET"), readPriceIDs("SANDBOX_"))
 	}
+
+	slog.Info("billing manager configured",
+		"super_admin_user_ids", len(userIDs),
+		"super_admin_emails", len(emails),
+		"sandbox_enabled", mgr.Sandbox != nil)
 
 	return mgr, nil
 }
@@ -139,35 +186,93 @@ func readPriceIDs(prefix string) map[string]string {
 	return out
 }
 
-func parseSuperAdmins(raw string) map[string]bool {
-	out := make(map[string]bool)
+// parseSuperAdmins splits the SUPER_ADMINS env var into two sets: direct
+// Clerk user IDs and email addresses. The split is by the presence of an
+// "@" — emails are lowercased so the runtime comparison is
+// case-insensitive. Whitespace around entries is tolerated. Stray
+// brackets / quotes are stripped so callers who accidentally paste a
+// JSON-array-looking value (`["alice@example.com"]`) still get parsed
+// correctly.
+func parseSuperAdmins(raw string) (userIDs map[string]bool, emails map[string]bool) {
+	userIDs = make(map[string]bool)
+	emails = make(map[string]bool)
 	for _, s := range strings.Split(raw, ",") {
 		s = strings.TrimSpace(s)
-		if s != "" {
-			out[s] = true
+		s = strings.Trim(s, `[]"' `)
+		if s == "" {
+			continue
+		}
+		if strings.Contains(s, "@") {
+			emails[strings.ToLower(s)] = true
+		} else {
+			userIDs[s] = true
 		}
 	}
-	return out
+	return userIDs, emails
 }
 
 // IsSuperAdmin reports whether the given Clerk user ID is in the
-// SUPER_ADMINS list. Used by the dashboard to gate sandbox-only UI.
-func (m *Manager) IsSuperAdmin(userID string) bool {
-	if m == nil {
+// SUPER_ADMINS allowlist. Direct user-ID entries match without touching
+// the DB. Email entries trigger a single user lookup the first time
+// IsSuperAdmin is called for a given userID; the result (positive or
+// negative) is cached for the lifetime of the process so repeat checks
+// are O(1).
+//
+// Returns false on lookup error rather than propagating, so a transient
+// DB hiccup doesn't accidentally upgrade or downgrade a user. The error
+// is logged.
+func (m *Manager) IsSuperAdmin(ctx context.Context, userID string) bool {
+	if m == nil || userID == "" {
 		return false
 	}
-	return m.superAdmins[userID]
+
+	// Direct user ID entry — fast path, no lock needed (the maps are
+	// only written at construction).
+	if m.superAdminUserIDs[userID] {
+		return true
+	}
+
+	// No email entries OR no way to resolve them → bail.
+	if len(m.superAdminEmails) == 0 || m.userLookup == nil {
+		return false
+	}
+
+	// Cached result from a previous lookup?
+	m.mu.RLock()
+	if v, ok := m.resolvedCache[userID]; ok {
+		m.mu.RUnlock()
+		return v
+	}
+	m.mu.RUnlock()
+
+	// Resolve via DB.
+	email, err := m.userLookup(ctx, userID)
+	if err != nil {
+		slog.Warn("billing: super-admin email lookup failed",
+			"user_id", userID, "error", err)
+		return false
+	}
+	isAdmin := m.superAdminEmails[strings.ToLower(strings.TrimSpace(email))]
+
+	m.mu.Lock()
+	m.resolvedCache[userID] = isAdmin
+	m.mu.Unlock()
+
+	if isAdmin {
+		slog.Info("billing: resolved super-admin email", "user_id", userID, "email", email)
+	}
+	return isAdmin
 }
 
 // For picks the Stripe mode to use for a given user. Sandbox wins when
 // the user is on the SUPER_ADMINS list AND a sandbox mode was configured;
 // otherwise everyone (including superadmins, when sandbox isn't set up)
 // goes through live.
-func (m *Manager) For(userID string) *Mode {
+func (m *Manager) For(ctx context.Context, userID string) *Mode {
 	if m == nil {
 		return nil
 	}
-	if m.Sandbox != nil && m.IsSuperAdmin(userID) {
+	if m.Sandbox != nil && m.IsSuperAdmin(ctx, userID) {
 		return m.Sandbox
 	}
 	return m.Live
