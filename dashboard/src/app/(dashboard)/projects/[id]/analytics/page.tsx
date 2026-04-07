@@ -17,6 +17,12 @@ import {
 } from "@/lib/api";
 import { PlatformIcon } from "@/components/platform-icons";
 import {
+  platformSupports,
+  anyPlatformSupports,
+  unsupportedReason,
+  type MetricKey,
+} from "@/lib/platform-capabilities";
+import {
   LineChart,
   Line,
   XAxis,
@@ -46,6 +52,19 @@ function formatNumber(n: number): string {
 
 function formatPercent(n: number): string {
   return (n * 100).toFixed(1) + "%";
+}
+
+// Renders a muted "N/A" with a tooltip explaining why a metric isn't
+// available for a given platform. See dashboard/src/lib/platform-capabilities.ts.
+function NACell({ platform, metric }: { platform: string; metric: MetricKey }) {
+  return (
+    <span
+      title={unsupportedReason(platform, metric)}
+      style={{ color: "var(--dmuted2)", cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
+    >
+      N/A
+    </span>
+  );
 }
 
 function formatChange(n: number): { text: string; up: boolean; down: boolean } {
@@ -617,6 +636,7 @@ function SummaryCards({ summary }: { summary: AnalyticsSummary }) {
           label="Total Impressions"
           value={engagement.impressions === 0 ? "--" : formatNumber(engagement.impressions)}
           change={delta.impressions_change}
+          footnote="Twitter / LinkedIn / Threads only"
         />
         <KPICard
           label="Total Likes"
@@ -628,19 +648,21 @@ function SummaryCards({ summary }: { summary: AnalyticsSummary }) {
           value={engagement.impressions === 0 ? "--" : formatPercent(engagement.engagement_rate)}
           color={engagement.impressions === 0 ? undefined : engRateColor(engagement.engagement_rate)}
           change={delta.engagement_change}
+          footnote="Based on platforms exposing impressions"
         />
       </div>
     </>
   );
 }
 
-function KPICard({ label, value, color, change, subtext, subtextColor }: {
+function KPICard({ label, value, color, change, subtext, subtextColor, footnote }: {
   label: string;
   value: string;
   color?: string;
   change?: number;
   subtext?: string;
   subtextColor?: string;
+  footnote?: string;
 }) {
   const ch = change !== undefined ? formatChange(change) : null;
   return (
@@ -677,6 +699,11 @@ function KPICard({ label, value, color, change, subtext, subtextColor }: {
       {subtext && (
         <div style={{ fontSize: 11, color: subtextColor || "var(--dmuted2)" }}>
           ⚠ {subtext}
+        </div>
+      )}
+      {footnote && (
+        <div style={{ fontSize: 10, color: "var(--dmuted2)", marginTop: 2, fontStyle: "italic" }}>
+          {footnote}
         </div>
       )}
     </div>
@@ -816,14 +843,22 @@ function ByPlatformTable({ rows }: { rows: PlatformAnalytics[] }) {
                     </span>
                   </td>
                   <td style={tdRight}>{formatNumber(r.posts)}</td>
-                  <td style={tdRight}>{r.impressions === 0 ? "--" : formatNumber(r.impressions)}</td>
+                  <td style={tdRight}>
+                    {!platformSupports(r.platform, "impressions")
+                      ? <NACell platform={r.platform} metric="impressions" />
+                      : r.impressions === 0 ? "--" : formatNumber(r.impressions)}
+                  </td>
                   <td style={tdRight}>{r.likes === 0 ? "--" : formatNumber(r.likes)}</td>
                   <td style={tdRight}>{r.comments === 0 ? "--" : formatNumber(r.comments)}</td>
                   <td style={tdRight}>{r.shares === 0 ? "--" : formatNumber(r.shares)}</td>
                   <td style={tdRight}>
-                    <span style={{ color: r.impressions === 0 ? "var(--dmuted2)" : engRateColor(r.engagement_rate) }}>
-                      {r.impressions === 0 ? "--" : formatPercent(r.engagement_rate)}
-                    </span>
+                    {!platformSupports(r.platform, "impressions") ? (
+                      <NACell platform={r.platform} metric="impressions" />
+                    ) : (
+                      <span style={{ color: r.impressions === 0 ? "var(--dmuted2)" : engRateColor(r.engagement_rate) }}>
+                        {r.impressions === 0 ? "--" : formatPercent(r.engagement_rate)}
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -984,6 +1019,7 @@ function FragmentRow({
   onToggle: () => void;
 }) {
   const failed = post.status === "failed";
+  const noImpressionPlatform = platforms.length > 0 && !anyPlatformSupports(platforms, "impressions");
   return (
     <>
       <tr
@@ -1012,10 +1048,28 @@ function FragmentRow({
         <td style={tdStyle}>
           <StatusPill status={post.status} />
         </td>
-        <td style={tdRight}>{failed || metrics.impressions === 0 ? "--" : formatNumber(metrics.impressions)}</td>
+        <td style={tdRight}>
+          {failed ? "--" : noImpressionPlatform ? (
+            <span
+              title="None of this post's platforms expose impressions via API"
+              style={{ color: "var(--dmuted2)", cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
+            >
+              N/A
+            </span>
+          ) : metrics.impressions === 0 ? "--" : formatNumber(metrics.impressions)}
+        </td>
         <td style={tdRight}>{failed || metrics.likes === 0 ? "--" : formatNumber(metrics.likes)}</td>
         <td style={tdRight}>
-          {failed || metrics.impressions === 0 ? (
+          {failed ? (
+            <span style={{ color: "var(--dmuted2)" }}>--</span>
+          ) : noImpressionPlatform ? (
+            <span
+              title="Engagement rate needs impressions, which none of this post's platforms expose"
+              style={{ color: "var(--dmuted2)", cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
+            >
+              N/A
+            </span>
+          ) : metrics.impressions === 0 ? (
             <span style={{ color: "var(--dmuted2)" }}>--</span>
           ) : (
             <span style={{ color: engRateColor(metrics.engagement_rate) }}>
@@ -1076,7 +1130,12 @@ function PostExpandPanel({ perAccount }: { perAccount: PostAnalytics[] }) {
                 </a>
               )}
             </div>
-            <MetricLine label="Impressions" value={row.impressions} />
+            <MetricLine
+              label="Impressions"
+              value={row.impressions}
+              na={!platformSupports(row.platform, "impressions")}
+              naReason={unsupportedReason(row.platform, "impressions")}
+            />
             {row.reach > 0 && <MetricLine label="Reach" value={row.reach} />}
             <MetricLine label="Likes" value={row.likes} />
             <MetricLine label="Comments" value={row.comments} />
@@ -1093,9 +1152,18 @@ function PostExpandPanel({ perAccount }: { perAccount: PostAnalytics[] }) {
               fontSize: 12,
             }}>
               <span style={{ color: "var(--dmuted)" }}>Engagement</span>
-              <span style={{ color: row.impressions === 0 ? "var(--dmuted2)" : engRateColor(row.engagement_rate), fontWeight: 600 }}>
-                {row.impressions === 0 ? "--" : formatPercent(row.engagement_rate)}
-              </span>
+              {!platformSupports(row.platform, "impressions") ? (
+                <span
+                  title={unsupportedReason(row.platform, "impressions")}
+                  style={{ color: "var(--dmuted2)", fontWeight: 600, cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
+                >
+                  N/A
+                </span>
+              ) : (
+                <span style={{ color: row.impressions === 0 ? "var(--dmuted2)" : engRateColor(row.engagement_rate), fontWeight: 600 }}>
+                  {row.impressions === 0 ? "--" : formatPercent(row.engagement_rate)}
+                </span>
+              )}
             </div>
           </div>
         );
@@ -1104,11 +1172,25 @@ function PostExpandPanel({ perAccount }: { perAccount: PostAnalytics[] }) {
   );
 }
 
-function MetricLine({ label, value }: { label: string; value: number }) {
+function MetricLine({ label, value, na, naReason }: {
+  label: string;
+  value: number;
+  na?: boolean;
+  naReason?: string;
+}) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "2px 0" }}>
       <span style={{ color: "var(--dmuted)" }}>{label}</span>
-      <span style={{ color: "var(--dtext)", fontVariantNumeric: "tabular-nums" }}>{formatNumber(value)}</span>
+      {na ? (
+        <span
+          title={naReason}
+          style={{ color: "var(--dmuted2)", cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
+        >
+          N/A
+        </span>
+      ) : (
+        <span style={{ color: "var(--dtext)", fontVariantNumeric: "tabular-nums" }}>{formatNumber(value)}</span>
+      )}
     </div>
   );
 }
