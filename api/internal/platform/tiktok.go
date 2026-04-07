@@ -30,10 +30,12 @@ func (a *TikTokAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 		AuthURL:      "https://www.tiktok.com/v2/auth/authorize/",
 		TokenURL:     "https://open.tiktokapis.com/v2/oauth/token/",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/tiktok",
-		// video.list is required by /v2/video/query/, which powers analytics.
-		// Existing connected accounts predate this scope and must reconnect
-		// for analytics to work — old access tokens don't carry it.
-		Scopes:       []string{"video.publish", "video.upload", "video.list", "user.info.basic"},
+		// NOTE: analytics needs the video.list scope, but TikTok sandbox apps
+		// can't request it — the entire authorization fails with "scope" as
+		// the reason. Add "video.list" to this slice AND to the scope query
+		// param in GetAuthURL below, then have every connected account
+		// disconnect/reconnect, ONLY after the app has production access.
+		Scopes:       []string{"video.publish", "video.upload", "user.info.basic"},
 	}
 }
 
@@ -43,7 +45,9 @@ func (a *TikTokAdapter) GetAuthURL(config OAuthConfig, state string) string {
 		"client_key":    {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
 		"response_type": {"code"},
-		"scope":         {"video.publish,video.upload,video.list,user.info.basic"},
+		// Keep in sync with DefaultOAuthConfig.Scopes above. video.list is
+		// intentionally absent until production access — see the note there.
+		"scope":         {"video.publish,video.upload,user.info.basic"},
 		"state":         {state},
 	}
 	return config.AuthURL + "?" + params.Encode()
