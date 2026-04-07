@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
@@ -439,6 +440,7 @@ export default function AnalyticsPage() {
             setSortField={setSortField}
             expanded={expanded}
             setExpanded={setExpanded}
+            projectId={projectId}
           />
         </>
       )}
@@ -890,6 +892,7 @@ function PostsTable({
   rows, allRows, page, totalPages, setPage,
   sortField, setSortField,
   expanded, setExpanded,
+  projectId,
 }: {
   rows: PostRow[];
   allRows: PostRow[];
@@ -900,6 +903,7 @@ function PostsTable({
   setSortField: (s: SortField) => void;
   expanded: Set<string>;
   setExpanded: (s: Set<string>) => void;
+  projectId: string;
 }) {
   const toggleRow = (id: string) => {
     const next = new Set(expanded);
@@ -992,6 +996,7 @@ function PostsTable({
                     isExpanded={isExpanded}
                     onToggle={() => toggleRow(post.id)}
                     cardWidth={cardWidth}
+                    projectId={projectId}
                   />
                 );
               })}
@@ -1038,7 +1043,7 @@ function PostsTable({
 }
 
 function FragmentRow({
-  post, metrics, perAccount, platforms, isExpanded, onToggle, cardWidth,
+  post, metrics, perAccount, platforms, isExpanded, onToggle, cardWidth, projectId,
 }: {
   post: SocialPost;
   metrics: ReturnType<typeof sumPostMetrics>;
@@ -1047,6 +1052,7 @@ function FragmentRow({
   isExpanded: boolean;
   onToggle: () => void;
   cardWidth: number;
+  projectId: string;
 }) {
   const failed = post.status === "failed";
   const noImpressionPlatform = platforms.length > 0 && !anyPlatformSupports(platforms, "impressions");
@@ -1114,7 +1120,7 @@ function FragmentRow({
       {isExpanded && (
         <tr>
           <td colSpan={8} style={{ background: "var(--surface)", padding: "16px 24px", borderBottom: "1px solid var(--dborder)" }}>
-            <PostExpandPanel results={post.results || []} perAccount={perAccount} cardWidth={cardWidth} />
+            <PostExpandPanel results={post.results || []} perAccount={perAccount} cardWidth={cardWidth} projectId={projectId} />
           </td>
         </tr>
       )}
@@ -1126,18 +1132,28 @@ function FragmentRow({
 // dispatched to. The source of truth for which accounts exist is the post's
 // own results[] (always present after a publish attempt, including failed
 // ones), joined in with PostAnalytics rows by social_account_id when the
-// analytics worker has fetched them. This means:
-//   - Failed accounts show their error_message even when there are no metrics.
-//   - Published accounts always render even before analytics has run, with a
-//     "Analytics not yet available" placeholder until metrics arrive.
+// analytics worker has fetched them.
+//
+// Each card is designed to add information the parent row can't show:
+//   - Account display name (e.g. @brand_us) — disambiguates multi-account
+//     posts where the row only shows a single platform icon.
+//   - Per-platform metric breakdown (the row shows aggregated sums).
+//   - Metrics the row can't fit: reach, comments, shares, saves, clicks,
+//     video_views — with a tooltip-explained N/A for fields the platform
+//     doesn't expose.
+//   - Per-account published_at, distinct from the post-level timestamp.
+//   - Per-account error message + an actionable hint for common failures
+//     (disconnected, rate limit, auth, …).
 function PostExpandPanel({
   results,
   perAccount,
   cardWidth,
+  projectId,
 }: {
   results: SocialPostResult[];
   perAccount: PostAnalytics[];
   cardWidth: number;
+  projectId: string;
 }) {
   if (results.length === 0) {
     return <div style={{ fontSize: 12, color: "var(--dmuted2)" }}>No accounts attached to this post.</div>;
@@ -1150,124 +1166,317 @@ function PostExpandPanel({
     metricsByAccount.set(m.social_account_id, m);
   }
 
-  // cardWidth is computed once at the table level (see PostsTable) so every
-  // expanded row uses the same column width — single-platform rows align
-  // exactly with multi-platform rows, and multi-platform rows fill the
-  // available width without leaving a trailing gutter.
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, ${cardWidth}px)`, gap: 16 }}>
-      {results.map((res) => {
-        const platform = res.platform || "";
-        const metrics = metricsByAccount.get(res.social_account_id);
-        const url = res.external_id ? postUrlFor(platform, res.external_id) : null;
-        const isFailed = res.status === "failed";
+      {results.map((res) => (
+        <ResultCard
+          key={res.social_account_id}
+          res={res}
+          metrics={metricsByAccount.get(res.social_account_id)}
+          projectId={projectId}
+        />
+      ))}
+    </div>
+  );
+}
 
-        return (
-          <div
-            key={res.social_account_id}
-            style={{
-              padding: 14,
-              background: "var(--surface2)",
-              border: "1px solid var(--dborder)",
-              borderRadius: 8,
-              opacity: isFailed ? 0.95 : 1,
-            }}
+function ResultCard({
+  res,
+  metrics,
+  projectId,
+}: {
+  res: SocialPostResult;
+  metrics: PostAnalytics | undefined;
+  projectId: string;
+}) {
+  const platform = res.platform || "";
+  const url = res.external_id ? postUrlFor(platform, res.external_id) : null;
+  const isFailed = res.status === "failed";
+  const accountName = res.account_name?.trim();
+
+  return (
+    <div
+      style={{
+        padding: 14,
+        background: "var(--surface2)",
+        border: "1px solid var(--dborder)",
+        borderRadius: 8,
+        opacity: isFailed ? 0.95 : 1,
+      }}
+    >
+      {/* Header: platform + status pill + external link */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <PlatformIcon platform={platform} size={14} />
+          <span style={{ fontWeight: 600, color: "var(--dtext)", textTransform: "capitalize", fontSize: 13 }}>
+            {platform || "unknown"}
+          </span>
+          <StatusPill status={res.status} />
+        </span>
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{ color: "var(--dmuted)", display: "inline-flex", flexShrink: 0 }}
+            title="Open original post"
           >
-            {/* Header: platform + status pill + (optional) external link */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                <PlatformIcon platform={platform} size={14} />
-                <span style={{ fontWeight: 600, color: "var(--dtext)", textTransform: "capitalize", fontSize: 13 }}>
-                  {platform || "unknown"}
-                </span>
-                <StatusPill status={res.status} />
+            <ExternalLink style={{ width: 12, height: 12 }} />
+          </a>
+        )}
+      </div>
+
+      {/* Account display name + per-account published timestamp */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 10, fontSize: 11, color: "var(--dmuted)" }}>
+        {accountName && (
+          <span style={{ color: "var(--dmuted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {accountName}
+          </span>
+        )}
+        {res.published_at && (
+          <span title={new Date(res.published_at).toLocaleString()}>
+            {formatShortDate(res.published_at)}
+          </span>
+        )}
+      </div>
+
+      {/* Failed → red error block + actionable hint */}
+      {isFailed && (
+        <FailureDetails error={res.error_message || ""} projectId={projectId} />
+      )}
+
+      {/* Published with no analytics yet → placeholder + external_id for support */}
+      {!isFailed && !metrics && (
+        <div style={{ fontSize: 12, color: "var(--dmuted2)", padding: "4px 0", lineHeight: 1.6 }}>
+          Published. Analytics not yet available — click Refresh to fetch.
+          {res.external_id && (
+            <div style={{ marginTop: 6, fontFamily: "var(--mono, monospace)", fontSize: 10, color: "var(--dmuted)", wordBreak: "break-all" }}>
+              ID: {res.external_id}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Published with analytics → full per-platform breakdown */}
+      {!isFailed && metrics && (
+        <>
+          <MetricLine
+            label="Impressions"
+            value={metrics.impressions}
+            na={!platformSupports(platform, "impressions")}
+            naReason={unsupportedReason(platform, "impressions")}
+          />
+          <MetricLine
+            label="Reach"
+            value={metrics.reach}
+            na={!platformSupports(platform, "reach")}
+            naReason={unsupportedReason(platform, "reach")}
+          />
+          <MetricLine
+            label="Likes"
+            value={metrics.likes}
+            na={!platformSupports(platform, "likes")}
+            naReason={unsupportedReason(platform, "likes")}
+          />
+          <MetricLine
+            label="Comments"
+            value={metrics.comments}
+            na={!platformSupports(platform, "comments")}
+            naReason={unsupportedReason(platform, "comments")}
+          />
+          <MetricLine
+            label="Shares"
+            value={metrics.shares}
+            na={!platformSupports(platform, "shares")}
+            naReason={unsupportedReason(platform, "shares")}
+          />
+          <MetricLine
+            label="Saves"
+            value={metrics.saves}
+            na={!platformSupports(platform, "saves")}
+            naReason={unsupportedReason(platform, "saves")}
+          />
+          <MetricLine
+            label="Clicks"
+            value={metrics.clicks}
+            na={!platformSupports(platform, "clicks")}
+            naReason={unsupportedReason(platform, "clicks")}
+          />
+          {(metrics.video_views > 0 || platformSupports(platform, "video_views")) && (
+            <MetricLine
+              label="Video Views"
+              value={metrics.video_views}
+              na={!platformSupports(platform, "video_views")}
+              naReason={unsupportedReason(platform, "video_views")}
+            />
+          )}
+
+          <div style={{
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: "1px solid var(--dborder)",
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 12,
+          }}>
+            <span style={{ color: "var(--dmuted)" }}>Engagement</span>
+            {!platformSupports(platform, "impressions") ? (
+              <span
+                title={unsupportedReason(platform, "impressions")}
+                style={{ color: "var(--dmuted2)", fontWeight: 600, cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
+              >
+                N/A
               </span>
-              {url && (
+            ) : (
+              <span style={{ color: metrics.impressions === 0 ? "var(--dmuted2)" : engRateColor(metrics.engagement_rate), fontWeight: 600 }}>
+                {metrics.impressions === 0 ? "--" : formatPercent(metrics.engagement_rate)}
+              </span>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// FailureDetails renders the raw error_message from the platform plus a
+// human-readable hint and (where applicable) a deep link to the page that
+// fixes it. The categorization is intentionally loose — we match against
+// substrings of the error rather than rely on machine-readable codes,
+// because the upstream platforms don't agree on a code taxonomy.
+function FailureDetails({ error, projectId }: { error: string; projectId: string }) {
+  const hint = categorizeError(error);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div
+        style={{
+          fontSize: 11,
+          color: "#ef4444",
+          background: "#ef444410",
+          border: "1px solid #ef444430",
+          borderRadius: 6,
+          padding: "8px 10px",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          fontFamily: "var(--mono, monospace)",
+          lineHeight: 1.5,
+          maxHeight: 140,
+          overflow: "auto",
+        }}
+      >
+        {error || "Publish failed (no error message reported)."}
+      </div>
+      {hint && (
+        <div style={{ fontSize: 12, color: "var(--dtext)", lineHeight: 1.5 }}>
+          <span style={{ color: "var(--dmuted)" }}>{hint.label}: </span>
+          {hint.body}
+          {hint.action && (
+            <>
+              {" "}
+              {hint.action.href.startsWith("http") ? (
                 <a
-                  href={url}
+                  href={hint.action.href}
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  style={{ color: "var(--dmuted)", display: "inline-flex", flexShrink: 0 }}
-                  title="Open original post"
+                  style={{ color: "var(--accent, #10b981)", textDecoration: "none" }}
                 >
-                  <ExternalLink style={{ width: 12, height: 12 }} />
+                  {hint.action.label} →
                 </a>
+              ) : (
+                <Link
+                  href={hint.action.href.replace(":projectId", projectId)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ color: "var(--accent, #10b981)", textDecoration: "none" }}
+                >
+                  {hint.action.label} →
+                </Link>
               )}
-            </div>
-
-            {/* Failed: surface the platform's error message instead of metrics */}
-            {isFailed && (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "#ef4444",
-                  background: "#ef444410",
-                  border: "1px solid #ef444430",
-                  borderRadius: 6,
-                  padding: "8px 10px",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  fontFamily: "var(--mono, monospace)",
-                  lineHeight: 1.5,
-                }}
-              >
-                {res.error_message || "Publish failed (no error message reported)."}
-              </div>
-            )}
-
-            {/* Published with no analytics yet: short placeholder */}
-            {!isFailed && !metrics && (
-              <div style={{ fontSize: 12, color: "var(--dmuted2)", padding: "4px 0" }}>
-                Published. Analytics not yet available — refresh to fetch.
-              </div>
-            )}
-
-            {/* Published with analytics: existing metric rows */}
-            {!isFailed && metrics && (
-              <>
-                <MetricLine
-                  label="Impressions"
-                  value={metrics.impressions}
-                  na={!platformSupports(platform, "impressions")}
-                  naReason={unsupportedReason(platform, "impressions")}
-                />
-                {metrics.reach > 0 && <MetricLine label="Reach" value={metrics.reach} />}
-                <MetricLine label="Likes" value={metrics.likes} />
-                <MetricLine label="Comments" value={metrics.comments} />
-                <MetricLine label="Shares" value={metrics.shares} />
-                {metrics.saves > 0 && <MetricLine label="Saves" value={metrics.saves} />}
-                {metrics.clicks > 0 && <MetricLine label="Clicks" value={metrics.clicks} />}
-                {metrics.video_views > 0 && <MetricLine label="Video Views" value={metrics.video_views} />}
-                <div style={{
-                  marginTop: 8,
-                  paddingTop: 8,
-                  borderTop: "1px solid var(--dborder)",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: 12,
-                }}>
-                  <span style={{ color: "var(--dmuted)" }}>Engagement</span>
-                  {!platformSupports(platform, "impressions") ? (
-                    <span
-                      title={unsupportedReason(platform, "impressions")}
-                      style={{ color: "var(--dmuted2)", fontWeight: 600, cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
-                    >
-                      N/A
-                    </span>
-                  ) : (
-                    <span style={{ color: metrics.impressions === 0 ? "var(--dmuted2)" : engRateColor(metrics.engagement_rate), fontWeight: 600 }}>
-                      {metrics.impressions === 0 ? "--" : formatPercent(metrics.engagement_rate)}
-                    </span>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        );
-      })}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+type ErrorHint = {
+  label: string;
+  body: string;
+  action?: { label: string; href: string };
+};
+
+// categorizeError matches the platform's raw error message against a small
+// set of known failure modes. Returns a human-readable explanation plus an
+// optional remediation link. Add new patterns as we encounter them in the
+// wild — match on substrings so we don't have to chase per-platform codes.
+function categorizeError(error: string): ErrorHint | null {
+  const e = error.toLowerCase();
+
+  if (e.includes("account is disconnected") || e.includes("account not found")) {
+    return {
+      label: "What to do",
+      body: "The connected social account was disconnected before this post was published.",
+      action: { label: "Reconnect on Accounts page", href: "/projects/:projectId/accounts" },
+    };
+  }
+  if (e.includes("token") && (e.includes("expired") || e.includes("invalid") || e.includes("revoked") || e.includes("unauthorized"))) {
+    return {
+      label: "What to do",
+      body: "The platform's access token is no longer valid (expired or revoked).",
+      action: { label: "Reconnect on Accounts page", href: "/projects/:projectId/accounts" },
+    };
+  }
+  if (e.includes("rate limit") || e.includes("too many requests") || e.includes("429")) {
+    return {
+      label: "What to do",
+      body: "The platform rate-limited this request. Wait a few minutes and try again — UniPost retries are not yet automatic.",
+    };
+  }
+  if (e.includes("invalid authorization header")) {
+    // TikTok returns this for several validation errors, not just auth.
+    return {
+      label: "Likely cause",
+      body: "TikTok returns this misleading message when a request body field is missing or when the source URL is on an unverified domain. Confirm R2_PUBLIC_DOMAIN is set and the bucket domain is verified in your TikTok dev portal.",
+    };
+  }
+  if (e.includes("url_ownership_unverified") || e.includes("url ownership")) {
+    return {
+      label: "What to do",
+      body: "TikTok requires the source URL to come from a domain you've registered in your developer portal. Verify the domain hosting your media.",
+      action: { label: "TikTok URL properties", href: "https://developers.tiktok.com/apps" },
+    };
+  }
+  if (e.includes("media") && (e.includes("size") || e.includes("too large") || e.includes("too big"))) {
+    return {
+      label: "What to do",
+      body: "The media file exceeded the platform's size limit. Compress or trim it and re-upload.",
+    };
+  }
+  if (e.includes("instagram requires at least one")) {
+    return {
+      label: "What to do",
+      body: "Instagram doesn't support text-only posts — attach at least one image or video URL in media_urls.",
+    };
+  }
+  if (e.includes("does not support post deletion")) {
+    return {
+      label: "Heads up",
+      body: "This platform doesn't allow API-driven deletion. The original post is still on the platform — delete it from the platform's own UI if needed.",
+    };
+  }
+  return null;
+}
+
+// formatShortDate renders an ISO timestamp as e.g. "Apr 7, 12:34" — short
+// enough to fit in a card subheader but unambiguous about minute precision.
+function formatShortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${date}, ${time}`;
 }
 
 function MetricLine({ label, value, na, naReason }: {

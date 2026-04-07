@@ -32,11 +32,20 @@ func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, q
 type postResultResponse struct {
 	SocialAccountID string         `json:"social_account_id"`
 	Platform        string         `json:"platform,omitempty"`
+	AccountName     string         `json:"account_name,omitempty"`
 	Status          string         `json:"status"`
 	ExternalID      *string        `json:"external_id,omitempty"`
 	ErrorMessage    *string        `json:"error_message,omitempty"`
 	PublishedAt     *string        `json:"published_at,omitempty"`
 	PublishStatus   map[string]any `json:"publish_status,omitempty"`
+}
+
+// accountSummary is what the List handler stores per social_account_id so the
+// per-result rows can resolve both the platform name and the human-readable
+// display name in a single map lookup.
+type accountSummary struct {
+	Platform string
+	Name     string
 }
 
 type socialPostResponse struct {
@@ -194,10 +203,11 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Publish to each account concurrently
 	type accountResult struct {
-		accountID string
-		platform  string
-		result    *platform.PostResult
-		err       error
+		accountID   string
+		platform    string
+		accountName string
+		result      *platform.PostResult
+		err         error
 	}
 
 	results := make([]accountResult, len(accounts))
@@ -208,15 +218,20 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		go func(idx int, account db.SocialAccount) {
 			defer wg.Done()
 
+			accountName := ""
+			if account.AccountName.Valid {
+				accountName = account.AccountName.String
+			}
+
 			adapter, err := platform.Get(account.Platform)
 			if err != nil {
-				results[idx] = accountResult{accountID: account.ID, platform: account.Platform, err: err}
+				results[idx] = accountResult{accountID: account.ID, platform: account.Platform, accountName: accountName, err: err}
 				return
 			}
 
 			accessToken, err := h.encryptor.Decrypt(account.AccessToken)
 			if err != nil {
-				results[idx] = accountResult{accountID: account.ID, platform: account.Platform, err: err}
+				results[idx] = accountResult{accountID: account.ID, platform: account.Platform, accountName: accountName, err: err}
 				return
 			}
 
@@ -241,10 +256,11 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 			postResult, err := adapter.Post(r.Context(), accessToken, body.Caption, platform.MediaFromURLs(body.MediaURLs), body.PlatformOptions[account.Platform])
 			results[idx] = accountResult{
-				accountID: account.ID,
-				platform:  account.Platform,
-				result:    postResult,
-				err:       err,
+				accountID:   account.ID,
+				platform:    account.Platform,
+				accountName: accountName,
+				result:      postResult,
+				err:         err,
 			}
 		}(i, acc)
 	}
@@ -286,6 +302,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		rr := postResultResponse{
 			SocialAccountID: dbResult.SocialAccountID,
 			Platform:        res.platform,
+			AccountName:     res.accountName,
 			Status:          dbResult.Status,
 		}
 		if dbResult.ExternalID.Valid {
@@ -324,9 +341,14 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
+		entryName := ""
+		if e.account.AccountName.Valid {
+			entryName = e.account.AccountName.String
+		}
 		responseResults = append(responseResults, postResultResponse{
 			SocialAccountID: e.account.ID,
 			Platform:        e.account.Platform,
+			AccountName:     entryName,
 			Status:          "failed",
 			ErrorMessage:    &errMessage,
 		})
@@ -414,10 +436,13 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 			rr.PublishedAt = &t
 		}
 
-		// Resolve platform from social account
+		// Resolve platform + account display name from social account
 		acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID)
 		if accErr == nil {
 			rr.Platform = acc.Platform
+			if acc.AccountName.Valid {
+				rr.AccountName = acc.AccountName.String
+			}
 		}
 
 		// For TikTok, check real-time publish status
@@ -475,13 +500,17 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pre-load ALL social accounts (including disconnected) for this project
-	// to resolve platform names. Historical post results may reference accounts
-	// that have since been disconnected — we still want their platform to show
-	// up in the analytics list.
+	// to resolve platform names AND display names. Historical post results
+	// may reference accounts that have since been disconnected — we still
+	// want their platform / handle to show up in the analytics list.
 	allAccounts, _ := h.queries.ListAllSocialAccountsByProject(r.Context(), projectID)
-	accountMap := make(map[string]string, len(allAccounts))
+	accountMap := make(map[string]accountSummary, len(allAccounts))
 	for _, acc := range allAccounts {
-		accountMap[acc.ID] = acc.Platform
+		name := ""
+		if acc.AccountName.Valid {
+			name = acc.AccountName.String
+		}
+		accountMap[acc.ID] = accountSummary{Platform: acc.Platform, Name: name}
 	}
 
 	var result []socialPostResponse
@@ -503,9 +532,11 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		postResults, _ := h.queries.ListSocialPostResultsByPost(r.Context(), p.ID)
 		var responseResults []postResultResponse
 		for _, res := range postResults {
+			summary := accountMap[res.SocialAccountID]
 			rr := postResultResponse{
 				SocialAccountID: res.SocialAccountID,
-				Platform:        accountMap[res.SocialAccountID],
+				Platform:        summary.Platform,
+				AccountName:     summary.Name,
 				Status:          res.Status,
 			}
 			if res.ExternalID.Valid {

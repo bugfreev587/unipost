@@ -205,6 +205,7 @@ export async function getOAuthConnectURL(
 export interface SocialPostResult {
   social_account_id: string;
   platform?: string;
+  account_name?: string;
   status: string;
   external_id?: string;
   error_message?: string;
