@@ -300,20 +300,114 @@ export interface PostAnalytics {
   social_account_id: string;
   platform: string;
   external_id: string;
-  views: number;
+  impressions: number;
+  reach: number;
   likes: number;
   comments: number;
   shares: number;
-  reach: number;
-  impressions: number;
+  saves: number;
+  clicks: number;
+  video_views: number;
+  views: number; // legacy alias for video_views; will be removed when backend drops it
   engagement_rate: number;
+  platform_specific?: Record<string, unknown>;
   fetched_at: string;
 }
 
 export async function getPostAnalytics(
   token: string,
   projectId: string,
-  postId: string
+  postId: string,
+  opts?: { refresh?: boolean }
 ): Promise<ApiResponse<PostAnalytics[]>> {
-  return request(`/v1/projects/${projectId}/social-posts/${postId}/analytics`, token);
+  const qs = opts?.refresh ? "?refresh=1" : "";
+  return request(`/v1/projects/${projectId}/social-posts/${postId}/analytics${qs}`, token);
+}
+
+// Aggregated analytics (powers the analytics page)
+
+export interface AnalyticsSummary {
+  period: { start: string; end: string };
+  posts: {
+    total: number;
+    published: number;
+    scheduled: number;
+    failed: number;
+    failed_rate: number;
+  };
+  engagement: {
+    impressions: number;
+    reach: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    saves: number;
+    clicks: number;
+    video_views: number;
+    engagement_rate: number;
+  };
+  vs_previous_period: {
+    impressions_change: number;
+    likes_change: number;
+    engagement_change: number;
+  };
+}
+
+export interface AnalyticsTrend {
+  dates: string[];
+  series: Record<string, number[]>;
+}
+
+export interface PlatformAnalytics {
+  platform: string;
+  posts: number;
+  accounts: number;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  clicks: number;
+  video_views: number;
+  engagement_rate: number;
+}
+
+export interface AnalyticsRangeParams {
+  start_date?: string; // YYYY-MM-DD
+  end_date?: string;   // YYYY-MM-DD
+}
+
+function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string {
+  if (!params) return "";
+  const qs = new URLSearchParams();
+  if (params.start_date) qs.set("start_date", params.start_date);
+  if (params.end_date) qs.set("end_date", params.end_date);
+  if (params.metric) qs.set("metric", params.metric);
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+export async function getAnalyticsSummary(
+  token: string,
+  projectId: string,
+  params?: AnalyticsRangeParams
+): Promise<ApiResponse<AnalyticsSummary>> {
+  return request(`/v1/projects/${projectId}/analytics/summary${rangeQuery(params)}`, token);
+}
+
+export async function getAnalyticsTrend(
+  token: string,
+  projectId: string,
+  params?: AnalyticsRangeParams & { metric?: string }
+): Promise<ApiResponse<AnalyticsTrend>> {
+  return request(`/v1/projects/${projectId}/analytics/trend${rangeQuery(params)}`, token);
+}
+
+export async function getAnalyticsByPlatform(
+  token: string,
+  projectId: string,
+  params?: AnalyticsRangeParams
+): Promise<ApiResponse<PlatformAnalytics[]>> {
+  return request(`/v1/projects/${projectId}/analytics/by-platform${rangeQuery(params)}`, token);
 }
