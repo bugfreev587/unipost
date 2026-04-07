@@ -11,6 +11,212 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getAnalyticsByPlatformByProject = `-- name: GetAnalyticsByPlatformByProject :many
+SELECT
+  sa.platform::TEXT                                                          AS platform,
+  COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
+  COUNT(DISTINCT sa.id)::BIGINT                                              AS accounts,
+  COALESCE(SUM(pa.impressions), 0)::BIGINT                                   AS impressions,
+  COALESCE(SUM(pa.reach), 0)::BIGINT                                         AS reach,
+  COALESCE(SUM(pa.likes), 0)::BIGINT                                         AS likes,
+  COALESCE(SUM(pa.comments), 0)::BIGINT                                      AS comments,
+  COALESCE(SUM(pa.shares), 0)::BIGINT                                        AS shares,
+  COALESCE(SUM(pa.saves), 0)::BIGINT                                         AS saves,
+  COALESCE(SUM(pa.clicks), 0)::BIGINT                                        AS clicks,
+  COALESCE(SUM(pa.video_views), 0)::BIGINT                                   AS video_views
+FROM social_posts sp
+JOIN social_post_results spr ON spr.post_id = sp.id
+JOIN social_accounts sa      ON sa.id = spr.social_account_id
+LEFT JOIN post_analytics pa  ON pa.social_post_result_id = spr.id
+WHERE sp.project_id = $1
+  AND sp.created_at >= $2
+  AND sp.created_at <  $3
+GROUP BY sa.platform
+ORDER BY sa.platform ASC
+`
+
+type GetAnalyticsByPlatformByProjectParams struct {
+	ProjectID   string             `json:"project_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+}
+
+type GetAnalyticsByPlatformByProjectRow struct {
+	Platform    string `json:"platform"`
+	Posts       int64  `json:"posts"`
+	Accounts    int64  `json:"accounts"`
+	Impressions int64  `json:"impressions"`
+	Reach       int64  `json:"reach"`
+	Likes       int64  `json:"likes"`
+	Comments    int64  `json:"comments"`
+	Shares      int64  `json:"shares"`
+	Saves       int64  `json:"saves"`
+	Clicks      int64  `json:"clicks"`
+	VideoViews  int64  `json:"video_views"`
+}
+
+// Per-platform aggregates. Inner-joins social_accounts so that posts with
+// no results (still publishing or all-failed at validation) are excluded —
+// a post can't have a platform breakdown without a result.
+func (q *Queries) GetAnalyticsByPlatformByProject(ctx context.Context, arg GetAnalyticsByPlatformByProjectParams) ([]GetAnalyticsByPlatformByProjectRow, error) {
+	rows, err := q.db.Query(ctx, getAnalyticsByPlatformByProject, arg.ProjectID, arg.CreatedAt, arg.CreatedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAnalyticsByPlatformByProjectRow{}
+	for rows.Next() {
+		var i GetAnalyticsByPlatformByProjectRow
+		if err := rows.Scan(
+			&i.Platform,
+			&i.Posts,
+			&i.Accounts,
+			&i.Impressions,
+			&i.Reach,
+			&i.Likes,
+			&i.Comments,
+			&i.Shares,
+			&i.Saves,
+			&i.Clicks,
+			&i.VideoViews,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAnalyticsSummaryByProject = `-- name: GetAnalyticsSummaryByProject :one
+SELECT
+  COUNT(DISTINCT sp.id)::BIGINT                                              AS total_posts,
+  COUNT(DISTINCT sp.id) FILTER (WHERE sp.status = 'published')::BIGINT       AS published_posts,
+  COUNT(DISTINCT sp.id) FILTER (WHERE sp.status = 'failed')::BIGINT          AS failed_posts,
+  COUNT(DISTINCT sp.id) FILTER (WHERE sp.status = 'scheduled')::BIGINT       AS scheduled_posts,
+  COALESCE(SUM(pa.impressions), 0)::BIGINT                                   AS impressions,
+  COALESCE(SUM(pa.reach), 0)::BIGINT                                         AS reach,
+  COALESCE(SUM(pa.likes), 0)::BIGINT                                         AS likes,
+  COALESCE(SUM(pa.comments), 0)::BIGINT                                      AS comments,
+  COALESCE(SUM(pa.shares), 0)::BIGINT                                        AS shares,
+  COALESCE(SUM(pa.saves), 0)::BIGINT                                         AS saves,
+  COALESCE(SUM(pa.clicks), 0)::BIGINT                                        AS clicks,
+  COALESCE(SUM(pa.video_views), 0)::BIGINT                                   AS video_views
+FROM social_posts sp
+LEFT JOIN social_post_results spr ON spr.post_id = sp.id
+LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
+WHERE sp.project_id = $1
+  AND sp.created_at >= $2
+  AND sp.created_at <  $3
+`
+
+type GetAnalyticsSummaryByProjectParams struct {
+	ProjectID   string             `json:"project_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+}
+
+type GetAnalyticsSummaryByProjectRow struct {
+	TotalPosts     int64 `json:"total_posts"`
+	PublishedPosts int64 `json:"published_posts"`
+	FailedPosts    int64 `json:"failed_posts"`
+	ScheduledPosts int64 `json:"scheduled_posts"`
+	Impressions    int64 `json:"impressions"`
+	Reach          int64 `json:"reach"`
+	Likes          int64 `json:"likes"`
+	Comments       int64 `json:"comments"`
+	Shares         int64 `json:"shares"`
+	Saves          int64 `json:"saves"`
+	Clicks         int64 `json:"clicks"`
+	VideoViews     int64 `json:"video_views"`
+}
+
+// Aggregate post counts and engagement totals for a project over a date range.
+// Filtering uses social_posts.created_at; analytics rows are joined via results.
+func (q *Queries) GetAnalyticsSummaryByProject(ctx context.Context, arg GetAnalyticsSummaryByProjectParams) (GetAnalyticsSummaryByProjectRow, error) {
+	row := q.db.QueryRow(ctx, getAnalyticsSummaryByProject, arg.ProjectID, arg.CreatedAt, arg.CreatedAt_2)
+	var i GetAnalyticsSummaryByProjectRow
+	err := row.Scan(
+		&i.TotalPosts,
+		&i.PublishedPosts,
+		&i.FailedPosts,
+		&i.ScheduledPosts,
+		&i.Impressions,
+		&i.Reach,
+		&i.Likes,
+		&i.Comments,
+		&i.Shares,
+		&i.Saves,
+		&i.Clicks,
+		&i.VideoViews,
+	)
+	return i, err
+}
+
+const getAnalyticsTrendByProject = `-- name: GetAnalyticsTrendByProject :many
+SELECT
+  date_trunc('day', sp.created_at)::TIMESTAMPTZ                              AS day,
+  COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
+  COALESCE(SUM(pa.impressions), 0)::BIGINT                                   AS impressions,
+  COALESCE(SUM(pa.likes), 0)::BIGINT                                         AS likes,
+  COALESCE(SUM(pa.comments), 0)::BIGINT                                      AS comments,
+  COALESCE(SUM(pa.shares), 0)::BIGINT                                        AS shares
+FROM social_posts sp
+LEFT JOIN social_post_results spr ON spr.post_id = sp.id
+LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
+WHERE sp.project_id = $1
+  AND sp.created_at >= $2
+  AND sp.created_at <  $3
+GROUP BY day
+ORDER BY day ASC
+`
+
+type GetAnalyticsTrendByProjectParams struct {
+	ProjectID   string             `json:"project_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+}
+
+type GetAnalyticsTrendByProjectRow struct {
+	Day         pgtype.Timestamptz `json:"day"`
+	Posts       int64              `json:"posts"`
+	Impressions int64              `json:"impressions"`
+	Likes       int64              `json:"likes"`
+	Comments    int64              `json:"comments"`
+	Shares      int64              `json:"shares"`
+}
+
+// Daily time series. Days with no posts are NOT returned by SQL — the
+// handler zero-fills them in Go to keep the query simple.
+func (q *Queries) GetAnalyticsTrendByProject(ctx context.Context, arg GetAnalyticsTrendByProjectParams) ([]GetAnalyticsTrendByProjectRow, error) {
+	rows, err := q.db.Query(ctx, getAnalyticsTrendByProject, arg.ProjectID, arg.CreatedAt, arg.CreatedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAnalyticsTrendByProjectRow{}
+	for rows.Next() {
+		var i GetAnalyticsTrendByProjectRow
+		if err := rows.Scan(
+			&i.Day,
+			&i.Posts,
+			&i.Impressions,
+			&i.Likes,
+			&i.Comments,
+			&i.Shares,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPostAnalytics = `-- name: GetPostAnalytics :one
 SELECT id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific FROM post_analytics WHERE social_post_result_id = $1
 `

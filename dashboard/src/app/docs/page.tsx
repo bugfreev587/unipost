@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   ["mcp", "MCP / AI Agents"],
   ["social-accounts", "Social Accounts"],
   ["social-posts", "Social Posts"],
+  ["analytics", "Analytics"],
   ["webhooks", "Webhooks"],
   ["oauth", "OAuth Flow"],
   ["billing", "Billing & Usage"],
@@ -439,6 +440,112 @@ export default function DocsPage() {
             </Endpoint>
             <Endpoint method="DELETE" path="/v1/social-posts/{id}" auth="API Key">
               <p className="doc-p">Delete a post. Attempts to delete from all platforms.</p>
+            </Endpoint>
+          </Section>
+
+          <Section id="analytics" title="Analytics">
+            <p className="doc-p">
+              Read aggregated and per-post engagement metrics across all platforms with a unified field set.
+              All endpoints accept <code>start_date</code> and <code>end_date</code> in <code>YYYY-MM-DD</code> form;
+              defaults are the last 30 days. Date range filtering is by post <code>created_at</code> in UTC.
+            </p>
+            <p className="doc-p">
+              <strong>Unified metric fields:</strong> <code>impressions</code>, <code>reach</code>, <code>likes</code>,{" "}
+              <code>comments</code>, <code>shares</code>, <code>saves</code>, <code>clicks</code>,{" "}
+              <code>video_views</code>. Fields a given platform doesn&apos;t expose are returned as <code>0</code>.
+              <code>engagement_rate</code> is computed as{" "}
+              <code>(likes + comments + shares + saves + clicks) / impressions</code>, rounded to 4 decimals.
+            </p>
+
+            <Endpoint method="GET" path="/v1/analytics/summary" auth="API Key">
+              <p className="doc-p">Aggregated post counts, engagement totals, and period-over-period change for the requested window.</p>
+              <Param name="start_date" type="query">YYYY-MM-DD. Defaults to 30 days ago (UTC).</Param>
+              <Param name="end_date" type="query">YYYY-MM-DD, inclusive. Defaults to today (UTC).</Param>
+              <p className="doc-p">
+                <strong>vs_previous_period</strong> compares the requested window against the same-length window
+                immediately preceding it (e.g. last 30 days vs days 60–30 ago). Returns 0 when the previous window has no data.
+              </p>
+              <Code title="Example">{`curl ${BASE}/v1/analytics/summary?start_date=2026-03-07&end_date=2026-04-06 \\\n  -H "Authorization: Bearer up_live_your_key"`}</Code>
+              <Code title="Response (200)">{`{
+  "data": {
+    "period": { "start": "2026-03-07", "end": "2026-04-06" },
+    "posts": {
+      "total": 62,
+      "published": 31,
+      "scheduled": 0,
+      "failed": 31,
+      "failed_rate": 0.5
+    },
+    "engagement": {
+      "impressions": 48234,
+      "reach": 0,
+      "likes": 2891,
+      "comments": 456,
+      "shares": 789,
+      "saves": 0,
+      "clicks": 234,
+      "video_views": 0,
+      "engagement_rate": 0.0884
+    },
+    "vs_previous_period": {
+      "impressions_change": 0.08,
+      "likes_change": 0.15,
+      "engagement_change": -0.02
+    }
+  }
+}`}</Code>
+            </Endpoint>
+
+            <Endpoint method="GET" path="/v1/analytics/trend" auth="API Key">
+              <p className="doc-p">Daily time series for the requested window. Days with no posts are zero-filled.</p>
+              <Param name="start_date" type="query">YYYY-MM-DD. Defaults to 30 days ago.</Param>
+              <Param name="end_date" type="query">YYYY-MM-DD, inclusive. Defaults to today.</Param>
+              <Param name="metric" type="query">
+                CSV of any of: <code>posts</code>, <code>impressions</code>, <code>likes</code>, <code>comments</code>, <code>shares</code>.
+                Defaults to <code>posts,impressions,likes</code>.
+              </Param>
+              <Code title="Example">{`curl ${BASE}/v1/analytics/trend?start_date=2026-04-01&end_date=2026-04-06&metric=posts,impressions \\\n  -H "Authorization: Bearer up_live_your_key"`}</Code>
+              <Code title="Response (200)">{`{
+  "data": {
+    "dates": ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05", "2026-04-06"],
+    "series": {
+      "posts":       [2, 1, 3, 0, 2, 1],
+      "impressions": [800, 400, 1200, 0, 900, 350]
+    }
+  }
+}`}</Code>
+            </Endpoint>
+
+            <Endpoint method="GET" path="/v1/analytics/by-platform" auth="API Key">
+              <p className="doc-p">Per-platform aggregates plus an account count for the requested window.</p>
+              <Param name="start_date" type="query">YYYY-MM-DD.</Param>
+              <Param name="end_date" type="query">YYYY-MM-DD, inclusive.</Param>
+              <Code title="Response (200)">{`{
+  "data": [
+    {
+      "platform": "instagram",
+      "posts": 2,
+      "accounts": 1,
+      "impressions": 3200,
+      "reach": 2100,
+      "likes": 189,
+      "comments": 34,
+      "shares": 12,
+      "saves": 18,
+      "clicks": 0,
+      "video_views": 0,
+      "engagement_rate": 0.0791
+    }
+  ]
+}`}</Code>
+            </Endpoint>
+
+            <Endpoint method="GET" path="/v1/social-posts/{id}/analytics" auth="API Key">
+              <p className="doc-p">
+                Per-post metrics broken down by social account (one entry per account the post was published to).
+                Cached for 1 hour; the <code>AnalyticsRefreshWorker</code> keeps cached rows fresh in the background.
+              </p>
+              <Code title="Example">{`curl ${BASE}/v1/social-posts/post_xyz789/analytics \\\n  -H "Authorization: Bearer up_live_your_key"`}</Code>
             </Endpoint>
           </Section>
 

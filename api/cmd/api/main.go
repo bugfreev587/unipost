@@ -208,6 +208,14 @@ func main() {
 		r.Get("/v1/projects/{projectID}/billing", billingHandler.GetBilling)
 		r.Post("/v1/projects/{projectID}/billing/checkout", billingHandler.CreateCheckout)
 		r.Post("/v1/projects/{projectID}/billing/portal", billingHandler.CreatePortal)
+
+		// Analytics (dashboard)
+		r.Get("/v1/projects/{projectID}/analytics/summary", analyticsHandler.GetSummary)
+		r.Get("/v1/projects/{projectID}/analytics/trend", analyticsHandler.GetTrend)
+		r.Get("/v1/projects/{projectID}/analytics/by-platform", analyticsHandler.GetByPlatform)
+		// Per-post analytics (project-scoped). Mirrors the API-key route below;
+		// the dashboard has been calling this URL but it wasn't wired until now.
+		r.Get("/v1/projects/{projectID}/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
 	})
 
 	// Public API routes (API key auth)
@@ -223,6 +231,11 @@ func main() {
 		r.Get("/v1/social-posts/{id}", socialPostHandler.Get)
 		r.Get("/v1/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
 		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
+
+		// Analytics aggregations (API key)
+		r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)
+		r.Get("/v1/analytics/trend", analyticsHandler.GetTrend)
+		r.Get("/v1/analytics/by-platform", analyticsHandler.GetByPlatform)
 
 		r.Post("/v1/webhooks", webhookSubHandler.Create)
 		r.Get("/v1/webhooks", webhookSubHandler.List)
