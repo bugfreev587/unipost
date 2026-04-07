@@ -181,15 +181,19 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 		return nil, fmt.Errorf("tiktok requires at least one media item")
 	}
 
-	// Photo carousels go down a separate API path. If the first item is an
-	// image (or all of them are), dispatch to the PHOTO uploader.
-	images := FilterByKind(media, MediaKindImage, MediaKindGIF, MediaKindUnknown)
-	if len(images) == len(media) && images[0].Kind == MediaKindImage {
-		return a.postPhoto(ctx, accessToken, text, images, opts)
+	// Photo carousels go down a separate API path. If none of the items
+	// are videos, dispatch to the PHOTO uploader. We treat unknown-kind URLs
+	// (no file extension — common with image CDNs like Unsplash) as photos
+	// because TikTok doesn't accept text-only posts and "video served at an
+	// extensionless URL" is much rarer than "image served at an extensionless
+	// URL". Callers that need to force the video path can use a URL with a
+	// .mp4 / .mov / .webm extension.
+	videos := FilterByKind(media, MediaKindVideo)
+	if len(videos) == 0 {
+		return a.postPhoto(ctx, accessToken, text, media, opts)
 	}
 
-	// Otherwise expect a single video. TikTok doesn't accept mixed media
-	// or multi-video posts.
+	// Video path: TikTok doesn't accept mixed media or multi-video posts.
 	if len(media) > 1 {
 		return nil, fmt.Errorf("tiktok video posts accept exactly one video")
 	}

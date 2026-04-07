@@ -10,6 +10,7 @@ import {
   getAnalyticsTrend,
   getAnalyticsByPlatform,
   type SocialPost,
+  type SocialPostResult,
   type PostAnalytics,
   type AnalyticsSummary,
   type AnalyticsTrend,
@@ -1084,7 +1085,7 @@ function FragmentRow({
       {isExpanded && (
         <tr>
           <td colSpan={8} style={{ background: "var(--surface)", padding: "16px 24px", borderBottom: "1px solid var(--dborder)" }}>
-            <PostExpandPanel perAccount={perAccount} />
+            <PostExpandPanel results={post.results || []} perAccount={perAccount} />
           </td>
         </tr>
       )}
@@ -1092,30 +1093,59 @@ function FragmentRow({
   );
 }
 
-function PostExpandPanel({ perAccount }: { perAccount: PostAnalytics[] }) {
-  if (perAccount.length === 0) {
-    return <div style={{ fontSize: 12, color: "var(--dmuted2)" }}>No analytics data for this post yet.</div>;
+// PostExpandPanel renders one card per social_account_id that the post was
+// dispatched to. The source of truth for which accounts exist is the post's
+// own results[] (always present after a publish attempt, including failed
+// ones), joined in with PostAnalytics rows by social_account_id when the
+// analytics worker has fetched them. This means:
+//   - Failed accounts show their error_message even when there are no metrics.
+//   - Published accounts always render even before analytics has run, with a
+//     "Analytics not yet available" placeholder until metrics arrive.
+function PostExpandPanel({
+  results,
+  perAccount,
+}: {
+  results: SocialPostResult[];
+  perAccount: PostAnalytics[];
+}) {
+  if (results.length === 0) {
+    return <div style={{ fontSize: 12, color: "var(--dmuted2)" }}>No accounts attached to this post.</div>;
   }
+
+  // Build a quick lookup so we can attach metrics to the matching result row
+  // without an O(n²) scan.
+  const metricsByAccount = new Map<string, PostAnalytics>();
+  for (const m of perAccount) {
+    metricsByAccount.set(m.social_account_id, m);
+  }
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
-      {perAccount.map((row) => {
-        const url = postUrlFor(row.platform, row.external_id);
+      {results.map((res) => {
+        const platform = res.platform || "";
+        const metrics = metricsByAccount.get(res.social_account_id);
+        const url = res.external_id ? postUrlFor(platform, res.external_id) : null;
+        const isFailed = res.status === "failed";
+
         return (
           <div
-            key={row.social_account_id}
+            key={res.social_account_id}
             style={{
               padding: 14,
               background: "var(--surface2)",
               border: "1px solid var(--dborder)",
               borderRadius: 8,
+              opacity: isFailed ? 0.95 : 1,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <PlatformIcon platform={row.platform} size={14} />
+            {/* Header: platform + status pill + (optional) external link */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                <PlatformIcon platform={platform} size={14} />
                 <span style={{ fontWeight: 600, color: "var(--dtext)", textTransform: "capitalize", fontSize: 13 }}>
-                  {row.platform}
+                  {platform || "unknown"}
                 </span>
+                <StatusPill status={res.status} />
               </span>
               {url && (
                 <a
@@ -1123,48 +1153,81 @@ function PostExpandPanel({ perAccount }: { perAccount: PostAnalytics[] }) {
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  style={{ color: "var(--dmuted)", display: "inline-flex" }}
+                  style={{ color: "var(--dmuted)", display: "inline-flex", flexShrink: 0 }}
                   title="Open original post"
                 >
                   <ExternalLink style={{ width: 12, height: 12 }} />
                 </a>
               )}
             </div>
-            <MetricLine
-              label="Impressions"
-              value={row.impressions}
-              na={!platformSupports(row.platform, "impressions")}
-              naReason={unsupportedReason(row.platform, "impressions")}
-            />
-            {row.reach > 0 && <MetricLine label="Reach" value={row.reach} />}
-            <MetricLine label="Likes" value={row.likes} />
-            <MetricLine label="Comments" value={row.comments} />
-            <MetricLine label="Shares" value={row.shares} />
-            {row.saves > 0 && <MetricLine label="Saves" value={row.saves} />}
-            {row.clicks > 0 && <MetricLine label="Clicks" value={row.clicks} />}
-            {row.video_views > 0 && <MetricLine label="Video Views" value={row.video_views} />}
-            <div style={{
-              marginTop: 8,
-              paddingTop: 8,
-              borderTop: "1px solid var(--dborder)",
-              display: "flex",
-              justifyContent: "space-between",
-              fontSize: 12,
-            }}>
-              <span style={{ color: "var(--dmuted)" }}>Engagement</span>
-              {!platformSupports(row.platform, "impressions") ? (
-                <span
-                  title={unsupportedReason(row.platform, "impressions")}
-                  style={{ color: "var(--dmuted2)", fontWeight: 600, cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
-                >
-                  N/A
-                </span>
-              ) : (
-                <span style={{ color: row.impressions === 0 ? "var(--dmuted2)" : engRateColor(row.engagement_rate), fontWeight: 600 }}>
-                  {row.impressions === 0 ? "--" : formatPercent(row.engagement_rate)}
-                </span>
-              )}
-            </div>
+
+            {/* Failed: surface the platform's error message instead of metrics */}
+            {isFailed && (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "#ef4444",
+                  background: "#ef444410",
+                  border: "1px solid #ef444430",
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "var(--mono, monospace)",
+                  lineHeight: 1.5,
+                }}
+              >
+                {res.error_message || "Publish failed (no error message reported)."}
+              </div>
+            )}
+
+            {/* Published with no analytics yet: short placeholder */}
+            {!isFailed && !metrics && (
+              <div style={{ fontSize: 12, color: "var(--dmuted2)", padding: "4px 0" }}>
+                Published. Analytics not yet available — refresh to fetch.
+              </div>
+            )}
+
+            {/* Published with analytics: existing metric rows */}
+            {!isFailed && metrics && (
+              <>
+                <MetricLine
+                  label="Impressions"
+                  value={metrics.impressions}
+                  na={!platformSupports(platform, "impressions")}
+                  naReason={unsupportedReason(platform, "impressions")}
+                />
+                {metrics.reach > 0 && <MetricLine label="Reach" value={metrics.reach} />}
+                <MetricLine label="Likes" value={metrics.likes} />
+                <MetricLine label="Comments" value={metrics.comments} />
+                <MetricLine label="Shares" value={metrics.shares} />
+                {metrics.saves > 0 && <MetricLine label="Saves" value={metrics.saves} />}
+                {metrics.clicks > 0 && <MetricLine label="Clicks" value={metrics.clicks} />}
+                {metrics.video_views > 0 && <MetricLine label="Video Views" value={metrics.video_views} />}
+                <div style={{
+                  marginTop: 8,
+                  paddingTop: 8,
+                  borderTop: "1px solid var(--dborder)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: 12,
+                }}>
+                  <span style={{ color: "var(--dmuted)" }}>Engagement</span>
+                  {!platformSupports(platform, "impressions") ? (
+                    <span
+                      title={unsupportedReason(platform, "impressions")}
+                      style={{ color: "var(--dmuted2)", fontWeight: 600, cursor: "help", borderBottom: "1px dotted var(--dmuted2)" }}
+                    >
+                      N/A
+                    </span>
+                  ) : (
+                    <span style={{ color: metrics.impressions === 0 ? "var(--dmuted2)" : engRateColor(metrics.engagement_rate), fontWeight: 600 }}>
+                      {metrics.impressions === 0 ? "--" : formatPercent(metrics.engagement_rate)}
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         );
       })}
