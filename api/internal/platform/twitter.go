@@ -58,12 +58,16 @@ func (a *TwitterAdapter) GetAuthURL(config OAuthConfig, state string) string {
 }
 
 func (a *TwitterAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, code string) (*ConnectResult, error) {
+	// PKCE: GetAuthURL sets code_challenge=state[:43] with method=plain, so
+	// the verifier we send here MUST equal that same string. The handler
+	// passes the original state through in OAuthConfig.State so we can
+	// reconstruct it here without storing it on the row.
 	data := url.Values{
 		"code":          {code},
 		"grant_type":    {"authorization_code"},
 		"client_id":     {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
-		"code_verifier": {""}, // Simplified PKCE
+		"code_verifier": {config.State[:43]},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, bytes.NewBufferString(data.Encode()))

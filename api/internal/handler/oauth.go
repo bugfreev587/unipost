@@ -134,6 +134,9 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config := h.getOAuthConfigForProject(r, oauthState.ProjectID, platformName, oauthAdapter)
+	// Pass the original state through so PKCE-using adapters (Twitter)
+	// can reconstruct their verifier on the token exchange step.
+	config.State = state
 
 	// Exchange code for tokens
 	result, err := oauthAdapter.ExchangeCode(r.Context(), config, code)
