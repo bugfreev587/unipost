@@ -114,9 +114,12 @@ func (a *TwitterAdapter) Connect(ctx context.Context, credentials map[string]str
 // /2/media/upload (chunked for video, simple for images) and pass the IDs
 // through. Mixed image+video is not allowed by Twitter — the call will fail
 // at attach time if a caller tries it.
+//
+// Threading: when opts["in_reply_to_tweet_id"] is set, the tweet is
+// posted as a reply to the given ID. The handler chains tweets in a
+// thread by passing the previous tweet's external_id through this
+// option (Sprint 2 PR6 — keeps the adapter interface stable).
 func (a *TwitterAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
-	_ = opts
-
 	var mediaIDs []string
 	if len(media) > 0 {
 		if len(media) > 4 {
@@ -134,6 +137,12 @@ func (a *TwitterAdapter) Post(ctx context.Context, accessToken string, text stri
 	payload := map[string]any{"text": text}
 	if len(mediaIDs) > 0 {
 		payload["media"] = map[string]any{"media_ids": mediaIDs}
+	}
+	// Threading: chain to a previous tweet via the v2 reply object.
+	// The handler passes us the previous tweet's external_id; we
+	// just pass it through to Twitter unchanged.
+	if replyTo, ok := opts["in_reply_to_tweet_id"].(string); ok && replyTo != "" {
+		payload["reply"] = map[string]any{"in_reply_to_tweet_id": replyTo}
 	}
 	body, _ := json.Marshal(payload)
 

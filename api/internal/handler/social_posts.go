@@ -339,17 +339,25 @@ func (h *SocialPostHandler) runPublishLoop(
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
 ) {
-	// Publish each platform post concurrently. Order is preserved by
-	// using a fixed-size slice indexed by input position.
+	// Publish each platform post. Standalone posts run in parallel
+	// (one goroutine each); thread groups run serially within their
+	// group but groups are still parallel with each other. The
+	// outcomes slice is indexed by input position so the per-post
+	// caption row in the response stays in lockstep with the input.
 	outcomes := make([]publishOneOutcome, len(parsed.Posts))
-	var wg sync.WaitGroup
 
-	for i, pp := range parsed.Posts {
+	// Group indices by (account_id, has-thread-position). Posts with
+	// thread_position > 0 share a serial group keyed by account_id;
+	// every standalone post gets its own group.
+	groups := groupForDispatch(parsed.Posts)
+
+	var wg sync.WaitGroup
+	for _, group := range groups {
 		wg.Add(1)
-		go func(idx int, pp platform.PlatformPostInput) {
+		go func(g []int) {
 			defer wg.Done()
-			outcomes[idx] = h.publishOne(r, pp, dbAccounts, accountMap)
-		}(i, pp)
+			h.runDispatchGroup(r, g, parsed.Posts, dbAccounts, accountMap, outcomes)
+		}(group)
 	}
 	wg.Wait()
 
@@ -464,6 +472,117 @@ func eventForStatus(postStatus string) string {
 		return events.EventPostFailed
 	default:
 		return events.EventPostFailed
+	}
+}
+
+// groupForDispatch buckets parsed.Posts indices into dispatch groups.
+// Standalone posts get their own single-element group. Threaded posts
+// (thread_position > 0) on the same account share one group and are
+// returned in thread_position order so the runDispatchGroup loop can
+// chain them in the right sequence.
+//
+// Output is a slice of int slices: each inner slice is one group.
+// Order between groups is irrelevant (they run concurrently); order
+// within a group matters (threads run sequentially).
+func groupForDispatch(posts []platform.PlatformPostInput) [][]int {
+	// First pass: collect threaded indices keyed by account_id.
+	threaded := make(map[string][]int)
+	var standalone []int
+	for i, p := range posts {
+		if p.ThreadPosition > 0 && p.AccountID != "" {
+			threaded[p.AccountID] = append(threaded[p.AccountID], i)
+		} else {
+			standalone = append(standalone, i)
+		}
+	}
+
+	groups := make([][]int, 0, len(standalone)+len(threaded))
+	for _, idx := range standalone {
+		groups = append(groups, []int{idx})
+	}
+	for _, idxs := range threaded {
+		// Sort by ThreadPosition so the serial chain runs in the
+		// declared order even when the input arrived out of order.
+		sortIndicesByThreadPosition(idxs, posts)
+		groups = append(groups, idxs)
+	}
+	return groups
+}
+
+// sortIndicesByThreadPosition sorts an []int of indices into posts by
+// posts[i].ThreadPosition ascending. Tiny insertion sort — thread
+// groups cap at ~25 entries (Twitter), so an O(n²) sort is faster
+// than calling sort.Slice + reflect overhead.
+func sortIndicesByThreadPosition(idxs []int, posts []platform.PlatformPostInput) {
+	for i := 1; i < len(idxs); i++ {
+		j := i
+		for j > 0 && posts[idxs[j]].ThreadPosition < posts[idxs[j-1]].ThreadPosition {
+			idxs[j], idxs[j-1] = idxs[j-1], idxs[j]
+			j--
+		}
+	}
+}
+
+// runDispatchGroup runs one dispatch group. Standalone groups (single
+// index) just call publishOne once. Thread groups iterate in order,
+// passing the previous tweet's external_id into the next post's opts
+// as in_reply_to_tweet_id so the adapter chains the reply chain
+// correctly.
+//
+// Mid-thread failure: any error STOPS the chain. Remaining tweets in
+// the group are marked as failed with a clear "upstream thread post
+// failed" error so the response shows exactly which tweet broke and
+// which weren't even attempted.
+func (h *SocialPostHandler) runDispatchGroup(
+	r *http.Request,
+	groupIndices []int,
+	posts []platform.PlatformPostInput,
+	dbAccounts map[string]db.SocialAccount,
+	accountMap map[string]platform.ValidateAccount,
+	outcomes []publishOneOutcome,
+) {
+	var prevExternalID string
+	for chainIdx, postIdx := range groupIndices {
+		pp := posts[postIdx]
+
+		// For threaded posts after the first, inject the previous
+		// tweet's external_id into the per-post opts so the adapter
+		// can attach a reply.in_reply_to_tweet_id to the API call.
+		if chainIdx > 0 && prevExternalID != "" {
+			if pp.PlatformOptions == nil {
+				pp.PlatformOptions = make(map[string]any)
+			} else {
+				// Copy so we don't mutate the caller's map.
+				clone := make(map[string]any, len(pp.PlatformOptions)+1)
+				for k, v := range pp.PlatformOptions {
+					clone[k] = v
+				}
+				pp.PlatformOptions = clone
+			}
+			pp.PlatformOptions["in_reply_to_tweet_id"] = prevExternalID
+		}
+
+		oc := h.publishOne(r, pp, dbAccounts, accountMap)
+		outcomes[postIdx] = oc
+
+		if oc.err != nil {
+			// Stop the chain: every later tweet in this group is
+			// marked as not-attempted with a deterministic error so
+			// the response is honest about what happened.
+			for skipIdx := chainIdx + 1; skipIdx < len(groupIndices); skipIdx++ {
+				skipPost := posts[groupIndices[skipIdx]]
+				outcomes[groupIndices[skipIdx]] = publishOneOutcome{
+					platform: oc.platform,
+					accountName: oc.accountName,
+					err:      fmt.Errorf("upstream thread post failed at thread_position %d: %w", pp.ThreadPosition, oc.err),
+				}
+				_ = skipPost // unused but kept for clarity in case we add per-skip logging later
+			}
+			return
+		}
+		if oc.result != nil {
+			prevExternalID = oc.result.ExternalID
+		}
 	}
 }
 
