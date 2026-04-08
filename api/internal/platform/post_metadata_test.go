@@ -1,17 +1,13 @@
-package handler
+package platform
 
-import (
-	"testing"
-
-	"github.com/xiaoboyu/unipost-api/internal/platform"
-)
+import "testing"
 
 // TestEncodeDecodeRoundTrip exercises the v2 metadata round-trip the
-// scheduler will rely on in PR6. Whatever Create stores must come back
-// out byte-equal so per-platform captions survive the trip through
+// scheduler relies on. Whatever Create stores must come back out byte-
+// equal so per-platform captions survive the trip through
 // social_posts.metadata.
 func TestEncodeDecodeRoundTrip(t *testing.T) {
-	in := []platform.PlatformPostInput{
+	in := []PlatformPostInput{
 		{
 			AccountID:       "acc_a",
 			Caption:         "tweet caption",
@@ -24,11 +20,11 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 			InReplyTo: "li_post_123",
 		},
 	}
-	raw, err := encodePostMetadata(in)
+	raw, err := EncodePostMetadata(in)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	out, err := decodePostMetadata(raw, "fallback")
+	out, err := DecodePostMetadata(raw, "fallback")
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -49,10 +45,10 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 }
 
 // TestDecodeLegacyMetadata exercises the v1 → v2 expansion path. The
-// scheduler must keep working for posts created BEFORE this PR landed.
+// scheduler must keep working for posts created BEFORE Sprint 1.
 func TestDecodeLegacyMetadata(t *testing.T) {
 	legacy := []byte(`{"account_ids":["a","b","c"],"media_urls":["https://x/y.jpg"]}`)
-	out, err := decodePostMetadata(legacy, "old caption")
+	out, err := DecodePostMetadata(legacy, "old caption")
 	if err != nil {
 		t.Fatalf("decode legacy: %v", err)
 	}
@@ -69,15 +65,32 @@ func TestDecodeLegacyMetadata(t *testing.T) {
 	}
 }
 
-// TestDecodeEmpty handles the nil-metadata case (e.g. immediate posts
-// before PR5 that didn't store anything). Should return nil, nil so
-// callers can fall back gracefully.
+// TestDecodeEmpty handles the nil-metadata case so callers can fall
+// back gracefully.
 func TestDecodeEmpty(t *testing.T) {
-	out, err := decodePostMetadata(nil, "x")
+	out, err := DecodePostMetadata(nil, "x")
 	if err != nil {
 		t.Fatalf("decode nil: %v", err)
 	}
 	if out != nil {
 		t.Errorf("expected nil slice, got %v", out)
+	}
+}
+
+// TestLegacyV1Metadata returns the platform_options map for a v1
+// row, nil for a v2 row.
+func TestLegacyV1Metadata(t *testing.T) {
+	v1 := []byte(`{"account_ids":["a"],"platform_options":{"tiktok":{"privacy_level":"PUBLIC"}}}`)
+	opts := LegacyV1Metadata(v1)
+	if opts == nil {
+		t.Fatal("expected v1 options, got nil")
+	}
+	if opts["tiktok"]["privacy_level"] != "PUBLIC" {
+		t.Errorf("v1 options round trip failed: %v", opts)
+	}
+
+	v2 := []byte(`{"schema_version":2,"platform_posts":[]}`)
+	if got := LegacyV1Metadata(v2); got != nil {
+		t.Errorf("expected nil for v2 row, got %v", got)
 	}
 }

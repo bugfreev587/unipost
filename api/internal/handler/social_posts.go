@@ -158,7 +158,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, projectID string, parsed parsedRequest) {
 	// Persist the parsed request shape into metadata so the scheduler
 	// can reconstruct the per-account captions.
-	metaJSON, err := encodePostMetadata(parsed.Posts)
+	metaJSON, err := platform.EncodePostMetadata(parsed.Posts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode metadata")
 		return
@@ -241,7 +241,7 @@ func (h *SocialPostHandler) createImmediatePost(
 	}
 
 	// Persist the parent post FIRST so per-result rows can FK to it.
-	metaJSON, _ := encodePostMetadata(parsed.Posts)
+	metaJSON, _ := platform.EncodePostMetadata(parsed.Posts)
 	canonicalCaption := pgtype.Text{}
 	if len(parsed.Posts) > 0 && parsed.Posts[0].Caption != "" {
 		canonicalCaption = pgtype.Text{String: parsed.Posts[0].Caption, Valid: true}
@@ -435,6 +435,15 @@ func (h *SocialPostHandler) publishOne(
 		}
 	}
 
+	// Per-platform routing log — emitted at INFO so smoke-tests can
+	// verify each PlatformPostInput is reaching the right adapter
+	// with the right caption. Mirrors the same line in scheduler.go
+	// so the immediate and scheduled paths produce comparable output.
+	slog.Info("publish: dispatching to adapter",
+		"account_id", acc.ID,
+		"platform", acc.Platform,
+		"caption_preview", truncateForLog(pp.Caption, 40))
+
 	postResult, err := adapter.Post(
 		r.Context(),
 		accessToken,
@@ -445,6 +454,20 @@ func (h *SocialPostHandler) publishOne(
 	oc.result = postResult
 	oc.err = err
 	return
+}
+
+// truncateForLog returns a copy of s shortened to at most n runes,
+// appending an ellipsis if it was actually truncated. Used to keep
+// dispatch log lines bounded when captions get long.
+func truncateForLog(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // publishOneOutcome is what publishOne returns. Pulled out into a named

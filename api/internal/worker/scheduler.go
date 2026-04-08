@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
@@ -65,117 +64,82 @@ func (w *SchedulerWorker) publishDue(ctx context.Context) {
 	}
 }
 
+// publishPost is the per-post publish loop. Reads the v2 metadata
+// (with v1 fallback) so per-platform captions stored at create time
+// are preserved through to the adapter call. Each PlatformPostInput
+// becomes one adapter dispatch — so threads (multiple posts to the
+// same account) work without special-casing.
 func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 	slog.Info("scheduler: publishing post", "post_id", post.ID)
 
-	// Get accounts and per-platform options for this post from metadata.
-	// Both are stored when the post was created.
-	var accountIDs []string
-	var platformOptions map[string]map[string]any
-	if post.Metadata != nil {
-		var meta struct {
-			AccountIDs      []string                    `json:"account_ids"`
-			PlatformOptions map[string]map[string]any   `json:"platform_options"`
-		}
-		if err := json.Unmarshal(post.Metadata, &meta); err == nil {
-			accountIDs = meta.AccountIDs
-			platformOptions = meta.PlatformOptions
-		}
+	// Decode the persisted metadata back into a slice of
+	// PlatformPostInput. v2 rows give us per-account captions; v1 rows
+	// fall back to the parent post's caption (single string).
+	parentCaption := ""
+	if post.Caption.Valid {
+		parentCaption = post.Caption.String
 	}
-
-	if len(accountIDs) == 0 {
-		slog.Error("scheduler: no account IDs in post metadata", "post_id", post.ID)
+	posts, err := platform.DecodePostMetadata(post.Metadata, parentCaption)
+	if err != nil || len(posts) == 0 {
+		slog.Error("scheduler: failed to decode post metadata", "post_id", post.ID, "error", err)
 		w.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
 			ID: post.ID, Status: "failed",
 		})
 		return
 	}
 
-	// Publish to each account
-	type result struct {
-		accountID string
-		platform  string
+	// Legacy v1 rows store platform_options keyed by platform name
+	// (since they didn't know per-account at create time). Resolve
+	// after fetching each account's platform below. v2 rows return
+	// nil here and the per-post PlatformOptions is used directly.
+	v1Options := platform.LegacyV1Metadata(post.Metadata)
+
+	// One outcome per input post, indexed by position so the result
+	// slice can be filled from goroutines without a mutex / append race.
+	type outcome struct {
+		input      platform.PlatformPostInput
+		platform   string
 		postResult *platform.PostResult
-		err       error
+		err        error
 	}
+	outcomes := make([]outcome, len(posts))
 
-	var results []result
 	var wg sync.WaitGroup
-
-	for _, accID := range accountIDs {
+	for i, pp := range posts {
 		wg.Add(1)
-		go func(accountID string) {
+		go func(idx int, pp platform.PlatformPostInput) {
 			defer wg.Done()
-
-			acc, err := w.queries.GetSocialAccount(ctx, accountID)
-			if err != nil {
-				results = append(results, result{accountID: accountID, err: err})
-				return
-			}
-
-			adapter, err := platform.Get(acc.Platform)
-			if err != nil {
-				results = append(results, result{accountID: accountID, platform: acc.Platform, err: err})
-				return
-			}
-
-			accessToken, err := w.encryptor.Decrypt(acc.AccessToken)
-			if err != nil {
-				results = append(results, result{accountID: accountID, platform: acc.Platform, err: err})
-				return
-			}
-
-			// Refresh token if expired
-			if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
-				refreshToken, decErr := w.encryptor.Decrypt(acc.RefreshToken.String)
-				if decErr == nil {
-					newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshToken)
-					if refErr == nil {
-						accessToken = newAccess
-						encAccess, _ := w.encryptor.Encrypt(newAccess)
-						encRefresh, _ := w.encryptor.Encrypt(newRefresh)
-						w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
-							ID: acc.ID, AccessToken: encAccess,
-							RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
-							TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-						})
-					}
-				}
-			}
-
-			caption := ""
-			if post.Caption.Valid {
-				caption = post.Caption.String
-			}
-
-			pr, err := adapter.Post(ctx, accessToken, caption, platform.MediaFromURLs(post.MediaUrls), platformOptions[acc.Platform])
-			results = append(results, result{accountID: accountID, platform: acc.Platform, postResult: pr, err: err})
-		}(accID)
+			outcomes[idx] = w.publishOne(ctx, post, pp, v1Options)
+		}(i, pp)
 	}
 	wg.Wait()
 
-	// Store results
+	// Persist results in input order with the per-post caption.
 	allPublished := true
 	anyPublished := false
-
-	for _, res := range results {
+	for i, oc := range outcomes {
 		status := "published"
 		var extID, errMsg pgtype.Text
 		var pubAt pgtype.Timestamptz
 
-		if res.err != nil {
+		if oc.err != nil {
 			status = "failed"
-			errMsg = pgtype.Text{String: res.err.Error(), Valid: true}
+			errMsg = pgtype.Text{String: oc.err.Error(), Valid: true}
 			allPublished = false
-		} else {
-			extID = pgtype.Text{String: res.postResult.ExternalID, Valid: true}
+		} else if oc.postResult != nil {
+			extID = pgtype.Text{String: oc.postResult.ExternalID, Valid: true}
 			pubAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 			anyPublished = true
 		}
 
 		w.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
-			PostID: post.ID, SocialAccountID: res.accountID,
-			Status: status, ExternalID: extID, ErrorMessage: errMsg, PublishedAt: pubAt,
+			PostID:          post.ID,
+			SocialAccountID: posts[i].AccountID,
+			Caption:         posts[i].Caption,
+			Status:          status,
+			ExternalID:      extID,
+			ErrorMessage:    errMsg,
+			PublishedAt:     pubAt,
 		})
 	}
 
@@ -195,5 +159,97 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 	})
 
 	slog.Info("scheduler: post published", "post_id", post.ID, "status", postStatus)
+}
+
+// publishOne is the goroutine body for one PlatformPostInput. Pulled
+// out of publishPost both for readability and so the dispatch loop
+// can fill its outcomes slice by index without mutating shared state.
+//
+// v1Options is the legacy platform_options map (keyed by platform
+// name) and is non-nil only when the parent post was created before
+// Sprint 1. v2 rows pass options on the per-post struct itself.
+func (w *SchedulerWorker) publishOne(
+	ctx context.Context,
+	parent db.SocialPost,
+	pp platform.PlatformPostInput,
+	v1Options map[string]map[string]any,
+) (oc struct {
+	input      platform.PlatformPostInput
+	platform   string
+	postResult *platform.PostResult
+	err        error
+}) {
+	oc.input = pp
+
+	acc, err := w.queries.GetSocialAccount(ctx, pp.AccountID)
+	if err != nil {
+		oc.err = err
+		return
+	}
+	oc.platform = acc.Platform
+
+	adapter, err := platform.Get(acc.Platform)
+	if err != nil {
+		oc.err = err
+		return
+	}
+	accessToken, err := w.encryptor.Decrypt(acc.AccessToken)
+	if err != nil {
+		oc.err = err
+		return
+	}
+
+	// Inline token refresh if expired.
+	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
+		if refreshTok, decErr := w.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
+			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshTok); refErr == nil {
+				accessToken = newAccess
+				encAccess, _ := w.encryptor.Encrypt(newAccess)
+				encRefresh, _ := w.encryptor.Encrypt(newRefresh)
+				w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
+					ID:             acc.ID,
+					AccessToken:    encAccess,
+					RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+					TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+				})
+			}
+		}
+	}
+
+	// Resolve platform options. v2 stores them per-post; v1 stores
+	// them keyed by platform name and we look them up here.
+	options := pp.PlatformOptions
+	if options == nil && v1Options != nil {
+		options = v1Options[acc.Platform]
+	}
+
+	// Per-platform routing log — emitted at INFO so smoke-tests can
+	// verify each PlatformPostInput is reaching the right adapter
+	// with the right caption. Truncate captions so the log line
+	// stays narrow even when callers ship 2200-character IG bodies.
+	slog.Info("scheduler: dispatching to adapter",
+		"post_id", parent.ID,
+		"account_id", acc.ID,
+		"platform", acc.Platform,
+		"caption_preview", truncateForLog(pp.Caption, 40))
+
+	pr, err := adapter.Post(ctx, accessToken, pp.Caption, platform.MediaFromURLs(pp.MediaURLs), options)
+	oc.postResult = pr
+	oc.err = err
+	return
+}
+
+// truncateForLog returns a copy of s shortened to at most n runes,
+// appending an ellipsis if it was actually truncated. Used to keep
+// log lines bounded when captions get long.
+func truncateForLog(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
