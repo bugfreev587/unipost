@@ -11,8 +11,14 @@ const NAV_ITEMS = [
   ["authentication", "Authentication"],
   ["quick-start", "Quick Start"],
   ["mcp", "MCP / AI Agents"],
+  ["capabilities", "Capabilities"],
   ["social-accounts", "Social Accounts"],
   ["social-posts", "Social Posts"],
+  ["validate", "Validate (preflight)"],
+  ["drafts", "Drafts & Preview"],
+  ["threads", "Threads"],
+  ["media", "Media library"],
+  ["account-health", "Account Health"],
   ["analytics", "Analytics"],
   ["webhooks", "Webhooks"],
   ["oauth", "OAuth Flow"],
@@ -86,6 +92,67 @@ const SN_CREATE_POST: Snippets = {
   python: `import requests\n\nresponse = requests.post(\n    '${BASE}/v1/social-posts',\n    headers={\n        'Authorization': 'Bearer up_live_xxxx',\n        'Content-Type':  'application/json',\n    },\n    json={\n        'caption':     'Hello from UniPost! 🚀',\n        'account_ids': ['sa_instagram_123', 'sa_linkedin_456'],\n    },\n)\n\ndata = response.json()['data']\nprint(data['id'])  # post_abc123`,
   go: `body := strings.NewReader(\`{\n  "caption":     "Hello from UniPost! 🚀",\n  "account_ids": ["sa_instagram_123", "sa_linkedin_456"]\n}\`)\n\nreq, _ := http.NewRequest("POST",\n    "${BASE}/v1/social-posts", body)\nreq.Header.Set("Authorization", "Bearer up_live_xxxx")\nreq.Header.Set("Content-Type",  "application/json")\n\nresp, _ := http.DefaultClient.Do(req)\n// resp.StatusCode == 200 ✓`,
   curl: `curl -X POST ${BASE}/v1/social-posts \\\n  -H "Authorization: Bearer up_live_xxxx" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "caption":     "Hello from UniPost! 🚀",\n    "account_ids": ["sa_instagram_123", "sa_linkedin_456"]\n  }'`,
+};
+
+const SN_PLATFORM_POSTS: Snippets = {
+  js: `// Different caption per platform — recommended shape.
+const response = await fetch(
+  '${BASE}/v1/social-posts',
+  {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer up_live_xxxx',
+      'Content-Type':  'application/json',
+    },
+    body: JSON.stringify({
+      platform_posts: [
+        { account_id: 'sa_twitter_1',  caption: 'shipped 🚀' },
+        { account_id: 'sa_linkedin_1', caption: 'Today we shipped a meaningful improvement to...' },
+        { account_id: 'sa_bluesky_1',  caption: 'shipped! 💫' },
+      ],
+      idempotency_key: 'launch-2026-04-08-001',
+    }),
+  }
+);`,
+  python: `import requests
+
+response = requests.post(
+    '${BASE}/v1/social-posts',
+    headers={
+        'Authorization': 'Bearer up_live_xxxx',
+        'Content-Type':  'application/json',
+    },
+    json={
+        'platform_posts': [
+            {'account_id': 'sa_twitter_1',  'caption': 'shipped 🚀'},
+            {'account_id': 'sa_linkedin_1', 'caption': 'Today we shipped...'},
+            {'account_id': 'sa_bluesky_1',  'caption': 'shipped! 💫'},
+        ],
+        'idempotency_key': 'launch-2026-04-08-001',
+    },
+)`,
+  go: `body := strings.NewReader(\`{
+  "platform_posts": [
+    { "account_id": "sa_twitter_1",  "caption": "shipped 🚀" },
+    { "account_id": "sa_linkedin_1", "caption": "Today we shipped..." },
+    { "account_id": "sa_bluesky_1",  "caption": "shipped! 💫" }
+  ],
+  "idempotency_key": "launch-2026-04-08-001"
+}\`)
+req, _ := http.NewRequest("POST", "${BASE}/v1/social-posts", body)
+req.Header.Set("Authorization", "Bearer up_live_xxxx")
+req.Header.Set("Content-Type",  "application/json")`,
+  curl: `curl -X POST ${BASE}/v1/social-posts \\
+  -H "Authorization: Bearer up_live_xxxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "platform_posts": [
+      { "account_id": "sa_twitter_1",  "caption": "shipped 🚀" },
+      { "account_id": "sa_linkedin_1", "caption": "Today we shipped..." },
+      { "account_id": "sa_bluesky_1",  "caption": "shipped! 💫" }
+    ],
+    "idempotency_key": "launch-2026-04-08-001"
+  }'`,
 };
 
 const SN_CREATE_VIDEO_POST: Snippets = {
@@ -387,6 +454,68 @@ export default function DocsPage() {
             </div>
           </Section>
 
+          <Section id="capabilities" title="Capabilities">
+            <p className="doc-p">
+              The capabilities map is the source of truth for what each
+              network accepts on the publish side: caption length,
+              image / video count caps, file size hints, threading,
+              first-comment support. LLM-driven clients should fetch
+              this once at session start so generated content respects
+              every per-platform limit before hitting publish.
+            </p>
+
+            <Endpoint method="GET" path="/v1/platforms/capabilities" auth="None — public, cacheable">
+              <p className="doc-p">
+                Static map of all supported platforms. Versioned via the
+                top-level <code>schema_version</code> field; bumps follow
+                semver semantics (1.0 → 1.1 was an additive change in
+                Sprint 2, adding <code>text.supports_threads</code>).
+              </p>
+              <p className="doc-p">
+                Returned with <code>Cache-Control: public, max-age=3600</code>{" "}
+                so CDNs and clients can cache it freely between deploys.
+              </p>
+              <Code title="Example">{`curl ${BASE}/v1/platforms/capabilities`}</Code>
+              <Code title="Response (200)">{`{
+  "data": {
+    "schema_version": "1.1",
+    "platforms": {
+      "twitter": {
+        "display_name": "Twitter / X",
+        "text": { "max_length": 280, "min_length": 0, "required": false, "supports_threads": true },
+        "media": {
+          "requires_media": false,
+          "allow_mixed": false,
+          "images": { "max_count": 4, "max_file_size_bytes": 5242880, "allowed_formats": ["jpg","png","webp","gif"] },
+          "videos": { "max_count": 1, "max_duration_seconds": 140, "max_file_size_bytes": 536870912, "allowed_formats": ["mp4","mov"] }
+        },
+        "thread":       { "supported": true },
+        "scheduling":   { "supported": true },
+        "first_comment":{ "supported": false }
+      },
+      "instagram": { /* ... */ },
+      "tiktok":    { /* ... */ },
+      "youtube":   { /* ... */ },
+      "threads":   { /* ... */ },
+      "linkedin":  { /* ... */ },
+      "bluesky":   { /* ... */ }
+    }
+  }
+}`}</Code>
+            </Endpoint>
+
+            <Endpoint method="GET" path="/v1/social-accounts/{id}/capabilities" auth="API Key">
+              <p className="doc-p">
+                Per-account variant. Same shape, but scoped to one
+                connected account so a client doesn&apos;t need to
+                map account_id → platform itself. Returns 404 for
+                accounts not in the calling project.
+              </p>
+              <Code title="Example">{`curl -H "Authorization: Bearer up_live_xxx" \\
+  ${BASE}/v1/social-accounts/8558370d-b957-450c-a399-e2c0838a441a/capabilities`}</Code>
+            </Endpoint>
+          </Section>
+
           <Section id="social-accounts" title="Social Accounts">
             <p className="doc-p">Connect, list, and disconnect social media accounts.</p>
             <Endpoint method="POST" path="/v1/social-accounts/connect" auth="API Key">
@@ -407,14 +536,69 @@ export default function DocsPage() {
           </Section>
 
           <Section id="social-posts" title="Social Posts">
-            <p className="doc-p">Create, list, get, and delete social media posts. Posts can be published to multiple accounts simultaneously.</p>
+            <p className="doc-p">
+              Create, list, get, and delete social media posts. Two
+              request shapes: pass <strong>exactly one</strong> of{" "}
+              <code>platform_posts[]</code> (per-account captions,
+              recommended for AgentPost-style flows) or the legacy{" "}
+              <code>caption + account_ids</code> (one caption fanned
+              out to N accounts). Both still work — the legacy shape
+              is expanded server-side into the same internal
+              representation, so behavior parity is preserved.
+            </p>
             <Endpoint method="POST" path="/v1/social-posts" auth="API Key">
-              <p className="doc-p">Create and publish a post to one or more connected accounts. Posts are published concurrently — one failure won&apos;t block others.</p>
-              <Param name="caption" type="string" required>The text content</Param>
-              <Param name="account_ids" type="string[]" required>Array of social account IDs</Param>
-              <Param name="media_urls" type="string[]">Array of media URLs. For TikTok and YouTube this must be a single, publicly downloadable video URL.</Param>
+              <p className="doc-p">
+                Create and publish a post. Posts are published concurrently
+                — one failure won&apos;t block others.
+              </p>
+
+              <p className="doc-p"><strong>Shape A — `platform_posts[]` (recommended)</strong></p>
+              <Param name="platform_posts" type="object[]" required>
+                Array of per-account posts with their own caption,
+                media, and platform options. Same <code>account_id</code>
+                can appear twice (e.g. a 2-tweet thread on the same
+                Twitter account).
+              </Param>
+              <Param name="platform_posts[].account_id" type="string" required>Social account ID</Param>
+              <Param name="platform_posts[].caption" type="string" required>The text content for THIS account</Param>
+              <Param name="platform_posts[].media_urls" type="string[]">Publicly reachable URLs (image / video / gif sniffed by extension)</Param>
+              <Param name="platform_posts[].media_ids" type="string[]">
+                IDs returned by the media library (see <a href="#media">Media library</a>). Resolved
+                to presigned download URLs server-side and merged with <code>media_urls</code>.
+              </Param>
+              <Param name="platform_posts[].platform_options" type="object">
+                Platform-specific options (privacy_status for YouTube,
+                privacy_level for TikTok, etc — see below).
+              </Param>
+              <Param name="platform_posts[].thread_position" type="number">
+                1-indexed position in a multi-post thread. All entries
+                with the same <code>account_id</code> and any non-zero
+                <code>thread_position</code> form one thread. Twitter only
+                in v0.3; Bluesky / Threads land in a future release. See{" "}
+                <a href="#threads">Threads</a>.
+              </Param>
+
+              <p className="doc-p"><strong>Shape B — legacy</strong></p>
+              <Param name="caption" type="string">The text content (used for every account_id)</Param>
+              <Param name="account_ids" type="string[]">Array of social account IDs</Param>
+              <Param name="media_urls" type="string[]">Shared media URLs (deprecated — prefer per-post media)</Param>
+              <Param name="platform_options" type="object">
+                Per-platform overrides keyed by platform name.
+              </Param>
+
+              <p className="doc-p"><strong>Common fields</strong></p>
               <Param name="scheduled_at" type="string">RFC3339 timestamp. If set, the post is queued and published by the scheduler at that time. Must be in the future.</Param>
-              <Param name="platform_options" type="object">Per-platform overrides, keyed by platform name. Unknown keys are ignored. See <strong>Platform options</strong> below.</Param>
+              <Param name="idempotency_key" type="string">
+                Optional retry-safe key. The same{" "}
+                <code>(project_id, idempotency_key)</code> within 24h
+                returns the original response unchanged with an{" "}
+                <code>Idempotent-Replay: true</code> response header.
+                <strong> No duplicate platform posts are created.</strong>
+              </Param>
+              <Param name="status" type="string">
+                Set to <code>&quot;draft&quot;</code> to persist without
+                publishing. See <a href="#drafts">Drafts &amp; Preview</a>.
+              </Param>
               <p className="doc-p"><strong>Media handling</strong></p>
               <p className="doc-p">
                 <code>media_urls</code> is a flat list of publicly reachable URLs.
@@ -460,7 +644,8 @@ export default function DocsPage() {
               <p className="doc-p"><strong>Response Headers</strong></p>
               <Param name="X-UniPost-Usage" type="header">Current usage, e.g. <code>450/1000</code></Param>
               <Param name="X-UniPost-Warning" type="header">Warning: <code>approaching_limit</code> or <code>over_limit</code></Param>
-              <CodeTabs title="Example" snippets={SN_CREATE_POST} />
+              <CodeTabs title="Example: per-platform captions (recommended)" snippets={SN_PLATFORM_POSTS} />
+              <CodeTabs title="Example: legacy fan-out shape" snippets={SN_CREATE_POST} />
               <CodeTabs title="Example: video to YouTube as public + TikTok" snippets={SN_CREATE_VIDEO_POST} />
               <Code title="Response (200)">{`{\n  "data": {\n    "id": "post_xyz789",\n    "caption": "Hello from UniPost! 🚀",\n    "status": "published",\n    "results": [\n      { "platform": "bluesky", "status": "published", "external_id": "at://..." },\n      { "platform": "linkedin", "status": "published", "external_id": "urn:li:share:..." }\n    ]\n  }\n}`}</Code>
               <div className="doc-callout doc-callout-warn">
@@ -476,6 +661,250 @@ export default function DocsPage() {
             <Endpoint method="DELETE" path="/v1/social-posts/{id}" auth="API Key">
               <p className="doc-p">Delete a post. Attempts to delete from all platforms.</p>
             </Endpoint>
+            <Endpoint method="GET" path="/v1/social-posts" auth="API Key">
+              <p className="doc-p">
+                List posts with optional filters and cursor-based pagination
+                over <code>(created_at DESC, id DESC)</code>.
+              </p>
+              <Param name="status" type="query"><code>draft</code>, <code>scheduled</code>, <code>published</code>, <code>partial</code>, <code>failed</code></Param>
+              <Param name="platform" type="query">Filter by destination platform key</Param>
+              <Param name="account_id" type="query">Filter by social account id</Param>
+              <Param name="created_after" type="query">RFC3339 lower bound</Param>
+              <Param name="created_before" type="query">RFC3339 upper bound</Param>
+              <Param name="limit" type="query">1–100, default 25</Param>
+              <Param name="cursor" type="query">Opaque cursor returned in <code>meta.next_cursor</code></Param>
+              <Code title="Response (200)">{`{
+  "data": [ /* SocialPost[] */ ],
+  "meta": { "next_cursor": "eyJjcmVhdGVkX2F0Ijoi..." }
+}`}</Code>
+            </Endpoint>
+          </Section>
+
+          <Section id="validate" title="Validate (preflight)">
+            <p className="doc-p">
+              Pure preflight: same request body as <code>POST /v1/social-posts</code>,
+              but no DB writes and no platform API calls. Use it to confirm an LLM-drafted
+              post will pass server-side validation before charging the user&apos;s quota.
+              Always returns 200 — the body carries fatal / non-fatal errors per platform.
+              p95 budget &lt; 50ms.
+            </p>
+            <Endpoint method="POST" path="/v1/social-posts/validate" auth="API Key">
+              <p className="doc-p">
+                Accepts both Shape A (<code>platform_posts[]</code>) and Shape B
+                (<code>caption + account_ids</code>). Validates account existence,
+                connection state, capability limits (caption length, media counts,
+                file sizes via <code>media_ids</code> from the Media library),
+                threading rules, and <code>scheduled_at</code>.
+              </p>
+              <Code title="Response (200)">{`{
+  "data": {
+    "ok": false,
+    "errors": [
+      {
+        "account_id": "sa_twitter_1",
+        "platform":   "twitter",
+        "code":       "caption_too_long",
+        "message":    "caption is 312 chars, twitter max is 280",
+        "fatal":      true
+      },
+      {
+        "account_id": "sa_instagram_1",
+        "platform":   "instagram",
+        "code":       "account_disconnected",
+        "message":    "account requires reconnect",
+        "fatal":      false
+      }
+    ]
+  }
+}`}</Code>
+              <p className="doc-p">
+                <strong>Fatal vs non-fatal.</strong> Fatal codes (<code>caption_too_long</code>,
+                <code> too_many_media</code>, <code>media_id_not_in_project</code>,
+                <code> unknown_account</code>, <code>scheduled_in_past</code>, …) block
+                publish. Non-fatal codes (e.g. <code>account_disconnected</code>) are surfaced
+                so the client can warn the user but don&apos;t prevent the request from being
+                accepted by <code>POST /v1/social-posts</code>.
+              </p>
+            </Endpoint>
+          </Section>
+
+          <Section id="drafts" title="Drafts & Preview">
+            <p className="doc-p">
+              Drafts are real <code>social_posts</code> rows with{" "}
+              <code>status=&quot;draft&quot;</code> — no separate table, no separate
+              API surface. Create one by passing <code>status: &quot;draft&quot;</code>
+              on <code>POST /v1/social-posts</code>; it&apos;s persisted but not dispatched
+              to any platform.
+            </p>
+            <p className="doc-p">
+              Each draft gets a tamper-proof preview URL signed with HMAC-SHA256
+              (the same <code>ENCRYPTION_KEY</code> used by the rest of the API).
+              Tokens are scoped to one post id and expire after 7 days.
+            </p>
+            <Endpoint method="POST" path="/v1/social-posts/{id}/publish" auth="API Key">
+              <p className="doc-p">
+                Promote a draft to live. Uses an optimistic lock
+                (<code>UPDATE … WHERE status=&apos;draft&apos; RETURNING …</code>) so a
+                concurrent second call loses with <code>409 ALREADY_PUBLISHED</code>{" "}
+                instead of double-posting. The body is empty; the post is dispatched
+                using the captions / media that were saved on the draft.
+              </p>
+              <Code title="Response (200)">{`{
+  "data": {
+    "id":     "post_xyz789",
+    "status": "published",
+    "results": [ /* one entry per account */ ]
+  }
+}`}</Code>
+            </Endpoint>
+            <Endpoint method="GET" path="/v1/social-posts/{id}/preview-url" auth="API Key">
+              <p className="doc-p">
+                Returns a signed URL pointing at <code>app.unipost.dev/preview/{"{id}"}</code>.
+                Tokens carry the post id in their <code>aud</code> claim and are rejected
+                for any other id.
+              </p>
+              <Code title="Response (200)">{`{
+  "data": {
+    "url":        "https://app.unipost.dev/preview/post_xyz789?token=eyJhbGciOi...",
+    "expires_at": "2026-04-15T10:00:00Z"
+  }
+}`}</Code>
+            </Endpoint>
+            <Endpoint method="GET" path="/v1/social-posts/{id}/preview" auth="Signed token">
+              <p className="doc-p">
+                Public, no API key. Validates the JWT signature + audience and returns
+                a render-friendly view of the post (per-account caption, resolved media URLs,
+                platform metadata). Powers the dashboard preview page.
+              </p>
+            </Endpoint>
+          </Section>
+
+          <Section id="threads" title="Threads">
+            <p className="doc-p">
+              Multi-post threads use <code>thread_position</code> on the{" "}
+              <code>platform_posts[]</code> shape: every entry sharing the same{" "}
+              <code>account_id</code> with a non-zero <code>thread_position</code> forms
+              one thread, dispatched in ascending order. Threads on different accounts
+              run in parallel; entries within one thread are sequential because each
+              reply must reference the prior tweet&apos;s id.
+            </p>
+            <div className="doc-callout doc-callout-info">
+              <strong>Platform support (v0.3):</strong> Twitter / X only.
+              Bluesky and Threads thread support is on the roadmap. Sending a
+              <code> thread_position</code> for an unsupported platform is
+              rejected by <code>/validate</code> with{" "}
+              <code>thread_unsupported</code>.
+            </div>
+            <Code title="3-tweet thread on one account">{`{
+  "platform_posts": [
+    { "account_id": "sa_twitter_1", "caption": "1/ I want to talk about why...",  "thread_position": 1 },
+    { "account_id": "sa_twitter_1", "caption": "2/ The first reason is...",       "thread_position": 2 },
+    { "account_id": "sa_twitter_1", "caption": "3/ And finally — try it here →",  "thread_position": 3 }
+  ]
+}`}</Code>
+            <p className="doc-p">
+              The handler orchestrates the dispatch: tweet 1 publishes, the returned
+              tweet id is plumbed into <code>opts[&quot;in_reply_to_tweet_id&quot;]</code>
+              for tweet 2, and so on. If any tweet in the chain fails the rest are
+              skipped and the post status is <code>partial</code>; already-posted
+              replies are not rolled back (Twitter doesn&apos;t support that).
+            </p>
+          </Section>
+
+          <Section id="media" title="Media library">
+            <p className="doc-p">
+              Two-step presigned upload backed by Cloudflare R2. Use this when you
+              don&apos;t have a public CDN handy, or when you want UniPost to enforce
+              size / content-type limits before the bytes ever touch a platform API.
+              Uploaded media is referenced from posts via <code>media_ids</code>.
+            </p>
+            <Endpoint method="POST" path="/v1/media" auth="API Key">
+              <p className="doc-p">
+                Reserve a media row and get a presigned PUT URL. The row starts in{" "}
+                <code>pending</code> status until the bytes land in R2.
+              </p>
+              <Param name="filename" type="string" required>Original filename, used for the storage key + extension sniffing</Param>
+              <Param name="content_type" type="string" required>MIME type — must be on the allowlist (image/jpeg, image/png, image/webp, image/gif, video/mp4, video/quicktime)</Param>
+              <Param name="size_bytes" type="number" required>Declared size — must respect per-type caps</Param>
+              <Code title="Response (201)">{`{
+  "data": {
+    "id":             "med_abc123",
+    "upload_url":     "https://r2.example.com/...&X-Amz-Signature=...",
+    "upload_method":  "PUT",
+    "upload_headers": { "Content-Type": "image/jpeg" },
+    "expires_at":     "2026-04-08T11:00:00Z"
+  }
+}`}</Code>
+            </Endpoint>
+            <Endpoint method="PUT" path="(presigned R2 URL)" auth="Signed">
+              <p className="doc-p">
+                Upload the bytes directly to R2 using the URL + headers from the previous
+                step. UniPost is not in the data path; the presigned URL expires after 15 minutes.
+              </p>
+              <Code title="cURL">{`curl -X PUT "$UPLOAD_URL" \\
+  -H "Content-Type: image/jpeg" \\
+  --data-binary @photo.jpg`}</Code>
+            </Endpoint>
+            <Endpoint method="GET" path="/v1/media/{id}" auth="API Key">
+              <p className="doc-p">
+                Returns the media row. <strong>Lazy hydration:</strong> the first call
+                after upload HEADs the R2 object, copies its real size and content-type,
+                and flips status from <code>pending</code> → <code>uploaded</code>.
+                No R2 webhooks required.
+              </p>
+              <Code title="Response (200)">{`{
+  "data": {
+    "id":           "med_abc123",
+    "status":       "uploaded",
+    "content_type": "image/jpeg",
+    "size_bytes":   284192,
+    "filename":     "photo.jpg",
+    "created_at":   "2026-04-08T10:42:00Z"
+  }
+}`}</Code>
+            </Endpoint>
+            <Endpoint method="GET" path="/v1/media" auth="API Key">
+              <p className="doc-p">List media rows for the project. Cursor pagination, same shape as <code>/v1/social-posts</code>.</p>
+            </Endpoint>
+            <Endpoint method="DELETE" path="/v1/media/{id}" auth="API Key">
+              <p className="doc-p">Delete the row and the underlying R2 object. Posts that reference the media keep their existing platform-side copies.</p>
+            </Endpoint>
+            <p className="doc-p">
+              <strong>Using media in posts.</strong> Pass{" "}
+              <code>media_ids: [&quot;med_abc123&quot;]</code> on a{" "}
+              <code>platform_posts[]</code> entry. The publish handler resolves each
+              id to a short-lived presigned download URL and merges them with any
+              <code> media_urls</code> on the same entry before handing off to the adapter.
+            </p>
+          </Section>
+
+          <Section id="account-health" title="Account Health">
+            <p className="doc-p">
+              Returns liveness state for one connected account: when its token was
+              last refreshed, what scopes it currently holds, and whether the most
+              recent publish attempt succeeded. Use this to decide if a reconnect
+              banner should be shown in your UI.
+            </p>
+            <Endpoint method="GET" path="/v1/social-accounts/{id}/health" auth="API Key">
+              <Code title="Response (200)">{`{
+  "data": {
+    "id":                  "sa_twitter_1",
+    "platform":            "twitter",
+    "status":              "active",
+    "token_refreshed_at":  "2026-04-07T22:11:04Z",
+    "scopes":              ["tweet.read", "tweet.write", "users.read", "media.write", "offline.access"],
+    "last_publish_at":     "2026-04-08T08:30:11Z",
+    "last_publish_status": "published",
+    "last_publish_error":  null
+  }
+}`}</Code>
+            </Endpoint>
+            <p className="doc-p">
+              <code>status</code> mirrors the value from <code>GET /v1/social-accounts</code>{" "}
+              (<code>active</code> or <code>reconnect_required</code>). The latter is set
+              automatically when a publish fails with a token error so the dashboard can
+              prompt the user before they next try to post.
+            </p>
           </Section>
 
           <Section id="analytics" title="Analytics">
@@ -591,7 +1020,17 @@ export default function DocsPage() {
               <Param name="events" type="string[]" required>Events: <code>post.published</code>, <code>post.failed</code>, <code>account.connected</code>, <code>account.disconnected</code></Param>
               <Param name="secret" type="string" required>HMAC-SHA256 signing secret</Param>
               <Code title="Webhook payload">{`{\n  "event": "post.published",\n  "timestamp": "2026-04-02T12:00:01Z",\n  "data": {\n    "post_id": "post_xyz789",\n    "platform": "bluesky",\n    "external_id": "at://..."\n  }\n}`}</Code>
-              <p className="doc-p">Verify with <code>X-UniPost-Signature</code> header: <code>HMAC-SHA256(secret, body)</code></p>
+              <p className="doc-p">
+                <strong>Signature header:</strong> <code>X-UniPost-Signature: t=&lt;unix_ts&gt;,v1=&lt;hex&gt;</code>.
+                Compute <code>v1 = HMAC-SHA256(secret, t + &quot;.&quot; + body)</code> and reject any
+                request whose <code>t</code> is more than 5 minutes old to defeat replay attacks.
+                Use a constant-time comparison.
+              </p>
+              <div className="doc-callout doc-callout-warn">
+                <strong>Breaking change (Sprint 1, PR8):</strong> the signature header was previously{" "}
+                <code>HMAC-SHA256(secret, body)</code> with no timestamp. Existing receivers must update
+                to the timestamped <code>t=…,v1=…</code> scheme — the body-only form is no longer sent.
+              </div>
             </Endpoint>
           </Section>
 
