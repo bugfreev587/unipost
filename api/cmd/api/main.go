@@ -214,6 +214,10 @@ func main() {
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	platformHandler := handler.NewPlatformHandler(queries)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
+	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
+	// for the hosted-page origin so the same env var that drives the
+	// preview link drives the connect link.
+	connectSessionHandler := handler.NewConnectSessionHandler(queries, os.Getenv("NEXT_PUBLIC_APP_URL"))
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
@@ -238,6 +242,11 @@ func main() {
 	// Public preview endpoint — no auth, JWT in query string. The
 	// dashboard preview page hits this route to render a draft.
 	r.Get("/v1/public/drafts/{id}", previewHandler.PublicGet)
+
+	// Sprint 3 PR2: public Connect session lookup — no API key, the
+	// hosted dashboard page reads it via ?state=<oauth_state> as the
+	// bearer. Returns a minimal projection of the session.
+	r.Get("/v1/public/connect/sessions/{id}", connectSessionHandler.PublicGet)
 
 	// Dashboard routes (Clerk session auth)
 	r.Group(func(r chi.Router) {
@@ -317,6 +326,12 @@ func main() {
 		r.Post("/v1/media", mediaHandler.Create)
 		r.Get("/v1/media/{id}", mediaHandler.Get)
 		r.Delete("/v1/media/{id}", mediaHandler.Delete)
+
+		// Sprint 3 PR2: Connect sessions. Customer creates a session,
+		// emails the URL to their end user, and polls (or waits for
+		// the account.connected webhook) until completion.
+		r.Post("/v1/connect/sessions", connectSessionHandler.Create)
+		r.Get("/v1/connect/sessions/{id}", connectSessionHandler.Get)
 
 		r.Get("/v1/social-posts", socialPostHandler.List)
 		r.Post("/v1/social-posts", socialPostHandler.Create)

@@ -324,6 +324,44 @@ export async function cancelSocialPost(
   });
 }
 
+// Connect sessions (Sprint 3 PR2 — multi-tenant Connect)
+
+export interface ConnectSession {
+  id: string;
+  platform: "twitter" | "linkedin" | "bluesky";
+  external_user_id: string;
+  external_user_email?: string;
+  return_url?: string;
+  status: "pending" | "completed" | "expired" | "cancelled";
+  url?: string;
+  expires_at: string;
+  created_at: string;
+  completed_at?: string;
+  completed_social_account_id?: string;
+}
+
+export async function createConnectSession(
+  token: string,
+  data: {
+    platform: "twitter" | "linkedin" | "bluesky";
+    external_user_id: string;
+    external_user_email?: string;
+    return_url?: string;
+  }
+): Promise<ApiResponse<ConnectSession>> {
+  return request(`/v1/connect/sessions`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getConnectSession(
+  token: string,
+  sessionId: string
+): Promise<ApiResponse<ConnectSession>> {
+  return request(`/v1/connect/sessions/${sessionId}`, token);
+}
+
 // Analytics
 
 export interface PostAnalytics {
