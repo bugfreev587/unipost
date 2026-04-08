@@ -238,13 +238,16 @@ func main() {
 	if tw := connect.NewTwitterConnector(os.Getenv("TWITTER_CLIENT_ID"), os.Getenv("TWITTER_CLIENT_SECRET"), apiBaseURL); tw != nil {
 		connectors = append(connectors, tw)
 	}
+	if li := connect.NewLinkedInConnector(os.Getenv("LINKEDIN_CLIENT_ID"), os.Getenv("LINKEDIN_CLIENT_SECRET"), apiBaseURL); li != nil {
+		connectors = append(connectors, li)
+	}
 	connectRegistry := connect.NewRegistry(connectors...)
 	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
-	adminHandler := handler.NewAdminHandler(pool)
+	adminHandler := handler.NewAdminHandler(pool, stripeMgr)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
