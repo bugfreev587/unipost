@@ -174,11 +174,41 @@ func main() {
 	tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor)
 	go tokenWorker.Start(workerCtx)
 
+	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
+	// the managed token refresh worker can take it as a dependency.
+	// Connectors return nil from their constructors when env vars are
+	// missing, so a half-configured environment simply doesn't have
+	// those platforms registered.
+	apiBaseURL := os.Getenv("API_BASE_URL")
+	if apiBaseURL == "" {
+		apiBaseURL = "https://api.unipost.dev"
+	}
+	connectors := []connect.Connector{}
+	if tw := connect.NewTwitterConnector(os.Getenv("TWITTER_CLIENT_ID"), os.Getenv("TWITTER_CLIENT_SECRET"), apiBaseURL); tw != nil {
+		connectors = append(connectors, tw)
+	}
+	if li := connect.NewLinkedInConnector(os.Getenv("LINKEDIN_CLIENT_ID"), os.Getenv("LINKEDIN_CLIENT_SECRET"), apiBaseURL); li != nil {
+		connectors = append(connectors, li)
+	}
+	connectRegistry := connect.NewRegistry(connectors...)
+
+	// Sprint 3 PR7: managed token refresh worker. Runs every 5 min,
+	// refreshes tokens within a 30 min window of expiry, uses
+	// FOR UPDATE SKIP LOCKED so concurrent API instances pick disjoint
+	// slices. Started after webhookWorker so it has a real bus to
+	// fire account.disconnected events into. Defer the goroutine
+	// start until after webhookWorker is constructed below.
+
 	// Webhook delivery worker doubles as the EventBus implementation
 	// for the publish path. Constructed before the scheduler /
 	// handlers so they can be wired with it as their bus dependency.
 	webhookWorker := worker.NewWebhookDeliveryWorker(queries)
 	go webhookWorker.Start(workerCtx)
+
+	// Sprint 3 PR7: managed token refresh worker. Started here so
+	// the bus dependency (webhookWorker) is already wired.
+	managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, webhookWorker)
+	go managedTokenWorker.Start(workerCtx)
 
 	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor, webhookWorker)
 	go schedulerWorker.Start(workerCtx)
@@ -225,23 +255,9 @@ func main() {
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
 	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, webhookWorker)
-	// Sprint 3 PR3/PR4: managed OAuth Connect for Twitter + LinkedIn.
-	// Bluesky doesn't go through this registry — its handler lives at
-	// connect_bluesky.go (form, not OAuth). Connectors return nil from
-	// their constructor when the env vars are missing so a half-config
-	// project simply won't have those platforms registered.
-	apiBaseURL := os.Getenv("API_BASE_URL")
-	if apiBaseURL == "" {
-		apiBaseURL = "https://api.unipost.dev"
-	}
-	connectors := []connect.Connector{}
-	if tw := connect.NewTwitterConnector(os.Getenv("TWITTER_CLIENT_ID"), os.Getenv("TWITTER_CLIENT_SECRET"), apiBaseURL); tw != nil {
-		connectors = append(connectors, tw)
-	}
-	if li := connect.NewLinkedInConnector(os.Getenv("LINKEDIN_CLIENT_ID"), os.Getenv("LINKEDIN_CLIENT_SECRET"), apiBaseURL); li != nil {
-		connectors = append(connectors, li)
-	}
-	connectRegistry := connect.NewRegistry(connectors...)
+	// connectRegistry was built in the worker section above so the
+	// managed token refresh worker could take it as a dependency.
+	// We just hand the same registry to the callback handler here.
 	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
