@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
@@ -178,6 +179,46 @@ func (h *SocialPostHandler) loadValidateAccounts(r *http.Request, projectID stri
 	return out, nil
 }
 
+// loadValidateMedia loads each referenced media_id from the project's
+// media table so the validator can check ownership + status. Only
+// the IDs explicitly mentioned in posts are loaded — we don't list
+// the whole project's media library, since most validate calls won't
+// touch any media at all.
+//
+// Returns an empty map (NOT nil) when posts reference NO media_ids,
+// so the validator's "Media != nil → check" gate runs and reports
+// any unknown IDs as media_id_not_in_project. nil would skip the
+// check entirely; that's only used by callers that don't want media
+// validation at all.
+func (h *SocialPostHandler) loadValidateMedia(r *http.Request, projectID string, posts []platform.PlatformPostInput) map[string]platform.ValidateMedia {
+	// Collect every media_id referenced anywhere in the request.
+	wanted := make(map[string]bool)
+	for _, p := range posts {
+		for _, mid := range p.MediaIDs {
+			wanted[mid] = true
+		}
+	}
+	out := make(map[string]platform.ValidateMedia, len(wanted))
+	for mid := range wanted {
+		row, err := h.queries.GetMediaByIDAndProject(r.Context(), db.GetMediaByIDAndProjectParams{
+			ID:        mid,
+			ProjectID: projectID,
+		})
+		if err != nil {
+			// Not in this project (or not found at all). The
+			// validator reports it via media_id_not_in_project — we
+			// just leave it absent from the map.
+			continue
+		}
+		out[mid] = platform.ValidateMedia{
+			Status:      row.Status,
+			ContentType: row.ContentType,
+			SizeBytes:   row.SizeBytes,
+		}
+	}
+	return out
+}
+
 // Validate handles POST /v1/social-posts/validate.
 //
 // Pure preflight — no DB writes, no platform API calls. Returns the
@@ -212,9 +253,12 @@ func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	media := h.loadValidateMedia(r, projectID, parsed.Posts)
+
 	result := platform.ValidatePlatformPosts(platform.ValidateOptions{
 		Capabilities: platform.Capabilities,
 		Accounts:     accounts,
+		Media:        media,
 		Posts:        parsed.Posts,
 		ScheduledAt:  parsed.ScheduledAt,
 	})
