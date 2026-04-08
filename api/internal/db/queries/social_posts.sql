@@ -53,3 +53,34 @@ RETURNING *;
 SELECT * FROM social_posts
 WHERE project_id = $1 AND status = 'scheduled'
 ORDER BY scheduled_at ASC;
+
+-- name: ClaimDraftForPublish :one
+-- Optimistic lock for the POST /v1/social-posts/{id}/publish
+-- transition. Two clients clicking publish simultaneously is the
+-- canonical race; the loser sees no rows and returns 409. We
+-- restrict to status='draft' so re-publishing an already-published
+-- post is also a no-op (the second call gets 0 rows back).
+UPDATE social_posts
+SET status = 'publishing'
+WHERE id = $1 AND project_id = $2 AND status = 'draft'
+RETURNING *;
+
+-- name: UpdateDraftContent :one
+-- PATCH /v1/social-posts/{id} for drafts. Replaces the canonical
+-- caption + media + metadata + scheduled_at in one shot. Refuses to
+-- touch non-draft rows so a race against publish can't sneak in
+-- under the rug.
+UPDATE social_posts
+SET caption = $3,
+    media_urls = $4,
+    metadata = $5,
+    scheduled_at = $6
+WHERE id = $1 AND project_id = $2 AND status = 'draft'
+RETURNING *;
+
+-- name: DeleteDraft :exec
+-- DELETE /v1/social-posts/{id} for drafts. Hard delete since drafts
+-- never made it out the door — there's no platform state to clean up
+-- and no analytics to preserve.
+DELETE FROM social_posts
+WHERE id = $1 AND project_id = $2 AND status = 'draft';

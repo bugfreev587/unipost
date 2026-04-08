@@ -303,6 +303,13 @@ func main() {
 		r.Get("/v1/social-posts/{id}", socialPostHandler.Get)
 		r.Get("/v1/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
 		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
+		// Drafts API (Sprint 2). Drafts are social_posts rows in
+		// status='draft' — no platform dispatch, no quota charge,
+		// no webhook fired. Publish flips them via optimistic lock
+		// then routes through the same publish loop the immediate
+		// path uses.
+		r.Post("/v1/social-posts/{id}/publish", socialPostHandler.PublishDraft)
+		r.Patch("/v1/social-posts/{id}", socialPostHandler.UpdateDraft)
 
 		// Analytics aggregations (API key)
 		r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)

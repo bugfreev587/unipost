@@ -38,6 +38,11 @@ type publishRequestBody struct {
 	// Common.
 	ScheduledAt    *string `json:"scheduled_at"`
 	IdempotencyKey string  `json:"idempotency_key"`
+
+	// Sprint 2: status="draft" persists the post without dispatching.
+	// Anything else (or omitted) preserves the existing immediate /
+	// scheduled flow.
+	Status string `json:"status"`
 }
 
 // platformPostBody is one entry in the new platform_posts[] shape.
@@ -64,6 +69,11 @@ type parsedRequest struct {
 	Posts          []platform.PlatformPostInput
 	ScheduledAt    *time.Time
 	IdempotencyKey string
+	// Status is set when the request body explicitly asked for
+	// "draft". Empty otherwise — the create handler maps that to
+	// either immediate publish or scheduled publish based on
+	// ScheduledAt.
+	Status string
 }
 
 // parsePublishRequest is the single entry point for converting the
@@ -89,6 +99,16 @@ func parsePublishRequest(body publishRequestBody) (parsedRequest, int, string) {
 	}
 
 	pr := parsedRequest{IdempotencyKey: body.IdempotencyKey}
+
+	// Status (Sprint 2): only "draft" is meaningful at create time;
+	// reject other explicit values to keep the surface narrow.
+	switch body.Status {
+	case "", "draft":
+		pr.Status = body.Status
+	default:
+		return parsedRequest{}, http.StatusUnprocessableEntity,
+			"status must be empty or \"draft\" when creating a post"
+	}
 
 	// scheduled_at parsing is shared.
 	if body.ScheduledAt != nil && *body.ScheduledAt != "" {

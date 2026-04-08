@@ -156,6 +156,16 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Posts:        parsed.Posts,
 		ScheduledAt:  parsed.ScheduledAt,
 	})
+	// Drafts (Sprint 2): persist with status='draft', skip the
+	// publish loop entirely, but still SURFACE validation results in
+	// the response so the user can see what's wrong before publishing.
+	// Validation errors do NOT block draft creation — drafts are an
+	// editing surface, not a transactional surface.
+	if parsed.Status == "draft" {
+		h.createDraft(w, r, projectID, parsed, vr)
+		return
+	}
+
 	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
 		writeValidationErrors(w, fatal)
 		return
@@ -283,6 +293,52 @@ func (h *SocialPostHandler) createImmediatePost(
 		return
 	}
 
+	h.runPublishLoop(w, r, projectID, post, parsed, dbAccounts, accountMap)
+}
+
+// publishExistingPost is the publish-from-draft entry point. The
+// parent social_posts row already exists (in status='publishing'
+// after ClaimDraftForPublish locked it); we just need to load
+// accounts and run the same publish loop createImmediatePost uses.
+// Used by PublishDraft so quota counting / event emission /
+// per-result caption persistence stay in one code path.
+func (h *SocialPostHandler) publishExistingPost(
+	w http.ResponseWriter,
+	r *http.Request,
+	projectID string,
+	post db.SocialPost,
+	parsed parsedRequest,
+	accountMap map[string]platform.ValidateAccount,
+) {
+	uniqueIDs := uniqueAccountIDs(parsed.Posts)
+	dbAccounts := make(map[string]db.SocialAccount, len(uniqueIDs))
+	for _, id := range uniqueIDs {
+		acc, err := h.queries.GetSocialAccountByIDAndProject(r.Context(), db.GetSocialAccountByIDAndProjectParams{
+			ID:        id,
+			ProjectID: projectID,
+		})
+		if err != nil {
+			continue
+		}
+		dbAccounts[id] = acc
+	}
+	h.runPublishLoop(w, r, projectID, post, parsed, dbAccounts, accountMap)
+}
+
+// runPublishLoop is the shared body of createImmediatePost and
+// publishExistingPost. Takes a parent post that already exists in
+// status='publishing', dispatches each PlatformPostInput to its
+// adapter, persists results, updates the parent status, fires the
+// webhook event, and writes the response.
+func (h *SocialPostHandler) runPublishLoop(
+	w http.ResponseWriter,
+	r *http.Request,
+	projectID string,
+	post db.SocialPost,
+	parsed parsedRequest,
+	dbAccounts map[string]db.SocialAccount,
+	accountMap map[string]platform.ValidateAccount,
+) {
 	// Publish each platform post concurrently. Order is preserved by
 	// using a fixed-size slice indexed by input position.
 	outcomes := make([]publishOneOutcome, len(parsed.Posts))

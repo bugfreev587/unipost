@@ -11,6 +11,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimDraftForPublish = `-- name: ClaimDraftForPublish :one
+UPDATE social_posts
+SET status = 'publishing'
+WHERE id = $1 AND project_id = $2 AND status = 'draft'
+RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+`
+
+type ClaimDraftForPublishParams struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+}
+
+// Optimistic lock for the POST /v1/social-posts/{id}/publish
+// transition. Two clients clicking publish simultaneously is the
+// canonical race; the loser sees no rows and returns 409. We
+// restrict to status='draft' so re-publishing an already-published
+// post is also a no-op (the second call gets 0 rows back).
+func (q *Queries) ClaimDraftForPublish(ctx context.Context, arg ClaimDraftForPublishParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, claimDraftForPublish, arg.ID, arg.ProjectID)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
 const claimScheduledPost = `-- name: ClaimScheduledPost :one
 UPDATE social_posts SET status = 'publishing'
 WHERE id = $1 AND status = 'scheduled'
@@ -75,6 +110,24 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 		&i.IdempotencyKey,
 	)
 	return i, err
+}
+
+const deleteDraft = `-- name: DeleteDraft :exec
+DELETE FROM social_posts
+WHERE id = $1 AND project_id = $2 AND status = 'draft'
+`
+
+type DeleteDraftParams struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+}
+
+// DELETE /v1/social-posts/{id} for drafts. Hard delete since drafts
+// never made it out the door — there's no platform state to clean up
+// and no analytics to preserve.
+func (q *Queries) DeleteDraft(ctx context.Context, arg DeleteDraftParams) error {
+	_, err := q.db.Exec(ctx, deleteDraft, arg.ID, arg.ProjectID)
+	return err
 }
 
 const deleteSocialPost = `-- name: DeleteSocialPost :exec
@@ -279,6 +332,54 @@ func (q *Queries) ListSocialPostsByProject(ctx context.Context, arg ListSocialPo
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateDraftContent = `-- name: UpdateDraftContent :one
+UPDATE social_posts
+SET caption = $3,
+    media_urls = $4,
+    metadata = $5,
+    scheduled_at = $6
+WHERE id = $1 AND project_id = $2 AND status = 'draft'
+RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+`
+
+type UpdateDraftContentParams struct {
+	ID          string             `json:"id"`
+	ProjectID   string             `json:"project_id"`
+	Caption     pgtype.Text        `json:"caption"`
+	MediaUrls   []string           `json:"media_urls"`
+	Metadata    []byte             `json:"metadata"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+}
+
+// PATCH /v1/social-posts/{id} for drafts. Replaces the canonical
+// caption + media + metadata + scheduled_at in one shot. Refuses to
+// touch non-draft rows so a race against publish can't sneak in
+// under the rug.
+func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContentParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, updateDraftContent,
+		arg.ID,
+		arg.ProjectID,
+		arg.Caption,
+		arg.MediaUrls,
+		arg.Metadata,
+		arg.ScheduledAt,
+	)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+	)
+	return i, err
 }
 
 const updateSocialPostStatus = `-- name: UpdateSocialPostStatus :exec
