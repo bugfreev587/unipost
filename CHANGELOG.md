@@ -8,11 +8,132 @@ each section heading below corresponds to a sprint, not a published version.
 
 ## [Unreleased]
 
+## Sprint 2 (commits `9d89c00..8198902`)
+
+### Added
+
+- **Media library API** (`POST/GET/DELETE /v1/media`). Two-step
+  upload: `POST /v1/media` returns a presigned PUT URL the client
+  uploads bytes to directly; subsequent publishes reference the
+  returned `media_id`. R2-backed (Cloudflare) reusing the bucket
+  set up in Sprint 1 for the TikTok PULL_FROM_URL workaround. The
+  abandoned-upload sweeper folds into the existing analytics
+  refresh worker (no new goroutine) and hard-deletes pending media
+  older than 7 days. Per-platform size caps from the capabilities
+  table apply on top of a 25 MB global hard ceiling.
+- **`platform_posts[].media_ids`** — references rows in the new
+  media library. Resolved server-side at adapter dispatch time
+  to a fresh 15-minute presigned download URL, then merged with
+  the existing `media_urls` list. Adapters see only URLs — zero
+  adapter code changes for the new field.
+- **Drafts API** — `POST /v1/social-posts` accepts `status="draft"`
+  to persist without dispatching. New endpoints:
+  - `POST /v1/social-posts/{id}/publish` — atomic draft → publish
+    transition with optimistic locking (409 on concurrent publish
+    races). Routes through the same publish loop the immediate
+    path uses so quota counting / event emission / per-result
+    caption persistence stay in one place.
+  - `PATCH /v1/social-posts/{id}` — replace draft content. Refuses
+    to touch non-draft rows.
+  - `DELETE /v1/social-posts/{id}` — already existed; gracefully
+    handles drafts (zero results = no platform calls).
+- **Hosted preview links** — new `POST /v1/social-posts/{id}/preview-link`
+  returns a 24h JWT-signed URL the user can share without exposing
+  the API key. The public route `GET /v1/public/drafts/{id}?token=...`
+  serves the draft + resolved media URLs to the new dashboard
+  preview page at `/preview/[id]` (one column per platform with
+  approximate caption count). JWT signed with the existing
+  `ENCRYPTION_KEY` value plus an `aud:"preview"` claim — no new
+  env var.
+- **Twitter threads** — `platform_posts[].thread_position` (1-indexed)
+  declares a multi-tweet thread. Posts in the same thread group
+  dispatch sequentially with the previous tweet's external_id
+  threaded through `opts["in_reply_to_tweet_id"]` so the adapter
+  can chain via the v2 reply object. Mid-thread failure stops the
+  chain and marks remaining tweets as `failed` with an
+  `upstream thread post failed at thread_position N` error.
+  Standalone posts and other thread groups still run in parallel.
+  Twitter only in Sprint 2; Bluesky / Threads land in Sprint 3.
+- **`list_posts` filters + cursor pagination** — `GET /v1/social-posts`
+  accepts `?status=draft,published&from=...&to=...&limit=...&cursor=...`.
+  Cursor is base64url(`unix_nanos|id`) — keyset pagination on the
+  new `(project_id, created_at DESC, id DESC)` index. Stable across
+  inserts. Response shape changes from the legacy `{ data, meta }`
+  envelope to `{ data, next_cursor }`. Clients loop until
+  `next_cursor` is empty. `account_id` and `platform` filters from
+  the PRD are deferred to Sprint 3 — they need EXISTS subqueries
+  against `social_post_results` and a separate index.
+- **Account health endpoint** — `GET /v1/social-accounts/{id}/health`
+  returns `{status, last_successful_post_at, last_error?, token_expires_at?}`.
+  Status derived from the account's last 10 results (no new
+  background workers, no active probing): `disconnected` if the
+  account row is flagged, `degraded` if any of the 10 failed,
+  otherwise `ok`. `last_error` is categorized via substring match
+  (`token_expired`, `rate_limited`, `media_too_large`,
+  `url_unverified`, `unknown`).
+- **MCP server v0.3.0** with five new / two upgraded tools:
+  - **NEW** `unipost_upload_media` — accepts EITHER `base64_data`
+    (≤4 MB after inflation, for Claude Desktop local files) OR
+    `url` (already-hosted files). Wraps the two-step
+    `POST /v1/media` + presigned PUT flow.
+  - **NEW** `unipost_create_draft` — alias for `create_post` with
+    `status="draft"`.
+  - **NEW** `unipost_publish_draft` — wraps the new
+    publish-from-draft endpoint.
+  - **NEW** `unipost_get_account_health` — wraps the new health
+    endpoint.
+  - `unipost_create_post` and `unipost_validate_post` gain
+    `media_ids` and `thread_position` pass-through.
+  - `unipost_list_posts` gains the new filter + cursor params.
+
+### Changed
+
+- **Capabilities schema bumped to `1.1`** with one additive field:
+  `text.supports_threads`. Twitter is the only `true` value in
+  Sprint 2. Old `1.0` consumers ignore the unknown field — the
+  bump is purely additive.
+- **`internal/mediaproxy` renamed to `internal/storage`**. Same R2
+  client, same env vars. Existing TikTok call site updated. The
+  package now houses both `UploadFromURL` (TikTok PULL_FROM_URL
+  staging, formerly `Upload`) and the new `PresignPut` / `Head` /
+  `PresignGet` / `Delete` helpers for the media library.
+- **`SocialPostHandler` constructor takes a `*storage.Client`** for
+  resolving `media_ids` to presigned download URLs at dispatch time.
+- **`scheduler.go` data race fixed** in PR6 — pre-existing append
+  from goroutines was already replaced with a fixed-size outcomes
+  slice. PR6 (this sprint) also added per-platform routing logs to
+  both publish paths for smoke-test correlation.
+- **`runPublishLoop`** refactored to dispatch by group (standalone
+  posts in parallel, thread groups serial within / parallel across)
+  via the new `groupForDispatch` + `runDispatchGroup` helpers.
+
+### Deprecated
+
+- **`media_urls` on the top-level legacy shape** — still works,
+  will warn in v0.4. Use `platform_posts[].media_urls` or
+  `platform_posts[].media_ids` for new integrations.
+
+### Breaking
+
+- None in Sprint 2.
+
+### Migration notes
+
+- New env vars: none. Sprint 2 reuses `ENCRYPTION_KEY` for the
+  preview JWT signing key (with an audience claim for domain
+  separation) and reuses the `R2_*` env vars set up in Sprint 1.
+- New DB migration `019_media_and_list_index.sql` adds the `media`
+  table and the `(project_id, created_at DESC, id DESC)` index for
+  cursor pagination. Safe to run on existing data — no DDL on
+  existing tables.
+
+## Sprint 1 (commits `ade0b7e..f006b28`)
+
 ### Added
 
 - **`POST /v1/social-posts` accepts `platform_posts[]`** — a per-account
   request shape with its own `caption`, `media_urls`, `platform_options`,
-  and (future) `in_reply_to`. Use it whenever you want to tailor content
+  and `in_reply_to`. Use it whenever you want to tailor content
   per platform (terse on Twitter, long-form on LinkedIn). The legacy
   `caption + account_ids` shape continues to work and is expanded
   server-side into the same internal representation. (PR5)
