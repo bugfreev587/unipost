@@ -156,6 +156,7 @@ SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, 
 WHERE project_id = $1
   AND platform = 'bluesky'
   AND external_account_id = $2
+  AND connection_type = 'managed'
   AND disconnected_at IS NULL
 LIMIT 1
 `
@@ -168,6 +169,11 @@ type GetManagedBlueskyAccountParams struct {
 // Bluesky-specific upsert lookup. Bluesky allows the same external_user_id
 // to map to multiple handles, so app code looks up by (project_id,
 // external_account_id) — the handle/DID is the unique identity.
+//
+// IMPORTANT: scoped to connection_type='managed' so a project that has
+// the same Bluesky handle connected via BOTH the BYO dashboard flow
+// AND the Sprint 3 Connect flow gets two distinct rows. Without this
+// filter, the Connect form would clobber the existing BYO row.
 func (q *Queries) GetManagedBlueskyAccount(ctx context.Context, arg GetManagedBlueskyAccountParams) (SocialAccount, error) {
 	row := q.db.QueryRow(ctx, getManagedBlueskyAccount, arg.ProjectID, arg.ExternalAccountID)
 	var i SocialAccount
@@ -494,10 +500,11 @@ SET access_token       = $2,
     external_user_id   = $5,
     external_user_email= $6,
     connect_session_id = $7,
+    connection_type    = 'managed',
     status             = 'active',
     disconnected_at    = NULL,
     last_refreshed_at  = NOW()
-WHERE id = $1
+WHERE id = $1 AND connection_type = 'managed'
 RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `
 
@@ -513,6 +520,9 @@ type UpdateManagedBlueskyAccountParams struct {
 
 // Companion to GetManagedBlueskyAccount. Refreshes the encrypted app
 // password and account metadata for an existing Bluesky managed row.
+// WHERE clause defensively requires connection_type='managed' so this
+// can never accidentally clobber a BYO row even if the lookup query
+// regresses.
 func (q *Queries) UpdateManagedBlueskyAccount(ctx context.Context, arg UpdateManagedBlueskyAccountParams) (SocialAccount, error) {
 	row := q.db.QueryRow(ctx, updateManagedBlueskyAccount,
 		arg.ID,

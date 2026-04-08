@@ -89,16 +89,25 @@ RETURNING *;
 -- Bluesky-specific upsert lookup. Bluesky allows the same external_user_id
 -- to map to multiple handles, so app code looks up by (project_id,
 -- external_account_id) — the handle/DID is the unique identity.
+--
+-- IMPORTANT: scoped to connection_type='managed' so a project that has
+-- the same Bluesky handle connected via BOTH the BYO dashboard flow
+-- AND the Sprint 3 Connect flow gets two distinct rows. Without this
+-- filter, the Connect form would clobber the existing BYO row.
 SELECT * FROM social_accounts
 WHERE project_id = $1
   AND platform = 'bluesky'
   AND external_account_id = $2
+  AND connection_type = 'managed'
   AND disconnected_at IS NULL
 LIMIT 1;
 
 -- name: UpdateManagedBlueskyAccount :one
 -- Companion to GetManagedBlueskyAccount. Refreshes the encrypted app
 -- password and account metadata for an existing Bluesky managed row.
+-- WHERE clause defensively requires connection_type='managed' so this
+-- can never accidentally clobber a BYO row even if the lookup query
+-- regresses.
 UPDATE social_accounts
 SET access_token       = $2,
     account_name       = $3,
@@ -106,10 +115,11 @@ SET access_token       = $2,
     external_user_id   = $5,
     external_user_email= $6,
     connect_session_id = $7,
+    connection_type    = 'managed',
     status             = 'active',
     disconnected_at    = NULL,
     last_refreshed_at  = NOW()
-WHERE id = $1
+WHERE id = $1 AND connection_type = 'managed'
 RETURNING *;
 
 -- name: MarkSocialAccountReconnectRequired :exec
