@@ -93,15 +93,16 @@ type SocialAccount struct {
 }
 
 type SocialPost struct {
-	ID          string             `json:"id"`
-	ProjectID   string             `json:"project_id"`
-	Caption     pgtype.Text        `json:"caption"`
-	MediaUrls   []string           `json:"media_urls"`
-	Status      string             `json:"status"`
-	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
-	PublishedAt pgtype.Timestamptz `json:"published_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	Metadata    []byte             `json:"metadata"`
+	ID             string             `json:"id"`
+	ProjectID      string             `json:"project_id"`
+	Caption        pgtype.Text        `json:"caption"`
+	MediaUrls      []string           `json:"media_urls"`
+	Status         string             `json:"status"`
+	ScheduledAt    pgtype.Timestamptz `json:"scheduled_at"`
+	PublishedAt    pgtype.Timestamptz `json:"published_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	Metadata       []byte             `json:"metadata"`
+	IdempotencyKey pgtype.Text        `json:"idempotency_key"`
 }
 
 type SocialPostResult struct {
@@ -112,6 +113,7 @@ type SocialPostResult struct {
 	ExternalID      pgtype.Text        `json:"external_id"`
 	ErrorMessage    pgtype.Text        `json:"error_message"`
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	Caption         string             `json:"caption"`
 }
 
 type Subscription struct {

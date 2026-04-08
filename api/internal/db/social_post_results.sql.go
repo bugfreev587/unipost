@@ -12,14 +12,15 @@ import (
 )
 
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
-INSERT INTO social_post_results (post_id, social_account_id, status, external_id, error_message, published_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at
+INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption
 `
 
 type CreateSocialPostResultParams struct {
 	PostID          string             `json:"post_id"`
 	SocialAccountID string             `json:"social_account_id"`
+	Caption         string             `json:"caption"`
 	Status          string             `json:"status"`
 	ExternalID      pgtype.Text        `json:"external_id"`
 	ErrorMessage    pgtype.Text        `json:"error_message"`
@@ -30,6 +31,7 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 	row := q.db.QueryRow(ctx, createSocialPostResult,
 		arg.PostID,
 		arg.SocialAccountID,
+		arg.Caption,
 		arg.Status,
 		arg.ExternalID,
 		arg.ErrorMessage,
@@ -44,6 +46,7 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		&i.ExternalID,
 		&i.ErrorMessage,
 		&i.PublishedAt,
+		&i.Caption,
 	)
 	return i, err
 }
@@ -58,7 +61,7 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 }
 
 const listSocialPostResultsByPost = `-- name: ListSocialPostResultsByPost :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at FROM social_post_results WHERE post_id = $1
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption FROM social_post_results WHERE post_id = $1
 `
 
 func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string) ([]SocialPostResult, error) {
@@ -78,6 +81,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 			&i.ExternalID,
 			&i.ErrorMessage,
 			&i.PublishedAt,
+			&i.Caption,
 		); err != nil {
 			return nil, err
 		}

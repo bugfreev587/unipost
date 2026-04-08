@@ -14,7 +14,7 @@ import (
 const claimScheduledPost = `-- name: ClaimScheduledPost :one
 UPDATE social_posts SET status = 'publishing'
 WHERE id = $1 AND status = 'scheduled'
-RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata
+RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
 `
 
 func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost, error) {
@@ -30,23 +30,25 @@ func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost
 		&i.PublishedAt,
 		&i.CreatedAt,
 		&i.Metadata,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
 
 const createSocialPost = `-- name: CreateSocialPost :one
-INSERT INTO social_posts (project_id, caption, media_urls, status, metadata, scheduled_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata
+INSERT INTO social_posts (project_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
 `
 
 type CreateSocialPostParams struct {
-	ProjectID   string             `json:"project_id"`
-	Caption     pgtype.Text        `json:"caption"`
-	MediaUrls   []string           `json:"media_urls"`
-	Status      string             `json:"status"`
-	Metadata    []byte             `json:"metadata"`
-	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	ProjectID      string             `json:"project_id"`
+	Caption        pgtype.Text        `json:"caption"`
+	MediaUrls      []string           `json:"media_urls"`
+	Status         string             `json:"status"`
+	Metadata       []byte             `json:"metadata"`
+	ScheduledAt    pgtype.Timestamptz `json:"scheduled_at"`
+	IdempotencyKey pgtype.Text        `json:"idempotency_key"`
 }
 
 func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostParams) (SocialPost, error) {
@@ -57,6 +59,7 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 		arg.Status,
 		arg.Metadata,
 		arg.ScheduledAt,
+		arg.IdempotencyKey,
 	)
 	var i SocialPost
 	err := row.Scan(
@@ -69,6 +72,7 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 		&i.PublishedAt,
 		&i.CreatedAt,
 		&i.Metadata,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -82,8 +86,23 @@ func (q *Queries) DeleteSocialPost(ctx context.Context, id string) error {
 	return err
 }
 
+const expireOldIdempotencyKeys = `-- name: ExpireOldIdempotencyKeys :exec
+UPDATE social_posts
+SET idempotency_key = NULL
+WHERE idempotency_key IS NOT NULL
+  AND created_at <= NOW() - INTERVAL '24 hours'
+`
+
+// Nullifies idempotency_key on rows older than 24h so the partial
+// unique index stays small. Run this from a periodic worker; it's
+// idempotent and safe to run on every tick.
+func (q *Queries) ExpireOldIdempotencyKeys(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, expireOldIdempotencyKeys)
+	return err
+}
+
 const getDueScheduledPosts = `-- name: GetDueScheduledPosts :many
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata FROM social_posts
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
 WHERE status = 'scheduled' AND scheduled_at <= NOW()
 ORDER BY scheduled_at ASC
 LIMIT 100
@@ -108,6 +127,7 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 			&i.PublishedAt,
 			&i.CreatedAt,
 			&i.Metadata,
+			&i.IdempotencyKey,
 		); err != nil {
 			return nil, err
 		}
@@ -120,7 +140,7 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 }
 
 const getScheduledPostsByProject = `-- name: GetScheduledPostsByProject :many
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata FROM social_posts
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
 WHERE project_id = $1 AND status = 'scheduled'
 ORDER BY scheduled_at ASC
 `
@@ -144,6 +164,7 @@ func (q *Queries) GetScheduledPostsByProject(ctx context.Context, projectID stri
 			&i.PublishedAt,
 			&i.CreatedAt,
 			&i.Metadata,
+			&i.IdempotencyKey,
 		); err != nil {
 			return nil, err
 		}
@@ -156,7 +177,7 @@ func (q *Queries) GetScheduledPostsByProject(ctx context.Context, projectID stri
 }
 
 const getSocialPostByIDAndProject = `-- name: GetSocialPostByIDAndProject :one
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata FROM social_posts WHERE id = $1 AND project_id = $2
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts WHERE id = $1 AND project_id = $2
 `
 
 type GetSocialPostByIDAndProjectParams struct {
@@ -177,12 +198,47 @@ func (q *Queries) GetSocialPostByIDAndProject(ctx context.Context, arg GetSocial
 		&i.PublishedAt,
 		&i.CreatedAt,
 		&i.Metadata,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
+const getSocialPostByIdempotencyKey = `-- name: GetSocialPostByIdempotencyKey :one
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
+WHERE project_id = $1
+  AND idempotency_key = $2
+  AND created_at > NOW() - INTERVAL '24 hours'
+`
+
+type GetSocialPostByIdempotencyKeyParams struct {
+	ProjectID      string      `json:"project_id"`
+	IdempotencyKey pgtype.Text `json:"idempotency_key"`
+}
+
+// Returns the row that already used this idempotency key for the
+// project, IF it was created within the 24h conceptual TTL. Beyond
+// that window the index entry is GC'd by a nightly worker, so this
+// query naturally returns no rows.
+func (q *Queries) GetSocialPostByIdempotencyKey(ctx context.Context, arg GetSocialPostByIdempotencyKeyParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, getSocialPostByIdempotencyKey, arg.ProjectID, arg.IdempotencyKey)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
 
 const listSocialPostsByProject = `-- name: ListSocialPostsByProject :many
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata FROM social_posts
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
 WHERE project_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -213,6 +269,7 @@ func (q *Queries) ListSocialPostsByProject(ctx context.Context, arg ListSocialPo
 			&i.PublishedAt,
 			&i.CreatedAt,
 			&i.Metadata,
+			&i.IdempotencyKey,
 		); err != nil {
 			return nil, err
 		}

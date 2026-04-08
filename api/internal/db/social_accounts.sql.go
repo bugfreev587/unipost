@@ -188,14 +188,17 @@ func (q *Queries) GetSocialAccountByIDAndProject(ctx context.Context, arg GetSoc
 	return i, err
 }
 
-const listSocialAccountsByProject = `-- name: ListSocialAccountsByProject :many
+const listAllSocialAccountsByProject = `-- name: ListAllSocialAccountsByProject :many
 SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope FROM social_accounts
-WHERE project_id = $1 AND disconnected_at IS NULL
+WHERE project_id = $1
 ORDER BY connected_at DESC
 `
 
-func (q *Queries) ListSocialAccountsByProject(ctx context.Context, projectID string) ([]SocialAccount, error) {
-	rows, err := q.db.Query(ctx, listSocialAccountsByProject, projectID)
+// Includes disconnected accounts. Used when resolving the platform for
+// historical post results, where the originating account may have been
+// disconnected after publishing.
+func (q *Queries) ListAllSocialAccountsByProject(ctx context.Context, projectID string) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listAllSocialAccountsByProject, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -228,17 +231,14 @@ func (q *Queries) ListSocialAccountsByProject(ctx context.Context, projectID str
 	return items, nil
 }
 
-const listAllSocialAccountsByProject = `-- name: ListAllSocialAccountsByProject :many
+const listSocialAccountsByProject = `-- name: ListSocialAccountsByProject :many
 SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope FROM social_accounts
-WHERE project_id = $1
+WHERE project_id = $1 AND disconnected_at IS NULL
 ORDER BY connected_at DESC
 `
 
-// ListAllSocialAccountsByProject returns every account for a project, including
-// disconnected ones. Used when resolving the platform for historical post
-// results whose originating account may have been disconnected after publish.
-func (q *Queries) ListAllSocialAccountsByProject(ctx context.Context, projectID string) ([]SocialAccount, error) {
-	rows, err := q.db.Query(ctx, listAllSocialAccountsByProject, projectID)
+func (q *Queries) ListSocialAccountsByProject(ctx context.Context, projectID string) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listSocialAccountsByProject, projectID)
 	if err != nil {
 		return nil, err
 	}
