@@ -1,0 +1,383 @@
+package platform
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+// helper that returns a stub Capabilities map sized down to just the
+// platforms each test needs. Tests should NOT pull from the global
+// Capabilities map so the assertions stay decoupled from any real
+// limit changes.
+func stubCapabilities() map[string]Capability {
+	return map[string]Capability{
+		"twitter": {
+			DisplayName: "Twitter / X",
+			Text:        TextCapability{MaxLength: 280},
+			Media: MediaCapability{
+				AllowMixed: false,
+				Images:     ImageCapability{MaxCount: 4},
+				Videos:     VideoCapability{MaxCount: 1},
+			},
+			Thread: ThreadCapability{Supported: true},
+		},
+		"instagram": {
+			DisplayName: "Instagram",
+			Text:        TextCapability{MaxLength: 2200},
+			Media: MediaCapability{
+				RequiresMedia: true,
+				AllowMixed:    true,
+				Images:        ImageCapability{MaxCount: 10},
+				Videos:        VideoCapability{MaxCount: 1},
+			},
+		},
+		"linkedin": {
+			DisplayName: "LinkedIn",
+			Text:        TextCapability{MaxLength: 3000},
+			Media: MediaCapability{
+				AllowMixed: false,
+				Images:     ImageCapability{MaxCount: 9},
+				Videos:     VideoCapability{MaxCount: 1},
+			},
+		},
+		"bluesky": {
+			DisplayName: "Bluesky",
+			Text:        TextCapability{MaxLength: 300},
+			Media: MediaCapability{
+				AllowMixed: false,
+				Images:     ImageCapability{MaxCount: 4},
+				Videos:     VideoCapability{MaxCount: 1},
+			},
+			Thread: ThreadCapability{Supported: true},
+		},
+		"youtube": {
+			DisplayName: "YouTube",
+			Text:        TextCapability{MaxLength: 5000},
+			Media: MediaCapability{
+				RequiresMedia: true,
+				Images:        ImageCapability{MaxCount: 0},
+				Videos:        VideoCapability{MaxCount: 1},
+			},
+		},
+	}
+}
+
+func stubAccounts() map[string]ValidateAccount {
+	return map[string]ValidateAccount{
+		"acc_twitter":   {Platform: "twitter"},
+		"acc_instagram": {Platform: "instagram"},
+		"acc_linkedin":  {Platform: "linkedin"},
+		"acc_bluesky":   {Platform: "bluesky"},
+		"acc_youtube":   {Platform: "youtube"},
+		"acc_dead":      {Platform: "twitter", Disconnected: true},
+		"acc_alien":     {Platform: "myspace"}, // unknown_platform path
+	}
+}
+
+// hasError returns true if the result contains an error matching the
+// given code at the given index. Tests use this in place of asserting
+// the full slice so additional unrelated errors don't cause failures.
+func hasError(t *testing.T, res ValidationResult, idx int, code string) {
+	t.Helper()
+	for _, e := range res.Errors {
+		if e.PlatformPostIndex == idx && e.Code == code {
+			return
+		}
+	}
+	t.Errorf("expected error code %q at index %d, got errors: %#v", code, idx, res.Errors)
+}
+
+func hasNoError(t *testing.T, res ValidationResult, code string) {
+	t.Helper()
+	for _, e := range res.Errors {
+		if e.Code == code {
+			t.Errorf("did not expect error code %q, but found one: %+v", code, e)
+		}
+	}
+}
+
+func validOpts(posts []PlatformPostInput) ValidateOptions {
+	return ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Posts:        posts,
+		Now:          time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+// ─── happy path ───────────────────────────────────────────────────────
+
+func TestValidate_HappyPath(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "hi twitter"},
+		{AccountID: "acc_linkedin", Caption: "hi linkedin", MediaURLs: []string{"https://x/y.jpg"}},
+	}))
+	if !res.Valid {
+		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("unexpected warnings: %#v", res.Warnings)
+	}
+}
+
+// ─── empty / oversized request ────────────────────────────────────────
+
+func TestValidate_EmptyPosts(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts(nil))
+	if res.Valid {
+		t.Fatal("expected invalid")
+	}
+	if res.Errors[0].Code != CodeEmptyPosts {
+		t.Errorf("expected empty_posts, got %q", res.Errors[0].Code)
+	}
+}
+
+func TestValidate_TooManyPosts(t *testing.T) {
+	posts := make([]PlatformPostInput, MaxPlatformPosts+1)
+	for i := range posts {
+		posts[i] = PlatformPostInput{AccountID: "acc_twitter", Caption: "x"}
+	}
+	res := ValidatePlatformPosts(validOpts(posts))
+	if res.Valid {
+		t.Fatal("expected invalid")
+	}
+	hasError(t, res, 0, CodeTooManyPosts)
+}
+
+// ─── account resolution errors ────────────────────────────────────────
+
+func TestValidate_AccountNotFound(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "", Caption: "hi"},
+	}))
+	hasError(t, res, 0, CodeAccountNotFound)
+}
+
+func TestValidate_AccountNotInProject(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_someone_else", Caption: "hi"},
+	}))
+	hasError(t, res, 0, CodeAccountNotInProject)
+}
+
+func TestValidate_UnknownPlatform(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_alien", Caption: "hi"},
+	}))
+	hasError(t, res, 0, CodeUnknownPlatform)
+}
+
+func TestValidate_AccountDisconnected(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_dead", Caption: "hi"},
+	}))
+	hasError(t, res, 0, CodeAccountDisconnected)
+}
+
+// ─── caption length ───────────────────────────────────────────────────
+
+func TestValidate_ExceedsMaxLength(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: strings.Repeat("a", 281)},
+	}))
+	hasError(t, res, 0, CodeExceedsMaxLength)
+}
+
+func TestValidate_BelowMinLength(t *testing.T) {
+	caps := stubCapabilities()
+	tw := caps["twitter"]
+	tw.Text.MinLength = 5
+	caps["twitter"] = tw
+
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: caps,
+		Accounts:     stubAccounts(),
+		Posts:        []PlatformPostInput{{AccountID: "acc_twitter", Caption: "hi"}},
+		Now:          time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+	hasError(t, res, 0, CodeBelowMinLength)
+}
+
+func TestValidate_CaptionMissingRequired(t *testing.T) {
+	caps := stubCapabilities()
+	tw := caps["twitter"]
+	tw.Text.Required = true
+	caps["twitter"] = tw
+
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: caps,
+		Accounts:     stubAccounts(),
+		Posts:        []PlatformPostInput{{AccountID: "acc_twitter", Caption: ""}},
+		Now:          time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+	hasError(t, res, 0, CodeMissingRequired)
+}
+
+// ─── media count + mixing ─────────────────────────────────────────────
+
+func TestValidate_RequiresMedia(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_instagram", Caption: "hi"},
+	}))
+	hasError(t, res, 0, CodeMissingRequired)
+}
+
+func TestValidate_MaxImagesExceeded(t *testing.T) {
+	urls := make([]string, 5)
+	for i := range urls {
+		urls[i] = "https://x/img.jpg"
+	}
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "hi", MediaURLs: urls},
+	}))
+	hasError(t, res, 0, CodeMaxImagesExceeded)
+}
+
+func TestValidate_ImagesNotSupported(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_youtube", Caption: "hi", MediaURLs: []string{"https://x/img.jpg"}},
+	}))
+	// YouTube has Images.MaxCount = 0, so any image trips the same code.
+	hasError(t, res, 0, CodeMaxImagesExceeded)
+}
+
+func TestValidate_MaxVideosExceeded(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "hi", MediaURLs: []string{
+			"https://x/a.mp4",
+			"https://x/b.mp4",
+		}},
+	}))
+	hasError(t, res, 0, CodeMaxVideosExceeded)
+}
+
+func TestValidate_MixedMediaUnsupported(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "hi", MediaURLs: []string{
+			"https://x/img.jpg",
+			"https://x/clip.mp4",
+		}},
+	}))
+	hasError(t, res, 0, CodeMixedMediaUnsupported)
+}
+
+func TestValidate_MixedAllowedOnInstagramCarousel(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_instagram", Caption: "hi", MediaURLs: []string{
+			"https://x/img.jpg",
+			"https://x/clip.mp4",
+		}},
+	}))
+	hasNoError(t, res, CodeMixedMediaUnsupported)
+}
+
+// ─── threading ────────────────────────────────────────────────────────
+
+func TestValidate_UnsupportedInReplyTo(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_instagram", Caption: "hi", MediaURLs: []string{"https://x/img.jpg"}, InReplyTo: "ig_post_123"},
+	}))
+	hasError(t, res, 0, CodeUnsupportedInReplyTo)
+}
+
+func TestValidate_InReplyToOKOnTwitter(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "hi", InReplyTo: "tweet_123"},
+	}))
+	hasNoError(t, res, CodeUnsupportedInReplyTo)
+}
+
+// ─── scheduling ───────────────────────────────────────────────────────
+
+func TestValidate_ScheduledTooSoon(t *testing.T) {
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	soon := now.Add(5 * time.Second)
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Posts:        []PlatformPostInput{{AccountID: "acc_twitter", Caption: "hi"}},
+		ScheduledAt:  &soon,
+		Now:          now,
+	})
+	if res.Valid {
+		t.Fatal("expected invalid")
+	}
+	found := false
+	for _, e := range res.Errors {
+		if e.Code == CodeScheduledTooSoon {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected scheduled_too_soon, got %#v", res.Errors)
+	}
+}
+
+func TestValidate_ScheduledTooFar(t *testing.T) {
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	far := now.Add(200 * 24 * time.Hour)
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Posts:        []PlatformPostInput{{AccountID: "acc_twitter", Caption: "hi"}},
+		ScheduledAt:  &far,
+		Now:          now,
+	})
+	found := false
+	for _, e := range res.Errors {
+		if e.Code == CodeScheduledTooFar {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected scheduled_too_far, got %#v", res.Errors)
+	}
+}
+
+// ─── warnings ─────────────────────────────────────────────────────────
+
+func TestValidate_LinkedInTextOnlyWarning(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_linkedin", Caption: "no media here"},
+	}))
+	if !res.Valid {
+		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("expected at least one warning")
+	}
+	if res.Warnings[0].Code != "low_engagement_likely" {
+		t.Errorf("unexpected warning code: %s", res.Warnings[0].Code)
+	}
+}
+
+// ─── multi-post determinism ───────────────────────────────────────────
+
+func TestValidate_MultiplePostsReportAllErrors(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: strings.Repeat("a", 999)}, // exceeds_max_length
+		{AccountID: "acc_instagram", Caption: "no media"},             // missing_required (media)
+		{AccountID: "acc_someone_else", Caption: "x"},                 // account_not_in_project
+	}))
+	hasError(t, res, 0, CodeExceedsMaxLength)
+	hasError(t, res, 1, CodeMissingRequired)
+	hasError(t, res, 2, CodeAccountNotInProject)
+}
+
+// ─── benchmark for the §5.4 p95 < 50ms requirement ────────────────────
+
+func BenchmarkValidate(b *testing.B) {
+	posts := []PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "hi twitter"},
+		{AccountID: "acc_instagram", Caption: "hi ig", MediaURLs: []string{"https://x/y.jpg"}},
+		{AccountID: "acc_linkedin", Caption: "hi linkedin", MediaURLs: []string{"https://x/y.jpg"}},
+		{AccountID: "acc_bluesky", Caption: "hi bsky"},
+	}
+	opts := validOpts(posts)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ValidatePlatformPosts(opts)
+	}
+}
