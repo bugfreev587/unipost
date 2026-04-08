@@ -209,10 +209,15 @@ func main() {
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
+	platformHandler := handler.NewPlatformHandler(queries)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
 	r.Get("/v1/plans", billingHandler.ListPlans)
+	// Platform capabilities map — public, cacheable, no auth.
+	// LLM clients use this BEFORE generating drafts to know each
+	// platform's caption / media limits. See AGENTPOST_HANDOFF §7.2.
+	r.Get("/v1/platforms/capabilities", platformHandler.GetGlobalCapabilities)
 
 	// Webhook routes (no API key auth, verified by signatures)
 	r.Post("/webhooks/clerk", webhookHandler.HandleClerk)
@@ -273,6 +278,10 @@ func main() {
 		r.Get("/v1/social-accounts", socialAccountHandler.List)
 		r.Post("/v1/social-accounts/connect", socialAccountHandler.Connect)
 		r.Delete("/v1/social-accounts/{id}", socialAccountHandler.Disconnect)
+		// Per-account capability lookup. Returns the platform's
+		// capability scoped to one account; falls back to platform
+		// defaults until Sprint 2 adds account-specific overrides.
+		r.Get("/v1/social-accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
 
 		r.Get("/v1/social-posts", socialPostHandler.List)
 		r.Post("/v1/social-posts", socialPostHandler.Create)
