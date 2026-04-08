@@ -9,8 +9,27 @@ SELECT * FROM webhooks WHERE project_id = $1 AND active = true;
 -- name: GetWebhook :one
 SELECT * FROM webhooks WHERE id = $1;
 
+-- name: GetWebhookByIDAndProject :one
+SELECT * FROM webhooks WHERE id = $1 AND project_id = $2;
+
 -- name: DeleteWebhook :exec
 UPDATE webhooks SET active = false WHERE id = $1 AND project_id = $2;
+
+-- name: HardDeleteWebhook :exec
+DELETE FROM webhooks WHERE id = $1 AND project_id = $2;
+
+-- name: UpdateWebhookURLEventsActive :one
+UPDATE webhooks
+SET url    = $3,
+    events = $4,
+    active = $5
+WHERE id = $1 AND project_id = $2
+RETURNING *;
+
+-- name: RotateWebhookSecret :one
+UPDATE webhooks SET secret = $3
+WHERE id = $1 AND project_id = $2
+RETURNING *;
 
 -- name: ListWebhooksByProjectAndEvent :many
 SELECT * FROM webhooks

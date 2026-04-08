@@ -303,6 +303,10 @@ func main() {
 
 		r.Post("/v1/webhooks", webhookSubHandler.Create)
 		r.Get("/v1/webhooks", webhookSubHandler.List)
+		r.Get("/v1/webhooks/{id}", webhookSubHandler.Get)
+		r.Patch("/v1/webhooks/{id}", webhookSubHandler.Update)
+		r.Delete("/v1/webhooks/{id}", webhookSubHandler.Delete)
+		r.Post("/v1/webhooks/{id}/rotate", webhookSubHandler.Rotate)
 
 		r.Get("/v1/oauth/connect/{platform}", oauthHandler.Connect)
 		r.Get("/v1/usage", billingHandler.GetUsage)

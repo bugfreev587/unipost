@@ -143,6 +143,44 @@ func (q *Queries) GetWebhook(ctx context.Context, id string) (Webhook, error) {
 	return i, err
 }
 
+const getWebhookByIDAndProject = `-- name: GetWebhookByIDAndProject :one
+SELECT id, project_id, url, secret, events, active, created_at FROM webhooks WHERE id = $1 AND project_id = $2
+`
+
+type GetWebhookByIDAndProjectParams struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+}
+
+func (q *Queries) GetWebhookByIDAndProject(ctx context.Context, arg GetWebhookByIDAndProjectParams) (Webhook, error) {
+	row := q.db.QueryRow(ctx, getWebhookByIDAndProject, arg.ID, arg.ProjectID)
+	var i Webhook
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Url,
+		&i.Secret,
+		&i.Events,
+		&i.Active,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const hardDeleteWebhook = `-- name: HardDeleteWebhook :exec
+DELETE FROM webhooks WHERE id = $1 AND project_id = $2
+`
+
+type HardDeleteWebhookParams struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+}
+
+func (q *Queries) HardDeleteWebhook(ctx context.Context, arg HardDeleteWebhookParams) error {
+	_, err := q.db.Exec(ctx, hardDeleteWebhook, arg.ID, arg.ProjectID)
+	return err
+}
+
 const listWebhooksByProject = `-- name: ListWebhooksByProject :many
 SELECT id, project_id, url, secret, events, active, created_at FROM webhooks WHERE project_id = $1 AND active = true
 `
@@ -213,6 +251,33 @@ func (q *Queries) ListWebhooksByProjectAndEvent(ctx context.Context, arg ListWeb
 	return items, nil
 }
 
+const rotateWebhookSecret = `-- name: RotateWebhookSecret :one
+UPDATE webhooks SET secret = $3
+WHERE id = $1 AND project_id = $2
+RETURNING id, project_id, url, secret, events, active, created_at
+`
+
+type RotateWebhookSecretParams struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Secret    string `json:"secret"`
+}
+
+func (q *Queries) RotateWebhookSecret(ctx context.Context, arg RotateWebhookSecretParams) (Webhook, error) {
+	row := q.db.QueryRow(ctx, rotateWebhookSecret, arg.ID, arg.ProjectID, arg.Secret)
+	var i Webhook
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Url,
+		&i.Secret,
+		&i.Events,
+		&i.Active,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updateWebhookDelivery = `-- name: UpdateWebhookDelivery :exec
 UPDATE webhook_deliveries
 SET status_code = $2, attempts = $3, next_retry_at = $4, delivered_at = $5
@@ -236,4 +301,42 @@ func (q *Queries) UpdateWebhookDelivery(ctx context.Context, arg UpdateWebhookDe
 		arg.DeliveredAt,
 	)
 	return err
+}
+
+const updateWebhookURLEventsActive = `-- name: UpdateWebhookURLEventsActive :one
+UPDATE webhooks
+SET url    = $3,
+    events = $4,
+    active = $5
+WHERE id = $1 AND project_id = $2
+RETURNING id, project_id, url, secret, events, active, created_at
+`
+
+type UpdateWebhookURLEventsActiveParams struct {
+	ID        string   `json:"id"`
+	ProjectID string   `json:"project_id"`
+	Url       string   `json:"url"`
+	Events    []string `json:"events"`
+	Active    bool     `json:"active"`
+}
+
+func (q *Queries) UpdateWebhookURLEventsActive(ctx context.Context, arg UpdateWebhookURLEventsActiveParams) (Webhook, error) {
+	row := q.db.QueryRow(ctx, updateWebhookURLEventsActive,
+		arg.ID,
+		arg.ProjectID,
+		arg.Url,
+		arg.Events,
+		arg.Active,
+	)
+	var i Webhook
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Url,
+		&i.Secret,
+		&i.Events,
+		&i.Active,
+		&i.CreatedAt,
+	)
+	return i, err
 }
