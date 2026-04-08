@@ -55,7 +55,7 @@ func TestLinkedInExchangeCode_HappyPath(t *testing.T) {
 		if _, _, ok := r.BasicAuth(); ok {
 			t.Error("LinkedIn must NOT use HTTP basic auth")
 		}
-		_, _ = io.WriteString(w, `{"access_token":"AT-1","expires_in":5184000,"refresh_token":"RT-1","refresh_token_expires_in":31536000,"scope":"w_member_social,r_liteprofile,openid,profile,email"}`)
+		_, _ = io.WriteString(w, `{"access_token":"AT-1","expires_in":5184000,"refresh_token":"RT-1","refresh_token_expires_in":31536000,"scope":"openid,profile,email,w_member_social"}`)
 	}))
 	defer mock.Close()
 
@@ -69,7 +69,7 @@ func TestLinkedInExchangeCode_HappyPath(t *testing.T) {
 	if tokens.AccessToken != "AT-1" || tokens.RefreshToken != "RT-1" {
 		t.Errorf("tokens: %+v", tokens)
 	}
-	if len(tokens.Scopes) != 5 {
+	if len(tokens.Scopes) != 4 {
 		t.Errorf("scopes (CSV-split): %v", tokens.Scopes)
 	}
 }
@@ -128,5 +128,18 @@ func TestLinkedInScopes_NoMarketingTier(t *testing.T) {
 		if strings.Contains(linkedinScopes, banned) {
 			t.Errorf("must not request gated scope %s — Sign In with LinkedIn OIDC tier only", banned)
 		}
+	}
+	// Sprint 3 PR4 hotfix: r_liteprofile was the legacy v1 scope
+	// before LinkedIn migrated this product to OIDC. Requesting it
+	// now triggers "Scope r_liteprofile is not authorized for your
+	// application". The replacement is the OIDC `profile` scope.
+	if strings.Contains(linkedinScopes, "r_liteprofile") {
+		t.Error("must not request r_liteprofile — use OIDC `profile` scope instead")
+	}
+	// Lock the exact scope set so future edits stay in sync with
+	// what the OIDC product actually grants.
+	wantScopes := "openid profile email w_member_social"
+	if linkedinScopes != wantScopes {
+		t.Errorf("linkedinScopes drift: got %q, want %q", linkedinScopes, wantScopes)
 	}
 }

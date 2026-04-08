@@ -142,20 +142,35 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	errParam := r.URL.Query().Get("error")
 	errDesc := r.URL.Query().Get("error_description")
 
-	// User cancellation — twitter / linkedin redirect with
-	// ?error=access_denied. Don't surface this as a 500.
+	// OAuth provider returned an error. The most common is
+	// access_denied (user clicked "Cancel" on the consent screen),
+	// but other errors include unauthorized_scope, invalid_request,
+	// etc. Distinguish access_denied (truly cancelled) from real
+	// errors so the customer's app sees the right connect_status.
 	if errParam != "" {
-		// Best-effort: try to find the session via state so we can
-		// mark it cancelled and redirect to return_url. If we can't,
-		// fall through to a generic cancelled page.
+		status := "error"
+		if errParam == "access_denied" {
+			status = "cancelled"
+		}
+		// Best-effort: find the session via state so we can flip
+		// it to the right terminal state and redirect to return_url.
 		if state != "" {
 			if sess, err := h.queries.GetConnectSessionByOAuthState(r.Context(), state); err == nil {
-				_, _ = h.queries.MarkConnectSessionCancelled(r.Context(), sess.ID)
-				h.redirectWithStatus(w, r, sess.ReturnUrl.String, "cancelled", errDesc)
+				if status == "cancelled" {
+					_, _ = h.queries.MarkConnectSessionCancelled(r.Context(), sess.ID)
+				}
+				// For non-access_denied errors we leave the session
+				// in 'pending' so the user can retry with the same
+				// link if the issue is fixable (e.g. transient).
+				reason := errDesc
+				if reason == "" {
+					reason = errParam
+				}
+				h.redirectWithStatus(w, r, sess.ReturnUrl.String, status, reason)
 				return
 			}
 		}
-		renderConnectError(w, http.StatusOK, "Connection cancelled.")
+		renderConnectError(w, http.StatusOK, "Connection failed: "+errParam)
 		return
 	}
 

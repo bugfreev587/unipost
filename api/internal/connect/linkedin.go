@@ -2,16 +2,19 @@
 // without PKCE. LinkedIn's standard authorization-code flow only
 // uses `state` for CSRF — there's no PKCE challenge.
 //
-// Scopes (Sprint 3): w_member_social r_liteprofile openid profile email.
+// Scopes (Sprint 3): openid profile email w_member_social.
 //
 //   - w_member_social → post on the user's behalf
-//   - r_liteprofile / openid / profile / email → read the user's
-//     basic identity for the social_accounts row
+//   - openid / profile / email → read the user's basic identity
+//     for the social_accounts row via /v2/userinfo
 //
 // All four are part of LinkedIn's "Sign In with LinkedIn using
 // OpenID Connect" product, which is instant-approval in the
-// Developer Portal. Higher-tier scopes (Marketing Developer Platform
-// etc.) require an approval review and are NOT requested here.
+// Developer Portal. The legacy r_liteprofile scope was REMOVED from
+// LinkedIn's allowlist when they migrated this product to OIDC —
+// requesting it now triggers "Scope r_liteprofile is not authorized
+// for your application". Higher-tier scopes (Marketing Developer
+// Platform, etc.) require manual review and are not requested here.
 //
 // Token lifetimes: access tokens are valid for 60 days, refresh
 // tokens for ~1 year. Refresh tokens are NOT rotated — the same
@@ -36,7 +39,7 @@ const (
 	linkedinTokenEndpoint     = "https://www.linkedin.com/oauth/v2/accessToken"
 	linkedinUserinfoEndpoint  = "https://api.linkedin.com/v2/userinfo"
 
-	linkedinScopes = "w_member_social r_liteprofile openid profile email"
+	linkedinScopes = "openid profile email w_member_social"
 )
 
 // LinkedInConnector is the OAuth 2.0 Connector for LinkedIn.
