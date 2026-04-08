@@ -285,6 +285,10 @@ func main() {
 
 		r.Get("/v1/social-posts", socialPostHandler.List)
 		r.Post("/v1/social-posts", socialPostHandler.Create)
+		// Pure preflight — runs the same checks Create() will run, but
+		// without writing rows or hitting platform APIs. LLM clients
+		// call this BEFORE publish to self-correct draft errors.
+		r.Post("/v1/social-posts/validate", socialPostHandler.Validate)
 		r.Get("/v1/social-posts/{id}", socialPostHandler.Get)
 		r.Get("/v1/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
 		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
