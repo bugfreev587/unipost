@@ -11,6 +11,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelSocialPost = `-- name: CancelSocialPost :one
+UPDATE social_posts
+SET status = 'cancelled'
+WHERE id = $1 AND project_id = $2 AND status IN ('draft', 'scheduled')
+RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+`
+
+type CancelSocialPostParams struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+}
+
+// Sprint 3 PR8: POST /v1/social-posts/{id}/cancel. Allowed for drafts
+// and scheduled posts; anything else is in-flight or already done and
+// cannot be cancelled. Same optimistic lock pattern as the publish
+// transition. Cancelled rows are filtered out by the scheduler's
+// WHERE status='scheduled' clause on the next tick.
+func (q *Queries) CancelSocialPost(ctx context.Context, arg CancelSocialPostParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, cancelSocialPost, arg.ID, arg.ProjectID)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
 const claimDraftForPublish = `-- name: ClaimDraftForPublish :one
 UPDATE social_posts
 SET status = 'publishing'
@@ -432,6 +467,41 @@ func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPos
 		return nil, err
 	}
 	return items, nil
+}
+
+const rescheduleSocialPost = `-- name: RescheduleSocialPost :one
+UPDATE social_posts
+SET scheduled_at = $3
+WHERE id = $1 AND project_id = $2 AND status = 'scheduled'
+RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+`
+
+type RescheduleSocialPostParams struct {
+	ID          string             `json:"id"`
+	ProjectID   string             `json:"project_id"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+}
+
+// Sprint 3 PR8: PATCH /v1/social-posts/{id} for status='scheduled' rows.
+// Only scheduled_at is editable in this state. Optimistic-locked on
+// status='scheduled' so a row that just flipped to 'publishing' (or
+// already published) loses cleanly with pgx.ErrNoRows → 409.
+func (q *Queries) RescheduleSocialPost(ctx context.Context, arg RescheduleSocialPostParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, rescheduleSocialPost, arg.ID, arg.ProjectID, arg.ScheduledAt)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+	)
+	return i, err
 }
 
 const updateDraftContent = `-- name: UpdateDraftContent :one

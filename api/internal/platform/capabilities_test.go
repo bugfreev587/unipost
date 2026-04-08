@@ -68,6 +68,22 @@ func TestCapabilitiesJSONShape(t *testing.T) {
 	}
 }
 
+// TestCapabilitiesSchemaVersion locks the version string so a refactor
+// can't silently de-bump it. The docs page hardcodes this value in an
+// example response, so a drift would lie to readers.
+func TestCapabilitiesSchemaVersion(t *testing.T) {
+	if CapabilitiesSchemaVersion != "1.2" {
+		t.Errorf("CapabilitiesSchemaVersion must be 1.2 in Sprint 3, got %s", CapabilitiesSchemaVersion)
+	}
+}
+
+// TestBlueskySupportsThreads — Sprint 3 PR8 flipped this. Lock it.
+func TestBlueskySupportsThreads(t *testing.T) {
+	if !Capabilities["bluesky"].Text.SupportsThreads {
+		t.Error("bluesky.text.supports_threads must be true after Sprint 3 PR8")
+	}
+}
+
 // TestCapabilityFor exercises the case-insensitivity contract — the
 // callers (handler + validate) lower-case the platform name before
 // lookup, so the map keys must be lowercase.

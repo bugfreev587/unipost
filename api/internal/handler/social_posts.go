@@ -544,25 +544,33 @@ func (h *SocialPostHandler) runDispatchGroup(
 	accountMap map[string]platform.ValidateAccount,
 	outcomes []publishOneOutcome,
 ) {
-	var prevExternalID string
+	// threadState carries per-platform thread plumbing across iterations.
+	// Twitter only needs the previous tweet id; Bluesky needs root URI+CID
+	// (frozen after post 1) and parent URI+CID (updated each iteration).
+	// Other platforms ignore everything in here.
+	var (
+		prevExternalID  string // twitter
+		rootURI, rootCID, parentURI, parentCID string // bluesky
+	)
 	for chainIdx, postIdx := range groupIndices {
 		pp := posts[postIdx]
 
-		// For threaded posts after the first, inject the previous
-		// tweet's external_id into the per-post opts so the adapter
-		// can attach a reply.in_reply_to_tweet_id to the API call.
-		if chainIdx > 0 && prevExternalID != "" {
-			if pp.PlatformOptions == nil {
-				pp.PlatformOptions = make(map[string]any)
-			} else {
-				// Copy so we don't mutate the caller's map.
-				clone := make(map[string]any, len(pp.PlatformOptions)+1)
-				for k, v := range pp.PlatformOptions {
-					clone[k] = v
-				}
-				pp.PlatformOptions = clone
+		if chainIdx > 0 {
+			// Copy opts so we don't mutate the caller's map.
+			clone := make(map[string]any, len(pp.PlatformOptions)+4)
+			for k, v := range pp.PlatformOptions {
+				clone[k] = v
 			}
-			pp.PlatformOptions["in_reply_to_tweet_id"] = prevExternalID
+			if prevExternalID != "" {
+				clone["in_reply_to_tweet_id"] = prevExternalID
+			}
+			if rootURI != "" {
+				clone["thread_root_uri"] = rootURI
+				clone["thread_root_cid"] = rootCID
+				clone["thread_parent_uri"] = parentURI
+				clone["thread_parent_cid"] = parentCID
+			}
+			pp.PlatformOptions = clone
 		}
 
 		oc := h.publishOne(r, pp, dbAccounts, accountMap)
@@ -575,9 +583,9 @@ func (h *SocialPostHandler) runDispatchGroup(
 			for skipIdx := chainIdx + 1; skipIdx < len(groupIndices); skipIdx++ {
 				skipPost := posts[groupIndices[skipIdx]]
 				outcomes[groupIndices[skipIdx]] = publishOneOutcome{
-					platform: oc.platform,
+					platform:    oc.platform,
 					accountName: oc.accountName,
-					err:      fmt.Errorf("upstream thread post failed at thread_position %d: %w", pp.ThreadPosition, oc.err),
+					err:         fmt.Errorf("upstream thread post failed at thread_position %d: %w", pp.ThreadPosition, oc.err),
 				}
 				_ = skipPost // unused but kept for clarity in case we add per-skip logging later
 			}
@@ -585,6 +593,12 @@ func (h *SocialPostHandler) runDispatchGroup(
 		}
 		if oc.result != nil {
 			prevExternalID = oc.result.ExternalID
+			parentURI = oc.result.ExternalID
+			parentCID = oc.result.CID
+			if chainIdx == 0 {
+				rootURI = oc.result.ExternalID
+				rootCID = oc.result.CID
+			}
 		}
 	}
 }

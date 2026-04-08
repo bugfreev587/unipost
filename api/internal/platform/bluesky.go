@@ -87,8 +87,13 @@ func (b *BlueskyAdapter) Connect(ctx context.Context, credentials map[string]str
 }
 
 // Post publishes a text post (with optional images) to Bluesky.
+//
+// Threading (Sprint 3 PR8): when opts carries thread_root_uri /
+// thread_root_cid / thread_parent_uri / thread_parent_cid, the post
+// is published as a reply in an AT-proto thread. The orchestrator in
+// social_posts.go is responsible for plumbing those keys after each
+// successful post in a thread group — the adapter only reads them.
 func (b *BlueskyAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
-	_ = opts // bluesky has no per-post options today
 	did, err := parseJWTSub(accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse DID from token: %w", err)
@@ -99,6 +104,23 @@ func (b *BlueskyAdapter) Post(ctx context.Context, accessToken string, text stri
 		"$type":     "app.bsky.feed.post",
 		"text":      text,
 		"createdAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	// Thread reply chain. AT-proto requires BOTH root and parent —
+	// root is frozen at the first post in the thread, parent updates
+	// after every iteration. The orchestrator sets all four keys.
+	if rootURI := optString(opts, "thread_root_uri"); rootURI != "" {
+		rootCID := optString(opts, "thread_root_cid")
+		parentURI := optString(opts, "thread_parent_uri")
+		parentCID := optString(opts, "thread_parent_cid")
+		if parentURI == "" {
+			parentURI = rootURI
+			parentCID = rootCID
+		}
+		record["reply"] = map[string]any{
+			"root":   map[string]any{"uri": rootURI, "cid": rootCID},
+			"parent": map[string]any{"uri": parentURI, "cid": parentCID},
+		}
 	}
 
 	// Split media into images vs. video — Bluesky requires distinct embed
@@ -190,6 +212,7 @@ func (b *BlueskyAdapter) Post(ctx context.Context, accessToken string, text stri
 	return &PostResult{
 		ExternalID: result.URI,
 		URL:        publicURL,
+		CID:        result.CID,
 	}, nil
 }
 

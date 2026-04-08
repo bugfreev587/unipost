@@ -113,9 +113,14 @@ type ConnectResult struct {
 }
 
 // PostResult holds the result of publishing a post.
+//
+// CID is Bluesky-specific: AT-proto threads require both the URI and
+// the content-addressed CID of the parent + root posts in the
+// record.reply field. Other platforms leave it empty.
 type PostResult struct {
 	ExternalID string // Platform-specific post ID
 	URL        string // Public URL to view the post
+	CID        string // Content hash; populated only by Bluesky for threading
 }
 
 // PostMetrics holds unified analytics metrics across all platforms.

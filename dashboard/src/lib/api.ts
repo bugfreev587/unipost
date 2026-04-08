@@ -302,6 +302,28 @@ export async function createSocialPost(
   });
 }
 
+// Sprint 3 PR8: reschedule a scheduled post (only scheduled_at editable).
+export async function rescheduleSocialPost(
+  token: string,
+  postId: string,
+  scheduledAt: string
+): Promise<ApiResponse<SocialPost>> {
+  return request(`/v1/social-posts/${postId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ scheduled_at: scheduledAt }),
+  });
+}
+
+// Sprint 3 PR8: cancel a draft or scheduled post.
+export async function cancelSocialPost(
+  token: string,
+  postId: string
+): Promise<ApiResponse<SocialPost>> {
+  return request(`/v1/social-posts/${postId}/cancel`, token, {
+    method: "POST",
+  });
+}
+
 // Analytics
 
 export interface PostAnalytics {

@@ -27,7 +27,10 @@ package platform
 //
 // 1.0 → 1.1 (Sprint 2): added TextCapability.SupportsThreads. Old
 // 1.0 consumers ignore the unknown field, so this is purely additive.
-const CapabilitiesSchemaVersion = "1.1"
+// 1.1 → 1.2 (Sprint 3): flipped bluesky.text.supports_threads to true
+// after the orchestrator gained AT-proto root+parent reply plumbing.
+// Field set unchanged — same purely-additive contract.
+const CapabilitiesSchemaVersion = "1.2"
 
 // Capability is the full set of post-creation rules for one platform.
 // Clients hit GET /v1/platforms/capabilities to fetch the whole map.
@@ -285,9 +288,10 @@ var Capabilities = map[string]Capability{
 	"bluesky": {
 		DisplayName: "Bluesky",
 		Text: TextCapability{
-			MaxLength: 300,
-			MinLength: 0,
-			Required:  false,
+			MaxLength:       300,
+			MinLength:       0,
+			Required:        false,
+			SupportsThreads: true, // Sprint 3 PR8: AT-proto root+parent reply plumbing
 		},
 		Media: MediaCapability{
 			RequiresMedia: false,

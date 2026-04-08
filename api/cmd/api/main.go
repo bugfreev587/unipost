@@ -334,6 +334,9 @@ func main() {
 		// path uses.
 		r.Post("/v1/social-posts/{id}/publish", socialPostHandler.PublishDraft)
 		r.Patch("/v1/social-posts/{id}", socialPostHandler.UpdateDraft)
+		// Sprint 3 PR8: cancel a draft or scheduled post. Optimistic-locked
+		// to lose cleanly against a concurrent publish flip.
+		r.Post("/v1/social-posts/{id}/cancel", socialPostHandler.CancelPost)
 		// Hosted preview link (Sprint 2). Returns a 24h JWT-signed
 		// URL the caller can share without exposing the API key.
 		r.Post("/v1/social-posts/{id}/preview-link", previewHandler.CreateLink)

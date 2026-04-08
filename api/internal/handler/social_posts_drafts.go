@@ -190,9 +190,95 @@ func (h *SocialPostHandler) rollbackToDraft(r *http.Request, postID string) erro
 	})
 }
 
-// UpdateDraft handles PATCH /v1/social-posts/{id}. Replaces the
-// draft's platform_posts / scheduled_at in one shot. Refuses to touch
-// non-draft rows (the SQL query has the same WHERE clause for safety).
+// reschedulePost handles the PATCH branch where the post is in
+// status='scheduled'. Only scheduled_at is editable; the body must
+// carry a future RFC3339 timestamp. Optimistic-locked: if the row
+// already flipped to 'publishing' between the read and the write
+// the UPDATE returns no rows and we 409.
+func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Request, projectID string, postID string) {
+	var body struct {
+		ScheduledAt *string `json:"scheduled_at"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	if body.ScheduledAt == nil || *body.ScheduledAt == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+			"scheduled_at is required when rescheduling a scheduled post")
+		return
+	}
+	t, err := time.Parse(time.RFC3339, *body.ScheduledAt)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+			"invalid scheduled_at: "+err.Error())
+		return
+	}
+	// Buffer so the scheduler tick (which fires every minute) reliably
+	// catches the new time without a race.
+	if t.Before(time.Now().Add(60 * time.Second)) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+			"scheduled_at must be at least 60 seconds in the future")
+		return
+	}
+
+	updated, err := h.queries.RescheduleSocialPost(r.Context(), db.RescheduleSocialPostParams{
+		ID:          postID,
+		ProjectID:   projectID,
+		ScheduledAt: pgtype.Timestamptz{Time: t, Valid: true},
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusConflict, "CONFLICT",
+				"Post is no longer scheduled (already publishing or published)")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reschedule post")
+		return
+	}
+	writeSuccess(w, socialPostResponseFromRow(updated))
+}
+
+// CancelPost handles POST /v1/social-posts/{id}/cancel. Allowed for
+// drafts and scheduled posts. Optimistic-locked the same way as
+// reschedule. Cancelled rows are filtered out by the scheduler's
+// WHERE status='scheduled' clause on the next tick — no further
+// action required. No webhook fired (cancellation is a customer
+// action, not a platform event).
+func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
+	projectID := auth.GetProjectID(r.Context())
+	if projectID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+		return
+	}
+	postID := chi.URLParam(r, "id")
+
+	cancelled, err := h.queries.CancelSocialPost(r.Context(), db.CancelSocialPostParams{
+		ID:        postID,
+		ProjectID: projectID,
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusConflict, "CONFLICT",
+				"Post cannot be cancelled (not a draft or scheduled post in this project)")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel post")
+		return
+	}
+	writeSuccess(w, socialPostResponseFromRow(cancelled))
+}
+
+// UpdateDraft handles PATCH /v1/social-posts/{id} for both drafts and
+// scheduled posts. The state machine:
+//
+//   - status='draft'     → caption / media / metadata / scheduled_at all editable
+//   - status='scheduled' → ONLY scheduled_at editable (Sprint 3 PR8)
+//   - any other status   → 409 (already publishing or done)
+//
+// The two paths use different SQL queries with their own optimistic
+// locks so a row that flipped to 'publishing' between the read and
+// the write loses cleanly.
 func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) {
 	projectID := auth.GetProjectID(r.Context())
 	if projectID == "" {
@@ -200,6 +286,30 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	postID := chi.URLParam(r, "id")
+
+	// Read current state once. We don't trust this for the actual
+	// write — the locked UPDATE below has its own WHERE — but we use
+	// it to dispatch between the draft-edit and reschedule branches.
+	existing, err := h.queries.GetSocialPostByIDAndProject(r.Context(), db.GetSocialPostByIDAndProjectParams{
+		ID:        postID,
+		ProjectID: projectID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found in this project")
+		return
+	}
+
+	// Sprint 3 PR8: scheduled-post reschedule branch. Only scheduled_at
+	// is editable; all other fields are ignored.
+	if existing.Status == "scheduled" {
+		h.reschedulePost(w, r, projectID, postID)
+		return
+	}
+	if existing.Status != "draft" {
+		writeError(w, http.StatusConflict, "CONFLICT",
+			"Post is "+existing.Status+" — only drafts and scheduled posts can be edited")
+		return
+	}
 
 	var body publishRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

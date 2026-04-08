@@ -115,3 +115,24 @@ RETURNING *;
 -- and no analytics to preserve.
 DELETE FROM social_posts
 WHERE id = $1 AND project_id = $2 AND status = 'draft';
+
+-- name: RescheduleSocialPost :one
+-- Sprint 3 PR8: PATCH /v1/social-posts/{id} for status='scheduled' rows.
+-- Only scheduled_at is editable in this state. Optimistic-locked on
+-- status='scheduled' so a row that just flipped to 'publishing' (or
+-- already published) loses cleanly with pgx.ErrNoRows → 409.
+UPDATE social_posts
+SET scheduled_at = $3
+WHERE id = $1 AND project_id = $2 AND status = 'scheduled'
+RETURNING *;
+
+-- name: CancelSocialPost :one
+-- Sprint 3 PR8: POST /v1/social-posts/{id}/cancel. Allowed for drafts
+-- and scheduled posts; anything else is in-flight or already done and
+-- cannot be cancelled. Same optimistic lock pattern as the publish
+-- transition. Cancelled rows are filtered out by the scheduler's
+-- WHERE status='scheduled' clause on the next tick.
+UPDATE social_posts
+SET status = 'cancelled'
+WHERE id = $1 AND project_id = $2 AND status IN ('draft', 'scheduled')
+RETURNING *;
