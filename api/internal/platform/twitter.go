@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -25,14 +26,20 @@ func NewTwitterAdapter() *TwitterAdapter {
 
 func (a *TwitterAdapter) Platform() string { return "twitter" }
 
-// DefaultOAuthConfig — Twitter has no Quickstart mode, returns empty config.
-// Native credentials must be provided via platform_credentials.
+// DefaultOAuthConfig falls back to TWITTER_CLIENT_ID / TWITTER_CLIENT_SECRET
+// env vars (the same pair Sprint 3 Connect uses) so the dashboard quickstart
+// works for projects that haven't set up white-label platform_credentials.
+// White-label credentials in platform_credentials still take precedence —
+// the BYO oauth handler reads them first and only falls through to this
+// function when none are configured.
 func (a *TwitterAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 	return OAuthConfig{
-		AuthURL:     "https://twitter.com/i/oauth2/authorize",
-		TokenURL:    "https://api.x.com/2/oauth2/token",
-		RedirectURL: baseRedirectURL + "/v1/oauth/callback/twitter",
-		Scopes:      []string{"tweet.read", "tweet.write", "users.read", "offline.access"},
+		ClientID:     os.Getenv("TWITTER_CLIENT_ID"),
+		ClientSecret: os.Getenv("TWITTER_CLIENT_SECRET"),
+		AuthURL:      "https://twitter.com/i/oauth2/authorize",
+		TokenURL:     "https://api.x.com/2/oauth2/token",
+		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/twitter",
+		Scopes:       []string{"tweet.read", "tweet.write", "users.read", "offline.access"},
 	}
 }
 
