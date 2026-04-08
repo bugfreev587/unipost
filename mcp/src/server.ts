@@ -57,7 +57,7 @@ async function apiRequest(path: string, apiKey: string, options?: RequestInit) {
 function createMcpServer(apiKey: string): McpServer {
   const server = new McpServer({
     name: "unipost",
-    version: "0.2.0",
+    version: "0.3.0",
   });
 
   server.tool(
@@ -135,8 +135,19 @@ function createMcpServer(apiKey: string): McpServer {
             account_id: z.string(),
             caption: z.string(),
             media_urls: z.array(z.string()).optional(),
+            media_ids: z
+              .array(z.string())
+              .optional()
+              .describe("R2-uploaded media IDs from unipost_upload_media. Resolved server-side."),
             platform_options: z.record(z.string(), z.any()).optional(),
             in_reply_to: z.string().optional(),
+            thread_position: z
+              .number()
+              .int()
+              .optional()
+              .describe(
+                "1-indexed position in a multi-post thread. All entries with the same account_id and any non-zero thread_position form one thread (Twitter only in Sprint 2). Sprint 3 will add Bluesky/Threads."
+              ),
           })
         )
         .optional()
@@ -155,6 +166,10 @@ function createMcpServer(apiKey: string): McpServer {
         .describe(
           "Optional idempotency key. Same key + same project within 24h returns the prior response unchanged."
         ),
+      status: z
+        .enum(["draft"])
+        .optional()
+        .describe("Set to \"draft\" to persist without publishing. Use unipost_publish_draft to ship later."),
     },
     async (args) => {
       const body: any = {};
@@ -176,6 +191,7 @@ function createMcpServer(apiKey: string): McpServer {
       }
       if (args.scheduled_at) body.scheduled_at = args.scheduled_at;
       if (args.idempotency_key) body.idempotency_key = args.idempotency_key;
+      if (args.status) body.status = args.status;
 
       const data = await apiRequest("/v1/social-posts", apiKey, {
         method: "POST",
@@ -203,8 +219,10 @@ function createMcpServer(apiKey: string): McpServer {
             account_id: z.string(),
             caption: z.string(),
             media_urls: z.array(z.string()).optional(),
+            media_ids: z.array(z.string()).optional(),
             platform_options: z.record(z.string(), z.any()).optional(),
             in_reply_to: z.string().optional(),
+            thread_position: z.number().int().optional(),
           })
         )
         .optional(),
@@ -263,16 +281,230 @@ function createMcpServer(apiKey: string): McpServer {
 
   server.tool(
     "unipost_list_posts",
-    "List recent posts with their status",
+    "List recent posts with optional filters and cursor pagination. Use cursor from a previous call's next_cursor field to walk through more than 25 results.",
     {
-      status: z.string().optional().describe("Filter by status: scheduled, published, failed"),
+      status: z
+        .string()
+        .optional()
+        .describe("Comma-separated list of statuses to include (draft, scheduled, publishing, published, partial, failed)."),
+      from: z.string().optional().describe("RFC3339 lower bound on created_at (inclusive)."),
+      to: z.string().optional().describe("RFC3339 upper bound on created_at (exclusive)."),
+      limit: z.number().int().optional().describe("Page size, default 25, max 100."),
+      cursor: z.string().optional().describe("Opaque cursor from a previous call's next_cursor."),
     },
-    async ({ status }) => {
-      let path = "/v1/social-posts";
-      if (status) path += `?status=${status}`;
-      const data = await apiRequest(path, apiKey);
+    async (args) => {
+      const params = new URLSearchParams();
+      if (args.status) params.set("status", args.status);
+      if (args.from) params.set("from", args.from);
+      if (args.to) params.set("to", args.to);
+      if (args.limit) params.set("limit", String(args.limit));
+      if (args.cursor) params.set("cursor", args.cursor);
+      const qs = params.toString();
+      const data = await apiRequest("/v1/social-posts" + (qs ? "?" + qs : ""), apiKey);
       return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
     }
+  );
+
+  // ── Sprint 2 tools ──
+
+  // unipost_upload_media accepts EITHER base64_data OR url:
+  // - base64_data is for Claude Desktop / SDK callers that have a
+  //   local file. The MCP server forwards the bytes to R2 via the
+  //   API's two-step presign flow. Cap is ~4 MB after base64 inflation.
+  // - url is for callers that already have the file hosted (Slack
+  //   attachment, public URL, etc). The API fetches it server-side
+  //   via the legacy media_urls path and stores it under a media_id.
+  // base64_data takes precedence if both are set.
+  server.tool(
+    "unipost_upload_media",
+    [
+      "Upload an image or video to UniPost's media library and return a media_id.",
+      "",
+      "Pass EITHER base64_data (for local files, ≤ 4 MB after base64 inflation)",
+      "OR url (for files already hosted publicly somewhere). base64_data wins",
+      "if both are set.",
+      "",
+      "The returned media_id can be used in subsequent unipost_create_post or",
+      "unipost_create_draft calls under platform_posts[].media_ids.",
+    ].join("\n"),
+    {
+      filename: z.string().describe("Original filename (used to derive the storage extension)."),
+      content_type: z.string().describe("MIME type, e.g. image/png, video/mp4."),
+      base64_data: z
+        .string()
+        .optional()
+        .describe("Base64-encoded file body. Required when url is not set."),
+      url: z
+        .string()
+        .optional()
+        .describe("Publicly fetchable URL the API can download from. Required when base64_data is not set."),
+    },
+    async (args) => {
+      if (!args.base64_data && !args.url) {
+        return {
+          content: [
+            { type: "text" as const, text: "Error: pass either base64_data or url." },
+          ],
+        };
+      }
+
+      // Decode base64 to compute size_bytes accurately. The API
+      // validates size client-side as a hard cap (~25 MB). For url
+      // mode we let the API HEAD the URL itself.
+      let sizeBytes: number;
+      let bytes: Uint8Array | null = null;
+      if (args.base64_data) {
+        bytes = Uint8Array.from(Buffer.from(args.base64_data, "base64"));
+        sizeBytes = bytes.length;
+      } else {
+        // url mode: do a HEAD to learn the size before calling POST /v1/media.
+        const head = await fetch(args.url!, { method: "HEAD" });
+        const lenHeader = head.headers.get("content-length");
+        sizeBytes = lenHeader ? parseInt(lenHeader, 10) : 0;
+        if (!sizeBytes) {
+          return {
+            content: [
+              { type: "text" as const, text: "Error: could not determine size of remote URL via HEAD." },
+            ],
+          };
+        }
+      }
+
+      // Step 1: register the upload, get the presigned PUT URL.
+      const createBody = {
+        filename: args.filename,
+        content_type: args.content_type,
+        size_bytes: sizeBytes,
+      };
+      const created = await apiRequest("/v1/media", apiKey, {
+        method: "POST",
+        body: JSON.stringify(createBody),
+      });
+      if (!created?.data?.upload_url) {
+        return {
+          content: [
+            { type: "text" as const, text: "Error: API did not return an upload URL: " + JSON.stringify(created) },
+          ],
+        };
+      }
+
+      // Step 2: PUT the bytes to the presigned URL.
+      let bodyToPut: BodyInit;
+      if (bytes) {
+        // Wrap the Uint8Array in a Blob so the fetch BodyInit type
+        // is happy across both Node and edge runtimes.
+        bodyToPut = new Blob([new Uint8Array(bytes)], { type: args.content_type });
+      } else {
+        const remote = await fetch(args.url!);
+        bodyToPut = await remote.arrayBuffer();
+      }
+      const putRes = await fetch(created.data.upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": args.content_type },
+        body: bodyToPut,
+      });
+      if (!putRes.ok) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: PUT to R2 failed (${putRes.status}): ${await putRes.text()}`,
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                media_id: created.data.id,
+                content_type: args.content_type,
+                size_bytes: sizeBytes,
+                note: "Reference this media_id under platform_posts[].media_ids in unipost_create_post or unipost_create_draft.",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "unipost_create_draft",
+    "Create a draft post (status='draft'). Same body shape as unipost_create_post. Drafts persist without dispatching to platforms — useful for review / preview / approval workflows. Pair with unipost_publish_draft when you're ready to ship.",
+    {
+      caption: z.string().optional(),
+      account_ids: z.array(z.string()).optional(),
+      media_urls: z.array(z.string()).optional(),
+      platform_posts: z
+        .array(
+          z.object({
+            account_id: z.string(),
+            caption: z.string(),
+            media_urls: z.array(z.string()).optional(),
+            media_ids: z.array(z.string()).optional(),
+            platform_options: z.record(z.string(), z.any()).optional(),
+            in_reply_to: z.string().optional(),
+            thread_position: z.number().int().optional(),
+          })
+        )
+        .optional(),
+      scheduled_at: z.string().optional(),
+    },
+    async (args) => {
+      const body: any = { status: "draft" };
+      if (args.platform_posts?.length) body.platform_posts = args.platform_posts;
+      else if (args.account_ids?.length) {
+        body.caption = args.caption ?? "";
+        body.account_ids = args.account_ids;
+        if (args.media_urls?.length) body.media_urls = args.media_urls;
+      }
+      if (args.scheduled_at) body.scheduled_at = args.scheduled_at;
+
+      const data = await apiRequest("/v1/social-posts", apiKey, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "unipost_publish_draft",
+    "Publish an existing draft. Atomically flips it to publishing and dispatches to all platforms — same publish path as unipost_create_post. Returns the post + per-platform results.",
+    {
+      draft_id: z.string().describe("ID of the draft to publish."),
+      idempotency_key: z
+        .string()
+        .optional()
+        .describe("Optional idempotency key for retry safety."),
+    },
+    async ({ draft_id, idempotency_key }) => {
+      const body: any = {};
+      if (idempotency_key) body.idempotency_key = idempotency_key;
+      const data = await apiRequest(`/v1/social-posts/${draft_id}/publish`, apiKey, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "unipost_get_account_health",
+    "Return the health status of one connected social account: ok / degraded / disconnected, plus last successful post timestamp and most recent error if any. Derived from the account's last 10 publish results — no active probing.",
+    {
+      account_id: z.string().describe("Social account ID."),
+    },
+    async ({ account_id }) => {
+      const data = await apiRequest(`/v1/social-accounts/${account_id}/health`, apiKey);
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
   );
 
   return server;
@@ -310,7 +542,7 @@ const httpServer = http.createServer(async (req, res) => {
   // Health check
   if (url.pathname === "/" || url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.2.0" }));
+    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.3.0" }));
     return;
   }
 
