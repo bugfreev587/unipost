@@ -21,6 +21,22 @@ type ApiKey struct {
 	Environment string             `json:"environment"`
 }
 
+type ConnectSession struct {
+	ID                       string             `json:"id"`
+	ProjectID                string             `json:"project_id"`
+	Platform                 string             `json:"platform"`
+	ExternalUserID           string             `json:"external_user_id"`
+	ExternalUserEmail        pgtype.Text        `json:"external_user_email"`
+	ReturnUrl                pgtype.Text        `json:"return_url"`
+	Status                   string             `json:"status"`
+	CompletedSocialAccountID pgtype.Text        `json:"completed_social_account_id"`
+	OauthState               string             `json:"oauth_state"`
+	PkceVerifier             pgtype.Text        `json:"pkce_verifier"`
+	ExpiresAt                pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
+}
+
 type Media struct {
 	ID          string             `json:"id"`
 	ProjectID   string             `json:"project_id"`
@@ -101,6 +117,12 @@ type SocialAccount struct {
 	DisconnectedAt    pgtype.Timestamptz `json:"disconnected_at"`
 	Metadata          []byte             `json:"metadata"`
 	Scope             []string           `json:"scope"`
+	Status            string             `json:"status"`
+	ConnectionType    string             `json:"connection_type"`
+	ConnectSessionID  pgtype.Text        `json:"connect_session_id"`
+	ExternalUserID    pgtype.Text        `json:"external_user_id"`
+	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
+	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
 }
 
 type SocialPost struct {

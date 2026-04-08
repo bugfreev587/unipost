@@ -30,18 +30,24 @@ func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor
 }
 
 type socialAccountResponse struct {
-	ID          string    `json:"id"`
-	Platform    string    `json:"platform"`
-	AccountName *string   `json:"account_name"`
-	ConnectedAt time.Time `json:"connected_at"`
-	Status      string    `json:"status"`
+	ID               string    `json:"id"`
+	Platform         string    `json:"platform"`
+	AccountName      *string   `json:"account_name"`
+	ConnectedAt      time.Time `json:"connected_at"`
+	Status           string    `json:"status"`
+	ConnectionType   string    `json:"connection_type"`
+	ExternalUserID   *string   `json:"external_user_id,omitempty"`
+	ExternalUserEmail *string  `json:"external_user_email,omitempty"`
 }
 
 func toSocialAccountResponse(a db.SocialAccount) socialAccountResponse {
-	status := "active"
-	// Token expiry is normal for OAuth platforms — the refresh worker handles it.
-	// Only mark as reconnect_required if the account has been explicitly flagged
-	// (e.g., refresh token also expired and refresh failed).
+	// Sprint 3: status comes from the column directly. Refresh worker
+	// flips it to reconnect_required when a managed token can't be
+	// refreshed; the dashboard surfaces that to prompt re-Connect.
+	status := a.Status
+	if status == "" {
+		status = "active"
+	}
 	if a.DisconnectedAt.Valid {
 		status = "disconnected"
 	}
@@ -49,12 +55,23 @@ func toSocialAccountResponse(a db.SocialAccount) socialAccountResponse {
 	if a.AccountName.Valid {
 		name = &a.AccountName.String
 	}
+	var extUserID *string
+	if a.ExternalUserID.Valid {
+		extUserID = &a.ExternalUserID.String
+	}
+	var extUserEmail *string
+	if a.ExternalUserEmail.Valid {
+		extUserEmail = &a.ExternalUserEmail.String
+	}
 	return socialAccountResponse{
-		ID:          a.ID,
-		Platform:    a.Platform,
-		AccountName: name,
-		ConnectedAt: a.ConnectedAt.Time,
-		Status:      status,
+		ID:                a.ID,
+		Platform:          a.Platform,
+		AccountName:       name,
+		ConnectedAt:       a.ConnectedAt.Time,
+		Status:            status,
+		ConnectionType:    a.ConnectionType,
+		ExternalUserID:    extUserID,
+		ExternalUserEmail: extUserEmail,
 	}
 }
 
@@ -127,6 +144,10 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 }
 
 // List handles GET /v1/social-accounts
+//
+// Sprint 3 PR1: optional query filters `external_user_id` and `platform`
+// let customers find rows created by a Connect flow. Both are optional —
+// passing neither preserves the existing "all accounts in project" shape.
 func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	projectID := h.getProjectID(r)
 	if projectID == "" {
@@ -134,7 +155,20 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accounts, err := h.queries.ListSocialAccountsByProject(r.Context(), projectID)
+	extUserID := r.URL.Query().Get("external_user_id")
+	platformFilter := r.URL.Query().Get("platform")
+
+	var accounts []db.SocialAccount
+	var err error
+	if extUserID == "" && platformFilter == "" {
+		accounts, err = h.queries.ListSocialAccountsByProject(r.Context(), projectID)
+	} else {
+		accounts, err = h.queries.ListSocialAccountsByProjectFiltered(r.Context(), db.ListSocialAccountsByProjectFilteredParams{
+			ProjectID:      projectID,
+			ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
+			Platform:       pgtype.Text{String: platformFilter, Valid: platformFilter != ""},
+		})
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list accounts")
 		return

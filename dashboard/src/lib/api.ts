@@ -154,14 +154,22 @@ export interface SocialAccount {
   platform: string;
   account_name: string | null;
   connected_at: string;
-  status: "active" | "reconnect_required";
+  status: "active" | "reconnect_required" | "disconnected";
+  connection_type: "byo" | "managed";
+  external_user_id?: string;
+  external_user_email?: string;
 }
 
 export async function listSocialAccounts(
   token: string,
-  projectId: string
+  projectId: string,
+  filters?: { external_user_id?: string; platform?: string }
 ): Promise<ApiResponse<SocialAccount[]>> {
-  return request(`/v1/projects/${projectId}/social-accounts`, token);
+  const qs = new URLSearchParams();
+  if (filters?.external_user_id) qs.set("external_user_id", filters.external_user_id);
+  if (filters?.platform) qs.set("platform", filters.platform);
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return request(`/v1/projects/${projectId}/social-accounts${suffix}`, token);
 }
 
 export async function connectSocialAccount(
