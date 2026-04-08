@@ -33,6 +33,7 @@ type postResultResponse struct {
 	SocialAccountID string         `json:"social_account_id"`
 	Platform        string         `json:"platform,omitempty"`
 	AccountName     string         `json:"account_name,omitempty"`
+	Caption         string         `json:"caption,omitempty"`
 	Status          string         `json:"status"`
 	ExternalID      *string        `json:"external_id,omitempty"`
 	ErrorMessage    *string        `json:"error_message,omitempty"`
@@ -58,7 +59,26 @@ type socialPostResponse struct {
 	Results     []postResultResponse `json:"results,omitempty"`
 }
 
-// Create handles POST /v1/social-posts
+// Create handles POST /v1/social-posts.
+//
+// Sprint 1 rewrite — accepts both the legacy shape (caption +
+// account_ids) and the new AgentPost shape (platform_posts[] with
+// per-account captions). The two shapes are normalized to a single
+// internal []PlatformPostInput by parsePublishRequest, then validated
+// once via the same pure function /validate uses, then dispatched to
+// either the scheduled or immediate path.
+//
+// Idempotency: when the request carries an idempotency_key, we look
+// for an existing post with that (project_id, key) within the 24h
+// window. On hit we hydrate the prior response and return it
+// unchanged — no new platform posts are created.
+//
+// Validation behavior: structural errors (caption too long, mixing
+// image+video, missing required media, schedule out of range, etc.)
+// return 400 with the issue list. Account-state errors (disconnected,
+// not in project) are recorded as failed per-account results so the
+// overall publish doesn't get blocked by one bad account — preserves
+// legacy soft-failure semantics.
 func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	projectID := h.getProjectID(r)
 	if projectID == "" {
@@ -66,243 +86,240 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body struct {
-		Caption         string                    `json:"caption"`
-		MediaURLs       []string                  `json:"media_urls"`
-		AccountIDs      []string                  `json:"account_ids"`
-		ScheduledAt     *string                   `json:"scheduled_at"`
-		PlatformOptions map[string]map[string]any `json:"platform_options"`
-	}
+	var body publishRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
 		return
 	}
 
-	if body.Caption == "" {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Caption is required")
-		return
-	}
-	if len(body.AccountIDs) == 0 {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "At least one account_id is required")
+	parsed, status, msg := parsePublishRequest(body)
+	if status != 0 {
+		writeError(w, status, "VALIDATION_ERROR", msg)
 		return
 	}
 
-	// Check quota (soft block — never hard block)
+	// Idempotency replay — if this key already produced a row, return
+	// the prior response unchanged. Cheap: one indexed lookup.
+	if parsed.IdempotencyKey != "" {
+		if existing, err := h.queries.GetSocialPostByIdempotencyKey(r.Context(), db.GetSocialPostByIdempotencyKeyParams{
+			ProjectID:      projectID,
+			IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
+		}); err == nil {
+			h.writeReplayedPost(w, r, existing)
+			return
+		}
+		// pgx.ErrNoRows is the expected miss; anything else we treat
+		// as transient and proceed (better to risk a duplicate than
+		// to block a publish on a flaky lookup).
+	}
+
+	// Quota headers (soft — never blocks).
 	quotaStatus := h.quota.Check(r.Context(), projectID)
 	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", quotaStatus.Usage, quotaStatus.Limit))
 	if quotaStatus.Warning != "" {
 		w.Header().Set("X-UniPost-Warning", quotaStatus.Warning)
 	}
 
-	// Handle scheduled posts
-	if body.ScheduledAt != nil && *body.ScheduledAt != "" {
-		scheduledTime, err := time.Parse(time.RFC3339, *body.ScheduledAt)
-		if err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid scheduled_at format, use RFC3339")
-			return
-		}
-		if scheduledTime.Before(time.Now()) {
-			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "scheduled_at must be in the future")
-			return
-		}
-
-		mediaURLs := body.MediaURLs
-		if mediaURLs == nil {
-			mediaURLs = []string{}
-		}
-
-		metaMap := map[string]any{
-			"account_ids": body.AccountIDs,
-		}
-		if len(body.PlatformOptions) > 0 {
-			metaMap["platform_options"] = body.PlatformOptions
-		}
-		metadataJSON, _ := json.Marshal(metaMap)
-
-		post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-			ProjectID:   projectID,
-			Caption:     pgtype.Text{String: body.Caption, Valid: true},
-			MediaUrls:   mediaURLs,
-			Status:      "scheduled",
-			Metadata:    metadataJSON,
-			ScheduledAt: pgtype.Timestamptz{Time: scheduledTime, Valid: true},
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create scheduled post")
-			return
-		}
-
-		var caption *string
-		if post.Caption.Valid {
-			caption = &post.Caption.String
-		}
-		scheduledAt := post.ScheduledAt.Time
-
-		writeCreated(w, socialPostResponse{
-			ID:          post.ID,
-			Caption:     caption,
-			Status:      "scheduled",
-			CreatedAt:   post.CreatedAt.Time,
-			ScheduledAt: &scheduledAt,
-		})
+	// Load accounts once so the validator and the publish loop both
+	// see the same view of which accounts the project owns.
+	accountMap, err := h.loadValidateAccounts(r, projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
 		return
 	}
 
-	// Validate accounts belong to project — disconnected accounts are included
-	// but will be marked as failed in results (one failure doesn't block others)
-	type accountEntry struct {
-		account      db.SocialAccount
-		disconnected bool
-		notFound     bool
+	// Run the same validator /social-posts/validate uses, then filter
+	// out non-fatal issues (account_disconnected, account_not_in_project)
+	// — those are still recorded as failed results below to preserve
+	// legacy soft-failure semantics.
+	vr := platform.ValidatePlatformPosts(platform.ValidateOptions{
+		Capabilities: platform.Capabilities,
+		Accounts:     accountMap,
+		Posts:        parsed.Posts,
+		ScheduledAt:  parsed.ScheduledAt,
+	})
+	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
+		writeValidationErrors(w, fatal)
+		return
 	}
-	var entries []accountEntry
-	for _, id := range body.AccountIDs {
+
+	// Branch on scheduled vs immediate.
+	if parsed.ScheduledAt != nil {
+		h.createScheduledPost(w, r, projectID, parsed)
+		return
+	}
+	h.createImmediatePost(w, r, projectID, parsed, accountMap)
+}
+
+// createScheduledPost persists the post with status="scheduled" and
+// the v2 metadata blob so the scheduler can later fan out per-account
+// when the time arrives. Returns 200 with a minimal response (no
+// results yet — they'll exist after the scheduler fires).
+func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, projectID string, parsed parsedRequest) {
+	// Persist the parsed request shape into metadata so the scheduler
+	// can reconstruct the per-account captions.
+	metaJSON, err := encodePostMetadata(parsed.Posts)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode metadata")
+		return
+	}
+
+	// social_posts.caption is the canonical / "first" caption — used
+	// by legacy reads and the dashboard hash UI. We populate it from
+	// the first platform post so existing consumers keep working.
+	canonicalCaption := pgtype.Text{}
+	if len(parsed.Posts) > 0 && parsed.Posts[0].Caption != "" {
+		canonicalCaption = pgtype.Text{String: parsed.Posts[0].Caption, Valid: true}
+	}
+
+	// media_urls on the parent row is also legacy — fall back to the
+	// first post's media so dashboard previews keep showing something.
+	canonicalMedia := []string{}
+	if len(parsed.Posts) > 0 {
+		canonicalMedia = parsed.Posts[0].MediaURLs
+	}
+	if canonicalMedia == nil {
+		canonicalMedia = []string{}
+	}
+
+	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
+		ProjectID:      projectID,
+		Caption:        canonicalCaption,
+		MediaUrls:      canonicalMedia,
+		Status:         "scheduled",
+		Metadata:       metaJSON,
+		ScheduledAt:    pgtype.Timestamptz{Time: *parsed.ScheduledAt, Valid: true},
+		IdempotencyKey: idempotencyKeyParam(parsed.IdempotencyKey),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create scheduled post")
+		return
+	}
+
+	var caption *string
+	if post.Caption.Valid {
+		caption = &post.Caption.String
+	}
+	scheduledAt := post.ScheduledAt.Time
+
+	writeCreated(w, socialPostResponse{
+		ID:          post.ID,
+		Caption:     caption,
+		Status:      "scheduled",
+		CreatedAt:   post.CreatedAt.Time,
+		ScheduledAt: &scheduledAt,
+	})
+}
+
+// createImmediatePost is the synchronous publish path. Walks each
+// PlatformPostInput, dispatches to its account's adapter with the
+// per-post caption / media / options, persists results with the
+// per-result caption populated, and returns the full response.
+func (h *SocialPostHandler) createImmediatePost(
+	w http.ResponseWriter,
+	r *http.Request,
+	projectID string,
+	parsed parsedRequest,
+	accountMap map[string]platform.ValidateAccount,
+) {
+	// We still need the FULL db.SocialAccount for each unique account
+	// (token, refresh, etc.) — accountMap only has platform name +
+	// disconnected flag. Look up each unique account_id once.
+	uniqueIDs := uniqueAccountIDs(parsed.Posts)
+	dbAccounts := make(map[string]db.SocialAccount, len(uniqueIDs))
+	for _, id := range uniqueIDs {
 		acc, err := h.queries.GetSocialAccountByIDAndProject(r.Context(), db.GetSocialAccountByIDAndProjectParams{
 			ID:        id,
 			ProjectID: projectID,
 		})
 		if err != nil {
-			if err == pgx.ErrNoRows {
-				entries = append(entries, accountEntry{account: db.SocialAccount{ID: id}, notFound: true})
-				continue
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate account")
-			return
+			// Missing accounts are reported as failed results below;
+			// continue so we don't fail the whole request.
+			continue
 		}
-		entries = append(entries, accountEntry{
-			account:      acc,
-			disconnected: acc.DisconnectedAt.Valid,
-		})
+		dbAccounts[id] = acc
 	}
 
-	var accounts []db.SocialAccount
-	for _, e := range entries {
-		if !e.notFound && !e.disconnected {
-			accounts = append(accounts, e.account)
-		}
+	// Persist the parent post FIRST so per-result rows can FK to it.
+	metaJSON, _ := encodePostMetadata(parsed.Posts)
+	canonicalCaption := pgtype.Text{}
+	if len(parsed.Posts) > 0 && parsed.Posts[0].Caption != "" {
+		canonicalCaption = pgtype.Text{String: parsed.Posts[0].Caption, Valid: true}
 	}
-
-	// Create post record
-	mediaURLs := body.MediaURLs
-	if mediaURLs == nil {
-		mediaURLs = []string{}
+	canonicalMedia := []string{}
+	if len(parsed.Posts) > 0 && parsed.Posts[0].MediaURLs != nil {
+		canonicalMedia = parsed.Posts[0].MediaURLs
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		ProjectID:   projectID,
-		Caption:     pgtype.Text{String: body.Caption, Valid: true},
-		MediaUrls:   mediaURLs,
-		Status:      "publishing",
-		Metadata:    nil,
-		ScheduledAt: pgtype.Timestamptz{},
+		ProjectID:      projectID,
+		Caption:        canonicalCaption,
+		MediaUrls:      canonicalMedia,
+		Status:         "publishing",
+		Metadata:       metaJSON,
+		ScheduledAt:    pgtype.Timestamptz{},
+		IdempotencyKey: idempotencyKeyParam(parsed.IdempotencyKey),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create post")
 		return
 	}
 
-	// Publish to each account concurrently
-	type accountResult struct {
-		accountID   string
-		platform    string
-		accountName string
-		result      *platform.PostResult
-		err         error
-	}
-
-	results := make([]accountResult, len(accounts))
+	// Publish each platform post concurrently. Order is preserved by
+	// using a fixed-size slice indexed by input position.
+	outcomes := make([]publishOneOutcome, len(parsed.Posts))
 	var wg sync.WaitGroup
 
-	for i, acc := range accounts {
+	for i, pp := range parsed.Posts {
 		wg.Add(1)
-		go func(idx int, account db.SocialAccount) {
+		go func(idx int, pp platform.PlatformPostInput) {
 			defer wg.Done()
-
-			accountName := ""
-			if account.AccountName.Valid {
-				accountName = account.AccountName.String
-			}
-
-			adapter, err := platform.Get(account.Platform)
-			if err != nil {
-				results[idx] = accountResult{accountID: account.ID, platform: account.Platform, accountName: accountName, err: err}
-				return
-			}
-
-			accessToken, err := h.encryptor.Decrypt(account.AccessToken)
-			if err != nil {
-				results[idx] = accountResult{accountID: account.ID, platform: account.Platform, accountName: accountName, err: err}
-				return
-			}
-
-			// Refresh token inline if expired
-			if account.TokenExpiresAt.Valid && account.TokenExpiresAt.Time.Before(time.Now()) && account.RefreshToken.Valid {
-				refreshToken, decErr := h.encryptor.Decrypt(account.RefreshToken.String)
-				if decErr == nil {
-					newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(r.Context(), refreshToken)
-					if refErr == nil {
-						accessToken = newAccess
-						encAccess, _ := h.encryptor.Encrypt(newAccess)
-						encRefresh, _ := h.encryptor.Encrypt(newRefresh)
-						h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
-							ID:             account.ID,
-							AccessToken:    encAccess,
-							RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
-							TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-						})
-					}
-				}
-			}
-
-			postResult, err := adapter.Post(r.Context(), accessToken, body.Caption, platform.MediaFromURLs(body.MediaURLs), body.PlatformOptions[account.Platform])
-			results[idx] = accountResult{
-				accountID:   account.ID,
-				platform:    account.Platform,
-				accountName: accountName,
-				result:      postResult,
-				err:         err,
-			}
-		}(i, acc)
+			outcomes[idx] = h.publishOne(r, pp, dbAccounts, accountMap)
+		}(i, pp)
 	}
 	wg.Wait()
 
-	// Store results
+	// Persist results + build response in input order.
 	var responseResults []postResultResponse
 	allPublished := true
 	anyPublished := false
+	publishedCount := 0
 
-	for _, res := range results {
+	for i, oc := range outcomes {
 		var extID, errMsg pgtype.Text
 		var pubAt pgtype.Timestamptz
 		status := "published"
 
-		if res.err != nil {
+		if oc.err != nil {
 			status = "failed"
-			errMsg = pgtype.Text{String: res.err.Error(), Valid: true}
+			errMsg = pgtype.Text{String: oc.err.Error(), Valid: true}
 			allPublished = false
-		} else {
-			extID = pgtype.Text{String: res.result.ExternalID, Valid: true}
+		} else if oc.result != nil {
+			extID = pgtype.Text{String: oc.result.ExternalID, Valid: true}
 			pubAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 			anyPublished = true
+			publishedCount++
 		}
 
-		dbResult, err := h.queries.CreateSocialPostResult(r.Context(), db.CreateSocialPostResultParams{
+		dbResult, dbErr := h.queries.CreateSocialPostResult(r.Context(), db.CreateSocialPostResultParams{
 			PostID:          post.ID,
-			SocialAccountID: res.accountID,
+			SocialAccountID: parsed.Posts[i].AccountID,
+			Caption:         parsed.Posts[i].Caption,
 			Status:          status,
 			ExternalID:      extID,
 			ErrorMessage:    errMsg,
 			PublishedAt:     pubAt,
 		})
-		if err != nil {
-			slog.Error("failed to save post result", "error", err)
+		if dbErr != nil {
+			slog.Error("failed to save post result", "error", dbErr)
 			continue
 		}
 
 		rr := postResultResponse{
 			SocialAccountID: dbResult.SocialAccountID,
-			Platform:        res.platform,
-			AccountName:     res.accountName,
+			Platform:        oc.platform,
+			AccountName:     oc.accountName,
+			Caption:         dbResult.Caption,
 			Status:          dbResult.Status,
 		}
 		if dbResult.ExternalID.Valid {
@@ -318,50 +335,13 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		responseResults = append(responseResults, rr)
 	}
 
-	// Record failed results for disconnected/not-found accounts
-	for _, e := range entries {
-		if !e.notFound && !e.disconnected {
-			continue
-		}
-		allPublished = false
-		errMessage := "account is disconnected"
-		if e.notFound {
-			errMessage = "account not found"
-		}
-
-		// Only save to DB if the account exists (disconnected but not deleted)
-		if !e.notFound {
-			h.queries.CreateSocialPostResult(r.Context(), db.CreateSocialPostResultParams{
-				PostID:          post.ID,
-				SocialAccountID: e.account.ID,
-				Status:          "failed",
-				ExternalID:      pgtype.Text{},
-				ErrorMessage:    pgtype.Text{String: errMessage, Valid: true},
-				PublishedAt:     pgtype.Timestamptz{},
-			})
-		}
-
-		entryName := ""
-		if e.account.AccountName.Valid {
-			entryName = e.account.AccountName.String
-		}
-		responseResults = append(responseResults, postResultResponse{
-			SocialAccountID: e.account.ID,
-			Platform:        e.account.Platform,
-			AccountName:     entryName,
-			Status:          "failed",
-			ErrorMessage:    &errMessage,
-		})
-	}
-
-	// Update post status
+	// Update parent status.
 	postStatus := "failed"
 	if allPublished {
 		postStatus = "published"
 	} else if anyPublished {
 		postStatus = "partial"
 	}
-
 	var publishedAt pgtype.Timestamptz
 	if anyPublished {
 		publishedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
@@ -372,13 +352,6 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		PublishedAt: publishedAt,
 	})
 
-	// Increment usage for successfully posted accounts
-	publishedCount := 0
-	for _, res := range results {
-		if res.err == nil {
-			publishedCount++
-		}
-	}
 	if publishedCount > 0 {
 		h.quota.Increment(r.Context(), projectID, publishedCount)
 	}
@@ -387,7 +360,6 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if post.Caption.Valid {
 		caption = &post.Caption.String
 	}
-
 	writeSuccess(w, socialPostResponse{
 		ID:        post.ID,
 		Caption:   caption,
@@ -395,6 +367,241 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: post.CreatedAt.Time,
 		Results:   responseResults,
 	})
+}
+
+// publishOne dispatches a single PlatformPostInput to its adapter.
+// Handles token decryption, expired-token refresh, and the actual
+// adapter.Post call. The caller is expected to merge per-platform
+// options from the parent payload before calling — but for v1 we
+// take options off the per-post struct directly so they're already
+// scoped to the right account.
+func (h *SocialPostHandler) publishOne(
+	r *http.Request,
+	pp platform.PlatformPostInput,
+	dbAccounts map[string]db.SocialAccount,
+	accountMap map[string]platform.ValidateAccount,
+) (oc publishOneOutcome) {
+	// Resolve account.
+	acc, ok := dbAccounts[pp.AccountID]
+	if !ok {
+		// Either not in project or disconnected — accountMap may
+		// still know the platform.
+		summary := accountMap[pp.AccountID]
+		oc.platform = summary.Platform
+		if summary.Platform == "" {
+			oc.err = fmt.Errorf("account not found")
+		} else if summary.Disconnected {
+			oc.err = fmt.Errorf("account is disconnected")
+		} else {
+			oc.err = fmt.Errorf("account not found")
+		}
+		return
+	}
+	oc.platform = acc.Platform
+	if acc.AccountName.Valid {
+		oc.accountName = acc.AccountName.String
+	}
+
+	if acc.DisconnectedAt.Valid {
+		oc.err = fmt.Errorf("account is disconnected")
+		return
+	}
+
+	adapter, err := platform.Get(acc.Platform)
+	if err != nil {
+		oc.err = err
+		return
+	}
+	accessToken, err := h.encryptor.Decrypt(acc.AccessToken)
+	if err != nil {
+		oc.err = err
+		return
+	}
+
+	// Inline token refresh if expired.
+	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
+		if refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
+			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(r.Context(), refreshTok); refErr == nil {
+				accessToken = newAccess
+				encAccess, _ := h.encryptor.Encrypt(newAccess)
+				encRefresh, _ := h.encryptor.Encrypt(newRefresh)
+				h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+					ID:             acc.ID,
+					AccessToken:    encAccess,
+					RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+					TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+				})
+			}
+		}
+	}
+
+	postResult, err := adapter.Post(
+		r.Context(),
+		accessToken,
+		pp.Caption,
+		platform.MediaFromURLs(pp.MediaURLs),
+		pp.PlatformOptions,
+	)
+	oc.result = postResult
+	oc.err = err
+	return
+}
+
+// publishOneOutcome is what publishOne returns. Pulled out into a named
+// type so the goroutine in createImmediatePost can declare a fixed-size
+// slice without re-stating the field names.
+type publishOneOutcome struct {
+	platform    string
+	accountName string
+	result      *platform.PostResult
+	err         error
+}
+
+// uniqueAccountIDs returns the distinct account IDs across a slice of
+// PlatformPostInput. Used by createImmediatePost so we only fetch each
+// account once even when the same account appears multiple times
+// (e.g. a thread with two tweets from the same handle).
+func uniqueAccountIDs(posts []platform.PlatformPostInput) []string {
+	seen := make(map[string]bool, len(posts))
+	out := make([]string, 0, len(posts))
+	for _, p := range posts {
+		if p.AccountID == "" || seen[p.AccountID] {
+			continue
+		}
+		seen[p.AccountID] = true
+		out = append(out, p.AccountID)
+	}
+	return out
+}
+
+// idempotencyKeyParam wraps a string into the pgtype.Text shape sqlc
+// expects, returning an invalid (NULL) value when the key is empty.
+func idempotencyKeyParam(key string) pgtype.Text {
+	if key == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: key, Valid: true}
+}
+
+// fatalErrorCodes is the set of validator error codes that block
+// publish. Account-state codes (disconnected, not_in_project,
+// not_found) are intentionally excluded so the publish loop can
+// record them as per-account failures and let the rest succeed —
+// preserves legacy partial-success semantics.
+var fatalErrorCodes = map[string]bool{
+	platform.CodeExceedsMaxLength:       true,
+	platform.CodeBelowMinLength:         true,
+	platform.CodeMissingRequired:        true,
+	platform.CodeMaxImagesExceeded:      true,
+	platform.CodeMaxVideosExceeded:      true,
+	platform.CodeMixedMediaUnsupported:  true,
+	platform.CodeUnsupportedInReplyTo:   true,
+	platform.CodeScheduledTooSoon:       true,
+	platform.CodeScheduledTooFar:        true,
+	platform.CodeUnknownPlatform:        true,
+	platform.CodeEmptyPosts:             true,
+	platform.CodeTooManyPosts:           true,
+	platform.CodeUnsupportedFormat:      true,
+	platform.CodeFileTooLarge:           true,
+	platform.CodeDimensionsOutOfRange:   true,
+	platform.CodeAspectRatioUnsupported: true,
+	platform.CodeDurationOutOfRange:     true,
+}
+
+// filterFatalIssues splits the validator's full Errors slice into
+// just the ones that should block the publish path. See fatalErrorCodes.
+func filterFatalIssues(errs []platform.Issue) []platform.Issue {
+	out := make([]platform.Issue, 0, len(errs))
+	for _, e := range errs {
+		if fatalErrorCodes[e.Code] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// writeValidationErrors writes a 400 response carrying the structured
+// issue list. Mirrors the shape of the /validate endpoint's response so
+// clients can use the same error-handling code for both.
+func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"code":    "VALIDATION_ERROR",
+			"message": "request failed pre-publish validation",
+			"issues":  errs,
+		},
+	})
+}
+
+// writeReplayedPost rebuilds a socialPostResponse from a previously-
+// stored post (looked up by idempotency_key) and returns it as if it
+// were the original publish response. No new platform posts are made.
+func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Request, post db.SocialPost) {
+	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
+
+	// Resolve platform + account name once per result via the project
+	// account map (cheaper than per-result GetSocialAccount calls).
+	allAccounts, _ := h.queries.ListAllSocialAccountsByProject(r.Context(), post.ProjectID)
+	accountInfo := make(map[string]struct {
+		Platform string
+		Name     string
+	}, len(allAccounts))
+	for _, a := range allAccounts {
+		name := ""
+		if a.AccountName.Valid {
+			name = a.AccountName.String
+		}
+		accountInfo[a.ID] = struct {
+			Platform string
+			Name     string
+		}{Platform: a.Platform, Name: name}
+	}
+
+	resp := socialPostResponse{
+		ID:        post.ID,
+		Status:    post.Status,
+		CreatedAt: post.CreatedAt.Time,
+	}
+	if post.Caption.Valid {
+		c := post.Caption.String
+		resp.Caption = &c
+	}
+	if post.PublishedAt.Valid {
+		t := post.PublishedAt.Time
+		resp.PublishedAt = &t
+	}
+	if post.ScheduledAt.Valid {
+		t := post.ScheduledAt.Time
+		resp.ScheduledAt = &t
+	}
+
+	for _, res := range results {
+		info := accountInfo[res.SocialAccountID]
+		rr := postResultResponse{
+			SocialAccountID: res.SocialAccountID,
+			Platform:        info.Platform,
+			AccountName:     info.Name,
+			Caption:         res.Caption,
+			Status:          res.Status,
+		}
+		if res.ExternalID.Valid {
+			rr.ExternalID = &res.ExternalID.String
+		}
+		if res.ErrorMessage.Valid {
+			rr.ErrorMessage = &res.ErrorMessage.String
+		}
+		if res.PublishedAt.Valid {
+			t := res.PublishedAt.Time.Format(time.RFC3339)
+			rr.PublishedAt = &t
+		}
+		resp.Results = append(resp.Results, rr)
+	}
+
+	// Stamp the replay so callers can tell from the headers.
+	w.Header().Set("Idempotent-Replay", "true")
+	writeSuccess(w, resp)
 }
 
 // Get handles GET /v1/social-posts/{id}
