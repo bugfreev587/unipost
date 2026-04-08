@@ -10,6 +10,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
@@ -17,10 +18,16 @@ import (
 type SchedulerWorker struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	// bus fans out post.published / post.partial / post.failed events
+	// once a scheduled post finishes its publish loop. Always non-nil.
+	bus events.EventBus
 }
 
-func NewSchedulerWorker(queries *db.Queries, encryptor *crypto.AESEncryptor) *SchedulerWorker {
-	return &SchedulerWorker{queries: queries, encryptor: encryptor}
+func NewSchedulerWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus) *SchedulerWorker {
+	if bus == nil {
+		bus = events.NoopBus{}
+	}
+	return &SchedulerWorker{queries: queries, encryptor: encryptor, bus: bus}
 }
 
 func (w *SchedulerWorker) Start(ctx context.Context) {
@@ -158,7 +165,34 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 		ID: post.ID, Status: postStatus, PublishedAt: publishedAt,
 	})
 
+	// Fan out webhook events. Best-effort — Publish recovers panics
+	// internally and never blocks the worker. Payload is a minimal
+	// post object so subscribers can correlate by ID without
+	// re-fetching anything.
+	w.bus.Publish(ctx, post.ProjectID, eventForStatus(postStatus), map[string]any{
+		"post_id":      post.ID,
+		"status":       postStatus,
+		"scheduled_at": post.ScheduledAt.Time,
+		"published_at": publishedAt.Time,
+	})
+
 	slog.Info("scheduler: post published", "post_id", post.ID, "status", postStatus)
+}
+
+// eventForStatus mirrors the helper in handler/social_posts.go so the
+// scheduler emits the same event names. Tiny duplicate to avoid an
+// import cycle (worker → handler is not allowed).
+func eventForStatus(postStatus string) string {
+	switch postStatus {
+	case "published":
+		return events.EventPostPublished
+	case "partial":
+		return events.EventPostPartial
+	case "failed":
+		return events.EventPostFailed
+	default:
+		return events.EventPostFailed
+	}
 }
 
 // publishOne is the goroutine body for one PlatformPostInput. Pulled

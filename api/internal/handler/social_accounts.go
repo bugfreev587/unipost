@@ -12,16 +12,21 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
 type SocialAccountHandler struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	bus       events.EventBus
 }
 
-func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor) *SocialAccountHandler {
-	return &SocialAccountHandler{queries: queries, encryptor: encryptor}
+func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus) *SocialAccountHandler {
+	if bus == nil {
+		bus = events.NoopBus{}
+	}
+	return &SocialAccountHandler{queries: queries, encryptor: encryptor, bus: bus}
 }
 
 type socialAccountResponse struct {
@@ -151,7 +156,7 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 		accountID = chi.URLParam(r, "accountID")
 	}
 
-	_, err := h.queries.DisconnectSocialAccount(r.Context(), db.DisconnectSocialAccountParams{
+	disconnected, err := h.queries.DisconnectSocialAccount(r.Context(), db.DisconnectSocialAccountParams{
 		ID:        accountID,
 		ProjectID: projectID,
 	})
@@ -163,6 +168,19 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to disconnect account")
 		return
 	}
+
+	// Fan out account.disconnected webhook. Best-effort — never blocks.
+	accountName := ""
+	if disconnected.AccountName.Valid {
+		accountName = disconnected.AccountName.String
+	}
+	h.bus.Publish(r.Context(), projectID, events.EventAccountDisconnected, map[string]any{
+		"social_account_id": disconnected.ID,
+		"platform":          disconnected.Platform,
+		"account_name":      accountName,
+		"disconnected_at":   time.Now().UTC().Format(time.RFC3339),
+		"reason":            "user_initiated",
+	})
 
 	writeSuccess(w, map[string]bool{"disconnected": true})
 }

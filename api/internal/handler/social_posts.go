@@ -15,6 +15,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
@@ -23,10 +24,19 @@ type SocialPostHandler struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
 	quota     *quota.Checker
+	// bus is the publish-side EventBus used to fan out
+	// post.published / post.partial / post.failed events to webhook
+	// subscribers. Always non-nil — main.go injects either the real
+	// worker or a NoopBus, never nil — so handler code can call
+	// h.bus.Publish unconditionally.
+	bus events.EventBus
 }
 
-func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker) *SocialPostHandler {
-	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker}
+func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus) *SocialPostHandler {
+	if bus == nil {
+		bus = events.NoopBus{}
+	}
+	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus}
 }
 
 type postResultResponse struct {
@@ -360,13 +370,37 @@ func (h *SocialPostHandler) createImmediatePost(
 	if post.Caption.Valid {
 		caption = &post.Caption.String
 	}
-	writeSuccess(w, socialPostResponse{
+	resp := socialPostResponse{
 		ID:        post.ID,
 		Caption:   caption,
 		Status:    postStatus,
 		CreatedAt: post.CreatedAt.Time,
 		Results:   responseResults,
-	})
+	}
+
+	// Fan out webhook events. Best-effort — Publish recovers panics
+	// internally and never blocks the response. The event payload is
+	// the same socialPostResponse the caller just got back, so
+	// subscribers can correlate by post ID.
+	h.bus.Publish(r.Context(), projectID, eventForStatus(postStatus), resp)
+
+	writeSuccess(w, resp)
+}
+
+// eventForStatus maps a post status to its outbound webhook event
+// name. Centralized so the immediate path, the scheduler, and any
+// future replay path all agree.
+func eventForStatus(postStatus string) string {
+	switch postStatus {
+	case "published":
+		return events.EventPostPublished
+	case "partial":
+		return events.EventPostPartial
+	case "failed":
+		return events.EventPostFailed
+	default:
+		return events.EventPostFailed
+	}
 }
 
 // publishOne dispatches a single PlatformPostInput to its adapter.

@@ -173,10 +173,13 @@ func main() {
 	tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor)
 	go tokenWorker.Start(workerCtx)
 
+	// Webhook delivery worker doubles as the EventBus implementation
+	// for the publish path. Constructed before the scheduler /
+	// handlers so they can be wired with it as their bus dependency.
 	webhookWorker := worker.NewWebhookDeliveryWorker(queries)
 	go webhookWorker.Start(workerCtx)
 
-	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor)
+	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor, webhookWorker)
 	go schedulerWorker.Start(workerCtx)
 
 	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor)
@@ -201,8 +204,8 @@ func main() {
 	webhookHandler := handler.NewWebhookHandler(queries)
 	projectHandler := handler.NewProjectHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
-	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor)
-	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker)
+	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, webhookWorker)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, webhookWorker)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)

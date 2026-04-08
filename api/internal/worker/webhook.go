@@ -49,6 +49,20 @@ func (w *WebhookDeliveryWorker) Start(ctx context.Context) {
 	}
 }
 
+// Publish satisfies the events.EventBus interface so handler /
+// scheduler can fire events without importing this package directly.
+// Best-effort: panics are recovered, errors are logged, no return.
+func (w *WebhookDeliveryWorker) Publish(ctx context.Context, projectID, event string, data any) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("webhook publish: panic recovered", "event", event, "project_id", projectID, "panic", r)
+		}
+	}()
+	if err := w.Enqueue(ctx, projectID, event, data); err != nil {
+		slog.Warn("webhook publish: enqueue failed", "event", event, "project_id", projectID, "error", err)
+	}
+}
+
 // Enqueue creates webhook delivery records for all matching webhooks.
 func (w *WebhookDeliveryWorker) Enqueue(ctx context.Context, projectID string, event string, data any) error {
 	webhooks, err := w.queries.ListWebhooksByProjectAndEvent(ctx, db.ListWebhooksByProjectAndEventParams{
