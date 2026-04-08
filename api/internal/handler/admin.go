@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -8,6 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xiaoboyu/unipost-api/internal/billing"
 )
 
 // AdminHandler exposes read-only aggregates for the /admin dashboard.
@@ -18,12 +21,53 @@ import (
 // instead of sqlc because most of these queries are cross-tenant
 // aggregates that don't fit cleanly into the per-project query patterns
 // the rest of the API uses.
+//
+// stripeMgr is held so we can read the SUPER_ADMINS allowlist and
+// exclude internal test accounts from stats / user lists. SUPER_ADMINS
+// users go through Stripe sandbox, so any MRR / paid-plan rows tied to
+// them are fake and would inflate the dashboard if counted.
 type AdminHandler struct {
-	pool *pgxpool.Pool
+	pool      *pgxpool.Pool
+	stripeMgr *billing.Manager
 }
 
-func NewAdminHandler(pool *pgxpool.Pool) *AdminHandler {
-	return &AdminHandler{pool: pool}
+func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager) *AdminHandler {
+	return &AdminHandler{pool: pool, stripeMgr: stripeMgr}
+}
+
+// excludedUserIDs returns the full set of Clerk user IDs that should be
+// hidden from admin dashboard data — i.e. SUPER_ADMINS members. Email
+// entries in SUPER_ADMINS are resolved to user IDs against the users
+// table; missing emails (users who haven't signed up yet) are silently
+// dropped. Returns an empty (non-nil) slice if no exclusions apply, so
+// it's always safe to pass to `!= ALL($N)` in pgx.
+func (h *AdminHandler) excludedUserIDs(ctx context.Context) ([]string, error) {
+	if h.stripeMgr == nil {
+		return []string{}, nil
+	}
+	directIDs, emails := h.stripeMgr.SuperAdminAllowlist()
+
+	out := make([]string, 0, len(directIDs)+len(emails))
+	out = append(out, directIDs...)
+
+	if len(emails) > 0 {
+		rows, err := h.pool.Query(ctx,
+			`SELECT id FROM users WHERE lower(email) = ANY($1)`,
+			emails,
+		)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // ── Stats ────────────────────────────────────────────────────────────
@@ -42,36 +86,71 @@ type adminStatsResponse struct {
 	Churn30d             int64 `json:"churn_30d"`
 }
 
+// adminStatsQuery takes one parameter: $1 = []string of Clerk user IDs
+// to exclude (SUPER_ADMINS resolved members). Every subquery filters
+// either by user ID directly (user-counting rows) or by project owner
+// (anything joined to projects). The pattern is `!= ALL($1)`, which
+// pgx feeds an empty []string into as `!= ALL('{}')` — a tautology
+// that excludes nothing, so the same query works whether or not any
+// super admins are configured.
 const adminStatsQuery = `
 SELECT
-  (SELECT COUNT(*) FROM users)                                                           AS total_users,
-  (SELECT COUNT(*) FROM users WHERE created_at >= date_trunc('month', NOW()))            AS new_users_this_month,
+  (SELECT COUNT(*) FROM users u WHERE u.id != ALL($1))                                   AS total_users,
+  (SELECT COUNT(*) FROM users u
+     WHERE u.created_at >= date_trunc('month', NOW())
+       AND u.id != ALL($1))                                                              AS new_users_this_month,
   (SELECT COUNT(DISTINCT p.owner_id)
      FROM subscriptions s
      JOIN projects p ON p.id = s.project_id
      JOIN plans pl ON pl.id = s.plan_id
-     WHERE s.status = 'active' AND pl.price_cents > 0)                                   AS paid_users,
+     WHERE s.status = 'active' AND pl.price_cents > 0
+       AND p.owner_id != ALL($1))                                                        AS paid_users,
   (SELECT COALESCE(SUM(pl.price_cents), 0)
      FROM subscriptions s
      JOIN plans pl ON pl.id = s.plan_id
-     WHERE s.status = 'active')                                                          AS mrr_cents,
-  (SELECT COUNT(*) FROM social_posts WHERE created_at >= date_trunc('month', NOW()))     AS posts_this_month,
-  (SELECT COUNT(*) FROM social_posts
-     WHERE created_at >= date_trunc('month', NOW()) AND status = 'failed')               AS posts_failed_this_month,
-  (SELECT COUNT(*) FROM projects)                                                        AS active_projects,
-  (SELECT COUNT(*) FROM social_accounts WHERE disconnected_at IS NULL)                   AS platform_connections,
-  (SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days')             AS new_signups_7d,
-  (SELECT COUNT(*) FROM users
-     WHERE created_at >= NOW() - INTERVAL '14 days'
-       AND created_at <  NOW() - INTERVAL '7 days')                                      AS prev_signups_7d,
-  (SELECT COUNT(*) FROM subscriptions
-     WHERE status IN ('canceled', 'past_due')
-       AND updated_at >= NOW() - INTERVAL '30 days')                                     AS churn_30d
+     JOIN projects p ON p.id = s.project_id
+     WHERE s.status = 'active'
+       AND p.owner_id != ALL($1))                                                        AS mrr_cents,
+  (SELECT COUNT(*)
+     FROM social_posts sp
+     JOIN projects p ON p.id = sp.project_id
+     WHERE sp.created_at >= date_trunc('month', NOW())
+       AND p.owner_id != ALL($1))                                                        AS posts_this_month,
+  (SELECT COUNT(*)
+     FROM social_posts sp
+     JOIN projects p ON p.id = sp.project_id
+     WHERE sp.created_at >= date_trunc('month', NOW())
+       AND sp.status = 'failed'
+       AND p.owner_id != ALL($1))                                                        AS posts_failed_this_month,
+  (SELECT COUNT(*) FROM projects p WHERE p.owner_id != ALL($1))                          AS active_projects,
+  (SELECT COUNT(*)
+     FROM social_accounts sa
+     JOIN projects p ON p.id = sa.project_id
+     WHERE sa.disconnected_at IS NULL
+       AND p.owner_id != ALL($1))                                                        AS platform_connections,
+  (SELECT COUNT(*) FROM users u
+     WHERE u.created_at >= NOW() - INTERVAL '7 days'
+       AND u.id != ALL($1))                                                              AS new_signups_7d,
+  (SELECT COUNT(*) FROM users u
+     WHERE u.created_at >= NOW() - INTERVAL '14 days'
+       AND u.created_at <  NOW() - INTERVAL '7 days'
+       AND u.id != ALL($1))                                                              AS prev_signups_7d,
+  (SELECT COUNT(*)
+     FROM subscriptions s
+     JOIN projects p ON p.id = s.project_id
+     WHERE s.status IN ('canceled', 'past_due')
+       AND s.updated_at >= NOW() - INTERVAL '30 days'
+       AND p.owner_id != ALL($1))                                                        AS churn_30d
 `
 
 func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
+	excluded, err := h.excludedUserIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve excluded users: "+err.Error())
+		return
+	}
 	var s adminStatsResponse
-	err := h.pool.QueryRow(r.Context(), adminStatsQuery).Scan(
+	err = h.pool.QueryRow(r.Context(), adminStatsQuery, excluded).Scan(
 		&s.TotalUsers,
 		&s.NewUsersThisMonth,
 		&s.PaidUsers,
@@ -162,6 +241,12 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		)`
 	}
 
+	excluded, err := h.excludedUserIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve excluded users: "+err.Error())
+		return
+	}
+
 	sql := `
 WITH base AS (
   SELECT
@@ -204,11 +289,12 @@ WITH base AS (
        WHERE p.owner_id = u.id) AS last_post_at
   FROM users u
   WHERE ($1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.id ILIKE '%' || $1 || '%')
+    AND u.id != ALL($4)
   ` + planFilter + `
 )
 SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 
-	rows, err := h.pool.Query(r.Context(), sql, search, limit, offset)
+	rows, err := h.pool.Query(r.Context(), sql, search, limit, offset, excluded)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list users: "+err.Error())
 		return
@@ -237,8 +323,10 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 	// Total (without limit/offset) for pagination — separate cheap query.
 	var total int64
 	_ = h.pool.QueryRow(r.Context(),
-		`SELECT COUNT(*) FROM users u WHERE ($1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.id ILIKE '%' || $1 || '%')`,
-		search,
+		`SELECT COUNT(*) FROM users u
+		 WHERE ($1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.id ILIKE '%' || $1 || '%')
+		   AND u.id != ALL($2)`,
+		search, excluded,
 	).Scan(&total)
 
 	writeSuccessWithMeta(w, out, int(total))

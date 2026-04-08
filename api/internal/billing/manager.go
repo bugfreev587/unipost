@@ -211,6 +211,29 @@ func parseSuperAdmins(raw string) (userIDs map[string]bool, emails map[string]bo
 	return userIDs, emails
 }
 
+// SuperAdminAllowlist exposes the parsed SUPER_ADMINS entries as two
+// slices: direct Clerk user IDs and lower-cased emails. Used by the
+// admin dashboard to exclude internal test accounts from stats and
+// user listings (super admins go through Stripe sandbox so their MRR
+// is fake).
+//
+// The returned slices are fresh copies — callers may sort or mutate
+// them without affecting the manager.
+func (m *Manager) SuperAdminAllowlist() (userIDs []string, emails []string) {
+	if m == nil {
+		return nil, nil
+	}
+	userIDs = make([]string, 0, len(m.superAdminUserIDs))
+	for id := range m.superAdminUserIDs {
+		userIDs = append(userIDs, id)
+	}
+	emails = make([]string, 0, len(m.superAdminEmails))
+	for e := range m.superAdminEmails {
+		emails = append(emails, e)
+	}
+	return userIDs, emails
+}
+
 // IsSuperAdmin reports whether the given Clerk user ID is in the
 // SUPER_ADMINS allowlist. Direct user-ID entries match without touching
 // the DB. Email entries trigger a single user lookup the first time
