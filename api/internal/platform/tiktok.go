@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiaoboyu/unipost-api/internal/mediaproxy"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 type TikTokAdapter struct {
 	client     *http.Client
-	mediaProxy *mediaproxy.Client // optional; required only for photo posts
+	mediaProxy *storage.Client // optional; required only for photo posts
 }
 
 func NewTikTokAdapter() *TikTokAdapter {
@@ -29,7 +29,7 @@ func NewTikTokAdapter() *TikTokAdapter {
 // because TikTok's photo Direct Post only accepts PULL_FROM_URL from
 // developer-verified domains — see internal/mediaproxy for the rationale.
 // Safe to call with nil to "unset", though that means photo posts will fail.
-func (a *TikTokAdapter) SetMediaProxy(c *mediaproxy.Client) {
+func (a *TikTokAdapter) SetMediaProxy(c *storage.Client) {
 	a.mediaProxy = c
 }
 
@@ -322,7 +322,7 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 
 	urls := make([]string, 0, len(images))
 	for _, item := range images {
-		proxied, err := a.mediaProxy.Upload(ctx, item.URL)
+		proxied, err := a.mediaProxy.UploadFromURL(ctx, item.URL)
 		if err != nil {
 			return nil, fmt.Errorf("tiktok photo: stage to R2: %w", err)
 		}

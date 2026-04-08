@@ -10,3 +10,8 @@ sql:
         sql_package: "pgx/v5"
         emit_json_tags: true
         emit_empty_slices: true
+        # sqlc's English-singular inflection heuristic turns the
+        # `media` table into a `Medium` Go struct, which reads
+        # bizarrely throughout the codebase. Override to `Media`.
+        rename:
+          medium: "Media"

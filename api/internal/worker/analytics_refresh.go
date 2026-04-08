@@ -12,6 +12,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 // AnalyticsRefreshWorker periodically refreshes cached metrics for published
@@ -27,13 +28,21 @@ import (
 //   - old posts (> 7d)   → 24 hour TTL
 //
 // Posts older than 90 days are excluded entirely.
+//
+// Sprint 2 also folds the abandoned-media sweeper into this same
+// hourly tick — both are "periodic cleanup" jobs and we don't need
+// a second goroutine for the handful of media rows that get garbage-
+// collected each hour. The sweeper runs after the analytics refresh
+// so it doesn't compete with the platform API calls for the same
+// burst of CPU.
 type AnalyticsRefreshWorker struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	storage   *storage.Client // optional; nil disables the media sweeper half
 }
 
-func NewAnalyticsRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor) *AnalyticsRefreshWorker {
-	return &AnalyticsRefreshWorker{queries: queries, encryptor: encryptor}
+func NewAnalyticsRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, store *storage.Client) *AnalyticsRefreshWorker {
+	return &AnalyticsRefreshWorker{queries: queries, encryptor: encryptor, storage: store}
 }
 
 // analyticsRefreshConcurrency caps in-flight platform API calls per tick.
@@ -58,6 +67,44 @@ func (w *AnalyticsRefreshWorker) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			w.refreshDue(ctx)
+			w.sweepAbandonedMedia(ctx)
+		}
+	}
+}
+
+// sweepAbandonedMedia hard-deletes media rows in `pending` status
+// older than 7 days, plus the matching R2 objects. Pending = the
+// client called POST /v1/media but never followed up with the
+// presigned PUT (or did, but never referenced the media_id in a
+// publish call). Worth keeping the cleanup conservative — 7 days is
+// long enough that flaky-network retries don't hit it.
+//
+// No-op when storage is nil so a server without R2 configured (or a
+// test env) doesn't trip on a missing client.
+func (w *AnalyticsRefreshWorker) sweepAbandonedMedia(ctx context.Context) {
+	if w.storage == nil {
+		return
+	}
+	rows, err := w.queries.ListAbandonedMedia(ctx)
+	if err != nil {
+		slog.Error("media sweeper: failed to list abandoned rows", "error", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	slog.Info("media sweeper: cleaning abandoned uploads", "count", len(rows))
+
+	for _, row := range rows {
+		// Best-effort R2 delete first; if R2 already lost it (404),
+		// the storage layer treats it as success.
+		if err := w.storage.Delete(ctx, row.StorageKey); err != nil {
+			slog.Warn("media sweeper: r2 delete failed", "media_id", row.ID, "error", err)
+			// Don't drop the row — try again next tick.
+			continue
+		}
+		if err := w.queries.HardDeleteMedia(ctx, row.ID); err != nil {
+			slog.Warn("media sweeper: db delete failed", "media_id", row.ID, "error", err)
 		}
 	}
 }

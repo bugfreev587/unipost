@@ -1,17 +1,26 @@
-// Package mediaproxy stages user-supplied media on a developer-controlled
-// public bucket so that platforms which require domain-verified PULL_FROM_URL
-// (notably TikTok photo Direct Post) can fetch it.
+// Package storage wraps Cloudflare R2 (S3-compatible) for two related
+// jobs:
 //
-// Without this proxy, every customer would have to register their CDN domain
-// with our TikTok developer portal — which doesn't scale to a multi-tenant
-// SaaS. By staging the bytes on a single bucket whose URL prefix is
-// pre-registered, every customer just works.
+//  1. The TikTok PULL_FROM_URL workaround — stage user-supplied media
+//     on a developer-controlled bucket whose URL prefix is verified
+//     in our TikTok dev portal. UploadFromURL is the entry point.
 //
-// Storage strategy: content-addressed (sha256) so identical bytes uploaded
-// twice dedupe to the same key. The bucket is configured with a lifecycle
-// rule that deletes objects after 24 hours; TikTok caches the image
-// immediately after PULL_FROM_URL succeeds, so we don't need long retention.
-package mediaproxy
+//  2. (Sprint 2) The media library — accept user uploads via presigned
+//     PUT URLs, hold them until they're attached to a post, and serve
+//     signed download URLs to the publish path so adapters can fetch
+//     them at dispatch time.
+//
+// Both jobs share one R2 bucket, one set of env vars (R2_ACCOUNT_ID /
+// R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME /
+// R2_PUBLIC_DOMAIN), and one *Client. They live in this package so we
+// have one place to configure timeouts, error handling, and (future)
+// retry logic.
+//
+// A nil *Client is a valid value: every method on it returns
+// ErrNotConfigured so callers can fall back gracefully when R2 hasn't
+// been provisioned. Tests use this to skip R2-dependent paths without
+// stubbing the whole package.
+package storage
 
 import (
 	"bytes"
@@ -53,14 +62,14 @@ type Config struct {
 // ErrNotConfigured is returned by every Client method when the receiver is
 // nil. Adapters use this to surface a clear error to the caller instead of
 // crashing when R2 hasn't been provisioned.
-var ErrNotConfigured = fmt.Errorf("mediaproxy: R2 client is not configured")
+var ErrNotConfigured = fmt.Errorf("storage:R2 client is not configured")
 
 // New constructs a Client. Returns nil + error if any required field is
 // missing or the S3 endpoint can't be reached.
 func New(ctx context.Context, cfg Config) (*Client, error) {
 	if cfg.AccountID == "" || cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" ||
 		cfg.Bucket == "" || cfg.PublicDomain == "" {
-		return nil, fmt.Errorf("mediaproxy: missing R2 configuration")
+		return nil, fmt.Errorf("storage:missing R2 configuration")
 	}
 
 	endpoint := fmt.Sprintf("https://%s.r2.cloudflarestorage.com", cfg.AccountID)
@@ -84,11 +93,18 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	}, nil
 }
 
-// Upload fetches the source URL once, stores the bytes in R2 under a
-// content-addressed key, and returns the public URL TikTok (or any other
-// PULL_FROM_URL consumer) can fetch from. Idempotent: re-uploading identical
-// bytes is a no-op since the key is the sha256 of the body.
-func (c *Client) Upload(ctx context.Context, sourceURL string) (string, error) {
+// UploadFromURL fetches the source URL once, stores the bytes in R2 under
+// a content-addressed key under the "tiktok/" prefix, and returns the
+// public URL TikTok (or any other PULL_FROM_URL consumer) can fetch
+// from. Idempotent: re-uploading identical bytes is a no-op since the
+// key is the sha256 of the body.
+//
+// This is the "stage on a verified domain" workaround for TikTok photo
+// Direct Post, which only accepts PULL_FROM_URL from
+// developer-verified domains. The Sprint 2 media library uses a
+// different prefix ("media/") and a different code path; see
+// PresignPut / Head / PresignGet in media.go.
+func (c *Client) UploadFromURL(ctx context.Context, sourceURL string) (string, error) {
 	if c == nil {
 		return "", ErrNotConfigured
 	}
@@ -96,22 +112,22 @@ func (c *Client) Upload(ctx context.Context, sourceURL string) (string, error) {
 	// Step 1: download the source.
 	req, err := http.NewRequestWithContext(ctx, "GET", sourceURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("mediaproxy: build request: %w", err)
+		return "", fmt.Errorf("storage:build request: %w", err)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("mediaproxy: fetch source: %w", err)
+		return "", fmt.Errorf("storage:fetch source: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("mediaproxy: source returned %d", resp.StatusCode)
+		return "", fmt.Errorf("storage:source returned %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("mediaproxy: read source: %w", err)
+		return "", fmt.Errorf("storage:read source: %w", err)
 	}
 	if len(body) == 0 {
-		return "", fmt.Errorf("mediaproxy: source body is empty")
+		return "", fmt.Errorf("storage:source body is empty")
 	}
 
 	// Step 2: build a content-addressed key. We hash the bytes (not the
@@ -142,7 +158,7 @@ func (c *Client) Upload(ctx context.Context, sourceURL string) (string, error) {
 		CacheControl: aws.String("public, max-age=86400, immutable"),
 	})
 	if err != nil {
-		return "", fmt.Errorf("mediaproxy: put object: %w", err)
+		return "", fmt.Errorf("storage:put object: %w", err)
 	}
 
 	return c.publicBase + "/" + key, nil

@@ -24,10 +24,10 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
-	"github.com/xiaoboyu/unipost-api/internal/mediaproxy"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 )
 
@@ -91,9 +91,9 @@ func main() {
 	// developer-verified domains, so we stage user-supplied images on a
 	// single bucket whose URL prefix is registered in our TikTok dev
 	// portal). Other adapters can use it later if needed.
-	var mediaProxyClient *mediaproxy.Client
+	var storageClient *storage.Client
 	if os.Getenv("R2_ACCOUNT_ID") != "" {
-		mp, mpErr := mediaproxy.New(ctx, mediaproxy.Config{
+		mp, mpErr := storage.New(ctx, storage.Config{
 			AccountID:       os.Getenv("R2_ACCOUNT_ID"),
 			AccessKeyID:     os.Getenv("R2_ACCESS_KEY_ID"),
 			SecretAccessKey: os.Getenv("R2_SECRET_ACCESS_KEY"),
@@ -103,7 +103,7 @@ func main() {
 		if mpErr != nil {
 			slog.Error("media proxy init failed; tiktok photo posts will be disabled", "error", mpErr)
 		} else {
-			mediaProxyClient = mp
+			storageClient = mp
 			slog.Info("media proxy initialized", "bucket", os.Getenv("R2_BUCKET_NAME"))
 		}
 	} else {
@@ -113,9 +113,9 @@ func main() {
 	// Conditionally register adapters that need credentials
 	if os.Getenv("TIKTOK_CLIENT_KEY") != "" {
 		tiktokAdapter := platform.NewTikTokAdapter()
-		tiktokAdapter.SetMediaProxy(mediaProxyClient)
+		tiktokAdapter.SetMediaProxy(storageClient)
 		platform.Register(tiktokAdapter)
-		slog.Info("tiktok adapter registered", "media_proxy", mediaProxyClient != nil)
+		slog.Info("tiktok adapter registered", "media_proxy", storageClient != nil)
 	}
 	if os.Getenv("YOUTUBE_CLIENT_ID") != "" {
 		platform.Register(platform.NewYouTubeAdapter())
@@ -182,7 +182,7 @@ func main() {
 	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor, webhookWorker)
 	go schedulerWorker.Start(workerCtx)
 
-	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor)
+	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
 	go analyticsRefreshWorker.Start(workerCtx)
 
 	r := chi.NewRouter()
@@ -213,6 +213,7 @@ func main() {
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	platformHandler := handler.NewPlatformHandler(queries)
+	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -285,6 +286,13 @@ func main() {
 		// capability scoped to one account; falls back to platform
 		// defaults until Sprint 2 adds account-specific overrides.
 		r.Get("/v1/social-accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
+
+		// Media library — two-step upload (POST returns presigned URL,
+		// client PUTs to R2 directly), then reference the media_id in
+		// platform_posts[].media_ids on subsequent /v1/social-posts.
+		r.Post("/v1/media", mediaHandler.Create)
+		r.Get("/v1/media/{id}", mediaHandler.Get)
+		r.Delete("/v1/media/{id}", mediaHandler.Delete)
 
 		r.Get("/v1/social-posts", socialPostHandler.List)
 		r.Post("/v1/social-posts", socialPostHandler.Create)
