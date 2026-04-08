@@ -294,6 +294,9 @@ func main() {
 		// capability scoped to one account; falls back to platform
 		// defaults until Sprint 2 adds account-specific overrides.
 		r.Get("/v1/social-accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
+		// Account health (Sprint 2 PR7) — derived from the last 10
+		// social_post_results rows. ok / degraded / disconnected.
+		r.Get("/v1/social-accounts/{id}/health", socialAccountHandler.AccountHealth)
 
 		// Media library — two-step upload (POST returns presigned URL,
 		// client PUTs to R2 directly), then reference the media_id in

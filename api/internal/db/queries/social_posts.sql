@@ -38,6 +38,30 @@ WHERE project_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
+-- name: ListSocialPostsFiltered :many
+-- Sprint 2 PR7 — keyset pagination + multi-filter list. Each
+-- optional filter uses the empty-string / empty-array sentinel
+-- pattern (the WHERE clause checks both the slot value and a
+-- "filter active" hint) so a single query handles every combo.
+--
+-- Cursor encoding: the caller passes the (created_at, id) of the
+-- last row from the previous page. The WHERE clause uses Postgres
+-- tuple comparison (`(created_at, id) < (cursor_at, cursor_id)`)
+-- which matches the (created_at DESC, id DESC) index added in
+-- migration 019, giving a clean keyset seek.
+--
+-- For the "no cursor" case (page 1), the caller passes a sentinel
+-- max-future timestamp + a high-sorting id; the tuple comparison
+-- naturally returns the first page.
+SELECT * FROM social_posts
+WHERE project_id = $1
+  AND ($2::text = ''  OR status     = ANY(string_to_array($2, ',')))
+  AND ($3::timestamptz IS NULL OR created_at >= $3)
+  AND ($4::timestamptz IS NULL OR created_at <  $4)
+  AND (created_at, id) < ($5::timestamptz, $6::text)
+ORDER BY created_at DESC, id DESC
+LIMIT $7;
+
 -- name: UpdateSocialPostStatus :exec
 UPDATE social_posts SET status = $2, published_at = $3
 WHERE id = $1;

@@ -2,10 +2,13 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -992,7 +995,22 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// List handles GET /v1/social-posts
+// List handles GET /v1/social-posts. Sprint 2 added query-string
+// filters and cursor pagination:
+//
+//   ?status=draft,published    multi-status (comma-separated)
+//   ?from=2026-04-01T00:00:00Z RFC3339, inclusive lower bound on created_at
+//   ?to=2026-04-08T00:00:00Z   RFC3339, exclusive upper bound on created_at
+//   ?limit=25                  default 25, max 100
+//   ?cursor=...                opaque, returned as next_cursor in the prior page
+//
+// Cursor format: base64url(created_at|id) — keyset on the
+// (created_at DESC, id DESC) index added in migration 019. Stable
+// across inserts because it doesn't depend on row offsets.
+//
+// account_id and platform filters are deferred to Sprint 3 — they
+// require EXISTS subqueries against social_post_results and a
+// separate index. Sprint 2 ships the filters that share one index.
 func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 	projectID := h.getProjectID(r)
 	if projectID == "" {
@@ -1000,10 +1018,29 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := h.queries.ListSocialPostsByProject(r.Context(), db.ListSocialPostsByProjectParams{
-		ProjectID: projectID,
-		Limit:     100,
-		Offset:    0,
+	// Decode the cursor if present. Empty cursor → start from a
+	// far-future timestamp + max-sorting id so the keyset query
+	// returns the first page naturally.
+	cursorAt, cursorID, err := decodeListCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid cursor: "+err.Error())
+		return
+	}
+
+	limit := parseLimitParam(r.URL.Query().Get("limit"), 25, 100)
+
+	statusCSV := r.URL.Query().Get("status")
+	from := parseRFC3339Param(r.URL.Query().Get("from"))
+	to := parseRFC3339Param(r.URL.Query().Get("to"))
+
+	posts, err := h.queries.ListSocialPostsFiltered(r.Context(), db.ListSocialPostsFilteredParams{
+		ProjectID:   projectID,
+		Column2:     statusCSV,
+		Column3:     from,
+		Column4:     to,
+		Column5:     pgtype.Timestamptz{Time: cursorAt, Valid: true},
+		Column6:     cursorID,
+		Limit:       int32(limit),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list posts")
@@ -1077,7 +1114,90 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		result = []socialPostResponse{}
 	}
 
-	writeSuccessWithMeta(w, result, len(result))
+	// Build next_cursor from the last row when we returned a full
+	// page. If we got fewer rows than the limit, this is the last
+	// page → next_cursor is empty.
+	var nextCursor string
+	if len(posts) == limit && len(posts) > 0 {
+		last := posts[len(posts)-1]
+		nextCursor = encodeListCursor(last.CreatedAt.Time, last.ID)
+	}
+
+	writeSuccess(w, listPostsResponse{
+		Data:       result,
+		NextCursor: nextCursor,
+	})
+}
+
+// listPostsResponse is the page envelope returned by List. Distinct
+// from the legacy writeSuccessWithMeta path because cursor pagination
+// has no concept of "total" (computing it would defeat the keyset
+// performance win). Clients keep paging until next_cursor is empty.
+type listPostsResponse struct {
+	Data       []socialPostResponse `json:"data"`
+	NextCursor string               `json:"next_cursor,omitempty"`
+}
+
+// parseLimitParam parses ?limit=N with a default + ceiling.
+func parseLimitParam(raw string, def, max int) int {
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return def
+	}
+	if n > max {
+		return max
+	}
+	return n
+}
+
+// parseRFC3339Param returns a pgtype.Timestamptz from an RFC3339
+// query param. Empty / invalid input → invalid timestamp (which the
+// SQL query treats as "no filter").
+func parseRFC3339Param(raw string) pgtype.Timestamptz {
+	if raw == "" {
+		return pgtype.Timestamptz{}
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: t, Valid: true}
+}
+
+// encodeListCursor packs a (created_at, id) tuple into an opaque
+// base64url string for the next_cursor response field. Format is
+// "<unix_nanos>|<id>" so it round-trips losslessly.
+func encodeListCursor(t time.Time, id string) string {
+	raw := strconv.FormatInt(t.UnixNano(), 10) + "|" + id
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeListCursor is the inverse. Empty cursor → far-future
+// timestamp + max-sorting id sentinel so the keyset query naturally
+// returns the first page (every real row sorts before "max id").
+func decodeListCursor(raw string) (time.Time, string, error) {
+	if raw == "" {
+		// Sentinel: end of "max" string is a tilde so it sorts after
+		// any printable ASCII (the IDs we generate are uuid hex which
+		// always sorts before tilde).
+		return time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC), "~", nil
+	}
+	bytes, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("not base64url")
+	}
+	parts := strings.SplitN(string(bytes), "|", 2)
+	if len(parts) != 2 {
+		return time.Time{}, "", fmt.Errorf("malformed")
+	}
+	nanos, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("bad timestamp")
+	}
+	return time.Unix(0, nanos), parts[1], nil
 }
 
 // Delete handles DELETE /v1/social-posts/{id}

@@ -360,6 +360,80 @@ func (q *Queries) ListSocialPostsByProject(ctx context.Context, arg ListSocialPo
 	return items, nil
 }
 
+const listSocialPostsFiltered = `-- name: ListSocialPostsFiltered :many
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
+WHERE project_id = $1
+  AND ($2::text = ''  OR status     = ANY(string_to_array($2, ',')))
+  AND ($3::timestamptz IS NULL OR created_at >= $3)
+  AND ($4::timestamptz IS NULL OR created_at <  $4)
+  AND (created_at, id) < ($5::timestamptz, $6::text)
+ORDER BY created_at DESC, id DESC
+LIMIT $7
+`
+
+type ListSocialPostsFilteredParams struct {
+	ProjectID string             `json:"project_id"`
+	Column2   string             `json:"column_2"`
+	Column3   pgtype.Timestamptz `json:"column_3"`
+	Column4   pgtype.Timestamptz `json:"column_4"`
+	Column5   pgtype.Timestamptz `json:"column_5"`
+	Column6   string             `json:"column_6"`
+	Limit     int32              `json:"limit"`
+}
+
+// Sprint 2 PR7 — keyset pagination + multi-filter list. Each
+// optional filter uses the empty-string / empty-array sentinel
+// pattern (the WHERE clause checks both the slot value and a
+// "filter active" hint) so a single query handles every combo.
+//
+// Cursor encoding: the caller passes the (created_at, id) of the
+// last row from the previous page. The WHERE clause uses Postgres
+// tuple comparison (`(created_at, id) < (cursor_at, cursor_id)`)
+// which matches the (created_at DESC, id DESC) index added in
+// migration 019, giving a clean keyset seek.
+//
+// For the "no cursor" case (page 1), the caller passes a sentinel
+// max-future timestamp + a high-sorting id; the tuple comparison
+// naturally returns the first page.
+func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPostsFilteredParams) ([]SocialPost, error) {
+	rows, err := q.db.Query(ctx, listSocialPostsFiltered,
+		arg.ProjectID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialPost{}
+	for rows.Next() {
+		var i SocialPost
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Caption,
+			&i.MediaUrls,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.PublishedAt,
+			&i.CreatedAt,
+			&i.Metadata,
+			&i.IdempotencyKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateDraftContent = `-- name: UpdateDraftContent :one
 UPDATE social_posts
 SET caption = $3,

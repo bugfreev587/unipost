@@ -60,6 +60,53 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 	return err
 }
 
+const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption FROM social_post_results
+WHERE social_account_id = $1
+ORDER BY published_at DESC NULLS LAST
+LIMIT $2
+`
+
+type ListRecentResultsByAccountParams struct {
+	SocialAccountID string `json:"social_account_id"`
+	Limit           int32  `json:"limit"`
+}
+
+// Most recent N results for an account, for the account health
+// endpoint. The PR7 health derivation walks the latest 10 of these
+// to compute "ok" / "degraded" status. published_at is the canonical
+// "when did this happen" timestamp; for failed results without one,
+// callers should fall back to a join against social_posts.created_at
+// (the health handler does the fallback in Go).
+func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecentResultsByAccountParams) ([]SocialPostResult, error) {
+	rows, err := q.db.Query(ctx, listRecentResultsByAccount, arg.SocialAccountID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialPostResult{}
+	for rows.Next() {
+		var i SocialPostResult
+		if err := rows.Scan(
+			&i.ID,
+			&i.PostID,
+			&i.SocialAccountID,
+			&i.Status,
+			&i.ExternalID,
+			&i.ErrorMessage,
+			&i.PublishedAt,
+			&i.Caption,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSocialPostResultsByPost = `-- name: ListSocialPostResultsByPost :many
 SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption FROM social_post_results WHERE post_id = $1
 `
