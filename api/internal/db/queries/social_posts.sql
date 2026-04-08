@@ -25,6 +25,13 @@ WHERE idempotency_key IS NOT NULL
 -- name: GetSocialPostByIDAndProject :one
 SELECT * FROM social_posts WHERE id = $1 AND project_id = $2;
 
+-- name: GetSocialPostByID :one
+-- Cross-project lookup. Used by the public preview endpoint where
+-- the JWT signature IS the authorization (the caller doesn't have
+-- a session). Do NOT use from any auth-required handler — those
+-- should always join via project_id.
+SELECT * FROM social_posts WHERE id = $1;
+
 -- name: ListSocialPostsByProject :many
 SELECT * FROM social_posts
 WHERE project_id = $1

@@ -214,6 +214,10 @@ func main() {
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	platformHandler := handler.NewPlatformHandler(queries)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
+	// Preview handler shares the dashboard origin (B3) and reuses
+	// the ENCRYPTION_KEY value as the HMAC secret with an audience
+	// claim for domain separation (B2). No new env var.
+	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -229,6 +233,10 @@ func main() {
 
 	// OAuth callback routes (no auth — called by OAuth providers)
 	r.Get("/v1/oauth/callback/{platform}", oauthHandler.Callback)
+
+	// Public preview endpoint — no auth, JWT in query string. The
+	// dashboard preview page hits this route to render a draft.
+	r.Get("/v1/public/drafts/{id}", previewHandler.PublicGet)
 
 	// Dashboard routes (Clerk session auth)
 	r.Group(func(r chi.Router) {
@@ -310,6 +318,9 @@ func main() {
 		// path uses.
 		r.Post("/v1/social-posts/{id}/publish", socialPostHandler.PublishDraft)
 		r.Patch("/v1/social-posts/{id}", socialPostHandler.UpdateDraft)
+		// Hosted preview link (Sprint 2). Returns a 24h JWT-signed
+		// URL the caller can share without exposing the API key.
+		r.Post("/v1/social-posts/{id}/preview-link", previewHandler.CreateLink)
 
 		// Analytics aggregations (API key)
 		r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)

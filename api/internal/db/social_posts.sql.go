@@ -229,6 +229,32 @@ func (q *Queries) GetScheduledPostsByProject(ctx context.Context, projectID stri
 	return items, nil
 }
 
+const getSocialPostByID = `-- name: GetSocialPostByID :one
+SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts WHERE id = $1
+`
+
+// Cross-project lookup. Used by the public preview endpoint where
+// the JWT signature IS the authorization (the caller doesn't have
+// a session). Do NOT use from any auth-required handler — those
+// should always join via project_id.
+func (q *Queries) GetSocialPostByID(ctx context.Context, id string) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, getSocialPostByID, id)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
 const getSocialPostByIDAndProject = `-- name: GetSocialPostByIDAndProject :one
 SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts WHERE id = $1 AND project_id = $2
 `
