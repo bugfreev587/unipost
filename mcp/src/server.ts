@@ -57,7 +57,7 @@ async function apiRequest(path: string, apiKey: string, options?: RequestInit) {
 function createMcpServer(apiKey: string): McpServer {
   const server = new McpServer({
     name: "unipost",
-    version: "0.1.0",
+    version: "0.2.0",
   });
 
   server.tool(
@@ -79,23 +79,164 @@ function createMcpServer(apiKey: string): McpServer {
     }
   );
 
+  // unipost_create_post accepts BOTH the legacy shape (caption +
+  // account_ids — single caption fanned out to every account) and the
+  // new AgentPost shape (platform_posts[] — different caption per
+  // account, optional per-post media + options). Pass exactly one of
+  // them. The new shape is preferred when generating "different copy
+  // per platform" — the LLM-readable description below tells Claude
+  // / GPT to reach for it whenever the message should differ across
+  // platforms (Twitter terse, LinkedIn long-form, etc.).
   server.tool(
     "unipost_create_post",
-    "Create and publish a post to one or more social media accounts",
+    [
+      "Publish a social post to one or more accounts.",
+      "",
+      "TWO REQUEST SHAPES — pass exactly one:",
+      "",
+      "1. Same caption everywhere (legacy):",
+      "     { caption, account_ids, media_urls?, scheduled_at? }",
+      "",
+      "2. Different caption per platform (preferred for multi-platform fan-out):",
+      "     { platform_posts: [{ account_id, caption, media_urls?, platform_options? }] }",
+      "",
+      "Use shape 2 whenever you want to tailor the message to each",
+      "network (e.g. terse on Twitter, long-form on LinkedIn). Each",
+      "platform_posts entry becomes ONE platform post — listing the",
+      "same account_id twice produces two posts on that account.",
+      "",
+      "Both shapes accept an optional idempotency_key — passing the",
+      "same key within 24h returns the original response unchanged",
+      "(no duplicate posts created).",
+      "",
+      "Call unipost_get_capabilities first to learn each platform's",
+      "caption length and media limits, or unipost_validate_post to",
+      "preflight a draft before publishing.",
+    ].join("\n"),
     {
-      caption: z.string().describe("The text content of the post"),
-      account_ids: z.array(z.string()).describe("List of social account IDs to post to"),
-      media_urls: z.array(z.string()).optional().describe("Optional media URLs"),
-      scheduled_at: z.string().optional().describe("ISO 8601 datetime for scheduled posting"),
+      // Legacy fields.
+      caption: z
+        .string()
+        .optional()
+        .describe("Legacy: single caption used for every account_id."),
+      account_ids: z
+        .array(z.string())
+        .optional()
+        .describe("Legacy: accounts to fan out to. Use platform_posts instead for per-platform captions."),
+      media_urls: z
+        .array(z.string())
+        .optional()
+        .describe("Legacy: shared media URLs. Ignored when platform_posts is set."),
+
+      // New shape.
+      platform_posts: z
+        .array(
+          z.object({
+            account_id: z.string(),
+            caption: z.string(),
+            media_urls: z.array(z.string()).optional(),
+            platform_options: z.record(z.string(), z.any()).optional(),
+            in_reply_to: z.string().optional(),
+          })
+        )
+        .optional()
+        .describe(
+          "Preferred: array of per-account posts with their own captions, media, and options."
+        ),
+
+      // Common.
+      scheduled_at: z
+        .string()
+        .optional()
+        .describe("RFC3339 timestamp. If set, post is queued and published by the scheduler at that time."),
+      idempotency_key: z
+        .string()
+        .optional()
+        .describe(
+          "Optional idempotency key. Same key + same project within 24h returns the prior response unchanged."
+        ),
     },
-    async ({ caption, account_ids, media_urls, scheduled_at }) => {
-      const body: any = { caption, account_ids };
-      if (media_urls?.length) body.media_urls = media_urls;
-      if (scheduled_at) body.scheduled_at = scheduled_at;
+    async (args) => {
+      const body: any = {};
+      if (args.platform_posts?.length) {
+        body.platform_posts = args.platform_posts;
+      } else if (args.account_ids?.length) {
+        body.caption = args.caption ?? "";
+        body.account_ids = args.account_ids;
+        if (args.media_urls?.length) body.media_urls = args.media_urls;
+      } else {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: 'Error: pass either { platform_posts: [...] } or { caption, account_ids: [...] }',
+            },
+          ],
+        };
+      }
+      if (args.scheduled_at) body.scheduled_at = args.scheduled_at;
+      if (args.idempotency_key) body.idempotency_key = args.idempotency_key;
+
       const data = await apiRequest("/v1/social-posts", apiKey, {
         method: "POST",
         body: JSON.stringify(body),
       });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    }
+  );
+
+  // Pure preflight — no DB writes, no platform API calls. Returns
+  // the same { valid, errors, warnings } shape as the REST endpoint.
+  // LLM clients should call this BEFORE create_post when generating
+  // a draft so they can self-correct length / media / threading
+  // errors without burning a publish round-trip.
+  server.tool(
+    "unipost_validate_post",
+    "Pre-flight a draft post against every per-platform limit. Returns { valid, errors, warnings } without writing anything or calling any platform API. Same body shape as unipost_create_post.",
+    {
+      caption: z.string().optional(),
+      account_ids: z.array(z.string()).optional(),
+      media_urls: z.array(z.string()).optional(),
+      platform_posts: z
+        .array(
+          z.object({
+            account_id: z.string(),
+            caption: z.string(),
+            media_urls: z.array(z.string()).optional(),
+            platform_options: z.record(z.string(), z.any()).optional(),
+            in_reply_to: z.string().optional(),
+          })
+        )
+        .optional(),
+      scheduled_at: z.string().optional(),
+    },
+    async (args) => {
+      const body: any = {};
+      if (args.platform_posts?.length) {
+        body.platform_posts = args.platform_posts;
+      } else if (args.account_ids?.length) {
+        body.caption = args.caption ?? "";
+        body.account_ids = args.account_ids;
+        if (args.media_urls?.length) body.media_urls = args.media_urls;
+      }
+      if (args.scheduled_at) body.scheduled_at = args.scheduled_at;
+      const data = await apiRequest("/v1/social-posts/validate", apiKey, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    }
+  );
+
+  // Capabilities map — caption length, image / video count caps,
+  // first-comment + threading + scheduling support, etc. The LLM
+  // should call this before drafting so it can size content correctly.
+  server.tool(
+    "unipost_get_capabilities",
+    "Return the per-platform publish-time capabilities map (caption length, media counts, file size hints, threading, scheduling, first comment). LLMs should call this before drafting a post so the content respects each platform's limits.",
+    {},
+    async () => {
+      const data = await apiRequest("/v1/platforms/capabilities", apiKey);
       return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
     }
   );
@@ -169,7 +310,7 @@ const httpServer = http.createServer(async (req, res) => {
   // Health check
   if (url.pathname === "/" || url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.1.0" }));
+    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.2.0" }));
     return;
   }
 
