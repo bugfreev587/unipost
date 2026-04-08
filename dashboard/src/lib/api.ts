@@ -416,3 +416,99 @@ export async function getAnalyticsByPlatform(
 ): Promise<ApiResponse<PlatformAnalytics[]>> {
   return request(`/v1/projects/${projectId}/analytics/by-platform${rangeQuery(params)}`, token);
 }
+
+// Admin
+
+export interface AdminStats {
+  total_users: number;
+  new_users_this_month: number;
+  paid_users: number;
+  mrr_cents: number;
+  posts_this_month: number;
+  posts_failed_this_month: number;
+  active_projects: number;
+  platform_connections: number;
+  new_signups_7d: number;
+  prev_signups_7d: number;
+  churn_30d: number;
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  created_at: string;
+  project_count: number;
+  api_key_count: number;
+  platform_count: number;
+  platforms: string[];
+  posts_used: number;
+  post_limit: number;
+  mrr_cents: number;
+  is_paid: boolean;
+  last_post_at: string | null;
+}
+
+export interface AdminUserProject {
+  id: string;
+  name: string;
+  mode: string;
+  created_at: string;
+  plan_id: string;
+  plan_name: string;
+  price_cents: number;
+  posts_used: number;
+  post_limit: number;
+  status: string;
+  platform_count: number;
+}
+
+export interface AdminUserDetail {
+  id: string;
+  email: string;
+  name: string;
+  created_at: string;
+  project_count: number;
+  api_key_count: number;
+  platform_count: number;
+  platforms: string[];
+  posts_used_this_month: number;
+  post_limit: number;
+  mrr_cents: number;
+  total_posts: number;
+  failed_posts_30d: number;
+  last_post_at: string | null;
+  projects: AdminUserProject[];
+}
+
+export interface AdminUserListParams {
+  search?: string;
+  plan?: "all" | "free" | "paid";
+  sort?: "newest" | "mrr" | "usage" | "last_active";
+  limit?: number;
+  offset?: number;
+}
+
+export async function getAdminStats(token: string): Promise<ApiResponse<AdminStats>> {
+  return request("/v1/admin/stats", token);
+}
+
+export async function listAdminUsers(
+  token: string,
+  params?: AdminUserListParams
+): Promise<ApiResponse<AdminUserRow[]>> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.plan && params.plan !== "all") qs.set("plan", params.plan);
+  if (params?.sort) qs.set("sort", params.sort);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  if (params?.offset != null) qs.set("offset", String(params.offset));
+  const s = qs.toString();
+  return request(`/v1/admin/users${s ? `?${s}` : ""}`, token);
+}
+
+export async function getAdminUser(
+  token: string,
+  id: string
+): Promise<ApiResponse<AdminUserDetail>> {
+  return request(`/v1/admin/users/${id}`, token);
+}

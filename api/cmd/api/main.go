@@ -213,6 +213,7 @@ func main() {
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	platformHandler := handler.NewPlatformHandler(queries)
+	adminHandler := handler.NewAdminHandler(pool)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -272,6 +273,18 @@ func main() {
 		// Per-post analytics (project-scoped). Mirrors the API-key route below;
 		// the dashboard has been calling this URL but it wasn't wired until now.
 		r.Get("/v1/projects/{projectID}/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
+	})
+
+	// Admin routes — Clerk session + ADMIN_EMAIL gate. The middleware
+	// stack runs Clerk first to populate userID in ctx, then the admin
+	// check looks the user up by ID and compares email to ADMIN_EMAIL.
+	r.Group(func(r chi.Router) {
+		r.Use(auth.ClerkSessionMiddleware)
+		r.Use(auth.AdminMiddleware(queries))
+
+		r.Get("/v1/admin/stats", adminHandler.GetStats)
+		r.Get("/v1/admin/users", adminHandler.ListUsers)
+		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
 	})
 
 	// Public API routes (API key auth)
