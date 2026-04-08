@@ -172,8 +172,9 @@ func (h *SocialPostHandler) loadValidateAccounts(r *http.Request, projectID stri
 	out := make(map[string]platform.ValidateAccount, len(accounts))
 	for _, a := range accounts {
 		out[a.ID] = platform.ValidateAccount{
-			Platform:     a.Platform,
-			Disconnected: a.DisconnectedAt.Valid,
+			Platform:       a.Platform,
+			Disconnected:   a.DisconnectedAt.Valid,
+			ConnectionType: a.ConnectionType,
 		}
 	}
 	return out, nil

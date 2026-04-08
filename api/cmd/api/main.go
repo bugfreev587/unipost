@@ -21,6 +21,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
+	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
@@ -224,6 +225,21 @@ func main() {
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
 	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, webhookWorker)
+	// Sprint 3 PR3/PR4: managed OAuth Connect for Twitter + LinkedIn.
+	// Bluesky doesn't go through this registry — its handler lives at
+	// connect_bluesky.go (form, not OAuth). Connectors return nil from
+	// their constructor when the env vars are missing so a half-config
+	// project simply won't have those platforms registered.
+	apiBaseURL := os.Getenv("API_BASE_URL")
+	if apiBaseURL == "" {
+		apiBaseURL = "https://api.unipost.dev"
+	}
+	connectors := []connect.Connector{}
+	if tw := connect.NewTwitterConnector(os.Getenv("TWITTER_CLIENT_ID"), os.Getenv("TWITTER_CLIENT_SECRET"), apiBaseURL); tw != nil {
+		connectors = append(connectors, tw)
+	}
+	connectRegistry := connect.NewRegistry(connectors...)
+	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
@@ -259,6 +275,14 @@ func main() {
 	// renders an HTML response — success → 302 to return_url; failure
 	// → re-rendered form with inline error.
 	r.Post("/v1/public/connect/sessions/{id}/bluesky", connectBlueskyHandler.SubmitForm)
+
+	// Sprint 3 PR3: OAuth Connect — authorize bridge + callback.
+	// /authorize is called by the hosted page when the user clicks
+	// the platform button. /callback is the OAuth provider's redirect
+	// target. Both are unauthenticated; oauth_state + the URL session
+	// id are the bearer.
+	r.Get("/v1/public/connect/sessions/{id}/authorize", connectCallbackHandler.Authorize)
+	r.Get("/v1/connect/callback/{platform}", connectCallbackHandler.Callback)
 
 	// Dashboard routes (Clerk session auth)
 	r.Group(func(r chi.Router) {
