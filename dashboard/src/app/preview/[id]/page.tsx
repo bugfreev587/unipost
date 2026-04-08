@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+import { countChars } from "@/lib/charcount";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev";
 
@@ -150,8 +151,14 @@ export default function PreviewPage() {
 }
 
 function PlatformCard({ post }: { post: PlatformPost }) {
-  const overLimit =
-    post.caption_max > 0 && post.caption_length > post.caption_max;
+  // Sprint 3 PR9: per-platform char counter using the local helper
+  // (Twitter URL collapsing, Bluesky grapheme count, others raw
+  // length). Falls back to the API's pre-computed values when the
+  // platform isn't recognized.
+  const local = countChars(post.platform, post.caption);
+  const captionLength = local.limit > 0 ? local.used : post.caption_length;
+  const captionMax = local.limit > 0 ? local.limit : post.caption_max;
+  const overLimit = captionMax > 0 && captionLength > captionMax;
   return (
     <div
       style={{
@@ -262,9 +269,9 @@ function PlatformCard({ post }: { post: PlatformPost }) {
         title="Approximate. Each platform counts characters slightly differently."
       >
         <span>
-          {post.caption_length.toLocaleString()} / {post.caption_max.toLocaleString() || "∞"}
+          {captionLength.toLocaleString()} / {captionMax.toLocaleString() || "∞"}
         </span>
-        <span style={{ color: "#444", fontSize: 10 }}>≈ approximate</span>
+        <span style={{ color: "#444", fontSize: 10 }}>per-platform</span>
       </div>
     </div>
   );

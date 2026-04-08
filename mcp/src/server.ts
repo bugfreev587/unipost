@@ -57,7 +57,9 @@ async function apiRequest(path: string, apiKey: string, options?: RequestInit) {
 function createMcpServer(apiKey: string): McpServer {
   const server = new McpServer({
     name: "unipost",
-    version: "0.3.0",
+    version: "0.4.0",
+    // Sprint 3 PR9: added unipost_create_connect_session,
+    // unipost_reschedule_post, unipost_cancel_post.
   });
 
   server.tool(
@@ -507,6 +509,64 @@ function createMcpServer(apiKey: string): McpServer {
     },
   );
 
+  // ── Sprint 3 v0.4.0 tools ──
+
+  server.tool(
+    "unipost_create_connect_session",
+    [
+      "Create a UniPost Connect session — a hosted OAuth link for onboarding an end user's social account.",
+      "",
+      "Returns {session_id, url, expires_at}. Email the URL to your end user; they",
+      "complete the OAuth handshake (or Bluesky app-password form) on the hosted",
+      "page, after which the new managed account appears in your project.",
+      "",
+      "Sprint 3 supports twitter, linkedin, bluesky. Sessions expire after 30 minutes.",
+    ].join("\n"),
+    {
+      platform: z.enum(["twitter", "linkedin", "bluesky"]).describe("Target social platform."),
+      external_user_id: z.string().describe("Your stable identifier for the end user — used to look up the resulting account later."),
+      external_user_email: z.string().optional().describe("Optional email for record-keeping; not used by UniPost beyond storage."),
+      return_url: z.string().optional().describe("Where to redirect the user after they complete the flow. Required for embedded apps."),
+    },
+    async (args) => {
+      const data = await apiRequest("/v1/connect/sessions", apiKey, {
+        method: "POST",
+        body: JSON.stringify(args),
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "unipost_reschedule_post",
+    "Move a scheduled post to a new scheduled_at timestamp. Only works on status='scheduled' posts; drafts use unipost_update_draft instead, and published posts cannot be rescheduled.",
+    {
+      post_id: z.string().describe("ID of the scheduled post."),
+      scheduled_at: z.string().describe("New RFC3339 timestamp; must be at least 60 seconds in the future."),
+    },
+    async ({ post_id, scheduled_at }) => {
+      const data = await apiRequest(`/v1/social-posts/${post_id}`, apiKey, {
+        method: "PATCH",
+        body: JSON.stringify({ scheduled_at }),
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "unipost_cancel_post",
+    "Cancel a draft or scheduled post. Cancelled posts are skipped by the scheduler; cancellation cannot be undone. Returns 409 for posts that are already publishing or published.",
+    {
+      post_id: z.string().describe("ID of the draft or scheduled post."),
+    },
+    async ({ post_id }) => {
+      const data = await apiRequest(`/v1/social-posts/${post_id}/cancel`, apiKey, {
+        method: "POST",
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
   return server;
 }
 
@@ -542,7 +602,7 @@ const httpServer = http.createServer(async (req, res) => {
   // Health check
   if (url.pathname === "/" || url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.3.0" }));
+    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.4.0" }));
     return;
   }
 
