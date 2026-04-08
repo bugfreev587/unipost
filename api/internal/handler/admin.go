@@ -109,11 +109,14 @@ type adminUserRow struct {
 }
 
 // Sort enums — whitelisted before being interpolated into ORDER BY.
+// These run against the outer `SELECT * FROM base`, where columns are
+// unqualified (the CTE projects u.created_at as plain created_at), so
+// no `u.` prefix here.
 var adminUserSortOrders = map[string]string{
-	"newest":      "u.created_at DESC",
-	"mrr":         "mrr_cents DESC, u.created_at DESC",
-	"usage":       "posts_used DESC, u.created_at DESC",
-	"last_active": "last_post_at DESC NULLS LAST, u.created_at DESC",
+	"newest":      "created_at DESC",
+	"mrr":         "mrr_cents DESC, created_at DESC",
+	"usage":       "posts_used DESC, created_at DESC",
+	"last_active": "last_post_at DESC NULLS LAST, created_at DESC",
 }
 
 func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
