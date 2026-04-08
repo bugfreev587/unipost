@@ -324,6 +324,39 @@ export async function cancelSocialPost(
   });
 }
 
+// Sprint 4 PR2: bulk publish — up to 50 posts in one call.
+// Each entry in the response is either a `data` (success) or `error`
+// (per-post failure) envelope. Drafts and scheduled posts are not
+// supported in bulk.
+export interface BulkPostResultEntry {
+  status: number;
+  data?: SocialPost;
+  error?: { code: string; message: string };
+}
+
+export async function bulkCreateSocialPosts(
+  token: string,
+  posts: Array<{
+    caption?: string;
+    account_ids?: string[];
+    platform_posts?: Array<{
+      account_id: string;
+      caption?: string;
+      media_urls?: string[];
+      media_ids?: string[];
+      platform_options?: Record<string, unknown>;
+      thread_position?: number;
+    }>;
+    media_urls?: string[];
+    idempotency_key?: string;
+  }>
+): Promise<ApiResponse<BulkPostResultEntry[]>> {
+  return request(`/v1/social-posts/bulk`, token, {
+    method: "POST",
+    body: JSON.stringify({ posts }),
+  });
+}
+
 // Connect sessions (Sprint 3 PR2 — multi-tenant Connect)
 
 export interface ConnectSession {

@@ -253,6 +253,23 @@ func (h *SocialPostHandler) createImmediatePost(
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
 ) {
+	resp, err := h.executeImmediatePost(r, projectID, parsed, accountMap)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	writeSuccess(w, resp)
+}
+
+// executeImmediatePost is createImmediatePost without the response
+// writer — it returns either the success response or an error. Used
+// by both single (Create) and bulk (CreateBulk) entry points.
+func (h *SocialPostHandler) executeImmediatePost(
+	r *http.Request,
+	projectID string,
+	parsed parsedRequest,
+	accountMap map[string]platform.ValidateAccount,
+) (socialPostResponse, error) {
 	// We still need the FULL db.SocialAccount for each unique account
 	// (token, refresh, etc.) — accountMap only has platform name +
 	// disconnected flag. Look up each unique account_id once.
@@ -292,11 +309,11 @@ func (h *SocialPostHandler) createImmediatePost(
 		IdempotencyKey: idempotencyKeyParam(parsed.IdempotencyKey),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create post")
-		return
+		return socialPostResponse{}, fmt.Errorf("failed to create post: %w", err)
 	}
 
-	h.runPublishLoop(w, r, projectID, post, parsed, dbAccounts, accountMap)
+	resp := h.executePublishLoop(r, projectID, post, parsed, dbAccounts, accountMap)
+	return resp, nil
 }
 
 // publishExistingPost is the publish-from-draft entry point. The
@@ -342,6 +359,22 @@ func (h *SocialPostHandler) runPublishLoop(
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
 ) {
+	resp := h.executePublishLoop(r, projectID, post, parsed, dbAccounts, accountMap)
+	writeSuccess(w, resp)
+}
+
+// executePublishLoop is the shared body without the writeSuccess. Used
+// by both runPublishLoop (single-post path) and CreateBulk (bulk path).
+// Persists results, updates parent status, fires the webhook event,
+// increments quota — everything except writing the HTTP response.
+func (h *SocialPostHandler) executePublishLoop(
+	r *http.Request,
+	projectID string,
+	post db.SocialPost,
+	parsed parsedRequest,
+	dbAccounts map[string]db.SocialAccount,
+	accountMap map[string]platform.ValidateAccount,
+) socialPostResponse {
 	// Publish each platform post. Standalone posts run in parallel
 	// (one goroutine each); thread groups run serially within their
 	// group but groups are still parallel with each other. The
@@ -459,7 +492,7 @@ func (h *SocialPostHandler) runPublishLoop(
 	// subscribers can correlate by post ID.
 	h.bus.Publish(r.Context(), projectID, eventForStatus(postStatus), resp)
 
-	writeSuccess(w, resp)
+	return resp
 }
 
 // eventForStatus maps a post status to its outbound webhook event
@@ -856,10 +889,19 @@ func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
 	})
 }
 
-// writeReplayedPost rebuilds a socialPostResponse from a previously-
+// writeReplayedPost is the writer shim for the single-post path.
+// Calls replayedPostResponse and stamps the Idempotent-Replay header.
+func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Request, post db.SocialPost) {
+	resp := h.replayedPostResponse(r, post)
+	w.Header().Set("Idempotent-Replay", "true")
+	writeSuccess(w, resp)
+}
+
+// replayedPostResponse rebuilds a socialPostResponse from a previously-
 // stored post (looked up by idempotency_key) and returns it as if it
 // were the original publish response. No new platform posts are made.
-func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Request, post db.SocialPost) {
+// Used by both writeReplayedPost (single) and processBulkOne (bulk).
+func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.SocialPost) socialPostResponse {
 	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
 
 	// Resolve platform + account name once per result via the project
@@ -920,9 +962,7 @@ func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Req
 		resp.Results = append(resp.Results, rr)
 	}
 
-	// Stamp the replay so callers can tell from the headers.
-	w.Header().Set("Idempotent-Replay", "true")
-	writeSuccess(w, resp)
+	return resp
 }
 
 // Get handles GET /v1/social-posts/{id}
