@@ -12,7 +12,7 @@ import (
 
 // AdminHandler exposes read-only aggregates for the /admin dashboard.
 //
-// Auth + ADMIN_EMAIL gating live in auth.AdminMiddleware — every route
+// Auth + ADMIN_USERS gating live in auth.AdminMiddleware — every route
 // here assumes that middleware has already cleared the request, so the
 // handler does no further checks. We talk to the DB via the raw pgxpool
 // instead of sqlc because most of these queries are cross-tenant

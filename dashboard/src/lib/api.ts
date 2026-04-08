@@ -556,6 +556,21 @@ export interface AdminUserListParams {
   offset?: number;
 }
 
+// Whoami — returns the authenticated user's identity plus an
+// is_admin flag derived from the backend ADMIN_USERS allowlist.
+// Used by the dashboard shell to decide whether to show the Admin
+// link, and by the admin page to gate client-side rendering.
+export interface MeResponse {
+  user_id: string;
+  email: string;
+  name?: string;
+  is_admin: boolean;
+}
+
+export async function getMe(token: string): Promise<ApiResponse<MeResponse>> {
+  return request("/v1/me", token);
+}
+
 export async function getAdminStats(token: string): Promise<ApiResponse<AdminStats>> {
   return request("/v1/admin/stats", token);
 }

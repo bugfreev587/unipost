@@ -5,14 +5,13 @@ import { useAuth, useUser } from "@clerk/nextjs";
 import {
   getAdminStats,
   getAdminUser,
+  getMe,
   listAdminUsers,
   type AdminStats,
   type AdminUserDetail,
   type AdminUserListParams,
   type AdminUserRow,
 } from "@/lib/api";
-
-const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || "").toLowerCase();
 
 // ── platform → emoji (mockup uses these as identicons) ───────────────
 const PLATFORM_ICON: Record<string, string> = {
@@ -71,9 +70,27 @@ export default function AdminPage() {
   const [detail, setDetail] = useState<AdminUserDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // Email gate (client-side; backend enforces too)
+  // Admin gate is resolved server-side via /v1/me against ADMIN_USERS.
+  // null = still checking, true/false = resolved. Backend independently
+  // enforces the same allowlist on /v1/admin/* — this client check is
+  // just UX so non-admins see a friendly 403 instead of empty cards.
   const userEmail = user?.primaryEmailAddress?.emailAddress?.toLowerCase() || "";
-  const isAdmin = !!ADMIN_EMAIL && userEmail === ADMIN_EMAIL;
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) { if (!cancelled) setIsAdmin(false); return; }
+        const res = await getMe(token);
+        if (!cancelled) setIsAdmin(!!res.data.is_admin);
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [getToken]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -96,7 +113,7 @@ export default function AdminPage() {
   }, [getToken, search, plan, sort, offset]);
 
   useEffect(() => {
-    if (userLoaded && isAdmin) loadAll();
+    if (userLoaded && isAdmin === true) loadAll();
   }, [userLoaded, isAdmin, loadAll]);
 
   // Debounce search input
@@ -151,8 +168,8 @@ export default function AdminPage() {
     return change;
   }, [stats]);
 
-  // ── Gating: still loading user, or not admin ──────────────────────
-  if (!userLoaded) {
+  // ── Gating: still loading user / admin check, or not admin ────────
+  if (!userLoaded || isAdmin === null) {
     return (
       <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}>
         <div style={{ color: "#666" }}>Loading…</div>

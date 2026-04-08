@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { listProjects, getBilling, createProject, type Project, type BillingInfo } from "@/lib/api";
+import { listProjects, getBilling, createProject, getMe, type Project, type BillingInfo } from "@/lib/api";
 import {
   Key,
   Users,
@@ -22,6 +22,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Settings,
+  Shield,
   Zap,
   LogOut,
   User,
@@ -53,6 +54,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [newProjectName, setNewProjectName] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
   const [accountsExpanded, setAccountsExpanded] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const projectMatch = pathname.match(/^\/projects\/([^/]+)/);
   const projectId = projectMatch?.[1];
@@ -68,6 +70,23 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }, [getToken]);
 
   useEffect(() => { loadProjects(); }, [loadProjects]);
+
+  // Resolve admin status from the backend ADMIN_USERS allowlist. We
+  // intentionally don't read a NEXT_PUBLIC_* env var here — keeping the
+  // allowlist server-side means rotating it doesn't require a frontend
+  // rebuild, and there's only one source of truth.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await getMe(token);
+        if (!cancelled) setIsAdmin(!!res.data.is_admin);
+      } catch { /* silent — non-admins simply don't see the link */ }
+    })();
+    return () => { cancelled = true; };
+  }, [getToken]);
 
   useEffect(() => {
     async function loadBilling() {
@@ -257,6 +276,17 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <Link href="/" data-active={pathname === "/"} className="sidebar-nav-item">
               <Zap style={{ width: 14, height: 14 }} strokeWidth={1.75} />
               Projects
+            </Link>
+          )}
+
+          {isAdmin && (
+            <Link
+              href="/admin"
+              data-active={pathname.startsWith("/admin")}
+              className="sidebar-nav-item"
+            >
+              <Shield style={{ width: 14, height: 14 }} strokeWidth={1.75} />
+              Admin
             </Link>
           )}
         </nav>

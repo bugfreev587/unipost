@@ -214,10 +214,16 @@ func main() {
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	platformHandler := handler.NewPlatformHandler(queries)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
+	adminChecker := auth.NewAdminChecker(queries)
+	meHandler := handler.NewMeHandler(queries, adminChecker)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
 	connectSessionHandler := handler.NewConnectSessionHandler(queries, os.Getenv("NEXT_PUBLIC_APP_URL"))
+	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
+	// session id + oauth_state act as the bearer. Server-renders an
+	// HTML form so the app password never touches dashboard JS.
+	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, webhookWorker)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
@@ -248,9 +254,20 @@ func main() {
 	// bearer. Returns a minimal projection of the session.
 	r.Get("/v1/public/connect/sessions/{id}", connectSessionHandler.PublicGet)
 
+	// Sprint 3 PR5: Bluesky Connect form submission. Native HTML form
+	// POST from the hosted dashboard page (cross-origin, no JS). Server
+	// renders an HTML response — success → 302 to return_url; failure
+	// → re-rendered form with inline error.
+	r.Post("/v1/public/connect/sessions/{id}/bluesky", connectBlueskyHandler.SubmitForm)
+
 	// Dashboard routes (Clerk session auth)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.ClerkSessionMiddleware)
+
+		// Whoami — returns the authenticated user's identity plus an
+		// is_admin flag derived from ADMIN_USERS. The dashboard reads
+		// this on mount to decide whether to render the Admin link.
+		r.Get("/v1/me", meHandler.Get)
 
 		r.Get("/v1/projects", projectHandler.List)
 		r.Post("/v1/projects", projectHandler.Create)
@@ -293,12 +310,13 @@ func main() {
 		r.Get("/v1/projects/{projectID}/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
 	})
 
-	// Admin routes — Clerk session + ADMIN_EMAIL gate. The middleware
+	// Admin routes — Clerk session + ADMIN_USERS gate. The middleware
 	// stack runs Clerk first to populate userID in ctx, then the admin
-	// check looks the user up by ID and compares email to ADMIN_EMAIL.
+	// check resolves the user against the ADMIN_USERS allowlist (which
+	// accepts both Clerk user IDs and emails).
 	r.Group(func(r chi.Router) {
 		r.Use(auth.ClerkSessionMiddleware)
-		r.Use(auth.AdminMiddleware(queries))
+		r.Use(auth.AdminMiddleware(adminChecker))
 
 		r.Get("/v1/admin/stats", adminHandler.GetStats)
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
