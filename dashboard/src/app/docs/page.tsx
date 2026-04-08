@@ -472,7 +472,8 @@ export default function DocsPage() {
                 semver semantics (1.0 → 1.1 added{" "}
                 <code>text.supports_threads</code> in Sprint 2; 1.1 → 1.2
                 flipped <code>bluesky.text.supports_threads</code> to
-                true in Sprint 3 — both additive).
+                true in Sprint 3; 1.2 → 1.3 dropped the managed-Twitter
+                media restriction in Sprint 4 — all additive).
               </p>
               <p className="doc-p">
                 Returned with <code>Cache-Control: public, max-age=3600</code>{" "}
@@ -481,7 +482,7 @@ export default function DocsPage() {
               <Code title="Example">{`curl ${BASE}/v1/platforms/capabilities`}</Code>
               <Code title="Response (200)">{`{
   "data": {
-    "schema_version": "1.2",
+    "schema_version": "1.3",
     "platforms": {
       "twitter": {
         "display_name": "Twitter / X",
@@ -604,16 +605,6 @@ export default function DocsPage() {
               be refreshed (with <code>reason: &quot;refresh_failed&quot;</code>) so
               your app can prompt the user to re-Connect.
             </p>
-
-            <div className="doc-callout doc-callout-warn">
-              <strong>Managed Twitter is text-only in v1.</strong> The OAuth flow
-              doesn&apos;t request the <code>media.write</code> scope, so posts with
-              <code> media_urls</code> or <code>media_ids</code> on a managed Twitter
-              account fail validation with{" "}
-              <code>media_unsupported_for_managed_twitter</code>. BYO Twitter accounts
-              (where you bring your own dev app) keep working with media. Sprint 4
-              will add managed media support.
-            </div>
 
             <div className="doc-callout doc-callout-info">
               <strong>Re-connecting the same user.</strong> If an end user runs the

@@ -30,7 +30,11 @@ package platform
 // 1.1 → 1.2 (Sprint 3): flipped bluesky.text.supports_threads to true
 // after the orchestrator gained AT-proto root+parent reply plumbing.
 // Field set unchanged — same purely-additive contract.
-const CapabilitiesSchemaVersion = "1.2"
+// 1.2 → 1.3 (Sprint 4 PR1): removed the managed-Twitter media guard
+// after media.write was added to the OAuth scope. Behavior loosening,
+// not a schema change — bumped to give clients a way to detect when
+// managed-Twitter media became supported.
+const CapabilitiesSchemaVersion = "1.3"
 
 // Capability is the full set of post-creation rules for one platform.
 // Clients hit GET /v1/platforms/capabilities to fetch the whole map.

@@ -180,11 +180,6 @@ const (
 	CodeMediaIDNotFound        = "media_id_not_found"
 	CodeMediaIDNotInProject    = "media_id_not_in_project"
 	CodeMediaNotUploaded       = "media_not_uploaded"
-
-	// Sprint 3 PR3: managed Twitter is text-only in v1 because the
-	// hosted OAuth flow doesn't request the media.write scope. The
-	// validator returns this BEFORE the adapter would 403 us.
-	CodeMediaUnsupportedManagedTwitter = "media_unsupported_for_managed_twitter"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -512,22 +507,6 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 	mediaItems := MediaFromURLs(post.MediaURLs)
 	imageCount := len(FilterByKind(mediaItems, MediaKindImage, MediaKindGIF, MediaKindUnknown))
 	videoCount := len(FilterByKind(mediaItems, MediaKindVideo))
-
-	// Sprint 3 PR3: managed Twitter is text-only because the hosted
-	// OAuth flow doesn't request media.write. Fail loud BEFORE the
-	// adapter would 403 us. Counts media_urls and media_ids together
-	// since either one would trigger the same Twitter API call.
-	if plat == "twitter" && acc.ConnectionType == "managed" && (len(mediaItems) > 0 || len(post.MediaIDs) > 0) {
-		res.Errors = append(res.Errors, Issue{
-			PlatformPostIndex: i,
-			AccountID:         post.AccountID,
-			Platform:          plat,
-			Field:             "media_urls",
-			Code:              CodeMediaUnsupportedManagedTwitter,
-			Message:           "managed Twitter accounts are text-only in v1 — media support is coming in Sprint 4",
-			Severity:          SeverityError,
-		})
-	}
 
 	if cap.Media.RequiresMedia && len(mediaItems) == 0 {
 		res.Errors = append(res.Errors, Issue{
