@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   ["quick-start", "Quick Start"],
   ["mcp", "MCP / AI Agents"],
   ["capabilities", "Capabilities"],
+  ["connect", "Connect (multi-tenant)"],
   ["social-accounts", "Social Accounts"],
   ["social-posts", "Social Posts"],
   ["validate", "Validate (preflight)"],
@@ -468,8 +469,10 @@ export default function DocsPage() {
               <p className="doc-p">
                 Static map of all supported platforms. Versioned via the
                 top-level <code>schema_version</code> field; bumps follow
-                semver semantics (1.0 → 1.1 was an additive change in
-                Sprint 2, adding <code>text.supports_threads</code>).
+                semver semantics (1.0 → 1.1 added{" "}
+                <code>text.supports_threads</code> in Sprint 2; 1.1 → 1.2
+                flipped <code>bluesky.text.supports_threads</code> to
+                true in Sprint 3 — both additive).
               </p>
               <p className="doc-p">
                 Returned with <code>Cache-Control: public, max-age=3600</code>{" "}
@@ -478,7 +481,7 @@ export default function DocsPage() {
               <Code title="Example">{`curl ${BASE}/v1/platforms/capabilities`}</Code>
               <Code title="Response (200)">{`{
   "data": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "platforms": {
       "twitter": {
         "display_name": "Twitter / X",
@@ -514,6 +517,112 @@ export default function DocsPage() {
               <Code title="Example">{`curl -H "Authorization: Bearer up_live_xxx" \\
   ${BASE}/v1/social-accounts/8558370d-b957-450c-a399-e2c0838a441a/capabilities`}</Code>
             </Endpoint>
+          </Section>
+
+          <Section id="connect" title="Connect (multi-tenant)">
+            <p className="doc-p">
+              UniPost Connect lets your customers onboard <em>their</em> end users&apos;
+              social accounts via a hosted OAuth flow — Stripe-Connect-style — without
+              your code ever touching credentials or running token refresh.
+            </p>
+            <p className="doc-p">
+              Sprint 3 supports three platforms: <strong>Twitter, LinkedIn, Bluesky</strong>.
+              Meta / Google / TikTok require platform-specific App Review and are coming
+              in a later release.
+            </p>
+
+            <p className="doc-p"><strong>The flow:</strong></p>
+            <p className="doc-p">
+              1. Your backend calls <code>POST /v1/connect/sessions</code> with the end
+              user&apos;s identifier and gets back a hosted-page URL.<br />
+              2. You email or in-app-redirect your user to that URL. They land on
+              <code> app.unipost.dev/connect/&lt;platform&gt;</code> and complete the OAuth
+              consent (or, for Bluesky, an app-password form).<br />
+              3. UniPost upserts a managed <code>social_accounts</code> row, fires the{" "}
+              <code>account.connected</code> webhook, and 302s the user back to your{" "}
+              <code>return_url</code>.<br />
+              4. Your existing <code>POST /v1/social-posts</code> can publish on the
+              user&apos;s behalf immediately. Token refresh runs in the background.
+            </p>
+
+            <Endpoint method="POST" path="/v1/connect/sessions" auth="API Key">
+              <p className="doc-p">Create a Connect session and get the hosted URL.</p>
+              <Param name="platform" type="string" required><code>twitter</code>, <code>linkedin</code>, or <code>bluesky</code></Param>
+              <Param name="external_user_id" type="string" required>Your stable identifier for the end user. Used to look up the resulting account via <code>GET /v1/social-accounts?external_user_id=…</code>.</Param>
+              <Param name="external_user_email" type="string">Optional, for record-keeping only.</Param>
+              <Param name="return_url" type="string">Where to send the user after the flow completes. Required for embedded apps; if omitted, UniPost renders a generic success page.</Param>
+              <Code title="Example">{`curl -X POST ${BASE}/v1/connect/sessions \\
+  -H "Authorization: Bearer up_live_xxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "platform": "twitter",
+    "external_user_id": "user_123",
+    "external_user_email": "alice@acme.com",
+    "return_url": "https://app.acme.com/integrations/done"
+  }'`}</Code>
+              <Code title="Response (201)">{`{
+  "data": {
+    "id": "cs_abc123",
+    "platform": "twitter",
+    "external_user_id": "user_123",
+    "status": "pending",
+    "url": "https://app.unipost.dev/connect/twitter?session=cs_abc123&state=...",
+    "expires_at": "2026-04-08T11:30:00Z",
+    "created_at": "2026-04-08T11:00:00Z"
+  }
+}`}</Code>
+              <p className="doc-p">
+                Sessions expire after 30 minutes. Expired sessions return{" "}
+                <code>status: &quot;expired&quot;</code> on subsequent reads.
+              </p>
+            </Endpoint>
+
+            <Endpoint method="GET" path="/v1/connect/sessions/{id}" auth="API Key">
+              <p className="doc-p">
+                Poll a session for completion. Webhooks are the recommended path —{" "}
+                this exists for the curl-loop dev case. When the user completes the flow,
+                <code> status</code> flips to <code>completed</code> and{" "}
+                <code> completed_social_account_id</code> points at the new managed row.
+              </p>
+            </Endpoint>
+
+            <Endpoint method="GET" path="/v1/social-accounts?external_user_id={id}" auth="API Key">
+              <p className="doc-p">
+                Look up the managed account that was created by a Connect session.
+                Optional <code>platform</code> filter scopes by destination network.
+                Returns the account&apos;s <code>id</code>, which you then use in{" "}
+                <code>POST /v1/social-posts</code> exactly like any other account.
+              </p>
+              <Code title="Example">{`curl ${BASE}/v1/social-accounts?external_user_id=user_123 \\
+  -H "Authorization: Bearer up_live_xxx"`}</Code>
+            </Endpoint>
+
+            <p className="doc-p"><strong>Webhook events</strong></p>
+            <p className="doc-p">
+              <code>account.connected</code> fires when a Connect flow completes.
+              <code> account.disconnected</code> fires when a managed token can&apos;t
+              be refreshed (with <code>reason: &quot;refresh_failed&quot;</code>) so
+              your app can prompt the user to re-Connect.
+            </p>
+
+            <div className="doc-callout doc-callout-warn">
+              <strong>Managed Twitter is text-only in v1.</strong> The OAuth flow
+              doesn&apos;t request the <code>media.write</code> scope, so posts with
+              <code> media_urls</code> or <code>media_ids</code> on a managed Twitter
+              account fail validation with{" "}
+              <code>media_unsupported_for_managed_twitter</code>. BYO Twitter accounts
+              (where you bring your own dev app) keep working with media. Sprint 4
+              will add managed media support.
+            </div>
+
+            <div className="doc-callout doc-callout-info">
+              <strong>Re-connecting the same user.</strong> If an end user runs the
+              flow twice with the same <code>external_user_id</code> and platform,
+              UniPost reuses the existing <code>social_accounts</code> row — your
+              historical post records stay intact, only the tokens are refreshed.
+              Bluesky is the exception: one user may legitimately own multiple handles,
+              so the upsert key for Bluesky is the handle/DID instead.
+            </div>
           </Section>
 
           <Section id="social-accounts" title="Social Accounts">

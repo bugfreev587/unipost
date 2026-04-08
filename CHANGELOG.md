@@ -8,6 +8,97 @@ each section heading below corresponds to a sprint, not a published version.
 
 ## [Unreleased]
 
+## Sprint 3 — UniPost Connect
+
+### Added
+
+- **UniPost Connect** — multi-tenant hosted OAuth flow that lets
+  customers onboard their end users' social accounts without
+  touching OAuth credentials or running token refresh themselves.
+  Three platforms in v1: **Twitter, LinkedIn, Bluesky**. Meta /
+  Google / TikTok deferred to Sprint 4 pending App Review.
+  - `POST /v1/connect/sessions` creates a 30-minute hosted-page
+    link the customer emails to their end user.
+  - `GET /v1/connect/sessions/{id}` (API key) for polling.
+  - `GET /v1/public/connect/sessions/{id}?state=…` (no auth,
+    oauth_state-protected) for the hosted page to read.
+  - Hosted dashboard page at
+    `app.unipost.dev/connect/<platform>?session=<id>&state=<state>`
+    with platform-specific UIs (Authorize button for OAuth,
+    native HTML form for Bluesky).
+  - `GET /v1/connect/callback/{platform}` is the OAuth provider
+    redirect target; runs token exchange + profile lookup, upserts
+    the managed `social_accounts` row, fires `account.connected`,
+    and 302s back to the customer's `return_url`.
+  - `POST /v1/public/connect/sessions/{id}/bluesky` accepts a
+    cross-origin native HTML form (handle + app password) so the
+    password never lives in dashboard JS.
+- **`account.connected` webhook event** — fires when a Connect flow
+  completes successfully (any of the three platforms).
+- **Managed token refresh worker** — runs every 5 min, refreshes
+  managed-flow tokens within 30 min of expiry, uses
+  `FOR UPDATE SKIP LOCKED` so concurrent API instances pick disjoint
+  slices and never double-refresh. Success path is silent; failure
+  flips `status='reconnect_required'` and fires
+  `account.disconnected` with `reason='refresh_failed'`.
+- **Bluesky thread support** — `bluesky.text.supports_threads`
+  flips to `true`. The runDispatchGroup orchestrator now plumbs
+  per-platform thread state (`thread_root_uri/cid` +
+  `thread_parent_uri/cid` for Bluesky; `in_reply_to_tweet_id` for
+  Twitter) so adapters stay decoupled. Capabilities schema bumps
+  `1.1 → 1.2` (additive).
+- **Reschedule + cancel for scheduled posts.** `PATCH
+  /v1/social-posts/{id}` extends to allow `scheduled_at`-only
+  edits when the row is in `status='scheduled'`. New endpoint
+  `POST /v1/social-posts/{id}/cancel` flips drafts and scheduled
+  posts to `status='cancelled'` under the same optimistic-lock
+  pattern Sprint 2 used for draft publish.
+- **`GET /v1/social-accounts` filters** — optional
+  `?external_user_id=…&platform=…` query params let customers
+  look up the row created by a Connect flow without scanning
+  the whole project.
+- **MCP server v0.4.0** with three new tools:
+  `unipost_create_connect_session`, `unipost_reschedule_post`,
+  `unipost_cancel_post`.
+- **Per-platform character counters** on the hosted preview page.
+  Twitter URLs collapse to 23 chars (t.co weighting), Bluesky uses
+  `Intl.Segmenter` for grapheme counts, others use UTF-16 code
+  units. Hand-rolled to avoid the 200KB `twitter-text` dependency.
+
+### Changed
+
+- **`social_accounts` schema gains six columns:** `status`
+  (active | reconnect_required), `connection_type` (byo |
+  managed), `connect_session_id`, `external_user_id`,
+  `external_user_email`, `last_refreshed_at`. Plus partial unique
+  index on `(project_id, platform, external_user_id)` for the
+  re-connect upsert path (excludes Bluesky, which upserts on
+  `external_account_id` instead because one user may legitimately
+  own multiple handles).
+- **Capabilities schema** `1.1 → 1.2`. Additive only.
+- Re-connecting the same `external_user_id` reuses the existing
+  `social_accounts` row (preserves historical post_results FK
+  references) instead of creating a duplicate.
+
+### Security / Validation
+
+- **Managed Twitter is text-only in v1.** The OAuth flow does NOT
+  request `media.write`. The validator rejects any media on a
+  managed Twitter account with the new
+  `media_unsupported_for_managed_twitter` fatal error code so
+  callers fail fast instead of getting a 403 from Twitter.
+- Bluesky form rate-limited at 10/min/IP, OAuth callback at
+  60/min/IP — both as defense against credential stuffing /
+  callback floods.
+
+### Deprecated
+
+Nothing.
+
+### Breaking
+
+None.
+
 ## Sprint 2 (commits `9d89c00..8198902`)
 
 ### Added
