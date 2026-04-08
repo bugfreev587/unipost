@@ -45,8 +45,10 @@ type postMetadataPlatformPostV2 struct {
 	AccountID       string         `json:"account_id"`
 	Caption         string         `json:"caption"`
 	MediaURLs       []string       `json:"media_urls,omitempty"`
+	MediaIDs        []string       `json:"media_ids,omitempty"`
 	PlatformOptions map[string]any `json:"platform_options,omitempty"`
 	InReplyTo       string         `json:"in_reply_to,omitempty"`
+	ThreadPosition  int            `json:"thread_position,omitempty"`
 }
 
 // EncodePostMetadata serializes a parsed request's posts into the v2
@@ -63,8 +65,10 @@ func EncodePostMetadata(posts []PlatformPostInput) ([]byte, error) {
 			AccountID:       p.AccountID,
 			Caption:         p.Caption,
 			MediaURLs:       p.MediaURLs,
+			MediaIDs:        p.MediaIDs,
 			PlatformOptions: p.PlatformOptions,
 			InReplyTo:       p.InReplyTo,
+			ThreadPosition:  p.ThreadPosition,
 		})
 	}
 	return json.Marshal(out)
@@ -100,8 +104,10 @@ func DecodePostMetadata(raw []byte, fallbackCaption string) ([]PlatformPostInput
 				AccountID:       p.AccountID,
 				Caption:         p.Caption,
 				MediaURLs:       p.MediaURLs,
+				MediaIDs:        p.MediaIDs,
 				PlatformOptions: p.PlatformOptions,
 				InReplyTo:       p.InReplyTo,
+				ThreadPosition:  p.ThreadPosition,
 			})
 		}
 		return out, nil

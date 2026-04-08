@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 type SocialPostHandler struct {
@@ -30,13 +32,19 @@ type SocialPostHandler struct {
 	// worker or a NoopBus, never nil — so handler code can call
 	// h.bus.Publish unconditionally.
 	bus events.EventBus
+	// storage (Sprint 2) is the R2-backed media library client used
+	// to resolve PlatformPostInput.MediaIDs into presigned download
+	// URLs at adapter dispatch time. Optional — nil disables the
+	// media_ids feature; the handler returns a clear error if a
+	// caller tries to use it on a server without R2 configured.
+	storage *storage.Client
 }
 
-func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus) *SocialPostHandler {
+func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client) *SocialPostHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
-	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus}
+	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus, storage: store}
 }
 
 type postResultResponse struct {
@@ -469,6 +477,21 @@ func (h *SocialPostHandler) publishOne(
 		}
 	}
 
+	// Resolve any media_ids to presigned download URLs and append
+	// them to the URL list. The adapter doesn't care about the
+	// distinction — both halves end up in the same MediaItem slice.
+	// Errors here are fatal for the post (we can't dispatch without
+	// the media), so we surface them as the post's err.
+	mediaURLs := append([]string(nil), pp.MediaURLs...)
+	if len(pp.MediaIDs) > 0 {
+		extra, mediaErr := h.resolveMediaIDsToURLs(r.Context(), pp.MediaIDs)
+		if mediaErr != nil {
+			oc.err = mediaErr
+			return
+		}
+		mediaURLs = append(mediaURLs, extra...)
+	}
+
 	// Per-platform routing log — emitted at INFO so smoke-tests can
 	// verify each PlatformPostInput is reaching the right adapter
 	// with the right caption. Mirrors the same line in scheduler.go
@@ -476,18 +499,67 @@ func (h *SocialPostHandler) publishOne(
 	slog.Info("publish: dispatching to adapter",
 		"account_id", acc.ID,
 		"platform", acc.Platform,
-		"caption_preview", truncateForLog(pp.Caption, 40))
+		"caption_preview", truncateForLog(pp.Caption, 40),
+		"media_urls", len(mediaURLs))
 
 	postResult, err := adapter.Post(
 		r.Context(),
 		accessToken,
 		pp.Caption,
-		platform.MediaFromURLs(pp.MediaURLs),
+		platform.MediaFromURLs(mediaURLs),
 		pp.PlatformOptions,
 	)
 	oc.result = postResult
 	oc.err = err
 	return
+}
+
+// resolveMediaIDsToURLs is the publish-time half of the media library
+// flow. For each media_id the caller referenced in platform_posts:
+//
+//  1. Fetch the row from the media table.
+//  2. If status is "pending", HEAD the R2 object and hydrate the row
+//     (the same poll-on-attach pattern the GET /v1/media endpoint
+//     uses). If R2 says the object isn't there, fail.
+//  3. Mint a fresh 15-minute presigned download URL for the adapter.
+//
+// Returns the URLs in the same order as the input media_ids so the
+// caller can interleave them with the per-post media_urls list.
+func (h *SocialPostHandler) resolveMediaIDsToURLs(ctx context.Context, mediaIDs []string) ([]string, error) {
+	if len(mediaIDs) == 0 {
+		return nil, nil
+	}
+	if h.storage == nil {
+		return nil, fmt.Errorf("media_ids supplied but R2 storage is not configured on this server")
+	}
+	out := make([]string, 0, len(mediaIDs))
+	for _, id := range mediaIDs {
+		row, err := h.queries.GetMedia(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("media_id %s: %w", id, err)
+		}
+		// Hydrate pending rows lazily.
+		if row.Status == "pending" {
+			head, hErr := h.storage.Head(ctx, row.StorageKey)
+			if hErr != nil || !head.Exists {
+				return nil, fmt.Errorf("media_id %s: not yet uploaded", id)
+			}
+			updated, uErr := h.queries.MarkMediaUploaded(ctx, db.MarkMediaUploadedParams{
+				ID:          row.ID,
+				SizeBytes:   head.SizeBytes,
+				ContentType: pickContentType(head.ContentType, row.ContentType),
+			})
+			if uErr == nil {
+				row = updated
+			}
+		}
+		dlURL, err := h.storage.PresignGet(ctx, row.StorageKey, 15*time.Minute)
+		if err != nil {
+			return nil, fmt.Errorf("media_id %s: presign get: %w", id, err)
+		}
+		out = append(out, dlURL)
+	}
+	return out, nil
 }
 
 // truncateForLog returns a copy of s shortened to at most n runes,

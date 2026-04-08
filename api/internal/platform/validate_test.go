@@ -14,7 +14,7 @@ func stubCapabilities() map[string]Capability {
 	return map[string]Capability{
 		"twitter": {
 			DisplayName: "Twitter / X",
-			Text:        TextCapability{MaxLength: 280},
+			Text:        TextCapability{MaxLength: 280, SupportsThreads: true},
 			Media: MediaCapability{
 				AllowMixed: false,
 				Images:     ImageCapability{MaxCount: 4},
@@ -363,6 +363,131 @@ func TestValidate_MultiplePostsReportAllErrors(t *testing.T) {
 	hasError(t, res, 0, CodeExceedsMaxLength)
 	hasError(t, res, 1, CodeMissingRequired)
 	hasError(t, res, 2, CodeAccountNotInProject)
+}
+
+// ─── thread validation (Sprint 2) ─────────────────────────────────────
+
+func TestValidate_ThreadHappyPath(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "1/", ThreadPosition: 1},
+		{AccountID: "acc_twitter", Caption: "2/", ThreadPosition: 2},
+		{AccountID: "acc_twitter", Caption: "3/", ThreadPosition: 3},
+	}))
+	if !res.Valid {
+		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
+}
+
+func TestValidate_ThreadOnUnsupportedPlatform(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_instagram", Caption: "x", MediaURLs: []string{"https://x/y.jpg"}, ThreadPosition: 1},
+	}))
+	hasError(t, res, 0, CodeThreadsUnsupported)
+}
+
+func TestValidate_ThreadMissingPositionOne(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "x", ThreadPosition: 2},
+		{AccountID: "acc_twitter", Caption: "y", ThreadPosition: 3},
+	}))
+	hasError(t, res, 0, CodeThreadPositionsNotContiguous)
+}
+
+func TestValidate_ThreadDuplicatePosition(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "x", ThreadPosition: 1},
+		{AccountID: "acc_twitter", Caption: "y", ThreadPosition: 1},
+	}))
+	hasError(t, res, 0, CodeThreadPositionsNotContiguous)
+}
+
+func TestValidate_ThreadMixedWithSingle(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "thread 1", ThreadPosition: 1},
+		{AccountID: "acc_twitter", Caption: "thread 2", ThreadPosition: 2},
+		{AccountID: "acc_twitter", Caption: "standalone"}, // no position
+	}))
+	hasError(t, res, 0, CodeThreadMixedWithSingle)
+}
+
+func TestValidate_ThreadOfOne(t *testing.T) {
+	// One entry with position=1, no siblings → silently treated as
+	// a single tweet. No error.
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "lonely", ThreadPosition: 1},
+	}))
+	if !res.Valid {
+		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
+}
+
+func TestValidate_ThreadAcrossDifferentAccounts(t *testing.T) {
+	// Two threads, one per account — they don't interfere.
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "tw 1", ThreadPosition: 1},
+		{AccountID: "acc_twitter", Caption: "tw 2", ThreadPosition: 2},
+		{AccountID: "acc_bluesky", Caption: "bs 1", ThreadPosition: 1},
+		{AccountID: "acc_bluesky", Caption: "bs 2", ThreadPosition: 2},
+	}))
+	// Bluesky doesn't support threads in our stub caps map → reject
+	// just the bluesky entries.
+	hasError(t, res, 2, CodeThreadsUnsupported)
+	hasError(t, res, 3, CodeThreadsUnsupported)
+	// Twitter ones should NOT have a thread error.
+	for _, e := range res.Errors {
+		if e.AccountID == "acc_twitter" && (e.Code == CodeThreadsUnsupported || e.Code == CodeThreadPositionsNotContiguous) {
+			t.Errorf("twitter thread should be valid, got %v", e)
+		}
+	}
+}
+
+// ─── media_ids validation (Sprint 2) ──────────────────────────────────
+
+func TestValidate_MediaIDNotInProject(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_known": {Status: "uploaded"},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_twitter", Caption: "x", MediaIDs: []string{"med_unknown"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+	hasError(t, res, 0, CodeMediaIDNotInProject)
+}
+
+func TestValidate_MediaNotUploaded(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_pending": {Status: "pending"},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_twitter", Caption: "x", MediaIDs: []string{"med_pending"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+	hasError(t, res, 0, CodeMediaNotUploaded)
+}
+
+func TestValidate_MediaIDUploaded(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_ok": {Status: "uploaded"},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_twitter", Caption: "x", MediaIDs: []string{"med_ok"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+	if !res.Valid {
+		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
 }
 
 // ─── benchmark for the §5.4 p95 < 50ms requirement ────────────────────

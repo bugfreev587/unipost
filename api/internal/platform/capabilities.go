@@ -24,7 +24,10 @@ package platform
 // MediaCapability / etc. structs. Bump when adding or renaming fields so
 // clients can detect schema drift. Bump the minor version for backwards-
 // compatible additions; bump the major version for breaking changes.
-const CapabilitiesSchemaVersion = "1.0"
+//
+// 1.0 → 1.1 (Sprint 2): added TextCapability.SupportsThreads. Old
+// 1.0 consumers ignore the unknown field, so this is purely additive.
+const CapabilitiesSchemaVersion = "1.1"
 
 // Capability is the full set of post-creation rules for one platform.
 // Clients hit GET /v1/platforms/capabilities to fetch the whole map.
@@ -48,6 +51,11 @@ type TextCapability struct {
 	// Required reports whether a caption is mandatory. False for IG /
 	// TikTok / Bluesky which accept media-only posts.
 	Required bool `json:"required"`
+	// SupportsThreads (Sprint 2 schema 1.1) reports whether the
+	// platform's adapter can chain multiple posts to the same account
+	// as a single thread via thread_position. Twitter is the only true
+	// in Sprint 2; Bluesky / Threads land in Sprint 3.
+	SupportsThreads bool `json:"supports_threads"`
 }
 
 // MediaCapability describes what media (images, videos, GIFs) the
@@ -122,9 +130,10 @@ var Capabilities = map[string]Capability{
 	"twitter": {
 		DisplayName: "Twitter / X",
 		Text: TextCapability{
-			MaxLength: 280,
-			MinLength: 0,
-			Required:  false,
+			MaxLength:       280,
+			MinLength:       0,
+			Required:        false,
+			SupportsThreads: true,
 		},
 		Media: MediaCapability{
 			RequiresMedia: false,

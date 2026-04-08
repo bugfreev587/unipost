@@ -205,7 +205,7 @@ func main() {
 	projectHandler := handler.NewProjectHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, webhookWorker)
-	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, webhookWorker)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, webhookWorker, storageClient)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)

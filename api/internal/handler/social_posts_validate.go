@@ -41,16 +41,21 @@ type publishRequestBody struct {
 }
 
 // platformPostBody is one entry in the new platform_posts[] shape.
-// Per §3.1 of the sprint PRD, per-post scheduled_at is rejected for
-// v1 — only the top-level scheduled_at is honored. The field exists
-// here so we can fail loud if a caller sends it.
+// Per §3.1 of the sprint 1 PRD, per-post scheduled_at is rejected —
+// only the top-level scheduled_at is honored. The field exists here
+// so we can fail loud if a caller sends it.
+//
+// Sprint 2 added MediaIDs (R2-hosted uploads via the media library)
+// and ThreadPosition (Twitter-only multi-tweet threads).
 type platformPostBody struct {
 	AccountID       string         `json:"account_id"`
 	Caption         string         `json:"caption"`
 	MediaURLs       []string       `json:"media_urls"`
+	MediaIDs        []string       `json:"media_ids"`
 	PlatformOptions map[string]any `json:"platform_options"`
 	InReplyTo       string         `json:"in_reply_to"`
-	ScheduledAt     *string        `json:"scheduled_at"` // forbidden in v1
+	ThreadPosition  int            `json:"thread_position"`
+	ScheduledAt     *string        `json:"scheduled_at"` // forbidden
 }
 
 // parsedRequest is what the parser hands back. The validator and the
@@ -106,8 +111,10 @@ func parsePublishRequest(body publishRequestBody) (parsedRequest, int, string) {
 				AccountID:       pp.AccountID,
 				Caption:         pp.Caption,
 				MediaURLs:       pp.MediaURLs,
+				MediaIDs:        pp.MediaIDs,
 				PlatformOptions: pp.PlatformOptions,
 				InReplyTo:       pp.InReplyTo,
+				ThreadPosition:  pp.ThreadPosition,
 			})
 		}
 		return pr, 0, ""

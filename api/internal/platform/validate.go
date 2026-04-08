@@ -40,8 +40,21 @@ type PlatformPostInput struct {
 	AccountID       string
 	Caption         string
 	MediaURLs       []string
+	// MediaIDs (Sprint 2) references rows in the media library —
+	// uploaded via POST /v1/media before publish. The handler resolves
+	// each ID to a presigned download URL at dispatch time and adds
+	// it to the adapter's media list. mixed MediaIDs + MediaURLs is
+	// allowed; both feed into the same MediaItem slice eventually.
+	MediaIDs        []string
 	PlatformOptions map[string]any
-	InReplyTo       string // optional, for thread support (Sprint 2)
+	InReplyTo       string // optional, for thread support (Sprint 2 / 3)
+
+	// ThreadPosition (Sprint 2, Twitter only) declares this post's
+	// 1-indexed position in a multi-post thread. All entries with the
+	// same AccountID and any non-zero ThreadPosition form one thread.
+	// 0 means "not part of a thread" — single post. Validated for
+	// contiguity (positions 1..N with no gaps) before dispatch.
+	ThreadPosition int
 }
 
 // ValidateAccount is what the validator needs to know about each
@@ -50,6 +63,17 @@ type PlatformPostInput struct {
 type ValidateAccount struct {
 	Platform     string
 	Disconnected bool
+}
+
+// ValidateMedia (Sprint 2) is what the validator needs to know about
+// each media_id referenced via PlatformPostInput.MediaIDs. The handler
+// builds this map by joining the referenced IDs against the media
+// table BEFORE calling ValidatePlatformPosts. Missing entries surface
+// as media_id_not_found / media_id_not_in_project errors.
+type ValidateMedia struct {
+	Status      string // "pending" | "uploaded" | "attached" | "deleted"
+	ContentType string
+	SizeBytes   int64
 }
 
 // ValidateOptions packages everything ValidatePlatformPosts needs.
@@ -63,6 +87,13 @@ type ValidateOptions struct {
 	// platform name + disconnect status. account_ids in Posts that are
 	// NOT in this map are reported as account_not_in_project errors.
 	Accounts map[string]ValidateAccount
+
+	// Media maps each media_id the caller is allowed to reference. Nil
+	// is fine — the validator skips media-id checks when the map is
+	// nil (used by /validate when the caller hasn't pre-loaded any).
+	// Empty (not nil) means "the caller pre-loaded media but found
+	// nothing", which makes any reference an error.
+	Media map[string]ValidateMedia
 
 	// Posts is the slice to validate.
 	Posts []PlatformPostInput
@@ -134,6 +165,16 @@ const (
 	CodeEmptyPosts             = "empty_posts"
 	CodeTooManyPosts           = "too_many_posts"
 	CodeUnknown                = "unknown"
+
+	// Sprint 2 thread codes.
+	CodeThreadsUnsupported     = "threads_unsupported"
+	CodeThreadPositionsNotContiguous = "thread_positions_not_contiguous"
+	CodeThreadMixedWithSingle  = "thread_mixed_with_single"
+
+	// Sprint 2 media library codes.
+	CodeMediaIDNotFound        = "media_id_not_found"
+	CodeMediaIDNotInProject    = "media_id_not_in_project"
+	CodeMediaNotUploaded       = "media_not_uploaded"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -225,8 +266,139 @@ func ValidatePlatformPosts(opts ValidateOptions) ValidationResult {
 		validateOnePost(i, post, opts, &res)
 	}
 
+	// Cross-post checks: thread contiguity / single-vs-thread mixing.
+	// Run AFTER the per-post pass so an LLM sees both kinds of error
+	// in one shot rather than having to fix per-post issues first.
+	validateThreads(opts, &res)
+
 	res.Valid = len(res.Errors) == 0
 	return res
+}
+
+// validateThreads enforces the Sprint 2 thread rules:
+//
+//   - thread_position is only allowed on platforms whose capability
+//     reports text.supports_threads = true.
+//   - All entries with the same account_id and any non-zero
+//     thread_position form one logical thread; positions must be
+//     contiguous starting at 1 (1, 2, 3 — not 1, 3 or 2, 3).
+//   - On the same account, you cannot mix thread entries with single
+//     non-thread entries in the same publish call. Either all of an
+//     account's posts are part of a thread, or none are.
+//
+// A "thread of 1" (one post with thread_position=1, no siblings) is
+// silently treated as a single post and not flagged. The chaining
+// logic in the handler is a no-op when there's only one entry.
+func validateThreads(opts ValidateOptions, res *ValidationResult) {
+	// Group entries by account_id, separating threaded from single
+	// posts in the same pass.
+	type group struct {
+		threaded  []int // indices into opts.Posts
+		singles   []int
+		platform  string
+	}
+	groups := make(map[string]*group)
+	for i, p := range opts.Posts {
+		if p.AccountID == "" {
+			continue // already reported elsewhere
+		}
+		g, ok := groups[p.AccountID]
+		if !ok {
+			g = &group{}
+			if acc, hit := opts.Accounts[p.AccountID]; hit {
+				g.platform = strings.ToLower(acc.Platform)
+			}
+			groups[p.AccountID] = g
+		}
+		if p.ThreadPosition > 0 {
+			g.threaded = append(g.threaded, i)
+		} else {
+			g.singles = append(g.singles, i)
+		}
+	}
+
+	for accountID, g := range groups {
+		if len(g.threaded) == 0 {
+			continue
+		}
+
+		// Capability gate — does the platform support threading at
+		// all? If not, every threaded entry gets a thread_unsupported
+		// error.
+		if cap, ok := opts.Capabilities[g.platform]; ok && !cap.Text.SupportsThreads {
+			for _, idx := range g.threaded {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: idx,
+					AccountID:         accountID,
+					Platform:          g.platform,
+					Field:             "thread_position",
+					Code:              CodeThreadsUnsupported,
+					Message:           g.platform + " does not support multi-post threads via UniPost",
+					Severity:          SeverityError,
+				})
+			}
+			continue
+		}
+
+		// Mixing rule — threaded + non-threaded on the same account
+		// in one call is ambiguous and rejected.
+		if len(g.singles) > 0 {
+			for _, idx := range g.threaded {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: idx,
+					AccountID:         accountID,
+					Platform:          g.platform,
+					Field:             "thread_position",
+					Code:              CodeThreadMixedWithSingle,
+					Message:           "cannot mix thread entries with non-thread entries on the same account in one call",
+					Severity:          SeverityError,
+				})
+			}
+			// Don't bother with the contiguity check below if we
+			// already failed mixing.
+			continue
+		}
+
+		// Contiguity: positions must be a permutation of 1..N.
+		positions := make([]int, 0, len(g.threaded))
+		for _, idx := range g.threaded {
+			positions = append(positions, opts.Posts[idx].ThreadPosition)
+		}
+		if !contiguousFromOne(positions) {
+			for _, idx := range g.threaded {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: idx,
+					AccountID:         accountID,
+					Platform:          g.platform,
+					Field:             "thread_position",
+					Code:              CodeThreadPositionsNotContiguous,
+					Message:           "thread_position values must be contiguous starting at 1",
+					Actual:            positions,
+					Severity:          SeverityError,
+				})
+			}
+		}
+	}
+}
+
+// contiguousFromOne reports whether the input is a permutation of
+// {1, 2, ..., len(s)}. Cheap O(n) check via a "seen" map sized to
+// the longest expected thread (Twitter caps at 25).
+func contiguousFromOne(s []int) bool {
+	if len(s) == 0 {
+		return true
+	}
+	seen := make(map[int]bool, len(s))
+	for _, v := range s {
+		if v < 1 || v > len(s) {
+			return false
+		}
+		if seen[v] {
+			return false // duplicate
+		}
+		seen[v] = true
+	}
+	return true
 }
 
 // validateOnePost runs every check that applies to a single
@@ -390,6 +562,38 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Message:           plat + " does not allow mixing images and video in one post",
 			Severity:          SeverityError,
 		})
+	}
+
+	// Step 3.5 (Sprint 2): media_ids ownership + state.
+	// We only run this check when the caller pre-loaded a media map.
+	// /validate without DB access passes Media=nil and skips this.
+	if opts.Media != nil {
+		for _, mid := range post.MediaIDs {
+			m, ok := opts.Media[mid]
+			if !ok {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "media_ids",
+					Code:              CodeMediaIDNotInProject,
+					Message:           "media_id " + mid + " not found or not in this project",
+					Severity:          SeverityError,
+				})
+				continue
+			}
+			if m.Status != "uploaded" && m.Status != "attached" {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "media_ids",
+					Code:              CodeMediaNotUploaded,
+					Message:           "media_id " + mid + " is in status " + m.Status + "; PUT the bytes to the presigned URL first",
+					Severity:          SeverityError,
+				})
+			}
+		}
 	}
 
 	// Step 4: in_reply_to threading sanity.
