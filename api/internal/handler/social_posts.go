@@ -1137,19 +1137,15 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		nextCursor = encodeListCursor(last.CreatedAt.Time, last.ID)
 	}
 
-	writeSuccess(w, listPostsResponse{
-		Data:       result,
-		NextCursor: nextCursor,
+	// Cursor pagination uses a flat envelope ({data, next_cursor}) rather
+	// than the nested writeSuccess path. Calling writeSuccess here would
+	// double-wrap as {data: {data: [...], next_cursor: ""}}, which the
+	// dashboard and the smoke test both reject because they read .data
+	// and .next_cursor at the top level.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":        result,
+		"next_cursor": nextCursor,
 	})
-}
-
-// listPostsResponse is the page envelope returned by List. Distinct
-// from the legacy writeSuccessWithMeta path because cursor pagination
-// has no concept of "total" (computing it would defeat the keyset
-// performance win). Clients keep paging until next_cursor is empty.
-type listPostsResponse struct {
-	Data       []socialPostResponse `json:"data"`
-	NextCursor string               `json:"next_cursor,omitempty"`
 }
 
 // parseLimitParam parses ?limit=N with a default + ceiling.
