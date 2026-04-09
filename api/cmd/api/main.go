@@ -243,6 +243,9 @@ func main() {
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
+	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
+	// dynamic GROUP BY clause sqlc can't model.
+	analyticsRollupHandler := handler.NewAnalyticsRollupHandler(pool)
 	platformHandler := handler.NewPlatformHandler(queries)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	adminChecker := auth.NewAdminChecker(queries)
@@ -458,6 +461,10 @@ func main() {
 		r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)
 		r.Get("/v1/analytics/trend", analyticsHandler.GetTrend)
 		r.Get("/v1/analytics/by-platform", analyticsHandler.GetByPlatform)
+		// Sprint 5 PR1: dimensional rollup with day/week/month
+		// granularity + dynamic GROUP BY across platform / account /
+		// external_user_id / status.
+		r.Get("/v1/analytics/rollup", analyticsRollupHandler.GetRollup)
 
 		r.Post("/v1/webhooks", webhookSubHandler.Create)
 		r.Get("/v1/webhooks", webhookSubHandler.List)
