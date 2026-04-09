@@ -877,23 +877,37 @@ func idempotencyKeyParam(key string) pgtype.Text {
 // record them as per-account failures and let the rest succeed —
 // preserves legacy partial-success semantics.
 var fatalErrorCodes = map[string]bool{
-	platform.CodeExceedsMaxLength:       true,
-	platform.CodeBelowMinLength:         true,
-	platform.CodeMissingRequired:        true,
-	platform.CodeMaxImagesExceeded:      true,
-	platform.CodeMaxVideosExceeded:      true,
-	platform.CodeMixedMediaUnsupported:  true,
-	platform.CodeUnsupportedInReplyTo:   true,
-	platform.CodeScheduledTooSoon:       true,
-	platform.CodeScheduledTooFar:        true,
-	platform.CodeUnknownPlatform:        true,
-	platform.CodeEmptyPosts:             true,
-	platform.CodeTooManyPosts:           true,
-	platform.CodeUnsupportedFormat:      true,
-	platform.CodeFileTooLarge:           true,
-	platform.CodeDimensionsOutOfRange:   true,
-	platform.CodeAspectRatioUnsupported: true,
-	platform.CodeDurationOutOfRange:     true,
+	platform.CodeExceedsMaxLength:            true,
+	platform.CodeBelowMinLength:              true,
+	platform.CodeMissingRequired:             true,
+	platform.CodeMaxImagesExceeded:           true,
+	platform.CodeMaxVideosExceeded:           true,
+	platform.CodeMixedMediaUnsupported:       true,
+	platform.CodeUnsupportedInReplyTo:        true,
+	platform.CodeScheduledTooSoon:            true,
+	platform.CodeScheduledTooFar:             true,
+	platform.CodeUnknownPlatform:             true,
+	platform.CodeEmptyPosts:                  true,
+	platform.CodeTooManyPosts:                true,
+	platform.CodeUnsupportedFormat:           true,
+	platform.CodeFileTooLarge:                true,
+	platform.CodeDimensionsOutOfRange:        true,
+	platform.CodeAspectRatioUnsupported:      true,
+	platform.CodeDurationOutOfRange:          true,
+	// Sprint 2 thread codes — fatal because the post can't be
+	// dispatched in a meaningful way without the structure being
+	// intelligible.
+	platform.CodeThreadsUnsupported:          true,
+	platform.CodeThreadPositionsNotContiguous: true,
+	platform.CodeThreadMixedWithSingle:       true,
+	// Sprint 2 media-library codes — fatal because the publish path
+	// would 4xx if it tried to dispatch with a missing media id.
+	platform.CodeMediaIDNotFound:             true,
+	platform.CodeMediaIDNotInProject:         true,
+	platform.CodeMediaNotUploaded:            true,
+	// Sprint 4 PR3 first_comment codes.
+	platform.CodeFirstCommentUnsupported:     true,
+	platform.CodeFirstCommentTooLong:         true,
 }
 
 // filterFatalIssues splits the validator's full Errors slice into
