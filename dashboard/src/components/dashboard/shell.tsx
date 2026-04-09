@@ -51,7 +51,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { signOut, openUserProfile } = useClerk();
   const [projects, setProjects] = useState<Project[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
-  const [accountsExpanded, setAccountsExpanded] = useState(false);
+  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
   const [isAdmin, setIsAdmin] = useState(false);
 
   const projectMatch = pathname.match(/^\/projects\/([^/]+)/);
@@ -192,13 +192,20 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 const active = isActive(item.href);
                 const Icon = item.icon;
                 const hasSubmenu = !!item.submenu;
-                const submenuOpen = hasSubmenu && (accountsExpanded || pathname.startsWith(`/projects/${projectId}/accounts`));
+                const submenuOpen = hasSubmenu && (
+                  expandedMenus.has(item.href) ||
+                  pathname.startsWith(`/projects/${projectId}${item.href}`)
+                );
 
                 return (
                   <div key={item.href}>
                     {hasSubmenu ? (
                       <button
-                        onClick={() => setAccountsExpanded(!submenuOpen)}
+                        onClick={() => setExpandedMenus(prev => {
+                          const next = new Set(prev);
+                          if (submenuOpen) next.delete(item.href); else next.add(item.href);
+                          return next;
+                        })}
                         className="sidebar-nav-item"
                         style={{ width: "100%", border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", justifyContent: "space-between" }}
                       >
