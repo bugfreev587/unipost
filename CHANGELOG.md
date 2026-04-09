@@ -8,6 +8,93 @@ each section heading below corresponds to a sprint, not a published version.
 
 ## [Unreleased]
 
+## Sprint 5 — Post-Launch Hardening
+
+### Added — UniPost API
+
+- **Analytics rollup endpoint** — `GET /v1/analytics/rollup` returns
+  time-bucketed publish metrics (total / succeeded / failed) with
+  configurable granularity (`day`, `week`, `month`) and GROUP BY
+  dimensions (`platform`, `social_account_id`, `external_user_id`,
+  `status`). Max range 366 days. Dynamic SQL uses an allowlist-based
+  GROUP BY (not user input interpolation) to prevent injection — two
+  lock tests pin the allowlists so a future refactor can't silently
+  expand the SQL surface. (PR1)
+- **Per-account monthly publish quota** — new `per_account_monthly_limit`
+  column on `projects`. When set, the publish path counts each social
+  account's successful posts in the current calendar month (UTC) and
+  refuses dispatch when the count reaches the cap. Enforcement is
+  wired into both the immediate publish path and the scheduler, using
+  a per-request `PerAccountTracker` with an atomic check-and-decrement
+  mutex so parallel dispatch groups within a single request can't
+  over-publish. `NULL` = unlimited (existing behavior); `0` = emergency
+  lockout. `PATCH /v1/projects/:id` accepts the field with a
+  `**int32` shape so absent/null/number map correctly. 7 tests under
+  `-race`. (PR2)
+- **Instagram Connect** (feature-flagged) — `InstagramConnector`
+  implements the managed-user OAuth flow using "Instagram API with
+  Instagram Login" (graph.instagram.com, no Facebook required). Two-
+  step token swap (short-lived → long-lived); long-lived failure is
+  fatal (no 1-hour fallback). Gated behind `CONNECT_INSTAGRAM_ENABLED`
+  so the code ships to production before Meta App Review. 7 tests. (PR3)
+- **Threads Connect** (feature-flagged) — `ThreadsConnector` for the
+  same managed-user flow. Structurally identical to Instagram (same
+  Meta two-step swap), with `th_` grant-type prefix (not `ig_`),
+  `threads_profile_picture_url` avatar field, and authorize URL on
+  `threads.net` (not `graph.threads.net`). Gated behind
+  `CONNECT_THREADS_ENABLED`. 7 tests pin the per-platform deltas
+  against IG→Threads port typos. (PR4)
+- **MCP server v0.6.0** with two new tools:
+  `unipost_get_analytics_rollup` (dimensional rollup with
+  day/week/month granularity + dynamic GROUP BY),
+  `unipost_update_project_quota` (set/clear the per-account cap from
+  MCP). `unipost_create_connect_session` platform enum expanded to
+  include `instagram` and `threads`. Tool count: 20 (from 18). (PR9)
+- **/tools landing page** at `unipost.dev/tools` — tool gallery with
+  reusable `ToolCard` component. AgentPost is the first card;
+  Connect Widget and Analytics Explorer are "coming soon" placeholders.
+  **/tools/agentpost** product page with hero, terminal demo mockup,
+  feature cards, LLM provider showcase, and CTA. Both routes live in
+  the existing Next.js app — no new domain. (PR8)
+
+### Added — AgentPost
+
+- **OpenAI + Gemini LLM providers** — refactored the single-provider
+  Claude path into `src/lib/llm/` with per-provider SDKs (Anthropic,
+  OpenAI, Google Gemini). The prompt is shared; the SDK call differs
+  per file. `llm_provider` in config.json is the new switch (default
+  "anthropic" for backward compat). `agentpost init` walks through
+  provider choice and asks only for the matching key. The shared
+  parser (`parse.ts`) absorbs all provider quirks: markdown fence
+  stripping (Gemini), prose-prefix recovery (Gemini), unknown
+  account_id rejection, empty-caption rejection, active-account
+  coverage check. 11 tests. (PR5)
+- **rss-bridge example** — `examples/rss-bridge/` polls any RSS or
+  Atom feed and posts new items as per-platform social posts via
+  UniPost. First-run safety: only the most recent item is published
+  on the first run. State tracked via a single guid in `state.json`,
+  committed back to the repo by the included GitHub Action. (PR6)
+
+### Changed
+
+- **Migration numbering** — `022_analytics_rollup_index.sql` was
+  renumbered to `023` (and PR2's quota migration to `024`) because
+  an external commit had already used version 022 for
+  `022_default_and_last_project.sql`. Goose panicked on boot with
+  "duplicate version 22 detected" until the renumber shipped.
+- **AgentPost `requireConfig()`** relaxed — no longer hard-checks
+  `anthropic_api_key` at startup. Provider key validation is lazy
+  (via `requireProviderKey()` in `llm/index.ts`) so a config with
+  multiple providers configured can switch between them without
+  re-running init.
+
+### Fixed
+
+- **Migration 022 collision** — `022_analytics_rollup_index.sql`
+  collided with the pre-existing `022_default_and_last_project.sql`,
+  causing a goose panic on Railway deploy. Renumbered to 023 in
+  commit `1ba40b5`. (PR1 hotfix)
+
 ## Sprint 4 — Launch Sprint (AgentPost v0.1 + Polish)
 
 This is the first sprint whose deliverable is **a launch**, not just
