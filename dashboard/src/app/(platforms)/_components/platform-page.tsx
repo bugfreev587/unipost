@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { MarketingNav, MarketingCTA, MarketingCTALight } from "@/components/marketing/nav";
+import { MarketingNav, MarketingCTA } from "@/components/marketing/nav";
 import type { PlatformConfig } from "../_config/platforms";
 import { ALL_PLATFORMS } from "../_config/platforms";
+
+const LANDING = process.env.NEXT_PUBLIC_LANDING_URL || "https://unipost.dev";
 
 // ── Platform brand SVG icons (from landing page) ──
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
@@ -231,14 +232,14 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
       {/* NAV */}
       <nav className="pp-nav">
         <div className="pp-nav-inner">
-          <Link href="/" className="pp-logo">
+          <a href={LANDING} className="pp-logo">
             <div className="pp-logo-mark"><ZapIcon /></div>
             <span className="pp-logo-name">UniPost</span>
-          </Link>
+          </a>
           <div className="pp-nav-links">
-            <Link href="/solutions" className="pp-nav-link">Solutions</Link>
-            <Link href="/docs" className="pp-nav-link">Docs</Link>
-            <Link href="/pricing" className="pp-nav-link">Pricing</Link>
+            <a href={`${LANDING}/solutions`} className="pp-nav-link">Solutions</a>
+            <a href={`${LANDING}/docs`} className="pp-nav-link">Docs</a>
+            <a href={`${LANDING}/pricing`} className="pp-nav-link">Pricing</a>
           </div>
           <MarketingNav />
         </div>
@@ -269,13 +270,13 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
 
           <div className="pp-hero-actions">
             {isWaitlist ? (
-              <Link href="/contact" className="lp-btn lp-btn-primary lp-btn-lg">Join Waitlist</Link>
+              <a href={`${LANDING}/contact`} className="lp-btn lp-btn-primary lp-btn-lg">Join Waitlist</a>
             ) : (
               <MarketingCTA />
             )}
-            <Link href={`/docs`} className="lp-btn lp-btn-ghost lp-btn-lg">
+            <a href={`${LANDING}/docs`} className="lp-btn lp-btn-ghost lp-btn-lg">
               View {cfg.name} Docs →
-            </Link>
+            </a>
           </div>
 
           <div className="pp-hero-meta">
@@ -525,9 +526,9 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
           <div className="pp-also-label">Also post to these platforms</div>
           <div className="pp-also-chips">
             {others.map((p) => (
-              <Link key={p.slug} href={`/${p.slug}-api`} className="pp-also-chip">
+              <a key={p.slug} href={`${LANDING}/${p.slug}-api`} className="pp-also-chip">
                 <span style={{ display: "flex", alignItems: "center" }}>{PLATFORM_ICONS[p.slug] ?? p.icon}</span> {p.name}
-              </Link>
+              </a>
             ))}
           </div>
         </div>
@@ -540,13 +541,13 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
             <p className="pp-cta-sub">Free plan includes 100 posts/month. No credit card required.</p>
             <div className="pp-cta-actions">
               {isWaitlist ? (
-                <Link href="/contact" className="lp-btn lp-btn-primary lp-btn-lg">Join Waitlist</Link>
+                <a href={`${LANDING}/contact`} className="lp-btn lp-btn-primary lp-btn-lg">Join Waitlist</a>
               ) : (
                 <MarketingCTA />
               )}
-              <Link href={`/docs`} className="lp-btn lp-btn-ghost lp-btn-lg">
+              <a href={`${LANDING}/docs`} className="lp-btn lp-btn-ghost lp-btn-lg">
                 View {cfg.name} Docs →
-              </Link>
+              </a>
             </div>
           </div>
         </div>
@@ -560,10 +561,10 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
             <span className="pp-footer-name">UniPost</span>
           </div>
           <div className="pp-footer-links">
-            <Link href="/docs" className="pp-footer-link">Docs</Link>
-            <Link href="/pricing" className="pp-footer-link">Pricing</Link>
-            <Link href="/privacy" className="pp-footer-link">Privacy</Link>
-            <Link href="/terms" className="pp-footer-link">Terms</Link>
+            <a href={`${LANDING}/docs`} className="pp-footer-link">Docs</a>
+            <a href={`${LANDING}/pricing`} className="pp-footer-link">Pricing</a>
+            <a href={`${LANDING}/privacy`} className="pp-footer-link">Privacy</a>
+            <a href={`${LANDING}/terms`} className="pp-footer-link">Terms</a>
           </div>
           <div className="pp-footer-copy">&copy; 2026 UniPost</div>
         </div>
