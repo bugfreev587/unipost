@@ -84,10 +84,6 @@ export default function ProjectOverviewPage() {
             <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>
               {project.name}
             </div>
-            <span className="dbadge dbadge-green">
-              <span className="dbadge-dot" />
-              {project.mode}
-            </span>
           </div>
           <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 11, color: "var(--dmuted2)", marginTop: 4 }}>
             {project.id}

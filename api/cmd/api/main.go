@@ -331,6 +331,11 @@ func main() {
 		// is_admin flag derived from ADMIN_USERS. The dashboard reads
 		// this on mount to decide whether to render the Admin link.
 		r.Get("/v1/me", meHandler.Get)
+		// Dashboard root resolver: returns default_project_id +
+		// last_project_id, lazily creating a "Default" project for
+		// fresh signups and backfilling default_project_id for legacy
+		// users with existing projects but no stamped default.
+		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
 
 		r.Get("/v1/projects", projectHandler.List)
 		r.Post("/v1/projects", projectHandler.Create)

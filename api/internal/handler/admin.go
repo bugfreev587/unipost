@@ -337,7 +337,6 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 type adminUserProject struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
-	Mode          string    `json:"mode"`
 	CreatedAt     time.Time `json:"created_at"`
 	PlanID        string    `json:"plan_id"`
 	PlanName      string    `json:"plan_name"`
@@ -410,7 +409,7 @@ WHERE u.id = $1
 	// Per-project breakdown
 	rows, err := h.pool.Query(r.Context(), `
 SELECT
-  p.id, p.name, p.mode, p.created_at,
+  p.id, p.name, p.created_at,
   COALESCE(s.plan_id, 'free'),
   COALESCE(pl.name, 'Free'),
   COALESCE(pl.price_cents, 0),
@@ -435,7 +434,7 @@ ORDER BY p.created_at DESC
 		var p adminUserProject
 		var posts int64
 		if err := rows.Scan(
-			&p.ID, &p.Name, &p.Mode, &p.CreatedAt,
+			&p.ID, &p.Name, &p.CreatedAt,
 			&p.PlanID, &p.PlanName, &p.PriceCents,
 			&posts, &p.PostLimit, &p.Status, &p.PlatformCount,
 		); err != nil {

@@ -12,25 +12,23 @@ import (
 )
 
 const createProject = `-- name: CreateProject :one
-INSERT INTO projects (owner_id, name, mode)
-VALUES ($1, $2, $3)
-RETURNING id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
+INSERT INTO projects (owner_id, name)
+VALUES ($1, $2)
+RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
 `
 
 type CreateProjectParams struct {
 	OwnerID string `json:"owner_id"`
 	Name    string `json:"name"`
-	Mode    string `json:"mode"`
 }
 
 func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error) {
-	row := q.db.QueryRow(ctx, createProject, arg.OwnerID, arg.Name, arg.Mode)
+	row := q.db.QueryRow(ctx, createProject, arg.OwnerID, arg.Name)
 	var i Project
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerID,
 		&i.Name,
-		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BrandingLogoUrl,
@@ -50,7 +48,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id string) error {
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE id = $1
+SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE id = $1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
@@ -60,7 +58,6 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.ID,
 		&i.OwnerID,
 		&i.Name,
-		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BrandingLogoUrl,
@@ -71,7 +68,7 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 }
 
 const getProjectByIDAndOwner = `-- name: GetProjectByIDAndOwner :one
-SELECT id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE id = $1 AND owner_id = $2
+SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE id = $1 AND owner_id = $2
 `
 
 type GetProjectByIDAndOwnerParams struct {
@@ -86,7 +83,6 @@ func (q *Queries) GetProjectByIDAndOwner(ctx context.Context, arg GetProjectByID
 		&i.ID,
 		&i.OwnerID,
 		&i.Name,
-		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BrandingLogoUrl,
@@ -97,7 +93,7 @@ func (q *Queries) GetProjectByIDAndOwner(ctx context.Context, arg GetProjectByID
 }
 
 const listProjectsByOwner = `-- name: ListProjectsByOwner :many
-SELECT id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE owner_id = $1 ORDER BY created_at DESC
+SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE owner_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error) {
@@ -113,7 +109,6 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 			&i.ID,
 			&i.OwnerID,
 			&i.Name,
-			&i.Mode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.BrandingLogoUrl,
@@ -133,7 +128,7 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 const updateProject = `-- name: UpdateProject :one
 UPDATE projects SET name = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
+RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
 `
 
 type UpdateProjectParams struct {
@@ -148,7 +143,6 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		&i.ID,
 		&i.OwnerID,
 		&i.Name,
-		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BrandingLogoUrl,
@@ -165,7 +159,7 @@ SET branding_logo_url      = COALESCE($2::TEXT,      branding_logo_url),
     branding_primary_color = COALESCE($4::TEXT, branding_primary_color),
     updated_at             = NOW()
 WHERE id = $1
-RETURNING id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
+RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
 `
 
 type UpdateProjectBrandingParams struct {
@@ -192,7 +186,6 @@ func (q *Queries) UpdateProjectBranding(ctx context.Context, arg UpdateProjectBr
 		&i.ID,
 		&i.OwnerID,
 		&i.Name,
-		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BrandingLogoUrl,

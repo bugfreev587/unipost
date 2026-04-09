@@ -98,7 +98,6 @@ type Project struct {
 	ID                   string             `json:"id"`
 	OwnerID              string             `json:"owner_id"`
 	Name                 string             `json:"name"`
-	Mode                 string             `json:"mode"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	BrandingLogoUrl      pgtype.Text        `json:"branding_logo_url"`
@@ -177,11 +176,13 @@ type Usage struct {
 }
 
 type User struct {
-	ID        string             `json:"id"`
-	Email     string             `json:"email"`
-	Name      pgtype.Text        `json:"name"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID               string             `json:"id"`
+	Email            string             `json:"email"`
+	Name             pgtype.Text        `json:"name"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	DefaultProjectID pgtype.Text        `json:"default_project_id"`
+	LastProjectID    pgtype.Text        `json:"last_project_id"`
 }
 
 type Webhook struct {

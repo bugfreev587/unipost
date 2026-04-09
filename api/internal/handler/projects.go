@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -27,7 +28,6 @@ type projectResponse struct {
 	ID        string    `json:"id"`
 	OwnerID   string    `json:"owner_id"`
 	Name      string    `json:"name"`
-	Mode      string    `json:"mode"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	// Sprint 4 PR4: white-label Connect branding. All three are
@@ -44,7 +44,6 @@ func toProjectResponse(p db.Project) projectResponse {
 		ID:        p.ID,
 		OwnerID:   p.OwnerID,
 		Name:      p.Name,
-		Mode:      p.Mode,
 		CreatedAt: p.CreatedAt.Time,
 		UpdatedAt: p.UpdatedAt.Time,
 	}
@@ -85,7 +84,6 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		Name string `json:"name"`
-		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -97,18 +95,9 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.Mode == "" {
-		body.Mode = "quickstart"
-	}
-	if body.Mode != "quickstart" && body.Mode != "whitelabel" {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Mode must be 'quickstart' or 'whitelabel'")
-		return
-	}
-
 	project, err := h.queries.CreateProject(r.Context(), db.CreateProjectParams{
 		OwnerID: userID,
 		Name:    body.Name,
-		Mode:    body.Mode,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create project")
@@ -133,6 +122,18 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get project")
 		return
+	}
+
+	// Stamp last_project_id as a side-effect of fetching a project the
+	// user owns. The dashboard hits this endpoint on every project page
+	// mount, so it's the natural hook for "last visited" tracking. We
+	// log on failure but never block the response — the user-facing
+	// page must render even if the side-effect write fails.
+	if err := h.queries.SetUserLastProject(r.Context(), db.SetUserLastProjectParams{
+		ID:            userID,
+		LastProjectID: pgtype.Text{String: projectID, Valid: true},
+	}); err != nil {
+		slog.Warn("failed to update last_project_id", "user_id", userID, "project_id", projectID, "error", err)
 	}
 
 	writeSuccess(w, toProjectResponse(project))
@@ -304,6 +305,22 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get project")
+		return
+	}
+
+	// Refuse to drop the user's auto-created Default project — it's the
+	// guaranteed fallback the dashboard root resolver redirects to when
+	// the user has nowhere else to go. Without this guard a user could
+	// delete their Default and end up with no project at all (zero-state
+	// would be self-healing via /me/bootstrap, but we'd lose the "can't
+	// delete the default" guarantee that documentation will rely on).
+	user, err := h.queries.GetUser(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load user")
+		return
+	}
+	if user.DefaultProjectID.Valid && user.DefaultProjectID.String == projectID {
+		writeError(w, http.StatusConflict, "DEFAULT_PROJECT_PROTECTED", "The default project cannot be deleted")
 		return
 	}
 

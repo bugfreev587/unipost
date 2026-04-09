@@ -5,8 +5,8 @@ SELECT * FROM projects WHERE owner_id = $1 ORDER BY created_at DESC;
 SELECT * FROM projects WHERE id = $1;
 
 -- name: CreateProject :one
-INSERT INTO projects (owner_id, name, mode)
-VALUES ($1, $2, $3)
+INSERT INTO projects (owner_id, name)
+VALUES ($1, $2)
 RETURNING *;
 
 -- name: UpdateProject :one

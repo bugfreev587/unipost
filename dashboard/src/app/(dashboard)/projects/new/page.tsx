@@ -29,7 +29,7 @@ export default function NewProjectPage() {
 
   return (
     <div style={{ maxWidth: 440, margin: "0 auto", paddingTop: 32 }}>
-      <Link href="/" style={{ fontSize: 12.5, color: "var(--dmuted)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
+      <Link href="/projects" style={{ fontSize: 12.5, color: "var(--dmuted)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
         ← Back to Projects
       </Link>
 

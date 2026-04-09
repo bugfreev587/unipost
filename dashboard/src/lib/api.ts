@@ -6,7 +6,6 @@ export interface Project {
   id: string;
   owner_id: string;
   name: string;
-  mode: "quickstart" | "whitelabel";
   created_at: string;
   updated_at: string;
   // Sprint 4 PR4: white-label Connect branding
@@ -95,7 +94,7 @@ export async function getProject(
 
 export async function createProject(
   token: string,
-  data: { name: string; mode?: string }
+  data: { name: string }
 ): Promise<ApiResponse<Project>> {
   return request("/v1/projects", token, {
     method: "POST",
@@ -605,7 +604,6 @@ export interface AdminUserRow {
 export interface AdminUserProject {
   id: string;
   name: string;
-  mode: string;
   created_at: string;
   plan_id: string;
   plan_name: string;
@@ -655,6 +653,23 @@ export interface MeResponse {
 
 export async function getMe(token: string): Promise<ApiResponse<MeResponse>> {
   return request("/v1/me", token);
+}
+
+// Bootstrap — dashboard root resolver. Returns the user's default and
+// last-visited project ids; lazily creates a "Default" project for
+// fresh signups so the dashboard never has to render an empty state
+// after the first login. Both fields can be null when the Clerk
+// webhook hasn't synced the user yet, in which case the caller should
+// fall back to /projects.
+export interface BootstrapResponse {
+  default_project_id: string | null;
+  last_project_id: string | null;
+}
+
+export async function getBootstrap(
+  token: string
+): Promise<ApiResponse<BootstrapResponse>> {
+  return request("/v1/me/bootstrap", token);
 }
 
 export async function getAdminStats(token: string): Promise<ApiResponse<AdminStats>> {
