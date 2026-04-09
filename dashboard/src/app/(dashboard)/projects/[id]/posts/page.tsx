@@ -10,6 +10,7 @@ import {
 import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { PostDetailDrawer } from "@/components/dashboard/post-detail-drawer";
+import { CreatePostModal } from "@/components/dashboard/create-post-modal";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft";
 
@@ -68,6 +69,7 @@ export default function PostsPage() {
   const [platformFilter, setPlatformFilter] = useState("all");
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [drawerPost, setDrawerPost] = useState<SocialPost | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async () => {
@@ -186,7 +188,7 @@ export default function PostsPage() {
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Posts</div>
           <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Published and scheduled content</div>
         </div>
-        <button className="dbtn dbtn-primary" style={{ gap: 5 }}>
+        <button className="dbtn dbtn-primary" style={{ gap: 5 }} onClick={() => setShowCreateModal(true)}>
           <Plus style={{ width: 14, height: 14 }} /> Create
         </button>
       </div>
@@ -289,7 +291,18 @@ export default function PostsPage() {
         <PostDetailDrawer
           post={drawerPost}
           onClose={() => setDrawerPost(null)}
-          onDuplicate={(p) => { setDrawerPost(null); /* TODO: open create modal */ }}
+          onDuplicate={() => { setDrawerPost(null); setShowCreateModal(true); }}
+        />
+      )}
+
+      {/* Create post modal */}
+      {showCreateModal && (
+        <CreatePostModal
+          accounts={accounts}
+          projectId={projectId}
+          getToken={getToken}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}
         />
       )}
     </>
