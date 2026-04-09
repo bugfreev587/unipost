@@ -1,6 +1,6 @@
 {
   "name": "@unipost/mcp-server",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "UniPost MCP Server — Let AI agents post to social media",
   "main": "dist/index.js",
   "bin": {
