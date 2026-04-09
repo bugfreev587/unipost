@@ -139,28 +139,42 @@ export default async function ConnectPage({ params, searchParams }: PageProps) {
 // Sprint 4 PR4: --brand-primary CSS variable lets the customer's
 // chosen color drive the Authorize button without re-templating
 // every CSS rule. Falls back to UniPost's default if no branding.
+//
+// IMPORTANT: All theme styling lives on the .wrap element, NOT on
+// body or html. The Connect page is mounted under the dashboard's
+// root layout which has its own dark theme; targeting body would
+// either lose the specificity battle or pollute the dashboard. By
+// making .wrap a self-contained light-themed card that ignores
+// inherited styles, the page looks consistent regardless of where
+// it's mounted (Sprint 4 PR4 hotfix).
 const STYLES = `
-  :root{--brand-primary:#111}
-  body{font-family:system-ui,-apple-system,sans-serif;background:#fafafa;color:#111;margin:0}
-  .wrap{max-width:480px;margin:48px auto;padding:0 24px;line-height:1.5}
-  h1{font-size:24px;margin-bottom:8px;letter-spacing:-0.3px}
-  p{color:#444}
-  .panel{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:24px;margin-top:16px}
-  .err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:12px 16px;border-radius:8px;margin:16px 0;font-size:14px}
-  .ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:12px 16px;border-radius:8px;margin:16px 0}
-  .btn{display:block;width:100%;background:var(--brand-primary);color:#fff;border:0;padding:14px;border-radius:8px;font-size:15px;text-align:center;text-decoration:none;cursor:pointer;font-weight:500}
-  .btn:hover{filter:brightness(0.92)}
-  label{display:block;margin-top:16px;font-size:14px;font-weight:500}
-  input{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:15px;margin-top:4px;box-sizing:border-box}
-  input:focus{outline:none;border-color:var(--brand-primary)}
-  .footer{font-size:12px;color:#888;margin-top:32px;text-align:center}
-  .small{font-size:13px;color:#666}
-  .warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 16px;border-radius:8px;margin-top:16px;font-size:13px}
-  .warn strong{font-weight:600}
-  .check{font-size:48px;color:#166534;text-align:center}
-  .brand-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
-  .brand-logo{max-width:48px;max-height:48px;border-radius:8px;object-fit:contain}
-  .brand-name{font-weight:600;color:#111}
+  .wrap{
+    --brand-primary:#111;
+    font-family:system-ui,-apple-system,sans-serif;
+    color:#111;
+    max-width:480px;
+    margin:0 auto;
+    padding:48px 24px;
+    line-height:1.5;
+  }
+  .wrap h1{font-size:24px;margin-bottom:8px;letter-spacing:-0.3px;color:#111}
+  .wrap p{color:#444;margin:0 0 8px}
+  .wrap .panel{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:24px;margin-top:16px}
+  .wrap .err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:12px 16px;border-radius:8px;margin:16px 0;font-size:14px}
+  .wrap .ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:12px 16px;border-radius:8px;margin:16px 0}
+  .wrap .btn{display:block;width:100%;background:var(--brand-primary);color:#fff;border:0;padding:14px;border-radius:8px;font-size:15px;text-align:center;text-decoration:none;cursor:pointer;font-weight:500;box-sizing:border-box}
+  .wrap .btn:hover{filter:brightness(0.92)}
+  .wrap label{display:block;margin-top:16px;font-size:14px;font-weight:500;color:#111}
+  .wrap input{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:15px;margin-top:4px;box-sizing:border-box;background:#fff;color:#111}
+  .wrap input:focus{outline:none;border-color:var(--brand-primary)}
+  .wrap .footer{font-size:12px;color:#888;margin-top:32px;text-align:center}
+  .wrap .small{font-size:13px;color:#666}
+  .wrap .warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 16px;border-radius:8px;margin-top:16px;font-size:13px}
+  .wrap .warn strong{font-weight:600}
+  .wrap .check{font-size:48px;color:#166534;text-align:center}
+  .wrap .brand-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  .wrap .brand-logo{max-width:48px;max-height:48px;border-radius:8px;object-fit:contain}
+  .wrap .brand-name{font-weight:600;color:#111;font-size:16px}
 `;
 
 type Branding = PublicConnectSession["branding"];
