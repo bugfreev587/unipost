@@ -10,7 +10,7 @@ import {
 import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { PostDetailDrawer } from "@/components/dashboard/post-detail-drawer";
-import { CreatePostModal } from "@/components/dashboard/create-post-modal";
+import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft";
 
@@ -295,16 +295,15 @@ export default function PostsPage() {
         />
       )}
 
-      {/* Create post modal */}
-      {showCreateModal && (
-        <CreatePostModal
-          accounts={accounts}
-          projectId={projectId}
-          getToken={getToken}
-          onClose={() => setShowCreateModal(false)}
-          onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}
-        />
-      )}
+      {/* Create post drawer */}
+      <CreatePostDrawer
+        open={showCreateModal}
+        onOpenChange={setShowCreateModal}
+        accounts={accounts}
+        projectId={projectId}
+        getToken={getToken}
+        onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}
+      />
     </>
   );
 }
