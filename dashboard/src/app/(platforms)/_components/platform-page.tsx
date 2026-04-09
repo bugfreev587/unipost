@@ -187,16 +187,23 @@ const CSS = `
 .pp-also-chip:hover{color:var(--text);border-color:var(--b2)}
 
 /* FOOTER */
-.pp-footer{border-top:1px solid var(--border);padding:48px 0}
-.pp-footer-inner{max-width:var(--content-max);margin:0 auto;padding:0 var(--px);display:flex;align-items:center;justify-content:space-between}
-.pp-footer-logo{display:flex;align-items:center;gap:7px}
-.pp-footer-mark{width:20px;height:20px;background:var(--accent);border-radius:4px;display:flex;align-items:center;justify-content:center}
-.pp-footer-mark svg{width:10px;height:10px;color:#000}
-.pp-footer-name{font-size:13px;font-weight:700}
-.pp-footer-links{display:flex;gap:16px}
-.pp-footer-link{font-size:12px;color:var(--muted);text-decoration:none;cursor:pointer}
-.pp-footer-link:hover{color:var(--text)}
-.pp-footer-copy{font-size:12px;color:var(--muted2)}
+.pp-footer{border-top:1px solid var(--border);padding:48px 0;width:100%}
+.pp-footer-inner{max-width:var(--content-max);margin:0 auto;padding:0 var(--px)}
+.pp-footer-top{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;gap:48px;margin-bottom:48px}
+.pp-footer-logo{display:flex;align-items:center;gap:9px;margin-bottom:16px}
+.pp-footer-mark{width:26px;height:26px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center}
+.pp-footer-mark svg{width:13px;height:13px;color:#000}
+.pp-footer-name{font-size:15px;font-weight:700;color:var(--text)}
+.pp-footer-tagline{font-size:13px;color:#aaa;line-height:1.65;max-width:260px}
+.pp-footer-col-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted2);margin-bottom:16px}
+.pp-footer-links-col{list-style:none}
+.pp-footer-col-link{font-size:13.5px;color:#aaa;margin-bottom:10px;cursor:pointer;transition:color .1s;display:block;text-decoration:none}
+.pp-footer-col-link:hover{color:var(--text)}
+.pp-footer-bottom{border-top:1px solid var(--border);padding-top:24px;display:flex;align-items:center;justify-content:space-between}
+.pp-footer-copy{font-size:13px;color:var(--muted2)}
+.pp-footer-social{display:flex;gap:12px}
+.pp-footer-social-link{width:32px;height:32px;background:var(--s2);border:1px solid var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;transition:all .15s;font-size:14px;text-decoration:none}
+.pp-footer-social-link:hover{background:var(--s3);color:var(--text);border-color:var(--b2)}
 
 /* RESPONSIVE */
 @media(max-width:768px){
@@ -209,7 +216,8 @@ const CSS = `
   .pp-metrics-grid{grid-template-columns:1fr 1fr}
   .pp-faq-grid{grid-template-columns:1fr}
   .pp-hero-meta{flex-direction:column;gap:8px}
-  .pp-footer-inner{flex-direction:column;gap:16px;text-align:center}
+  .pp-footer-top{grid-template-columns:1fr 1fr;gap:32px}
+  .pp-footer-bottom{flex-direction:column;gap:12px;text-align:center}
   .pp-section-title{font-size:28px}
 }
 `;
@@ -556,17 +564,34 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
       {/* FOOTER */}
       <footer className="pp-footer">
         <div className="pp-footer-inner">
-          <div className="pp-footer-logo">
-            <div className="pp-footer-mark"><ZapIcon /></div>
-            <span className="pp-footer-name">UniPost</span>
+          <div className="pp-footer-top">
+            <div>
+              <div className="pp-footer-logo"><div className="pp-footer-mark"><ZapIcon /></div><span className="pp-footer-name">UniPost</span></div>
+              <p className="pp-footer-tagline">Unified social media API for developers. Post to 6 platforms with one API call.</p>
+            </div>
+            <div>
+              <div className="pp-footer-col-title">Product</div>
+              <ul className="pp-footer-links-col"><li><a href={LANDING} className="pp-footer-col-link">Overview</a></li><li><a href={`${LANDING}/pricing`} className="pp-footer-col-link">Pricing</a></li><li><a href={`${LANDING}/docs`} className="pp-footer-col-link">Docs</a></li></ul>
+            </div>
+            <div>
+              <div className="pp-footer-col-title">Platforms</div>
+              <ul className="pp-footer-links-col">{ALL_PLATFORMS.map((p) => (<li key={p.slug}><a href={`${LANDING}/${p.slug}-api`} className="pp-footer-col-link">{p.name}</a></li>))}</ul>
+            </div>
+            <div>
+              <div className="pp-footer-col-title">Developers</div>
+              <ul className="pp-footer-links-col"><li><a href={`${LANDING}/docs`} className="pp-footer-col-link">API Reference</a></li><li><a href={`${LANDING}/docs#mcp`} className="pp-footer-col-link">MCP Server</a></li></ul>
+            </div>
+            <div>
+              <div className="pp-footer-col-title">Legal</div>
+              <ul className="pp-footer-links-col"><li><a href={`${LANDING}/privacy`} className="pp-footer-col-link">Privacy</a></li><li><a href={`${LANDING}/terms`} className="pp-footer-col-link">Terms</a></li></ul>
+            </div>
           </div>
-          <div className="pp-footer-links">
-            <a href={`${LANDING}/docs`} className="pp-footer-link">Docs</a>
-            <a href={`${LANDING}/pricing`} className="pp-footer-link">Pricing</a>
-            <a href={`${LANDING}/privacy`} className="pp-footer-link">Privacy</a>
-            <a href={`${LANDING}/terms`} className="pp-footer-link">Terms</a>
+          <div className="pp-footer-bottom">
+            <div className="pp-footer-copy">&copy; 2026 UniPost. All rights reserved.</div>
+            <div className="pp-footer-social">
+              <a href="https://x.com/unipostdev" className="pp-footer-social-link" target="_blank" rel="noopener noreferrer">𝕏</a>
+            </div>
           </div>
-          <div className="pp-footer-copy">&copy; 2026 UniPost</div>
         </div>
       </footer>
     </>
