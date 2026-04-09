@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -189,6 +190,20 @@ func main() {
 	}
 	if li := connect.NewLinkedInConnector(os.Getenv("LINKEDIN_CLIENT_ID"), os.Getenv("LINKEDIN_CLIENT_SECRET"), apiBaseURL); li != nil {
 		connectors = append(connectors, li)
+	}
+	// Sprint 5 PR3: Instagram Connect, gated behind a feature flag.
+	// Two doors must both be open before Instagram becomes a real
+	// Connect platform: (a) the credentials must be present, and (b)
+	// CONNECT_INSTAGRAM_ENABLED must be truthy. The flag exists so we
+	// can ship this code to production well before launch and only
+	// flip it on when the Meta App Review is approved — this avoids
+	// a "what's that broken Instagram tile in the Connect picker?"
+	// support thread on day 1. Keep the legacy fail-fast nil check
+	// in NewInstagramConnector for the credentials half.
+	if instagramConnectEnabled() {
+		if ig := connect.NewInstagramConnector(os.Getenv("INSTAGRAM_APP_ID"), os.Getenv("INSTAGRAM_APP_SECRET"), apiBaseURL); ig != nil {
+			connectors = append(connectors, ig)
+		}
 	}
 	connectRegistry := connect.NewRegistry(connectors...)
 
@@ -580,4 +595,15 @@ func (h fanoutHandler) WithGroup(name string) slog.Handler {
 		handlers[i] = handler.WithGroup(name)
 	}
 	return fanoutHandler{handlers: handlers}
+}
+
+// instagramConnectEnabled is the Sprint 5 PR3 feature flag for the
+// Instagram Connect path. Returns true when CONNECT_INSTAGRAM_ENABLED
+// is set to a truthy value (1, true, yes, on — case-insensitive).
+// Anything else (including the unset default) keeps the platform out
+// of the Connect registry, so customer dashboards don't show an
+// Instagram tile that bounces them off Meta App Review failures.
+func instagramConnectEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("CONNECT_INSTAGRAM_ENABLED")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
