@@ -57,9 +57,12 @@ async function apiRequest(path: string, apiKey: string, options?: RequestInit) {
 function createMcpServer(apiKey: string): McpServer {
   const server = new McpServer({
     name: "unipost",
-    version: "0.4.0",
+    version: "0.5.0",
     // Sprint 3 PR9: added unipost_create_connect_session,
     // unipost_reschedule_post, unipost_cancel_post.
+    // Sprint 4 PR9: added unipost_bulk_create_posts,
+    // unipost_list_managed_users. The single-post create tool also
+    // gained the optional first_comment field on platform_posts[].
   });
 
   server.tool(
@@ -148,7 +151,13 @@ function createMcpServer(apiKey: string): McpServer {
               .int()
               .optional()
               .describe(
-                "1-indexed position in a multi-post thread. All entries with the same account_id and any non-zero thread_position form one thread (Twitter only in Sprint 2). Sprint 3 will add Bluesky/Threads."
+                "1-indexed position in a multi-post thread. All entries with the same account_id and any non-zero thread_position form one thread. Twitter + Bluesky as of Sprint 3."
+              ),
+            first_comment: z
+              .string()
+              .optional()
+              .describe(
+                "Sprint 4: optional reply / comment posted immediately after the main post lands. Twitter (self-reply), LinkedIn (own-post comment), Instagram (first comment API). Bluesky and Threads reject this field — use thread_position instead."
               ),
           })
         )
@@ -567,6 +576,60 @@ function createMcpServer(apiKey: string): McpServer {
     },
   );
 
+  // ── Sprint 4 v0.5.0 tools ──
+
+  server.tool(
+    "unipost_bulk_create_posts",
+    [
+      "Publish up to 50 social posts in a single call. Returns one result entry per input post (success or per-post error).",
+      "",
+      "Each post in the `posts` array is the same shape as a single unipost_create_post call: pass platform_posts[] with",
+      "per-account captions, or use the legacy caption + account_ids fan-out shape. Drafts and scheduled posts are NOT supported in bulk —",
+      "use unipost_create_post for those.",
+      "",
+      "Per-post idempotency_key still works; re-sending the same batch with the same keys safely retries failed posts.",
+      "Quota counts each post individually. Mid-batch quota exhaustion fails only the remaining posts, not the whole batch.",
+    ].join("\n"),
+    {
+      posts: z
+        .array(z.record(z.string(), z.unknown()))
+        .max(50)
+        .describe("Array of post bodies (1-50). Each entry is a complete /v1/social-posts request body."),
+    },
+    async ({ posts }) => {
+      const data = await apiRequest("/v1/social-posts/bulk", apiKey, {
+        method: "POST",
+        body: JSON.stringify({ posts }),
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "unipost_list_managed_users",
+    "List end users onboarded via UniPost Connect, grouped by external_user_id with per-platform account counts. Use this when an AI agent needs a project-level view of all managed users (e.g. 'who has a Twitter account connected via Connect?').",
+    {
+      limit: z.number().int().min(1).max(100).optional().describe("Page size, default 25, max 100."),
+    },
+    async ({ limit }) => {
+      const qs = limit ? `?limit=${limit}` : "";
+      const data = await apiRequest(`/v1/users${qs}`, apiKey);
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "unipost_get_managed_user",
+    "Get the detail view of one managed end user: every social account they've connected, with per-account status and platform info. Pair with unipost_list_managed_users to walk a project's end-user list.",
+    {
+      external_user_id: z.string().describe("The external_user_id you used when creating the Connect session."),
+    },
+    async ({ external_user_id }) => {
+      const data = await apiRequest(`/v1/users/${encodeURIComponent(external_user_id)}`, apiKey);
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
   return server;
 }
 
@@ -602,7 +665,7 @@ const httpServer = http.createServer(async (req, res) => {
   // Health check
   if (url.pathname === "/" || url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.4.0" }));
+    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.5.0" }));
     return;
   }
 
