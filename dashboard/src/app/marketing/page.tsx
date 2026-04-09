@@ -40,8 +40,8 @@ const PLATFORM_ICONS: Record<string, React.ReactNode> = {
 };
 
 const PLATFORMS = [
-  { name: "Bluesky" }, { name: "LinkedIn" }, { name: "Instagram" },
-  { name: "Threads" }, { name: "TikTok" }, { name: "YouTube" },
+  { name: "Bluesky", slug: "bluesky" }, { name: "LinkedIn", slug: "linkedin" }, { name: "Instagram", slug: "instagram" },
+  { name: "Threads", slug: "threads" }, { name: "TikTok", slug: "tiktok" }, { name: "YouTube", slug: "youtube" },
 ];
 const FEATURES = [
   { number: "01", title: "One API, every platform", desc: "Stop maintaining 6 different integrations. One endpoint, one auth token, one response format. Post to Bluesky, LinkedIn, Instagram, Threads, TikTok, and YouTube with a single call.", code: `POST /v1/social-posts\n{\n  "caption": "Hello from UniPost!",\n  "account_ids": ["sa_instagram", "sa_linkedin"],\n  "scheduled_at": "2026-04-07T09:00:00Z"\n}` },
@@ -119,7 +119,7 @@ export default function LandingPage() {
         <div className="lp-platforms">
           <div className="lp-plat-label">Supported Platforms</div>
           <div className="lp-plat-row">
-            {PLATFORMS.map((p) => (<div key={p.name} className="lp-plat-chip"><span className="lp-plat-icon">{PLATFORM_ICONS[p.name]}</span>{p.name}</div>))}
+            {PLATFORMS.map((p) => (<Link key={p.name} href={`/${p.slug}-api`} className="lp-plat-chip" style={{ textDecoration: "none" }}><span className="lp-plat-icon">{PLATFORM_ICONS[p.name]}</span>{p.name}</Link>))}
           </div>
         </div>
 
@@ -262,6 +262,7 @@ export default function LandingPage() {
           <div className="lp-footer-top">
             <div><div className="lp-footer-logo"><div className="lp-footer-mark"><ZapIcon /></div><span className="lp-footer-name">UniPost</span></div><p className="lp-footer-tagline">Unified social media API for developers. Post to 6 platforms with one API call.</p></div>
             <div><div className="lp-footer-col-title">Product</div><ul className="lp-footer-links"><li><Link href="/" className="lp-footer-link">Overview</Link></li><li><Link href="/pricing" className="lp-footer-link">Pricing</Link></li><li><Link href="/docs" className="lp-footer-link">Docs</Link></li></ul></div>
+            <div><div className="lp-footer-col-title">Platforms</div><ul className="lp-footer-links">{PLATFORMS.map((p) => (<li key={p.slug}><Link href={`/${p.slug}-api`} className="lp-footer-link">{p.name}</Link></li>))}</ul></div>
             <div><div className="lp-footer-col-title">Developers</div><ul className="lp-footer-links"><li><Link href="/docs" className="lp-footer-link">API Reference</Link></li><li><Link href="/docs" className="lp-footer-link">MCP Server</Link></li></ul></div>
             <div><div className="lp-footer-col-title">Legal</div><ul className="lp-footer-links"><li><Link href="/privacy" className="lp-footer-link">Privacy</Link></li><li><Link href="/terms" className="lp-footer-link">Terms</Link></li></ul></div>
           </div>
