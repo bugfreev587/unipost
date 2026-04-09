@@ -15,6 +15,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -112,6 +113,7 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:     limit,
 	})
 	if err != nil {
+		slog.Error("list managed users failed", "project_id", projectID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list managed users")
 		return
 	}
