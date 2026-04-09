@@ -229,6 +229,12 @@ func (a *TwitterAdapter) uploadMedia(ctx context.Context, accessToken string, it
 
 // uploadMediaSimple performs a single multipart POST to /2/media/upload for
 // small images. Twitter accepts up to 5 MB per image on this path.
+//
+// Sprint 4 PR1 hotfix 3: Twitter's /2/media/upload now requires
+// media_category as a multipart form field even for the simple
+// (non-chunked) path. Without it Twitter returns
+// "$.media_category: is missing but it is required" with HTTP 400.
+// "tweet_image" is the right category for inline post images.
 func (a *TwitterAdapter) uploadMediaSimple(ctx context.Context, accessToken string, data []byte, contentType string) (string, error) {
 	if contentType == "" {
 		contentType = "image/jpeg"
@@ -236,6 +242,11 @@ func (a *TwitterAdapter) uploadMediaSimple(ctx context.Context, accessToken stri
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
+	// media_category MUST be set before the file part — Twitter is
+	// strict about field order on this endpoint.
+	if err := mw.WriteField("media_category", "tweet_image"); err != nil {
+		return "", err
+	}
 	part, err := mw.CreateFormFile("media", "upload")
 	if err != nil {
 		return "", err
