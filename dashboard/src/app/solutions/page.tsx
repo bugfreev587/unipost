@@ -95,7 +95,7 @@ const SOLUTIONS = [
   {
     key: "multiAccount",
     title: "Multi-Account Management",
-    desc: "Manage dozens or hundreds of social accounts affordably. Native mode lets your customers see your brand on OAuth, while you scale on a flat rate.",
+    desc: "Manage dozens or hundreds of social accounts affordably. White-label lets your customers see your brand on OAuth, while you scale on a flat rate.",
   },
   {
     key: "agency",

@@ -23,7 +23,7 @@ const FEATURES_FREE = [
   { text: "Analytics", included: true }, { text: "Scheduled posts", included: true },
   { text: "MCP Server (AI Agent)", included: true }, { text: "Unlimited API keys", included: true },
   { text: "Unlimited team members", included: true }, { text: "Quickstart mode", included: true },
-  { text: "Native mode", included: false },
+  { text: "White-label", included: false },
 ];
 const FEATURES_PAID = [
   { text: "posts per month", dynamic: true, included: true }, { text: "Unlimited social accounts", included: true },
@@ -31,7 +31,7 @@ const FEATURES_PAID = [
   { text: "Analytics", included: true }, { text: "Scheduled posts", included: true },
   { text: "MCP Server (AI Agent)", included: true }, { text: "Unlimited API keys", included: true },
   { text: "Unlimited team members", included: true }, { text: "Quickstart mode", included: true },
-  { text: "Native mode", included: true },
+  { text: "White-label", included: true },
 ];
 const COMPARE_ROWS = [
   { name: "Post volume", sub: null, free: "100/mo", paid: "dynamic" },
@@ -44,12 +44,12 @@ const COMPARE_ROWS = [
   { name: "Scheduled posts", sub: "Post at a future time", free: true, paid: true },
   { name: "MCP Server", sub: "AI Agent integration via MCP protocol", free: true, paid: true },
   { name: "Quickstart mode", sub: "Use UniPost credentials", free: true, paid: true },
-  { name: "Native mode", sub: "Bring your own credentials", free: false, paid: true },
+  { name: "White-label", sub: "Bring your own credentials", free: false, paid: true },
 ];
 const FAQS = [
   { q: "What counts as a post?", a: "One successful publish to a single social account. Posting the same content to 3 platforms counts as 3 posts. Failed or cancelled posts are never counted." },
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
-  { q: "What's the difference between Quickstart and Native mode?", a: "Quickstart uses UniPost's platform credentials so you can start immediately — users see 'UniPost' during OAuth. Native mode lets you bring your own credentials so users see your app name. Native requires a paid plan." },
+  { q: "What's the difference between Quickstart and White-label?", a: "Quickstart uses UniPost's platform credentials so you can start immediately — users see 'UniPost' during OAuth. White-label (called Native mode in API docs) lets you bring your own credentials so users see your app name. White-label requires a paid plan." },
   { q: "Do unused posts roll over to the next month?", a: "No, post quotas reset at the start of each billing cycle. However, if you exceed your limit we won't cut you off — we'll reach out about upgrading instead." },
   { q: "What happens if I go over my plan?", a: "We won't shut you down or block your posts. If your usage consistently exceeds the limit, we'll reach out about upgrading. You'll never experience a hard stop that breaks your users' experience." },
   { q: "Is there a free trial for paid plans?", a: "The Free plan is your trial — 100 posts/month with no credit card required. Upgrade when you need more volume. There's no time limit on the free tier." },

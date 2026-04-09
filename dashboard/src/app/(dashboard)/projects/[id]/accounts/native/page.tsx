@@ -80,9 +80,9 @@ export default function NativeModePage() {
     <>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Native Mode</div>
+          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>White-label Credentials</div>
           <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>
-            Bring your own platform app credentials. OAuth pages will show your brand instead of UniPost&apos;s.
+            Configure your own platform credentials (Native mode). Users will see your app name during OAuth instead of &quot;UniPost&quot;.
           </div>
         </div>
       </div>

@@ -457,7 +457,7 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
                   ))}
                 </div>
                 <div className="pp-mode-card">
-                  <div className="pp-mode-badge pp-mb-blue">🔑 Native Mode</div>
+                  <div className="pp-mode-badge pp-mb-blue">🔑 White-label</div>
                   <div className="pp-mode-title">Your brand, your credentials</div>
                   <div className="pp-mode-desc">{cfg.modes.nativeDesc}</div>
                   {cfg.modes.nativeFeats.map((f) => (

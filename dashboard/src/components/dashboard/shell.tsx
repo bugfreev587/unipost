@@ -33,7 +33,7 @@ const NAV_ITEMS = [
   { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/accounts", label: "Accounts", icon: Users, submenu: [
     { href: "/accounts", label: "Quickstart Mode" },
-    { href: "/accounts/native", label: "Native Mode" },
+    { href: "/accounts/native", label: "White-label" },
   ]},
   { href: "/users", label: "Managed Users", icon: User },
   { href: "/posts", label: "Posts", icon: Send },

@@ -621,6 +621,10 @@ export default function DocsPage() {
 
           <Section id="social-accounts" title="Social Accounts">
             <p className="doc-p">Connect, list, and disconnect social media accounts.</p>
+            <div style={{ background: "#0ea5e908", border: "1px solid #0ea5e920", borderRadius: 8, padding: "14px 18px", margin: "16px 0 20px", fontSize: 13.5, lineHeight: 1.6, color: "#aaa" }}>
+              <strong style={{ color: "#0ea5e9" }}>&#8505;&#65039; Terminology note</strong><br />
+              &ldquo;White-label&rdquo; in our marketing refers to what the API calls &ldquo;Native mode&rdquo; (<code>connection_type: &apos;byo&apos;</code>). Both terms describe the same feature: using your own platform credentials so your users see your app name during OAuth.
+            </div>
             <Endpoint method="POST" path="/v1/social-accounts/connect" auth="API Key">
               <p className="doc-p">Connect a new social media account. For Bluesky, provide credentials directly. For OAuth platforms, use the <a href="#oauth">OAuth flow</a>.</p>
               <Param name="platform" type="string" required>Platform: <code>bluesky</code></Param>

@@ -183,7 +183,7 @@ print(data['id'])  # post_abc123`,
   ],
 
   faq: [
-    { q: "Do I need to apply for Meta developer access?", a: "In Quickstart mode, no. UniPost's approved Meta app handles everything. In Native mode, you'll need your own Meta app with instagram_content_publish scope." },
+    { q: "Do I need to apply for Meta developer access?", a: "In Quickstart mode, no. UniPost's approved Meta app handles everything. In White-label mode, you'll need your own Meta app with instagram_content_publish scope." },
     { q: "Does UniPost support Instagram personal accounts?", a: "No. Instagram's API only supports Business and Creator accounts. You can convert a personal account to a Business account in the Instagram app for free." },
     { q: "How long does setup take?", a: "In Quickstart mode: about 5 minutes. Connect your Instagram Business account via OAuth and you're ready to post via API." },
     { q: "What happens when my token expires?", a: "UniPost's background worker automatically refreshes Meta tokens before they expire (every 60 days). You don't need to do anything." },
@@ -314,7 +314,7 @@ response = requests.post(
   faq: [
     { q: "Can I post to LinkedIn Company Pages?", a: "Yes, if your account has admin access to the page. Connect the page via OAuth and use its account_id in API calls." },
     { q: "Does LinkedIn support video posts?", a: "Not yet in the current version. Text and image posts are fully supported. Video support is coming in a future update." },
-    { q: "Do I need LinkedIn developer access?", a: "In Quickstart mode, no — UniPost's credentials handle everything. In Native mode, you'll need your own LinkedIn app." },
+    { q: "Do I need LinkedIn developer access?", a: "In Quickstart mode, no — UniPost's credentials handle everything. In White-label mode, you'll need your own LinkedIn app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your LinkedIn account via OAuth and start posting immediately." },
     { q: "What happens when my token expires?", a: "UniPost automatically refreshes LinkedIn tokens in the background. You never need to re-authenticate." },
     { q: "Is LinkedIn included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including LinkedIn." },
@@ -441,7 +441,7 @@ response = requests.post(
   faq: [
     { q: "What Twitter API access does UniPost use?", a: "Twitter API access is included in your UniPost subscription. No separate Twitter developer plan required." },
     { q: "Can I post Twitter threads with UniPost?", a: "Yes. Use thread_position 1, 2, 3... to create threaded tweets. Each tweet is linked automatically." },
-    { q: "Do I need my own Twitter developer account?", a: "In Quickstart mode, no. UniPost handles everything. In Native mode, you'll need your own Twitter app credentials." },
+    { q: "Do I need my own Twitter developer account?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Twitter app credentials." },
     { q: "How does UniPost handle rate limits?", a: "UniPost queues requests and retries automatically when rate limits are hit. You don't need to build any retry logic." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Twitter tokens automatically in the background. No action needed on your end." },
     { q: "Is Twitter included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including Twitter." },
@@ -568,7 +568,7 @@ response = requests.post(
   faq: [
     { q: "Does UniPost support TikTok personal accounts?", a: "TikTok API requires creator accounts. Personal accounts are not supported by TikTok's API." },
     { q: "What video formats are supported?", a: "MP4 is recommended. Maximum file size is 500MB." },
-    { q: "Do I need TikTok developer access?", a: "In Quickstart mode, no. UniPost handles everything. In Native mode, you'll need your own TikTok app." },
+    { q: "Do I need TikTok developer access?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own TikTok app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect a TikTok creator account via OAuth and start uploading." },
     { q: "What happens when my token expires?", a: "UniPost refreshes TikTok tokens automatically in the background." },
     { q: "Is TikTok included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including TikTok." },
@@ -694,7 +694,7 @@ response = requests.post(
   faq: [
     { q: "Can I upload videos longer than 15 minutes?", a: "Yes, if your YouTube account is verified for long-form content. UniPost does not impose additional length limits." },
     { q: "Does UniPost support YouTube Shorts?", a: "Yes. Shorts are vertical videos under 60 seconds uploaded via the same API endpoint." },
-    { q: "Do I need Google developer access?", a: "In Quickstart mode, no. UniPost handles everything. In Native mode, you'll need your own Google OAuth app." },
+    { q: "Do I need Google developer access?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Google OAuth app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your YouTube channel via OAuth and start uploading." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Google tokens automatically in the background." },
     { q: "Is YouTube included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including YouTube." },

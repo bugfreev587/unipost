@@ -56,12 +56,12 @@ const CODE_SNIPPETS: Record<string, string> = {
 };
 const MODES = [
   { badge: "Quickstart Mode", badgeColor: "#10b981", title: "Start posting in minutes", desc: "Use UniPost's developer credentials. No platform approval process, no waiting.", features: ["Instant access to all 7 platforms", "No developer approval needed", "OAuth shows 'UniPost' branding", "Available on all plans including Free"], ctaVariant: "ghost" },
-  { badge: "Native Mode", badgeColor: "#3b82f6", title: "Your brand, your credentials", desc: "Bring your own platform credentials. Users see your app name during OAuth.", features: ["OAuth shows your app name", "Complete credential ownership", "Professional user experience", "Available on all paid plans"], ctaVariant: "primary" },
+  { badge: "White-label", badgeColor: "#3b82f6", title: "Your brand, your credentials", desc: "Bring your own platform credentials. Users see your app name during OAuth.", features: ["OAuth shows your app name", "Complete credential ownership", "Professional user experience", "Available on all paid plans"], ctaVariant: "primary" },
 ];
 const FAQS = [
   { q: "Why UniPost over direct platform APIs?", a: "We handle OAuth, token refresh, media processing, and platform-specific quirks — reducing integration time from weeks to hours." },
   { q: "What counts as a post?", a: "One successful publish to a single social account. Posting to 3 platforms counts as 3 posts. Failed posts are never counted." },
-  { q: "What's the difference between Quickstart and Native mode?", a: "Quickstart uses UniPost's credentials so you start immediately. Native mode lets you bring your own credentials so users see your app name." },
+  { q: "What's the difference between Quickstart and White-label?", a: "Quickstart uses UniPost's credentials so you start immediately. White-label (called Native mode in API docs) lets you bring your own credentials so users see your app name." },
   { q: "Do I need to handle OAuth flows?", a: "No. UniPost handles the entire OAuth flow. Your users connect once through our hosted flow, and you get a simple account_id to use in API calls." },
 ];
 
