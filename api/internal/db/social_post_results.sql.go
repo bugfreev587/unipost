@@ -11,6 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countPublishedThisMonthByAccount = `-- name: CountPublishedThisMonthByAccount :one
+SELECT COUNT(*)::INTEGER AS count
+FROM social_post_results
+WHERE social_account_id = $1
+  AND published_at IS NOT NULL
+  AND published_at >= date_trunc('month', NOW() AT TIME ZONE 'UTC')
+  AND published_at <  date_trunc('month', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 month'
+`
+
+// Sprint 5 PR2: per-account monthly quota enforcement. Counts the
+// successful posts for one social account in the current calendar
+// month (UTC — same boundary projects.usage uses, so the per-project
+// and per-account counts agree). Used at dispatch time, so it must
+// be one indexed lookup; the partial index
+// social_post_results_quota_count_idx is shaped exactly for this
+// WHERE clause. Failed rows (published_at NULL) are excluded both
+// by the WHERE and by the partial index.
+func (q *Queries) CountPublishedThisMonthByAccount(ctx context.Context, socialAccountID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countPublishedThisMonthByAccount, socialAccountID)
+	var count int32
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
 INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)

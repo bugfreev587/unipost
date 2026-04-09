@@ -37,6 +37,11 @@ type projectResponse struct {
 	BrandingLogoURL      *string `json:"branding_logo_url,omitempty"`
 	BrandingDisplayName  *string `json:"branding_display_name,omitempty"`
 	BrandingPrimaryColor *string `json:"branding_primary_color,omitempty"`
+	// Sprint 5 PR2: per-social-account monthly publish cap. nil = no
+	// cap (the default — unlimited per-account, only the project-wide
+	// quota applies). Set to a positive integer to enforce; 0 is a
+	// valid emergency-lockout value.
+	PerAccountMonthlyLimit *int32 `json:"per_account_monthly_limit"`
 }
 
 func toProjectResponse(p db.Project) projectResponse {
@@ -58,6 +63,10 @@ func toProjectResponse(p db.Project) projectResponse {
 	if p.BrandingPrimaryColor.Valid {
 		v := p.BrandingPrimaryColor.String
 		resp.BrandingPrimaryColor = &v
+	}
+	if p.PerAccountMonthlyLimit.Valid {
+		v := p.PerAccountMonthlyLimit.Int32
+		resp.PerAccountMonthlyLimit = &v
 	}
 	return resp
 }
@@ -162,11 +171,20 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// — customers patching just the logo shouldn't have to re-supply
 	// name + color, and customers wanting to remove a logo entirely
 	// need a way to clear it.
+	// Sprint 5 PR2: per_account_monthly_limit uses a two-level pointer
+	// (**int32) so we can distinguish three states in the JSON body:
+	//   absent       → leave the column unchanged
+	//   "...": null  → clear the cap (back to unlimited)
+	//   "...": 50    → set the cap to 50
+	// json.Unmarshal handles this naturally — absent leaves the
+	// outer pointer nil; explicit null sets it non-nil with the
+	// inner pointer nil; a number sets both.
 	var body struct {
-		Name                 *string `json:"name"`
-		BrandingLogoURL      *string `json:"branding_logo_url"`
-		BrandingDisplayName  *string `json:"branding_display_name"`
-		BrandingPrimaryColor *string `json:"branding_primary_color"`
+		Name                   *string  `json:"name"`
+		BrandingLogoURL        *string  `json:"branding_logo_url"`
+		BrandingDisplayName    *string  `json:"branding_display_name"`
+		BrandingPrimaryColor   *string  `json:"branding_primary_color"`
+		PerAccountMonthlyLimit **int32  `json:"per_account_monthly_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -199,6 +217,19 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Sprint 5 PR2: validate per_account_monthly_limit. Negative
+	// values make no sense; explicit null clears the cap; 0 is
+	// allowed (an emergency lockout). Upper bound 1_000_000 is a
+	// sanity ceiling — anything above is almost certainly a typo.
+	if body.PerAccountMonthlyLimit != nil && *body.PerAccountMonthlyLimit != nil {
+		v := **body.PerAccountMonthlyLimit
+		if v < 0 || v > 1_000_000 {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+				"per_account_monthly_limit must be between 0 and 1000000 (or null to disable)")
+			return
+		}
+	}
+
 	// Apply name update first (separate query — keeps the existing
 	// UpdateProject signature unchanged for callers that don't touch
 	// branding).
@@ -215,18 +246,34 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Apply branding updates if any of the three fields was provided.
 	// COALESCE on the SQL side leaves untouched columns alone.
 	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil {
-		updated, err := h.queries.UpdateProjectBranding(r.Context(), db.UpdateProjectBrandingParams{
+		if _, err := h.queries.UpdateProjectBranding(r.Context(), db.UpdateProjectBrandingParams{
 			ID:           projectID,
 			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
 			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
 			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
-		})
-		if err != nil {
+		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update branding")
 			return
 		}
-		writeSuccess(w, toProjectResponse(updated))
-		return
+	}
+
+	// Sprint 5 PR2: per_account_monthly_limit. The double-pointer
+	// shape collapses to one of three pgtype.Int4 values:
+	//   body.PerAccountMonthlyLimit == nil      → no-op (don't touch)
+	//   *body.PerAccountMonthlyLimit == nil     → set NULL  (clear cap)
+	//   **body.PerAccountMonthlyLimit          → set to that integer
+	if body.PerAccountMonthlyLimit != nil {
+		var quotaParam pgtype.Int4
+		if *body.PerAccountMonthlyLimit != nil {
+			quotaParam = pgtype.Int4{Int32: **body.PerAccountMonthlyLimit, Valid: true}
+		}
+		if _, err := h.queries.UpdateProjectPerAccountQuota(r.Context(), db.UpdateProjectPerAccountQuotaParams{
+			ID:                     projectID,
+			PerAccountMonthlyLimit: quotaParam,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update per-account quota")
+			return
+		}
 	}
 
 	// Re-fetch so the response reflects the latest state including

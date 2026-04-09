@@ -380,6 +380,26 @@ func (h *SocialPostHandler) executePublishLoop(
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
 ) socialPostResponse {
+	// Sprint 5 PR2: per-account monthly quota. Load the project once
+	// to read its per_account_monthly_limit, then snapshot the
+	// current-month publish counts for every account this request
+	// will dispatch to. The tracker decrements as publishOne fires;
+	// any account that runs out gets a deterministic
+	// "per_account_monthly_quota_exceeded" error on its result row
+	// instead of a dispatch. Project lookup failures degrade to
+	// "no cap" rather than blocking — the legacy behavior is the
+	// safer fallback if metadata is briefly unavailable.
+	var perAccountLimit pgtype.Int4
+	if proj, projErr := h.queries.GetProject(r.Context(), projectID); projErr == nil {
+		perAccountLimit = proj.PerAccountMonthlyLimit
+	}
+	tracker := quota.NewPerAccountTracker(
+		r.Context(),
+		h.queries,
+		perAccountLimit,
+		uniqueAccountIDs(parsed.Posts),
+	)
+
 	// Publish each platform post. Standalone posts run in parallel
 	// (one goroutine each); thread groups run serially within their
 	// group but groups are still parallel with each other. The
@@ -397,7 +417,7 @@ func (h *SocialPostHandler) executePublishLoop(
 		wg.Add(1)
 		go func(g []int) {
 			defer wg.Done()
-			h.runDispatchGroup(r, g, parsed.Posts, dbAccounts, accountMap, outcomes)
+			h.runDispatchGroup(r, g, parsed.Posts, dbAccounts, accountMap, outcomes, tracker)
 		}(group)
 	}
 	wg.Wait()
@@ -586,6 +606,7 @@ func (h *SocialPostHandler) runDispatchGroup(
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
 	outcomes []publishOneOutcome,
+	tracker *quota.PerAccountTracker,
 ) {
 	// threadState carries per-platform thread plumbing across iterations.
 	// Twitter only needs the previous tweet id; Bluesky needs root URI+CID
@@ -616,7 +637,7 @@ func (h *SocialPostHandler) runDispatchGroup(
 			pp.PlatformOptions = clone
 		}
 
-		oc := h.publishOne(r, pp, dbAccounts, accountMap)
+		oc := h.publishOne(r, pp, dbAccounts, accountMap, tracker)
 		outcomes[postIdx] = oc
 
 		if oc.err != nil {
@@ -657,6 +678,7 @@ func (h *SocialPostHandler) publishOne(
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
+	tracker *quota.PerAccountTracker,
 ) (oc publishOneOutcome) {
 	// Resolve account.
 	acc, ok := dbAccounts[pp.AccountID]
@@ -681,6 +703,18 @@ func (h *SocialPostHandler) publishOne(
 
 	if acc.DisconnectedAt.Valid {
 		oc.err = fmt.Errorf("account is disconnected")
+		return
+	}
+
+	// Sprint 5 PR2: per-account monthly quota gate. Atomically
+	// check-and-decrement the per-request budget for this account.
+	// Refusal here is final for this dispatch — no adapter call,
+	// no token decrypt, no media resolve. The result row carries
+	// the deterministic error string so the caller (and the
+	// dashboard) can distinguish "you hit your cap" from
+	// "the platform rejected the post".
+	if tracker != nil && !tracker.Allow(acc.ID) {
+		oc.err = quota.ErrPerAccountQuotaExceeded
 		return
 	}
 

@@ -12,6 +12,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // SchedulerWorker publishes scheduled posts when their scheduled_at time arrives.
@@ -101,6 +102,27 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 	// nil here and the per-post PlatformOptions is used directly.
 	v1Options := platform.LegacyV1Metadata(post.Metadata)
 
+	// Sprint 5 PR2: per-account monthly quota also applies to the
+	// scheduled path. Without this guard, a customer could schedule
+	// 10000 posts past the cap and watch the worker happily blow
+	// through it at the scheduled time. Build the tracker the same
+	// way the immediate path does — load the project for the limit,
+	// dedupe the account ids, snapshot current-month counts.
+	var perAccountLimit pgtype.Int4
+	if proj, projErr := w.queries.GetProject(ctx, post.ProjectID); projErr == nil {
+		perAccountLimit = proj.PerAccountMonthlyLimit
+	}
+	uniqueIDs := make([]string, 0, len(posts))
+	seen := make(map[string]struct{}, len(posts))
+	for _, pp := range posts {
+		if _, ok := seen[pp.AccountID]; ok {
+			continue
+		}
+		seen[pp.AccountID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, pp.AccountID)
+	}
+	tracker := quota.NewPerAccountTracker(ctx, w.queries, perAccountLimit, uniqueIDs)
+
 	// One outcome per input post, indexed by position so the result
 	// slice can be filled from goroutines without a mutex / append race.
 	type outcome struct {
@@ -116,7 +138,7 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 		wg.Add(1)
 		go func(idx int, pp platform.PlatformPostInput) {
 			defer wg.Done()
-			outcomes[idx] = w.publishOne(ctx, post, pp, v1Options)
+			outcomes[idx] = w.publishOne(ctx, post, pp, v1Options, tracker)
 		}(i, pp)
 	}
 	wg.Wait()
@@ -207,6 +229,7 @@ func (w *SchedulerWorker) publishOne(
 	parent db.SocialPost,
 	pp platform.PlatformPostInput,
 	v1Options map[string]map[string]any,
+	tracker *quota.PerAccountTracker,
 ) (oc struct {
 	input      platform.PlatformPostInput
 	platform   string
@@ -221,6 +244,15 @@ func (w *SchedulerWorker) publishOne(
 		return
 	}
 	oc.platform = acc.Platform
+
+	// Sprint 5 PR2: per-account monthly quota gate. Same semantics
+	// as the immediate path in handler/social_posts.go — refusal
+	// here records the deterministic error string and skips the
+	// adapter call entirely.
+	if tracker != nil && !tracker.Allow(acc.ID) {
+		oc.err = quota.ErrPerAccountQuotaExceeded
+		return
+	}
 
 	adapter, err := platform.Get(acc.Platform)
 	if err != nil {

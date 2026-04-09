@@ -95,14 +95,15 @@ type PostAnalytic struct {
 }
 
 type Project struct {
-	ID                   string             `json:"id"`
-	OwnerID              string             `json:"owner_id"`
-	Name                 string             `json:"name"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	BrandingLogoUrl      pgtype.Text        `json:"branding_logo_url"`
-	BrandingDisplayName  pgtype.Text        `json:"branding_display_name"`
-	BrandingPrimaryColor pgtype.Text        `json:"branding_primary_color"`
+	ID                     string             `json:"id"`
+	OwnerID                string             `json:"owner_id"`
+	Name                   string             `json:"name"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	BrandingLogoUrl        pgtype.Text        `json:"branding_logo_url"`
+	BrandingDisplayName    pgtype.Text        `json:"branding_display_name"`
+	BrandingPrimaryColor   pgtype.Text        `json:"branding_primary_color"`
+	PerAccountMonthlyLimit pgtype.Int4        `json:"per_account_monthly_limit"`
 }
 
 type SocialAccount struct {

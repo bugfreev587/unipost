@@ -14,7 +14,7 @@ import (
 const createProject = `-- name: CreateProject :one
 INSERT INTO projects (owner_id, name)
 VALUES ($1, $2)
-RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
+RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, per_account_monthly_limit
 `
 
 type CreateProjectParams struct {
@@ -34,6 +34,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
+		&i.PerAccountMonthlyLimit,
 	)
 	return i, err
 }
@@ -48,7 +49,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id string) error {
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE id = $1
+SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, per_account_monthly_limit FROM projects WHERE id = $1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
@@ -63,12 +64,13 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
+		&i.PerAccountMonthlyLimit,
 	)
 	return i, err
 }
 
 const getProjectByIDAndOwner = `-- name: GetProjectByIDAndOwner :one
-SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE id = $1 AND owner_id = $2
+SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, per_account_monthly_limit FROM projects WHERE id = $1 AND owner_id = $2
 `
 
 type GetProjectByIDAndOwnerParams struct {
@@ -88,12 +90,13 @@ func (q *Queries) GetProjectByIDAndOwner(ctx context.Context, arg GetProjectByID
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
+		&i.PerAccountMonthlyLimit,
 	)
 	return i, err
 }
 
 const listProjectsByOwner = `-- name: ListProjectsByOwner :many
-SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE owner_id = $1 ORDER BY created_at DESC
+SELECT id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, per_account_monthly_limit FROM projects WHERE owner_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error) {
@@ -114,6 +117,7 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 			&i.BrandingLogoUrl,
 			&i.BrandingDisplayName,
 			&i.BrandingPrimaryColor,
+			&i.PerAccountMonthlyLimit,
 		); err != nil {
 			return nil, err
 		}
@@ -128,7 +132,7 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 const updateProject = `-- name: UpdateProject :one
 UPDATE projects SET name = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
+RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, per_account_monthly_limit
 `
 
 type UpdateProjectParams struct {
@@ -148,6 +152,7 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
+		&i.PerAccountMonthlyLimit,
 	)
 	return i, err
 }
@@ -159,7 +164,7 @@ SET branding_logo_url      = COALESCE($2::TEXT,      branding_logo_url),
     branding_primary_color = COALESCE($4::TEXT, branding_primary_color),
     updated_at             = NOW()
 WHERE id = $1
-RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
+RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, per_account_monthly_limit
 `
 
 type UpdateProjectBrandingParams struct {
@@ -191,6 +196,43 @@ func (q *Queries) UpdateProjectBranding(ctx context.Context, arg UpdateProjectBr
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
+		&i.PerAccountMonthlyLimit,
+	)
+	return i, err
+}
+
+const updateProjectPerAccountQuota = `-- name: UpdateProjectPerAccountQuota :one
+UPDATE projects
+SET per_account_monthly_limit = $2::INTEGER,
+    updated_at                = NOW()
+WHERE id = $1
+RETURNING id, owner_id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, per_account_monthly_limit
+`
+
+type UpdateProjectPerAccountQuotaParams struct {
+	ID                     string      `json:"id"`
+	PerAccountMonthlyLimit pgtype.Int4 `json:"per_account_monthly_limit"`
+}
+
+// Sprint 5 PR2: set / clear the per-social-account monthly publish
+// cap. Pass NULL to disable the cap (the default — unlimited).
+// Pass a positive integer to enforce. Zero is allowed and means
+// "this account cannot publish at all this month" — handy for
+// emergency lockouts. The publish path counts published_at rows in
+// the current calendar month and refuses dispatch when count >= cap.
+func (q *Queries) UpdateProjectPerAccountQuota(ctx context.Context, arg UpdateProjectPerAccountQuotaParams) (Project, error) {
+	row := q.db.QueryRow(ctx, updateProjectPerAccountQuota, arg.ID, arg.PerAccountMonthlyLimit)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BrandingLogoUrl,
+		&i.BrandingDisplayName,
+		&i.BrandingPrimaryColor,
+		&i.PerAccountMonthlyLimit,
 	)
 	return i, err
 }
