@@ -90,7 +90,14 @@ const listManagedUsersByProject = `-- name: ListManagedUsersByProject :many
 
 SELECT
   external_user_id::TEXT AS external_user_id,
-  (MAX(external_user_email) FILTER (WHERE external_user_email IS NOT NULL AND external_user_email <> ''))::TEXT AS external_user_email,
+  -- COALESCE keeps the result non-null when no row in the group
+  -- carries an email, so sqlc can use a plain ` + "`" + `string` + "`" + ` type instead
+  -- of pgtype.Text. Without this, pgx fails with "cannot scan NULL
+  -- into *string" the moment a managed user has no email on file.
+  COALESCE(
+    MAX(external_user_email) FILTER (WHERE external_user_email IS NOT NULL AND external_user_email <> ''),
+    ''
+  )::TEXT AS external_user_email,
   COUNT(*)::INTEGER AS account_count,
   COUNT(*) FILTER (WHERE platform = 'twitter')::INTEGER  AS twitter_count,
   COUNT(*) FILTER (WHERE platform = 'linkedin')::INTEGER AS linkedin_count,
