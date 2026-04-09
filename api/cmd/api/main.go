@@ -258,6 +258,16 @@ func main() {
 	// Sprint 4 PR5: Managed Users view (one row per end user across
 	// all their connected social accounts).
 	managedUsersHandler := handler.NewManagedUsersHandler(queries)
+	// Sprint 4 PR7: Meta App Review data-deletion callback. Endpoint
+	// is mandatory for App Review submission. META_APP_SECRET will be
+	// set in Railway when business verification clears + the Meta
+	// integration goes live; until then the handler returns 503
+	// NOT_CONFIGURED for any inbound requests.
+	metaDataDeletionHandler := handler.NewMetaDataDeletionHandler(
+		queries,
+		os.Getenv("META_APP_SECRET"),
+		"https://app.unipost.dev/meta/data-deletion-status",
+	)
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
@@ -305,6 +315,13 @@ func main() {
 	// id are the bearer.
 	r.Get("/v1/public/connect/sessions/{id}/authorize", connectCallbackHandler.Authorize)
 	r.Get("/v1/connect/callback/{platform}", connectCallbackHandler.Callback)
+
+	// Sprint 4 PR7: Meta App Review data-deletion callback. No auth —
+	// the signed_request JWT body is the bearer. Mandatory for the
+	// Meta App Review submission process; ships in Sprint 4 even
+	// though Meta business verification + the actual integration
+	// land later.
+	r.Post("/v1/meta/data-deletion", metaDataDeletionHandler.HandleDataDeletion)
 
 	// Dashboard routes (Clerk session auth)
 	r.Group(func(r chi.Router) {
