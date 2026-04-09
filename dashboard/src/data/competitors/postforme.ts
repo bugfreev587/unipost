@@ -8,14 +8,19 @@ export const POSTFORME = {
   slug: "postforme",
   tagline: "Open-source social media posting API",
   pricing: {
-    freeTier: false,
-    freePostsPerMonth: 0,
-    startingPrice: 19,
-    pricingModel: "Per feature tier",
-    enterprisePlan: false,
+    freeTier: true,
+    freePostsPerMonth: 100,
+    startingPrice: 10,
+    pricingModel: "Per post volume",
+    enterprisePlan: true,
     tiers: [
-      { label: "Starter", price: 19, posts: "Included" },
-      { label: "Pro", price: 49, posts: "Higher volume" },
+      { label: "Free", price: 0, posts: "100/mo" },
+      { label: "Starter", price: 10, posts: "1,000/mo" },
+      { label: "Growth", price: 25, posts: "2,500/mo" },
+      { label: "Pro", price: 50, posts: "5,000/mo" },
+      { label: "Scale", price: 75, posts: "10,000/mo" },
+      { label: "Business", price: 150, posts: "20,000/mo" },
+      { label: "Enterprise", price: 1000, posts: "200,000/mo" },
     ],
   },
   platforms: {
@@ -54,13 +59,13 @@ export const POSTFORME = {
     gdpr: true,
   },
   heroTitle: "UniPost vs PostForMe —\nA developer's comparison",
-  heroSub: "Evaluating PostForMe alternatives? UniPost offers more platforms, a free tier, analytics, webhooks, and native MCP Server support — all without self-hosting.",
+  heroSub: "Evaluating PostForMe alternatives? UniPost offers more platforms, analytics, webhooks, and native MCP Server support — all without self-hosting.",
   verdict: {
     chooseUs: [
-      "You want a free tier with no self-hosting",
       "You need X/Twitter support",
       "You need analytics and webhooks",
       "You're building AI agents (MCP)",
+      "You want a managed API with no self-hosting",
     ],
     chooseThem: [
       "You want to self-host and own the code",
@@ -81,7 +86,7 @@ export const POSTFORME = {
     { q: "PostForMe is open-source. Is UniPost?", a: "No. UniPost is a managed SaaS product. You get reliability, uptime, and zero infrastructure management. If you need open-source, PostForMe is a good choice." },
     { q: "Does UniPost support X/Twitter?", a: "Yes. UniPost supports X/Twitter along with 6 other platforms. PostForMe does not currently support X/Twitter." },
     { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required." },
-    { q: "Is PostForMe really free?", a: "PostForMe is open-source but their hosted version requires a paid plan starting at $19/month. Self-hosting is free but requires your own infrastructure." },
+    { q: "Is PostForMe really free?", a: "PostForMe offers a free tier with 100 posts/month, similar to UniPost. Their paid plans follow the same per-post volume pricing model. Self-hosting the open-source version is free but requires your own infrastructure." },
     { q: "How long does migration take?", a: "Most developers complete the switch in under an hour. The main change is the endpoint URL and field names." },
   ],
   seo: {

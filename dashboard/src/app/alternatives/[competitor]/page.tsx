@@ -128,6 +128,9 @@ const CSS = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,
 /* SECTION TITLES */
 .alt-section-eyebrow{font-size:11.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:12px;font-family:var(--mono);text-align:center}
 
+/* LP-BTN COMPAT (MarketingNav/CTA use lp- classes) */
+.lp-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:var(--r);font-size:13.5px;font-weight:600;cursor:pointer;transition:all .15s;border:1px solid transparent;font-family:var(--ui);text-decoration:none;white-space:nowrap}.lp-btn-primary{background:var(--blue);color:#000}.lp-btn-primary:hover{background:#38bdf8;box-shadow:0 0 24px #0ea5e930}.lp-btn-ghost{background:transparent;color:var(--muted);border-color:var(--b2)}.lp-btn-ghost:hover{background:var(--s2);color:var(--text);border-color:var(--b3)}.lp-btn-outline{background:transparent;color:var(--text);border-color:var(--b2)}.lp-btn-outline:hover{background:var(--s2);border-color:var(--b3)}.lp-btn-lg{padding:12px 28px;font-size:15px;border-radius:10px}
+
 /* RESPONSIVE */
 @media(min-width:1600px){:root{--content-max:1100px;--px:40px}}
 @media(max-width:1024px){:root{--px:24px;--section-py:72px}}
