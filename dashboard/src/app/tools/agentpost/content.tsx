@@ -9,7 +9,7 @@ import { MarketingCTALight } from "@/components/marketing/nav";
 const CSS = `.ap-hero{padding:64px 0 40px;max-width:880px;text-align:center;margin:0 auto}
 .ap-hero-title{font-size:48px;font-weight:900;letter-spacing:-1.5px;line-height:1.1;color:var(--text);margin-bottom:14px}
 .ap-hero-title em{color:var(--accent);font-style:normal}
-.ap-hero-sub{font-size:16px;color:#aaa;line-height:1.6;margin-bottom:8px}
+.ap-hero-sub{font-size:16px;color:#bbb;line-height:1.6;margin-bottom:8px}
 .ap-tabs{display:flex;justify-content:center;gap:4px;margin-top:24px}
 .ap-tab{padding:8px 20px;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid var(--b2);background:transparent;color:var(--muted);transition:all .15s;font-family:var(--ui)}
 .ap-tab:hover{background:var(--s2);color:var(--text)}

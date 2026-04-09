@@ -42,7 +42,7 @@ const CSS = `
 :root{
   --bg:#000;--s1:#0a0a0a;--s2:#111;--s3:#1a1a1a;
   --border:#1a1a1a;--b2:#242424;--b3:#2e2e2e;
-  --text:#f0f0f0;--muted:#999;--muted2:#555;
+  --text:#fff;--muted:#b0b0b0;--muted2:#777;
   --accent:#10b981;--adim:#10b98112;
   --blue:#0ea5e9;--blue-dim:#0ea5e912;
   --danger:#ef4444;
@@ -194,10 +194,10 @@ const CSS = `
 .pp-footer-mark{width:26px;height:26px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center}
 .pp-footer-mark svg{width:13px;height:13px;color:#000}
 .pp-footer-name{font-size:15px;font-weight:700;color:var(--text)}
-.pp-footer-tagline{font-size:13px;color:#aaa;line-height:1.65;max-width:260px}
+.pp-footer-tagline{font-size:13px;color:#bbb;line-height:1.65;max-width:260px}
 .pp-footer-col-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted2);margin-bottom:16px}
 .pp-footer-links-col{list-style:none}
-.pp-footer-col-link{font-size:13.5px;color:#aaa;margin-bottom:10px;cursor:pointer;transition:color .1s;display:block;text-decoration:none}
+.pp-footer-col-link{font-size:13.5px;color:#bbb;margin-bottom:10px;cursor:pointer;transition:color .1s;display:block;text-decoration:none}
 .pp-footer-col-link:hover{color:var(--text)}
 .pp-footer-bottom{border-top:1px solid var(--border);padding-top:24px;display:flex;align-items:center;justify-content:space-between}
 .pp-footer-copy{font-size:13px;color:var(--muted2)}

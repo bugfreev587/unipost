@@ -7,7 +7,7 @@ import { PlatformCard } from "@/components/tools/PlatformCard";
 const CSS = `.cc-hero{padding:var(--section-py) 0 48px;max-width:880px}
 .cc-hero-title{font-size:48px;font-weight:900;letter-spacing:-1.5px;line-height:1.1;color:var(--text);margin-bottom:16px}
 .cc-hero-title em{color:var(--accent);font-style:normal}
-.cc-hero-sub{font-size:16px;color:#aaa;line-height:1.6;margin-bottom:6px}
+.cc-hero-sub{font-size:16px;color:#bbb;line-height:1.6;margin-bottom:6px}
 .cc-hero-free{font-size:12px;color:var(--muted2);font-family:var(--mono)}
 .cc-tool{padding:0 0 var(--section-py)}
 .cc-textarea{width:100%;min-height:160px;background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;padding:20px;font-size:15px;line-height:1.6;color:#f0f0f0;font-family:var(--ui);resize:vertical;outline:none;transition:border-color .15s}
@@ -27,7 +27,7 @@ const CSS = `.cc-hero{padding:var(--section-py) 0 48px;max-width:880px}
 .cc-tips-title{font-size:22px;font-weight:800;letter-spacing:-.3px;margin-bottom:20px;color:var(--text)}
 .cc-tip{background:#0f0f0f;border:1px solid #1a1a1a;border-radius:10px;padding:16px 20px;margin-bottom:10px}
 .cc-tip-platform{font-size:13px;font-weight:700;color:var(--accent);margin-bottom:4px}
-.cc-tip-text{font-size:13.5px;color:#999;line-height:1.55}
+.cc-tip-text{font-size:13.5px;color:#b0b0b0;line-height:1.55}
 @media(max-width:1024px){.cc-grid{grid-template-columns:repeat(2,1fr)}.cc-hero-title{font-size:38px}}
 @media(max-width:680px){.cc-grid{grid-template-columns:1fr}.cc-hero-title{font-size:30px}}`;
 

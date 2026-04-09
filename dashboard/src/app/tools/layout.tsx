@@ -9,7 +9,7 @@ import { MarketingNav } from "@/components/marketing/nav";
 // tools section to avoid collisions with the landing/pricing/solutions
 // pages that use similar design tokens but different prefix namespaces.
 const TOOLS_CSS = `
-:root{--bg:#000;--s1:#0a0a0a;--s2:#111;--s3:#1a1a1a;--border:#1a1a1a;--b2:#242424;--b3:#2e2e2e;--text:#f0f0f0;--muted:#999;--muted2:#555;--accent:#10b981;--blue:#0ea5e9;--r:8px;--mono:var(--font-fira-code),monospace;--ui:var(--font-dm-sans),system-ui,sans-serif;--nav-max:1480px;--content-max:1100px;--px:32px;--section-py:96px}
+:root{--bg:#000;--s1:#0a0a0a;--s2:#111;--s3:#1a1a1a;--border:#1a1a1a;--b2:#242424;--b3:#2e2e2e;--text:#fff;--muted:#b0b0b0;--muted2:#777;--accent:#10b981;--blue:#0ea5e9;--r:8px;--mono:var(--font-fira-code),monospace;--ui:var(--font-dm-sans),system-ui,sans-serif;--nav-max:1480px;--content-max:1100px;--px:32px;--section-py:96px}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
 
@@ -45,7 +45,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px
 .tl-eyebrow{font-size:11.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:18px;font-family:var(--mono)}
 .tl-hero-title{font-size:52px;font-weight:900;letter-spacing:-2px;line-height:1.05;color:var(--text);margin-bottom:24px}
 .tl-hero-title em{color:var(--accent);font-style:normal}
-.tl-hero-sub{font-size:17px;color:#aaa;line-height:1.7;max-width:680px}
+.tl-hero-sub{font-size:17px;color:#bbb;line-height:1.7;max-width:680px}
 
 /* Tool card grid */
 .tl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:0 0 var(--section-py)}
@@ -63,7 +63,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px
 .tl-cta-inner{background:#0d0d0d;border:1px solid var(--border);border-radius:16px;padding:56px 48px;text-align:center;position:relative;overflow:hidden}
 .tl-cta-glow{position:absolute;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,#10b98112,transparent 70%);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none}
 .tl-cta-title{font-size:32px;font-weight:800;letter-spacing:-.6px;margin-bottom:12px;position:relative}
-.tl-cta-sub{font-size:14.5px;color:#aaa;margin-bottom:28px;position:relative;max-width:520px;margin-left:auto;margin-right:auto}
+.tl-cta-sub{font-size:14.5px;color:#bbb;margin-bottom:28px;position:relative;max-width:520px;margin-left:auto;margin-right:auto}
 .tl-cta-actions{display:flex;align-items:center;justify-content:center;gap:12px;position:relative;flex-wrap:wrap}
 
 /* Footer */
