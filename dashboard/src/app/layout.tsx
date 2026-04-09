@@ -1,12 +1,18 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { DM_Sans } from "next/font/google";
+import { DM_Sans, Fira_Code } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 const dmSans = DM_Sans({
   variable: "--font-dm-sans",
   subsets: ["latin"],
+});
+
+const firaCode = Fira_Code({
+  variable: "--font-fira-code",
+  subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 const geistSans = Geist({
@@ -99,7 +105,7 @@ export default function RootLayout({
     >
       <html
         lang="en"
-        className={`dark ${dmSans.variable} ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+        className={`dark ${dmSans.variable} ${firaCode.variable} ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
         style={{ fontFamily: "var(--font-dm-sans), system-ui, sans-serif" }}
       >
         <body className="min-h-full flex flex-col" style={{ background: "#080808", color: "#ededed" }}>

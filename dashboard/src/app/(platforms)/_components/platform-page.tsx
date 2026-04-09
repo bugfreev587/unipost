@@ -38,7 +38,7 @@ function ZapIcon() {
 // Reuses lp- variables from the marketing landing page (same font, color, spacing system).
 // Adds pp- prefix for platform-page-specific sections matching the reference HTML design.
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700;9..40,800;9..40,900&family=Fira+Code:wght@400;500&display=swap');
+
 :root{
   --bg:#000;--s1:#0a0a0a;--s2:#111;--s3:#1a1a1a;
   --border:#1a1a1a;--b2:#242424;--b3:#2e2e2e;
@@ -46,7 +46,7 @@ const CSS = `
   --accent:#10b981;--adim:#10b98112;
   --blue:#0ea5e9;--blue-dim:#0ea5e912;
   --danger:#ef4444;
-  --r:8px;--mono:'Fira Code',monospace;--ui:'DM Sans',system-ui,sans-serif;
+  --r:8px;--mono:var(--font-fira-code),monospace;--ui:var(--font-dm-sans),system-ui,sans-serif;
   --content-max:960px;--nav-max:1480px;--px:32px;--section-py:64px;
 }
 
