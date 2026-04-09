@@ -70,7 +70,7 @@ export default function TermsPage() {
             </p>
             <p className="mt-2">Core capabilities include:</p>
             <ul className="list-disc pl-6 mt-2 space-y-1">
-              <li>Connecting social media accounts (Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube)</li>
+              <li>Connecting social media accounts (X, Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube)</li>
               <li>Publishing content to multiple platforms simultaneously via API</li>
               <li>Managing API keys for programmatic access</li>
               <li>Webhook notifications for post status updates</li>

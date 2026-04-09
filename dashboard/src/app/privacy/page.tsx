@@ -126,7 +126,7 @@ export default function PrivacyPage() {
               <li><strong>Stripe</strong> — subscription billing and payments</li>
               <li><strong>Railway</strong> — API server hosting</li>
               <li><strong>Vercel</strong> — dashboard and website hosting</li>
-              <li><strong>Social platforms</strong> — content is published to platforms you connect (Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube)</li>
+              <li><strong>Social platforms</strong> — content is published to platforms you connect (X, Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube)</li>
             </ul>
 
             <h3 className="text-lg font-medium text-zinc-800 mt-4 mb-2">Legal Requirements</h3>

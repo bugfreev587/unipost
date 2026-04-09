@@ -567,7 +567,7 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
           <div className="pp-footer-top">
             <div>
               <div className="pp-footer-logo"><div className="pp-footer-mark"><ZapIcon /></div><span className="pp-footer-name">UniPost</span></div>
-              <p className="pp-footer-tagline">Unified social media API for developers. Post to 6 platforms with one API call.</p>
+              <p className="pp-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p>
             </div>
             <div>
               <div className="pp-footer-col-title">Product</div>

@@ -40,11 +40,11 @@ const PLATFORM_ICONS: Record<string, React.ReactNode> = {
 };
 
 const PLATFORMS = [
-  { name: "Bluesky", slug: "bluesky" }, { name: "LinkedIn", slug: "linkedin" }, { name: "Instagram", slug: "instagram" },
+  { name: "X", slug: "twitter" }, { name: "Bluesky", slug: "bluesky" }, { name: "LinkedIn", slug: "linkedin" }, { name: "Instagram", slug: "instagram" },
   { name: "Threads", slug: "threads" }, { name: "TikTok", slug: "tiktok" }, { name: "YouTube", slug: "youtube" },
 ];
 const FEATURES = [
-  { number: "01", title: "One API, every platform", desc: "Stop maintaining 6 different integrations. One endpoint, one auth token, one response format. Post to Bluesky, LinkedIn, Instagram, Threads, TikTok, and YouTube with a single call.", code: `POST /v1/social-posts\n{\n  "caption": "Hello from UniPost!",\n  "account_ids": ["sa_instagram", "sa_linkedin"],\n  "scheduled_at": "2026-04-07T09:00:00Z"\n}` },
+  { number: "01", title: "One API, every platform", desc: "Stop maintaining 7 different integrations. One endpoint, one auth token, one response format. Post to X, Bluesky, LinkedIn, Instagram, Threads, TikTok, and YouTube with a single call.", code: `POST /v1/social-posts\n{\n  "caption": "Hello from UniPost!",\n  "account_ids": ["sa_instagram", "sa_linkedin"],\n  "scheduled_at": "2026-04-07T09:00:00Z"\n}` },
   { number: "02", title: "Token management, handled", desc: "OAuth flows, token refresh, expiry handling — all managed automatically. Your users connect once, and UniPost handles everything in the background forever.", code: `// No token refresh code needed.\n// UniPost handles it automatically.\n\nGET /v1/social-accounts\n→ Always returns valid, active accounts` },
   { number: "03", title: "AI Agent ready via MCP", desc: "The first unified social API with native MCP Server support. Let Claude, GPT, or any AI agent post on behalf of your users — no code required.", code: `// Claude Desktop config\n{\n  "mcpServers": {\n    "unipost": {\n      "url": "https://mcp.unipost.dev/sse",\n      "headers": {\n        "Authorization": "Bearer up_live_xxx"\n      }\n    }\n  }\n}` },
 ];
@@ -55,7 +55,7 @@ const CODE_SNIPPETS: Record<string, string> = {
   curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\\\\n  -H "Authorization: Bearer up_live_xxxx" \\\\\n  -H "Content-Type: application/json" \\\\\n  -d '{\n    "caption":     "Hello from UniPost! 🚀",\n    "account_ids": ["sa_instagram_123", "sa_linkedin_456"]\n  }'`,
 };
 const MODES = [
-  { badge: "Quickstart Mode", badgeColor: "#10b981", title: "Start posting in minutes", desc: "Use UniPost's developer credentials. No platform approval process, no waiting.", features: ["Instant access to all 6 platforms", "No developer approval needed", "OAuth shows 'UniPost' branding", "Available on all plans including Free"], ctaVariant: "ghost" },
+  { badge: "Quickstart Mode", badgeColor: "#10b981", title: "Start posting in minutes", desc: "Use UniPost's developer credentials. No platform approval process, no waiting.", features: ["Instant access to all 7 platforms", "No developer approval needed", "OAuth shows 'UniPost' branding", "Available on all plans including Free"], ctaVariant: "ghost" },
   { badge: "Native Mode", badgeColor: "#3b82f6", title: "Your brand, your credentials", desc: "Bring your own platform credentials. Users see your app name during OAuth.", features: ["OAuth shows your app name", "Complete credential ownership", "Professional user experience", "Available on all paid plans"], ctaVariant: "primary" },
 ];
 const FAQS = [
@@ -116,7 +116,7 @@ export default function LandingPage() {
       <div className="lp-page">
         {/* HERO */}
         <div className="lp-hero">
-          <div className="lp-hero-badge"><span className="lp-hero-badge-dot" />Now supporting 6 platforms</div>
+          <div className="lp-hero-badge"><span className="lp-hero-badge-dot" />Now supporting 7 platforms</div>
           <h1 className="lp-hero-title">Ship social media<br />integrations for <em>your</em></h1>
           <div className="lp-hero-rotate-wrap" aria-live="polite"><span className={`lp-hero-rotate-text ${rotatePhase}`} style={{ color: rotatingItem.color }}>{rotatingItem.text}.</span></div>
           <p className="lp-hero-sub">UniPost gives your app a unified API to post, schedule, and analyze across all major social platforms. Ship in hours, not weeks.</p>
@@ -127,7 +127,7 @@ export default function LandingPage() {
           <div className="lp-hero-meta">
             <div className="lp-hero-meta-item"><CheckIcon /><span>Free plan · 100 posts/month</span></div>
             <div className="lp-hero-meta-item"><CheckIcon /><span>No credit card required</span></div>
-            <div className="lp-hero-meta-item"><CheckIcon /><span>6 platforms supported</span></div>
+            <div className="lp-hero-meta-item"><CheckIcon /><span>7 platforms supported</span></div>
           </div>
         </div>
 
@@ -192,7 +192,7 @@ export default function LandingPage() {
         <div className="lp-features">
           <div className="lp-section-eyebrow">Why UniPost</div>
           <h2 className="lp-section-title">Everything you need.<br />Nothing you don&apos;t.</h2>
-          <p className="lp-section-sub" style={{ marginBottom: 64 }}>Stop maintaining 6 different API integrations. One integration handles everything.</p>
+          <p className="lp-section-sub" style={{ marginBottom: 64 }}>Stop maintaining 7 different API integrations. One integration handles everything.</p>
           <div className="lp-feat-list">
             {FEATURES.map((f, i) => (
               <div key={f.number} className={`lp-feat-item ${i % 2 !== 0 ? "reverse" : ""}`}>
@@ -276,7 +276,7 @@ export default function LandingPage() {
       <footer className="lp-footer">
         <div className="lp-footer-inner">
           <div className="lp-footer-top">
-            <div><div className="lp-footer-logo"><div className="lp-footer-mark"><ZapIcon /></div><span className="lp-footer-name">UniPost</span></div><p className="lp-footer-tagline">Unified social media API for developers. Post to 6 platforms with one API call.</p></div>
+            <div><div className="lp-footer-logo"><div className="lp-footer-mark"><ZapIcon /></div><span className="lp-footer-name">UniPost</span></div><p className="lp-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p></div>
             <div><div className="lp-footer-col-title">Product</div><ul className="lp-footer-links"><li><Link href="/" className="lp-footer-link">Overview</Link></li><li><Link href="/pricing" className="lp-footer-link">Pricing</Link></li><li><Link href="/docs" className="lp-footer-link">Docs</Link></li></ul></div>
             <div><div className="lp-footer-col-title">Platforms</div><ul className="lp-footer-links">{PLATFORMS.map((p) => (<li key={p.slug}><Link href={`/${p.slug}-api`} className="lp-footer-link">{p.name}</Link></li>))}</ul></div>
             <div><div className="lp-footer-col-title">Legal</div><ul className="lp-footer-links"><li><Link href="/privacy" className="lp-footer-link">Privacy</Link></li><li><Link href="/terms" className="lp-footer-link">Terms</Link></li></ul></div>

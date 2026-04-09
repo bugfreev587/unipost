@@ -321,7 +321,7 @@ export default function DocsPage() {
             <p className="doc-p">
               UniPost is a unified social media API that lets developers integrate posting capabilities
               into their products without dealing with each platform individually. Connect social accounts
-              once, then publish content to Bluesky, LinkedIn, Instagram, Threads, TikTok, and YouTube
+              once, then publish content to X, Bluesky, LinkedIn, Instagram, Threads, TikTok, and YouTube
               through a single API call.
             </p>
             <div className="doc-grid-2">
