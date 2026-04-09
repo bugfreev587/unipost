@@ -57,7 +57,7 @@ async function apiRequest(path: string, apiKey: string, options?: RequestInit) {
 function createMcpServer(apiKey: string): McpServer {
   const server = new McpServer({
     name: "unipost",
-    version: "0.5.0",
+    version: "0.6.0",
     // Sprint 3 PR9: added unipost_create_connect_session,
     // unipost_reschedule_post, unipost_cancel_post.
     // Sprint 4 PR9: added unipost_bulk_create_posts,
@@ -532,7 +532,7 @@ function createMcpServer(apiKey: string): McpServer {
       "Sprint 3 supports twitter, linkedin, bluesky. Sessions expire after 30 minutes.",
     ].join("\n"),
     {
-      platform: z.enum(["twitter", "linkedin", "bluesky"]).describe("Target social platform."),
+      platform: z.enum(["twitter", "linkedin", "bluesky", "instagram", "threads"]).describe("Target social platform. Instagram and Threads require CONNECT_INSTAGRAM_ENABLED / CONNECT_THREADS_ENABLED on the server."),
       external_user_id: z.string().describe("Your stable identifier for the end user — used to look up the resulting account later."),
       external_user_email: z.string().optional().describe("Optional email for record-keeping; not used by UniPost beyond storage."),
       return_url: z.string().optional().describe("Where to redirect the user after they complete the flow. Required for embedded apps."),
@@ -630,6 +630,82 @@ function createMcpServer(apiKey: string): McpServer {
     },
   );
 
+  // ── Sprint 5 v0.6.0 tools ──
+
+  server.tool(
+    "unipost_get_analytics_rollup",
+    [
+      "Dimensional analytics rollup — aggregate publish metrics over a",
+      "date range with configurable granularity (day/week/month) and",
+      "GROUP BY dimensions (platform, social_account_id, external_user_id,",
+      "status). Returns time-bucketed rows with total + succeeded + failed",
+      "counts. Max range 366 days.",
+      "",
+      "Example: get daily publish counts by platform for the last 30 days:",
+      "  { from: '2026-03-08T00:00:00Z', to: '2026-04-08T00:00:00Z',",
+      "    granularity: 'day', group_by: 'platform' }",
+    ].join("\n"),
+    {
+      from: z.string().describe("RFC3339 lower bound (inclusive)."),
+      to: z.string().describe("RFC3339 upper bound (exclusive)."),
+      granularity: z.enum(["day", "week", "month"]).optional().describe("Time bucket size (default: day)."),
+      group_by: z.string().optional().describe("Comma-separated dimensions: platform, social_account_id, external_user_id, status."),
+    },
+    async (args) => {
+      const params = new URLSearchParams();
+      params.set("from", args.from);
+      params.set("to", args.to);
+      if (args.granularity) params.set("granularity", args.granularity);
+      if (args.group_by) params.set("group_by", args.group_by);
+      const data = await apiRequest(`/v1/analytics/rollup?${params.toString()}`, apiKey);
+      return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "unipost_update_project_quota",
+    [
+      "Set or clear the per-social-account monthly publish cap for the",
+      "current project. When set, the publish path counts each account's",
+      "successful posts this calendar month and refuses dispatch when",
+      "the count reaches the cap. Pass null to disable the cap (the",
+      "default — unlimited per-account, only the project-wide quota",
+      "applies). Pass 0 to emergency-lock a runaway account for the",
+      "rest of the month.",
+      "",
+      "Upper bound: 1,000,000. Negative values are rejected.",
+    ].join("\n"),
+    {
+      per_account_monthly_limit: z
+        .number()
+        .int()
+        .min(0)
+        .max(1_000_000)
+        .nullable()
+        .describe("Monthly publish cap per social account. null = unlimited (default)."),
+    },
+    async ({ per_account_monthly_limit }) => {
+      // The REST API reads the project_id from the API key's default
+      // project context. PATCH /v1/projects/:id requires the project
+      // id — we don't have it in the MCP session, so we list the
+      // user's projects and pick the first (most MCP users have a
+      // single project). Multi-project users can set the quota from
+      // the dashboard directly.
+      const projects = await apiRequest("/v1/projects", apiKey);
+      const projectId = projects?.data?.[0]?.id;
+      if (!projectId) {
+        return {
+          content: [{ type: "text" as const, text: "Error: could not determine project ID. Ensure the API key has at least one project." }],
+        };
+      }
+      const data = await apiRequest(`/v1/projects/${projectId}`, apiKey, {
+        method: "PATCH",
+        body: JSON.stringify({ per_account_monthly_limit }),
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
+    },
+  );
+
   return server;
 }
 
@@ -665,7 +741,7 @@ const httpServer = http.createServer(async (req, res) => {
   // Health check
   if (url.pathname === "/" || url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.5.0" }));
+    res.end(JSON.stringify({ status: "ok", service: "unipost-mcp", version: "0.6.0" }));
     return;
   }
 

@@ -205,6 +205,17 @@ func main() {
 			connectors = append(connectors, ig)
 		}
 	}
+	// Sprint 5 PR4: Threads Connect, gated behind a feature flag for
+	// the same reasons as Instagram (Sprint 5 PR3) — Meta App Review
+	// approval is decoupled from code shipping. Same THREADS_APP_ID /
+	// THREADS_APP_SECRET env vars the BYO/dashboard path already
+	// reads, so a single set of credentials covers both connection
+	// types.
+	if threadsConnectEnabled() {
+		if th := connect.NewThreadsConnector(os.Getenv("THREADS_APP_ID"), os.Getenv("THREADS_APP_SECRET"), apiBaseURL); th != nil {
+			connectors = append(connectors, th)
+		}
+	}
 	connectRegistry := connect.NewRegistry(connectors...)
 
 	// Sprint 3 PR7: managed token refresh worker. Runs every 5 min,
@@ -605,5 +616,14 @@ func (h fanoutHandler) WithGroup(name string) slog.Handler {
 // Instagram tile that bounces them off Meta App Review failures.
 func instagramConnectEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("CONNECT_INSTAGRAM_ENABLED")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+// threadsConnectEnabled is the Sprint 5 PR4 feature flag for the
+// Threads Connect path. Same shape and semantics as the Instagram
+// gate above — keeps the platform out of the Connect registry until
+// Meta App Review approves the Threads app.
+func threadsConnectEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("CONNECT_THREADS_ENABLED")))
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
