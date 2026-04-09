@@ -189,7 +189,7 @@ const CSS = `
 /* FOOTER */
 .pp-footer{border-top:1px solid var(--border);padding:48px 0;width:100%}
 .pp-footer-inner{max-width:var(--content-max);margin:0 auto;padding:0 var(--px)}
-.pp-footer-top{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;gap:48px;margin-bottom:48px}
+.pp-footer-top{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:48px;margin-bottom:48px}
 .pp-footer-logo{display:flex;align-items:center;gap:9px;margin-bottom:16px}
 .pp-footer-mark{width:26px;height:26px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center}
 .pp-footer-mark svg{width:13px;height:13px;color:#000}
@@ -576,10 +576,6 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
             <div>
               <div className="pp-footer-col-title">Platforms</div>
               <ul className="pp-footer-links-col">{ALL_PLATFORMS.map((p) => (<li key={p.slug}><a href={`${LANDING}/${p.slug}-api`} className="pp-footer-col-link">{p.name}</a></li>))}</ul>
-            </div>
-            <div>
-              <div className="pp-footer-col-title">Developers</div>
-              <ul className="pp-footer-links-col"><li><a href={`${LANDING}/docs`} className="pp-footer-col-link">API Reference</a></li><li><a href={`${LANDING}/docs#mcp`} className="pp-footer-col-link">MCP Server</a></li></ul>
             </div>
             <div>
               <div className="pp-footer-col-title">Legal</div>

@@ -14,7 +14,16 @@ export default clerkMiddleware(async (auth, request) => {
     hostname.startsWith("localhost:");
 
   // Public pages (no auth, available on both domains)
-  if (pathname === "/terms" || pathname === "/privacy" || pathname === "/docs" || pathname === "/pricing" || pathname === "/solutions") {
+  const isPublicPage =
+    pathname === "/terms" ||
+    pathname === "/privacy" ||
+    pathname === "/docs" ||
+    pathname === "/pricing" ||
+    pathname === "/solutions" ||
+    pathname === "/contact" ||
+    pathname.startsWith("/tools") ||
+    pathname.endsWith("-api"); // platform landing pages: /twitter-api, /instagram-api, etc.
+  if (isPublicPage) {
     return NextResponse.next();
   }
 
