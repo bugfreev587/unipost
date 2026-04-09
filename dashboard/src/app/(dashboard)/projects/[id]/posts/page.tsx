@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
+import { PostDetailDrawer } from "@/components/dashboard/post-detail-drawer";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft";
 
@@ -66,6 +67,7 @@ export default function PostsPage() {
   const [search, setSearch] = useState("");
   const [platformFilter, setPlatformFilter] = useState("all");
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [drawerPost, setDrawerPost] = useState<SocialPost | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async () => {
@@ -156,7 +158,7 @@ export default function PostsPage() {
 
   function actionsMenu(post: SocialPost) {
     const items: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean }[] = [
-      { icon: <Eye />, label: "View details", action: () => { /* TODO: open drawer */ setMenuOpen(null); } },
+      { icon: <Eye />, label: "View details", action: () => { setDrawerPost(post); setMenuOpen(null); } },
       { icon: <Copy />, label: "Duplicate", action: () => handleDuplicate(post) },
     ];
     if (post.status === "draft") {
@@ -242,7 +244,7 @@ export default function PostsPage() {
             </thead>
             <tbody>
               {filtered.map((post) => (
-                <tr key={post.id} className="posts-row">
+                <tr key={post.id} className="posts-row" onClick={() => setDrawerPost(post)}>
                   <td>
                     <span className="posts-caption" title={post.caption || undefined}>
                       {post.caption || "(no caption)"}
@@ -280,6 +282,15 @@ export default function PostsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Detail drawer */}
+      {drawerPost && (
+        <PostDetailDrawer
+          post={drawerPost}
+          onClose={() => setDrawerPost(null)}
+          onDuplicate={(p) => { setDrawerPost(null); /* TODO: open create modal */ }}
+        />
       )}
     </>
   );
