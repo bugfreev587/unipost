@@ -17,7 +17,7 @@ export default clerkMiddleware(async (auth, request) => {
   const isPublicPage =
     pathname === "/terms" ||
     pathname === "/privacy" ||
-    pathname === "/docs" ||
+    pathname.startsWith("/docs") ||
     pathname === "/pricing" ||
     pathname === "/solutions" ||
     pathname === "/contact" ||
