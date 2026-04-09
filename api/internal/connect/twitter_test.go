@@ -59,13 +59,13 @@ func TestTwitterAuthorizeURL(t *testing.T) {
 	}
 }
 
-// TestTwitterAuthorizeURL_NoMediaWriteScope — Sprint 3 PR3 ships
-// text-only managed Twitter. Lock the scope set so a future change
-// can't accidentally request media.write before the post-pipeline
-// guard is removed.
-func TestTwitterAuthorizeURL_NoMediaWriteScope(t *testing.T) {
-	if strings.Contains(twitterScopes, "media.write") {
-		t.Error("media.write must NOT be in twitterScopes until Sprint 4 unlocks managed Twitter media")
+// TestTwitterAuthorizeURL_HasMediaWriteScope — Sprint 4 PR1 added
+// media.write so managed Twitter accounts can post images. Lock the
+// presence so a future refactor can't silently drop it (which would
+// silently regress media uploads with no validator-side warning).
+func TestTwitterAuthorizeURL_HasMediaWriteScope(t *testing.T) {
+	if !strings.Contains(twitterScopes, "media.write") {
+		t.Error("media.write must be in twitterScopes since Sprint 4 PR1")
 	}
 }
 

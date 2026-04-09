@@ -40,11 +40,12 @@ const (
 	twitterTokenEndpoint     = "https://api.twitter.com/2/oauth2/token"
 	twitterUsersMeEndpoint   = "https://api.twitter.com/2/users/me"
 
-	// Sprint 3: text-only managed Twitter. media.write would let us
-	// upload images / video but it requires Twitter dev portal
-	// approval that's gated separately. Bumping to media.write is
-	// a Sprint 4 task tracked in CHANGELOG.
-	twitterScopes = "tweet.read tweet.write users.read offline.access"
+	// Sprint 4 PR1: managed Twitter now supports media. media.write
+	// was added to the UniPost OAuth app's scope allowlist; this
+	// constant requests it on every Connect handshake so newly-minted
+	// tokens can call POST /1.1/media/upload. Existing tokens minted
+	// before this change DON'T have the scope and need a re-Connect.
+	twitterScopes = "tweet.read tweet.write users.read offline.access media.write"
 )
 
 // TwitterConnector is the OAuth 2.0 PKCE Connector for Twitter / X.
