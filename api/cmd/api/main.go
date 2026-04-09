@@ -255,6 +255,9 @@ func main() {
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
 	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, webhookWorker)
+	// Sprint 4 PR5: Managed Users view (one row per end user across
+	// all their connected social accounts).
+	managedUsersHandler := handler.NewManagedUsersHandler(queries)
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
@@ -326,6 +329,10 @@ func main() {
 		r.Get("/v1/projects/{projectID}/social-accounts", socialAccountHandler.List)
 		r.Post("/v1/projects/{projectID}/social-accounts/connect", socialAccountHandler.Connect)
 		r.Delete("/v1/projects/{projectID}/social-accounts/{accountID}", socialAccountHandler.Disconnect)
+
+		// Sprint 4 PR5: Managed Users view (dashboard).
+		r.Get("/v1/projects/{projectID}/users", managedUsersHandler.List)
+		r.Get("/v1/projects/{projectID}/users/{external_user_id}", managedUsersHandler.Get)
 
 		// Social posts (dashboard)
 		r.Get("/v1/projects/{projectID}/social-posts", socialPostHandler.List)
@@ -416,6 +423,11 @@ func main() {
 		// Sprint 4 PR2: bulk publish — up to 50 posts in one request,
 		// per-post idempotency, partial-success semantics.
 		r.Post("/v1/social-posts/bulk", socialPostHandler.CreateBulk)
+
+		// Sprint 4 PR5: Managed Users view — list / detail of end
+		// users onboarded via Connect, grouped by external_user_id.
+		r.Get("/v1/users", managedUsersHandler.List)
+		r.Get("/v1/users/{external_user_id}", managedUsersHandler.Get)
 		// Hosted preview link (Sprint 2). Returns a 24h JWT-signed
 		// URL the caller can share without exposing the API key.
 		r.Post("/v1/social-posts/{id}/preview-link", previewHandler.CreateLink)

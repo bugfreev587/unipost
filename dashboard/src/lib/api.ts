@@ -366,6 +366,50 @@ export async function bulkCreateSocialPosts(
   });
 }
 
+// Managed Users (Sprint 4 PR5 — list / detail of end users
+// onboarded via Connect, grouped by external_user_id)
+
+export interface ManagedUserListEntry {
+  external_user_id: string;
+  external_user_email?: string;
+  account_count: number;
+  platform_counts: {
+    twitter: number;
+    linkedin: number;
+    bluesky: number;
+  };
+  reconnect_count: number;
+  first_connected_at: string;
+  last_refreshed_at?: string;
+}
+
+export interface ManagedUserDetail {
+  external_user_id: string;
+  external_user_email?: string;
+  account_count: number;
+  accounts: SocialAccount[];
+}
+
+export async function listManagedUsers(
+  token: string,
+  projectId: string,
+  limit?: number
+): Promise<ApiResponse<ManagedUserListEntry[]>> {
+  const qs = limit ? `?limit=${limit}` : "";
+  return request(`/v1/projects/${projectId}/users${qs}`, token);
+}
+
+export async function getManagedUser(
+  token: string,
+  projectId: string,
+  externalUserId: string
+): Promise<ApiResponse<ManagedUserDetail>> {
+  return request(
+    `/v1/projects/${projectId}/users/${encodeURIComponent(externalUserId)}`,
+    token
+  );
+}
+
 // Connect sessions (Sprint 3 PR2 — multi-tenant Connect)
 
 export interface ConnectSession {

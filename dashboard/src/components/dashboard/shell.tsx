@@ -38,6 +38,7 @@ const NAV_ITEMS = [
     { href: "/accounts", label: "Quickstart Mode" },
     { href: "/accounts/native", label: "Native Mode" },
   ]},
+  { href: "/users", label: "Managed Users", icon: User },
   { href: "/posts", label: "Posts", icon: Send },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
