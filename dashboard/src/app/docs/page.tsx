@@ -15,6 +15,9 @@ const NAV_ITEMS = [
   ["connect", "Connect (multi-tenant)"],
   ["social-accounts", "Social Accounts"],
   ["social-posts", "Social Posts"],
+  ["bulk-publish", "Bulk Publish"],
+  ["first-comment", "First Comment"],
+  ["managed-users", "Managed Users"],
   ["validate", "Validate (preflight)"],
   ["drafts", "Drafts & Preview"],
   ["threads", "Threads"],
@@ -776,6 +779,122 @@ export default function DocsPage() {
               <Code title="Response (200)">{`{
   "data": [ /* SocialPost[] */ ],
   "meta": { "next_cursor": "eyJjcmVhdGVkX2F0Ijoi..." }
+}`}</Code>
+            </Endpoint>
+          </Section>
+
+          <Section id="bulk-publish" title="Bulk Publish">
+            <p className="doc-p">
+              Publish up to 50 posts in one request. Each entry is a complete{" "}
+              <code>POST /v1/social-posts</code> body — pass either{" "}
+              <code>platform_posts[]</code> (recommended) or the legacy{" "}
+              <code>caption + account_ids</code> shape per entry.
+            </p>
+            <Endpoint method="POST" path="/v1/social-posts/bulk" auth="API Key">
+              <Param name="posts" type="object[]" required>
+                Array of 1–50 single-post bodies. 51+ entries → 400.
+              </Param>
+              <Code title="Request">{`{
+  "posts": [
+    {"platform_posts":[{"account_id":"sa_t1","caption":"first post"}]},
+    {"platform_posts":[{"account_id":"sa_t1","caption":"second post"}]},
+    {"platform_posts":[{"account_id":"sa_l1","caption":"longer LinkedIn version"}]}
+  ]
+}`}</Code>
+              <Code title="Response (200)">{`{
+  "data": [
+    {"status":200,"data":{"id":"post_1","status":"published","results":[...]}},
+    {"status":200,"data":{"id":"post_2","status":"published","results":[...]}},
+    {"status":422,"error":{"code":"VALIDATION_ERROR","message":"caption exceeds the platform maximum"}}
+  ]
+}`}</Code>
+              <p className="doc-p">
+                <strong>Partial-success semantics.</strong> The HTTP response is
+                always 200 as long as the request itself parses. Per-post failures
+                land in each entry&apos;s <code>error</code> field — re-send the
+                same batch with the same{" "}
+                <code>idempotency_key</code> values to retry only the failed posts
+                without re-publishing the successful ones.
+              </p>
+              <p className="doc-p">
+                Drafts and scheduled posts are NOT supported in bulk — use{" "}
+                <code>POST /v1/social-posts</code> for those. Quota counts each
+                post in the batch separately; mid-batch quota exhaustion fails
+                only the remaining posts.
+              </p>
+            </Endpoint>
+          </Section>
+
+          <Section id="first-comment" title="First Comment">
+            <p className="doc-p">
+              Every <code>platform_posts[]</code> entry accepts an optional{" "}
+              <code>first_comment</code> string. The handler publishes the main
+              post, captures the external id, then dispatches the first comment
+              as a self-reply / comment / first-comment depending on the platform.
+              Failure of the first comment is recorded as a{" "}
+              <code>warnings[]</code> entry on the parent result; the main post
+              is never rolled back.
+            </p>
+            <p className="doc-p">
+              <strong>Supported platforms:</strong> Twitter (self-reply via the
+              v2 reply object), LinkedIn (UGC comment via the socialActions API),
+              Instagram (Graph API media comments).
+            </p>
+            <p className="doc-p">
+              <strong>Rejected platforms:</strong> Bluesky and Threads. Both have
+              native multi-post threads — use <code>thread_position</code>{" "}
+              instead. Sending <code>first_comment</code> on those platforms
+              triggers <code>first_comment_unsupported</code> at validate time.
+            </p>
+            <Code title="Example">{`{
+  "platform_posts": [
+    {
+      "account_id": "sa_twitter_1",
+      "caption": "shipped agentpost today 🎉",
+      "first_comment": "details + install: https://github.com/unipost-dev/agentpost"
+    }
+  ]
+}`}</Code>
+          </Section>
+
+          <Section id="managed-users" title="Managed Users">
+            <p className="doc-p">
+              List end users onboarded via Connect, grouped by{" "}
+              <code>external_user_id</code>. Each row aggregates account counts
+              by platform + flags users with <code>reconnect_required</code>{" "}
+              accounts. The detail endpoint returns the full per-account list
+              for one end user.
+            </p>
+            <Endpoint method="GET" path="/v1/users" auth="API Key">
+              <Param name="limit" type="query">1–100, default 25</Param>
+              <Code title="Response (200)">{`{
+  "data": [
+    {
+      "external_user_id": "user_abc",
+      "external_user_email": "lin@example.com",
+      "account_count": 2,
+      "platform_counts": {"twitter": 1, "linkedin": 1, "bluesky": 0},
+      "reconnect_count": 0,
+      "first_connected_at": "2026-04-01T...",
+      "last_refreshed_at": "2026-04-08T..."
+    }
+  ],
+  "meta": {"total": 1, "page": 1, "per_page": 20}
+}`}</Code>
+            </Endpoint>
+            <Endpoint method="GET" path="/v1/users/{external_user_id}" auth="API Key">
+              <p className="doc-p">
+                Detail view: every social_accounts row for the requested end user.
+                Use this to render a "connected accounts" page in the customer&apos;s
+                own UI.
+              </p>
+              <Code title="Response (200)">{`{
+  "data": {
+    "external_user_id": "user_abc",
+    "external_user_email": "lin@example.com",
+    "account_count": 2,
+    "accounts": [ /* SocialAccount[] */ ]
+  }
 }`}</Code>
             </Endpoint>
           </Section>

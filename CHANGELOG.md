@@ -8,6 +8,133 @@ each section heading below corresponds to a sprint, not a published version.
 
 ## [Unreleased]
 
+## Sprint 4 — Launch Sprint (AgentPost v0.1 + Polish)
+
+This is the first sprint whose deliverable is **a launch**, not just
+code. AgentPost v0.1 ships as an open-source CLI on npm
+(`@unipost/agentpost`), Show HN goes live on Tuesday April 28 2026
+9am PT, and the UniPost Connect surface lands four polish items
+that close the gaps from the Sprint 3 review.
+
+### Added — UniPost API
+
+- **Managed Twitter media support** — the validator no longer rejects
+  posts with images on managed (Connect-flow) Twitter accounts. The
+  Connect OAuth flow now requests `media.write` and the BYO Twitter
+  adapter passes the `media_category=tweet_image` form field on
+  uploads. Three latent bugs surfaced and were fixed during smoke
+  testing (empty `media.write` scope on both Connect + BYO paths,
+  missing `media_category` field on the Twitter `/2/media/upload`
+  endpoint).
+- **Bulk publish endpoint** — `POST /v1/social-posts/bulk` accepts
+  up to 50 single-post bodies in one request and returns a per-post
+  result array. Partial-success semantics: HTTP 200 as long as the
+  request itself parses, with per-post failures landing in each
+  entry's `error` field. Per-post idempotency keys still work; the
+  natural retry pattern is "re-send the same batch with the same
+  keys."
+- **First-comment support** — every `platform_posts[]` entry now
+  accepts an optional `first_comment` string. The handler publishes
+  the main post, captures the external_id, then dispatches the
+  first comment via a new `FirstCommentAdapter` interface that
+  Twitter (self-reply), LinkedIn (UGC comment), and Instagram
+  (Graph API comments) implement. Bluesky and Threads strict-reject
+  the field with `first_comment_unsupported` — they have native
+  thread support, use `thread_position` instead. First-comment
+  failure is recorded as a `warnings[]` entry on the parent result;
+  the main post is never rolled back.
+- **White-label Connect branding** — `projects` gains three optional
+  columns (`branding_logo_url`, `branding_display_name`,
+  `branding_primary_color`) that the hosted Connect page renders
+  when set. Customers can show their own logo + name + primary
+  button color on the page their end users see. The "Powered by
+  UniPost" footer is always visible (full-label removal is Sprint 5+).
+- **Managed Users view** — `GET /v1/users` and the dashboard
+  `/projects/{id}/users` page show one row per end user
+  (`external_user_id`) onboarded via Connect, grouped on the fly
+  via SQL aggregation over `social_accounts`. Each row carries
+  per-platform account counts and a reconnect-needed flag. Detail
+  view at `GET /v1/users/{external_user_id}` returns the full
+  per-account list with disconnect buttons.
+- **Meta data-deletion endpoint** — `POST /v1/meta/data-deletion`
+  verifies Meta's signed_request HMAC-SHA256, extracts the user_id,
+  deletes matching `social_accounts` rows, returns the
+  `{url, confirmation_code}` response Meta requires. Mandatory for
+  the eventual Meta App Review submission. Returns 503
+  NOT_CONFIGURED until `META_APP_SECRET` is set in Railway.
+- **MCP server v0.5.0** with three new tools:
+  `unipost_bulk_create_posts`, `unipost_list_managed_users`,
+  `unipost_get_managed_user`. The existing `unipost_create_post`
+  schema documents the new `first_comment` field on
+  `platform_posts[]` entries.
+
+### Added — AgentPost (new repo at github.com/unipost-dev/agentpost)
+
+- **AgentPost v0.1 CLI** — `npm install -g @unipost/agentpost`
+  installs the `agentpost` binary. Three commands: `init` (sets up
+  UniPost + Anthropic API keys at `~/.agentpost/config.json`),
+  `accounts` (lists connected social accounts), and the headline
+  bare-positional form `agentpost "<message>"` that uses Claude to
+  generate per-platform posts, renders them in an Ink TUI with
+  color-coded character counters, and publishes on confirmation.
+- **changelog-bot example** — `examples/changelog-bot/` reads
+  `CHANGELOG.md`, finds the most recent release section, asks
+  Claude to translate user-facing changes into platform-perfect
+  launch posts, and publishes via UniPost's bulk endpoint. Drop-in
+  GitHub Action workflow lets users add `UNIPOST_API_KEY` +
+  `ANTHROPIC_API_KEY` as repo secrets and tag a release to get
+  automatic multi-platform launch posts.
+
+### Changed
+
+- **Capabilities schema** `1.2 → 1.4` (additive, two bumps in one
+  sprint). 1.3 dropped the managed-Twitter media restriction.
+  1.4 added `FirstCommentCapability.MaxLength` and flipped
+  `twitter.first_comment.supported` to `true`.
+- **`projects` schema** gains `branding_logo_url`,
+  `branding_display_name`, `branding_primary_color`. All three
+  optional; `PATCH /v1/projects/{id}` accepts them with hex color
+  + HTTPS URL validation.
+- **OAuth scopes** — both the BYO Twitter adapter and the Sprint 3
+  Connect Twitter connector now request `media.write` in addition
+  to the previous `tweet.read tweet.write users.read offline.access`.
+  Existing tokens minted before Sprint 4 don't carry the new scope
+  and need a re-Connect to upgrade.
+
+### Fixed
+
+- **Sprint 3 PR3 latent bug**: validator codes
+  `first_comment_unsupported` and `first_comment_too_long` were
+  added to `validate.go` but missed from the handler's
+  `fatalErrorCodes` allowlist, so the strict-reject contract for
+  Bluesky/Threads silently failed and the publish loop went ahead
+  and posted the parent. Audit also surfaced the same gap for the
+  Sprint 2 thread codes (`threads_unsupported`,
+  `thread_positions_not_contiguous`, `thread_mixed_with_single`)
+  and media-library codes (`media_id_not_found`,
+  `media_id_not_in_project`, `media_not_uploaded`) — all are now
+  registered as fatal. New `fatal_codes_test.go` locks the
+  allowlist so a regression of this exact form can't recur.
+- **Connect dashboard page rendering** — the `/connect/[platform]`
+  page was inheriting the dashboard's dark `#080808` body
+  background, making the brand-name span next to the logo nearly
+  invisible. New `dashboard/src/app/connect/layout.tsx` wraps
+  /connect routes in a fixed-position `#fafafa` container so the
+  hosted page is fully decoupled from the dashboard chrome.
+- **Managed users SQL** — `MAX(external_user_email) FILTER (...)`
+  returned NULL when no row in the group had an email, but sqlc
+  inferred the column as plain `string` (the `::TEXT` cast hides
+  the nullability). Wrap in `COALESCE(..., '')` so the result is
+  always non-null.
+
+### Deprecated
+
+Nothing.
+
+### Breaking
+
+None.
+
 ## Sprint 3 — UniPost Connect
 
 ### Added
