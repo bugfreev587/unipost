@@ -151,6 +151,23 @@ type AnalyticsAdapter interface {
 	GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error)
 }
 
+// FirstCommentAdapter is the optional interface adapters implement
+// when they support attaching a first_comment to a published post.
+// The handler dispatcher checks for this interface after a successful
+// main post and calls PostComment with the parent's externalID.
+//
+// Sprint 4 PR3 implementations: Twitter (reply-to-self), LinkedIn
+// (own-post comment via UGC API), Instagram (first comment via media
+// comments API). Bluesky/Threads/TikTok/YouTube don't implement it.
+type FirstCommentAdapter interface {
+	// PostComment attaches text as a comment / reply on the existing
+	// post identified by parentExternalID. Returns the comment's own
+	// external id (useful for delete / analytics) plus the public URL.
+	// Failure of this call is logged as a warning on the parent
+	// result; the parent post is NEVER rolled back.
+	PostComment(ctx context.Context, accessToken string, parentExternalID string, text string) (*PostResult, error)
+}
+
 // PlatformAdapter defines the interface all platform integrations must implement.
 type PlatformAdapter interface {
 	// Platform returns the platform identifier (e.g., "bluesky").

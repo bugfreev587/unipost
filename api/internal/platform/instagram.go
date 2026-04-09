@@ -161,6 +161,45 @@ func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text st
 	}, nil
 }
 
+// PostComment publishes a comment on an existing Instagram post,
+// used by the Sprint 4 PR3 first_comment feature. Hits the Graph API
+// /{ig-media-id}/comments endpoint with the page access token. The
+// comment appears as a top-level reply on the parent post and is
+// authored by the same Instagram Business account.
+func (a *InstagramAdapter) PostComment(ctx context.Context, accessToken string, parentExternalID string, text string) (*PostResult, error) {
+	// Graph API: POST /v21.0/{media-id}/comments?message=...&access_token=...
+	commentURL := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/comments?message=%s&access_token=%s",
+		parentExternalID,
+		url.QueryEscape(text),
+		accessToken,
+	)
+	req, err := http.NewRequestWithContext(ctx, "POST", commentURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram post_comment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("instagram post_comment (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	return &PostResult{
+		ExternalID: result.ID,
+		URL:        fmt.Sprintf("https://www.instagram.com/p/%s/", parentExternalID),
+	}, nil
+}
+
 // createSingleContainer creates a non-carousel media container. caption is
 // only attached when isCarouselChild is false (children inherit it from the
 // parent CAROUSEL container).

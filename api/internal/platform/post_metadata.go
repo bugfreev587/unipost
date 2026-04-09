@@ -49,6 +49,7 @@ type postMetadataPlatformPostV2 struct {
 	PlatformOptions map[string]any `json:"platform_options,omitempty"`
 	InReplyTo       string         `json:"in_reply_to,omitempty"`
 	ThreadPosition  int            `json:"thread_position,omitempty"`
+	FirstComment    string         `json:"first_comment,omitempty"` // Sprint 4 PR3
 }
 
 // EncodePostMetadata serializes a parsed request's posts into the v2
@@ -69,6 +70,7 @@ func EncodePostMetadata(posts []PlatformPostInput) ([]byte, error) {
 			PlatformOptions: p.PlatformOptions,
 			InReplyTo:       p.InReplyTo,
 			ThreadPosition:  p.ThreadPosition,
+			FirstComment:    p.FirstComment,
 		})
 	}
 	return json.Marshal(out)
@@ -108,6 +110,7 @@ func DecodePostMetadata(raw []byte, fallbackCaption string) ([]PlatformPostInput
 				PlatformOptions: p.PlatformOptions,
 				InReplyTo:       p.InReplyTo,
 				ThreadPosition:  p.ThreadPosition,
+				FirstComment:    p.FirstComment,
 			})
 		}
 		return out, nil

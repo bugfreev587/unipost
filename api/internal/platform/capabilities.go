@@ -34,7 +34,10 @@ package platform
 // after media.write was added to the OAuth scope. Behavior loosening,
 // not a schema change — bumped to give clients a way to detect when
 // managed-Twitter media became supported.
-const CapabilitiesSchemaVersion = "1.3"
+// 1.3 → 1.4 (Sprint 4 PR3): added FirstCommentCapability.MaxLength
+// and flipped twitter.first_comment.supported to true. Old consumers
+// keep working — the new MaxLength field is omitempty.
+const CapabilitiesSchemaVersion = "1.4"
 
 // Capability is the full set of post-creation rules for one platform.
 // Clients hit GET /v1/platforms/capabilities to fetch the whole map.
@@ -120,10 +123,17 @@ type SchedulingCapability struct {
 }
 
 // FirstCommentCapability flags platforms where the first comment can
-// be posted alongside the main post (Instagram and LinkedIn at time
-// of writing). This unlocks the "hashtags as first comment" pattern.
+// be posted alongside the main post (Sprint 4 PR3: Twitter, LinkedIn,
+// Instagram). This unlocks the "hashtags as first comment" pattern
+// and other community-conventions where the actual content lives in
+// the first reply.
+//
+// MaxLength is the per-platform character cap on the first comment
+// itself. 0 means "no separate limit" (the platform's main caption
+// rules apply); a non-zero value enforces a tighter cap.
 type FirstCommentCapability struct {
 	Supported bool `json:"supported"`
+	MaxLength int  `json:"max_length,omitempty"`
 }
 
 // Capabilities is the full per-platform map. Order matters only for
@@ -159,7 +169,7 @@ var Capabilities = map[string]Capability{
 		},
 		Thread:       ThreadCapability{Supported: true},
 		Scheduling:   SchedulingCapability{Supported: true},
-		FirstComment: FirstCommentCapability{Supported: false},
+		FirstComment: FirstCommentCapability{Supported: true, MaxLength: 280},
 	},
 	"instagram": {
 		DisplayName: "Instagram",
@@ -185,7 +195,7 @@ var Capabilities = map[string]Capability{
 		},
 		Thread:       ThreadCapability{Supported: false},
 		Scheduling:   SchedulingCapability{Supported: true},
-		FirstComment: FirstCommentCapability{Supported: true},
+		FirstComment: FirstCommentCapability{Supported: true, MaxLength: 2200},
 	},
 	"tiktok": {
 		DisplayName: "TikTok",
@@ -287,7 +297,7 @@ var Capabilities = map[string]Capability{
 		},
 		Thread:       ThreadCapability{Supported: false},
 		Scheduling:   SchedulingCapability{Supported: true},
-		FirstComment: FirstCommentCapability{Supported: true},
+		FirstComment: FirstCommentCapability{Supported: true, MaxLength: 1250},
 	},
 	"bluesky": {
 		DisplayName: "Bluesky",

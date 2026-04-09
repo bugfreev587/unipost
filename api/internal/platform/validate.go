@@ -55,6 +55,19 @@ type PlatformPostInput struct {
 	// 0 means "not part of a thread" — single post. Validated for
 	// contiguity (positions 1..N with no gaps) before dispatch.
 	ThreadPosition int
+
+	// FirstComment (Sprint 4 PR3) is an optional reply / comment that
+	// gets posted immediately after the main post lands. The handler
+	// orchestrates: publish main post → capture external_id → call
+	// adapter.PostComment(externalID, FirstComment). Failure of the
+	// first comment is recorded as a warning on the main result; the
+	// main post is NOT rolled back.
+	//
+	// Supported on Twitter (self-reply), LinkedIn (own post comment),
+	// Instagram (first comment via media comments API). Bluesky and
+	// Threads reject this field with first_comment_unsupported because
+	// they have native thread support — use thread_position instead.
+	FirstComment string
 }
 
 // ValidateAccount is what the validator needs to know about each
@@ -180,6 +193,10 @@ const (
 	CodeMediaIDNotFound        = "media_id_not_found"
 	CodeMediaIDNotInProject    = "media_id_not_in_project"
 	CodeMediaNotUploaded       = "media_not_uploaded"
+
+	// Sprint 4 PR3: first_comment field codes.
+	CodeFirstCommentUnsupported = "first_comment_unsupported"
+	CodeFirstCommentTooLong     = "first_comment_too_long"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -501,6 +518,39 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Limit:             cap.Text.MaxLength,
 			Severity:          SeverityError,
 		})
+	}
+
+	// Sprint 4 PR3: first_comment field validation. Reject on platforms
+	// that don't support it (Bluesky/Threads have native threads instead;
+	// they reject with first_comment_unsupported per PRD §W4 D10).
+	// Enforce per-platform max length when set.
+	if post.FirstComment != "" {
+		if !cap.FirstComment.Supported {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "first_comment",
+				Code:              CodeFirstCommentUnsupported,
+				Message:           plat + " does not support first_comment — use thread_position for native thread support",
+				Severity:          SeverityError,
+			})
+		} else if cap.FirstComment.MaxLength > 0 {
+			fcLen := len([]rune(post.FirstComment))
+			if fcLen > cap.FirstComment.MaxLength {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "first_comment",
+					Code:              CodeFirstCommentTooLong,
+					Message:           "first_comment exceeds the platform maximum",
+					Actual:            fcLen,
+					Limit:             cap.FirstComment.MaxLength,
+					Severity:          SeverityError,
+				})
+			}
+		}
 	}
 
 	// Step 3: media count + mixing rules.

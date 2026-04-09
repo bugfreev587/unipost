@@ -189,6 +189,49 @@ func (a *TwitterAdapter) Post(ctx context.Context, accessToken string, text stri
 	}, nil
 }
 
+// PostComment publishes a self-reply to an existing tweet, used by
+// the Sprint 4 PR3 first_comment feature. Reuses the same /2/tweets
+// endpoint with the v2 reply object — semantically identical to a
+// thread reply, just published as a follow-up rather than as part of
+// a multi-tweet batch from the same publish call.
+func (a *TwitterAdapter) PostComment(ctx context.Context, accessToken string, parentExternalID string, text string) (*PostResult, error) {
+	payload := map[string]any{
+		"text":  text,
+		"reply": map[string]any{"in_reply_to_tweet_id": parentExternalID},
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/tweets", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("twitter post_comment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("twitter post_comment (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	return &PostResult{
+		ExternalID: result.Data.ID,
+		URL:        fmt.Sprintf("https://x.com/i/status/%s", result.Data.ID),
+	}, nil
+}
+
 // uploadMedia uploads a single media item to X/Twitter and returns the
 // media_id_string. Routes to the chunked path for video and to the simple
 // multipart upload for images. Both use the v2 endpoint at

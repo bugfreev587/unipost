@@ -20,7 +20,8 @@ func stubCapabilities() map[string]Capability {
 				Images:     ImageCapability{MaxCount: 4},
 				Videos:     VideoCapability{MaxCount: 1},
 			},
-			Thread: ThreadCapability{Supported: true},
+			Thread:       ThreadCapability{Supported: true},
+			FirstComment: FirstCommentCapability{Supported: true, MaxLength: 280},
 		},
 		"instagram": {
 			DisplayName: "Instagram",
@@ -31,6 +32,7 @@ func stubCapabilities() map[string]Capability {
 				Images:        ImageCapability{MaxCount: 10},
 				Videos:        VideoCapability{MaxCount: 1},
 			},
+			FirstComment: FirstCommentCapability{Supported: true, MaxLength: 2200},
 		},
 		"linkedin": {
 			DisplayName: "LinkedIn",
@@ -40,6 +42,7 @@ func stubCapabilities() map[string]Capability {
 				Images:     ImageCapability{MaxCount: 9},
 				Videos:     VideoCapability{MaxCount: 1},
 			},
+			FirstComment: FirstCommentCapability{Supported: true, MaxLength: 1250},
 		},
 		"bluesky": {
 			DisplayName: "Bluesky",
@@ -49,7 +52,8 @@ func stubCapabilities() map[string]Capability {
 				Images:     ImageCapability{MaxCount: 4},
 				Videos:     VideoCapability{MaxCount: 1},
 			},
-			Thread: ThreadCapability{Supported: true},
+			Thread:       ThreadCapability{Supported: true},
+			FirstComment: FirstCommentCapability{Supported: false},
 		},
 		"youtube": {
 			DisplayName: "YouTube",
@@ -487,6 +491,48 @@ func TestValidate_MediaIDUploaded(t *testing.T) {
 	})
 	if !res.Valid {
 		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
+}
+
+// ─── Sprint 4 PR3: first_comment validation ───────────────────────────
+
+func TestValidate_FirstComment_Supported(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "main", FirstComment: "reply"},
+	}))
+	if !res.Valid {
+		t.Fatalf("twitter first_comment should validate, got %#v", res.Errors)
+	}
+}
+
+func TestValidate_FirstComment_RejectedOnBluesky(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_bluesky", Caption: "hi", FirstComment: "comment"},
+	}))
+	if res.Valid {
+		t.Fatal("bluesky should reject first_comment per Sprint 4 PR3 PRD §W4 D10")
+	}
+	hasError(t, res, 0, CodeFirstCommentUnsupported)
+}
+
+func TestValidate_FirstComment_TooLong(t *testing.T) {
+	long := strings.Repeat("x", 281)
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "ok", FirstComment: long},
+	}))
+	if res.Valid {
+		t.Fatal("281-char first_comment on twitter should fail (max 280)")
+	}
+	hasError(t, res, 0, CodeFirstCommentTooLong)
+}
+
+func TestValidate_FirstComment_EmptyAllowed(t *testing.T) {
+	// Empty FirstComment string means "don't post one" — must not error.
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{AccountID: "acc_bluesky", Caption: "hi", FirstComment: ""},
+	}))
+	if !res.Valid {
+		t.Fatalf("empty first_comment must be allowed everywhere, got %#v", res.Errors)
 	}
 }
 

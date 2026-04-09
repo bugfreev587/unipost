@@ -62,6 +62,7 @@ type platformPostBody struct {
 	InReplyTo       string         `json:"in_reply_to"`
 	ThreadPosition  int            `json:"thread_position"`
 	ScheduledAt     *string        `json:"scheduled_at"` // forbidden
+	FirstComment    string         `json:"first_comment"` // Sprint 4 PR3
 }
 
 // parsedRequest is what the parser hands back. The validator and the
@@ -136,6 +137,7 @@ func parsePublishRequest(body publishRequestBody) (parsedRequest, int, string) {
 				PlatformOptions: pp.PlatformOptions,
 				InReplyTo:       pp.InReplyTo,
 				ThreadPosition:  pp.ThreadPosition,
+				FirstComment:    pp.FirstComment,
 			})
 		}
 		return pr, 0, ""

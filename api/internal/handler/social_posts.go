@@ -60,6 +60,11 @@ type postResultResponse struct {
 	ErrorMessage    *string        `json:"error_message,omitempty"`
 	PublishedAt     *string        `json:"published_at,omitempty"`
 	PublishStatus   map[string]any `json:"publish_status,omitempty"`
+	// Warnings (Sprint 4 PR3) carries non-fatal issues that didn't
+	// prevent the main post from being published. The first user is
+	// first_comment failure: the parent post lands and reports
+	// status='published', but the customer is told the comment didn't.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // accountSummary is what the List handler stores per social_account_id so the
@@ -450,6 +455,11 @@ func (h *SocialPostHandler) executePublishLoop(
 			t := dbResult.PublishedAt.Time.Format(time.RFC3339)
 			rr.PublishedAt = &t
 		}
+		// Sprint 4 PR3: surface first_comment failure as a warning
+		// without affecting the main result status.
+		if oc.firstCommentWarning != "" {
+			rr.Warnings = append(rr.Warnings, "first_comment_failed: "+oc.firstCommentWarning)
+		}
 		responseResults = append(responseResults, rr)
 	}
 
@@ -736,6 +746,25 @@ func (h *SocialPostHandler) publishOne(
 	)
 	oc.result = postResult
 	oc.err = err
+
+	// Sprint 4 PR3: first_comment dispatch. Only fires when the main
+	// post succeeded AND the adapter implements FirstCommentAdapter
+	// (validator already rejected first_comment on platforms that
+	// don't support it). Failure of the first comment NEVER rolls
+	// back the main post — it's recorded as a warning instead.
+	if err == nil && postResult != nil && pp.FirstComment != "" {
+		if commenter, ok := adapter.(platform.FirstCommentAdapter); ok {
+			if _, ferr := commenter.PostComment(r.Context(), accessToken, postResult.ExternalID, pp.FirstComment); ferr != nil {
+				oc.firstCommentWarning = ferr.Error()
+				slog.Warn("first_comment failed",
+					"account_id", acc.ID,
+					"platform", acc.Platform,
+					"parent_id", postResult.ExternalID,
+					"err", ferr,
+				)
+			}
+		}
+	}
 	return
 }
 
@@ -804,11 +833,16 @@ func truncateForLog(s string, n int) string {
 // publishOneOutcome is what publishOne returns. Pulled out into a named
 // type so the goroutine in createImmediatePost can declare a fixed-size
 // slice without re-stating the field names.
+//
+// firstCommentWarning (Sprint 4 PR3) is set when the main post landed
+// successfully but the first_comment failed. The main result still
+// reports status='published' — the comment failure is informational.
 type publishOneOutcome struct {
-	platform    string
-	accountName string
-	result      *platform.PostResult
-	err         error
+	platform            string
+	accountName         string
+	result              *platform.PostResult
+	err                 error
+	firstCommentWarning string
 }
 
 // uniqueAccountIDs returns the distinct account IDs across a slice of

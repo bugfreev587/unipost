@@ -482,7 +482,7 @@ export default function DocsPage() {
               <Code title="Example">{`curl ${BASE}/v1/platforms/capabilities`}</Code>
               <Code title="Response (200)">{`{
   "data": {
-    "schema_version": "1.3",
+    "schema_version": "1.4",
     "platforms": {
       "twitter": {
         "display_name": "Twitter / X",

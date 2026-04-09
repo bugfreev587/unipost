@@ -485,6 +485,56 @@ func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, 
 	}, nil
 }
 
+// PostComment publishes a comment on an existing LinkedIn post,
+// used by the Sprint 4 PR3 first_comment feature. Hits LinkedIn's
+// /v2/socialActions/{shareUrn}/comments endpoint with the same
+// person URN that authored the parent post (so the comment appears
+// from "the user" rather than from a third party).
+func (a *LinkedInAdapter) PostComment(ctx context.Context, accessToken string, parentExternalID string, text string) (*PostResult, error) {
+	userInfo, err := a.getUserInfo(ctx, accessToken)
+	if err != nil {
+		return nil, fmt.Errorf("linkedin post_comment: get user info: %w", err)
+	}
+	actorURN := "urn:li:person:" + userInfo.sub
+
+	payload := map[string]any{
+		"actor": actorURN,
+		"message": map[string]any{
+			"text": text,
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	// LinkedIn's comment endpoint takes the parent's URN in the path.
+	// The parent ID we receive is already a full URN like
+	// urn:li:share:7180000000000000000.
+	url := fmt.Sprintf("https://api.linkedin.com/v2/socialActions/%s/comments", parentExternalID)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Restli-Protocol-Version", "2.0.0")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("linkedin post_comment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("linkedin post_comment (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	commentURN := resp.Header.Get("X-RestLi-Id")
+	return &PostResult{
+		ExternalID: commentURN,
+		URL:        fmt.Sprintf("https://www.linkedin.com/feed/update/%s", parentExternalID),
+	}, nil
+}
+
 type linkedInUserInfo struct {
 	sub     string
 	name    string
