@@ -90,6 +90,7 @@ export default function LandingPage() {
           </Link>
           <div className="lp-nav-links">
             <Link href="/solutions" className="lp-nav-link">Solutions</Link>
+            <Link href="/tools" className="lp-nav-link">Tools</Link>
             <Link href="/docs" className="lp-nav-link">Docs</Link>
             <Link href="/pricing" className="lp-nav-link">Pricing</Link>
           </div>

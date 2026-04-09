@@ -118,6 +118,7 @@ export default function SolutionsPage() {
           </Link>
           <div className="sol-nav-links">
             <Link href="/solutions" className="sol-nav-link active">Solutions</Link>
+            <Link href="/tools" className="sol-nav-link">Tools</Link>
             <Link href="/docs" className="sol-nav-link">Docs</Link>
             <Link href="/pricing" className="sol-nav-link">Pricing</Link>
           </div>
