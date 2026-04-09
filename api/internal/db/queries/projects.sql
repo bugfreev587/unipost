@@ -14,6 +14,20 @@ UPDATE projects SET name = $2, updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateProjectBranding :one
+-- Sprint 4 PR4: white-label Connect page branding. nullable params
+-- via sqlc.narg let the caller patch a subset (e.g. just the logo)
+-- without forcing them to re-supply name + color. NULL passed in
+-- via sqlc.narg means "leave the column unchanged"; pass an empty
+-- string to clear a value.
+UPDATE projects
+SET branding_logo_url      = COALESCE(sqlc.narg('logo_url')::TEXT,      branding_logo_url),
+    branding_display_name  = COALESCE(sqlc.narg('display_name')::TEXT,  branding_display_name),
+    branding_primary_color = COALESCE(sqlc.narg('primary_color')::TEXT, branding_primary_color),
+    updated_at             = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: DeleteProject :exec
 DELETE FROM projects WHERE id = $1;
 

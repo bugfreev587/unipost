@@ -31,6 +31,13 @@ type PublicConnectSession = {
   status: SessionStatus;
   return_url?: string;
   expires_at: string;
+  // Sprint 4 PR4: optional white-label branding. Any of the three
+  // fields may be missing — the page falls back to UniPost defaults.
+  branding?: {
+    logo_url?: string;
+    display_name?: string;
+    primary_color?: string;
+  };
 };
 
 type ApiEnvelope<T> = { data?: T; error?: { code: string; message: string } };
@@ -129,7 +136,11 @@ export default async function ConnectPage({ params, searchParams }: PageProps) {
 
 // ── Layout primitives ─────────────────────────────────────────────
 
+// Sprint 4 PR4: --brand-primary CSS variable lets the customer's
+// chosen color drive the Authorize button without re-templating
+// every CSS rule. Falls back to UniPost's default if no branding.
 const STYLES = `
+  :root{--brand-primary:#111}
   body{font-family:system-ui,-apple-system,sans-serif;background:#fafafa;color:#111;margin:0}
   .wrap{max-width:480px;margin:48px auto;padding:0 24px;line-height:1.5}
   h1{font-size:24px;margin-bottom:8px;letter-spacing:-0.3px}
@@ -137,27 +148,46 @@ const STYLES = `
   .panel{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:24px;margin-top:16px}
   .err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:12px 16px;border-radius:8px;margin:16px 0;font-size:14px}
   .ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:12px 16px;border-radius:8px;margin:16px 0}
-  .btn{display:block;width:100%;background:#111;color:#fff;border:0;padding:14px;border-radius:8px;font-size:15px;text-align:center;text-decoration:none;cursor:pointer;font-weight:500}
-  .btn:hover{background:#000}
+  .btn{display:block;width:100%;background:var(--brand-primary);color:#fff;border:0;padding:14px;border-radius:8px;font-size:15px;text-align:center;text-decoration:none;cursor:pointer;font-weight:500}
+  .btn:hover{filter:brightness(0.92)}
   label{display:block;margin-top:16px;font-size:14px;font-weight:500}
   input{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:15px;margin-top:4px;box-sizing:border-box}
-  input:focus{outline:none;border-color:#111}
+  input:focus{outline:none;border-color:var(--brand-primary)}
   .footer{font-size:12px;color:#888;margin-top:32px;text-align:center}
   .small{font-size:13px;color:#666}
   .warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:12px 16px;border-radius:8px;margin-top:16px;font-size:13px}
   .warn strong{font-weight:600}
   .check{font-size:48px;color:#166534;text-align:center}
+  .brand-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  .brand-logo{max-width:48px;max-height:48px;border-radius:8px;object-fit:contain}
+  .brand-name{font-weight:600;color:#111}
 `;
 
-function Layout({ children }: { children: React.ReactNode }) {
+type Branding = PublicConnectSession["branding"];
+
+function Layout({ children, branding }: { children: React.ReactNode; branding?: Branding }) {
+  // Inject the customer's primary color via inline style on a wrapper
+  // div so the cascading CSS variable picks it up. Defaults to #111
+  // (UniPost dark) when unset.
+  const wrapperStyle: React.CSSProperties = {};
+  if (branding?.primary_color) {
+    (wrapperStyle as Record<string, string>)["--brand-primary"] = branding.primary_color;
+  }
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
-      <div className="wrap">
+      <div className="wrap" style={wrapperStyle}>
+        {branding?.logo_url && (
+          <div className="brand-header">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={branding.logo_url} alt={branding.display_name || "Logo"} className="brand-logo" />
+            {branding.display_name && <span className="brand-name">{branding.display_name}</span>}
+          </div>
+        )}
         {children}
         <div className="footer">
           Powered by{" "}
-          <Link href="/" style={{ color: "#666", textDecoration: "none" }}>
+          <Link href="/" style={{ color: "#888", textDecoration: "none" }}>
             UniPost
           </Link>
         </div>
@@ -168,9 +198,9 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 // ── Variants ──────────────────────────────────────────────────────
 
-function ErrorPage({ title, body }: { title: string; body: string }) {
+function ErrorPage({ title, body, branding }: { title: string; body: string; branding?: Branding }) {
   return (
-    <Layout>
+    <Layout branding={branding}>
       <h1>{title}</h1>
       <div className="panel">
         <div className="err">{body}</div>
@@ -180,9 +210,9 @@ function ErrorPage({ title, body }: { title: string; body: string }) {
   );
 }
 
-function SuccessPage() {
+function SuccessPage({ branding }: { branding?: Branding }) {
   return (
-    <Layout>
+    <Layout branding={branding}>
       <div className="panel" style={{ textAlign: "center" }}>
         <div className="check">✓</div>
         <h1 style={{ marginTop: 8 }}>Connected!</h1>
@@ -190,6 +220,13 @@ function SuccessPage() {
       </div>
     </Layout>
   );
+}
+
+// brandedRequester returns the customer-facing name shown in the
+// "X wants to publish posts to your account" copy. Falls back to
+// the project name when no display_name is set.
+function brandedRequester(session: PublicConnectSession): string {
+  return session.branding?.display_name || session.project_name;
 }
 
 function OAuthPrompt({
@@ -210,10 +247,10 @@ function OAuthPrompt({
     sessionID,
   )}/authorize?state=${encodeURIComponent(state)}`;
   return (
-    <Layout>
+    <Layout branding={session.branding}>
       <h1>Connect {label}</h1>
       <p>
-        <strong>{session.project_name}</strong> wants to publish posts to your {label} account on your behalf.
+        <strong>{brandedRequester(session)}</strong> wants to publish posts to your {label} account on your behalf.
       </p>
       <div className="panel">
         <a className="btn" href={authorizeHref}>
@@ -246,10 +283,10 @@ function BlueskyForm({
     sessionID,
   )}/bluesky?state=${encodeURIComponent(state)}`;
   return (
-    <Layout>
+    <Layout branding={session.branding}>
       <h1>Connect Bluesky</h1>
       <p>
-        <strong>{session.project_name}</strong> wants to publish posts to your Bluesky account on your behalf.
+        <strong>{brandedRequester(session)}</strong> wants to publish posts to your Bluesky account on your behalf.
       </p>
       <div className="panel">
         <form method="POST" action={action}>

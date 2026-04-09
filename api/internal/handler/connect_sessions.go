@@ -112,12 +112,24 @@ func toConnectSessionResponse(s db.ConnectSession, hostedURL string) connectSess
 // publicConnectSessionResponse is the no-auth projection used by the
 // hosted page. Carefully strips anything sensitive (oauth_state,
 // pkce_verifier, internal IDs the page doesn't need).
+//
+// Branding (Sprint 4 PR4) is read from the project's branding_*
+// columns and rendered by the dashboard /connect/[platform] page.
+// Any of the three may be empty — the page falls back to UniPost
+// defaults when a field is missing.
 type publicConnectSessionResponse struct {
-	Platform    string    `json:"platform"`
-	ProjectName string    `json:"project_name"`
-	Status      string    `json:"status"`
-	ReturnURL   string    `json:"return_url,omitempty"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	Platform    string                 `json:"platform"`
+	ProjectName string                 `json:"project_name"`
+	Status      string                 `json:"status"`
+	ReturnURL   string                 `json:"return_url,omitempty"`
+	ExpiresAt   time.Time              `json:"expires_at"`
+	Branding    *publicBrandingPayload `json:"branding,omitempty"`
+}
+
+type publicBrandingPayload struct {
+	LogoURL      string `json:"logo_url,omitempty"`
+	DisplayName  string `json:"display_name,omitempty"`
+	PrimaryColor string `json:"primary_color,omitempty"`
 }
 
 // Create handles POST /v1/connect/sessions.
@@ -308,6 +320,22 @@ func (h *ConnectSessionHandler) PublicGet(w http.ResponseWriter, r *http.Request
 	}
 	if session.ReturnUrl.Valid {
 		resp.ReturnURL = session.ReturnUrl.String
+	}
+
+	// Sprint 4 PR4: surface white-label branding from the project's
+	// branding_* columns. Only emit the Branding field if at least
+	// one column is set — otherwise the page falls back to defaults.
+	if project.BrandingLogoUrl.Valid || project.BrandingDisplayName.Valid || project.BrandingPrimaryColor.Valid {
+		resp.Branding = &publicBrandingPayload{}
+		if project.BrandingLogoUrl.Valid {
+			resp.Branding.LogoURL = project.BrandingLogoUrl.String
+		}
+		if project.BrandingDisplayName.Valid {
+			resp.Branding.DisplayName = project.BrandingDisplayName.String
+		}
+		if project.BrandingPrimaryColor.Valid {
+			resp.Branding.PrimaryColor = project.BrandingPrimaryColor.String
+		}
 	}
 
 	// Headers tuned for the hosted page: never cache, never leak

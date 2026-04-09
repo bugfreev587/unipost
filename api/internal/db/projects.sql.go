@@ -7,12 +7,14 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createProject = `-- name: CreateProject :one
 INSERT INTO projects (owner_id, name, mode)
 VALUES ($1, $2, $3)
-RETURNING id, owner_id, name, mode, created_at, updated_at
+RETURNING id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
 `
 
 type CreateProjectParams struct {
@@ -31,6 +33,9 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BrandingLogoUrl,
+		&i.BrandingDisplayName,
+		&i.BrandingPrimaryColor,
 	)
 	return i, err
 }
@@ -45,7 +50,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id string) error {
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, owner_id, name, mode, created_at, updated_at FROM projects WHERE id = $1
+SELECT id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE id = $1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
@@ -58,12 +63,15 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BrandingLogoUrl,
+		&i.BrandingDisplayName,
+		&i.BrandingPrimaryColor,
 	)
 	return i, err
 }
 
 const getProjectByIDAndOwner = `-- name: GetProjectByIDAndOwner :one
-SELECT id, owner_id, name, mode, created_at, updated_at FROM projects WHERE id = $1 AND owner_id = $2
+SELECT id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE id = $1 AND owner_id = $2
 `
 
 type GetProjectByIDAndOwnerParams struct {
@@ -81,12 +89,15 @@ func (q *Queries) GetProjectByIDAndOwner(ctx context.Context, arg GetProjectByID
 		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BrandingLogoUrl,
+		&i.BrandingDisplayName,
+		&i.BrandingPrimaryColor,
 	)
 	return i, err
 }
 
 const listProjectsByOwner = `-- name: ListProjectsByOwner :many
-SELECT id, owner_id, name, mode, created_at, updated_at FROM projects WHERE owner_id = $1 ORDER BY created_at DESC
+SELECT id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color FROM projects WHERE owner_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error) {
@@ -105,6 +116,9 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 			&i.Mode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.BrandingLogoUrl,
+			&i.BrandingDisplayName,
+			&i.BrandingPrimaryColor,
 		); err != nil {
 			return nil, err
 		}
@@ -119,7 +133,7 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 const updateProject = `-- name: UpdateProject :one
 UPDATE projects SET name = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, owner_id, name, mode, created_at, updated_at
+RETURNING id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
 `
 
 type UpdateProjectParams struct {
@@ -137,6 +151,53 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		&i.Mode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BrandingLogoUrl,
+		&i.BrandingDisplayName,
+		&i.BrandingPrimaryColor,
+	)
+	return i, err
+}
+
+const updateProjectBranding = `-- name: UpdateProjectBranding :one
+UPDATE projects
+SET branding_logo_url      = COALESCE($2::TEXT,      branding_logo_url),
+    branding_display_name  = COALESCE($3::TEXT,  branding_display_name),
+    branding_primary_color = COALESCE($4::TEXT, branding_primary_color),
+    updated_at             = NOW()
+WHERE id = $1
+RETURNING id, owner_id, name, mode, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color
+`
+
+type UpdateProjectBrandingParams struct {
+	ID           string      `json:"id"`
+	LogoUrl      pgtype.Text `json:"logo_url"`
+	DisplayName  pgtype.Text `json:"display_name"`
+	PrimaryColor pgtype.Text `json:"primary_color"`
+}
+
+// Sprint 4 PR4: white-label Connect page branding. nullable params
+// via sqlc.narg let the caller patch a subset (e.g. just the logo)
+// without forcing them to re-supply name + color. NULL passed in
+// via sqlc.narg means "leave the column unchanged"; pass an empty
+// string to clear a value.
+func (q *Queries) UpdateProjectBranding(ctx context.Context, arg UpdateProjectBrandingParams) (Project, error) {
+	row := q.db.QueryRow(ctx, updateProjectBranding,
+		arg.ID,
+		arg.LogoUrl,
+		arg.DisplayName,
+		arg.PrimaryColor,
+	)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Mode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BrandingLogoUrl,
+		&i.BrandingDisplayName,
+		&i.BrandingPrimaryColor,
 	)
 	return i, err
 }

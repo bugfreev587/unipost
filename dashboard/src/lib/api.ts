@@ -9,6 +9,10 @@ export interface Project {
   mode: "quickstart" | "whitelabel";
   created_at: string;
   updated_at: string;
+  // Sprint 4 PR4: white-label Connect branding
+  branding_logo_url?: string;
+  branding_display_name?: string;
+  branding_primary_color?: string;
 }
 
 export interface ApiKey {
@@ -102,7 +106,12 @@ export async function createProject(
 export async function updateProject(
   token: string,
   id: string,
-  data: { name: string }
+  data: {
+    name?: string;
+    branding_logo_url?: string;
+    branding_display_name?: string;
+    branding_primary_color?: string;
+  }
 ): Promise<ApiResponse<Project>> {
   return request(`/v1/projects/${id}`, token, {
     method: "PATCH",
