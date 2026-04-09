@@ -268,6 +268,7 @@ export default function LandingPage() {
               <MarketingCTA />
               <Link href="/docs" className="lp-btn lp-btn-outline lp-btn-lg">Read the Docs →</Link>
             </div>
+            <p style={{ fontSize: 13, color: "#555", marginTop: 20, position: "relative" }}>Switching from <Link href="/alternatives/ayrshare" style={{ color: "#999", textDecoration: "underline" }}>Ayrshare</Link> or <Link href="/alternatives/zernio" style={{ color: "#999", textDecoration: "underline" }}>Zernio</Link>? <Link href="/compare" style={{ color: "#999", textDecoration: "underline" }}>See how UniPost compares →</Link></p>
           </div>
         </div>
       </div>
@@ -279,6 +280,7 @@ export default function LandingPage() {
             <div><div className="lp-footer-logo"><div className="lp-footer-mark"><ZapIcon /></div><span className="lp-footer-name">UniPost</span></div><p className="lp-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p></div>
             <div><div className="lp-footer-col-title">Product</div><ul className="lp-footer-links"><li><Link href="/" className="lp-footer-link">Overview</Link></li><li><Link href="/pricing" className="lp-footer-link">Pricing</Link></li><li><Link href="/docs" className="lp-footer-link">Docs</Link></li></ul></div>
             <div><div className="lp-footer-col-title">Platforms</div><ul className="lp-footer-links">{PLATFORMS.map((p) => (<li key={p.slug}><Link href={`/${p.slug}-api`} className="lp-footer-link">{p.name}</Link></li>))}</ul></div>
+            <div><div className="lp-footer-col-title">Compare</div><ul className="lp-footer-links"><li><Link href="/alternatives/ayrshare" className="lp-footer-link">vs Ayrshare</Link></li><li><Link href="/alternatives/zernio" className="lp-footer-link">vs Zernio</Link></li><li><Link href="/alternatives/postforme" className="lp-footer-link">vs PostForMe</Link></li><li><Link href="/compare" className="lp-footer-link">All Comparisons →</Link></li></ul></div>
             <div><div className="lp-footer-col-title">Legal</div><ul className="lp-footer-links"><li><Link href="/privacy" className="lp-footer-link">Privacy</Link></li><li><Link href="/terms" className="lp-footer-link">Terms</Link></li></ul></div>
           </div>
           <div className="lp-footer-bottom">

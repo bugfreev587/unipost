@@ -53,6 +53,7 @@ const FAQS = [
   { q: "Do unused posts roll over to the next month?", a: "No, post quotas reset at the start of each billing cycle. However, if you exceed your limit we won't cut you off — we'll reach out about upgrading instead." },
   { q: "What happens if I go over my plan?", a: "We won't shut you down or block your posts. If your usage consistently exceeds the limit, we'll reach out about upgrading. You'll never experience a hard stop that breaks your users' experience." },
   { q: "Is there a free trial for paid plans?", a: "The Free plan is your trial — 100 posts/month with no credit card required. Upgrade when you need more volume. There's no time limit on the free tier." },
+  { q: "How does UniPost compare to Ayrshare or Zernio?", a: "UniPost offers a permanent free tier, simpler per-post pricing, and native MCP Server support. See our full comparisons at unipost.dev/compare." },
 ];
 
 // ── Icons ──
@@ -131,6 +132,7 @@ export default function PricingPage() {
         <div className="pr-hero">
           <h1 className="pr-hero-title">Predictable pricing<br />without surprises.</h1>
           <p className="pr-hero-sub">All plans include every feature. The only difference is how many posts you need per month.</p>
+          <p style={{ fontSize: 13, color: "#555", marginTop: -28 }}>Comparing with competitors? <Link href="/alternatives/ayrshare" style={{ color: "#999", textDecoration: "underline" }}>UniPost vs Ayrshare</Link> · <Link href="/alternatives/zernio" style={{ color: "#999", textDecoration: "underline" }}>UniPost vs Zernio</Link></p>
         </div>
 
         {/* CARDS */}
