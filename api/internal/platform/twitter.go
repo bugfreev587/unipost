@@ -39,7 +39,7 @@ func (a *TwitterAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig 
 		AuthURL:      "https://twitter.com/i/oauth2/authorize",
 		TokenURL:     "https://api.x.com/2/oauth2/token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/twitter",
-		Scopes:       []string{"tweet.read", "tweet.write", "users.read", "offline.access"},
+		Scopes:       []string{"tweet.read", "tweet.write", "users.read", "offline.access", "media.write"},
 	}
 }
 
@@ -49,7 +49,7 @@ func (a *TwitterAdapter) GetAuthURL(config OAuthConfig, state string) string {
 		"response_type": {"code"},
 		"client_id":     {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
-		"scope":         {"tweet.read tweet.write users.read offline.access"},
+		"scope":         {"tweet.read tweet.write users.read offline.access media.write"},
 		"state":         {state},
 		"code_challenge":        {state[:43]}, // Use part of state as challenge (simplified PKCE)
 		"code_challenge_method": {"plain"},
