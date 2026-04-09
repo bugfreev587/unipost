@@ -36,7 +36,10 @@ const NAV_ITEMS = [
     { href: "/accounts/native", label: "White-label" },
   ]},
   { href: "/users", label: "Managed Users", icon: User },
-  { href: "/posts", label: "Posts", icon: Send },
+  { href: "/posts", label: "Posts", icon: Send, submenu: [
+    { href: "/posts", label: "Overview" },
+    { href: "/posts/queue", label: "Queue" },
+  ]},
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 

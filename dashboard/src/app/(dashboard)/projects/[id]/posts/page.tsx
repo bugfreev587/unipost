@@ -1,17 +1,60 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { Label } from "@/components/ui/label";
 import {
-  listSocialAccounts, listSocialPosts, createSocialPost, getPostAnalytics,
-  type SocialAccount, type SocialPost, type PostAnalytics,
+  listSocialAccounts, listSocialPosts, cancelSocialPost,
+  type SocialAccount, type SocialPost,
 } from "@/lib/api";
-import { Send, CheckCircle2, XCircle, Clock, AlertCircle, BarChart3, Calendar } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 
-type FilterTab = "all" | "published" | "scheduled" | "failed";
+type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft";
+
+const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
+  published: { cls: "dbadge-green", label: "published" },
+  scheduled: { cls: "dbadge-blue", label: "scheduled" },
+  processing: { cls: "dbadge-blue", label: "processing" },
+  partial: { cls: "dbadge-amber", label: "partial" },
+  failed: { cls: "dbadge-red", label: "failed" },
+  draft: { cls: "dbadge-gray", label: "draft" },
+  cancelled: { cls: "dbadge-gray", label: "cancelled" },
+};
+
+function statusBadge(status: string) {
+  const b = STATUS_BADGE[status] || { cls: "dbadge-gray", label: status };
+  return <span className={`dbadge ${b.cls}`}><span className="dbadge-dot" />{b.label}</span>;
+}
+
+// Extra CSS for this page
+const CSS = `.dbadge-gray{background:#ffffff08;color:#666;border:1px solid #333}
+.posts-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.posts-filters{display:flex;align-items:center;gap:8px;margin-bottom:16px}
+.posts-search{display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;padding:0 10px;height:32px;flex:0 1 240px}
+.posts-search input{background:none;border:none;outline:none;color:var(--dtext);font-size:12.5px;font-family:inherit;width:100%}
+.posts-search input::placeholder{color:var(--dmuted2)}
+.posts-search svg{color:var(--dmuted2);flex-shrink:0}
+.posts-select{background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;padding:0 10px;height:32px;color:var(--dtext);font-size:12.5px;font-family:inherit;cursor:pointer;outline:none}
+.posts-select:focus{border-color:var(--daccent)}
+.posts-row{cursor:pointer;transition:background .1s}
+.posts-row:hover{background:var(--surface2)}
+.posts-caption{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:360px;font-size:13.5px;color:var(--dtext)}
+.posts-plats{display:flex;gap:3px;align-items:center}
+.posts-plats-more{font-size:10px;color:var(--dmuted2);font-weight:600}
+.posts-time{font-size:12.5px;color:var(--dmuted)}
+.posts-actions{position:relative}
+.posts-actions-btn{background:none;border:1px solid transparent;border-radius:4px;padding:4px;cursor:pointer;color:var(--dmuted2);transition:all .1s;display:flex;align-items:center}
+.posts-actions-btn:hover{background:var(--surface2);border-color:var(--dborder);color:var(--dtext)}
+.posts-menu{position:absolute;right:0;top:100%;margin-top:4px;background:var(--surface1);border:1px solid var(--dborder);border-radius:8px;padding:4px;min-width:180px;z-index:20;box-shadow:0 8px 24px #00000060}
+.posts-menu-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px;font-size:12.5px;color:var(--dmuted);cursor:pointer;transition:all .1s;border:none;background:none;width:100%;text-align:left;font-family:inherit}
+.posts-menu-item:hover{background:var(--surface2);color:var(--dtext)}
+.posts-menu-item svg{width:13px;height:13px;flex-shrink:0}
+.posts-menu-item.danger{color:#ef4444}
+.posts-menu-item.danger:hover{background:#ef444410}
+.posts-empty{text-align:center;padding:60px 20px}
+.posts-empty-title{font-size:15px;font-weight:600;color:var(--dtext);margin-bottom:6px}
+.posts-empty-sub{font-size:13px;color:var(--dmuted)}`;
 
 export default function PostsPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -19,287 +62,224 @@ export default function PostsPage() {
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [loading, setLoading] = useState(true);
-  const [caption, setCaption] = useState("");
-  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
-  const [posting, setPosting] = useState(false);
-  const [postResult, setPostResult] = useState<SocialPost | null>(null);
-  const [filter, setFilter] = useState<FilterTab>("all");
-  const [expandedPost, setExpandedPost] = useState<string | null>(null);
-  const [scheduleMode, setScheduleMode] = useState<"now" | "later">("now");
-  const [scheduledDate, setScheduledDate] = useState("");
-  const [scheduledTime, setScheduledTime] = useState("");
-  const [analyticsData, setAnalyticsData] = useState<Record<string, PostAnalytics[]>>({});
-  const [loadingAnalytics, setLoadingAnalytics] = useState<string | null>(null);
+  const [tab, setTab] = useState<FilterTab>("all");
+  const [search, setSearch] = useState("");
+  const [platformFilter, setPlatformFilter] = useState("all");
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async () => {
     try {
       const token = await getToken();
       if (!token) return;
-      const [accountsRes, postsRes] = await Promise.all([listSocialAccounts(token, projectId), listSocialPosts(token, projectId)]);
-      setAccounts(accountsRes.data); setPosts(postsRes.data);
-    } catch (err) { console.error("Failed to load:", err); } finally { setLoading(false); }
+      const [a, p] = await Promise.all([
+        listSocialAccounts(token, projectId),
+        listSocialPosts(token, projectId),
+      ]);
+      setAccounts(a.data);
+      setPosts(p.data);
+    } catch (err) {
+      console.error("Failed to load:", err);
+    } finally {
+      setLoading(false);
+    }
   }, [getToken, projectId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  function toggleAccount(id: string) {
-    setSelectedAccounts((prev) => prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]);
-  }
+  // Close menu on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(null);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
-  async function handlePost() {
-    if (!caption.trim() || selectedAccounts.length === 0) return;
-    setPosting(true); setPostResult(null);
+  async function handleCancel(postId: string) {
     try {
       const token = await getToken();
       if (!token) return;
-      const payload: { caption: string; account_ids: string[]; scheduled_at?: string } = {
-        caption: caption.trim(), account_ids: selectedAccounts,
-      };
-      if (scheduleMode === "later" && scheduledDate && scheduledTime) {
-        payload.scheduled_at = new Date(`${scheduledDate}T${scheduledTime}:00`).toISOString();
-      }
-      const res = await createSocialPost(token, projectId, payload);
-      setPostResult(res.data); setCaption(""); setSelectedAccounts([]);
-      setScheduleMode("now"); setScheduledDate(""); setScheduledTime("");
+      await cancelSocialPost(token, postId);
       loadData();
-    } catch (err) { console.error("Failed to post:", err); } finally { setPosting(false); }
+    } catch (err) { console.error("Cancel failed:", err); }
+    setMenuOpen(null);
   }
 
-  async function fetchAnalytics(postId: string) {
-    if (analyticsData[postId]) return;
-    setLoadingAnalytics(postId);
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const res = await getPostAnalytics(token, projectId, postId);
-      setAnalyticsData((prev) => ({ ...prev, [postId]: res.data || [] }));
-    } catch (err) { console.error("Failed to fetch analytics:", err); }
-    finally { setLoadingAnalytics(null); }
+  async function handleDuplicate(post: SocialPost) {
+    // TODO: open create modal pre-filled with post content
+    setMenuOpen(null);
   }
 
-  const filtered = filter === "all" ? posts : posts.filter((p) => p.status === filter);
+  // Filter logic
+  const filtered = posts.filter((p) => {
+    // Tab filter
+    if (tab === "published" && p.status !== "published") return false;
+    if (tab === "scheduled" && p.status !== "scheduled") return false;
+    if (tab === "failed" && p.status !== "failed" && p.status !== "partial") return false;
+    if (tab === "draft" && p.status !== "draft") return false;
+    // Search
+    if (search && !(p.caption || "").toLowerCase().includes(search.toLowerCase())) return false;
+    // Platform filter
+    if (platformFilter !== "all") {
+      const hasPlatform = p.results?.some((r) => r.platform === platformFilter);
+      if (!hasPlatform) return false;
+    }
+    return true;
+  });
 
-  function statusBadge(status: string) {
-    const cls = status === "published" ? "dbadge-green" : status === "scheduled" ? "dbadge-blue" : status === "partial" ? "dbadge-amber" : "dbadge-red";
-    return <span className={`dbadge ${cls}`}><span className="dbadge-dot" />{status}</span>;
+  const tabCounts = {
+    all: posts.length,
+    published: posts.filter((p) => p.status === "published").length,
+    scheduled: posts.filter((p) => p.status === "scheduled").length,
+    failed: posts.filter((p) => p.status === "failed" || p.status === "partial").length,
+    draft: posts.filter((p) => p.status === "draft").length,
+  };
+
+  function getTime(post: SocialPost) {
+    const d = post.status === "scheduled" ? post.scheduled_at : post.published_at || post.created_at;
+    if (!d) return "";
+    return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
 
-  if (loading) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+  function platformIcons(post: SocialPost) {
+    const platforms = [...new Set(post.results?.map((r) => r.platform).filter(Boolean) || [])];
+    const show = platforms.slice(0, 4);
+    const more = platforms.length - show.length;
+    return (
+      <div className="posts-plats">
+        {show.map((p) => <PlatformIcon key={p} platform={p!} size={14} />)}
+        {more > 0 && <span className="posts-plats-more">+{more}</span>}
+      </div>
+    );
+  }
+
+  function actionsMenu(post: SocialPost) {
+    const items: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean }[] = [
+      { icon: <Eye />, label: "View details", action: () => { /* TODO: open drawer */ setMenuOpen(null); } },
+      { icon: <Copy />, label: "Duplicate", action: () => handleDuplicate(post) },
+    ];
+    if (post.status === "draft") {
+      items.push({ icon: <Pencil />, label: "Edit", action: () => { setMenuOpen(null); } });
+      items.push({ icon: <Send />, label: "Publish now", action: () => { setMenuOpen(null); } });
+      items.push({ icon: <Calendar />, label: "Schedule", action: () => { setMenuOpen(null); } });
+      items.push({ icon: <XCircle />, label: "Delete", action: () => { setMenuOpen(null); }, danger: true });
+    }
+    if (post.status === "scheduled") {
+      items.push({ icon: <Calendar />, label: "Edit scheduled time", action: () => { setMenuOpen(null); } });
+      items.push({ icon: <XCircle />, label: "Cancel", action: () => handleCancel(post.id), danger: true });
+    }
+    return items;
+  }
+
+  if (loading) return <div style={{ color: "var(--dmuted)", padding: 20 }}>Loading...</div>;
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+
+      {/* Header */}
+      <div className="posts-header">
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Posts</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Published and scheduled social media posts</div>
+          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Published and scheduled content</div>
         </div>
+        <button className="dbtn dbtn-primary" style={{ gap: 5 }}>
+          <Plus style={{ width: 14, height: 14 }} /> Create
+        </button>
       </div>
 
-      {/* Compose */}
-      <div className="settings-section" style={{ marginBottom: 24 }}>
-        <div className="settings-section-header">
-          Compose
-          <span style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 11, color: "var(--dmuted2)" }}>{caption.length} chars</span>
-        </div>
-        <div className="settings-section-body">
-          <textarea
-            className="dform-input"
-            style={{ minHeight: 80, resize: "none", marginBottom: 12 }}
-            placeholder="What would you like to share?"
-            value={caption}
-            onChange={(e) => setCaption(e.target.value)}
-          />
-          {accounts.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--dmuted2)" }}>
-              No accounts. <a href={`/projects/${projectId}/accounts`} style={{ color: "var(--daccent)" }}>Connect one</a>
-            </div>
-          ) : (
-            <>
-              <Label className="dform-label">Post to</Label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-                {accounts.map((a) => {
-                  const sel = selectedAccounts.includes(a.id);
-                  return (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() => toggleAccount(a.id)}
-                      className={sel ? "dbtn dbtn-primary" : "dbtn dbtn-ghost"}
-                      style={{ padding: "4px 10px", fontSize: 12, gap: 5 }}
-                    >
-                      <PlatformIcon platform={a.platform} size={12} />
-                      {a.account_name || a.platform}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-          {/* Schedule options */}
-          <div style={{ marginBottom: 12 }}>
-            <Label className="dform-label">Publish</Label>
-            <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, color: "var(--dtext)", cursor: "pointer" }}>
-                <input type="radio" name="scheduleMode" checked={scheduleMode === "now"} onChange={() => setScheduleMode("now")} />
-                Immediately
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, color: "var(--dtext)", cursor: "pointer" }}>
-                <input type="radio" name="scheduleMode" checked={scheduleMode === "later"} onChange={() => setScheduleMode("later")} />
-                <Calendar style={{ width: 12, height: 12 }} /> Schedule for later
-              </label>
-            </div>
-            {scheduleMode === "later" && (
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  type="date"
-                  className="dform-input"
-                  style={{ width: "auto" }}
-                  value={scheduledDate}
-                  onChange={(e) => setScheduledDate(e.target.value)}
-                  min={new Date().toISOString().split("T")[0]}
-                />
-                <input
-                  type="time"
-                  className="dform-input"
-                  style={{ width: "auto" }}
-                  value={scheduledTime}
-                  onChange={(e) => setScheduledTime(e.target.value)}
-                />
-                <span style={{ fontSize: 11, color: "var(--dmuted2)", alignSelf: "center" }}>Local time</span>
-              </div>
-            )}
+      {/* Tabs */}
+      <div className="dtabs" style={{ marginBottom: 16 }}>
+        {(["all", "published", "scheduled", "failed", "draft"] as FilterTab[]).map((t) => (
+          <div key={t} className={`dtab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
+            {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "failed" ? "s" : t === "draft" ? "s" : ""}
+            <span style={{ fontSize: 10, color: "var(--dmuted2)", marginLeft: 4 }}>
+              {tabCounts[t]}
+            </span>
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button
-              className="dbtn dbtn-primary"
-              onClick={handlePost}
-              disabled={posting || !caption.trim() || selectedAccounts.length === 0 || (scheduleMode === "later" && (!scheduledDate || !scheduledTime))}
-            >
-              {scheduleMode === "later" ? <Calendar style={{ width: 13, height: 13 }} /> : <Send style={{ width: 13, height: 13 }} />}
-              {posting ? "Sending..." : scheduleMode === "later" ? "Schedule Post" : "Send Post"}
-            </button>
-          </div>
-        </div>
+        ))}
       </div>
 
-      {/* Result */}
-      {postResult && (
-        <div style={{ padding: "10px 14px", borderRadius: 6, marginBottom: 20, background: postResult.status === "published" ? "#10b98110" : postResult.status === "partial" ? "#f59e0b10" : "#ef444410", border: `1px solid ${postResult.status === "published" ? "#10b98125" : postResult.status === "partial" ? "#f59e0b25" : "#ef444425"}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>{statusBadge(postResult.status)}</div>
-          {postResult.results?.map((r, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginTop: 4 }}>
-              {statusBadge(r.status)}
-              <span style={{ color: "var(--dmuted)" }}>{r.platform || "unknown"}</span>
-              {r.external_id && <span className="mono" style={{ fontSize: 10 }}>{r.external_id}</span>}
-              {r.error_message && <span style={{ color: "var(--danger)", fontSize: 11 }}>{r.error_message}</span>}
-            </div>
+      {/* Filters */}
+      <div className="posts-filters">
+        <div className="posts-search">
+          <Search style={{ width: 13, height: 13 }} />
+          <input placeholder="Search posts..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <select className="posts-select" value={platformFilter} onChange={(e) => setPlatformFilter(e.target.value)}>
+          <option value="all">All platforms</option>
+          {["twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky"].map((p) => (
+            <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
           ))}
-        </div>
-      )}
+        </select>
+      </div>
 
-      {/* Tabs + table */}
-      {posts.length > 0 && (
-        <>
-          <div className="dtabs">
-            {(["all", "published", "scheduled", "failed"] as FilterTab[]).map((t) => (
-              <div key={t} className={`dtab ${filter === t ? "active" : ""}`} onClick={() => setFilter(t)}>
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </div>
-            ))}
+      {/* Table */}
+      {filtered.length === 0 ? (
+        <div className="posts-empty">
+          <div className="posts-empty-title">
+            {posts.length === 0 ? "No posts yet" : `No ${tab === "all" ? "" : tab + " "}posts found`}
           </div>
-
-          {filtered.length === 0 ? (
-            <div className="empty-state" style={{ padding: 40 }}>
-              <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 4 }}>No {filter} posts</div>
-              <div style={{ fontSize: 12.5, color: "var(--dmuted)" }}>Posts in this status will appear here.</div>
-            </div>
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Caption</th><th>Platforms</th><th>Status</th><th>Created</th></tr></thead>
-                <tbody>
-                  {filtered.map((post) => (
-                    <tr key={post.id} onClick={() => setExpandedPost(expandedPost === post.id ? null : post.id)} style={{ cursor: "pointer" }}>
-                      <td style={{ maxWidth: 300 }}>
-                        <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {post.caption || "(no caption)"}
-                        </span>
-                        {expandedPost === post.id && (
-                          <div style={{ marginTop: 8, padding: 10, background: "var(--bg)", border: "1px solid var(--dborder)", borderRadius: 6, whiteSpace: "pre-wrap", fontSize: 12, color: "var(--dmuted)" }}>
-                            {post.caption}
-                            {post.scheduled_at && (
-                              <div style={{ marginTop: 6, fontSize: 11, color: "var(--dmuted2)" }}>
-                                Scheduled: {new Date(post.scheduled_at).toLocaleString()}
-                              </div>
-                            )}
-                            {post.results && post.results.length > 0 && (
-                              <div style={{ marginTop: 8, borderTop: "1px solid var(--dborder)", paddingTop: 8 }}>
-                                {post.results.map((r, i) => (
-                                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                                    {statusBadge(r.status)}
-                                    <span>{r.platform}</span>
-                                    {r.error_message && <span style={{ color: "var(--danger)", fontSize: 11 }}>{r.error_message}</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {/* Analytics */}
-                            {post.status === "published" && (
-                              <div style={{ marginTop: 8, borderTop: "1px solid var(--dborder)", paddingTop: 8 }}>
-                                {!analyticsData[post.id] ? (
-                                  <button
-                                    className="dbtn dbtn-ghost"
-                                    style={{ fontSize: 11, padding: "3px 8px", gap: 4 }}
-                                    onClick={(e) => { e.stopPropagation(); fetchAnalytics(post.id); }}
-                                    disabled={loadingAnalytics === post.id}
-                                  >
-                                    <BarChart3 style={{ width: 11, height: 11 }} />
-                                    {loadingAnalytics === post.id ? "Loading..." : "View Analytics"}
-                                  </button>
-                                ) : analyticsData[post.id].length === 0 ? (
-                                  <div style={{ fontSize: 11, color: "var(--dmuted2)" }}>No analytics data available yet.</div>
-                                ) : (
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                    {analyticsData[post.id].map((a, i) => (
-                                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11 }}>
-                                        <PlatformIcon platform={a.platform} size={12} />
-                                        <span style={{ color: "var(--dtext)", fontWeight: 500 }}>{a.platform}</span>
-                                        <span title="Views">{a.views.toLocaleString()} views</span>
-                                        <span title="Likes">{a.likes.toLocaleString()} likes</span>
-                                        <span title="Comments">{a.comments.toLocaleString()} comments</span>
-                                        <span title="Shares">{a.shares.toLocaleString()} shares</span>
-                                        {a.engagement_rate > 0 && (
-                                          <span title="Engagement rate" style={{ color: "var(--daccent)" }}>
-                                            {(a.engagement_rate * 100).toFixed(1)}% eng
-                                          </span>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <div style={{ display: "flex", gap: 4 }}>
-                          {post.results?.map((r, i) => (
-                            <PlatformIcon key={i} platform={r.platform || ""} size={14} />
+          <div className="posts-empty-sub">
+            {posts.length === 0
+              ? "Create your first post to get started."
+              : "Try adjusting your filters."}
+          </div>
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Caption</th>
+                <th style={{ width: 100 }}>Platforms</th>
+                <th style={{ width: 110 }}>Status</th>
+                <th style={{ width: 100 }}>Time</th>
+                <th style={{ width: 48 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((post) => (
+                <tr key={post.id} className="posts-row">
+                  <td>
+                    <span className="posts-caption" title={post.caption || undefined}>
+                      {post.caption || "(no caption)"}
+                    </span>
+                  </td>
+                  <td>{platformIcons(post)}</td>
+                  <td>{statusBadge(post.status)}</td>
+                  <td><span className="posts-time">{getTime(post)}</span></td>
+                  <td>
+                    <div className="posts-actions" ref={menuOpen === post.id ? menuRef : undefined}>
+                      <button
+                        className="posts-actions-btn"
+                        onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === post.id ? null : post.id); }}
+                      >
+                        <MoreHorizontal style={{ width: 16, height: 16 }} />
+                      </button>
+                      {menuOpen === post.id && (
+                        <div className="posts-menu">
+                          {actionsMenu(post).map((item) => (
+                            <button
+                              key={item.label}
+                              className={`posts-menu-item${item.danger ? " danger" : ""}`}
+                              onClick={(e) => { e.stopPropagation(); item.action(); }}
+                            >
+                              {item.icon}
+                              {item.label}
+                            </button>
                           ))}
                         </div>
-                      </td>
-                      <td>{statusBadge(post.status)}</td>
-                      <td style={{ color: "var(--dmuted)" }}>
-                        {new Date(post.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </>
   );
