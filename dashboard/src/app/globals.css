@@ -394,7 +394,13 @@
   border: 1px solid var(--dborder);
   border-radius: 8px;
   padding: 16px 18px;
+  transition: border-color 0.15s, background 0.15s;
 }
+/* Hover affordance to match the rest of the dashboard (table rows,
+   plan-card, project-overview nav cards). Stat cards aren't clickable
+   on most pages, so we don't add cursor:pointer here — pages that DO
+   make a stat card clickable should set their own cursor. */
+.stat-card:hover { border-color: var(--dborder2); background: var(--surface2); }
 
 /* ── Settings sections ── */
 .settings-section {
@@ -413,6 +419,13 @@
   display: flex; align-items: center; justify-content: space-between;
 }
 .settings-section-body { padding: 18px; }
+/* Row hover for tables nested inside a settings-section (used by the
+   analytics page's "By Platform" and "Posts" tables — those don't use
+   .table-wrap because they need the section header/border treatment).
+   Scoped this way so settings forms and the posts compose box, which
+   live in .settings-section-body but contain no <table>, are unaffected. */
+.settings-section-body table tbody tr { transition: background 0.1s; }
+.settings-section-body table tbody tr:hover { background: var(--surface2); }
 .settings-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 0;
