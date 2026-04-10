@@ -14,18 +14,9 @@ import (
 )
 
 // AdminHandler exposes read-only aggregates for the /admin dashboard.
-//
-// Auth + ADMIN_USERS gating live in auth.AdminMiddleware — every route
-// here assumes that middleware has already cleared the request, so the
-// handler does no further checks. We talk to the DB via the raw pgxpool
-// instead of sqlc because most of these queries are cross-tenant
-// aggregates that don't fit cleanly into the per-project query patterns
-// the rest of the API uses.
-//
-// stripeMgr is held so we can read the SUPER_ADMINS allowlist and
-// exclude internal test accounts from stats / user lists. SUPER_ADMINS
-// users go through Stripe sandbox, so any MRR / paid-plan rows tied to
-// them are fake and would inflate the dashboard if counted.
+// Auth + ADMIN_USERS gating live in auth.AdminMiddleware. We talk to
+// the DB via the raw pgxpool because most of these queries are
+// cross-tenant aggregates that don't fit into per-workspace sqlc patterns.
 type AdminHandler struct {
 	pool      *pgxpool.Pool
 	stripeMgr *billing.Manager
@@ -35,12 +26,6 @@ func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager) *AdminHandl
 	return &AdminHandler{pool: pool, stripeMgr: stripeMgr}
 }
 
-// excludedUserIDs returns the full set of Clerk user IDs that should be
-// hidden from admin dashboard data — i.e. SUPER_ADMINS members. Email
-// entries in SUPER_ADMINS are resolved to user IDs against the users
-// table; missing emails (users who haven't signed up yet) are silently
-// dropped. Returns an empty (non-nil) slice if no exclusions apply, so
-// it's always safe to pass to `!= ALL($N)` in pgx.
 func (h *AdminHandler) excludedUserIDs(ctx context.Context) ([]string, error) {
 	if h.stripeMgr == nil {
 		return []string{}, nil
@@ -79,55 +64,49 @@ type adminStatsResponse struct {
 	MRRCents             int64 `json:"mrr_cents"`
 	PostsThisMonth       int64 `json:"posts_this_month"`
 	PostsFailedThisMonth int64 `json:"posts_failed_this_month"`
-	ActiveProjects       int64 `json:"active_projects"`
+	ActiveWorkspaces     int64 `json:"active_workspaces"`
 	PlatformConnections  int64 `json:"platform_connections"`
 	NewSignups7d         int64 `json:"new_signups_7d"`
 	PrevSignups7d        int64 `json:"prev_signups_7d"`
 	Churn30d             int64 `json:"churn_30d"`
 }
 
-// adminStatsQuery takes one parameter: $1 = []string of Clerk user IDs
-// to exclude (SUPER_ADMINS resolved members). Every subquery filters
-// either by user ID directly (user-counting rows) or by project owner
-// (anything joined to projects). The pattern is `!= ALL($1)`, which
-// pgx feeds an empty []string into as `!= ALL('{}')` — a tautology
-// that excludes nothing, so the same query works whether or not any
-// super admins are configured.
 const adminStatsQuery = `
 SELECT
   (SELECT COUNT(*) FROM users u WHERE u.id != ALL($1))                                   AS total_users,
   (SELECT COUNT(*) FROM users u
      WHERE u.created_at >= date_trunc('month', NOW())
        AND u.id != ALL($1))                                                              AS new_users_this_month,
-  (SELECT COUNT(DISTINCT p.owner_id)
+  (SELECT COUNT(DISTINCT w.user_id)
      FROM subscriptions s
-     JOIN projects p ON p.id = s.project_id
+     JOIN workspaces w ON w.id = s.workspace_id
      JOIN plans pl ON pl.id = s.plan_id
      WHERE s.status = 'active' AND pl.price_cents > 0
-       AND p.owner_id != ALL($1))                                                        AS paid_users,
+       AND w.user_id != ALL($1))                                                         AS paid_users,
   (SELECT COALESCE(SUM(pl.price_cents), 0)
      FROM subscriptions s
      JOIN plans pl ON pl.id = s.plan_id
-     JOIN projects p ON p.id = s.project_id
+     JOIN workspaces w ON w.id = s.workspace_id
      WHERE s.status = 'active'
-       AND p.owner_id != ALL($1))                                                        AS mrr_cents,
+       AND w.user_id != ALL($1))                                                         AS mrr_cents,
   (SELECT COUNT(*)
      FROM social_posts sp
-     JOIN projects p ON p.id = sp.project_id
+     JOIN workspaces w ON w.id = sp.workspace_id
      WHERE sp.created_at >= date_trunc('month', NOW())
-       AND p.owner_id != ALL($1))                                                        AS posts_this_month,
+       AND w.user_id != ALL($1))                                                         AS posts_this_month,
   (SELECT COUNT(*)
      FROM social_posts sp
-     JOIN projects p ON p.id = sp.project_id
+     JOIN workspaces w ON w.id = sp.workspace_id
      WHERE sp.created_at >= date_trunc('month', NOW())
        AND sp.status = 'failed'
-       AND p.owner_id != ALL($1))                                                        AS posts_failed_this_month,
-  (SELECT COUNT(*) FROM projects p WHERE p.owner_id != ALL($1))                          AS active_projects,
+       AND w.user_id != ALL($1))                                                         AS posts_failed_this_month,
+  (SELECT COUNT(*) FROM workspaces w WHERE w.user_id != ALL($1))                         AS active_workspaces,
   (SELECT COUNT(*)
      FROM social_accounts sa
-     JOIN projects p ON p.id = sa.project_id
+     JOIN profiles p ON p.id = sa.profile_id
+     JOIN workspaces w ON w.id = p.workspace_id
      WHERE sa.disconnected_at IS NULL
-       AND p.owner_id != ALL($1))                                                        AS platform_connections,
+       AND w.user_id != ALL($1))                                                         AS platform_connections,
   (SELECT COUNT(*) FROM users u
      WHERE u.created_at >= NOW() - INTERVAL '7 days'
        AND u.id != ALL($1))                                                              AS new_signups_7d,
@@ -137,10 +116,10 @@ SELECT
        AND u.id != ALL($1))                                                              AS prev_signups_7d,
   (SELECT COUNT(*)
      FROM subscriptions s
-     JOIN projects p ON p.id = s.project_id
+     JOIN workspaces w ON w.id = s.workspace_id
      WHERE s.status IN ('canceled', 'past_due')
        AND s.updated_at >= NOW() - INTERVAL '30 days'
-       AND p.owner_id != ALL($1))                                                        AS churn_30d
+       AND w.user_id != ALL($1))                                                         AS churn_30d
 `
 
 func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +136,7 @@ func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 		&s.MRRCents,
 		&s.PostsThisMonth,
 		&s.PostsFailedThisMonth,
-		&s.ActiveProjects,
+		&s.ActiveWorkspaces,
 		&s.PlatformConnections,
 		&s.NewSignups7d,
 		&s.PrevSignups7d,
@@ -176,7 +155,7 @@ type adminUserRow struct {
 	ID              string     `json:"id"`
 	Email           string     `json:"email"`
 	CreatedAt       time.Time  `json:"created_at"`
-	ProjectCount    int64      `json:"project_count"`
+	WorkspaceCount  int64      `json:"workspace_count"`
 	APIKeyCount     int64      `json:"api_key_count"`
 	PlatformCount   int64      `json:"platform_count"`
 	Platforms       []string   `json:"platforms"`
@@ -187,10 +166,6 @@ type adminUserRow struct {
 	LastPostAt      *time.Time `json:"last_post_at"`
 }
 
-// Sort enums — whitelisted before being interpolated into ORDER BY.
-// These run against the outer `SELECT * FROM base`, where columns are
-// unqualified (the CTE projects u.created_at as plain created_at), so
-// no `u.` prefix here.
 var adminUserSortOrders = map[string]string{
 	"newest":      "created_at DESC",
 	"mrr":         "mrr_cents DESC, created_at DESC",
@@ -201,7 +176,7 @@ var adminUserSortOrders = map[string]string{
 func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	search := q.Get("search")
-	plan := q.Get("plan") // all | free | paid
+	plan := q.Get("plan")
 	if plan == "" {
 		plan = "all"
 	}
@@ -229,15 +204,15 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		planFilter = `AND EXISTS(
 			SELECT 1 FROM subscriptions s
 			JOIN plans pl ON pl.id = s.plan_id
-			JOIN projects p ON p.id = s.project_id
-			WHERE p.owner_id = u.id AND s.status='active' AND pl.price_cents > 0
+			JOIN workspaces w ON w.id = s.workspace_id
+			WHERE w.user_id = u.id AND s.status='active' AND pl.price_cents > 0
 		)`
 	case "free":
 		planFilter = `AND NOT EXISTS(
 			SELECT 1 FROM subscriptions s
 			JOIN plans pl ON pl.id = s.plan_id
-			JOIN projects p ON p.id = s.project_id
-			WHERE p.owner_id = u.id AND s.status='active' AND pl.price_cents > 0
+			JOIN workspaces w ON w.id = s.workspace_id
+			WHERE w.user_id = u.id AND s.status='active' AND pl.price_cents > 0
 		)`
 	}
 
@@ -251,42 +226,44 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 WITH base AS (
   SELECT
     u.id, u.email, u.created_at,
-    (SELECT COUNT(*) FROM projects p WHERE p.owner_id = u.id) AS project_count,
+    (SELECT COUNT(*) FROM workspaces w WHERE w.user_id = u.id) AS workspace_count,
     (SELECT COUNT(*)
        FROM api_keys ak
-       JOIN projects p ON p.id = ak.project_id
-       WHERE p.owner_id = u.id AND ak.revoked_at IS NULL) AS api_key_count,
+       JOIN workspaces w ON w.id = ak.workspace_id
+       WHERE w.user_id = u.id AND ak.revoked_at IS NULL) AS api_key_count,
     (SELECT COUNT(*)
        FROM social_accounts sa
-       JOIN projects p ON p.id = sa.project_id
-       WHERE p.owner_id = u.id AND sa.disconnected_at IS NULL) AS platform_count,
+       JOIN profiles p ON p.id = sa.profile_id
+       JOIN workspaces w ON w.id = p.workspace_id
+       WHERE w.user_id = u.id AND sa.disconnected_at IS NULL) AS platform_count,
     COALESCE((SELECT array_agg(DISTINCT sa.platform)
        FROM social_accounts sa
-       JOIN projects p ON p.id = sa.project_id
-       WHERE p.owner_id = u.id AND sa.disconnected_at IS NULL), '{}') AS platforms,
+       JOIN profiles p ON p.id = sa.profile_id
+       JOIN workspaces w ON w.id = p.workspace_id
+       WHERE w.user_id = u.id AND sa.disconnected_at IS NULL), '{}') AS platforms,
     COALESCE((SELECT SUM(usg.post_count)::bigint
        FROM usage usg
-       JOIN projects p ON p.id = usg.project_id
-       WHERE p.owner_id = u.id AND usg.period = to_char(NOW(), 'YYYY-MM')), 0) AS posts_used,
+       JOIN workspaces w ON w.id = usg.workspace_id
+       WHERE w.user_id = u.id AND usg.period = to_char(NOW(), 'YYYY-MM')), 0) AS posts_used,
     COALESCE((SELECT SUM(pl.post_limit)::bigint
        FROM subscriptions s
        JOIN plans pl ON pl.id = s.plan_id
-       JOIN projects p ON p.id = s.project_id
-       WHERE p.owner_id = u.id AND s.status = 'active'), 0) AS post_limit,
+       JOIN workspaces w ON w.id = s.workspace_id
+       WHERE w.user_id = u.id AND s.status = 'active'), 0) AS post_limit,
     COALESCE((SELECT SUM(pl.price_cents)::bigint
        FROM subscriptions s
        JOIN plans pl ON pl.id = s.plan_id
-       JOIN projects p ON p.id = s.project_id
-       WHERE p.owner_id = u.id AND s.status = 'active'), 0) AS mrr_cents,
+       JOIN workspaces w ON w.id = s.workspace_id
+       WHERE w.user_id = u.id AND s.status = 'active'), 0) AS mrr_cents,
     EXISTS(SELECT 1
        FROM subscriptions s
        JOIN plans pl ON pl.id = s.plan_id
-       JOIN projects p ON p.id = s.project_id
-       WHERE p.owner_id = u.id AND s.status = 'active' AND pl.price_cents > 0) AS is_paid,
+       JOIN workspaces w ON w.id = s.workspace_id
+       WHERE w.user_id = u.id AND s.status = 'active' AND pl.price_cents > 0) AS is_paid,
     (SELECT MAX(sp.published_at)
        FROM social_posts sp
-       JOIN projects p ON p.id = sp.project_id
-       WHERE p.owner_id = u.id) AS last_post_at
+       JOIN workspaces w ON w.id = sp.workspace_id
+       WHERE w.user_id = u.id) AS last_post_at
   FROM users u
   WHERE ($1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.id ILIKE '%' || $1 || '%')
     AND u.id != ALL($4)
@@ -307,7 +284,7 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 		var lastPostAt *time.Time
 		if err := rows.Scan(
 			&u.ID, &u.Email, &u.CreatedAt,
-			&u.ProjectCount, &u.APIKeyCount, &u.PlatformCount,
+			&u.WorkspaceCount, &u.APIKeyCount, &u.PlatformCount,
 			&u.Platforms,
 			&u.PostsUsed, &u.PostLimit,
 			&u.MRRCents, &u.IsPaid,
@@ -320,7 +297,6 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 		out = append(out, u)
 	}
 
-	// Total (without limit/offset) for pagination — separate cheap query.
 	var total int64
 	_ = h.pool.QueryRow(r.Context(),
 		`SELECT COUNT(*) FROM users u
@@ -334,7 +310,7 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 
 // ── User detail ──────────────────────────────────────────────────────
 
-type adminUserProject struct {
+type adminUserWorkspace struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -348,21 +324,21 @@ type adminUserProject struct {
 }
 
 type adminUserDetailResponse struct {
-	ID                string             `json:"id"`
-	Email             string             `json:"email"`
-	Name              string             `json:"name"`
-	CreatedAt         time.Time          `json:"created_at"`
-	ProjectCount      int64              `json:"project_count"`
-	APIKeyCount       int64              `json:"api_key_count"`
-	PlatformCount     int64              `json:"platform_count"`
-	Platforms         []string           `json:"platforms"`
-	PostsUsedThisMonth int64             `json:"posts_used_this_month"`
-	PostLimit         int64              `json:"post_limit"`
-	MRRCents          int64              `json:"mrr_cents"`
-	TotalPosts        int64              `json:"total_posts"`
-	FailedPosts30d    int64              `json:"failed_posts_30d"`
-	LastPostAt        *time.Time         `json:"last_post_at"`
-	Projects          []adminUserProject `json:"projects"`
+	ID                 string               `json:"id"`
+	Email              string               `json:"email"`
+	Name               string               `json:"name"`
+	CreatedAt          time.Time            `json:"created_at"`
+	WorkspaceCount     int64                `json:"workspace_count"`
+	APIKeyCount        int64                `json:"api_key_count"`
+	PlatformCount      int64                `json:"platform_count"`
+	Platforms          []string             `json:"platforms"`
+	PostsUsedThisMonth int64                `json:"posts_used_this_month"`
+	PostLimit          int64                `json:"post_limit"`
+	MRRCents           int64                `json:"mrr_cents"`
+	TotalPosts         int64                `json:"total_posts"`
+	FailedPosts30d     int64                `json:"failed_posts_30d"`
+	LastPostAt         *time.Time           `json:"last_post_at"`
+	Workspaces         []adminUserWorkspace `json:"workspaces"`
 }
 
 func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
@@ -374,21 +350,21 @@ func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	err := h.pool.QueryRow(r.Context(), `
 SELECT
   u.id, u.email, u.name, u.created_at,
-  (SELECT COUNT(*) FROM projects p WHERE p.owner_id = u.id),
-  (SELECT COUNT(*) FROM api_keys ak JOIN projects p ON p.id = ak.project_id WHERE p.owner_id = u.id AND ak.revoked_at IS NULL),
-  (SELECT COUNT(*) FROM social_accounts sa JOIN projects p ON p.id = sa.project_id WHERE p.owner_id = u.id AND sa.disconnected_at IS NULL),
-  COALESCE((SELECT array_agg(DISTINCT sa.platform) FROM social_accounts sa JOIN projects p ON p.id = sa.project_id WHERE p.owner_id = u.id AND sa.disconnected_at IS NULL), '{}'),
-  COALESCE((SELECT SUM(usg.post_count)::bigint FROM usage usg JOIN projects p ON p.id = usg.project_id WHERE p.owner_id = u.id AND usg.period = to_char(NOW(), 'YYYY-MM')), 0),
-  COALESCE((SELECT SUM(pl.post_limit)::bigint FROM subscriptions s JOIN plans pl ON pl.id = s.plan_id JOIN projects p ON p.id = s.project_id WHERE p.owner_id = u.id AND s.status='active'), 0),
-  COALESCE((SELECT SUM(pl.price_cents)::bigint FROM subscriptions s JOIN plans pl ON pl.id = s.plan_id JOIN projects p ON p.id = s.project_id WHERE p.owner_id = u.id AND s.status='active'), 0),
-  (SELECT COUNT(*) FROM social_posts sp JOIN projects p ON p.id = sp.project_id WHERE p.owner_id = u.id),
-  (SELECT COUNT(*) FROM social_posts sp JOIN projects p ON p.id = sp.project_id WHERE p.owner_id = u.id AND sp.status='failed' AND sp.created_at >= NOW() - INTERVAL '30 days'),
-  (SELECT MAX(sp.published_at) FROM social_posts sp JOIN projects p ON p.id = sp.project_id WHERE p.owner_id = u.id)
+  (SELECT COUNT(*) FROM workspaces w WHERE w.user_id = u.id),
+  (SELECT COUNT(*) FROM api_keys ak JOIN workspaces w ON w.id = ak.workspace_id WHERE w.user_id = u.id AND ak.revoked_at IS NULL),
+  (SELECT COUNT(*) FROM social_accounts sa JOIN profiles p ON p.id = sa.profile_id JOIN workspaces w ON w.id = p.workspace_id WHERE w.user_id = u.id AND sa.disconnected_at IS NULL),
+  COALESCE((SELECT array_agg(DISTINCT sa.platform) FROM social_accounts sa JOIN profiles p ON p.id = sa.profile_id JOIN workspaces w ON w.id = p.workspace_id WHERE w.user_id = u.id AND sa.disconnected_at IS NULL), '{}'),
+  COALESCE((SELECT SUM(usg.post_count)::bigint FROM usage usg JOIN workspaces w ON w.id = usg.workspace_id WHERE w.user_id = u.id AND usg.period = to_char(NOW(), 'YYYY-MM')), 0),
+  COALESCE((SELECT SUM(pl.post_limit)::bigint FROM subscriptions s JOIN plans pl ON pl.id = s.plan_id JOIN workspaces w ON w.id = s.workspace_id WHERE w.user_id = u.id AND s.status='active'), 0),
+  COALESCE((SELECT SUM(pl.price_cents)::bigint FROM subscriptions s JOIN plans pl ON pl.id = s.plan_id JOIN workspaces w ON w.id = s.workspace_id WHERE w.user_id = u.id AND s.status='active'), 0),
+  (SELECT COUNT(*) FROM social_posts sp JOIN workspaces w ON w.id = sp.workspace_id WHERE w.user_id = u.id),
+  (SELECT COUNT(*) FROM social_posts sp JOIN workspaces w ON w.id = sp.workspace_id WHERE w.user_id = u.id AND sp.status='failed' AND sp.created_at >= NOW() - INTERVAL '30 days'),
+  (SELECT MAX(sp.published_at) FROM social_posts sp JOIN workspaces w ON w.id = sp.workspace_id WHERE w.user_id = u.id)
 FROM users u
 WHERE u.id = $1
 `, userID).Scan(
 		&d.ID, &d.Email, &name, &d.CreatedAt,
-		&d.ProjectCount, &d.APIKeyCount, &d.PlatformCount,
+		&d.WorkspaceCount, &d.APIKeyCount, &d.PlatformCount,
 		&d.Platforms,
 		&d.PostsUsedThisMonth, &d.PostLimit, &d.MRRCents,
 		&d.TotalPosts, &d.FailedPosts30d, &lastPostAt,
@@ -406,43 +382,43 @@ WHERE u.id = $1
 	}
 	d.LastPostAt = lastPostAt
 
-	// Per-project breakdown
+	// Per-workspace breakdown
 	rows, err := h.pool.Query(r.Context(), `
 SELECT
-  p.id, p.name, p.created_at,
+  w.id, w.name, w.created_at,
   COALESCE(s.plan_id, 'free'),
   COALESCE(pl.name, 'Free'),
   COALESCE(pl.price_cents, 0),
-  COALESCE((SELECT post_count FROM usage WHERE project_id = p.id AND period = to_char(NOW(),'YYYY-MM')), 0),
+  COALESCE((SELECT post_count FROM usage WHERE workspace_id = w.id AND period = to_char(NOW(),'YYYY-MM')), 0),
   COALESCE(pl.post_limit, 100),
   COALESCE(s.status, 'active'),
-  (SELECT COUNT(*) FROM social_accounts sa WHERE sa.project_id = p.id AND sa.disconnected_at IS NULL)
-FROM projects p
-LEFT JOIN subscriptions s ON s.project_id = p.id
+  (SELECT COUNT(*) FROM social_accounts sa JOIN profiles p ON p.id = sa.profile_id WHERE p.workspace_id = w.id AND sa.disconnected_at IS NULL)
+FROM workspaces w
+LEFT JOIN subscriptions s ON s.workspace_id = w.id
 LEFT JOIN plans pl ON pl.id = s.plan_id
-WHERE p.owner_id = $1
-ORDER BY p.created_at DESC
+WHERE w.user_id = $1
+ORDER BY w.created_at DESC
 `, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load projects: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load workspaces: "+err.Error())
 		return
 	}
 	defer rows.Close()
 
-	d.Projects = make([]adminUserProject, 0)
+	d.Workspaces = make([]adminUserWorkspace, 0)
 	for rows.Next() {
-		var p adminUserProject
+		var ws adminUserWorkspace
 		var posts int64
 		if err := rows.Scan(
-			&p.ID, &p.Name, &p.CreatedAt,
-			&p.PlanID, &p.PlanName, &p.PriceCents,
-			&posts, &p.PostLimit, &p.Status, &p.PlatformCount,
+			&ws.ID, &ws.Name, &ws.CreatedAt,
+			&ws.PlanID, &ws.PlanName, &ws.PriceCents,
+			&posts, &ws.PostLimit, &ws.Status, &ws.PlatformCount,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan project: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan workspace: "+err.Error())
 			return
 		}
-		p.PostsUsed = posts
-		d.Projects = append(d.Projects, p)
+		ws.PostsUsed = posts
+		d.Workspaces = append(d.Workspaces, ws)
 	}
 
 	writeSuccess(w, d)

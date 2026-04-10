@@ -68,10 +68,10 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 		return
 	}
 
-	projectID := session.Metadata["project_id"]
+	workspaceID := session.Metadata["workspace_id"]
 	planID := session.Metadata["plan_id"]
-	if projectID == "" || planID == "" {
-		slog.Error("stripe webhook: missing metadata", "project_id", projectID, "plan_id", planID)
+	if workspaceID == "" || planID == "" {
+		slog.Error("stripe webhook: missing metadata", "workspace_id", workspaceID, "plan_id", planID)
 		return
 	}
 
@@ -86,18 +86,18 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 
 	// Use upsert to handle both new and existing subscription rows
 	_, err := h.queries.CreateSubscription(r.Context(), db.CreateSubscriptionParams{
-		WorkspaceID:            projectID,
+		WorkspaceID:            workspaceID,
 		PlanID:               planID,
 		StripeCustomerID:     pgtype.Text{String: customerID, Valid: customerID != ""},
 		StripeSubscriptionID: pgtype.Text{String: subscriptionID, Valid: subscriptionID != ""},
 		Status:               "active",
 	})
 	if err != nil {
-		slog.Error("stripe webhook: failed to upsert subscription", "error", err, "project_id", projectID)
+		slog.Error("stripe webhook: failed to upsert subscription", "error", err, "workspace_id", workspaceID)
 		return
 	}
 
-	slog.Info("stripe webhook: subscription created", "project_id", projectID, "plan_id", planID, "customer", customerID)
+	slog.Info("stripe webhook: subscription created", "workspace_id", workspaceID, "plan_id", planID, "customer", customerID)
 }
 
 func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event stripe.Event) {

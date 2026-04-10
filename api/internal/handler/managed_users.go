@@ -36,10 +36,10 @@ func NewManagedUsersHandler(queries *db.Queries) *ManagedUsersHandler {
 	return &ManagedUsersHandler{queries: queries}
 }
 
-// getProjectID resolves the project context for either auth mode.
+// getProfileID resolves the profile context for either auth mode.
 // API key callers carry it on the request context (set by the
 // API key middleware). Dashboard callers come through the
-// /v1/projects/{projectID}/users path and the project is the URL
+// /v1/profiles/{profileID}/users path and the profile is the URL
 // param — we additionally verify the requesting Clerk user owns it.
 func (h *ManagedUsersHandler) getProfileID(r *http.Request) string {
 	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
@@ -63,7 +63,7 @@ func (h *ManagedUsersHandler) getProfileID(r *http.Request) string {
 }
 
 // managedUserListEntry is one row in the GET /v1/users response.
-// Aggregate fields are derived from the project's social_accounts
+// Aggregate fields are derived from the profile's social_accounts
 // rows on the fly via the SQL GROUP BY in
 // ListManagedUsersByProject.
 type managedUserListEntry struct {
@@ -91,13 +91,13 @@ type managedUserDetail struct {
 // Query params:
 //   - limit  (optional, 1–100, default 25)
 //
-// Cursor pagination is intentionally NOT in v1 — the typical project
+// Cursor pagination is intentionally NOT in v1 — the typical profile
 // has 0–100 managed users and a single LIMIT 100 query is fast enough.
 // We can add cursor support in a follow-up if anyone hits the cap.
 func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProfileID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	profileID := h.getProfileID(r)
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 
@@ -109,11 +109,11 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.queries.ListManagedUsersByProfile(r.Context(), db.ListManagedUsersByProfileParams{
-		ProfileID: projectID,
+		ProfileID: profileID,
 		Limit:     limit,
 	})
 	if err != nil {
-		slog.Error("list managed users failed", "project_id", projectID, "err", err)
+		slog.Error("list managed users failed", "profile_id", profileID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list managed users")
 		return
 	}
@@ -140,7 +140,7 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the total count for the meta.
-	total, _ := h.queries.CountManagedUsersByProfile(r.Context(), projectID)
+	total, _ := h.queries.CountManagedUsersByProfile(r.Context(), profileID)
 
 	writeSuccessWithMeta(w, out, int(total))
 }
@@ -149,11 +149,11 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 //
 // Returns the full detail view: header info + every social account
 // belonging to that end user. 404 if no managed accounts exist for
-// the id within the project.
+// the id within the profile.
 func (h *ManagedUsersHandler) Get(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProfileID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	profileID := h.getProfileID(r)
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 	externalUserID := chi.URLParam(r, "external_user_id")
@@ -163,7 +163,7 @@ func (h *ManagedUsersHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accounts, err := h.queries.ListManagedAccountsByExternalUser(r.Context(), db.ListManagedAccountsByExternalUserParams{
-		ProfileID:      projectID,
+		ProfileID:      profileID,
 		ExternalUserID: pgtype.Text{String: externalUserID, Valid: true},
 	})
 	if err != nil {

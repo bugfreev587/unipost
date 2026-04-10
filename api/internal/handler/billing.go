@@ -37,24 +37,24 @@ type billingResponse struct {
 	TrialEligible  bool    `json:"trial_eligible"`
 }
 
-// GetBilling handles GET /v1/billing (Clerk auth, project-scoped)
+// GetBilling handles GET /v1/billing (Clerk auth, workspace-scoped)
 func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "workspaceID")
+	workspaceID := chi.URLParam(r, "workspaceID")
 	userID := auth.GetUserID(r.Context())
 
 	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID: projectID, UserID: userID,
+		ID: workspaceID, UserID: userID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
 		return
 	}
 
-	h.quota.EnsureSubscription(r.Context(), projectID)
+	h.quota.EnsureSubscription(r.Context(), workspaceID)
 
-	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
+	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	plan, _ := h.queries.GetPlan(r.Context(), sub.PlanID)
-	status := h.quota.Check(r.Context(), projectID)
+	status := h.quota.Check(r.Context(), workspaceID)
 
 	writeSuccess(w, billingResponse{
 		Plan:          sub.PlanID,
@@ -72,14 +72,14 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 
 // CreateCheckout handles POST /v1/billing/checkout
 func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "workspaceID")
+	workspaceID := chi.URLParam(r, "workspaceID")
 	userID := auth.GetUserID(r.Context())
 
-	project, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID: projectID, UserID: userID,
+	workspace, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID: workspaceID, UserID: userID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
 		return
 	}
 
@@ -91,7 +91,7 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Pick the Stripe mode (live or sandbox) based on whether the project
+	// Pick the Stripe mode (live or sandbox) based on whether the workspace
 	// owner is a superadmin. The price ID for the requested plan must
 	// exist *in that mode* — if a sandbox user requests a plan whose
 	// sandbox price ID isn't configured we reject with a clear message
@@ -116,10 +116,10 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get or create Stripe customer in the chosen mode. NB: customer IDs
-	// from live and sandbox don't overlap, so even if a project changes
+	// from live and sandbox don't overlap, so even if a workspace changes
 	// modes (user added/removed from SUPER_ADMINS), the previous mode's
 	// customer ID will be invalid in the new mode and we'll mint a new one.
-	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
+	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	customerID := ""
 	if sub.StripeCustomerID.String != "" {
 		customerID = sub.StripeCustomerID.String
@@ -127,10 +127,10 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		user, _ := h.queries.GetUser(r.Context(), userID)
 		params := &stripe.CustomerParams{
 			Email: stripe.String(user.Email),
-			Name:  stripe.String(project.Name),
+			Name:  stripe.String(workspace.Name),
 			Params: stripe.Params{
 				Metadata: map[string]string{
-					"project_id": projectID,
+					"workspace_id": workspaceID,
 					"user_id":    userID,
 					"mode":       mode.Name,
 				},
@@ -155,11 +155,11 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{Price: stripe.String(priceID), Quantity: stripe.Int64(1)},
 		},
-		SuccessURL: stripe.String(appURL + "/projects/" + projectID + "/billing?status=success"),
-		CancelURL:  stripe.String(appURL + "/projects/" + projectID + "/billing?status=canceled"),
+		SuccessURL: stripe.String(appURL + "/workspaces/" + workspaceID + "/billing?status=success"),
+		CancelURL:  stripe.String(appURL + "/workspaces/" + workspaceID + "/billing?status=canceled"),
 		Params: stripe.Params{
 			Metadata: map[string]string{
-				"project_id": projectID,
+				"workspace_id": workspaceID,
 				"plan_id":    body.PlanID,
 				// Stamp the mode on the session so the webhook handler can
 				// double-check which mode it came from when both signing
@@ -174,7 +174,7 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		checkoutParams.SubscriptionData = &stripe.CheckoutSessionSubscriptionDataParams{
 			TrialPeriodDays: stripe.Int64(14),
 		}
-		_ = h.queries.MarkTrialUsed(r.Context(), projectID)
+		_ = h.queries.MarkTrialUsed(r.Context(), workspaceID)
 	}
 
 	s, err := mode.Client.CheckoutSessions.New(checkoutParams)
@@ -188,18 +188,18 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 
 // CreatePortal handles POST /v1/billing/portal
 func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "workspaceID")
+	workspaceID := chi.URLParam(r, "workspaceID")
 	userID := auth.GetUserID(r.Context())
 
 	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID: projectID, UserID: userID,
+		ID: workspaceID, UserID: userID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
 		return
 	}
 
-	sub, err := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
+	sub, err := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	if err != nil || sub.StripeCustomerID.String == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "No active subscription")
 		return
@@ -218,7 +218,7 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 
 	params := &stripe.BillingPortalSessionParams{
 		Customer:  stripe.String(sub.StripeCustomerID.String),
-		ReturnURL: stripe.String(appURL + "/projects/" + projectID + "/billing"),
+		ReturnURL: stripe.String(appURL + "/workspaces/" + workspaceID + "/billing"),
 	}
 
 	s, err := mode.Client.BillingPortalSessions.New(params)
@@ -232,16 +232,16 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 
 // GetUsage handles GET /v1/usage (API key auth)
 func (h *BillingHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetWorkspaceID(r.Context())
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
-	h.quota.EnsureSubscription(r.Context(), projectID)
-	status := h.quota.Check(r.Context(), projectID)
+	h.quota.EnsureSubscription(r.Context(), workspaceID)
+	status := h.quota.Check(r.Context(), workspaceID)
 
-	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
+	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	planID := "free"
 	if sub.PlanID != "" {
 		planID = sub.PlanID

@@ -57,8 +57,8 @@ type accountCapabilityResponse struct {
 
 // GetAccountCapabilities handles GET /v1/social-accounts/{id}/capabilities.
 //
-// API key auth (project-scoped). Returns the capability for the
-// account's platform, scoped to the calling project so a customer
+// API key auth (workspace-scoped). Returns the capability for the
+// account's platform, scoped to the calling workspace so a customer
 // can't enumerate accounts they don't own.
 //
 // Per-account quirks (e.g. business vs creator IG) are NOT yet
@@ -68,7 +68,7 @@ type accountCapabilityResponse struct {
 func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.Request) {
 	profileID := auth.GetWorkspaceID(r.Context())
 	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 

@@ -28,26 +28,26 @@ type platformCredentialResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Create handles POST /v1/projects/{projectID}/platform-credentials
+// Create handles POST /v1/workspaces/{workspaceID}/platform-credentials
 func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "workspaceID")
+	workspaceID := chi.URLParam(r, "workspaceID")
 
 	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID:     projectID,
+		ID:     workspaceID,
 		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify project")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
 		return
 	}
 
 	// Native mode requires a paid plan
-	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
+	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	if sub.PlanID == "free" || sub.PlanID == "" {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "Native mode requires a paid plan. Please upgrade to use your own platform credentials.")
 		return
@@ -75,7 +75,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	cred, err := h.queries.CreatePlatformCredential(r.Context(), db.CreatePlatformCredentialParams{
-		WorkspaceID:    projectID,
+		WorkspaceID:    workspaceID,
 		Platform:     body.Platform,
 		ClientID:     body.ClientID,
 		ClientSecret: encSecret,
@@ -92,25 +92,25 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// List handles GET /v1/projects/{projectID}/platform-credentials
+// List handles GET /v1/workspaces/{workspaceID}/platform-credentials
 func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "workspaceID")
+	workspaceID := chi.URLParam(r, "workspaceID")
 
 	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID:     projectID,
+		ID:     workspaceID,
 		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify project")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
 		return
 	}
 
-	creds, err := h.queries.ListPlatformCredentialsByWorkspace(r.Context(), projectID)
+	creds, err := h.queries.ListPlatformCredentialsByWorkspace(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list credentials")
 		return
@@ -128,27 +128,27 @@ func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request)
 	writeSuccessWithMeta(w, result, len(result))
 }
 
-// Delete handles DELETE /v1/projects/{projectID}/platform-credentials/{platform}
+// Delete handles DELETE /v1/workspaces/{workspaceID}/platform-credentials/{platform}
 func (h *PlatformCredentialHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "workspaceID")
+	workspaceID := chi.URLParam(r, "workspaceID")
 	platformName := chi.URLParam(r, "platform")
 
 	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID:     projectID,
+		ID:     workspaceID,
 		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify project")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
 		return
 	}
 
 	h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 		Platform:  platformName,
 	})
 

@@ -158,11 +158,11 @@ func TestValidate_AccountNotFound(t *testing.T) {
 	hasError(t, res, 0, CodeAccountNotFound)
 }
 
-func TestValidate_AccountNotInProject(t *testing.T) {
+func TestValidate_AccountNotInWorkspace(t *testing.T) {
 	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
 		{AccountID: "acc_someone_else", Caption: "hi"},
 	}))
-	hasError(t, res, 0, CodeAccountNotInProject)
+	hasError(t, res, 0, CodeAccountNotInWorkspace)
 }
 
 func TestValidate_UnknownPlatform(t *testing.T) {
@@ -366,7 +366,7 @@ func TestValidate_MultiplePostsReportAllErrors(t *testing.T) {
 	}))
 	hasError(t, res, 0, CodeExceedsMaxLength)
 	hasError(t, res, 1, CodeMissingRequired)
-	hasError(t, res, 2, CodeAccountNotInProject)
+	hasError(t, res, 2, CodeAccountNotInWorkspace)
 }
 
 // ─── thread validation (Sprint 2) ─────────────────────────────────────
@@ -447,7 +447,7 @@ func TestValidate_ThreadAcrossDifferentAccounts(t *testing.T) {
 
 // ─── media_ids validation (Sprint 2) ──────────────────────────────────
 
-func TestValidate_MediaIDNotInProject(t *testing.T) {
+func TestValidate_MediaIDNotInWorkspace(t *testing.T) {
 	res := ValidatePlatformPosts(ValidateOptions{
 		Capabilities: stubCapabilities(),
 		Accounts:     stubAccounts(),
@@ -459,7 +459,7 @@ func TestValidate_MediaIDNotInProject(t *testing.T) {
 		},
 		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
 	})
-	hasError(t, res, 0, CodeMediaIDNotInProject)
+	hasError(t, res, 0, CodeMediaIDNotInWorkspace)
 }
 
 func TestValidate_MediaNotUploaded(t *testing.T) {

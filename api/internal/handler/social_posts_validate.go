@@ -163,11 +163,11 @@ func parsePublishRequest(body publishRequestBody) (parsedRequest, int, string) {
 }
 
 // loadValidateAccounts builds the ValidateAccount map the pure
-// validator needs. We load every account for the project once (cheap
-// — projects rarely have more than a few dozen accounts) so the
+// validator needs. We load every account for the workspace once (cheap
+// — workspaces rarely have more than a few dozen accounts) so the
 // validator can resolve any account_id without a per-id round trip.
-func (h *SocialPostHandler) loadValidateAccounts(r *http.Request, projectID string) (map[string]platform.ValidateAccount, error) {
-	accounts, err := h.queries.ListSocialAccountsByWorkspace(r.Context(), projectID)
+func (h *SocialPostHandler) loadValidateAccounts(r *http.Request, workspaceID string) (map[string]platform.ValidateAccount, error) {
+	accounts, err := h.queries.ListSocialAccountsByWorkspace(r.Context(), workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -182,18 +182,18 @@ func (h *SocialPostHandler) loadValidateAccounts(r *http.Request, projectID stri
 	return out, nil
 }
 
-// loadValidateMedia loads each referenced media_id from the project's
+// loadValidateMedia loads each referenced media_id from the workspace's
 // media table so the validator can check ownership + status. Only
 // the IDs explicitly mentioned in posts are loaded — we don't list
-// the whole project's media library, since most validate calls won't
+// the whole workspace's media library, since most validate calls won't
 // touch any media at all.
 //
 // Returns an empty map (NOT nil) when posts reference NO media_ids,
 // so the validator's "Media != nil → check" gate runs and reports
-// any unknown IDs as media_id_not_in_project. nil would skip the
+// any unknown IDs as media_id_not_in_workspace. nil would skip the
 // check entirely; that's only used by callers that don't want media
 // validation at all.
-func (h *SocialPostHandler) loadValidateMedia(r *http.Request, projectID string, posts []platform.PlatformPostInput) map[string]platform.ValidateMedia {
+func (h *SocialPostHandler) loadValidateMedia(r *http.Request, workspaceID string, posts []platform.PlatformPostInput) map[string]platform.ValidateMedia {
 	// Collect every media_id referenced anywhere in the request.
 	wanted := make(map[string]bool)
 	for _, p := range posts {
@@ -205,11 +205,11 @@ func (h *SocialPostHandler) loadValidateMedia(r *http.Request, projectID string,
 	for mid := range wanted {
 		row, err := h.queries.GetMediaByIDAndWorkspace(r.Context(), db.GetMediaByIDAndWorkspaceParams{
 			ID:          mid,
-			WorkspaceID: projectID,
+			WorkspaceID: workspaceID,
 		})
 		if err != nil {
-			// Not in this project (or not found at all). The
-			// validator reports it via media_id_not_in_project — we
+			// Not in this workspace (or not found at all). The
+			// validator reports it via media_id_not_in_workspace — we
 			// just leave it absent from the map.
 			continue
 		}
@@ -229,12 +229,12 @@ func (h *SocialPostHandler) loadValidateMedia(r *http.Request, projectID string,
 // defense-in-depth preflight inside Create() (PR5).
 //
 // Performance budget: p95 < 50ms. The single DB hit is the
-// project-wide social_accounts list, which is bounded and cached at
+// workspace-wide social_accounts list, which is bounded and cached at
 // the pgx layer.
 func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getWorkspaceID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := h.getWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
@@ -250,13 +250,13 @@ func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accounts, err := h.loadValidateAccounts(r, projectID)
+	accounts, err := h.loadValidateAccounts(r, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load accounts")
 		return
 	}
 
-	media := h.loadValidateMedia(r, projectID, parsed.Posts)
+	media := h.loadValidateMedia(r, workspaceID, parsed.Posts)
 
 	result := platform.ValidatePlatformPosts(platform.ValidateOptions{
 		Capabilities: platform.Capabilities,

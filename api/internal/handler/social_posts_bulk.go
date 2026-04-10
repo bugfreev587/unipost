@@ -13,7 +13,7 @@
 // processed posts (and processes any keys that haven't been seen).
 // This makes batch retries safe.
 //
-// Quota counts each post individually. If a project hits its quota
+// Quota counts each post individually. If a workspace hits its quota
 // halfway through the batch, the remaining posts get a quota_exceeded
 // error result rather than failing the batch.
 //
@@ -69,9 +69,9 @@ type bulkErrorEnvelope struct {
 
 // CreateBulk handles POST /v1/social-posts/bulk.
 func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getWorkspaceID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := h.getWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 	// Load accounts ONCE for the whole batch — way cheaper than
 	// looking them up per-post. The validator and publish loop both
 	// read from this map.
-	accountMap, err := h.loadValidateAccounts(r, projectID)
+	accountMap, err := h.loadValidateAccounts(r, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
 		return
@@ -104,7 +104,7 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 	// quota is checked inside processBulkOne; we don't pre-reserve N
 	// slots because that would punish a partial-success batch (e.g.
 	// 49 posts succeed, 1 fails — caller should only be charged for 49).
-	quotaStatus := h.quota.Check(r.Context(), projectID)
+	quotaStatus := h.quota.Check(r.Context(), workspaceID)
 	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", quotaStatus.Usage, quotaStatus.Limit))
 	if quotaStatus.Warning != "" {
 		w.Header().Set("X-UniPost-Warning", quotaStatus.Warning)
@@ -112,7 +112,7 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]bulkResultEntry, len(body.Posts))
 	for i, postBody := range body.Posts {
-		results[i] = h.processBulkOne(r, projectID, postBody, accountMap)
+		results[i] = h.processBulkOne(r, workspaceID, postBody, accountMap)
 	}
 
 	writeSuccess(w, results)
@@ -124,7 +124,7 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 // posts are rejected — the bulk endpoint is immediate-publish only.
 func (h *SocialPostHandler) processBulkOne(
 	r *http.Request,
-	projectID string,
+	workspaceID string,
 	body publishRequestBody,
 	accountMap map[string]platform.ValidateAccount,
 ) bulkResultEntry {
@@ -162,7 +162,7 @@ func (h *SocialPostHandler) processBulkOne(
 	// safe and the natural retry pattern.
 	if parsed.IdempotencyKey != "" {
 		if existing, err := h.queries.GetSocialPostByIdempotencyKey(r.Context(), db.GetSocialPostByIdempotencyKeyParams{
-			WorkspaceID:    projectID,
+			WorkspaceID:    workspaceID,
 			IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
 		}); err == nil {
 			resp := h.replayedPostResponse(r, existing)
@@ -193,7 +193,7 @@ func (h *SocialPostHandler) processBulkOne(
 	}
 
 	// Publish.
-	resp, err := h.executeImmediatePost(r, projectID, parsed, accountMap)
+	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap)
 	if err != nil {
 		return bulkResultEntry{
 			Status: http.StatusInternalServerError,

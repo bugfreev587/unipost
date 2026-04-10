@@ -47,7 +47,7 @@ type accountHealthResponse struct {
 }
 
 // AccountHealth handles GET /v1/social-accounts/{id}/health.
-// Project-scoped — refuses to expose another project's account.
+// Workspace-scoped — refuses to expose another workspace's account.
 func (h *SocialAccountHandler) AccountHealth(w http.ResponseWriter, r *http.Request) {
 	profileID := h.getProfileID(r)
 	if profileID == "" {

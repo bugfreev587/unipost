@@ -102,13 +102,13 @@ type socialPostResponse struct {
 // Validation behavior: structural errors (caption too long, mixing
 // image+video, missing required media, schedule out of range, etc.)
 // return 400 with the issue list. Account-state errors (disconnected,
-// not in project) are recorded as failed per-account results so the
+// not in workspace) are recorded as failed per-account results so the
 // overall publish doesn't get blocked by one bad account — preserves
 // legacy soft-failure semantics.
 func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getWorkspaceID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := h.getWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
@@ -128,7 +128,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// the prior response unchanged. Cheap: one indexed lookup.
 	if parsed.IdempotencyKey != "" {
 		if existing, err := h.queries.GetSocialPostByIdempotencyKey(r.Context(), db.GetSocialPostByIdempotencyKeyParams{
-			WorkspaceID:      projectID,
+			WorkspaceID:      workspaceID,
 			IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
 		}); err == nil {
 			h.writeReplayedPost(w, r, existing)
@@ -140,22 +140,22 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Quota headers (soft — never blocks).
-	quotaStatus := h.quota.Check(r.Context(), projectID)
+	quotaStatus := h.quota.Check(r.Context(), workspaceID)
 	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", quotaStatus.Usage, quotaStatus.Limit))
 	if quotaStatus.Warning != "" {
 		w.Header().Set("X-UniPost-Warning", quotaStatus.Warning)
 	}
 
 	// Load accounts once so the validator and the publish loop both
-	// see the same view of which accounts the project owns.
-	accountMap, err := h.loadValidateAccounts(r, projectID)
+	// see the same view of which accounts the workspace owns.
+	accountMap, err := h.loadValidateAccounts(r, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
 		return
 	}
 
 	// Run the same validator /social-posts/validate uses, then filter
-	// out non-fatal issues (account_disconnected, account_not_in_project)
+	// out non-fatal issues (account_disconnected, account_not_in_workspace)
 	// — those are still recorded as failed results below to preserve
 	// legacy soft-failure semantics.
 	vr := platform.ValidatePlatformPosts(platform.ValidateOptions{
@@ -170,7 +170,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Validation errors do NOT block draft creation — drafts are an
 	// editing surface, not a transactional surface.
 	if parsed.Status == "draft" {
-		h.createDraft(w, r, projectID, parsed, vr)
+		h.createDraft(w, r, workspaceID, parsed, vr)
 		return
 	}
 
@@ -181,17 +181,17 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Branch on scheduled vs immediate.
 	if parsed.ScheduledAt != nil {
-		h.createScheduledPost(w, r, projectID, parsed)
+		h.createScheduledPost(w, r, workspaceID, parsed)
 		return
 	}
-	h.createImmediatePost(w, r, projectID, parsed, accountMap)
+	h.createImmediatePost(w, r, workspaceID, parsed, accountMap)
 }
 
 // createScheduledPost persists the post with status="scheduled" and
 // the v2 metadata blob so the scheduler can later fan out per-account
 // when the time arrives. Returns 200 with a minimal response (no
 // results yet — they'll exist after the scheduler fires).
-func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, projectID string, parsed parsedRequest) {
+func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) {
 	// Persist the parsed request shape into metadata so the scheduler
 	// can reconstruct the per-account captions.
 	metaJSON, err := platform.EncodePostMetadata(parsed.Posts)
@@ -219,7 +219,7 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		WorkspaceID:      projectID,
+		WorkspaceID:      workspaceID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "scheduled",
@@ -254,11 +254,11 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 func (h *SocialPostHandler) createImmediatePost(
 	w http.ResponseWriter,
 	r *http.Request,
-	projectID string,
+	workspaceID string,
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
 ) {
-	resp, err := h.executeImmediatePost(r, projectID, parsed, accountMap)
+	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -271,7 +271,7 @@ func (h *SocialPostHandler) createImmediatePost(
 // by both single (Create) and bulk (CreateBulk) entry points.
 func (h *SocialPostHandler) executeImmediatePost(
 	r *http.Request,
-	projectID string,
+	workspaceID string,
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
 ) (socialPostResponse, error) {
@@ -283,7 +283,7 @@ func (h *SocialPostHandler) executeImmediatePost(
 	for _, id := range uniqueIDs {
 		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
 			ID:          id,
-			WorkspaceID: projectID,
+			WorkspaceID: workspaceID,
 		})
 		if err != nil {
 			// Missing accounts are reported as failed results below;
@@ -305,7 +305,7 @@ func (h *SocialPostHandler) executeImmediatePost(
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		WorkspaceID:      projectID,
+		WorkspaceID:      workspaceID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "publishing",
@@ -317,7 +317,7 @@ func (h *SocialPostHandler) executeImmediatePost(
 		return socialPostResponse{}, fmt.Errorf("failed to create post: %w", err)
 	}
 
-	resp := h.executePublishLoop(r, projectID, post, parsed, dbAccounts, accountMap)
+	resp := h.executePublishLoop(r, workspaceID, post, parsed, dbAccounts, accountMap)
 	return resp, nil
 }
 
@@ -330,7 +330,7 @@ func (h *SocialPostHandler) executeImmediatePost(
 func (h *SocialPostHandler) publishExistingPost(
 	w http.ResponseWriter,
 	r *http.Request,
-	projectID string,
+	workspaceID string,
 	post db.SocialPost,
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
@@ -340,14 +340,14 @@ func (h *SocialPostHandler) publishExistingPost(
 	for _, id := range uniqueIDs {
 		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
 			ID:          id,
-			WorkspaceID: projectID,
+			WorkspaceID: workspaceID,
 		})
 		if err != nil {
 			continue
 		}
 		dbAccounts[id] = acc
 	}
-	h.runPublishLoop(w, r, projectID, post, parsed, dbAccounts, accountMap)
+	h.runPublishLoop(w, r, workspaceID, post, parsed, dbAccounts, accountMap)
 }
 
 // runPublishLoop is the shared body of createImmediatePost and
@@ -358,13 +358,13 @@ func (h *SocialPostHandler) publishExistingPost(
 func (h *SocialPostHandler) runPublishLoop(
 	w http.ResponseWriter,
 	r *http.Request,
-	projectID string,
+	workspaceID string,
 	post db.SocialPost,
 	parsed parsedRequest,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
 ) {
-	resp := h.executePublishLoop(r, projectID, post, parsed, dbAccounts, accountMap)
+	resp := h.executePublishLoop(r, workspaceID, post, parsed, dbAccounts, accountMap)
 	writeSuccess(w, resp)
 }
 
@@ -374,23 +374,23 @@ func (h *SocialPostHandler) runPublishLoop(
 // increments quota — everything except writing the HTTP response.
 func (h *SocialPostHandler) executePublishLoop(
 	r *http.Request,
-	projectID string,
+	workspaceID string,
 	post db.SocialPost,
 	parsed parsedRequest,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
 ) socialPostResponse {
-	// Sprint 5 PR2: per-account monthly quota. Load the project once
+	// Sprint 5 PR2: per-account monthly quota. Load the workspace once
 	// to read its per_account_monthly_limit, then snapshot the
 	// current-month publish counts for every account this request
 	// will dispatch to. The tracker decrements as publishOne fires;
 	// any account that runs out gets a deterministic
 	// "per_account_monthly_quota_exceeded" error on its result row
-	// instead of a dispatch. Project lookup failures degrade to
+	// instead of a dispatch. Workspace lookup failures degrade to
 	// "no cap" rather than blocking — the legacy behavior is the
 	// safer fallback if metadata is briefly unavailable.
 	var perAccountLimit pgtype.Int4
-	if ws, wsErr := h.queries.GetWorkspace(r.Context(), projectID); wsErr == nil {
+	if ws, wsErr := h.queries.GetWorkspace(r.Context(), workspaceID); wsErr == nil {
 		perAccountLimit = ws.PerAccountMonthlyLimit
 	}
 	tracker := quota.NewPerAccountTracker(
@@ -501,7 +501,7 @@ func (h *SocialPostHandler) executePublishLoop(
 	})
 
 	if publishedCount > 0 {
-		h.quota.Increment(r.Context(), projectID, publishedCount)
+		h.quota.Increment(r.Context(), workspaceID, publishedCount)
 	}
 
 	var caption *string
@@ -520,7 +520,7 @@ func (h *SocialPostHandler) executePublishLoop(
 	// internally and never blocks the response. The event payload is
 	// the same socialPostResponse the caller just got back, so
 	// subscribers can correlate by post ID.
-	h.bus.Publish(r.Context(), projectID, eventForStatus(postStatus), resp)
+	h.bus.Publish(r.Context(), workspaceID, eventForStatus(postStatus), resp)
 
 	return resp
 }
@@ -937,7 +937,7 @@ var fatalErrorCodes = map[string]bool{
 	// Sprint 2 media-library codes — fatal because the publish path
 	// would 4xx if it tried to dispatch with a missing media id.
 	platform.CodeMediaIDNotFound:             true,
-	platform.CodeMediaIDNotInProject:         true,
+	platform.CodeMediaIDNotInWorkspace:         true,
 	platform.CodeMediaNotUploaded:            true,
 	// Sprint 4 PR3 first_comment codes.
 	platform.CodeFirstCommentUnsupported:     true,
@@ -986,7 +986,7 @@ func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Req
 func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.SocialPost) socialPostResponse {
 	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
 
-	// Resolve platform + account name once per result via the project
+	// Resolve platform + account name once per result via the workspace
 	// account map (cheaper than per-result GetSocialAccount calls).
 	allAccounts, _ := h.queries.ListSocialAccountsByWorkspace(r.Context(), post.WorkspaceID)
 	accountInfo := make(map[string]struct {
@@ -1049,7 +1049,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 
 // Get handles GET /v1/social-posts/{id}
 func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getWorkspaceID(r)
+	workspaceID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
@@ -1057,7 +1057,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
 		ID:          postID,
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -1148,9 +1148,9 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 // require EXISTS subqueries against social_post_results and a
 // separate index. Sprint 2 ships the filters that share one index.
 func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getWorkspaceID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := h.getWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
@@ -1170,7 +1170,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 	to := parseRFC3339Param(r.URL.Query().Get("to"))
 
 	posts, err := h.queries.ListSocialPostsFiltered(r.Context(), db.ListSocialPostsFilteredParams{
-		WorkspaceID:   projectID,
+		WorkspaceID:   workspaceID,
 		Column2:     statusCSV,
 		Column3:     from,
 		Column4:     to,
@@ -1183,11 +1183,11 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-load ALL social accounts (including disconnected) for this project
+	// Pre-load ALL social accounts (including disconnected) for this workspace
 	// to resolve platform names AND display names. Historical post results
 	// may reference accounts that have since been disconnected — we still
 	// want their platform / handle to show up in the analytics list.
-	allAccounts, _ := h.queries.ListSocialAccountsByWorkspace(r.Context(), projectID)
+	allAccounts, _ := h.queries.ListSocialAccountsByWorkspace(r.Context(), workspaceID)
 	accountMap := make(map[string]accountSummary, len(allAccounts))
 	for _, acc := range allAccounts {
 		name := ""
@@ -1334,7 +1334,7 @@ func decodeListCursor(raw string) (time.Time, string, error) {
 
 // Delete handles DELETE /v1/social-posts/{id}
 func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getWorkspaceID(r)
+	workspaceID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
@@ -1342,7 +1342,7 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
 		ID:          postID,
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {

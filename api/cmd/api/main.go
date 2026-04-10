@@ -259,7 +259,7 @@ func main() {
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
 	webhookHandler := handler.NewWebhookHandler(queries)
-	projectHandler := handler.NewProjectHandler(queries)
+	profileHandler := handler.NewProfileHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, webhookWorker)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, webhookWorker, storageClient)
@@ -366,11 +366,11 @@ func main() {
 		// users with existing profiles but no stamped default.
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
 
-		r.Get("/v1/profiles", projectHandler.List)
-		r.Post("/v1/profiles", projectHandler.Create)
-		r.Get("/v1/profiles/{id}", projectHandler.Get)
-		r.Patch("/v1/profiles/{id}", projectHandler.Update)
-		r.Delete("/v1/profiles/{id}", projectHandler.Delete)
+		r.Get("/v1/profiles", profileHandler.List)
+		r.Post("/v1/profiles", profileHandler.Create)
+		r.Get("/v1/profiles/{id}", profileHandler.Get)
+		r.Patch("/v1/profiles/{id}", profileHandler.Update)
+		r.Delete("/v1/profiles/{id}", profileHandler.Delete)
 
 		// Workspace-scoped dashboard routes
 		r.Get("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.List)

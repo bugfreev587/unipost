@@ -22,7 +22,7 @@
 // state.
 //
 // Per Sprint 3 decision #1 the upsert is keyed on
-// (project_id, external_account_id) for Bluesky — the DID/handle —
+// (profile_id, external_account_id) for Bluesky — the DID/handle —
 // because the same external_user_id may legitimately map to multiple
 // Bluesky handles (different aliases for one human).
 
@@ -180,7 +180,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 
 	metadataJSON, _ := json.Marshal(connectResult.Metadata)
 
-	// Bluesky upsert path: look up by (project_id, external_account_id).
+	// Bluesky upsert path: look up by (profile_id, external_account_id).
 	// If a row exists for this DID we update in place so historical
 	// post_results FKs stay intact (Sprint 3 decision #1). Otherwise
 	// insert a fresh managed row.

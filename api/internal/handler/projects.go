@@ -16,31 +16,29 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
-type ProjectHandler struct {
+type ProfileHandler struct {
 	queries *db.Queries
 }
 
-func NewProjectHandler(queries *db.Queries) *ProjectHandler {
-	return &ProjectHandler{queries: queries}
+func NewProfileHandler(queries *db.Queries) *ProfileHandler {
+	return &ProfileHandler{queries: queries}
 }
 
-type projectResponse struct {
+type profileResponse struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspace_id"`
 	Name        string    `json:"name"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-	// Sprint 4 PR4: white-label Connect branding. All three are
-	// optional; the hosted Connect page falls back to UniPost defaults
-	// when null. Pointer types so absent vs empty-string is meaningful
-	// in the JSON output (omitempty drops nulls but keeps empty strings).
+	// White-label Connect branding. All three are optional; the hosted
+	// Connect page falls back to UniPost defaults when null.
 	BrandingLogoURL      *string `json:"branding_logo_url,omitempty"`
 	BrandingDisplayName  *string `json:"branding_display_name,omitempty"`
 	BrandingPrimaryColor *string `json:"branding_primary_color,omitempty"`
 }
 
-func toProjectResponse(p db.Profile) projectResponse {
-	resp := projectResponse{
+func toProfileResponse(p db.Profile) profileResponse {
+	resp := profileResponse{
 		ID:          p.ID,
 		WorkspaceID: p.WorkspaceID,
 		Name:        p.Name,
@@ -62,7 +60,7 @@ func toProjectResponse(p db.Profile) projectResponse {
 	return resp
 }
 
-func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *ProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "workspaceID")
 
 	profiles, err := h.queries.ListProfilesByWorkspace(r.Context(), workspaceID)
@@ -71,15 +69,15 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := make([]projectResponse, len(profiles))
+	result := make([]profileResponse, len(profiles))
 	for i, p := range profiles {
-		result[i] = toProjectResponse(p)
+		result[i] = toProfileResponse(p)
 	}
 
 	writeSuccessWithMeta(w, result, len(result))
 }
 
-func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	workspaceID := chi.URLParam(r, "workspaceID")
 
 	var body struct {
@@ -104,10 +102,10 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeCreated(w, toProjectResponse(profile))
+	writeCreated(w, toProfileResponse(profile))
 }
 
-func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
+func (h *ProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
 	profileID := chi.URLParam(r, "id")
 
@@ -124,11 +122,6 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stamp last_profile_id as a side-effect of fetching a profile the
-	// user owns. The dashboard hits this endpoint on every profile page
-	// mount, so it's the natural hook for "last visited" tracking. We
-	// log on failure but never block the response — the user-facing
-	// page must render even if the side-effect write fails.
 	if err := h.queries.SetUserLastProfile(r.Context(), db.SetUserLastProfileParams{
 		ID:            userID,
 		LastProfileID: pgtype.Text{String: profileID, Valid: true},
@@ -136,14 +129,13 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("failed to update last_profile_id", "user_id", userID, "profile_id", profileID, "error", err)
 	}
 
-	writeSuccess(w, toProjectResponse(profile))
+	writeSuccess(w, toProfileResponse(profile))
 }
 
-func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
+func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
 	profileID := chi.URLParam(r, "id")
 
-	// Verify ownership
 	_, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
 		ID:     profileID,
 		UserID: userID,
@@ -157,29 +149,22 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sprint 4 PR4: pointer fields distinguish absent (don't touch)
-	// from explicit empty string (clear the value). Both are useful
-	// — customers patching just the logo shouldn't have to re-supply
-	// name + color, and customers wanting to remove a logo entirely
-	// need a way to clear it.
 	var body struct {
-		Name                   *string  `json:"name"`
-		BrandingLogoURL        *string  `json:"branding_logo_url"`
-		BrandingDisplayName    *string  `json:"branding_display_name"`
-		BrandingPrimaryColor   *string  `json:"branding_primary_color"`
+		Name                 *string `json:"name"`
+		BrandingLogoURL      *string `json:"branding_logo_url"`
+		BrandingDisplayName  *string `json:"branding_display_name"`
+		BrandingPrimaryColor *string `json:"branding_primary_color"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
 		return
 	}
 
-	// Validate name if provided.
 	if body.Name != nil && *body.Name == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Name cannot be empty")
 		return
 	}
 
-	// Validate branding fields if provided.
 	if body.BrandingLogoURL != nil && *body.BrandingLogoURL != "" {
 		if err := validateBrandingLogoURL(*body.BrandingLogoURL); err != nil {
 			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
@@ -199,9 +184,6 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply name update first (separate query — keeps the existing
-	// UpdateProfile signature unchanged for callers that don't touch
-	// branding).
 	if body.Name != nil {
 		if _, err := h.queries.UpdateProfile(r.Context(), db.UpdateProfileParams{
 			ID:   profileID,
@@ -212,8 +194,6 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply branding updates if any of the three fields was provided.
-	// COALESCE on the SQL side leaves untouched columns alone.
 	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil {
 		if _, err := h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
 			ID:           profileID,
@@ -226,20 +206,14 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Re-fetch so the response reflects the latest state including
-	// columns we didn't touch.
 	final, err := h.queries.GetProfile(r.Context(), profileID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read profile")
 		return
 	}
-	writeSuccess(w, toProjectResponse(final))
+	writeSuccess(w, toProfileResponse(final))
 }
 
-// pgTextFromPtr converts an optional *string into the pgtype.Text
-// shape sqlc expects. nil → invalid (the SQL UPDATE leaves the
-// column alone via COALESCE); non-nil → valid even when empty
-// (the caller is explicitly clearing the value).
 func pgTextFromPtr(p *string) pgtype.Text {
 	if p == nil {
 		return pgtype.Text{}
@@ -247,9 +221,6 @@ func pgTextFromPtr(p *string) pgtype.Text {
 	return pgtype.Text{String: *p, Valid: true}
 }
 
-// validateBrandingLogoURL enforces https:// + length cap. We don't
-// fetch the URL — that would slow down the dashboard PATCH and isn't
-// the API's job to police.
 func validateBrandingLogoURL(raw string) error {
 	if len(raw) > 512 {
 		return errors.New("branding_logo_url must be ≤ 512 chars")
@@ -267,9 +238,6 @@ func validateBrandingLogoURL(raw string) error {
 	return nil
 }
 
-// isHexColor matches "#RRGGBB" — six hex digits with a leading hash.
-// Three-digit shorthand and rgba() are not accepted; the dashboard
-// color picker should always emit the long form.
 func isHexColor(s string) bool {
 	if len(s) != 7 || s[0] != '#' {
 		return false
@@ -287,11 +255,10 @@ func isHexColor(s string) bool {
 	return true
 }
 
-func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
+func (h *ProfileHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
 	profileID := chi.URLParam(r, "id")
 
-	// Verify ownership
 	_, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
 		ID:     profileID,
 		UserID: userID,
@@ -305,12 +272,6 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refuse to drop the user's auto-created Default profile — it's the
-	// guaranteed fallback the dashboard root resolver redirects to when
-	// the user has nowhere else to go. Without this guard a user could
-	// delete their Default and end up with no profile at all (zero-state
-	// would be self-healing via /me/bootstrap, but we'd lose the "can't
-	// delete the default" guarantee that documentation will rely on).
 	user, err := h.queries.GetUser(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load user")

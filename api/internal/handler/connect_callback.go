@@ -286,7 +286,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 
 	slog.Info("connect.callback: account connected",
 		"platform", platformName,
-		"project_id", session.ProfileID,
+		"profile_id", session.ProfileID,
 		"external_user_id", session.ExternalUserID,
 		"account_id", saved.ID,
 	)

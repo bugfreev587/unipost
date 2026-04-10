@@ -49,7 +49,7 @@ func TestFatalErrorCodes_Threads(t *testing.T) {
 func TestFatalErrorCodes_Media(t *testing.T) {
 	required := []string{
 		platform.CodeMediaIDNotFound,
-		platform.CodeMediaIDNotInProject,
+		platform.CodeMediaIDNotInWorkspace,
 		platform.CodeMediaNotUploaded,
 	}
 	for _, code := range required {

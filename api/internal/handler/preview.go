@@ -64,16 +64,16 @@ type previewLinkResponse struct {
 // be re-shared via preview link (use the platform URLs from the
 // publish response instead).
 func (h *PreviewHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetWorkspaceID(r.Context())
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 	postID := chi.URLParam(r, "id")
 
 	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
 		ID:        postID,
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -144,8 +144,8 @@ func (h *PreviewHandler) PublicGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load the post WITHOUT a project filter — preview tokens are the
-	// authorization, not the project context. The token signature is
+	// Load the post WITHOUT a workspace filter — preview tokens are the
+	// authorization, not the workspace context. The token signature is
 	// what proves the caller is allowed to see this draft.
 	post, err := h.queries.GetSocialPostByID(r.Context(), urlPostID)
 	if err != nil {

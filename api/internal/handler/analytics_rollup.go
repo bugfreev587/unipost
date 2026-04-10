@@ -88,9 +88,9 @@ type rollupResponse struct {
 
 // GetRollup handles GET /v1/analytics/rollup.
 func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getWorkspaceID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := h.getWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
@@ -151,9 +151,9 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 		ORDER BY bucket DESC, %s
 	`, allowedGranularity[granularity], groupColsJoined, groupColsJoined, groupColsJoined)
 
-	rows, err := h.pool.Query(r.Context(), query, projectID, from, to)
+	rows, err := h.pool.Query(r.Context(), query, workspaceID, from, to)
 	if err != nil {
-		slog.Error("analytics rollup query failed", "workspace_id", projectID, "err", err)
+		slog.Error("analytics rollup query failed", "workspace_id", workspaceID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to query rollup")
 		return
 	}
@@ -296,8 +296,8 @@ func parseGroupBy(raw string) []string {
 	return out
 }
 
-// getProjectID resolves the project context for either auth mode
-// (API key or Clerk session via /v1/projects/{projectID}/...).
+// getWorkspaceID resolves the workspace context for either auth mode
+// (API key or Clerk session via /v1/workspaces/{workspaceID}/...).
 func (h *AnalyticsRollupHandler) getWorkspaceID(r *http.Request) string {
 	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
 		return pid

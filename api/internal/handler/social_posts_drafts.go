@@ -45,7 +45,7 @@ type draftResponse struct {
 func (h *SocialPostHandler) createDraft(
 	w http.ResponseWriter,
 	r *http.Request,
-	projectID string,
+	workspaceID string,
 	parsed parsedRequest,
 	validation platform.ValidationResult,
 ) {
@@ -72,7 +72,7 @@ func (h *SocialPostHandler) createDraft(
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		WorkspaceID:      projectID,
+		WorkspaceID:      workspaceID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "draft",
@@ -99,9 +99,9 @@ func (h *SocialPostHandler) createDraft(
 // so quota counting, event emission, and per-result caption
 // persistence stay in one place.
 func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetWorkspaceID(r.Context())
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 	postID := chi.URLParam(r, "id")
@@ -110,16 +110,16 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	// transition. The loser sees pgx.ErrNoRows.
 	claimed, err := h.queries.ClaimDraftForPublish(r.Context(), db.ClaimDraftForPublishParams{
 		ID:          postID,
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			// Either the post isn't a draft anymore (already
 			// published or being published by another worker) or
-			// it doesn't exist / belong to this project. Both map
+			// it doesn't exist / belong to this workspace. Both map
 			// to 409 — the resource isn't in a publishable state.
 			writeError(w, http.StatusConflict, "CONFLICT",
-				"Post is not a draft (already publishing, published, or not found in this project)")
+				"Post is not a draft (already publishing, published, or not found in this workspace)")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to claim draft")
@@ -151,7 +151,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 
 	// Load accounts once so the validator and the publish loop see
 	// the same view.
-	accountMap, err := h.loadValidateAccounts(r, projectID)
+	accountMap, err := h.loadValidateAccounts(r, workspaceID)
 	if err != nil {
 		_ = h.rollbackToDraft(r, claimed.ID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
@@ -176,7 +176,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	// re-create the parent row, but we already have one — instead,
 	// inline the same logic against the claimed row. To minimize
 	// duplication we add a thin variant that takes an existing row.
-	h.publishExistingPost(w, r, projectID, claimed, parsed, accountMap)
+	h.publishExistingPost(w, r, workspaceID, claimed, parsed, accountMap)
 }
 
 // rollbackToDraft is the inverse of ClaimDraftForPublish. Used when
@@ -195,7 +195,7 @@ func (h *SocialPostHandler) rollbackToDraft(r *http.Request, postID string) erro
 // carry a future RFC3339 timestamp. Optimistic-locked: if the row
 // already flipped to 'publishing' between the read and the write
 // the UPDATE returns no rows and we 409.
-func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Request, projectID string, postID string) {
+func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Request, workspaceID string, postID string) {
 	var body struct {
 		ScheduledAt *string `json:"scheduled_at"`
 	}
@@ -224,7 +224,7 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 
 	updated, err := h.queries.RescheduleSocialPost(r.Context(), db.RescheduleSocialPostParams{
 		ID:          postID,
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 		ScheduledAt: pgtype.Timestamptz{Time: t, Valid: true},
 	})
 	if err != nil {
@@ -246,21 +246,21 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 // action required. No webhook fired (cancellation is a customer
 // action, not a platform event).
 func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetWorkspaceID(r.Context())
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 	postID := chi.URLParam(r, "id")
 
 	cancelled, err := h.queries.CancelSocialPost(r.Context(), db.CancelSocialPostParams{
 		ID:          postID,
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusConflict, "CONFLICT",
-				"Post cannot be cancelled (not a draft or scheduled post in this project)")
+				"Post cannot be cancelled (not a draft or scheduled post in this workspace)")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel post")
@@ -280,9 +280,9 @@ func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
 // locks so a row that flipped to 'publishing' between the read and
 // the write loses cleanly.
 func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetWorkspaceID(r.Context())
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 	postID := chi.URLParam(r, "id")
@@ -292,17 +292,17 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	// it to dispatch between the draft-edit and reschedule branches.
 	existing, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
 		ID:          postID,
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found in this project")
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found in this workspace")
 		return
 	}
 
 	// Sprint 3 PR8: scheduled-post reschedule branch. Only scheduled_at
 	// is editable; all other fields are ignored.
 	if existing.Status == "scheduled" {
-		h.reschedulePost(w, r, projectID, postID)
+		h.reschedulePost(w, r, workspaceID, postID)
 		return
 	}
 	if existing.Status != "draft" {
@@ -345,7 +345,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 
 	updated, err := h.queries.UpdateDraftContent(r.Context(), db.UpdateDraftContentParams{
 		ID:          postID,
-		WorkspaceID: projectID,
+		WorkspaceID: workspaceID,
 		Caption:     canonicalCaption,
 		MediaUrls:   canonicalMedia,
 		Metadata:    metaJSON,
@@ -354,7 +354,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusConflict, "CONFLICT",
-				"Post is not a draft or does not exist in this project")
+				"Post is not a draft or does not exist in this workspace")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update draft")
@@ -363,7 +363,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 
 	// Re-run validation against the new content so the editor sees
 	// fresh diagnostics in the response.
-	accountMap, _ := h.loadValidateAccounts(r, projectID)
+	accountMap, _ := h.loadValidateAccounts(r, workspaceID)
 	vr := platform.ValidatePlatformPosts(platform.ValidateOptions{
 		Capabilities: platform.Capabilities,
 		Accounts:     accountMap,

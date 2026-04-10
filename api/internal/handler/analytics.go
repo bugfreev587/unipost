@@ -58,13 +58,13 @@ func computeEngagementRate(m *platform.PostMetrics) float64 {
 }
 
 // GetAnalytics handles GET /v1/social-posts/{id}/analytics
-// (and the project-scoped /v1/projects/{projectID}/social-posts/{id}/analytics).
+// (and the workspace-scoped /v1/workspaces/{workspaceID}/social-posts/{id}/analytics).
 //
 // Pass ?refresh=1 to bypass the 1-hour cache and force a live fetch from each
 // platform. Without it, cached rows are served whenever fresh — the
 // AnalyticsRefreshWorker keeps them up to date in the background.
 func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getWorkspaceID(r)
+	workspaceID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
@@ -72,7 +72,7 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 	forceRefresh := r.URL.Query().Get("refresh") == "1"
 
 	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
-		ID: postID, WorkspaceID: projectID,
+		ID: postID, WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {

@@ -176,7 +176,7 @@ const (
 	CodeUnsupportedInReplyTo   = "unsupported_in_reply_to"
 	CodeUnknownPlatform        = "unknown_platform"
 	CodeAccountNotFound        = "account_not_found"
-	CodeAccountNotInProject    = "account_not_in_project"
+	CodeAccountNotInWorkspace    = "account_not_in_workspace"
 	CodeMaxImagesExceeded      = "max_images_exceeded"
 	CodeMaxVideosExceeded      = "max_videos_exceeded"
 	CodeMixedMediaUnsupported  = "mixed_media_unsupported"
@@ -191,7 +191,7 @@ const (
 
 	// Sprint 2 media library codes.
 	CodeMediaIDNotFound        = "media_id_not_found"
-	CodeMediaIDNotInProject    = "media_id_not_in_project"
+	CodeMediaIDNotInWorkspace    = "media_id_not_in_workspace"
 	CodeMediaNotUploaded       = "media_not_uploaded"
 
 	// Sprint 4 PR3: first_comment field codes.
@@ -444,8 +444,8 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			PlatformPostIndex: i,
 			AccountID:         post.AccountID,
 			Field:             "account_id",
-			Code:              CodeAccountNotInProject,
-			Message:           "account does not belong to this project",
+			Code:              CodeAccountNotInWorkspace,
+			Message:           "account does not belong to this workspace",
 			Severity:          SeverityError,
 		})
 		return
@@ -631,8 +631,8 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 					AccountID:         post.AccountID,
 					Platform:          plat,
 					Field:             "media_ids",
-					Code:              CodeMediaIDNotInProject,
-					Message:           "media_id " + mid + " not found or not in this project",
+					Code:              CodeMediaIDNotInWorkspace,
+					Message:           "media_id " + mid + " not found or not in this workspace",
 					Severity:          SeverityError,
 				})
 				continue

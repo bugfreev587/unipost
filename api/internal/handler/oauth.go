@@ -41,9 +41,9 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	platformName := chi.URLParam(r, "platform")
 	redirectURL := r.URL.Query().Get("redirect_url")
 
-	projectID := h.getProfileID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	profileID := h.getProfileID(r)
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get OAuth config — check for White Label credentials first
-	config := h.getOAuthConfig(r, projectID, platformName, oauthAdapter)
+	config := h.getOAuthConfig(r, profileID, platformName, oauthAdapter)
 
 	// Generate CSRF state
 	state, err := platform.GenerateState()
@@ -72,7 +72,7 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	// Store state for verification on callback
 	_, err = h.queries.CreateOAuthState(r.Context(), db.CreateOAuthStateParams{
 		State:     state,
-		ProfileID: projectID,
+		ProfileID: profileID,
 		Platform:    platformName,
 		RedirectUrl: pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
 	})
@@ -133,7 +133,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config := h.getOAuthConfigForProject(r, oauthState.ProfileID, platformName, oauthAdapter)
+	config := h.getOAuthConfigForProfile(r, oauthState.ProfileID, platformName, oauthAdapter)
 	// Pass the original state through so PKCE-using adapters (Twitter)
 	// can reconstruct their verifier on the token exchange step.
 	config.State = state
@@ -187,7 +187,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("oauth account connected", "platform", platformName, "project_id", oauthState.ProfileID, "account", result.AccountName)
+	slog.Info("oauth account connected", "platform", platformName, "profile_id", oauthState.ProfileID, "account", result.AccountName)
 
 	// Redirect back to frontend
 	redirectURL := oauthState.RedirectUrl.String
@@ -201,16 +201,16 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectURL+sep+"status=success&account_name="+result.AccountName, http.StatusFound)
 }
 
-func (h *OAuthHandler) getOAuthConfig(r *http.Request, projectID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
-	return h.getOAuthConfigForProject(r, projectID, platformName, adapter)
+func (h *OAuthHandler) getOAuthConfig(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
+	return h.getOAuthConfigForProfile(r, profileID, platformName, adapter)
 }
 
-func (h *OAuthHandler) getOAuthConfigForProject(r *http.Request, projectID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
+func (h *OAuthHandler) getOAuthConfigForProfile(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
 	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
 
 	// Check for White Label credentials
 	creds, err := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
-		WorkspaceID: projectID,
+		WorkspaceID: profileID,
 		Platform:  platformName,
 	})
 	if err == nil {

@@ -113,13 +113,13 @@ func toConnectSessionResponse(s db.ConnectSession, hostedURL string) connectSess
 // hosted page. Carefully strips anything sensitive (oauth_state,
 // pkce_verifier, internal IDs the page doesn't need).
 //
-// Branding (Sprint 4 PR4) is read from the project's branding_*
+// Branding (Sprint 4 PR4) is read from the profile's branding_*
 // columns and rendered by the dashboard /connect/[platform] page.
 // Any of the three may be empty — the page falls back to UniPost
 // defaults when a field is missing.
 type publicConnectSessionResponse struct {
 	Platform    string                 `json:"platform"`
-	ProjectName string                 `json:"project_name"`
+	ProfileName string                 `json:"profile_name"`
 	Status      string                 `json:"status"`
 	ReturnURL   string                 `json:"return_url,omitempty"`
 	ExpiresAt   time.Time              `json:"expires_at"`
@@ -141,9 +141,9 @@ type publicBrandingPayload struct {
 // /authorize endpoint (PR3) can derive the challenge from the row
 // without re-rolling the verifier on every click.
 func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetWorkspaceID(r.Context())
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	profileID := auth.GetWorkspaceID(r.Context())
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 
@@ -208,7 +208,7 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Add(connectSessionTTL)
 
 	session, err := h.queries.CreateConnectSession(r.Context(), db.CreateConnectSessionParams{
-		ProfileID:         projectID,
+		ProfileID:         profileID,
 		Platform:          body.Platform,
 		ExternalUserID:    body.ExternalUserID,
 		ExternalUserEmail: pgtype.Text{String: body.ExternalUserEmail, Valid: body.ExternalUserEmail != ""},
@@ -226,21 +226,21 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeCreated(w, toConnectSessionResponse(session, hostedURL))
 }
 
-// Get handles GET /v1/connect/sessions/{id} (API key, project-scoped).
+// Get handles GET /v1/connect/sessions/{id} (API key, profile-scoped).
 // Used by customers polling for completion when they don't want to
 // run a webhook receiver. Webhooks remain the recommended path —
 // this is here for the curl-loop dev case.
 func (h *ConnectSessionHandler) Get(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetWorkspaceID(r.Context())
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	profileID := auth.GetWorkspaceID(r.Context())
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 	sessionID := chi.URLParam(r, "id")
 
 	session, err := h.queries.GetConnectSessionByID(r.Context(), db.GetConnectSessionByIDParams{
 		ID:        sessionID,
-		ProfileID: projectID,
+		ProfileID: profileID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -305,8 +305,8 @@ func (h *ConnectSessionHandler) PublicGet(w http.ResponseWriter, r *http.Request
 		session.Status = "expired"
 	}
 
-	// Look up the project name for display in the hosted page.
-	project, err := h.queries.GetProfile(r.Context(), session.ProfileID)
+	// Look up the profile name for display in the hosted page.
+	profile, err := h.queries.GetProfile(r.Context(), session.ProfileID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Connect session not found")
 		return
@@ -314,7 +314,7 @@ func (h *ConnectSessionHandler) PublicGet(w http.ResponseWriter, r *http.Request
 
 	resp := publicConnectSessionResponse{
 		Platform:    session.Platform,
-		ProjectName: project.Name,
+		ProfileName: profile.Name,
 		Status:      session.Status,
 		ExpiresAt:   session.ExpiresAt.Time,
 	}
@@ -322,19 +322,19 @@ func (h *ConnectSessionHandler) PublicGet(w http.ResponseWriter, r *http.Request
 		resp.ReturnURL = session.ReturnUrl.String
 	}
 
-	// Sprint 4 PR4: surface white-label branding from the project's
+	// Sprint 4 PR4: surface white-label branding from the profile's
 	// branding_* columns. Only emit the Branding field if at least
 	// one column is set — otherwise the page falls back to defaults.
-	if project.BrandingLogoUrl.Valid || project.BrandingDisplayName.Valid || project.BrandingPrimaryColor.Valid {
+	if profile.BrandingLogoUrl.Valid || profile.BrandingDisplayName.Valid || profile.BrandingPrimaryColor.Valid {
 		resp.Branding = &publicBrandingPayload{}
-		if project.BrandingLogoUrl.Valid {
-			resp.Branding.LogoURL = project.BrandingLogoUrl.String
+		if profile.BrandingLogoUrl.Valid {
+			resp.Branding.LogoURL = profile.BrandingLogoUrl.String
 		}
-		if project.BrandingDisplayName.Valid {
-			resp.Branding.DisplayName = project.BrandingDisplayName.String
+		if profile.BrandingDisplayName.Valid {
+			resp.Branding.DisplayName = profile.BrandingDisplayName.String
 		}
-		if project.BrandingPrimaryColor.Valid {
-			resp.Branding.PrimaryColor = project.BrandingPrimaryColor.String
+		if profile.BrandingPrimaryColor.Valid {
+			resp.Branding.PrimaryColor = profile.BrandingPrimaryColor.String
 		}
 	}
 
