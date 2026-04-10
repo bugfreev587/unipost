@@ -36,6 +36,14 @@ export function CreatePostDrawer({
   getToken,
   onCreated,
 }: CreatePostDrawerProps) {
+  // If the API hasn't returned profiles yet, create a fallback from
+  // the current page's profileId so the dropdown is never empty.
+  const effectiveProfiles: Profile[] = profiles.length > 0
+    ? profiles
+    : initialProfileId
+      ? [{ id: initialProfileId, workspace_id: workspaceId, name: "Default", created_at: "", updated_at: "" }]
+      : [];
+
   const [selectedProfileId, setSelectedProfileId] = useState<string>(initialProfileId || "");
   const [profileAccounts, setProfileAccounts] = useState<SocialAccount[]>(initialAccounts);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
@@ -47,10 +55,10 @@ export function CreatePostDrawer({
 
   // Auto-select initial profile when drawer opens
   useEffect(() => {
-    if (open && !selectedProfileId && profiles.length > 0) {
-      setSelectedProfileId(initialProfileId || profiles[0].id);
+    if (open && !selectedProfileId && effectiveProfiles.length > 0) {
+      setSelectedProfileId(initialProfileId || effectiveProfiles[0].id);
     }
-  }, [open, profiles, initialProfileId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, effectiveProfiles, initialProfileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load accounts when profile changes
   useEffect(() => {
@@ -311,7 +319,7 @@ export function CreatePostDrawer({
                   }}
                   className="w-full rounded-lg px-3 py-2.5 pr-8 text-sm bg-[#17171a] border border-[#22222a] text-[#f4f4f5] outline-none appearance-none cursor-pointer transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
                 >
-                  {profiles.map((p) => (
+                  {effectiveProfiles.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
