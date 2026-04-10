@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
+import { OnboardingTourProvider, TourTriggerButton } from "@/components/dashboard/onboarding-tour";
 // useClerk kept for signOut
 import {
   DropdownMenu,
@@ -159,6 +160,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const avatarUrl = user?.imageUrl;
 
   return (
+    <OnboardingTourProvider>
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
       {/* ── SIDEBAR ── */}
       <aside
@@ -244,8 +246,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 const hasSubmenu = !!item.submenu;
                 const submenuOpen = hasSubmenu && expandedMenus.has(item.href);
 
+                const tourId = item.label.toLowerCase().replace(/\s+/g, "-");
                 return (
-                  <div key={item.href}>
+                  <div key={item.href} data-tour={tourId}>
                     {hasSubmenu ? (
                       <button
                         onClick={() => setExpandedMenus(prev => {
@@ -329,9 +332,15 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
+        {/* ── Take a tour ── */}
+        <div style={{ padding: "4px 10px" }}>
+          <TourTriggerButton />
+        </div>
+
         {/* ── Bottom: Workspace ── */}
         {workspace && (
           <div
+            data-tour="workspace"
             style={{
               padding: "10px 10px",
               borderTop: "1px solid var(--dborder)",
@@ -372,5 +381,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </main>
     </div>
+    </OnboardingTourProvider>
   );
 }
