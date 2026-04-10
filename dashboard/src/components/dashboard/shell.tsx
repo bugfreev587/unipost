@@ -28,13 +28,14 @@ import {
   CreditCard,
   Mail,
   Cable,
+  Layers,
 } from "lucide-react";
 
 // Each nav item can be tagged with the usage modes that require it.
 // Items with no `modes` array are always shown.
 const ALL_NAV_ITEMS = [
+  { href: "/profile", label: "Profiles", icon: Layers },
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
-    { href: "/profile", label: "Profile" },
     { href: "/accounts", label: "Accounts", modes: ["personal", "whitelabel"] },
     { href: "/users", label: "Connect Flow", modes: ["api"] },
     { href: "/accounts/native", label: "Credentials", modes: ["whitelabel"] },
@@ -61,7 +62,7 @@ function filterNavItems(modes: string[]) {
     if (!item.submenu) return item;
     const filteredSub = item.submenu.filter((sub) => {
       if (!("modes" in sub) || !sub.modes) return true;
-      return sub.modes.some((m: string) => modes.includes(m));
+      return (sub.modes as string[]).some((m: string) => modes.includes(m));
     });
     return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
   }).filter((item) => item.submenu === undefined || item.submenu.length > 0);
