@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useCallback, useState, useRef, useMemo, memo } from "react";
 import { Plus } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { AccountCardGrid } from "./account-card-grid";
@@ -15,6 +15,73 @@ import {
 import type { SocialAccount } from "@/lib/api";
 import { createSocialPost } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+// ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
+
+const MediaThumb = memo(function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+
+  return (
+    <div className="relative w-[88px] h-[88px] rounded-lg overflow-hidden border border-[#2e2e38] bg-[#0a0a0b] flex-shrink-0 group/thumb">
+      {file.type.startsWith("video/") ? (
+        <video
+          src={url}
+          className="w-full h-full object-cover"
+          muted
+          preload="metadata"
+          onLoadedData={(e) => { (e.target as HTMLVideoElement).currentTime = 0.5; }}
+        />
+      ) : (
+        <img src={url} alt={file.name} className="w-full h-full object-cover" />
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity text-xs"
+      >
+        &times;
+      </button>
+      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[9px] text-[#ccc] px-1.5 py-0.5 truncate font-mono">
+        {file.name}
+      </div>
+    </div>
+  );
+});
+
+function MediaThumbnails({ files, onRemove, onAdd }: {
+  files: File[];
+  onRemove: (index: number) => void;
+  onAdd: (files: File[]) => void;
+}) {
+  return (
+    <section className="mt-6">
+      <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-2.5">
+        Media
+      </label>
+      <div className="flex gap-2.5 flex-wrap">
+        {files.map((file, i) => (
+          <MediaThumb key={`${file.name}-${file.size}-${i}`} file={file} onRemove={() => onRemove(i)} />
+        ))}
+        <label className="group flex flex-col items-center justify-center w-[88px] h-[88px] rounded-lg border border-dashed border-[#2e2e38] hover:border-[#8a8a93] bg-[#0a0a0b]/40 cursor-pointer transition-colors flex-shrink-0">
+          <Plus className="w-4 h-4 text-[#8a8a93] group-hover:text-[#f4f4f5] transition-colors" />
+          <div className="text-[9px] text-[#55555c] group-hover:text-[#8a8a93] mt-1 text-center leading-tight transition-colors">
+            Add media
+          </div>
+          <input
+            type="file"
+            multiple
+            className="hidden"
+            accept="image/png,image/jpeg,video/mp4"
+            onChange={(e) => { if (e.target.files) onAdd(Array.from(e.target.files)); }}
+          />
+        </label>
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 
 interface CreatePostDrawerProps {
   open: boolean;
@@ -191,59 +258,11 @@ export function CreatePostDrawer({
             </section>
 
             {/* Media upload */}
-            <section className="mt-6">
-              <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-2.5">
-                Media
-              </label>
-              <div className="flex gap-2.5 flex-wrap">
-                {form.mediaFiles.map((file, i) => (
-                  <div key={`${file.name}-${i}`} className="relative w-[88px] h-[88px] rounded-lg overflow-hidden border border-[#2e2e38] bg-[#0a0a0b] flex-shrink-0 group/thumb">
-                    {file.type.startsWith("video/") ? (
-                      <video
-                        src={URL.createObjectURL(file)}
-                        className="w-full h-full object-cover"
-                        muted
-                        preload="metadata"
-                        onLoadedData={(e) => { (e.target as HTMLVideoElement).currentTime = 0.5; }}
-                      />
-                    ) : (
-                      <img
-                        src={URL.createObjectURL(file)}
-                        alt={file.name}
-                        className="w-full h-full object-cover"
-                      />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => form.setMediaFiles(form.mediaFiles.filter((_, j) => j !== i))}
-                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity text-xs"
-                    >
-                      &times;
-                    </button>
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[9px] text-[#ccc] px-1.5 py-0.5 truncate font-mono">
-                      {file.name}
-                    </div>
-                  </div>
-                ))}
-                <label className="group flex flex-col items-center justify-center w-[88px] h-[88px] rounded-lg border border-dashed border-[#2e2e38] hover:border-[#8a8a93] bg-[#0a0a0b]/40 cursor-pointer transition-colors flex-shrink-0">
-                  <Plus className="w-4 h-4 text-[#8a8a93] group-hover:text-[#f4f4f5] transition-colors" />
-                  <div className="text-[9px] text-[#55555c] group-hover:text-[#8a8a93] mt-1 text-center leading-tight transition-colors">
-                    Add media
-                  </div>
-                  <input
-                    type="file"
-                    multiple
-                    className="hidden"
-                    accept="image/png,image/jpeg,video/mp4"
-                    onChange={(e) => {
-                      if (e.target.files) {
-                        form.setMediaFiles([...form.mediaFiles, ...Array.from(e.target.files)]);
-                      }
-                    }}
-                  />
-                </label>
-              </div>
-            </section>
+            <MediaThumbnails
+              files={form.mediaFiles}
+              onRemove={(i) => form.setMediaFiles(form.mediaFiles.filter((_, j) => j !== i))}
+              onAdd={(newFiles) => form.setMediaFiles([...form.mediaFiles, ...newFiles])}
+            />
 
             {/* Per-platform overrides */}
             <section className="mt-8">
