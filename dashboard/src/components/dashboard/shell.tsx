@@ -54,7 +54,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
+  // Auto-expand submenus that match the current path on initial render
+  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    for (const item of NAV_ITEMS) {
+      if (item.submenu && typeof window !== "undefined" && window.location.pathname.includes(item.href)) {
+        initial.add(item.href);
+      }
+    }
+    return initial;
+  });
   const [isAdmin, setIsAdmin] = useState(false);
 
   const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
@@ -208,10 +217,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 const active = isActive(item.href);
                 const Icon = item.icon;
                 const hasSubmenu = !!item.submenu;
-                const submenuOpen = hasSubmenu && (
-                  expandedMenus.has(item.href) ||
-                  pathname.startsWith(`/projects/${profileId}${item.href}`)
-                );
+                const submenuOpen = hasSubmenu && expandedMenus.has(item.href);
 
                 return (
                   <div key={item.href}>
@@ -219,7 +225,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                       <button
                         onClick={() => setExpandedMenus(prev => {
                           const next = new Set(prev);
-                          if (submenuOpen) next.delete(item.href); else next.add(item.href);
+                          if (next.has(item.href)) next.delete(item.href);
+                          else next.add(item.href);
                           return next;
                         })}
                         className="sidebar-nav-item"
