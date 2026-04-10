@@ -260,11 +260,13 @@ export function CreatePostDrawer({
       const token = await getToken();
       if (!token) return;
       const payload = form.buildPayload();
+      console.log("[CreatePost] payload:", JSON.stringify(payload, null, 2));
       await createSocialPost(token, workspaceId, payload as any);
       onCreated();
       onOpenChange(false);
     } catch (err) {
       console.error("Create post failed:", err);
+      console.error("[CreatePost] payload was:", JSON.stringify(form.buildPayload(), null, 2));
     } finally {
       form.setSubmitting(false);
     }
