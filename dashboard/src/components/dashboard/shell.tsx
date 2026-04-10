@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { listProfiles, getBilling, getMe, type Profile, type BillingInfo } from "@/lib/api";
+import { listProfiles, getWorkspace, getBilling, getMe, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
 import {
   Key,
   Users,
@@ -51,6 +51,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { signOut, openUserProfile } = useClerk();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -97,6 +98,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       } catch { /* silent */ }
     }
     loadBilling();
+  }, [currentProfile?.workspace_id, getToken]);
+
+  useEffect(() => {
+    async function loadWorkspace() {
+      if (!currentProfile?.workspace_id) return;
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await getWorkspace(token, currentProfile.workspace_id);
+        setWorkspace(res.data);
+      } catch { /* silent */ }
+    }
+    loadWorkspace();
   }, [currentProfile?.workspace_id, getToken]);
 
   function isActive(href: string) {
@@ -281,7 +295,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        {/* ── Bottom: Current profile + settings + switcher ── */}
+        {/* ── Bottom: Current profile + switcher ── */}
         {currentProfile && (
           <div
             style={{
@@ -312,18 +326,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               }}
               onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
-              title="Settings"
+              title="Profile settings"
             >
               <Settings style={{ width: 16, height: 16 }} strokeWidth={1.75} />
             </Link>
-            {/*
-              Switcher used to open an in-place dropdown to pick a
-              profile. We replaced it with a navigation to the full
-              /projects page so users have one canonical place to view
-              all their profiles, create new ones, and switch between
-              them — keeps the sidebar lean and avoids two surfaces
-              for the same operation.
-            */}
             <Link
               href="/projects"
               style={{
@@ -336,6 +342,41 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               title="Switch profile"
             >
               <ChevronsUpDown style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+            </Link>
+          </div>
+        )}
+
+        {/* ── Bottom: Workspace ── */}
+        {workspace && (
+          <div
+            style={{
+              padding: "10px 10px",
+              borderTop: "1px solid var(--dborder)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                flex: 1, fontSize: 12, fontWeight: 500, color: "var(--dmuted)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}
+            >
+              {workspace.name}
+            </span>
+            <Link
+              href="/workspace/settings"
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                width: 28, height: 28, borderRadius: 6,
+                color: "var(--dmuted)", transition: "background 0.1s, color 0.1s", flexShrink: 0,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
+              title="Workspace settings"
+            >
+              <Settings style={{ width: 14, height: 14 }} strokeWidth={1.75} />
             </Link>
           </div>
         )}
