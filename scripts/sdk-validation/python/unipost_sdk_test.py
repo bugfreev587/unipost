@@ -15,13 +15,18 @@ Or with TEST_ACCOUNT_ID to test post creation:
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+import requests as _requests
 
 from unipost import UniPost
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
 API_KEY = os.environ.get("UNIPOST_API_KEY", "")
+API_URL = os.environ.get("UNIPOST_API_URL", "https://api.unipost.dev")
 TEST_ACCOUNT_ID = os.environ.get("TEST_ACCOUNT_ID", "")
+
+# Track post IDs created during the test run for cleanup.
+created_post_ids = []
 
 # ─── Test runner ──────────────────────────────────────────────────────────────
 
@@ -106,6 +111,7 @@ def main():
 
         draft = test("posts.create() — draft mode", lambda: _test_create_draft(client, caption))
         if draft:
+            created_post_ids.append(draft.id)
             print(f"\n  Created draft post: {draft.id}")
 
         scheduled_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
@@ -114,6 +120,7 @@ def main():
             lambda: _test_create_scheduled(client, f"SDK scheduled — {timestamp}", scheduled_at),
         )
         if scheduled:
+            created_post_ids.append(scheduled.id)
             print(f"  Created scheduled post: {scheduled.id}")
             test(
                 f'posts.cancel("{scheduled.id[:8]}...")',
@@ -140,6 +147,20 @@ def main():
         "analytics.rollup() — last 30 days",
         lambda: _test_analytics(client, thirty_days_ago.isoformat(), now.isoformat()),
     )
+
+    # ── Cleanup ────────────────────────────────────────────────────────────────
+    if created_post_ids:
+        section("5. Cleanup — deleting test posts")
+        for pid in created_post_ids:
+            try:
+                resp = _requests.delete(
+                    f"{API_URL}/v1/social-posts/{pid}",
+                    headers={"Authorization": f"Bearer {API_KEY}"},
+                )
+                resp.raise_for_status()
+                print(f"  🗑  Deleted {pid[:8]}...")
+            except Exception as e:
+                print(f"  ⚠  Failed to delete {pid[:8]}... ({e})")
 
     # ── Summary ────────────────────────────────────────────────────────────────
     print(f"\n╔══════════════════════════════════════════════════╗")

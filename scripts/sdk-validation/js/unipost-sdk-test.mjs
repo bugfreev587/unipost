@@ -16,10 +16,14 @@ import { UniPost } from '@unipost/sdk';
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const API_KEY = process.env.UNIPOST_API_KEY || 'YOUR_API_KEY_HERE';
+const API_URL = process.env.UNIPOST_API_URL || 'https://api.unipost.dev';
 
 // After running listAccounts(), paste one account_id here for post tests.
 // Leave empty to skip post creation tests (safe for first run).
 const TEST_ACCOUNT_ID = process.env.TEST_ACCOUNT_ID || '';
+
+// Track post IDs created during the test run for cleanup.
+const createdPostIds = [];
 
 // ─── Test runner ──────────────────────────────────────────────────────────────
 
@@ -135,6 +139,7 @@ async function main() {
 
     if (draft) {
       draftPostId = draft.id;
+      createdPostIds.push(draftPostId);
       console.log(`\n  Created draft post: ${draftPostId}`);
     }
 
@@ -154,6 +159,7 @@ async function main() {
 
     if (scheduled) {
       scheduledPostId = scheduled.id;
+      createdPostIds.push(scheduledPostId);
       console.log(`  Created scheduled post: ${scheduledPostId}`);
       console.log(`  Scheduled for: ${scheduledAt}`);
     }
@@ -199,6 +205,22 @@ async function main() {
     if (!res) throw new Error('Expected rollup data');
     return res;
   });
+
+  // ── Cleanup ─────────────────────────────────────────────────────────────────
+  if (createdPostIds.length > 0) {
+    section('5. Cleanup — deleting test posts');
+    for (const id of createdPostIds) {
+      try {
+        await fetch(`${API_URL}/v1/social-posts/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${API_KEY}` },
+        });
+        console.log(`  🗑  Deleted ${id.slice(0, 8)}...`);
+      } catch {
+        console.log(`  ⚠  Failed to delete ${id.slice(0, 8)}... (non-fatal)`);
+      }
+    }
+  }
 
   // ── Summary ──────────────────────────────────────────────────────────────────
   console.log('\n╔══════════════════════════════════════════════════╗');

@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
@@ -17,9 +18,10 @@ import (
 )
 
 var (
-	passed   int
-	failed   int
-	failures []string
+	passed         int
+	failed         int
+	failures       []string
+	createdPostIDs []string
 )
 
 func test(name string, fn func() error) {
@@ -137,6 +139,7 @@ func main() {
 			return nil
 		})
 		if draftID != "" {
+			createdPostIDs = append(createdPostIDs, draftID)
 			fmt.Printf("\n  Created draft: %s\n", draftID)
 		}
 
@@ -160,6 +163,7 @@ func main() {
 		})
 
 		if scheduledID != "" {
+			createdPostIDs = append(createdPostIDs, scheduledID)
 			fmt.Printf("  Created scheduled: %s\n", scheduledID)
 			test(fmt.Sprintf("Posts.Cancel(\"%s...\")", scheduledID[:8]), func() error {
 				_, err := client.Posts.Cancel(ctx, scheduledID)
@@ -184,6 +188,24 @@ func main() {
 			})
 		} else {
 			fmt.Println("\n  ⏭  Real publish skipped (set TEST_PUBLISH_NOW=true)")
+		}
+	}
+
+	// ── Cleanup ───────────────────────────────────────────────────────────────
+	if len(createdPostIDs) > 0 {
+		section("5. Cleanup — deleting test posts")
+		apiURL := os.Getenv("UNIPOST_API_URL")
+		if apiURL == "" {
+			apiURL = "https://api.unipost.dev"
+		}
+		for _, id := range createdPostIDs {
+			req, _ := http.NewRequest("DELETE", apiURL+"/v1/social-posts/"+id, nil)
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			if _, err := http.DefaultClient.Do(req); err != nil {
+				fmt.Printf("  ⚠  Failed to delete %s... (non-fatal)\n", id[:8])
+			} else {
+				fmt.Printf("  🗑  Deleted %s...\n", id[:8])
+			}
 		}
 	}
 
