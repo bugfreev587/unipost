@@ -62,11 +62,17 @@ func toProfileResponse(p db.Profile) profileResponse {
 
 func (h *ProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 	// The route is /v1/profiles (no workspaceID in path). Resolve the
-	// workspace from the authenticated user — for single-workspace
-	// setups, workspace_id == user_id (seeded by migration 025).
+	// workspace from the authenticated user by looking up their
+	// workspace(s), then listing profiles under the first workspace.
 	workspaceID := chi.URLParam(r, "workspaceID")
 	if workspaceID == "" {
-		workspaceID = auth.GetUserID(r.Context())
+		userID := auth.GetUserID(r.Context())
+		workspaces, err := h.queries.ListWorkspacesByUser(r.Context(), userID)
+		if err != nil || len(workspaces) == 0 {
+			writeSuccessWithMeta(w, []profileResponse{}, 0)
+			return
+		}
+		workspaceID = workspaces[0].ID
 	}
 
 	profiles, err := h.queries.ListProfilesByWorkspace(r.Context(), workspaceID)
