@@ -66,8 +66,15 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    const err: ApiError = await res.json();
-    throw new Error(err.error?.message || `Request failed: ${res.status}`);
+    const body = await res.json().catch(() => ({}));
+    const err = body as ApiError & { error?: { issues?: Array<{ message?: string; field?: string; code?: string }> } };
+    // Include validation issue details if present
+    let message = err.error?.message || `Request failed: ${res.status}`;
+    if (err.error?.issues && err.error.issues.length > 0) {
+      const details = err.error.issues.map((i) => i.message || i.code).filter(Boolean).join("; ");
+      if (details) message += `: ${details}`;
+    }
+    throw new Error(message);
   }
 
   if (res.status === 204) {
