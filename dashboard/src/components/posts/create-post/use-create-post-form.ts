@@ -325,18 +325,19 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     return true;
   }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId]);
 
-  const buildPayload = useCallback(() => {
-    // Use only unique accounts — skip duplicates (same platform + account_name)
+  // Not wrapped in useCallback — always reads latest state to avoid
+  // stale closure issues with mediaItems/uploadedMediaIds.
+  function buildPayload() {
     const accountIds = uniqueSelectedAccounts.map((a) => a.id);
     const hasOverrides = accountIds.some((id) => overrides[id]?.caption?.trim());
 
     const payload: Record<string, unknown> = {};
 
-    const mediaIds = uploadedMediaIds.length > 0 ? uploadedMediaIds : undefined;
-    console.log("[buildPayload] mediaItems:", mediaItems.length, "uploadedMediaIds:", uploadedMediaIds, "mediaFiles:", mediaFiles.length);
+    // Read uploadedMediaIds directly from mediaItems (latest state)
+    const currentMediaIds = mediaItems.filter((m) => m.mediaId).map((m) => m.mediaId!);
+    const mediaIds = currentMediaIds.length > 0 ? currentMediaIds : undefined;
 
     if (hasOverrides || mediaIds) {
-      // Use platform_posts[] format when any account has a custom caption or media
       payload.platform_posts = accountIds.map((id) => {
         const o = overrides[id];
         const entry: Record<string, unknown> = {
@@ -351,7 +352,6 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
         return entry;
       });
     } else {
-      // Legacy format: same caption for all accounts
       payload.caption = mainContent.trim();
       payload.account_ids = accountIds;
     }
@@ -364,7 +364,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     }
 
     return payload;
-  }, [uniqueSelectedAccounts, overrides, mainContent, publishMode, scheduledAt, uploadedMediaIds]);
+  }
 
   const reset = useCallback(() => {
     setMainContent("");
