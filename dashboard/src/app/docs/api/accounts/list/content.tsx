@@ -107,7 +107,7 @@ export function ListAccountsContent() {
       <EndpointHeader
         method="GET"
         path="/v1/social-accounts"
-        description="List all connected social media accounts in the current project. Returns active accounts by default; disconnected accounts are excluded unless queried by ID."
+        description="List all connected social media accounts in the current workspace. Returns active accounts by default; disconnected accounts are excluded unless queried by ID."
         badges={["Requires Auth", "Rate Limited"]}
       />
 

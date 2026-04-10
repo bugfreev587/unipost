@@ -8,6 +8,24 @@ each section heading below corresponds to a sprint, not a published version.
 
 ## [Unreleased]
 
+### Changed — Workspace + Profile Architecture Refactor
+
+- **Breaking**: `Project` concept split into `Workspace` (security boundary,
+  API keys, billing, posts) and `Profile` (lightweight brand grouping, social
+  accounts). Enables cross-profile posting — one post can target accounts from
+  multiple profiles within the same workspace.
+- **Database**: New `workspaces` table; `projects` renamed to `profiles`;
+  all FK columns updated (`project_id` → `workspace_id` or `profile_id`).
+  Migration 025 handles the full schema change.
+- **API routes**: Dashboard routes split into `/v1/workspaces/{id}/...`
+  (workspace-scoped) and `/v1/profiles/{id}/...` (profile-scoped).
+  `/v1/projects` removed; use `/v1/profiles` for profile CRUD.
+- **Error codes**: `account_not_in_project` → `account_not_in_workspace`,
+  `media_id_not_in_project` → `media_id_not_in_workspace`.
+- **Stripe metadata**: `project_id` → `workspace_id` in checkout session metadata.
+- **Dashboard**: All "Project" UI text → "Profile"; API client updated for new endpoints.
+- **Admin**: `active_projects` → `active_workspaces`, `project_count` → `workspace_count`.
+
 ## Sprint 5 — Post-Launch Hardening
 
 ### Added — UniPost API

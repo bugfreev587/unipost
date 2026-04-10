@@ -194,7 +194,7 @@ TEXT_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.platform == "twitter" or
 ANY_ID=$(echo "$RESP_BODY" | jq -r '.data[0].id // empty')
 
 if [[ -z "$ANY_ID" ]]; then
-  echo -e "  ${YELLOW}note:${NC} no social accounts in this project — most tests below will skip"
+  echo -e "  ${YELLOW}note:${NC} no social accounts in this workspace — most tests below will skip"
 fi
 
 # Happy-path validate. Use a text-friendly platform so the test
@@ -335,7 +335,7 @@ fi
 if [[ -n "$ANY_ID" ]]; then
   api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$ANY_ID" \
     '{platform_posts: [{account_id: $id, caption: "x", media_ids: ["med_does_not_exist"]}]}')"
-  assert_jq '.data.errors | map(.code) | index("media_id_not_in_project") != null' 'true' 'unknown media_id rejected'
+  assert_jq '.data.errors | map(.code) | index("media_id_not_in_workspace") != null' 'true' 'unknown media_id rejected'
 else
   skip "media_id validation" "no account_id"
 fi
@@ -436,7 +436,7 @@ if [[ -n "$NEXT_CURSOR" ]]; then
   api GET "/v1/social-posts?limit=2&cursor=${NEXT_CURSOR}"
   assert_status "200" "GET /v1/social-posts?cursor=..."
 else
-  echo -e "    ${DIM}note: project has ≤2 posts, no next_cursor expected${NC}"
+  echo -e "    ${DIM}note: workspace has ≤2 posts, no next_cursor expected${NC}"
 fi
 
 # Status filter.
@@ -464,7 +464,7 @@ if [[ -n "$ANY_ID" ]]; then
     fail "health.status enum" "got $STATUS"
   fi
 
-  # 404 for an account in another project.
+  # 404 for an account in another workspace.
   api GET "/v1/social-accounts/account_does_not_exist/health"
   assert_status "404" "GET /health for unknown account → 404"
 else

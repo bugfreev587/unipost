@@ -343,7 +343,7 @@ export default function DocsPage() {
           <Section id="authentication" title="Authentication">
             <p className="doc-p">
               All API requests require a Bearer token in the <code>Authorization</code> header.
-              Create API keys in your project dashboard at <a href="https://app.unipost.dev">app.unipost.dev</a>.
+              Create API keys in your workspace dashboard at <a href="https://app.unipost.dev">app.unipost.dev</a>.
             </p>
             <CodeTabs title="Example" snippets={SN_LIST_ACCOUNTS} />
             <p className="doc-p"><strong>Key format:</strong> <code>up_live_</code> (production) or <code>up_test_</code> (test)</p>
@@ -516,7 +516,7 @@ export default function DocsPage() {
                 Per-account variant. Same shape, but scoped to one
                 connected account so a client doesn&apos;t need to
                 map account_id → platform itself. Returns 404 for
-                accounts not in the calling project.
+                accounts not in the calling workspace.
               </p>
               <Code title="Example">{`curl -H "Authorization: Bearer up_live_xxx" \\
   ${BASE}/v1/social-accounts/8558370d-b957-450c-a399-e2c0838a441a/capabilities`}</Code>
@@ -697,7 +697,7 @@ export default function DocsPage() {
               <Param name="scheduled_at" type="string">RFC3339 timestamp. If set, the post is queued and published by the scheduler at that time. Must be in the future.</Param>
               <Param name="idempotency_key" type="string">
                 Optional retry-safe key. The same{" "}
-                <code>(project_id, idempotency_key)</code> within 24h
+                <code>(workspace_id, idempotency_key)</code> within 24h
                 returns the original response unchanged with an{" "}
                 <code>Idempotent-Replay: true</code> response header.
                 <strong> No duplicate platform posts are created.</strong>
@@ -942,7 +942,7 @@ export default function DocsPage() {
 }`}</Code>
               <p className="doc-p">
                 <strong>Fatal vs non-fatal.</strong> Fatal codes (<code>caption_too_long</code>,
-                <code> too_many_media</code>, <code>media_id_not_in_project</code>,
+                <code> too_many_media</code>, <code>media_id_not_in_workspace</code>,
                 <code> unknown_account</code>, <code>scheduled_in_past</code>, …) block
                 publish. Non-fatal codes (e.g. <code>account_disconnected</code>) are surfaced
                 so the client can warn the user but don&apos;t prevent the request from being
@@ -1087,7 +1087,7 @@ export default function DocsPage() {
 }`}</Code>
             </Endpoint>
             <Endpoint method="GET" path="/v1/media" auth="API Key">
-              <p className="doc-p">List media rows for the project. Cursor pagination, same shape as <code>/v1/social-posts</code>.</p>
+              <p className="doc-p">List media rows for the workspace. Cursor pagination, same shape as <code>/v1/social-posts</code>.</p>
             </Endpoint>
             <Endpoint method="DELETE" path="/v1/media/{id}" auth="API Key">
               <p className="doc-p">Delete the row and the underlying R2 object. Posts that reference the media keep their existing platform-side copies.</p>
