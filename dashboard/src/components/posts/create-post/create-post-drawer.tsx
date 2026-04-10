@@ -45,10 +45,13 @@ export function CreatePostDrawer({
       : [];
 
   const [selectedProfileId, setSelectedProfileId] = useState<string>(initialProfileId || "");
-  const [profileAccounts, setProfileAccounts] = useState<SocialAccount[]>(initialAccounts);
+  // Current profile's accounts (shown in Connected Accounts grid)
+  const [currentProfileAccounts, setCurrentProfileAccounts] = useState<SocialAccount[]>(initialAccounts);
+  // All accounts seen across profile switches (used by form for selections + Post To)
+  const [allAccounts, setAllAccounts] = useState<SocialAccount[]>(initialAccounts);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
 
-  const form = useCreatePostForm(profileAccounts);
+  const form = useCreatePostForm(allAccounts);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [queues, setQueues] = useState<Array<{ id: string; name: string }>>([]);
   const [queuesLoaded, setQueuesLoaded] = useState(false);
@@ -60,7 +63,7 @@ export function CreatePostDrawer({
     }
   }, [open, effectiveProfiles, initialProfileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load accounts when profile changes
+  // Load accounts when profile changes — accumulate across switches
   useEffect(() => {
     if (!selectedProfileId || !open) return;
     (async () => {
@@ -69,7 +72,15 @@ export function CreatePostDrawer({
         const token = await getToken();
         if (!token) return;
         const res = await listSocialAccounts(token, selectedProfileId);
-        setProfileAccounts(res.data);
+        setCurrentProfileAccounts(res.data);
+        // Merge new accounts into allAccounts (dedup by id)
+        setAllAccounts((prev) => {
+          const existing = new Map(prev.map((a) => [a.id, a]));
+          for (const a of res.data) {
+            existing.set(a.id, a);
+          }
+          return Array.from(existing.values());
+        });
       } catch (err) {
         console.error("Failed to load accounts:", err);
       } finally {
@@ -92,7 +103,8 @@ export function CreatePostDrawer({
       setShowDiscardConfirm(false);
       setQueuesLoaded(false);
       setSelectedProfileId(initialProfileId || "");
-      setProfileAccounts(initialAccounts);
+      setCurrentProfileAccounts(initialAccounts);
+      setAllAccounts(initialAccounts);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -315,7 +327,6 @@ export function CreatePostDrawer({
                   value={selectedProfileId}
                   onChange={(e) => {
                     setSelectedProfileId(e.target.value);
-                    form.reset();
                   }}
                   className="w-full rounded-lg px-3 py-2.5 pr-8 text-sm bg-[#17171a] border border-[#22222a] text-[#f4f4f5] outline-none appearance-none cursor-pointer transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
                 >
@@ -338,7 +349,7 @@ export function CreatePostDrawer({
                 <div className="text-[12px] text-[#55555c] py-4 text-center">Loading accounts...</div>
               ) : (
                 <ConnectedAccountsGrid
-                  accounts={form.activeAccounts}
+                  accounts={currentProfileAccounts.filter((a) => a.status === "active")}
                   selectedIds={form.selectedAccountIds}
                   onToggle={form.toggleAccount}
                 />
@@ -356,7 +367,7 @@ export function CreatePostDrawer({
                 </span>
               </div>
               <PostToGrid
-                accounts={form.activeAccounts}
+                accounts={allAccounts}
                 selectedIds={form.selectedAccountIds}
                 onRemove={form.toggleAccount}
               />
