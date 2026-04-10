@@ -80,14 +80,19 @@ export default function PostsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [a, p, pr] = await Promise.all([
+      const [a, p] = await Promise.all([
         listSocialAccounts(token, profileId),
         listSocialPosts(token, workspaceId),
-        listProfiles(token),
       ]);
       setAccounts(a.data);
       setPosts(p.data);
-      setProfiles(pr.data);
+      // Load profiles separately — don't block posts/accounts if it fails
+      try {
+        const pr = await listProfiles(token);
+        setProfiles(pr.data);
+      } catch (profileErr) {
+        console.error("Failed to load profiles:", profileErr);
+      }
     } catch (err) {
       console.error("Failed to load:", err);
     } finally {
