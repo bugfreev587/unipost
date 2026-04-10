@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -49,9 +51,9 @@ type accountHealthResponse struct {
 // AccountHealth handles GET /v1/social-accounts/{id}/health.
 // Workspace-scoped — refuses to expose another workspace's account.
 func (h *SocialAccountHandler) AccountHealth(w http.ResponseWriter, r *http.Request) {
-	profileID := h.getProfileID(r)
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 	accountID := chi.URLParam(r, "id")
@@ -59,9 +61,9 @@ func (h *SocialAccountHandler) AccountHealth(w http.ResponseWriter, r *http.Requ
 		accountID = chi.URLParam(r, "accountID")
 	}
 
-	acc, err := h.queries.GetSocialAccountByIDAndProfile(r.Context(), db.GetSocialAccountByIDAndProfileParams{
-		ID:        accountID,
-		ProfileID: profileID,
+	acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+		ID:          accountID,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {

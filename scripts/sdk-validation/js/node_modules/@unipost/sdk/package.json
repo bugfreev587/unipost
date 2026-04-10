@@ -1,0 +1,58 @@
+{
+  "name": "@unipost/sdk",
+  "version": "0.1.0",
+  "description": "Official UniPost API client for JavaScript and TypeScript",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "unipost",
+    "social-media",
+    "api",
+    "twitter",
+    "linkedin",
+    "instagram",
+    "bluesky",
+    "tiktok",
+    "youtube",
+    "threads"
+  ],
+  "author": "UniPost <hello@unipost.dev>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/unipost-dev/sdk-js"
+  },
+  "homepage": "https://unipost.dev/docs",
+  "bugs": {
+    "url": "https://github.com/unipost-dev/sdk-js/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}

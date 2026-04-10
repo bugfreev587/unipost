@@ -78,7 +78,7 @@ func toSocialAccountResponse(a db.SocialAccount) socialAccountResponse {
 // Connect handles POST /v1/social-accounts/connect (API key auth)
 // and POST /v1/profiles/{profileID}/social-accounts/connect (Clerk auth)
 func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
-	profileID := h.getProfileID(r)
+	profileID := h.resolveProfileID(r)
 	if profileID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
@@ -143,31 +143,46 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	writeCreated(w, toSocialAccountResponse(account))
 }
 
-// List handles GET /v1/social-accounts
+// List handles GET /v1/social-accounts (API key) and
+// GET /v1/profiles/{profileID}/social-accounts (dashboard).
 //
-// Sprint 3 PR1: optional query filters `external_user_id` and `platform`
-// let customers find rows created by a Connect flow. Both are optional —
-// passing neither preserves the existing "all accounts in project" shape.
+// API key path: lists all accounts across all profiles in the workspace.
+// Dashboard path: lists accounts for a specific profile.
 func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
-	profileID := h.getProfileID(r)
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
-		return
-	}
-
 	extUserID := r.URL.Query().Get("external_user_id")
 	platformFilter := r.URL.Query().Get("platform")
 
 	var accounts []db.SocialAccount
 	var err error
-	if extUserID == "" && platformFilter == "" {
-		accounts, err = h.queries.ListSocialAccountsByProfile(r.Context(), profileID)
+
+	// API key path — workspace-scoped (all profiles)
+	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
+		if extUserID == "" && platformFilter == "" {
+			accounts, err = h.queries.ListSocialAccountsByWorkspace(r.Context(), workspaceID)
+		} else {
+			accounts, err = h.queries.ListSocialAccountsByWorkspaceFiltered(r.Context(), db.ListSocialAccountsByWorkspaceFilteredParams{
+				WorkspaceID:    workspaceID,
+				ProfileID:      pgtype.Text{},
+				ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
+				Platform:       pgtype.Text{String: platformFilter, Valid: platformFilter != ""},
+			})
+		}
 	} else {
-		accounts, err = h.queries.ListSocialAccountsByProfileFiltered(r.Context(), db.ListSocialAccountsByProfileFilteredParams{
-			ProfileID:      profileID,
-			ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
-			Platform:       pgtype.Text{String: platformFilter, Valid: platformFilter != ""},
-		})
+		// Dashboard path — profile-scoped
+		profileID := h.getProfileID(r)
+		if profileID == "" {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+			return
+		}
+		if extUserID == "" && platformFilter == "" {
+			accounts, err = h.queries.ListSocialAccountsByProfile(r.Context(), profileID)
+		} else {
+			accounts, err = h.queries.ListSocialAccountsByProfileFiltered(r.Context(), db.ListSocialAccountsByProfileFilteredParams{
+				ProfileID:      profileID,
+				ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
+				Platform:       pgtype.Text{String: platformFilter, Valid: platformFilter != ""},
+			})
+		}
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list accounts")
@@ -184,10 +199,27 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Disconnect handles DELETE /v1/social-accounts/{id}
 func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
-	profileID := h.getProfileID(r)
 	accountID := chi.URLParam(r, "id")
 	if accountID == "" {
 		accountID = chi.URLParam(r, "accountID")
+	}
+
+	// Resolve the profile_id for the account — API key path verifies via
+	// workspace, dashboard path verifies via profile URL param.
+	var profileID string
+	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
+		// API key path: verify the account belongs to this workspace
+		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+			ID:          accountID,
+			WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")
+			return
+		}
+		profileID = acc.ProfileID
+	} else {
+		profileID = h.getProfileID(r)
 	}
 
 	disconnected, err := h.queries.DisconnectSocialAccount(r.Context(), db.DisconnectSocialAccountParams{
@@ -224,12 +256,8 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	writeSuccess(w, map[string]bool{"disconnected": true})
 }
 
-// getProfileID extracts profile ID from API key context or URL param (dashboard routes).
+// getProfileID extracts profile ID from URL param (dashboard routes only).
 func (h *SocialAccountHandler) getProfileID(r *http.Request) string {
-	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
-		return pid
-	}
-	// Dashboard route: verify ownership via URL param
 	profileID := chi.URLParam(r, "profileID")
 	if profileID == "" {
 		return ""
@@ -246,4 +274,18 @@ func (h *SocialAccountHandler) getProfileID(r *http.Request) string {
 		return ""
 	}
 	return profileID
+}
+
+// resolveProfileID returns a profile ID for creating accounts.
+// API key path: picks the first profile in the workspace.
+// Dashboard path: uses the profile ID from the URL.
+func (h *SocialAccountHandler) resolveProfileID(r *http.Request) string {
+	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
+		profiles, err := h.queries.ListProfilesByWorkspace(r.Context(), workspaceID)
+		if err != nil || len(profiles) == 0 {
+			return ""
+		}
+		return profiles[0].ID
+	}
+	return h.getProfileID(r)
 }
