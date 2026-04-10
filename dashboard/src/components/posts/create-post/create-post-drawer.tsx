@@ -457,6 +457,7 @@ export function CreatePostDrawer({
               <PostToGrid
                 accounts={form.activeAccounts}
                 selectedIds={form.selectedAccountIds}
+                duplicateIds={form.duplicateAccountIds}
                 onRemove={form.toggleAccount}
               />
             </div>

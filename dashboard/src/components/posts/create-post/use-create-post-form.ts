@@ -136,6 +136,27 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     return activeAccounts.filter((a) => selectedAccountIds.has(a.id));
   }, [activeAccounts, selectedAccountIds]);
 
+  // Detect duplicate platform accounts (same platform + account_name).
+  // When the same underlying account is connected via BYO + managed,
+  // or selected from two profiles, we should only publish once.
+  const { duplicateAccountIds, uniqueSelectedAccounts } = useMemo(() => {
+    const seen = new Map<string, string>(); // "platform::account_name" → first account id
+    const dupes = new Set<string>();
+    const unique: SocialAccount[] = [];
+
+    for (const acc of selectedAccounts) {
+      const key = `${acc.platform}::${(acc.account_name || "").toLowerCase()}`;
+      const existing = seen.get(key);
+      if (existing) {
+        dupes.add(acc.id);
+      } else {
+        seen.set(key, acc.id);
+        unique.push(acc);
+      }
+    }
+    return { duplicateAccountIds: dupes, uniqueSelectedAccounts: unique };
+  }, [selectedAccounts]);
+
   const toggleAccount = useCallback((id: string) => {
     setSelectedAccountIds((prev) => {
       const next = new Set(prev);
@@ -305,7 +326,8 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId]);
 
   const buildPayload = useCallback(() => {
-    const accountIds = [...selectedAccountIds];
+    // Use only unique accounts — skip duplicates (same platform + account_name)
+    const accountIds = uniqueSelectedAccounts.map((a) => a.id);
     const hasOverrides = accountIds.some((id) => overrides[id]?.caption?.trim());
 
     const payload: Record<string, unknown> = {};
@@ -341,7 +363,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     }
 
     return payload;
-  }, [selectedAccountIds, overrides, mainContent, publishMode, scheduledAt]);
+  }, [uniqueSelectedAccounts, overrides, mainContent, publishMode, scheduledAt, uploadedMediaIds]);
 
   const reset = useCallback(() => {
     setMainContent("");
@@ -378,6 +400,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     setSubmitting,
     collapsedBlocks,
     allMediaUploaded,
+    duplicateAccountIds,
 
     // Actions
     toggleAccount,

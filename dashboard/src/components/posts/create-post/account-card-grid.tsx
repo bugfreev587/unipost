@@ -124,12 +124,14 @@ function AccountCardSmall({
 interface PostToGridProps {
   accounts: SocialAccount[];
   selectedIds: Set<string>;
+  duplicateIds?: Set<string>;
   onRemove: (id: string) => void;
 }
 
 export function PostToGrid({
   accounts,
   selectedIds,
+  duplicateIds,
   onRemove,
 }: PostToGridProps) {
   const selectedAccounts = accounts.filter((a) => selectedIds.has(a.id));
@@ -145,34 +147,53 @@ export function PostToGrid({
   }
 
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {selectedAccounts.map((account) => (
-        <PostToChip key={account.id} account={account} onRemove={onRemove} />
-      ))}
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {selectedAccounts.map((account) => (
+          <PostToChip
+            key={account.id}
+            account={account}
+            isDuplicate={duplicateIds?.has(account.id) ?? false}
+            onRemove={onRemove}
+          />
+        ))}
+      </div>
+      {duplicateIds && duplicateIds.size > 0 && (
+        <div className="mt-2 text-[10px] text-[#f59e0b] font-mono">
+          Duplicate accounts detected — only one post per platform account will be sent.
+        </div>
+      )}
     </div>
   );
 }
 
 function PostToChip({
   account,
+  isDuplicate,
   onRemove,
 }: {
+  isDuplicate: boolean;
   account: SocialAccount;
   onRemove: (id: string) => void;
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "#888";
 
   return (
-    <div className="flex items-center gap-1.5 rounded-md bg-[#17171a] border border-[#10b981]/30 px-2 py-1 text-[11px]">
+    <div className={`flex items-center gap-1.5 rounded-md bg-[#17171a] border px-2 py-1 text-[11px] ${
+      isDuplicate ? "border-[#f59e0b]/40 opacity-50" : "border-[#10b981]/30"
+    }`}>
       <div
         className="w-3.5 h-3.5 rounded flex items-center justify-center flex-shrink-0"
         style={{ background: `${brandColor}20`, color: brandColor }}
       >
         <PlatformIcon platform={account.platform} size={8} />
       </div>
-      <span className="text-[#f4f4f5] truncate max-w-[80px]">
+      <span className={`truncate max-w-[80px] ${isDuplicate ? "text-[#8a8a93] line-through" : "text-[#f4f4f5]"}`}>
         {account.account_name || account.platform}
       </span>
+      {isDuplicate && (
+        <span className="text-[9px] text-[#f59e0b] flex-shrink-0">DUP</span>
+      )}
       <button
         type="button"
         onClick={() => onRemove(account.id)}
