@@ -53,9 +53,11 @@ export function CreatePostDrawer({
         const token = await getToken();
         if (!token) return;
         const res = await listProfiles(token);
-        setProfiles(res.data);
-        if (res.data.length > 0 && !selectedProfileId) {
-          setSelectedProfileId(res.data[0].id);
+        const loaded = res.data ?? [];
+        setProfiles(loaded);
+        // Always auto-select first profile on open
+        if (loaded.length > 0) {
+          setSelectedProfileId((prev) => prev || loaded[0].id);
         }
       } catch (err) {
         console.error("Failed to load profiles:", err);
@@ -320,16 +322,18 @@ export function CreatePostDrawer({
                     setSelectedProfileId(e.target.value);
                     form.reset();
                   }}
-                  className="w-full rounded-lg px-3 py-2.5 pr-8 text-sm bg-[#17171a] border border-[#22222a] text-[#f4f4f5] outline-none appearance-none cursor-pointer transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
+                  disabled={profiles.length === 0}
+                  className="w-full rounded-lg px-3 py-2.5 pr-8 text-sm bg-[#17171a] border border-[#22222a] text-[#f4f4f5] outline-none appearance-none cursor-pointer transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] disabled:opacity-50"
                 >
-                  {profiles.length === 0 && (
+                  {profiles.length === 0 ? (
                     <option value="">Loading profiles...</option>
+                  ) : (
+                    profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))
                   )}
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
                 </select>
                 <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#55555c] pointer-events-none" />
               </div>
