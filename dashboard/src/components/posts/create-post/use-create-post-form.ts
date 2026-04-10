@@ -113,14 +113,11 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     [accounts]
   );
 
+  // Preserve the same order as activeAccounts (matches the right-side
+  // "Post To" card grid) so the per-platform editors on the left align
+  // with the account cards on the right.
   const selectedAccounts = useMemo(() => {
-    const selected = activeAccounts.filter((a) => selectedAccountIds.has(a.id));
-    return selected.sort((a, b) => {
-      const pa = PLATFORM_ORDER.indexOf(a.platform as typeof PLATFORM_ORDER[number]);
-      const pb = PLATFORM_ORDER.indexOf(b.platform as typeof PLATFORM_ORDER[number]);
-      if (pa !== pb) return (pa === -1 ? 999 : pa) - (pb === -1 ? 999 : pb);
-      return (a.account_name || "").localeCompare(b.account_name || "");
-    });
+    return activeAccounts.filter((a) => selectedAccountIds.has(a.id));
   }, [activeAccounts, selectedAccountIds]);
 
   const toggleAccount = useCallback((id: string) => {
