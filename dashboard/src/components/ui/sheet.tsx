@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
 function Sheet({ ...props }: DrawerPrimitive.Root.Props) {
-  return <DrawerPrimitive.Root data-slot="sheet" {...props} />
+  return <DrawerPrimitive.Root data-slot="sheet" swipeDirection="right" {...props} />
 }
 
 function SheetTrigger({ ...props }: DrawerPrimitive.Trigger.Props) {
@@ -31,8 +31,8 @@ function SheetOverlay({
     <DrawerPrimitive.Backdrop
       data-slot="sheet-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/60 backdrop-blur-[4px] transition-opacity duration-[220ms]",
-        "data-open:opacity-100 data-closed:opacity-0",
+        "fixed inset-0 z-50 bg-black/60 backdrop-blur-[4px]",
+        "transition-opacity duration-[220ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
         className
       )}
       {...props}
@@ -56,7 +56,6 @@ function SheetContent({
         className={cn(
           "fixed top-0 right-0 z-50 flex h-screen flex-col border-l outline-none",
           "transition-transform duration-[320ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
-          "data-open:translate-x-0 data-closed:translate-x-full",
           "shadow-[-24px_0_48px_-12px_rgba(0,0,0,0.5)]",
           className
         )}
