@@ -317,7 +317,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               {workspace.name}
             </span>
             <Link
-              href="/workspace/settings"
+              href={`/projects/${profileId}/workspace`}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 width: 28, height: 28, borderRadius: 6,
