@@ -28,7 +28,7 @@ SELECT * FROM social_accounts WHERE id = $1;
 SELECT * FROM social_accounts WHERE id = $1 AND profile_id = $2;
 
 -- name: DisconnectSocialAccount :one
-UPDATE social_accounts SET disconnected_at = NOW()
+UPDATE social_accounts SET disconnected_at = NOW(), status = 'disconnected'
 WHERE id = $1 AND profile_id = $2
 RETURNING *;
 

@@ -67,7 +67,7 @@ func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccou
 }
 
 const disconnectSocialAccount = `-- name: DisconnectSocialAccount :one
-UPDATE social_accounts SET disconnected_at = NOW()
+UPDATE social_accounts SET disconnected_at = NOW(), status = 'disconnected'
 WHERE id = $1 AND profile_id = $2
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `
