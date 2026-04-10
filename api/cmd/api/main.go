@@ -260,6 +260,7 @@ func main() {
 	healthHandler := handler.NewHealthHandler()
 	webhookHandler := handler.NewWebhookHandler(queries)
 	profileHandler := handler.NewProfileHandler(queries)
+	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, webhookWorker)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, webhookWorker, storageClient)
@@ -427,6 +428,10 @@ func main() {
 	// Public API routes (API key auth)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.APIKeyMiddleware(queries))
+
+		// Workspace info (API key scoped)
+		r.Get("/v1/workspace", workspaceHandler.Get)
+		r.Patch("/v1/workspace", workspaceHandler.Update)
 
 		r.Get("/v1/social-accounts", socialAccountHandler.List)
 		r.Post("/v1/social-accounts/connect", socialAccountHandler.Connect)

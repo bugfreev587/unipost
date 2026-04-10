@@ -175,7 +175,7 @@ function createMcpServer(apiKey: string): McpServer {
         .string()
         .optional()
         .describe(
-          "Optional idempotency key. Same key + same project within 24h returns the prior response unchanged."
+          "Optional idempotency key. Same key + same workspace within 24h returns the prior response unchanged."
         ),
       status: z
         .enum(["draft"])
@@ -527,7 +527,7 @@ function createMcpServer(apiKey: string): McpServer {
       "",
       "Returns {session_id, url, expires_at}. Email the URL to your end user; they",
       "complete the OAuth handshake (or Bluesky app-password form) on the hosted",
-      "page, after which the new managed account appears in your project.",
+      "page, after which the new managed account appears in your workspace.",
       "",
       "Sprint 3 supports twitter, linkedin, bluesky. Sessions expire after 30 minutes.",
     ].join("\n"),
@@ -607,7 +607,7 @@ function createMcpServer(apiKey: string): McpServer {
 
   server.tool(
     "unipost_list_managed_users",
-    "List end users onboarded via UniPost Connect, grouped by external_user_id with per-platform account counts. Use this when an AI agent needs a project-level view of all managed users (e.g. 'who has a Twitter account connected via Connect?').",
+    "List end users onboarded via UniPost Connect, grouped by external_user_id with per-platform account counts. Use this when an AI agent needs a workspace-level view of all managed users (e.g. 'who has a Twitter account connected via Connect?').",
     {
       limit: z.number().int().min(1).max(100).optional().describe("Page size, default 25, max 100."),
     },
@@ -620,7 +620,7 @@ function createMcpServer(apiKey: string): McpServer {
 
   server.tool(
     "unipost_get_managed_user",
-    "Get the detail view of one managed end user: every social account they've connected, with per-account status and platform info. Pair with unipost_list_managed_users to walk a project's end-user list.",
+    "Get the detail view of one managed end user: every social account they've connected, with per-account status and platform info. Pair with unipost_list_managed_users to walk a workspace's end-user list.",
     {
       external_user_id: z.string().describe("The external_user_id you used when creating the Connect session."),
     },
@@ -663,13 +663,13 @@ function createMcpServer(apiKey: string): McpServer {
   );
 
   server.tool(
-    "unipost_update_project_quota",
+    "unipost_update_workspace_quota",
     [
       "Set or clear the per-social-account monthly publish cap for the",
-      "current project. When set, the publish path counts each account's",
+      "current workspace. When set, the publish path counts each account's",
       "successful posts this calendar month and refuses dispatch when",
       "the count reaches the cap. Pass null to disable the cap (the",
-      "default — unlimited per-account, only the project-wide quota",
+      "default — unlimited per-account, only the workspace-wide quota",
       "applies). Pass 0 to emergency-lock a runaway account for the",
       "rest of the month.",
       "",
@@ -685,20 +685,8 @@ function createMcpServer(apiKey: string): McpServer {
         .describe("Monthly publish cap per social account. null = unlimited (default)."),
     },
     async ({ per_account_monthly_limit }) => {
-      // The REST API reads the project_id from the API key's default
-      // project context. PATCH /v1/projects/:id requires the project
-      // id — we don't have it in the MCP session, so we list the
-      // user's projects and pick the first (most MCP users have a
-      // single project). Multi-project users can set the quota from
-      // the dashboard directly.
-      const projects = await apiRequest("/v1/projects", apiKey);
-      const projectId = projects?.data?.[0]?.id;
-      if (!projectId) {
-        return {
-          content: [{ type: "text" as const, text: "Error: could not determine project ID. Ensure the API key has at least one project." }],
-        };
-      }
-      const data = await apiRequest(`/v1/projects/${projectId}`, apiKey, {
+      // PATCH /v1/workspace uses the workspace_id from the API key context.
+      const data = await apiRequest("/v1/workspace", apiKey, {
         method: "PATCH",
         body: JSON.stringify({ per_account_monthly_limit }),
       });
