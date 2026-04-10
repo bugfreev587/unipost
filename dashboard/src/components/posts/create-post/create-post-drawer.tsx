@@ -135,23 +135,45 @@ export function CreatePostDrawer({
   }, [open, form.canSubmit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Upload a file to R2 via the two-step presigned URL flow
+  // Compute SHA-256 hash of a file
+  async function hashFile(file: File): Promise<string> {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
   async function handleFileUpload(file: File) {
-    // addMediaItem checks cache — if already uploaded, returns immediately
+    // Local cache check — if already uploaded in this session, skip
     const { cached } = form.addMediaItem(file);
     if (cached) return;
     const index = form.mediaItems.length;
     try {
       const token = await getToken();
       if (!token) return;
-      // Step 1: Get presigned URL
+
+      // Step 1: Hash the file for server-side dedup
+      form.updateMediaItem(index, { progress: 5 });
+      const contentHash = await hashFile(file);
       form.updateMediaItem(index, { progress: 10 });
+
+      // Step 2: POST to create media row (server checks hash for dedup)
       const res = await createMedia(token, workspaceId, {
         filename: file.name,
         content_type: file.type || "application/octet-stream",
         size_bytes: file.size,
+        content_hash: contentHash,
       });
+
+      // If server returned an existing uploaded media (dedup hit), skip R2 PUT
+      if (res.data.status === "uploaded") {
+        form.updateMediaItem(index, { progress: 100, mediaId: res.data.id });
+        return;
+      }
+
+      // Step 3: PUT file to R2 via presigned URL
       form.updateMediaItem(index, { progress: 30 });
-      // Step 2: PUT file to R2
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("PUT", res.data.upload_url);

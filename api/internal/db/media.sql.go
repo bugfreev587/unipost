@@ -7,20 +7,23 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createMedia = `-- name: CreateMedia :one
-INSERT INTO media (workspace_id, storage_key, content_type, size_bytes, status)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id
+INSERT INTO media (workspace_id, storage_key, content_type, size_bytes, status, content_hash)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash
 `
 
 type CreateMediaParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	StorageKey  string `json:"storage_key"`
-	ContentType string `json:"content_type"`
-	SizeBytes   int64  `json:"size_bytes"`
-	Status      string `json:"status"`
+	WorkspaceID string      `json:"workspace_id"`
+	StorageKey  string      `json:"storage_key"`
+	ContentType string      `json:"content_type"`
+	SizeBytes   int64       `json:"size_bytes"`
+	Status      string      `json:"status"`
+	ContentHash pgtype.Text `json:"content_hash"`
 }
 
 func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Media, error) {
@@ -30,6 +33,7 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Media
 		arg.ContentType,
 		arg.SizeBytes,
 		arg.Status,
+		arg.ContentHash,
 	)
 	var i Media
 	err := row.Scan(
@@ -41,12 +45,13 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Media
 		&i.CreatedAt,
 		&i.UploadedAt,
 		&i.WorkspaceID,
+		&i.ContentHash,
 	)
 	return i, err
 }
 
 const getMedia = `-- name: GetMedia :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id FROM media WHERE id = $1
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media WHERE id = $1
 `
 
 func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
@@ -61,12 +66,41 @@ func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
 		&i.CreatedAt,
 		&i.UploadedAt,
 		&i.WorkspaceID,
+		&i.ContentHash,
+	)
+	return i, err
+}
+
+const getMediaByHash = `-- name: GetMediaByHash :one
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
+WHERE workspace_id = $1 AND content_hash = $2 AND status != 'deleted'
+LIMIT 1
+`
+
+type GetMediaByHashParams struct {
+	WorkspaceID string      `json:"workspace_id"`
+	ContentHash pgtype.Text `json:"content_hash"`
+}
+
+func (q *Queries) GetMediaByHash(ctx context.Context, arg GetMediaByHashParams) (Media, error) {
+	row := q.db.QueryRow(ctx, getMediaByHash, arg.WorkspaceID, arg.ContentHash)
+	var i Media
+	err := row.Scan(
+		&i.ID,
+		&i.StorageKey,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UploadedAt,
+		&i.WorkspaceID,
+		&i.ContentHash,
 	)
 	return i, err
 }
 
 const getMediaByIDAndWorkspace = `-- name: GetMediaByIDAndWorkspace :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id FROM media WHERE id = $1 AND workspace_id = $2
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media WHERE id = $1 AND workspace_id = $2
 `
 
 type GetMediaByIDAndWorkspaceParams struct {
@@ -86,6 +120,7 @@ func (q *Queries) GetMediaByIDAndWorkspace(ctx context.Context, arg GetMediaByID
 		&i.CreatedAt,
 		&i.UploadedAt,
 		&i.WorkspaceID,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -101,7 +136,7 @@ func (q *Queries) HardDeleteMedia(ctx context.Context, id string) error {
 }
 
 const listAbandonedMedia = `-- name: ListAbandonedMedia :many
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
 WHERE status = 'pending'
   AND created_at < NOW() - INTERVAL '7 days'
 LIMIT 100
@@ -125,6 +160,7 @@ func (q *Queries) ListAbandonedMedia(ctx context.Context) ([]Media, error) {
 			&i.CreatedAt,
 			&i.UploadedAt,
 			&i.WorkspaceID,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -137,7 +173,7 @@ func (q *Queries) ListAbandonedMedia(ctx context.Context) ([]Media, error) {
 }
 
 const listMediaByWorkspace = `-- name: ListMediaByWorkspace :many
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
 WHERE workspace_id = $1 AND status != 'deleted'
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -167,6 +203,7 @@ func (q *Queries) ListMediaByWorkspace(ctx context.Context, arg ListMediaByWorks
 			&i.CreatedAt,
 			&i.UploadedAt,
 			&i.WorkspaceID,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -185,7 +222,7 @@ SET status = 'uploaded',
     content_type = $3,
     uploaded_at = NOW()
 WHERE id = $1
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash
 `
 
 type MarkMediaUploadedParams struct {
@@ -206,6 +243,7 @@ func (q *Queries) MarkMediaUploaded(ctx context.Context, arg MarkMediaUploadedPa
 		&i.CreatedAt,
 		&i.UploadedAt,
 		&i.WorkspaceID,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -228,7 +266,7 @@ func (q *Queries) SoftDeleteMedia(ctx context.Context, arg SoftDeleteMediaParams
 const updateMediaStorageKey = `-- name: UpdateMediaStorageKey :one
 UPDATE media SET storage_key = $2
 WHERE id = $1
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash
 `
 
 type UpdateMediaStorageKeyParams struct {
@@ -248,6 +286,7 @@ func (q *Queries) UpdateMediaStorageKey(ctx context.Context, arg UpdateMediaStor
 		&i.CreatedAt,
 		&i.UploadedAt,
 		&i.WorkspaceID,
+		&i.ContentHash,
 	)
 	return i, err
 }

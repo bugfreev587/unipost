@@ -46,6 +46,7 @@ type Media struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UploadedAt  pgtype.Timestamptz `json:"uploaded_at"`
 	WorkspaceID string             `json:"workspace_id"`
+	ContentHash pgtype.Text        `json:"content_hash"`
 }
 
 type OauthState struct {

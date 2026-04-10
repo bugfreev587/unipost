@@ -1,10 +1,15 @@
 -- name: CreateMedia :one
-INSERT INTO media (workspace_id, storage_key, content_type, size_bytes, status)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO media (workspace_id, storage_key, content_type, size_bytes, status, content_hash)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetMedia :one
 SELECT * FROM media WHERE id = $1;
+
+-- name: GetMediaByHash :one
+SELECT * FROM media
+WHERE workspace_id = $1 AND content_hash = $2 AND status != 'deleted'
+LIMIT 1;
 
 -- name: UpdateMediaStorageKey :one
 UPDATE media SET storage_key = $2

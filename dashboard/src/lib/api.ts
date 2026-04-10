@@ -359,7 +359,7 @@ export interface MediaUpload {
 export async function createMedia(
   token: string,
   workspaceId: string,
-  data: { filename: string; content_type: string; size_bytes: number }
+  data: { filename: string; content_type: string; size_bytes: number; content_hash?: string }
 ): Promise<ApiResponse<MediaUpload>> {
   return request(`/v1/workspaces/${workspaceId}/media`, token, {
     method: "POST",

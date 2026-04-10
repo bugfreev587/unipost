@@ -108,6 +108,7 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Filename    string `json:"filename"`
 		ContentType string `json:"content_type"`
 		SizeBytes   int64  `json:"size_bytes"`
+		ContentHash string `json:"content_hash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -130,21 +131,33 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build a stable storage key from a fresh DB row ID. We insert
-	// first so the ID is available; PresignPut signs the URL using
-	// that ID + the original file extension so the R2 object's name
-	// is recognizable in dashboards.
+	// Dedup: if the client sent a content_hash, check for an existing
+	// media row with the same hash in this workspace. Return it directly
+	// without creating a new row or presigned URL — the file is already
+	// in R2.
+	if body.ContentHash != "" {
+		existing, err := h.queries.GetMediaByHash(r.Context(), db.GetMediaByHashParams{
+			WorkspaceID: workspaceID,
+			ContentHash: pgtype.Text{String: body.ContentHash, Valid: true},
+		})
+		if err == nil && existing.ID != "" {
+			resp := toMediaResponse(existing)
+			resp.Status = existing.Status
+			writeSuccess(w, resp)
+			return
+		}
+	}
+
 	ext := pickExt(body.Filename, body.ContentType)
-	tempKey := storage.MediaKey("placeholder", ext)
-	_ = tempKey // overwritten below; here only so the helper is exercised in test if we add one later
 
 	// Insert the row first with a placeholder storage_key.
 	row, err := h.queries.CreateMedia(r.Context(), db.CreateMediaParams{
-		WorkspaceID:   workspaceID,
+		WorkspaceID: workspaceID,
 		StorageKey:  "placeholder", // overwritten just below
 		ContentType: body.ContentType,
 		SizeBytes:   body.SizeBytes,
 		Status:      "pending",
+		ContentHash: pgtype.Text{String: body.ContentHash, Valid: body.ContentHash != ""},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create media row")
