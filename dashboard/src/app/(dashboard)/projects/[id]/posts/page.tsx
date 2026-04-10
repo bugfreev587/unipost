@@ -5,8 +5,8 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
-  listSocialAccounts, listSocialPosts, cancelSocialPost,
-  type SocialAccount, type SocialPost,
+  listSocialAccounts, listSocialPosts, cancelSocialPost, listProfiles,
+  type SocialAccount, type SocialPost, type Profile,
 } from "@/lib/api";
 import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
@@ -65,6 +65,7 @@ export default function PostsPage() {
   const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<FilterTab>("all");
   const [search, setSearch] = useState("");
@@ -79,12 +80,14 @@ export default function PostsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [a, p] = await Promise.all([
+      const [a, p, pr] = await Promise.all([
         listSocialAccounts(token, profileId),
         listSocialPosts(token, workspaceId),
+        listProfiles(token),
       ]);
       setAccounts(a.data);
       setPosts(p.data);
+      setProfiles(pr.data);
     } catch (err) {
       console.error("Failed to load:", err);
     } finally {
@@ -303,6 +306,8 @@ export default function PostsPage() {
         open={showCreateModal}
         onOpenChange={setShowCreateModal}
         accounts={accounts}
+        profiles={profiles}
+        initialProfileId={profileId}
         workspaceId={workspaceId}
         getToken={getToken}
         onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}

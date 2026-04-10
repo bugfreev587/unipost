@@ -12,15 +12,16 @@ import {
   PRIMARY_BUTTON_LABELS,
 } from "./use-create-post-form";
 import type { SocialAccount, Profile } from "@/lib/api";
-import { createSocialPost, listProfiles, listSocialAccounts } from "@/lib/api";
+import { createSocialPost, listSocialAccounts } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface CreatePostDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   accounts: SocialAccount[];
+  profiles: Profile[];
+  initialProfileId?: string;
   workspaceId: string;
-  profileName?: string;
   getToken: () => Promise<string | null>;
   onCreated: () => void;
 }
@@ -29,14 +30,13 @@ export function CreatePostDrawer({
   open,
   onOpenChange,
   accounts: initialAccounts,
+  profiles,
+  initialProfileId,
   workspaceId,
-  profileName,
   getToken,
   onCreated,
 }: CreatePostDrawerProps) {
-  // Profile management
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState<string>("");
+  const [selectedProfileId, setSelectedProfileId] = useState<string>(initialProfileId || "");
   const [profileAccounts, setProfileAccounts] = useState<SocialAccount[]>(initialAccounts);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
 
@@ -45,25 +45,12 @@ export function CreatePostDrawer({
   const [queues, setQueues] = useState<Array<{ id: string; name: string }>>([]);
   const [queuesLoaded, setQueuesLoaded] = useState(false);
 
-  // Load profiles when drawer opens
+  // Auto-select initial profile when drawer opens
   useEffect(() => {
-    if (!open) return;
-    (async () => {
-      try {
-        const token = await getToken();
-        if (!token) return;
-        const res = await listProfiles(token);
-        const loaded = res.data ?? [];
-        setProfiles(loaded);
-        // Always auto-select first profile on open
-        if (loaded.length > 0) {
-          setSelectedProfileId((prev) => prev || loaded[0].id);
-        }
-      } catch (err) {
-        console.error("Failed to load profiles:", err);
-      }
-    })();
-  }, [open, getToken]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (open && !selectedProfileId && profiles.length > 0) {
+      setSelectedProfileId(initialProfileId || profiles[0].id);
+    }
+  }, [open, profiles, initialProfileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load accounts when profile changes
   useEffect(() => {
@@ -96,7 +83,7 @@ export function CreatePostDrawer({
       form.reset();
       setShowDiscardConfirm(false);
       setQueuesLoaded(false);
-      setSelectedProfileId("");
+      setSelectedProfileId(initialProfileId || "");
       setProfileAccounts(initialAccounts);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
