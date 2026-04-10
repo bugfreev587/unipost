@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { getBilling, createCheckout, createPortal, type BillingInfo, type Plan } from "@/lib/api";
 import { CheckCircle2, ExternalLink } from "lucide-react";
 
@@ -19,7 +20,7 @@ const PLANS: Plan[] = [
 ];
 
 export default function BillingPage() {
-  const { id: workspaceId } = useParams<{ id: string }>();
+  const workspaceId = useWorkspaceId();
   const searchParams = useSearchParams();
   const { getToken } = useAuth();
   const [billing, setBilling] = useState<BillingInfo | null>(null);
@@ -28,6 +29,7 @@ export default function BillingPage() {
   const callbackStatus = searchParams.get("status");
 
   const loadBilling = useCallback(async () => {
+    if (!workspaceId) return; // wait for workspace resolution
     try {
       const token = await getToken();
       if (!token) return;

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +17,7 @@ import { Plus, Key, AlertTriangle } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ApiKeysPage() {
-  const { id: workspaceId } = useParams<{ id: string }>();
+  const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,6 +30,7 @@ export default function ApiKeysPage() {
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
 
   const loadKeys = useCallback(async () => {
+    if (!workspaceId) return; // wait for workspace resolution
     try {
       const token = await getToken();
       if (!token) return;

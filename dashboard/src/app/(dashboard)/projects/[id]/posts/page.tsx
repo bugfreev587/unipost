@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   listSocialAccounts, listSocialPosts, cancelSocialPost,
   type SocialAccount, type SocialPost,
@@ -59,7 +60,8 @@ const CSS = `.dbadge-gray{background:#ffffff08;color:#666;border:1px solid #333}
 .posts-empty-sub{font-size:13px;color:var(--dmuted)}`;
 
 export default function PostsPage() {
-  const { id: workspaceId } = useParams<{ id: string }>();
+  const { id: profileId } = useParams<{ id: string }>();
+  const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -73,11 +75,12 @@ export default function PostsPage() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async () => {
+    if (!workspaceId) return; // wait for workspace resolution
     try {
       const token = await getToken();
       if (!token) return;
       const [a, p] = await Promise.all([
-        listSocialAccounts(token, workspaceId),
+        listSocialAccounts(token, profileId),
         listSocialPosts(token, workspaceId),
       ]);
       setAccounts(a.data);
@@ -87,7 +90,7 @@ export default function PostsPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, workspaceId]);
+  }, [getToken, profileId, workspaceId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 

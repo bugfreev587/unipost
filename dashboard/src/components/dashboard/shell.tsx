@@ -88,16 +88,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function loadBilling() {
-      if (!profileId) return;
+      if (!currentProfile?.workspace_id) return;
       try {
         const token = await getToken();
         if (!token) return;
-        const res = await getBilling(token, profileId);
+        const res = await getBilling(token, currentProfile.workspace_id);
         setBilling(res.data);
       } catch { /* silent */ }
     }
     loadBilling();
-  }, [profileId, getToken]);
+  }, [currentProfile?.workspace_id, getToken]);
 
   function isActive(href: string) {
     if (!profileId) return false;

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   listSocialPosts,
   getPostAnalytics,
@@ -170,7 +170,7 @@ const TREND_METRICS: { key: "posts" | "impressions" | "likes" | "comments" | "sh
 type SortField = "published_at" | "impressions" | "likes" | "engagement";
 
 export default function AnalyticsPage() {
-  const { id: workspaceId } = useParams<{ id: string }>();
+  const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
 
   // Filters
@@ -217,6 +217,7 @@ export default function AnalyticsPage() {
 
   const reloadAll = useCallback(
     async (forceRefresh = false) => {
+      if (!workspaceId) return; // wait for workspace resolution
       try {
         const token = await getToken();
         if (!token) return;
