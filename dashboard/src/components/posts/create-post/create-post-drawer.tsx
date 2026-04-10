@@ -12,8 +12,9 @@ import {
   PRIMARY_BUTTON_LABELS,
   type PublishMode,
 } from "./use-create-post-form";
-import type { SocialAccount } from "@/lib/api";
-import { createSocialPost, createMedia, getMedia } from "@/lib/api";
+import { ChevronDown } from "lucide-react";
+import type { SocialAccount, Profile } from "@/lib/api";
+import { createSocialPost, createMedia, getMedia, listProfiles, listSocialAccounts } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
@@ -102,17 +103,55 @@ export function CreatePostDrawer({
   getToken,
   onCreated,
 }: CreatePostDrawerProps) {
-  const form = useCreatePostForm(accounts);
+  // Profile management
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [profileAccounts, setProfileAccounts] = useState<SocialAccount[]>(accounts);
+
+  const form = useCreatePostForm(profileAccounts);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [queues, setQueues] = useState<Array<{ id: string; name: string }>>([]);
   const [queuesLoaded, setQueuesLoaded] = useState(false);
   const pendingCloseRef = useRef(false);
 
+  // Load profiles when drawer opens
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await listProfiles(token);
+        const loaded = Array.isArray(res.data) ? res.data : [];
+        setProfiles(loaded);
+        if (loaded.length > 0 && !selectedProfileId) {
+          setSelectedProfileId(loaded[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load profiles:", err);
+      }
+    })();
+  }, [open, getToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load accounts when profile changes
+  useEffect(() => {
+    if (!selectedProfileId || !open) return;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await listSocialAccounts(token, selectedProfileId);
+        setProfileAccounts(res.data);
+      } catch (err) {
+        console.error("Failed to load accounts:", err);
+      }
+    })();
+  }, [selectedProfileId, open, getToken]);
+
   // Load queues lazily when switching to queue mode
   useEffect(() => {
     if (form.publishMode === "queue" && !queuesLoaded) {
       setQueuesLoaded(true);
-      // Queue API not yet implemented - leave empty for now
     }
   }, [form.publishMode, queuesLoaded]);
 
@@ -120,6 +159,8 @@ export function CreatePostDrawer({
   useEffect(() => {
     if (!open) {
       form.reset();
+      setSelectedProfileId("");
+      setProfileAccounts(accounts);
       setShowDiscardConfirm(false);
       setQueuesLoaded(false);
       pendingCloseRef.current = false;
@@ -288,8 +329,8 @@ export function CreatePostDrawer({
 
         {/* Body: two columns */}
         <div className="flex-1 flex min-h-0">
-          {/* LEFT: Content + per-platform editors */}
-          <div className="flex-1 overflow-y-auto px-8 py-7 border-r border-[#22222a] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2e2e38] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-[#3a3a46]">
+          {/* LEFT: Content + per-platform editors (3:2 ratio) */}
+          <div className="flex-[3] overflow-y-auto px-8 py-7 border-r border-[#22222a] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2e2e38] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-[#3a3a46]">
             {/* Main content */}
             <section>
               <div className="flex items-center justify-between mb-2.5">
@@ -365,17 +406,63 @@ export function CreatePostDrawer({
             </section>
           </div>
 
-          {/* RIGHT: Accounts + Publish panel */}
-          <aside className="w-[360px] flex-shrink-0 overflow-y-auto px-6 py-7 bg-[#0a0a0b]/40 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2e2e38] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-[#3a3a46]">
-            <ConnectedAccountsGrid
-              accounts={form.activeAccounts}
-              selectedIds={form.selectedAccountIds}
-              onToggle={form.toggleAccount}
-            />
+          {/* RIGHT: Profile + Connected Accounts + Post To + Publish */}
+          <aside className="flex-[2] overflow-y-auto px-6 py-7 bg-[#0a0a0b]/40 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2e2e38] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-[#3a3a46]">
+
+            {/* 1. Profile selector */}
+            {profiles.length > 0 && (
+              <div className="mb-5">
+                <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-2">
+                  Profile
+                </label>
+                <div className="relative">
+                  <select
+                    value={selectedProfileId}
+                    onChange={(e) => setSelectedProfileId(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2.5 pr-8 text-sm bg-[#17171a] border border-[#22222a] text-[#f4f4f5] outline-none appearance-none cursor-pointer transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
+                  >
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#55555c] pointer-events-none" />
+                </div>
+              </div>
+            )}
+
+            {/* 2. Connected Accounts */}
+            <div className="mb-5">
+              <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-2">
+                Connected accounts
+              </label>
+              <ConnectedAccountsGrid
+                accounts={form.activeAccounts}
+                selectedIds={form.selectedAccountIds}
+                onToggle={form.toggleAccount}
+              />
+            </div>
+
+            {/* 3. Post To */}
+            <div className="mb-5">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium">
+                  Post to
+                </label>
+                <span className="text-[11px] text-[#55555c] font-mono">
+                  {form.selectedAccountIds.size} selected
+                </span>
+              </div>
+              <PostToGrid
+                accounts={form.activeAccounts}
+                selectedIds={form.selectedAccountIds}
+                onRemove={form.toggleAccount}
+              />
+            </div>
 
             {/* Divider */}
-            <div className="my-7 border-t border-[#22222a]" />
+            <div className="my-5 border-t border-[#22222a]" />
 
+            {/* 4. Publish */}
             <PublishModePanel
               mode={form.publishMode}
               onModeChange={form.setPublishMode}
