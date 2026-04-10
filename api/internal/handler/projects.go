@@ -24,6 +24,21 @@ func NewProfileHandler(queries *db.Queries) *ProfileHandler {
 	return &ProfileHandler{queries: queries}
 }
 
+// resolveWorkspaceID returns the workspace ID from the URL param if
+// present, otherwise looks up the user's default workspace. Returns
+// empty string if no workspace found.
+func (h *ProfileHandler) resolveWorkspaceID(r *http.Request) string {
+	if wid := chi.URLParam(r, "workspaceID"); wid != "" {
+		return wid
+	}
+	userID := auth.GetUserID(r.Context())
+	workspaces, err := h.queries.ListWorkspacesByUser(r.Context(), userID)
+	if err != nil || len(workspaces) == 0 {
+		return ""
+	}
+	return workspaces[0].ID
+}
+
 type profileResponse struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspace_id"`
@@ -61,18 +76,10 @@ func toProfileResponse(p db.Profile) profileResponse {
 }
 
 func (h *ProfileHandler) List(w http.ResponseWriter, r *http.Request) {
-	// The route is /v1/profiles (no workspaceID in path). Resolve the
-	// workspace from the authenticated user by looking up their
-	// workspace(s), then listing profiles under the first workspace.
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := h.resolveWorkspaceID(r)
 	if workspaceID == "" {
-		userID := auth.GetUserID(r.Context())
-		workspaces, err := h.queries.ListWorkspacesByUser(r.Context(), userID)
-		if err != nil || len(workspaces) == 0 {
-			writeSuccessWithMeta(w, []profileResponse{}, 0)
-			return
-		}
-		workspaceID = workspaces[0].ID
+		writeSuccessWithMeta(w, []profileResponse{}, 0)
+		return
 	}
 
 	profiles, err := h.queries.ListProfilesByWorkspace(r.Context(), workspaceID)
@@ -90,7 +97,11 @@ func (h *ProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := h.resolveWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "No workspace found for this user")
+		return
+	}
 
 	var body struct {
 		Name string `json:"name"`
