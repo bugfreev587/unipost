@@ -111,7 +111,7 @@ export async function getWorkspace(
 export async function updateWorkspace(
   token: string,
   workspaceId: string,
-  data: { name: string }
+  data: { name: string; usage_modes?: string[] }
 ): Promise<ApiResponse<Workspace>> {
   return request(`/v1/workspaces/${workspaceId}`, token, {
     method: "PATCH",
