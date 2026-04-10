@@ -31,18 +31,18 @@ import {
 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
     { href: "/profile", label: "Profile" },
     { href: "/accounts", label: "Quickstart" },
     { href: "/accounts/native", label: "White-label" },
   ]},
-  { href: "/users", label: "Managed Users", icon: User },
   { href: "/posts", label: "Posts", icon: Send, submenu: [
     { href: "/posts", label: "Overview" },
     { href: "/posts/queue", label: "Queue" },
   ]},
+  { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/users", label: "Managed Users", icon: User },
 ];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
