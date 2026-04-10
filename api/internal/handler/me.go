@@ -90,13 +90,29 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 	lastID := user.LastProfileID
 
 	if !defaultID.Valid {
-		// Branch 1 vs branch 2: do they already have any profiles?
-		// NOTE: ListProfilesByWorkspace expects a workspace_id. During
-		// bootstrap the user may not have a workspace yet — the Clerk
-		// webhook + migration 025 seed one per user. We pass userID
-		// here as a temporary measure; the workspace_id == user_id for
-		// the default workspace created by the migration.
-		existing, err := h.queries.ListProfilesByWorkspace(r.Context(), userID)
+		// Resolve the user's workspace, creating one if needed.
+		workspaces, err := h.queries.ListWorkspacesByUser(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list workspaces: "+err.Error())
+			return
+		}
+		var workspaceID string
+		if len(workspaces) == 0 {
+			// Create a default workspace for this user
+			ws, err := h.queries.CreateWorkspace(r.Context(), db.CreateWorkspaceParams{
+				UserID: userID,
+				Name:   "Default Workspace",
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create workspace: "+err.Error())
+				return
+			}
+			workspaceID = ws.ID
+		} else {
+			workspaceID = workspaces[0].ID
+		}
+
+		existing, err := h.queries.ListProfilesByWorkspace(r.Context(), workspaceID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list profiles: "+err.Error())
 			return
@@ -105,7 +121,7 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		var pickedID string
 		if len(existing) == 0 {
 			created, err := h.queries.CreateProfile(r.Context(), db.CreateProfileParams{
-				WorkspaceID: userID,
+				WorkspaceID: workspaceID,
 				Name:        "Default",
 			})
 			if err != nil {

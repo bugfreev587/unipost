@@ -123,6 +123,43 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// On user.created: seed a "{name} Workspace" with a "Default" profile
+	// if the user doesn't already have a workspace. This ensures the
+	// dashboard has something to show on first login.
+	existing, _ := h.queries.ListWorkspacesByUser(r.Context(), userData.ID)
+	if len(existing) == 0 {
+		wsName := "Default Workspace"
+		if name != "" {
+			wsName = name + "'s Workspace"
+		}
+		ws, wsErr := h.queries.CreateWorkspace(r.Context(), db.CreateWorkspaceParams{
+			UserID: userData.ID,
+			Name:   wsName,
+		})
+		if wsErr != nil {
+			log.Printf("Failed to create workspace for %s: %v", userData.ID, wsErr)
+		} else {
+			prof, profErr := h.queries.CreateProfile(r.Context(), db.CreateProfileParams{
+				WorkspaceID: ws.ID,
+				Name:        "Default",
+			})
+			if profErr != nil {
+				log.Printf("Failed to create default profile for %s: %v", userData.ID, profErr)
+			} else {
+				// Stamp both default_profile_id and last_profile_id
+				_ = h.queries.SetUserDefaultProfile(r.Context(), db.SetUserDefaultProfileParams{
+					ID:               userData.ID,
+					DefaultProfileID: pgtype.Text{String: prof.ID, Valid: true},
+				})
+				_ = h.queries.SetUserLastProfile(r.Context(), db.SetUserLastProfileParams{
+					ID:            userData.ID,
+					LastProfileID: pgtype.Text{String: prof.ID, Valid: true},
+				})
+				log.Printf("Created workspace '%s' + Default profile for user %s", wsName, userData.ID)
+			}
+		}
+	}
+
 	log.Printf("Synced user %s (%s)", userData.ID, email)
 	w.WriteHeader(http.StatusOK)
 }
