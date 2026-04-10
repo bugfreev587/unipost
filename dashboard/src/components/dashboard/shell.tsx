@@ -33,7 +33,7 @@ import {
 const NAV_ITEMS = [
   { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
-    { href: "/projects", label: "Profile", absolute: true },
+    { href: "/profile", label: "Profile" },
     { href: "/accounts", label: "Quickstart" },
     { href: "/accounts/native", label: "White-label" },
   ]},
@@ -233,13 +233,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                     )}
                     {hasSubmenu && submenuOpen && item.submenu && (
                       <div style={{ paddingLeft: 28, marginBottom: 4 }}>
-                        {item.submenu.map((sub: { href: string; label: string; absolute?: boolean }) => {
-                          const resolvedHref = sub.absolute ? sub.href : `/projects/${profileId}${sub.href}`;
-                          const subActive = pathname === resolvedHref;
+                        {item.submenu.map((sub) => {
+                          const subActive = pathname === `/projects/${profileId}${sub.href}`;
                           return (
                             <Link
                               key={sub.href}
-                              href={resolvedHref}
+                              href={`/projects/${profileId}${sub.href}`}
                               style={{
                                 display: "block",
                                 padding: "6px 12px",
