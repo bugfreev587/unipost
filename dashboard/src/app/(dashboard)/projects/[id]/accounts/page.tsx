@@ -93,10 +93,13 @@ export default function AccountsPage() {
   }
 
   async function handleDisconnect(accountId: string) {
+    // Find the account's profile_id — accounts may belong to different profiles
+    const account = accounts.find((a) => a.id === accountId);
+    const ownerProfileId = account?.profile_id || profileId;
     try {
       const token = await getToken();
       if (!token) return;
-      await disconnectSocialAccount(token, profileId, accountId);
+      await disconnectSocialAccount(token, ownerProfileId, accountId);
       loadAccounts();
     } catch (err) { console.error("Failed to disconnect:", err); }
     finally { setDisconnectTarget(null); }
