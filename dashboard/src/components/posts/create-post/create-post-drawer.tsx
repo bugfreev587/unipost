@@ -136,8 +136,10 @@ export function CreatePostDrawer({
 
   // Upload a file to R2 via the two-step presigned URL flow
   async function handleFileUpload(file: File) {
+    // addMediaItem checks cache — if already uploaded, returns immediately
+    const { cached } = form.addMediaItem(file);
+    if (cached) return;
     const index = form.mediaItems.length;
-    form.addMediaItem(file);
     try {
       const token = await getToken();
       if (!token) return;

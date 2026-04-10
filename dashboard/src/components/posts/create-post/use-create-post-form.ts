@@ -99,15 +99,23 @@ export const PRIMARY_BUTTON_LABELS: Record<PublishMode, string> = {
 
 export interface MediaItem {
   file: File;
+  fingerprint: string; // unique key: name + size + lastModified
   mediaId: string | null; // null = not uploaded yet
   progress: number; // 0-100
   error: string | null;
+}
+
+/** Fingerprint a File for dedup — same file re-selected → same key */
+function fileFingerprint(file: File): string {
+  return `${file.name}::${file.size}::${file.lastModified}`;
 }
 
 export function useCreatePostForm(accounts: SocialAccount[]) {
   const [mainContent, setMainContent] = useState("");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  // Cache: fingerprint → mediaId (persists across add/remove in same session)
+  const [uploadCache, setUploadCache] = useState<Map<string, string>>(new Map());
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Record<string, PlatformOverride>>({});
   const [publishMode, setPublishMode] = useState<PublishMode>("now");
@@ -196,16 +204,47 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     []
   );
 
-  const addMediaItem = useCallback((file: File) => {
-    setMediaItems((prev) => [...prev, { file, mediaId: null, progress: 0, error: null }]);
+  // Returns true if the file was already uploaded (cache hit → no upload needed)
+  const addMediaItem = useCallback((file: File): { cached: boolean; mediaId: string | null } => {
+    const fp = fileFingerprint(file);
+    // Check if already displayed
+    const alreadyDisplayed = mediaItems.some((m) => m.fingerprint === fp);
+    if (alreadyDisplayed) return { cached: true, mediaId: null };
+
+    // Check upload cache — file was uploaded before in this session
+    const cachedId = uploadCache.get(fp);
+    if (cachedId) {
+      setMediaItems((prev) => [...prev, { file, fingerprint: fp, mediaId: cachedId, progress: 100, error: null }]);
+      setMediaFiles((prev) => [...prev, file]);
+      return { cached: true, mediaId: cachedId };
+    }
+
+    // New file — needs upload
+    setMediaItems((prev) => [...prev, { file, fingerprint: fp, mediaId: null, progress: 0, error: null }]);
     setMediaFiles((prev) => [...prev, file]);
-  }, []);
+    return { cached: false, mediaId: null };
+  }, [mediaItems, uploadCache]);
 
   const updateMediaItem = useCallback((index: number, update: Partial<MediaItem>) => {
-    setMediaItems((prev) => prev.map((item, i) => i === index ? { ...item, ...update } : item));
+    setMediaItems((prev) => {
+      const updated = prev.map((item, i) => i === index ? { ...item, ...update } : item);
+      // When upload completes, cache the fingerprint → mediaId
+      if (update.mediaId) {
+        const item = prev[index];
+        if (item) {
+          setUploadCache((cache) => {
+            const next = new Map(cache);
+            next.set(item.fingerprint, update.mediaId!);
+            return next;
+          });
+        }
+      }
+      return updated;
+    });
   }, []);
 
   const removeMediaItem = useCallback((index: number) => {
+    // Remove from display but keep the upload cache entry
     setMediaItems((prev) => prev.filter((_, i) => i !== index));
     setMediaFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
@@ -293,6 +332,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     setMainContent("");
     setMediaFiles([]);
     setMediaItems([]);
+    setUploadCache(new Map());
     setSelectedAccountIds(new Set());
     setOverrides({});
     setPublishMode("now");
