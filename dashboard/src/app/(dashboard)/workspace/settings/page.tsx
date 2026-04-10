@@ -9,6 +9,7 @@ export default function WorkspaceSettingsPage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -29,11 +30,14 @@ export default function WorkspaceSettingsPage() {
     e.preventDefault();
     if (!workspace || !name.trim()) return;
     setSaving(true);
+    setSaved(false);
     try {
       const token = await getToken();
       if (!token) return;
       const res = await updateWorkspace(token, workspace.id, { name: name.trim() });
       setWorkspace(res.data);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     } catch (err) { console.error("Failed to save:", err); } finally { setSaving(false); }
   }
 
@@ -57,7 +61,7 @@ export default function WorkspaceSettingsPage() {
             <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
               <input className="dform-input" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: 1 }} />
               <button type="submit" className="dbtn dbtn-primary" disabled={saving || !name.trim()}>
-                {saving ? "Saving..." : "Save"}
+                {saving ? "Saving..." : saved ? "✓ Saved" : "Save"}
               </button>
             </div>
           </form>

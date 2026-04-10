@@ -297,57 +297,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        {/* ── Bottom: Current profile + switcher ── */}
-        {currentProfile && (
-          <div
-            style={{
-              padding: "12px 10px",
-              borderTop: "1px solid var(--dborder)",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <div className="project-initial" style={{ width: 28, height: 28, fontSize: 12 }}>
-              {currentProfile.name.charAt(0).toUpperCase()}
-            </div>
-            <span
-              style={{
-                flex: 1, fontSize: 13, fontWeight: 600, color: "var(--dtext)",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }}
-            >
-              {currentProfile.name}
-            </span>
-            <Link
-              href={`/projects/${profileId}/settings`}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: 30, height: 30, borderRadius: 6,
-                color: "var(--dmuted)", transition: "background 0.1s, color 0.1s", flexShrink: 0,
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
-              title="Profile settings"
-            >
-              <Settings style={{ width: 16, height: 16 }} strokeWidth={1.75} />
-            </Link>
-            <Link
-              href="/projects"
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: 30, height: 30, borderRadius: 6, color: "var(--dmuted)",
-                transition: "background 0.1s, color 0.1s", flexShrink: 0,
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
-              title="Switch profile"
-            >
-              <ChevronsUpDown style={{ width: 16, height: 16 }} strokeWidth={1.75} />
-            </Link>
-          </div>
-        )}
-
         {/* ── Bottom: Workspace ── */}
         {workspace && (
           <div
