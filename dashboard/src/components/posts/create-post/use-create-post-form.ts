@@ -220,38 +220,39 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
 
   const buildPayload = useCallback(() => {
     const accountIds = [...selectedAccountIds];
-    const overridesPayload: Record<string, Record<string, unknown>> = {};
+    const hasOverrides = accountIds.some((id) => overrides[id]?.caption?.trim());
 
-    for (const id of accountIds) {
-      const o = overrides[id];
-      if (!o) continue;
-      const entry: Record<string, unknown> = {};
-      if (o.caption?.trim()) entry.caption = o.caption.trim();
-      if (o.youtube) entry.youtube = o.youtube;
-      if (o.tiktok) entry.tiktok = o.tiktok;
-      if (o.instagram) entry.instagram = o.instagram;
-      if (o.linkedin) entry.linkedin = o.linkedin;
-      if (Object.keys(entry).length > 0) overridesPayload[id] = entry;
+    const payload: Record<string, unknown> = {};
+
+    if (hasOverrides) {
+      // Use platform_posts[] format when any account has a custom caption
+      payload.platform_posts = accountIds.map((id) => {
+        const o = overrides[id];
+        const entry: Record<string, unknown> = {
+          account_id: id,
+          caption: o?.caption?.trim() || mainContent.trim(),
+        };
+        if (o?.youtube) entry.platform_options = { ...o.youtube };
+        if (o?.tiktok) entry.platform_options = { ...o.tiktok };
+        if (o?.instagram) entry.platform_options = { ...o.instagram };
+        if (o?.linkedin) entry.platform_options = { ...o.linkedin };
+        return entry;
+      });
+    } else {
+      // Legacy format: same caption for all accounts
+      payload.caption = mainContent.trim();
+      payload.account_ids = accountIds;
     }
 
-    const payload: Record<string, unknown> = {
-      content: mainContent.trim(),
-      account_ids: accountIds,
-      publish_mode: publishMode,
-    };
-
-    if (Object.keys(overridesPayload).length > 0) {
-      payload.overrides = overridesPayload;
-    }
     if (publishMode === "schedule" && scheduledAt) {
       payload.scheduled_at = new Date(scheduledAt).toISOString();
     }
-    if (publishMode === "queue" && queueId) {
-      payload.queue_id = queueId;
+    if (publishMode === "draft") {
+      payload.status = "draft";
     }
 
     return payload;
-  }, [selectedAccountIds, overrides, mainContent, publishMode, scheduledAt, queueId]);
+  }, [selectedAccountIds, overrides, mainContent, publishMode, scheduledAt]);
 
   const reset = useCallback(() => {
     setMainContent("");

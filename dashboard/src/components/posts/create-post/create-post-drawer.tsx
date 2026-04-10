@@ -157,7 +157,7 @@ export function CreatePostDrawer({
       const token = await getToken();
       if (!token) return;
       const payload = form.buildPayload();
-      (payload as any).publish_mode = "draft";
+      (payload as any).status = "draft";
       await createSocialPost(token, workspaceId, payload as any);
       onCreated();
       onOpenChange(false);
