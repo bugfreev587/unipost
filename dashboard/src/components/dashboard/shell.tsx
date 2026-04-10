@@ -30,20 +30,39 @@ import {
   Cable,
 } from "lucide-react";
 
-const NAV_ITEMS = [
+// Each nav item can be tagged with the usage modes that require it.
+// Items with no `modes` array are always shown.
+const ALL_NAV_ITEMS = [
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
     { href: "/profile", label: "Profile" },
-    { href: "/accounts", label: "Quickstart" },
-    { href: "/accounts/native", label: "White-label" },
+    { href: "/accounts", label: "Accounts", modes: ["personal", "whitelabel"] },
+    { href: "/users", label: "Connect Flow", modes: ["api"] },
+    { href: "/accounts/native", label: "Credentials", modes: ["whitelabel"] },
   ]},
   { href: "/posts", label: "Posts", icon: Send, submenu: [
     { href: "/posts", label: "Overview" },
     { href: "/posts/queue", label: "Queue" },
   ]},
-  { href: "/api-keys", label: "API Keys", icon: Key },
+  { href: "/api-keys", label: "API Keys", icon: Key, modes: ["whitelabel", "api"] },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/users", label: "Managed Users", icon: User },
 ];
+
+// Filter nav items based on workspace usage modes.
+// Empty modes array = show everything.
+function filterNavItems(modes: string[]) {
+  if (modes.length === 0) return ALL_NAV_ITEMS;
+  return ALL_NAV_ITEMS.filter((item) => {
+    if (!("modes" in item) || !item.modes) return true;
+    return item.modes.some((m: string) => modes.includes(m));
+  }).map((item) => {
+    if (!item.submenu) return item;
+    const filteredSub = item.submenu.filter((sub) => {
+      if (!("modes" in sub) || !sub.modes) return true;
+      return sub.modes.some((m: string) => modes.includes(m));
+    });
+    return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
+  }).filter((item) => item.submenu === undefined || item.submenu.length > 0);
+}
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -57,7 +76,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   // Auto-expand submenus that match the current path on initial render
   const [expandedMenus, setExpandedMenus] = useState<Set<string>>(() => {
     const initial = new Set<string>();
-    for (const item of NAV_ITEMS) {
+    for (const item of ALL_NAV_ITEMS) {
       if (item.submenu && typeof window !== "undefined" && window.location.pathname.includes(item.href)) {
         initial.add(item.href);
       }
@@ -69,6 +88,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
   const profileId = profileMatch?.[1];
   const currentProfile = profiles.find((p) => p.id === profileId);
+
+  const navItems = filterNavItems(workspace?.usage_modes ?? []);
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -213,7 +234,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--dmuted2)", padding: "0 6px", marginBottom: 4 }}>
                 Navigate
               </div>
-              {NAV_ITEMS.map((item) => {
+              {navItems.map((item) => {
                 const active = isActive(item.href);
                 const Icon = item.icon;
                 const hasSubmenu = !!item.submenu;
