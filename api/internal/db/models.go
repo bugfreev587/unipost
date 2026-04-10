@@ -177,13 +177,14 @@ type Usage struct {
 }
 
 type User struct {
-	ID               string             `json:"id"`
-	Email            string             `json:"email"`
-	Name             pgtype.Text        `json:"name"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	DefaultProfileID pgtype.Text        `json:"default_profile_id"`
-	LastProfileID    pgtype.Text        `json:"last_profile_id"`
+	ID                  string             `json:"id"`
+	Email               string             `json:"email"`
+	Name                pgtype.Text        `json:"name"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	DefaultProfileID    pgtype.Text        `json:"default_profile_id"`
+	LastProfileID       pgtype.Text        `json:"last_profile_id"`
+	OnboardingCompleted bool               `json:"onboarding_completed"`
 }
 
 type Webhook struct {
@@ -215,4 +216,5 @@ type Workspace struct {
 	PerAccountMonthlyLimit pgtype.Int4        `json:"per_account_monthly_limit"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	UsageModes             []string           `json:"usage_modes"`
 }

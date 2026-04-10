@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -58,8 +59,9 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 //   - last_profile_id: where the user was last working — the dashboard
 //     `/` route redirects here on every visit.
 type bootstrapResponse struct {
-	DefaultProfileID *string `json:"default_profile_id"`
-	LastProfileID    *string `json:"last_profile_id"`
+	DefaultProfileID    *string `json:"default_profile_id"`
+	LastProfileID       *string `json:"last_profile_id"`
+	OnboardingCompleted bool    `json:"onboarding_completed"`
 }
 
 // Bootstrap is the dashboard root resolver. Three states:
@@ -154,7 +156,9 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := bootstrapResponse{}
+	resp := bootstrapResponse{
+		OnboardingCompleted: user.OnboardingCompleted,
+	}
 	if defaultID.Valid {
 		v := defaultID.String
 		resp.DefaultProfileID = &v
@@ -167,4 +171,65 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		resp.LastProfileID = &v
 	}
 	writeSuccess(w, resp)
+}
+
+// CompleteOnboarding handles PATCH /v1/me/onboarding.
+// Saves the user's name, optionally renames the workspace, saves usage
+// modes, and marks onboarding as completed.
+func (h *MeHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+
+	var body struct {
+		FirstName  string   `json:"first_name"`
+		OrgName    string   `json:"org_name"`
+		UsageModes []string `json:"usage_modes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	if body.FirstName == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "first_name is required")
+		return
+	}
+
+	// Validate usage_modes values
+	valid := map[string]bool{"personal": true, "whitelabel": true, "api": true}
+	for _, m := range body.UsageModes {
+		if !valid[m] {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid usage_mode: "+m)
+			return
+		}
+	}
+
+	// Update user name and mark onboarding completed
+	if err := h.queries.CompleteOnboarding(r.Context(), db.CompleteOnboardingParams{
+		ID:   userID,
+		Name: pgtype.Text{String: body.FirstName, Valid: true},
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to complete onboarding")
+		return
+	}
+
+	// Update workspace: name (if org provided) + usage_modes
+	workspaces, err := h.queries.ListWorkspacesByUser(r.Context(), userID)
+	if err == nil && len(workspaces) > 0 {
+		ws := workspaces[0]
+		if body.OrgName != "" {
+			h.queries.UpdateWorkspace(r.Context(), db.UpdateWorkspaceParams{
+				ID:   ws.ID,
+				Name: body.OrgName,
+			})
+		}
+		h.queries.UpdateWorkspaceUsageModes(r.Context(), db.UpdateWorkspaceUsageModesParams{
+			ID:         ws.ID,
+			UsageModes: body.UsageModes,
+		})
+	}
+
+	writeSuccess(w, map[string]bool{"completed": true})
 }

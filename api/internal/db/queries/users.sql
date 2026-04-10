@@ -17,3 +17,7 @@ WHERE id = $1;
 
 -- name: SetUserLastProfile :exec
 UPDATE users SET last_profile_id = $2 WHERE id = $1;
+
+-- name: CompleteOnboarding :exec
+UPDATE users SET onboarding_completed = TRUE, name = $2, updated_at = NOW()
+WHERE id = $1;

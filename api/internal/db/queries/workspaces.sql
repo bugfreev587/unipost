@@ -24,5 +24,10 @@ SET per_account_monthly_limit = sqlc.narg('per_account_monthly_limit')::INTEGER,
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateWorkspaceUsageModes :one
+UPDATE workspaces SET usage_modes = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: DeleteWorkspace :exec
 DELETE FROM workspaces WHERE id = $1;

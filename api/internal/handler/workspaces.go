@@ -25,16 +25,22 @@ type workspaceResponse struct {
 	ID                     string    `json:"id"`
 	Name                   string    `json:"name"`
 	PerAccountMonthlyLimit *int32    `json:"per_account_monthly_limit"`
+	UsageModes             []string  `json:"usage_modes"`
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 func toWorkspaceResponse(w db.Workspace) workspaceResponse {
+	modes := w.UsageModes
+	if modes == nil {
+		modes = []string{}
+	}
 	resp := workspaceResponse{
-		ID:        w.ID,
-		Name:      w.Name,
-		CreatedAt: w.CreatedAt.Time,
-		UpdatedAt: w.UpdatedAt.Time,
+		ID:         w.ID,
+		Name:       w.Name,
+		UsageModes: modes,
+		CreatedAt:  w.CreatedAt.Time,
+		UpdatedAt:  w.UpdatedAt.Time,
 	}
 	if w.PerAccountMonthlyLimit.Valid {
 		v := w.PerAccountMonthlyLimit.Int32
@@ -155,7 +161,8 @@ func (h *WorkspaceHandler) DashboardUpdate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Name string `json:"name"`
+		Name       string   `json:"name"`
+		UsageModes []string `json:"usage_modes,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -171,6 +178,11 @@ func (h *WorkspaceHandler) DashboardUpdate(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update workspace")
 		return
+	}
+	if body.UsageModes != nil {
+		ws, _ = h.queries.UpdateWorkspaceUsageModes(r.Context(), db.UpdateWorkspaceUsageModesParams{
+			ID: workspaceID, UsageModes: body.UsageModes,
+		})
 	}
 	writeSuccess(w, toWorkspaceResponse(ws))
 }

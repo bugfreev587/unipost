@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const completeOnboarding = `-- name: CompleteOnboarding :exec
+UPDATE users SET onboarding_completed = TRUE, name = $2, updated_at = NOW()
+WHERE id = $1
+`
+
+type CompleteOnboardingParams struct {
+	ID   string      `json:"id"`
+	Name pgtype.Text `json:"name"`
+}
+
+func (q *Queries) CompleteOnboarding(ctx context.Context, arg CompleteOnboardingParams) error {
+	_, err := q.db.Exec(ctx, completeOnboarding, arg.ID, arg.Name)
+	return err
+}
+
 const deleteUser = `-- name: DeleteUser :exec
 DELETE FROM users WHERE id = $1
 `
@@ -21,7 +36,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, name, created_at, updated_at, default_profile_id, last_profile_id FROM users WHERE id = $1
+SELECT id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
@@ -35,6 +50,7 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 		&i.UpdatedAt,
 		&i.DefaultProfileID,
 		&i.LastProfileID,
+		&i.OnboardingCompleted,
 	)
 	return i, err
 }
@@ -73,7 +89,7 @@ INSERT INTO users (id, email, name)
 VALUES ($1, $2, $3)
 ON CONFLICT (id)
 DO UPDATE SET email = $2, name = $3, updated_at = NOW()
-RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id
+RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed
 `
 
 type UpsertUserParams struct {
@@ -93,6 +109,7 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.UpdatedAt,
 		&i.DefaultProfileID,
 		&i.LastProfileID,
+		&i.OnboardingCompleted,
 	)
 	return i, err
 }
