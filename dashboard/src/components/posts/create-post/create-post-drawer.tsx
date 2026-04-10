@@ -12,7 +12,7 @@ import {
   PRIMARY_BUTTON_LABELS,
 } from "./use-create-post-form";
 import type { SocialAccount, Profile } from "@/lib/api";
-import { createSocialPost, listSocialAccounts } from "@/lib/api";
+import { createSocialPost, listSocialAccounts, createMedia } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface CreatePostDrawerProps {
@@ -134,6 +134,46 @@ export function CreatePostDrawer({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, form.canSubmit]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Upload a file to R2 via the two-step presigned URL flow
+  async function handleFileUpload(file: File) {
+    const index = form.mediaItems.length;
+    form.addMediaItem(file);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      // Step 1: Get presigned URL
+      form.updateMediaItem(index, { progress: 10 });
+      const res = await createMedia(token, workspaceId, {
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+      });
+      form.updateMediaItem(index, { progress: 30 });
+      // Step 2: PUT file to R2
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", res.data.upload_url);
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round(30 + (e.loaded / e.total) * 65);
+            form.updateMediaItem(index, { progress: pct });
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`Upload failed: ${xhr.status}`));
+        };
+        xhr.onerror = () => reject(new Error("Upload failed"));
+        xhr.send(file);
+      });
+      form.updateMediaItem(index, { progress: 100, mediaId: res.data.id });
+    } catch (err) {
+      console.error("Media upload failed:", err);
+      form.updateMediaItem(index, { error: (err as Error).message, progress: 0 });
+    }
+  }
+
   async function handleSubmit() {
     if (!form.canSubmit) return;
     form.setSubmitting(true);
@@ -244,11 +284,11 @@ export function CreatePostDrawer({
                 Media
               </label>
               <div className="flex gap-2.5 flex-wrap">
-                {form.mediaFiles.map((file, i) => (
-                  <div key={`${file.name}-${i}`} className="relative w-[88px] h-[88px] rounded-lg overflow-hidden border border-[#2e2e38] bg-[#0a0a0b] flex-shrink-0 group/thumb">
-                    {file.type.startsWith("video/") ? (
+                {form.mediaItems.map((item, i) => (
+                  <div key={`${item.file.name}-${i}`} className="relative w-[88px] h-[88px] rounded-lg overflow-hidden border border-[#2e2e38] bg-[#0a0a0b] flex-shrink-0 group/thumb">
+                    {item.file.type.startsWith("video/") ? (
                       <video
-                        src={URL.createObjectURL(file)}
+                        src={URL.createObjectURL(item.file)}
                         className="w-full h-full object-cover"
                         muted
                         preload="metadata"
@@ -256,20 +296,51 @@ export function CreatePostDrawer({
                       />
                     ) : (
                       <img
-                        src={URL.createObjectURL(file)}
-                        alt={file.name}
+                        src={URL.createObjectURL(item.file)}
+                        alt={item.file.name}
                         className="w-full h-full object-cover"
                       />
                     )}
+                    {/* Upload progress overlay */}
+                    {!item.mediaId && !item.error && (
+                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                        <div className="w-10 h-10 relative">
+                          <svg className="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
+                            <circle cx="18" cy="18" r="15" fill="none" stroke="#2e2e38" strokeWidth="3" />
+                            <circle cx="18" cy="18" r="15" fill="none" stroke="#10b981" strokeWidth="3"
+                              strokeDasharray={`${item.progress * 0.94} 94`}
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          <span className="absolute inset-0 flex items-center justify-center text-[9px] font-mono text-[#f4f4f5]">
+                            {item.progress}%
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {/* Error overlay */}
+                    {item.error && (
+                      <div className="absolute inset-0 bg-red-900/60 flex items-center justify-center">
+                        <span className="text-[9px] text-red-300 text-center px-1">Failed</span>
+                      </div>
+                    )}
+                    {/* Uploaded checkmark */}
+                    {item.mediaId && (
+                      <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-[#10b981] flex items-center justify-center">
+                        <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
+                          <path d="M1.5 5l2.5 2.5L8.5 2.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </div>
+                    )}
                     <button
                       type="button"
-                      onClick={() => form.setMediaFiles(form.mediaFiles.filter((_, j) => j !== i))}
+                      onClick={() => form.removeMediaItem(i)}
                       className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity text-xs"
                     >
                       &times;
                     </button>
                     <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[9px] text-[#ccc] px-1.5 py-0.5 truncate font-mono">
-                      {file.name}
+                      {item.file.name}
                     </div>
                   </div>
                 ))}
@@ -282,10 +353,10 @@ export function CreatePostDrawer({
                     type="file"
                     multiple
                     className="hidden"
-                    accept="image/png,image/jpeg,video/mp4"
+                    accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/quicktime"
                     onChange={(e) => {
                       if (e.target.files) {
-                        form.setMediaFiles([...form.mediaFiles, ...Array.from(e.target.files)]);
+                        Array.from(e.target.files).forEach((file) => handleFileUpload(file));
                       }
                     }}
                   />

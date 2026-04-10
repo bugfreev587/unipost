@@ -345,6 +345,28 @@ export async function createSocialPost(
   });
 }
 
+// Media upload — two-step: POST returns presigned URL, then PUT to R2
+
+export interface MediaUpload {
+  id: string;
+  status: string;
+  content_type: string;
+  size_bytes: number;
+  upload_url: string;
+  expires_at: string;
+}
+
+export async function createMedia(
+  token: string,
+  workspaceId: string,
+  data: { filename: string; content_type: string; size_bytes: number }
+): Promise<ApiResponse<MediaUpload>> {
+  return request(`/v1/workspaces/${workspaceId}/media`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 // Sprint 3 PR8: reschedule a scheduled post (only scheduled_at editable).
 export async function rescheduleSocialPost(
   token: string,

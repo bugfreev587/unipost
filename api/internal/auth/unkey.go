@@ -95,6 +95,13 @@ func GetWorkspaceID(ctx context.Context) string {
 	return workspaceID
 }
 
+// SetWorkspaceID injects a workspace ID into the context. Used by
+// dashboard routes that pass workspace ID via URL parameter instead
+// of API key resolution.
+func SetWorkspaceID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, WorkspaceIDKey, id)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

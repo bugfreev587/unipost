@@ -392,6 +392,17 @@ func main() {
 		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
 		r.Get("/v1/profiles/{profileID}/users/{external_user_id}", managedUsersHandler.Get)
 
+		// Media library (dashboard, workspace-scoped — injects workspaceID
+		// into context so the shared media handler can use GetWorkspaceID)
+		r.Post("/v1/workspaces/{workspaceID}/media", func(w http.ResponseWriter, r *http.Request) {
+			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
+			mediaHandler.Create(w, r.WithContext(ctx))
+		})
+		r.Get("/v1/workspaces/{workspaceID}/media/{id}", func(w http.ResponseWriter, r *http.Request) {
+			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
+			mediaHandler.Get(w, r.WithContext(ctx))
+		})
+
 		// Social posts (dashboard, workspace-scoped)
 		r.Get("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.List)
 		r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)

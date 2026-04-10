@@ -97,9 +97,17 @@ export const PRIMARY_BUTTON_LABELS: Record<PublishMode, string> = {
 
 // --- Hook ---
 
+export interface MediaItem {
+  file: File;
+  mediaId: string | null; // null = not uploaded yet
+  progress: number; // 0-100
+  error: string | null;
+}
+
 export function useCreatePostForm(accounts: SocialAccount[]) {
   const [mainContent, setMainContent] = useState("");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Record<string, PlatformOverride>>({});
   const [publishMode, setPublishMode] = useState<PublishMode>("now");
@@ -188,11 +196,35 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     []
   );
 
+  const addMediaItem = useCallback((file: File) => {
+    setMediaItems((prev) => [...prev, { file, mediaId: null, progress: 0, error: null }]);
+    setMediaFiles((prev) => [...prev, file]);
+  }, []);
+
+  const updateMediaItem = useCallback((index: number, update: Partial<MediaItem>) => {
+    setMediaItems((prev) => prev.map((item, i) => i === index ? { ...item, ...update } : item));
+  }, []);
+
+  const removeMediaItem = useCallback((index: number) => {
+    setMediaItems((prev) => prev.filter((_, i) => i !== index));
+    setMediaFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const uploadedMediaIds = useMemo(
+    () => mediaItems.filter((m) => m.mediaId).map((m) => m.mediaId!),
+    [mediaItems]
+  );
+
+  const allMediaUploaded = useMemo(
+    () => mediaItems.length === 0 || mediaItems.every((m) => m.mediaId !== null),
+    [mediaItems]
+  );
+
   const hasUnsavedContent = useMemo(() => {
     if (mainContent.trim()) return true;
-    if (mediaFiles.length > 0) return true;
+    if (mediaItems.length > 0) return true;
     return Object.values(overrides).some((o) => o.caption?.trim());
-  }, [mainContent, mediaFiles, overrides]);
+  }, [mainContent, mediaItems, overrides]);
 
   const hasOverLimit = useMemo(() => {
     for (const acc of selectedAccounts) {
@@ -209,14 +241,14 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (submitting) return false;
     if (selectedAccountIds.size === 0) return false;
     if (hasOverLimit) return false;
-    // Must have content or media
+    if (!allMediaUploaded) return false; // wait for uploads to finish
     const hasContent = mainContent.trim() || Object.values(overrides).some((o) => o.caption?.trim());
-    if (!hasContent && mediaFiles.length === 0) return false;
+    if (!hasContent && mediaItems.length === 0) return false;
     if (publishMode === "schedule" && !scheduledAt) return false;
     if (publishMode === "schedule" && scheduledAt && new Date(scheduledAt) <= new Date()) return false;
     if (publishMode === "queue" && !queueId) return false;
     return true;
-  }, [submitting, selectedAccountIds, hasOverLimit, mainContent, overrides, mediaFiles, publishMode, scheduledAt, queueId]);
+  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId]);
 
   const buildPayload = useCallback(() => {
     const accountIds = [...selectedAccountIds];
@@ -224,14 +256,17 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
 
     const payload: Record<string, unknown> = {};
 
-    if (hasOverrides) {
-      // Use platform_posts[] format when any account has a custom caption
+    const mediaIds = uploadedMediaIds.length > 0 ? uploadedMediaIds : undefined;
+
+    if (hasOverrides || mediaIds) {
+      // Use platform_posts[] format when any account has a custom caption or media
       payload.platform_posts = accountIds.map((id) => {
         const o = overrides[id];
         const entry: Record<string, unknown> = {
           account_id: id,
           caption: o?.caption?.trim() || mainContent.trim(),
         };
+        if (mediaIds) entry.media_ids = mediaIds;
         if (o?.youtube) entry.platform_options = { ...o.youtube };
         if (o?.tiktok) entry.platform_options = { ...o.tiktok };
         if (o?.instagram) entry.platform_options = { ...o.instagram };
@@ -257,6 +292,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   const reset = useCallback(() => {
     setMainContent("");
     setMediaFiles([]);
+    setMediaItems([]);
     setSelectedAccountIds(new Set());
     setOverrides({});
     setPublishMode("now");
@@ -272,6 +308,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     setMainContent,
     mediaFiles,
     setMediaFiles,
+    mediaItems,
     selectedAccountIds,
     selectedAccounts,
     activeAccounts,
@@ -285,6 +322,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     submitting,
     setSubmitting,
     collapsedBlocks,
+    allMediaUploaded,
 
     // Actions
     toggleAccount,
@@ -292,6 +330,9 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     toggleBlockCollapse,
     updateOverrideCaption,
     updateOverridePlatformField,
+    addMediaItem,
+    updateMediaItem,
+    removeMediaItem,
     getCharCount,
     buildPayload,
     reset,
