@@ -333,6 +333,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     const payload: Record<string, unknown> = {};
 
     const mediaIds = uploadedMediaIds.length > 0 ? uploadedMediaIds : undefined;
+    console.log("[buildPayload] mediaItems:", mediaItems.length, "uploadedMediaIds:", uploadedMediaIds, "mediaFiles:", mediaFiles.length);
 
     if (hasOverrides || mediaIds) {
       // Use platform_posts[] format when any account has a custom caption or media
