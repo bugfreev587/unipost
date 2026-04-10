@@ -154,6 +154,10 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Load media rows referenced by the request so the validator can
+	// check ownership, status, and content type.
+	mediaMap := h.loadValidateMedia(r, workspaceID, parsed.Posts)
+
 	// Run the same validator /social-posts/validate uses, then filter
 	// out non-fatal issues (account_disconnected, account_not_in_workspace)
 	// — those are still recorded as failed results below to preserve
@@ -161,6 +165,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	vr := platform.ValidatePlatformPosts(platform.ValidateOptions{
 		Capabilities: platform.Capabilities,
 		Accounts:     accountMap,
+		Media:        mediaMap,
 		Posts:        parsed.Posts,
 		ScheduledAt:  parsed.ScheduledAt,
 	})
