@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 import { type PublishMode } from "./use-create-post-form";
 
 interface PublishModePanelProps {
@@ -27,12 +27,25 @@ const DAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 function pad(n: number) { return String(n).padStart(2, "0"); }
 
-// ── Mini Calendar ────────────────────────────────────────────────────
+// ── Mini Calendar Dropdown ───────────────────────────────────────────
 
-function MiniCalendar({ selected, onSelect }: { selected: Date | null; onSelect: (d: Date) => void }) {
+function MiniCalendar({ selected, onSelect, onClose }: {
+  selected: Date | null;
+  onSelect: (d: Date) => void;
+  onClose: () => void;
+}) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(selected?.getFullYear() ?? today.getFullYear());
   const [viewMonth, setViewMonth] = useState(selected?.getMonth() ?? today.getMonth());
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [onClose]);
 
   const days = useMemo(() => {
     const first = new Date(viewYear, viewMonth, 1);
@@ -52,7 +65,6 @@ function MiniCalendar({ selected, onSelect }: { selected: Date | null; onSelect:
     if (viewMonth === 11) { setViewMonth(0); setViewYear(viewYear + 1); }
     else setViewMonth(viewMonth + 1);
   }
-
   function isToday(day: number) {
     return day === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
   }
@@ -66,7 +78,7 @@ function MiniCalendar({ selected, onSelect }: { selected: Date | null; onSelect:
   }
 
   return (
-    <div className="select-none">
+    <div ref={ref} className="absolute top-full left-0 right-0 mt-1 z-50 rounded-lg border border-[#22222a] bg-[#111113] p-3 shadow-xl">
       <div className="flex items-center justify-between mb-2">
         <button type="button" onClick={prev} className="w-6 h-6 flex items-center justify-center rounded hover:bg-[#22222a] text-[#8a8a93] hover:text-[#f4f4f5] transition-colors">
           <ChevronLeft className="w-3.5 h-3.5" />
@@ -86,7 +98,7 @@ function MiniCalendar({ selected, onSelect }: { selected: Date | null; onSelect:
               <button
                 type="button"
                 disabled={isPast(day)}
-                onClick={() => onSelect(new Date(viewYear, viewMonth, day))}
+                onClick={() => { onSelect(new Date(viewYear, viewMonth, day)); onClose(); }}
                 className={`w-7 h-7 rounded-md text-[11px] font-medium transition-all duration-100 ${
                   isSelected(day)
                     ? "bg-[#10b981] text-[#0a0a0b]"
@@ -107,49 +119,6 @@ function MiniCalendar({ selected, onSelect }: { selected: Date | null; onSelect:
   );
 }
 
-// ── Time Picker (scrollable hour / minute / second) ──────────────────
-
-function TimePicker({ hour, minute, second, onChange }: {
-  hour: number; minute: number; second: number;
-  onChange: (h: number, m: number, s: number) => void;
-}) {
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-  const minutes = Array.from({ length: 60 }, (_, i) => i);
-  const seconds = Array.from({ length: 60 }, (_, i) => i);
-
-  const col = (items: number[], value: number, onPick: (v: number) => void) => (
-    <div className="flex-1 h-[140px] overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2e2e38] [&::-webkit-scrollbar-thumb]:rounded-full">
-      {items.map((v) => (
-        <button
-          key={v} type="button" onClick={() => onPick(v)}
-          className={`w-full py-1 text-center text-xs font-mono transition-colors rounded ${
-            v === value ? "bg-[#10b981] text-[#0a0a0b] font-semibold" : "text-[#8a8a93] hover:bg-[#22222a] hover:text-[#f4f4f5]"
-          }`}
-        >
-          {pad(v)}
-        </button>
-      ))}
-    </div>
-  );
-
-  return (
-    <div>
-      <div className="flex items-center gap-1 mb-1.5">
-        <span className="flex-1 text-[10px] text-[#55555c] text-center font-medium">HR</span>
-        <span className="flex-1 text-[10px] text-[#55555c] text-center font-medium">MIN</span>
-        <span className="flex-1 text-[10px] text-[#55555c] text-center font-medium">SEC</span>
-      </div>
-      <div className="flex gap-1 rounded-md border border-[#22222a] bg-[#0a0a0b] p-1">
-        {col(hours, hour, (h) => onChange(h, minute, second))}
-        <div className="w-px bg-[#22222a]" />
-        {col(minutes, minute, (m) => onChange(hour, m, second))}
-        <div className="w-px bg-[#22222a]" />
-        {col(seconds, second, (s) => onChange(hour, minute, s))}
-      </div>
-    </div>
-  );
-}
-
 // ── Main Panel ───────────────────────────────────────────────────────
 
 export function PublishModePanel({
@@ -162,27 +131,19 @@ export function PublishModePanel({
   queues,
   nextSlot,
 }: PublishModePanelProps) {
-  // Parse scheduledAt ("YYYY-MM-DDTHH:MM") into date + time parts.
+  const [calendarOpen, setCalendarOpen] = useState(false);
+
   const parsed = useMemo(() => {
     if (!scheduledAt) return null;
     const d = new Date(scheduledAt);
     return isNaN(d.getTime()) ? null : d;
   }, [scheduledAt]);
 
-  const now = new Date();
-  const selDate = parsed ?? null;
-  const selHour = parsed?.getHours() ?? now.getHours();
-  const selMinute = parsed?.getMinutes() ?? now.getMinutes();
-  const selSecond = parsed ? 0 : 0;
-
   function handleDateSelect(d: Date) {
+    // Preserve existing time, or default to current time
+    const now = new Date();
     const h = parsed?.getHours() ?? now.getHours();
     const m = parsed?.getMinutes() ?? now.getMinutes();
-    onScheduledAtChange(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(h)}:${pad(m)}`);
-  }
-
-  function handleTimeChange(h: number, m: number, _s: number) {
-    const d = parsed ?? now;
     onScheduledAtChange(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(h)}:${pad(m)}`);
   }
 
@@ -222,31 +183,35 @@ export function PublishModePanel({
         )}
 
         {mode === "schedule" && (
-          <div className="space-y-4">
-            {/* Calendar */}
+          <div className="space-y-3">
             <div>
-              <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-2">
-                Date
+              <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+                Date &amp; time
               </label>
-              <div className="rounded-lg border border-[#22222a] bg-[#0a0a0b] p-3">
-                <MiniCalendar selected={selDate} onSelect={handleDateSelect} />
+              <div className="relative">
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => onScheduledAtChange(e.target.value)}
+                  min={new Date().toISOString().slice(0, 16)}
+                  className="w-full rounded-md px-3 py-2 text-sm font-mono bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCalendarOpen(!calendarOpen)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded hover:bg-[#22222a] text-[#8a8a93] hover:text-[#f4f4f5] transition-colors"
+                >
+                  <Calendar className="w-4 h-4" />
+                </button>
+                {calendarOpen && (
+                  <MiniCalendar
+                    selected={parsed}
+                    onSelect={handleDateSelect}
+                    onClose={() => setCalendarOpen(false)}
+                  />
+                )}
               </div>
             </div>
-
-            {/* Time */}
-            <div>
-              <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-2">
-                Time
-              </label>
-              <TimePicker
-                hour={selHour}
-                minute={selMinute}
-                second={selSecond}
-                onChange={handleTimeChange}
-              />
-            </div>
-
-            {/* Timezone */}
             <div>
               <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
                 Timezone
