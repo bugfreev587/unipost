@@ -114,6 +114,9 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   const [mainContent, setMainContent] = useState("");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  // Ref for latest mediaItems — used by buildPayload to avoid stale closures
+  const mediaItemsRef = useRef<MediaItem[]>([]);
+  mediaItemsRef.current = mediaItems;
   // Cache: fingerprint → mediaId (persists across add/remove in same session)
   const [uploadCache, setUploadCache] = useState<Map<string, string>>(new Map());
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
@@ -333,9 +336,11 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
 
     const payload: Record<string, unknown> = {};
 
-    // Read uploadedMediaIds directly from mediaItems (latest state)
-    const currentMediaIds = mediaItems.filter((m) => m.mediaId).map((m) => m.mediaId!);
+    // Read from ref to always get the absolute latest mediaItems
+    const latestMediaItems = mediaItemsRef.current;
+    const currentMediaIds = latestMediaItems.filter((m) => m.mediaId).map((m) => m.mediaId!);
     const mediaIds = currentMediaIds.length > 0 ? currentMediaIds : undefined;
+    console.log("[buildPayload] latestMediaItems:", latestMediaItems.length, "currentMediaIds:", currentMediaIds);
 
     if (hasOverrides || mediaIds) {
       payload.platform_posts = accountIds.map((id) => {
