@@ -243,33 +243,54 @@ export function CreatePostDrawer({
               <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-2.5">
                 Media
               </label>
-              <label className="group flex flex-col items-center justify-center gap-2 w-full rounded-lg border border-dashed border-[#2e2e38] hover:border-[#8a8a93] bg-[#0a0a0b]/40 py-8 cursor-pointer transition-colors">
-                <Plus className="w-5 h-5 text-[#8a8a93] group-hover:text-[#f4f4f5] transition-colors" />
-                <div className="text-center">
-                  <div className="text-sm text-[#8a8a93] group-hover:text-[#f4f4f5] transition-colors">
-                    Add images or video
+              <div className="flex gap-2.5 flex-wrap">
+                {form.mediaFiles.map((file, i) => (
+                  <div key={`${file.name}-${i}`} className="relative w-[88px] h-[88px] rounded-lg overflow-hidden border border-[#2e2e38] bg-[#0a0a0b] flex-shrink-0 group/thumb">
+                    {file.type.startsWith("video/") ? (
+                      <video
+                        src={URL.createObjectURL(file)}
+                        className="w-full h-full object-cover"
+                        muted
+                        preload="metadata"
+                        onLoadedData={(e) => { (e.target as HTMLVideoElement).currentTime = 0.5; }}
+                      />
+                    ) : (
+                      <img
+                        src={URL.createObjectURL(file)}
+                        alt={file.name}
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => form.setMediaFiles(form.mediaFiles.filter((_, j) => j !== i))}
+                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity text-xs"
+                    >
+                      &times;
+                    </button>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[9px] text-[#ccc] px-1.5 py-0.5 truncate font-mono">
+                      {file.name}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-[#55555c] mt-0.5 font-mono">
-                    PNG &middot; JPG &middot; MP4 &middot; up to 200 MB
+                ))}
+                <label className="group flex flex-col items-center justify-center w-[88px] h-[88px] rounded-lg border border-dashed border-[#2e2e38] hover:border-[#8a8a93] bg-[#0a0a0b]/40 cursor-pointer transition-colors flex-shrink-0">
+                  <Plus className="w-4 h-4 text-[#8a8a93] group-hover:text-[#f4f4f5] transition-colors" />
+                  <div className="text-[9px] text-[#55555c] group-hover:text-[#8a8a93] mt-1 text-center leading-tight transition-colors">
+                    Add media
                   </div>
-                </div>
-                <input
-                  type="file"
-                  multiple
-                  className="hidden"
-                  accept="image/png,image/jpeg,video/mp4"
-                  onChange={(e) => {
-                    if (e.target.files) {
-                      form.setMediaFiles(Array.from(e.target.files));
-                    }
-                  }}
-                />
-              </label>
-              {form.mediaFiles.length > 0 && (
-                <div className="mt-2 text-[11px] text-[#8a8a93] font-mono">
-                  {form.mediaFiles.length} file{form.mediaFiles.length > 1 ? "s" : ""} selected
-                </div>
-              )}
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    accept="image/png,image/jpeg,video/mp4"
+                    onChange={(e) => {
+                      if (e.target.files) {
+                        form.setMediaFiles([...form.mediaFiles, ...Array.from(e.target.files)]);
+                      }
+                    }}
+                  />
+                </label>
+              </div>
             </section>
 
             {/* Per-platform overrides */}
