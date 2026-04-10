@@ -31,6 +31,7 @@ export default function AccountsPage() {
   const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profileFilter, setProfileFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
@@ -47,18 +48,19 @@ export default function AccountsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [acctRes, profRes] = await Promise.all([
-        listSocialAccounts(token, profileId),
-        listProfiles(token),
-      ]);
-      setAccounts(acctRes.data);
+      const profRes = await listProfiles(token);
       setProfiles(profRes.data);
+      // Load accounts from all profiles
+      const allAccounts = await Promise.all(
+        profRes.data.map((p) => listSocialAccounts(token, p.id))
+      );
+      setAccounts(allAccounts.flatMap((r) => r.data));
     } catch (err) {
       console.error("Failed to load accounts:", err);
     } finally {
       setLoading(false);
     }
-  }, [getToken, profileId]);
+  }, [getToken]);
 
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
 
@@ -117,6 +119,27 @@ export default function AccountsPage() {
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Quickstart Mode</div>
           <div style={{ fontSize: 14, color: "#aaa", marginTop: 6, maxWidth: 520, lineHeight: 1.6 }}>Connect social accounts instantly — no developer approvals or platform credentials needed. UniPost handles OAuth so you can start posting in minutes.</div>
+          {profiles.length > 1 && (
+            <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
+              <button
+                className={`dbtn ${profileFilter === "all" ? "dbtn-primary" : "dbtn-ghost"}`}
+                style={{ padding: "4px 12px", fontSize: 12 }}
+                onClick={() => setProfileFilter("all")}
+              >
+                All
+              </button>
+              {profiles.map((p) => (
+                <button
+                  key={p.id}
+                  className={`dbtn ${profileFilter === p.id ? "dbtn-primary" : "dbtn-ghost"}`}
+                  style={{ padding: "4px 12px", fontSize: 12 }}
+                  onClick={() => setProfileFilter(p.id)}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <Dialog open={connectOpen} onOpenChange={(open) => { setConnectOpen(open); if (!open) { setSelectedPlatform(null); setConnectError(""); } }}>
           <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
@@ -182,9 +205,11 @@ export default function AccountsPage() {
         </Dialog>
       </div>
 
-      {loading ? (
+      {(() => {
+        const filtered = profileFilter === "all" ? accounts : accounts.filter((a) => a.profile_id === profileFilter);
+        return loading ? (
         <div style={{ color: "var(--dmuted)" }}>Loading...</div>
-      ) : accounts.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="empty-state">
           <Unplug style={{ width: 32, height: 32, opacity: 0.4, marginBottom: 12 }} />
           <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 6 }}>No accounts connected</div>
@@ -198,7 +223,7 @@ export default function AccountsPage() {
           <table>
             <thead><tr><th>Account</th><th>Profile</th><th>Platform</th><th>Connected</th><th>Status</th><th></th></tr></thead>
             <tbody>
-              {accounts.map((a) => (
+              {filtered.map((a) => (
                 <tr key={a.id}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -229,7 +254,8 @@ export default function AccountsPage() {
             </tbody>
           </table>
         </div>
-      )}
+      );
+      })()}
 
       <ConfirmModal
         open={!!disconnectTarget}
