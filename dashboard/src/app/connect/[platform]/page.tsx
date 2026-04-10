@@ -27,7 +27,7 @@ type SessionStatus = "pending" | "completed" | "expired" | "cancelled";
 
 type PublicConnectSession = {
   platform: "twitter" | "linkedin" | "bluesky";
-  project_name: string;
+  profile_name: string;
   status: SessionStatus;
   return_url?: string;
   expires_at: string;
@@ -238,9 +238,9 @@ function SuccessPage({ branding }: { branding?: Branding }) {
 
 // brandedRequester returns the customer-facing name shown in the
 // "X wants to publish posts to your account" copy. Falls back to
-// the project name when no display_name is set.
+// the profile name when no display_name is set.
 function brandedRequester(session: PublicConnectSession): string {
-  return session.branding?.display_name || session.project_name;
+  return session.branding?.display_name || session.profile_name;
 }
 
 function OAuthPrompt({

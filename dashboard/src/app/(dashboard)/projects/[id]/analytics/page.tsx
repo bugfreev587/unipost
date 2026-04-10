@@ -170,7 +170,7 @@ const TREND_METRICS: { key: "posts" | "impressions" | "likes" | "comments" | "sh
 type SortField = "published_at" | "impressions" | "likes" | "engagement";
 
 export default function AnalyticsPage() {
-  const { id: projectId } = useParams<{ id: string }>();
+  const { id: workspaceId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
 
   // Filters
@@ -238,10 +238,10 @@ export default function AnalyticsPage() {
         // On a normal load we don't need this ordering, since aggregations
         // and per-post both serve from the same cached table.
         if (forceRefresh) {
-          const postsRes = await listSocialPosts(token, projectId);
+          const postsRes = await listSocialPosts(token, workspaceId);
           const published = (postsRes.data || []).filter((p) => p.status === "published");
           const results = await Promise.allSettled(
-            published.map((p) => getPostAnalytics(token, projectId, p.id, { refresh: true }))
+            published.map((p) => getPostAnalytics(token, workspaceId, p.id, { refresh: true }))
           );
           const map: Record<string, PostAnalytics[]> = {};
           results.forEach((r, i) => {
@@ -254,13 +254,13 @@ export default function AnalyticsPage() {
         }
 
         const [summaryRes, trendRes, byPlatformRes, postsRes] = await Promise.all([
-          getAnalyticsSummary(token, projectId, apiRange),
-          getAnalyticsTrend(token, projectId, {
+          getAnalyticsSummary(token, workspaceId, apiRange),
+          getAnalyticsTrend(token, workspaceId, {
             ...apiRange,
             metric: "posts,impressions,likes,comments,shares",
           }),
-          getAnalyticsByPlatform(token, projectId, apiRange),
-          listSocialPosts(token, projectId),
+          getAnalyticsByPlatform(token, workspaceId, apiRange),
+          listSocialPosts(token, workspaceId),
         ]);
 
         setSummary(summaryRes.data);
@@ -274,7 +274,7 @@ export default function AnalyticsPage() {
         if (!forceRefresh) {
           const published = (postsRes.data || []).filter((p) => p.status === "published");
           const results = await Promise.allSettled(
-            published.map((p) => getPostAnalytics(token, projectId, p.id))
+            published.map((p) => getPostAnalytics(token, workspaceId, p.id))
           );
           const map: Record<string, PostAnalytics[]> = {};
           results.forEach((r, i) => {
@@ -291,7 +291,7 @@ export default function AnalyticsPage() {
         setRefreshing(false);
       }
     },
-    [getToken, projectId, apiRange, range, customRange]
+    [getToken, workspaceId, apiRange, range, customRange]
   );
 
   // Auto-load on filter change with 200ms debounce.
@@ -440,7 +440,7 @@ export default function AnalyticsPage() {
             setSortField={setSortField}
             expanded={expanded}
             setExpanded={setExpanded}
-            projectId={projectId}
+            workspaceId={workspaceId}
           />
         </>
       )}
@@ -892,7 +892,7 @@ function PostsTable({
   rows, allRows, page, totalPages, setPage,
   sortField, setSortField,
   expanded, setExpanded,
-  projectId,
+  workspaceId,
 }: {
   rows: PostRow[];
   allRows: PostRow[];
@@ -903,7 +903,7 @@ function PostsTable({
   setSortField: (s: SortField) => void;
   expanded: Set<string>;
   setExpanded: (s: Set<string>) => void;
-  projectId: string;
+  workspaceId: string;
 }) {
   const toggleRow = (id: string) => {
     const next = new Set(expanded);
@@ -996,7 +996,7 @@ function PostsTable({
                     isExpanded={isExpanded}
                     onToggle={() => toggleRow(post.id)}
                     cardWidth={cardWidth}
-                    projectId={projectId}
+                    workspaceId={workspaceId}
                   />
                 );
               })}
@@ -1043,7 +1043,7 @@ function PostsTable({
 }
 
 function FragmentRow({
-  post, metrics, perAccount, platforms, isExpanded, onToggle, cardWidth, projectId,
+  post, metrics, perAccount, platforms, isExpanded, onToggle, cardWidth, workspaceId,
 }: {
   post: SocialPost;
   metrics: ReturnType<typeof sumPostMetrics>;
@@ -1052,7 +1052,7 @@ function FragmentRow({
   isExpanded: boolean;
   onToggle: () => void;
   cardWidth: number;
-  projectId: string;
+  workspaceId: string;
 }) {
   const failed = post.status === "failed";
   const noImpressionPlatform = platforms.length > 0 && !anyPlatformSupports(platforms, "impressions");
@@ -1120,7 +1120,7 @@ function FragmentRow({
       {isExpanded && (
         <tr>
           <td colSpan={8} style={{ background: "var(--surface)", padding: "16px 24px", borderBottom: "1px solid var(--dborder)" }}>
-            <PostExpandPanel results={post.results || []} perAccount={perAccount} cardWidth={cardWidth} projectId={projectId} />
+            <PostExpandPanel results={post.results || []} perAccount={perAccount} cardWidth={cardWidth} workspaceId={workspaceId} />
           </td>
         </tr>
       )}
@@ -1148,12 +1148,12 @@ function PostExpandPanel({
   results,
   perAccount,
   cardWidth,
-  projectId,
+  workspaceId,
 }: {
   results: SocialPostResult[];
   perAccount: PostAnalytics[];
   cardWidth: number;
-  projectId: string;
+  workspaceId: string;
 }) {
   if (results.length === 0) {
     return <div style={{ fontSize: 12, color: "var(--dmuted2)" }}>No accounts attached to this post.</div>;
@@ -1173,7 +1173,7 @@ function PostExpandPanel({
           key={res.social_account_id}
           res={res}
           metrics={metricsByAccount.get(res.social_account_id)}
-          projectId={projectId}
+          workspaceId={workspaceId}
         />
       ))}
     </div>
@@ -1183,11 +1183,11 @@ function PostExpandPanel({
 function ResultCard({
   res,
   metrics,
-  projectId,
+  workspaceId,
 }: {
   res: SocialPostResult;
   metrics: PostAnalytics | undefined;
-  projectId: string;
+  workspaceId: string;
 }) {
   const platform = res.platform || "";
   const url = res.external_id ? postUrlFor(platform, res.external_id) : null;
@@ -1243,7 +1243,7 @@ function ResultCard({
 
       {/* Failed → red error block + actionable hint */}
       {isFailed && (
-        <FailureDetails error={res.error_message || ""} projectId={projectId} />
+        <FailureDetails error={res.error_message || ""} workspaceId={workspaceId} />
       )}
 
       {/* Published with no analytics yet → placeholder + external_id for support */}
@@ -1345,7 +1345,7 @@ function ResultCard({
 // fixes it. The categorization is intentionally loose — we match against
 // substrings of the error rather than rely on machine-readable codes,
 // because the upstream platforms don't agree on a code taxonomy.
-function FailureDetails({ error, projectId }: { error: string; projectId: string }) {
+function FailureDetails({ error, workspaceId }: { error: string; workspaceId: string }) {
   const hint = categorizeError(error);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1386,7 +1386,7 @@ function FailureDetails({ error, projectId }: { error: string; projectId: string
                 </a>
               ) : (
                 <Link
-                  href={hint.action.href.replace(":projectId", projectId)}
+                  href={hint.action.href.replace(":id", workspaceId)}
                   onClick={(e) => e.stopPropagation()}
                   style={{ color: "var(--accent, #10b981)", textDecoration: "none" }}
                 >
@@ -1418,14 +1418,14 @@ function categorizeError(error: string): ErrorHint | null {
     return {
       label: "What to do",
       body: "The connected social account was disconnected before this post was published.",
-      action: { label: "Reconnect on Accounts page", href: "/projects/:projectId/accounts" },
+      action: { label: "Reconnect on Accounts page", href: "/projects/:id/accounts" },
     };
   }
   if (e.includes("token") && (e.includes("expired") || e.includes("invalid") || e.includes("revoked") || e.includes("unauthorized"))) {
     return {
       label: "What to do",
       body: "The platform's access token is no longer valid (expired or revoked).",
-      action: { label: "Reconnect on Accounts page", href: "/projects/:projectId/accounts" },
+      action: { label: "Reconnect on Accounts page", href: "/projects/:id/accounts" },
     };
   }
   if (e.includes("rate limit") || e.includes("too many requests") || e.includes("429")) {

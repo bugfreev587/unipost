@@ -16,7 +16,7 @@ import { Users, AlertTriangle, ArrowRight } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 
 export default function ManagedUsersPage() {
-  const { id: projectId } = useParams<{ id: string }>();
+  const { id: profileId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
   const [users, setUsers] = useState<ManagedUserListEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -26,7 +26,7 @@ export default function ManagedUsersPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await listManagedUsers(token, projectId);
+      const res = await listManagedUsers(token, profileId);
       setUsers(res.data);
       setTotal(res.meta?.total ?? res.data.length);
     } catch (err) {
@@ -34,7 +34,7 @@ export default function ManagedUsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, projectId]);
+  }, [getToken, profileId]);
 
   useEffect(() => {
     load();
@@ -115,7 +115,7 @@ export default function ManagedUsersPage() {
                   </td>
                   <td className="px-4 py-4 text-right">
                     <Link
-                      href={`/projects/${projectId}/users/${encodeURIComponent(u.external_user_id)}`}
+                      href={`/projects/${profileId}/users/${encodeURIComponent(u.external_user_id)}`}
                       className="inline-flex items-center gap-1 text-sm text-[#10b981] hover:text-[#0d9668]"
                     >
                       Detail <ArrowRight className="w-3 h-3" />

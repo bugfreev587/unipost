@@ -53,14 +53,14 @@ type PublishMode = "now" | "schedule" | "draft";
 
 interface Props {
   accounts: SocialAccount[];
-  projectId: string;
+  workspaceId: string;
   getToken: () => Promise<string | null>;
   onClose: () => void;
   onCreated: () => void;
   editDraft?: SocialPost | null;
 }
 
-export function CreatePostModal({ accounts, projectId, getToken, onClose, onCreated, editDraft }: Props) {
+export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCreated, editDraft }: Props) {
   const [caption, setCaption] = useState(editDraft?.caption || "");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
     if (editDraft?.results) return new Set(editDraft.results.map(r => r.social_account_id));
@@ -119,7 +119,7 @@ export function CreatePostModal({ accounts, projectId, getToken, onClose, onCrea
         payload.status = "draft";
       }
 
-      await createSocialPost(token, projectId, payload);
+      await createSocialPost(token, workspaceId, payload);
       onCreated();
       onClose();
     } catch (err) {

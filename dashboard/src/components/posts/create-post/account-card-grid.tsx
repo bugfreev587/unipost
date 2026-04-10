@@ -8,7 +8,7 @@ interface AccountCardGridProps {
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
   onToggleAll: () => void;
-  projectName?: string;
+  profileName?: string;
 }
 
 export function AccountCardGrid({
@@ -16,7 +16,7 @@ export function AccountCardGrid({
   selectedIds,
   onToggle,
   onToggleAll,
-  projectName,
+  profileName,
 }: AccountCardGridProps) {
   if (accounts.length === 0) {
     return (
@@ -55,9 +55,9 @@ export function AccountCardGrid({
         ))}
       </div>
 
-      {projectName && (
+      {profileName && (
         <div className="mt-3 text-[11px] text-[#55555c] font-mono">
-          connected to <span className="text-[#8a8a93]">{projectName}</span> product
+          connected to <span className="text-[#8a8a93]">{profileName}</span> profile
         </div>
       )}
     </div>

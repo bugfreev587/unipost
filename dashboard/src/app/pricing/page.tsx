@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { PricingNav, PricingCTA } from "@/components/marketing/nav";
-import { listProjects, getBilling } from "@/lib/api";
+import { listProfiles, getBilling } from "@/lib/api";
 
 // ── Data ──
 const TIERS = [
@@ -68,7 +68,7 @@ export default function PricingPage() {
   const [selectedTier, setSelectedTier] = useState(0);
   const [dropOpen, setDropOpen] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<string | null>(null);
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [profileId, setProjectId] = useState<string | null>(null);
   const [trialEligible, setTrialEligible] = useState(true);
   const dropRef = useRef<HTMLDivElement>(null);
   const tier = TIERS[selectedTier];
@@ -82,9 +82,9 @@ export default function PricingPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const projects = await listProjects(token);
-      if (!projects.data || projects.data.length === 0) return;
-      const pid = projects.data[0].id;
+      const profiles = await listProfiles(token);
+      if (!profiles.data || profiles.data.length === 0) return;
+      const pid = profiles.data[0].id;
       setProjectId(pid);
       const billing = await getBilling(token, pid);
       const plan = billing.data.plan;
@@ -206,9 +206,9 @@ export default function PricingPage() {
             )}
             <div style={{ marginTop: "auto", paddingTop: 8 }}>
               {currentPlan === tier.id ? (
-                <PricingCTA className="pr-btn-paid" label="Go to Dashboard" href={projectId ? `${APP_URL}/projects/${projectId}/billing` : APP_URL} />
-              ) : projectId ? (
-                <PricingCTA className="pr-btn-paid" label="Get Started" href={`${APP_URL}/projects/${projectId}/billing?upgrade=${tier.id}`} />
+                <PricingCTA className="pr-btn-paid" label="Go to Dashboard" href={profileId ? `${APP_URL}/projects/${profileId}/billing` : APP_URL} />
+              ) : profileId ? (
+                <PricingCTA className="pr-btn-paid" label="Get Started" href={`${APP_URL}/projects/${profileId}/billing?upgrade=${tier.id}`} />
               ) : (
                 <PricingCTA className="pr-btn-paid" />
               )}

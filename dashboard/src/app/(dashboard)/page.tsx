@@ -31,7 +31,7 @@ export default function DashboardRootPage() {
         if (!token || cancelled) return;
         const res = await getBootstrap(token);
         if (cancelled) return;
-        const target = res.data.last_project_id ?? res.data.default_project_id;
+        const target = res.data.last_profile_id ?? res.data.default_profile_id;
         if (target) {
           router.replace(`/projects/${target}`);
         } else {

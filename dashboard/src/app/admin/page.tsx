@@ -284,9 +284,9 @@ export default function AdminPage() {
           {/* Stat grid — row 2 */}
           <div className="ad-stat-grid" style={{ marginBottom: 24 }}>
             <StatCard
-              label="Active Projects"
-              value={stats ? fmtNumber(stats.active_projects) : "—"}
-              sub={stats && stats.total_users > 0 ? `avg ${(stats.active_projects / stats.total_users).toFixed(1)} / user` : "—"}
+              label="Active Workspaces"
+              value={stats ? fmtNumber(stats.active_workspaces) : "—"}
+              sub={stats && stats.total_users > 0 ? `avg ${(stats.active_workspaces / stats.total_users).toFixed(1)} / user` : "—"}
             />
             <StatCard
               label="Platform Connections"
@@ -343,7 +343,7 @@ export default function AdminPage() {
                   <th>User</th>
                   <th>Plan</th>
                   <th>MRR</th>
-                  <th>Projects</th>
+                  <th>Workspaces</th>
                   <th>API Keys</th>
                   <th>Platforms</th>
                   <th>Posts Used</th>
@@ -380,7 +380,8 @@ export default function AdminPage() {
                             <span style={{ color: "#3a3a3a", fontSize: 11 }}>—</span>
                           )}
                         </td>
-                        <td>{u.project_count}</td>
+                        <td>{u.workspace_count}</td>
+
                         <td>{u.api_key_count}</td>
                         <td>
                           {u.platforms.length > 0 ? (
@@ -463,7 +464,7 @@ export default function AdminPage() {
 
                     <div className="ad-panel-section">
                       <div className="ad-panel-section-title">Usage</div>
-                      <PanelRow k="Projects" v={String(detail.project_count)} />
+                      <PanelRow k="Workspaces" v={String(detail.workspace_count)} />
                       <PanelRow k="API Keys" v={String(detail.api_key_count)} />
                       <PanelRow
                         k="Connected platforms"
@@ -480,10 +481,10 @@ export default function AdminPage() {
                       />
                     </div>
 
-                    {detail.projects.length > 0 && (
+                    {detail.workspaces.length > 0 && (
                       <div className="ad-panel-section">
-                        <div className="ad-panel-section-title">Projects ({detail.projects.length})</div>
-                        {detail.projects.map((p) => (
+                        <div className="ad-panel-section-title">Workspaces ({detail.workspaces.length})</div>
+                        {detail.workspaces.map((p) => (
                           <div key={p.id} style={{ padding: "8px 0", borderBottom: "1px solid #1f1f1f" }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                               <span style={{ fontSize: 12, fontWeight: 500 }}>{p.name}</span>

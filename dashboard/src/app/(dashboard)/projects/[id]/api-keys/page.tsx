@@ -17,7 +17,7 @@ import { Plus, Key, AlertTriangle } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ApiKeysPage() {
-  const { id: projectId } = useParams<{ id: string }>();
+  const { id: workspaceId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,14 +33,14 @@ export default function ApiKeysPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await listApiKeys(token, projectId);
+      const res = await listApiKeys(token, workspaceId);
       setKeys(res.data);
     } catch (err) {
       console.error("Failed to load API keys:", err);
     } finally {
       setLoading(false);
     }
-  }, [getToken, projectId]);
+  }, [getToken, workspaceId]);
 
   useEffect(() => { loadKeys(); }, [loadKeys]);
 
@@ -50,7 +50,7 @@ export default function ApiKeysPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await createApiKey(token, projectId, { name: keyName.trim(), environment: keyEnv });
+      const res = await createApiKey(token, workspaceId, { name: keyName.trim(), environment: keyEnv });
       setNewKey(res.data.key);
       setCreateOpen(false);
       setKeyName("");
@@ -67,7 +67,7 @@ export default function ApiKeysPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await revokeApiKey(token, projectId, keyId);
+      await revokeApiKey(token, workspaceId, keyId);
       loadKeys();
     } catch (err) {
       console.error("Failed to revoke:", err);
@@ -89,7 +89,7 @@ export default function ApiKeysPage() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>API Keys</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Manage authentication keys for your project</div>
+          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Manage authentication keys for your workspace</div>
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger render={<button className="dbtn dbtn-primary" />}>

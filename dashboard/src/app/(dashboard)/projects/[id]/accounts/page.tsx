@@ -26,7 +26,7 @@ const PLATFORMS = [
 ];
 
 export default function AccountsPage() {
-  const { id: projectId } = useParams<{ id: string }>();
+  const { id: profileId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
@@ -46,14 +46,14 @@ export default function AccountsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await listSocialAccounts(token, projectId);
+      const res = await listSocialAccounts(token, profileId);
       setAccounts(res.data);
     } catch (err) {
       console.error("Failed to load accounts:", err);
     } finally {
       setLoading(false);
     }
-  }, [getToken, projectId]);
+  }, [getToken, profileId]);
 
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
 
@@ -63,7 +63,7 @@ export default function AccountsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await connectSocialAccount(token, projectId, { platform: "bluesky", credentials: { handle: handle.trim(), app_password: appPassword.trim() } });
+      await connectSocialAccount(token, profileId, { platform: "bluesky", credentials: { handle: handle.trim(), app_password: appPassword.trim() } });
       setConnectOpen(false); setSelectedPlatform(null); setHandle(""); setAppPassword(""); loadAccounts();
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "Failed to connect");
@@ -76,7 +76,7 @@ export default function AccountsPage() {
       const token = await getToken();
       if (!token) return;
       const redirectUrl = window.location.href.split("?")[0];
-      const res = await getOAuthConnectURL(token, projectId, platform, redirectUrl);
+      const res = await getOAuthConnectURL(token, profileId, platform, redirectUrl);
       window.location.href = res.data.auth_url;
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "Failed to start OAuth");
@@ -88,7 +88,7 @@ export default function AccountsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await disconnectSocialAccount(token, projectId, accountId);
+      await disconnectSocialAccount(token, profileId, accountId);
       loadAccounts();
     } catch (err) { console.error("Failed to disconnect:", err); }
     finally { setDisconnectTarget(null); }

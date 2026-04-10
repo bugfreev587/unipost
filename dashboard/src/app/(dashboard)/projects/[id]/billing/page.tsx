@@ -19,7 +19,7 @@ const PLANS: Plan[] = [
 ];
 
 export default function BillingPage() {
-  const { id: projectId } = useParams<{ id: string }>();
+  const { id: workspaceId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const { getToken } = useAuth();
   const [billing, setBilling] = useState<BillingInfo | null>(null);
@@ -31,10 +31,10 @@ export default function BillingPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await getBilling(token, projectId);
+      const res = await getBilling(token, workspaceId);
       setBilling(res.data);
     } catch (err) { console.error("Failed to load billing:", err); } finally { setLoading(false); }
-  }, [getToken, projectId]);
+  }, [getToken, workspaceId]);
 
   useEffect(() => { loadBilling(); }, [loadBilling]);
 
@@ -56,7 +56,7 @@ export default function BillingPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await createCheckout(token, projectId, planId);
+      const res = await createCheckout(token, workspaceId, planId);
       window.location.href = res.data.checkout_url;
     } catch (err) { console.error("Failed:", err); setUpgrading(null); }
   }
@@ -65,7 +65,7 @@ export default function BillingPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await createPortal(token, projectId);
+      const res = await createPortal(token, workspaceId);
       window.location.href = res.data.portal_url;
     } catch (err) { console.error("Failed:", err); }
   }

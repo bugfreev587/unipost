@@ -59,7 +59,7 @@ const CSS = `.dbadge-gray{background:#ffffff08;color:#666;border:1px solid #333}
 .posts-empty-sub{font-size:13px;color:var(--dmuted)}`;
 
 export default function PostsPage() {
-  const { id: projectId } = useParams<{ id: string }>();
+  const { id: workspaceId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -77,8 +77,8 @@ export default function PostsPage() {
       const token = await getToken();
       if (!token) return;
       const [a, p] = await Promise.all([
-        listSocialAccounts(token, projectId),
-        listSocialPosts(token, projectId),
+        listSocialAccounts(token, workspaceId),
+        listSocialPosts(token, workspaceId),
       ]);
       setAccounts(a.data);
       setPosts(p.data);
@@ -87,7 +87,7 @@ export default function PostsPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, projectId]);
+  }, [getToken, workspaceId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -300,7 +300,7 @@ export default function PostsPage() {
         open={showCreateModal}
         onOpenChange={setShowCreateModal}
         accounts={accounts}
-        projectId={projectId}
+        workspaceId={workspaceId}
         getToken={getToken}
         onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}
       />

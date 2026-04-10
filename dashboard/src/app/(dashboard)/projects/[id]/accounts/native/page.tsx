@@ -19,7 +19,7 @@ const CRED_PLATFORMS = [
 interface PlatformCred { platform: string; client_id: string; created_at: string; }
 
 export default function NativeModePage() {
-  const { id: projectId } = useParams<{ id: string }>();
+  const { id: profileId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
   const [creds, setCreds] = useState<PlatformCred[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,12 +32,12 @@ export default function NativeModePage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await fetch(`${API_URL}/v1/projects/${projectId}/platform-credentials`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API_URL}/v1/profiles/${profileId}/platform-credentials`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       setCreds(data.data || []);
     } catch { /* silent */ }
     finally { setLoading(false); }
-  }, [getToken, projectId]);
+  }, [getToken, profileId]);
 
   useEffect(() => { loadCreds(); }, [loadCreds]);
 
@@ -52,7 +52,7 @@ export default function NativeModePage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await fetch(`${API_URL}/v1/projects/${projectId}/platform-credentials`, {
+      const res = await fetch(`${API_URL}/v1/profiles/${profileId}/platform-credentials`, {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ platform, client_id: form.clientId, client_secret: form.clientSecret }),
       });
@@ -66,7 +66,7 @@ export default function NativeModePage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await fetch(`${API_URL}/v1/projects/${projectId}/platform-credentials/${platform}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      await fetch(`${API_URL}/v1/profiles/${profileId}/platform-credentials/${platform}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       loadCreds();
     } catch { /* silent */ }
     finally { setRemoveTarget(null); }

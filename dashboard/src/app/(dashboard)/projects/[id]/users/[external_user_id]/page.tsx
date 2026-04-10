@@ -18,7 +18,7 @@ import { ArrowLeft, Unplug, Mail, Calendar } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 
 export default function ManagedUserDetailPage() {
-  const { id: projectId, external_user_id: rawExternalUserID } = useParams<{
+  const { id: profileId, external_user_id: rawExternalUserID } = useParams<{
     id: string;
     external_user_id: string;
   }>();
@@ -32,14 +32,14 @@ export default function ManagedUserDetailPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await getManagedUser(token, projectId, externalUserID);
+      const res = await getManagedUser(token, profileId, externalUserID);
       setUser(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load user");
     } finally {
       setLoading(false);
     }
-  }, [getToken, projectId, externalUserID]);
+  }, [getToken, profileId, externalUserID]);
 
   useEffect(() => {
     load();
@@ -52,7 +52,7 @@ export default function ManagedUserDetailPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await disconnectSocialAccount(token, projectId, accountId);
+      await disconnectSocialAccount(token, profileId, accountId);
       load();
     } catch (err) {
       console.error("Disconnect failed:", err);
@@ -65,7 +65,7 @@ export default function ManagedUserDetailPage() {
       <div className="p-8 text-[#ef4444]">
         {error || "User not found"}
         <div className="mt-4">
-          <Link href={`/projects/${projectId}/users`} className="text-[#10b981] text-sm">
+          <Link href={`/projects/${profileId}/users`} className="text-[#10b981] text-sm">
             ← Back to users
           </Link>
         </div>
@@ -76,7 +76,7 @@ export default function ManagedUserDetailPage() {
   return (
     <div className="p-8 max-w-4xl">
       <Link
-        href={`/projects/${projectId}/users`}
+        href={`/projects/${profileId}/users`}
         className="inline-flex items-center gap-2 text-sm text-[#888] hover:text-[#f0f0f0] mb-6"
       >
         <ArrowLeft className="w-4 h-4" />

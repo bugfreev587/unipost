@@ -20,8 +20,8 @@ interface CreatePostDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   accounts: SocialAccount[];
-  projectId: string;
-  projectName?: string;
+  workspaceId: string;
+  profileName?: string;
   getToken: () => Promise<string | null>;
   onCreated: () => void;
 }
@@ -30,8 +30,8 @@ export function CreatePostDrawer({
   open,
   onOpenChange,
   accounts,
-  projectId,
-  projectName,
+  workspaceId,
+  profileName,
   getToken,
   onCreated,
 }: CreatePostDrawerProps) {
@@ -93,7 +93,7 @@ export function CreatePostDrawer({
       const token = await getToken();
       if (!token) return;
       const payload = form.buildPayload();
-      await createSocialPost(token, projectId, payload as any);
+      await createSocialPost(token, workspaceId, payload as any);
       onCreated();
       onOpenChange(false);
     } catch (err) {
@@ -110,7 +110,7 @@ export function CreatePostDrawer({
       if (!token) return;
       const payload = form.buildPayload();
       (payload as any).publish_mode = "draft";
-      await createSocialPost(token, projectId, payload as any);
+      await createSocialPost(token, workspaceId, payload as any);
       onCreated();
       onOpenChange(false);
     } catch (err) {
@@ -273,7 +273,7 @@ export function CreatePostDrawer({
               selectedIds={form.selectedAccountIds}
               onToggle={form.toggleAccount}
               onToggleAll={form.toggleAll}
-              projectName={projectName}
+              profileName={profileName}
             />
 
             {/* Divider */}

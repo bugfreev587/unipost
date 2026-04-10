@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { listProjects, type Project } from "@/lib/api";
+import { listProfiles, type Profile } from "@/lib/api";
 import { Plus, FolderOpen, ChevronRight } from "lucide-react";
 
-export default function ProjectsListPage() {
+export default function ProfilesListPage() {
   const { getToken } = useAuth();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -16,10 +16,10 @@ export default function ProjectsListPage() {
       try {
         const token = await getToken();
         if (!token) return;
-        const res = await listProjects(token);
-        setProjects(res.data);
+        const res = await listProfiles(token);
+        setProfiles(res.data);
       } catch (err) {
-        console.error("Failed to load projects:", err);
+        console.error("Failed to load profiles:", err);
       } finally {
         setLoading(false);
       }
@@ -31,11 +31,11 @@ export default function ProjectsListPage() {
     <>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Projects</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Manage your UniPost projects and API integrations.</div>
+          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Profiles</div>
+          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Manage your UniPost profiles and API integrations.</div>
         </div>
         <Link href="/projects/new" className="dbtn dbtn-primary">
-          <Plus style={{ width: 13, height: 13 }} /> New Project
+          <Plus style={{ width: 13, height: 13 }} /> New Profile
         </Link>
       </div>
 
@@ -45,15 +45,15 @@ export default function ProjectsListPage() {
             <div key={i} style={{ height: 52, background: i % 2 === 0 ? "var(--surface2)" : "transparent" }} />
           ))}
         </div>
-      ) : projects.length === 0 ? (
+      ) : profiles.length === 0 ? (
         <div className="empty-state">
           <FolderOpen style={{ width: 32, height: 32, opacity: 0.4, marginBottom: 12 }} />
-          <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 6 }}>No projects yet</div>
+          <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 6 }}>No profiles yet</div>
           <div style={{ fontSize: 12.5, color: "var(--dmuted)", maxWidth: 280, lineHeight: 1.6 }}>
-            Create your first project to start using the UniPost API.
+            Create your first profile to start using the UniPost API.
           </div>
           <Link href="/projects/new" className="dbtn dbtn-primary" style={{ marginTop: 16 }}>
-            <Plus style={{ width: 13, height: 13 }} /> Create Project
+            <Plus style={{ width: 13, height: 13 }} /> Create Profile
           </Link>
         </div>
       ) : (
@@ -68,23 +68,23 @@ export default function ProjectsListPage() {
               </tr>
             </thead>
             <tbody>
-              {projects.map((project) => (
+              {profiles.map((profile) => (
                 <tr
-                  key={project.id}
-                  onClick={() => (window.location.href = `/projects/${project.id}`)}
+                  key={profile.id}
+                  onClick={() => (window.location.href = `/projects/${profile.id}`)}
                   style={{ cursor: "pointer" }}
                 >
                   <td style={{ fontWeight: 500 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div className="project-initial">
-                        {project.name.charAt(0).toUpperCase()}
+                        {profile.name.charAt(0).toUpperCase()}
                       </div>
-                      {project.name}
+                      {profile.name}
                     </div>
                   </td>
-                  <td><span className="mono">{project.id.slice(0, 12)}</span></td>
+                  <td><span className="mono">{profile.id.slice(0, 12)}</span></td>
                   <td style={{ color: "var(--dmuted)" }}>
-                    {new Date(project.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    {new Date(profile.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                   </td>
                   <td style={{ textAlign: "right" }}>
                     <ChevronRight style={{ width: 14, height: 14, color: "var(--dmuted2)" }} />

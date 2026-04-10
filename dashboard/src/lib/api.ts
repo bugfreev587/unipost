@@ -2,9 +2,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 // Types
 
-export interface Project {
+export interface Profile {
   id: string;
-  owner_id: string;
+  workspace_id: string;
   name: string;
   created_at: string;
   updated_at: string;
@@ -77,32 +77,32 @@ async function request<T>(
   return res.json();
 }
 
-// Projects
+// Profiles
 
-export async function listProjects(
+export async function listProfiles(
   token: string
-): Promise<ApiResponse<Project[]>> {
-  return request("/v1/projects", token);
+): Promise<ApiResponse<Profile[]>> {
+  return request("/v1/profiles", token);
 }
 
-export async function getProject(
+export async function getProfile(
   token: string,
   id: string
-): Promise<ApiResponse<Project>> {
-  return request(`/v1/projects/${id}`, token);
+): Promise<ApiResponse<Profile>> {
+  return request(`/v1/profiles/${id}`, token);
 }
 
-export async function createProject(
+export async function createProfile(
   token: string,
   data: { name: string }
-): Promise<ApiResponse<Project>> {
-  return request("/v1/projects", token, {
+): Promise<ApiResponse<Profile>> {
+  return request("/v1/profiles", token, {
     method: "POST",
     body: JSON.stringify(data),
   });
 }
 
-export async function updateProject(
+export async function updateProfile(
   token: string,
   id: string,
   data: {
@@ -111,35 +111,35 @@ export async function updateProject(
     branding_display_name?: string;
     branding_primary_color?: string;
   }
-): Promise<ApiResponse<Project>> {
-  return request(`/v1/projects/${id}`, token, {
+): Promise<ApiResponse<Profile>> {
+  return request(`/v1/profiles/${id}`, token, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
 }
 
-export async function deleteProject(
+export async function deleteProfile(
   token: string,
   id: string
 ): Promise<void> {
-  return request(`/v1/projects/${id}`, token, { method: "DELETE" });
+  return request(`/v1/profiles/${id}`, token, { method: "DELETE" });
 }
 
-// API Keys
+// API Keys (workspace-scoped)
 
 export async function listApiKeys(
   token: string,
-  projectId: string
+  workspaceId: string
 ): Promise<ApiResponse<ApiKey[]>> {
-  return request(`/v1/projects/${projectId}/api-keys`, token);
+  return request(`/v1/workspaces/${workspaceId}/api-keys`, token);
 }
 
 export async function createApiKey(
   token: string,
-  projectId: string,
+  workspaceId: string,
   data: { name: string; environment?: string; expires_at?: string }
 ): Promise<ApiResponse<ApiKeyCreateResponse>> {
-  return request(`/v1/projects/${projectId}/api-keys`, token, {
+  return request(`/v1/workspaces/${workspaceId}/api-keys`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -147,15 +147,15 @@ export async function createApiKey(
 
 export async function revokeApiKey(
   token: string,
-  projectId: string,
+  workspaceId: string,
   keyId: string
 ): Promise<void> {
-  return request(`/v1/projects/${projectId}/api-keys/${keyId}`, token, {
+  return request(`/v1/workspaces/${workspaceId}/api-keys/${keyId}`, token, {
     method: "DELETE",
   });
 }
 
-// Social Accounts
+// Social Accounts (profile-scoped)
 
 export interface SocialAccount {
   id: string;
@@ -170,22 +170,22 @@ export interface SocialAccount {
 
 export async function listSocialAccounts(
   token: string,
-  projectId: string,
+  profileId: string,
   filters?: { external_user_id?: string; platform?: string }
 ): Promise<ApiResponse<SocialAccount[]>> {
   const qs = new URLSearchParams();
   if (filters?.external_user_id) qs.set("external_user_id", filters.external_user_id);
   if (filters?.platform) qs.set("platform", filters.platform);
   const suffix = qs.toString() ? `?${qs}` : "";
-  return request(`/v1/projects/${projectId}/social-accounts${suffix}`, token);
+  return request(`/v1/profiles/${profileId}/social-accounts${suffix}`, token);
 }
 
 export async function connectSocialAccount(
   token: string,
-  projectId: string,
+  profileId: string,
   data: { platform: string; credentials: Record<string, string> }
 ): Promise<ApiResponse<SocialAccount>> {
-  return request(`/v1/projects/${projectId}/social-accounts/connect`, token, {
+  return request(`/v1/profiles/${profileId}/social-accounts/connect`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -193,11 +193,11 @@ export async function connectSocialAccount(
 
 export async function disconnectSocialAccount(
   token: string,
-  projectId: string,
+  profileId: string,
   accountId: string
 ): Promise<void> {
   return request(
-    `/v1/projects/${projectId}/social-accounts/${accountId}`,
+    `/v1/profiles/${profileId}/social-accounts/${accountId}`,
     token,
     { method: "DELETE" }
   );
@@ -205,18 +205,18 @@ export async function disconnectSocialAccount(
 
 export async function getOAuthConnectURL(
   token: string,
-  projectId: string,
+  profileId: string,
   platform: string,
   redirectUrl: string
 ): Promise<ApiResponse<{ auth_url: string }>> {
   const params = new URLSearchParams({ redirect_url: redirectUrl });
   return request(
-    `/v1/projects/${projectId}/oauth/connect/${platform}?${params}`,
+    `/v1/profiles/${profileId}/oauth/connect/${platform}?${params}`,
     token
   );
 }
 
-// Social Posts
+// Social Posts (workspace-scoped)
 
 export interface SocialPostResult {
   social_account_id: string;
@@ -240,12 +240,12 @@ export interface SocialPost {
 
 export async function listSocialPosts(
   token: string,
-  projectId: string
+  workspaceId: string
 ): Promise<ApiResponse<SocialPost[]>> {
-  return request(`/v1/projects/${projectId}/social-posts`, token);
+  return request(`/v1/workspaces/${workspaceId}/social-posts`, token);
 }
 
-// Billing
+// Billing (workspace-scoped)
 
 export interface BillingInfo {
   plan: string;
@@ -269,17 +269,17 @@ export interface Plan {
 
 export async function getBilling(
   token: string,
-  projectId: string
+  workspaceId: string
 ): Promise<ApiResponse<BillingInfo>> {
-  return request(`/v1/projects/${projectId}/billing`, token);
+  return request(`/v1/workspaces/${workspaceId}/billing`, token);
 }
 
 export async function createCheckout(
   token: string,
-  projectId: string,
+  workspaceId: string,
   planId: string
 ): Promise<ApiResponse<{ checkout_url: string }>> {
-  return request(`/v1/projects/${projectId}/billing/checkout`, token, {
+  return request(`/v1/workspaces/${workspaceId}/billing/checkout`, token, {
     method: "POST",
     body: JSON.stringify({ plan_id: planId }),
   });
@@ -287,9 +287,9 @@ export async function createCheckout(
 
 export async function createPortal(
   token: string,
-  projectId: string
+  workspaceId: string
 ): Promise<ApiResponse<{ portal_url: string }>> {
-  return request(`/v1/projects/${projectId}/billing/portal`, token, {
+  return request(`/v1/workspaces/${workspaceId}/billing/portal`, token, {
     method: "POST",
   });
 }
@@ -301,10 +301,10 @@ export async function listPlans(): Promise<ApiResponse<Plan[]>> {
 
 export async function createSocialPost(
   token: string,
-  projectId: string,
+  workspaceId: string,
   data: { caption: string; account_ids: string[]; media_urls?: string[]; scheduled_at?: string }
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/projects/${projectId}/social-posts`, token, {
+  return request(`/v1/workspaces/${workspaceId}/social-posts`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -365,8 +365,8 @@ export async function bulkCreateSocialPosts(
   });
 }
 
-// Managed Users (Sprint 4 PR5 — list / detail of end users
-// onboarded via Connect, grouped by external_user_id)
+// Managed Users (profile-scoped — Sprint 4 PR5: list / detail of end
+// users onboarded via Connect, grouped by external_user_id)
 
 export interface ManagedUserListEntry {
   external_user_id: string;
@@ -391,20 +391,20 @@ export interface ManagedUserDetail {
 
 export async function listManagedUsers(
   token: string,
-  projectId: string,
+  profileId: string,
   limit?: number
 ): Promise<ApiResponse<ManagedUserListEntry[]>> {
   const qs = limit ? `?limit=${limit}` : "";
-  return request(`/v1/projects/${projectId}/users${qs}`, token);
+  return request(`/v1/profiles/${profileId}/users${qs}`, token);
 }
 
 export async function getManagedUser(
   token: string,
-  projectId: string,
+  profileId: string,
   externalUserId: string
 ): Promise<ApiResponse<ManagedUserDetail>> {
   return request(
-    `/v1/projects/${projectId}/users/${encodeURIComponent(externalUserId)}`,
+    `/v1/profiles/${profileId}/users/${encodeURIComponent(externalUserId)}`,
     token
   );
 }
@@ -447,7 +447,7 @@ export async function getConnectSession(
   return request(`/v1/connect/sessions/${sessionId}`, token);
 }
 
-// Analytics
+// Analytics (workspace-scoped)
 
 export interface PostAnalytics {
   post_id: string;
@@ -470,12 +470,12 @@ export interface PostAnalytics {
 
 export async function getPostAnalytics(
   token: string,
-  projectId: string,
+  workspaceId: string,
   postId: string,
   opts?: { refresh?: boolean }
 ): Promise<ApiResponse<PostAnalytics[]>> {
   const qs = opts?.refresh ? "?refresh=1" : "";
-  return request(`/v1/projects/${projectId}/social-posts/${postId}/analytics${qs}`, token);
+  return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}/analytics${qs}`, token);
 }
 
 // Aggregated analytics (powers the analytics page)
@@ -548,26 +548,26 @@ function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string
 
 export async function getAnalyticsSummary(
   token: string,
-  projectId: string,
+  workspaceId: string,
   params?: AnalyticsRangeParams
 ): Promise<ApiResponse<AnalyticsSummary>> {
-  return request(`/v1/projects/${projectId}/analytics/summary${rangeQuery(params)}`, token);
+  return request(`/v1/workspaces/${workspaceId}/analytics/summary${rangeQuery(params)}`, token);
 }
 
 export async function getAnalyticsTrend(
   token: string,
-  projectId: string,
+  workspaceId: string,
   params?: AnalyticsRangeParams & { metric?: string }
 ): Promise<ApiResponse<AnalyticsTrend>> {
-  return request(`/v1/projects/${projectId}/analytics/trend${rangeQuery(params)}`, token);
+  return request(`/v1/workspaces/${workspaceId}/analytics/trend${rangeQuery(params)}`, token);
 }
 
 export async function getAnalyticsByPlatform(
   token: string,
-  projectId: string,
+  workspaceId: string,
   params?: AnalyticsRangeParams
 ): Promise<ApiResponse<PlatformAnalytics[]>> {
-  return request(`/v1/projects/${projectId}/analytics/by-platform${rangeQuery(params)}`, token);
+  return request(`/v1/workspaces/${workspaceId}/analytics/by-platform${rangeQuery(params)}`, token);
 }
 
 // Admin
@@ -579,7 +579,7 @@ export interface AdminStats {
   mrr_cents: number;
   posts_this_month: number;
   posts_failed_this_month: number;
-  active_projects: number;
+  active_workspaces: number;
   platform_connections: number;
   new_signups_7d: number;
   prev_signups_7d: number;
@@ -590,7 +590,7 @@ export interface AdminUserRow {
   id: string;
   email: string;
   created_at: string;
-  project_count: number;
+  workspace_count: number;
   api_key_count: number;
   platform_count: number;
   platforms: string[];
@@ -601,7 +601,7 @@ export interface AdminUserRow {
   last_post_at: string | null;
 }
 
-export interface AdminUserProject {
+export interface AdminUserWorkspace {
   id: string;
   name: string;
   created_at: string;
@@ -619,7 +619,7 @@ export interface AdminUserDetail {
   email: string;
   name: string;
   created_at: string;
-  project_count: number;
+  workspace_count: number;
   api_key_count: number;
   platform_count: number;
   platforms: string[];
@@ -629,7 +629,7 @@ export interface AdminUserDetail {
   total_posts: number;
   failed_posts_30d: number;
   last_post_at: string | null;
-  projects: AdminUserProject[];
+  workspaces: AdminUserWorkspace[];
 }
 
 export interface AdminUserListParams {
@@ -656,14 +656,14 @@ export async function getMe(token: string): Promise<ApiResponse<MeResponse>> {
 }
 
 // Bootstrap — dashboard root resolver. Returns the user's default and
-// last-visited project ids; lazily creates a "Default" project for
+// last-visited profile ids; lazily creates a "Default" profile for
 // fresh signups so the dashboard never has to render an empty state
 // after the first login. Both fields can be null when the Clerk
 // webhook hasn't synced the user yet, in which case the caller should
-// fall back to /projects.
+// fall back to /profiles.
 export interface BootstrapResponse {
-  default_project_id: string | null;
-  last_project_id: string | null;
+  default_profile_id: string | null;
+  last_profile_id: string | null;
 }
 
 export async function getBootstrap(

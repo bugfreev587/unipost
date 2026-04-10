@@ -5,12 +5,12 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import {
-  getProject,
+  getProfile,
   getBilling,
   listSocialAccounts,
   listSocialPosts,
   listApiKeys,
-  type Project,
+  type Profile,
   type BillingInfo,
   type SocialAccount,
   type SocialPost,
@@ -27,10 +27,10 @@ const NAV_CARDS = [
   { href: "/settings", label: "Settings", desc: "Configuration", icon: Settings },
 ];
 
-export default function ProjectOverviewPage() {
+export default function ProfileOverviewPage() {
   const { id } = useParams<{ id: string }>();
   const { getToken } = useAuth();
-  const [project, setProject] = useState<Project | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -42,21 +42,21 @@ export default function ProjectOverviewPage() {
       try {
         const token = await getToken();
         if (!token) return;
-        const [projectRes, billingRes, accountsRes, postsRes, keysRes] =
+        const [profileRes, billingRes, accountsRes, postsRes, keysRes] =
           await Promise.all([
-            getProject(token, id),
+            getProfile(token, id),
             getBilling(token, id).catch(() => null),
             listSocialAccounts(token, id).catch(() => ({ data: [] as SocialAccount[] })),
             listSocialPosts(token, id).catch(() => ({ data: [] as SocialPost[] })),
             listApiKeys(token, id).catch(() => ({ data: [] as ApiKey[] })),
           ]);
-        setProject(projectRes.data);
+        setProfile(profileRes.data);
         if (billingRes) setBilling(billingRes.data);
         setAccounts(accountsRes.data);
         setPosts(postsRes.data);
         setKeys(keysRes.data);
       } catch (err) {
-        console.error("Failed to load project:", err);
+        console.error("Failed to load profile:", err);
       } finally {
         setLoading(false);
       }
@@ -68,8 +68,8 @@ export default function ProjectOverviewPage() {
     return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
   }
 
-  if (!project) {
-    return <div style={{ color: "var(--danger)" }}>Project not found.</div>;
+  if (!profile) {
+    return <div style={{ color: "var(--danger)" }}>Profile not found.</div>;
   }
 
   const usagePct = billing ? Math.min(billing.percentage, 100) : 0;
@@ -82,11 +82,11 @@ export default function ProjectOverviewPage() {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>
-              {project.name}
+              {profile.name}
             </div>
           </div>
           <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 11, color: "var(--dmuted2)", marginTop: 4 }}>
-            {project.id}
+            {profile.id}
           </div>
         </div>
         {billing && (

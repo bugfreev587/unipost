@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { listProjects, getBilling, getMe, type Project, type BillingInfo } from "@/lib/api";
+import { listProfiles, getBilling, getMe, type Profile, type BillingInfo } from "@/lib/api";
 import {
   Key,
   Users,
@@ -49,25 +49,25 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { getToken } = useAuth();
   const { user } = useUser();
   const { signOut, openUserProfile } = useClerk();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
   const [isAdmin, setIsAdmin] = useState(false);
 
-  const projectMatch = pathname.match(/^\/projects\/([^/]+)/);
-  const projectId = projectMatch?.[1];
-  const currentProject = projects.find((p) => p.id === projectId);
+  const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
+  const profileId = profileMatch?.[1];
+  const currentProfile = profiles.find((p) => p.id === profileId);
 
-  const loadProjects = useCallback(async () => {
+  const loadProfiles = useCallback(async () => {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await listProjects(token);
-      setProjects(res.data);
+      const res = await listProfiles(token);
+      setProfiles(res.data);
     } catch { /* silent */ }
   }, [getToken]);
 
-  useEffect(() => { loadProjects(); }, [loadProjects]);
+  useEffect(() => { loadProfiles(); }, [loadProfiles]);
 
   // Resolve admin status from the backend ADMIN_USERS allowlist. We
   // intentionally don't read a NEXT_PUBLIC_* env var here — keeping the
@@ -88,20 +88,20 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function loadBilling() {
-      if (!projectId) return;
+      if (!profileId) return;
       try {
         const token = await getToken();
         if (!token) return;
-        const res = await getBilling(token, projectId);
+        const res = await getBilling(token, profileId);
         setBilling(res.data);
       } catch { /* silent */ }
     }
     loadBilling();
-  }, [projectId, getToken]);
+  }, [profileId, getToken]);
 
   function isActive(href: string) {
-    if (!projectId) return false;
-    return pathname.startsWith(`/projects/${projectId}${href}`);
+    if (!profileId) return false;
+    return pathname.startsWith(`/projects/${profileId}${href}`);
   }
 
   const displayName = user?.firstName || user?.username || "User";
@@ -164,8 +164,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuItem onClick={() => router.push("/account")} style={{ padding: "10px 14px" }}>
                 <User style={{ width: 14, height: 14 }} /><span>Account</span>
               </DropdownMenuItem>
-              {projectId && (
-                <DropdownMenuItem onClick={() => router.push(`/projects/${projectId}/billing`)} style={{ padding: "10px 14px" }}>
+              {profileId && (
+                <DropdownMenuItem onClick={() => router.push(`/projects/${profileId}/billing`)} style={{ padding: "10px 14px" }}>
                   <CreditCard style={{ width: 14, height: 14 }} /><span>Billing</span>
                 </DropdownMenuItem>
               )}
@@ -183,7 +183,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* ── Middle: Nav items ── */}
         <nav style={{ padding: "16px 10px 8px", flex: 1, overflowY: "auto" }}>
-          {projectId ? (
+          {profileId ? (
             <>
               <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--dmuted2)", padding: "0 6px", marginBottom: 4 }}>
                 Navigate
@@ -194,7 +194,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 const hasSubmenu = !!item.submenu;
                 const submenuOpen = hasSubmenu && (
                   expandedMenus.has(item.href) ||
-                  pathname.startsWith(`/projects/${projectId}${item.href}`)
+                  pathname.startsWith(`/projects/${profileId}${item.href}`)
                 );
 
                 return (
@@ -221,7 +221,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                       </button>
                     ) : (
                       <Link
-                        href={`/projects/${projectId}${item.href}`}
+                        href={`/projects/${profileId}${item.href}`}
                         data-active={active}
                         className="sidebar-nav-item"
                       >
@@ -232,11 +232,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                     {hasSubmenu && submenuOpen && item.submenu && (
                       <div style={{ paddingLeft: 28, marginBottom: 4 }}>
                         {item.submenu.map((sub) => {
-                          const subActive = pathname === `/projects/${projectId}${sub.href}`;
+                          const subActive = pathname === `/projects/${profileId}${sub.href}`;
                           return (
                             <Link
                               key={sub.href}
-                              href={`/projects/${projectId}${sub.href}`}
+                              href={`/projects/${profileId}${sub.href}`}
                               style={{
                                 display: "block",
                                 padding: "6px 12px",
@@ -265,7 +265,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           ) : (
             <Link href="/projects" data-active={pathname === "/projects"} className="sidebar-nav-item">
               <Zap style={{ width: 14, height: 14 }} strokeWidth={1.75} />
-              Projects
+              Profiles
             </Link>
           )}
 
@@ -281,8 +281,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        {/* ── Bottom: Current project + settings + switcher ── */}
-        {currentProject && (
+        {/* ── Bottom: Current profile + settings + switcher ── */}
+        {currentProfile && (
           <div
             style={{
               padding: "12px 10px",
@@ -293,7 +293,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             }}
           >
             <div className="project-initial" style={{ width: 28, height: 28, fontSize: 12 }}>
-              {currentProject.name.charAt(0).toUpperCase()}
+              {currentProfile.name.charAt(0).toUpperCase()}
             </div>
             <span
               style={{
@@ -301,10 +301,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}
             >
-              {currentProject.name}
+              {currentProfile.name}
             </span>
             <Link
-              href={`/projects/${projectId}/settings`}
+              href={`/projects/${profileId}/settings`}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 width: 30, height: 30, borderRadius: 6,
@@ -318,9 +318,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </Link>
             {/*
               Switcher used to open an in-place dropdown to pick a
-              project. We replaced it with a navigation to the full
+              profile. We replaced it with a navigation to the full
               /projects page so users have one canonical place to view
-              all their projects, create new ones, and switch between
+              all their profiles, create new ones, and switch between
               them — keeps the sidebar lean and avoids two surfaces
               for the same operation.
             */}
@@ -333,7 +333,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               }}
               onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
-              title="Switch project"
+              title="Switch profile"
             >
               <ChevronsUpDown style={{ width: 16, height: 16 }} strokeWidth={1.75} />
             </Link>
@@ -350,4 +350,3 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
