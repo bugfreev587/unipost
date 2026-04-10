@@ -356,6 +356,14 @@ export interface MediaUpload {
   expires_at: string;
 }
 
+export async function getMedia(
+  token: string,
+  workspaceId: string,
+  mediaId: string
+): Promise<ApiResponse<MediaUpload>> {
+  return request(`/v1/workspaces/${workspaceId}/media/${mediaId}`, token);
+}
+
 export async function createMedia(
   token: string,
   workspaceId: string,

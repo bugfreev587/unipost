@@ -13,7 +13,7 @@ import {
   type PublishMode,
 } from "./use-create-post-form";
 import type { SocialAccount } from "@/lib/api";
-import { createSocialPost, createMedia } from "@/lib/api";
+import { createSocialPost, createMedia, getMedia } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
@@ -202,6 +202,9 @@ export function CreatePostDrawer({
         xhr.onerror = () => reject(new Error("Upload failed"));
         xhr.send(file);
       });
+      // Trigger server-side hydration: HEAD the R2 object, flip status
+      // from 'pending' to 'uploaded' so the publish validator accepts it.
+      await getMedia(token, workspaceId, res.data.id);
       form.updateMediaItem(index, { progress: 100, mediaId: res.data.id });
     } catch (err) {
       console.error("Media upload failed:", err);
