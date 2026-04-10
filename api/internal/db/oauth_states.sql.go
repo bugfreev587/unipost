@@ -12,14 +12,14 @@ import (
 )
 
 const createOAuthState = `-- name: CreateOAuthState :one
-INSERT INTO oauth_states (state, project_id, platform, redirect_url)
+INSERT INTO oauth_states (state, profile_id, platform, redirect_url)
 VALUES ($1, $2, $3, $4)
-RETURNING state, project_id, platform, redirect_url, expires_at, created_at
+RETURNING state, profile_id, platform, redirect_url, expires_at, created_at
 `
 
 type CreateOAuthStateParams struct {
 	State       string      `json:"state"`
-	ProjectID   string      `json:"project_id"`
+	ProfileID   string      `json:"profile_id"`
 	Platform    string      `json:"platform"`
 	RedirectUrl pgtype.Text `json:"redirect_url"`
 }
@@ -27,14 +27,14 @@ type CreateOAuthStateParams struct {
 func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStateParams) (OauthState, error) {
 	row := q.db.QueryRow(ctx, createOAuthState,
 		arg.State,
-		arg.ProjectID,
+		arg.ProfileID,
 		arg.Platform,
 		arg.RedirectUrl,
 	)
 	var i OauthState
 	err := row.Scan(
 		&i.State,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.RedirectUrl,
 		&i.ExpiresAt,
@@ -62,7 +62,7 @@ func (q *Queries) DeleteOAuthState(ctx context.Context, state string) error {
 }
 
 const getOAuthState = `-- name: GetOAuthState :one
-SELECT state, project_id, platform, redirect_url, expires_at, created_at FROM oauth_states WHERE state = $1 AND expires_at > NOW()
+SELECT state, profile_id, platform, redirect_url, expires_at, created_at FROM oauth_states WHERE state = $1 AND expires_at > NOW()
 `
 
 func (q *Queries) GetOAuthState(ctx context.Context, state string) (OauthState, error) {
@@ -70,7 +70,7 @@ func (q *Queries) GetOAuthState(ctx context.Context, state string) (OauthState, 
 	var i OauthState
 	err := row.Scan(
 		&i.State,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.RedirectUrl,
 		&i.ExpiresAt,

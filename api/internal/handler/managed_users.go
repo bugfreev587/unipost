@@ -41,25 +41,25 @@ func NewManagedUsersHandler(queries *db.Queries) *ManagedUsersHandler {
 // API key middleware). Dashboard callers come through the
 // /v1/projects/{projectID}/users path and the project is the URL
 // param — we additionally verify the requesting Clerk user owns it.
-func (h *ManagedUsersHandler) getProjectID(r *http.Request) string {
-	if pid := auth.GetProjectID(r.Context()); pid != "" {
+func (h *ManagedUsersHandler) getProfileID(r *http.Request) string {
+	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
 		return pid
 	}
-	projectID := chi.URLParam(r, "projectID")
-	if projectID == "" {
+	profileID := chi.URLParam(r, "profileID")
+	if profileID == "" {
 		return ""
 	}
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
 		return ""
 	}
-	if _, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	if _, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
+		ID:     profileID,
+		UserID: userID,
 	}); err != nil {
 		return ""
 	}
-	return projectID
+	return profileID
 }
 
 // managedUserListEntry is one row in the GET /v1/users response.
@@ -95,7 +95,7 @@ type managedUserDetail struct {
 // has 0–100 managed users and a single LIMIT 100 query is fast enough.
 // We can add cursor support in a follow-up if anyone hits the cap.
 func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getProfileID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -108,8 +108,8 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := h.queries.ListManagedUsersByProject(r.Context(), db.ListManagedUsersByProjectParams{
-		ProjectID: projectID,
+	rows, err := h.queries.ListManagedUsersByProfile(r.Context(), db.ListManagedUsersByProfileParams{
+		ProfileID: projectID,
 		Limit:     limit,
 	})
 	if err != nil {
@@ -140,7 +140,7 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the total count for the meta.
-	total, _ := h.queries.CountManagedUsersByProject(r.Context(), projectID)
+	total, _ := h.queries.CountManagedUsersByProfile(r.Context(), projectID)
 
 	writeSuccessWithMeta(w, out, int(total))
 }
@@ -151,7 +151,7 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 // belonging to that end user. 404 if no managed accounts exist for
 // the id within the project.
 func (h *ManagedUsersHandler) Get(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getProfileID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -163,7 +163,7 @@ func (h *ManagedUsersHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accounts, err := h.queries.ListManagedAccountsByExternalUser(r.Context(), db.ListManagedAccountsByExternalUserParams{
-		ProjectID:      projectID,
+		ProfileID:      projectID,
 		ExternalUserID: pgtype.Text{String: externalUserID, Valid: true},
 	})
 	if err != nil {

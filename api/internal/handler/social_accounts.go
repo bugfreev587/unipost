@@ -76,11 +76,11 @@ func toSocialAccountResponse(a db.SocialAccount) socialAccountResponse {
 }
 
 // Connect handles POST /v1/social-accounts/connect (API key auth)
-// and POST /v1/projects/{projectID}/social-accounts/connect (Clerk auth)
+// and POST /v1/profiles/{profileID}/social-accounts/connect (Clerk auth)
 func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	profileID := h.getProfileID(r)
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 
@@ -125,7 +125,7 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	metadataJSON, _ := json.Marshal(result.Metadata)
 
 	account, err := h.queries.CreateSocialAccount(r.Context(), db.CreateSocialAccountParams{
-		ProjectID:         projectID,
+		ProfileID:         profileID,
 		Platform:          body.Platform,
 		AccessToken:       encAccess,
 		RefreshToken:      pgtype.Text{String: encRefresh, Valid: true},
@@ -149,9 +149,9 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 // let customers find rows created by a Connect flow. Both are optional —
 // passing neither preserves the existing "all accounts in project" shape.
 func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	profileID := h.getProfileID(r)
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 
@@ -161,10 +161,10 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	var accounts []db.SocialAccount
 	var err error
 	if extUserID == "" && platformFilter == "" {
-		accounts, err = h.queries.ListSocialAccountsByProject(r.Context(), projectID)
+		accounts, err = h.queries.ListSocialAccountsByProfile(r.Context(), profileID)
 	} else {
-		accounts, err = h.queries.ListSocialAccountsByProjectFiltered(r.Context(), db.ListSocialAccountsByProjectFilteredParams{
-			ProjectID:      projectID,
+		accounts, err = h.queries.ListSocialAccountsByProfileFiltered(r.Context(), db.ListSocialAccountsByProfileFilteredParams{
+			ProfileID:      profileID,
 			ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
 			Platform:       pgtype.Text{String: platformFilter, Valid: platformFilter != ""},
 		})
@@ -184,7 +184,7 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Disconnect handles DELETE /v1/social-accounts/{id}
 func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	profileID := h.getProfileID(r)
 	accountID := chi.URLParam(r, "id")
 	if accountID == "" {
 		accountID = chi.URLParam(r, "accountID")
@@ -192,7 +192,7 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 
 	disconnected, err := h.queries.DisconnectSocialAccount(r.Context(), db.DisconnectSocialAccountParams{
 		ID:        accountID,
-		ProjectID: projectID,
+		ProfileID: profileID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -208,7 +208,12 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	if disconnected.AccountName.Valid {
 		accountName = disconnected.AccountName.String
 	}
-	h.bus.Publish(r.Context(), projectID, events.EventAccountDisconnected, map[string]any{
+	// Webhooks are workspace-scoped; resolve workspace_id from profile.
+	wsID := profileID
+	if prof, pErr := h.queries.GetProfile(r.Context(), profileID); pErr == nil {
+		wsID = prof.WorkspaceID
+	}
+	h.bus.Publish(r.Context(), wsID, events.EventAccountDisconnected, map[string]any{
 		"social_account_id": disconnected.ID,
 		"platform":          disconnected.Platform,
 		"account_name":      accountName,
@@ -219,26 +224,26 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	writeSuccess(w, map[string]bool{"disconnected": true})
 }
 
-// getProjectID extracts project ID from API key context or URL param (dashboard routes).
-func (h *SocialAccountHandler) getProjectID(r *http.Request) string {
-	if pid := auth.GetProjectID(r.Context()); pid != "" {
+// getProfileID extracts profile ID from API key context or URL param (dashboard routes).
+func (h *SocialAccountHandler) getProfileID(r *http.Request) string {
+	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
 		return pid
 	}
 	// Dashboard route: verify ownership via URL param
-	projectID := chi.URLParam(r, "projectID")
-	if projectID == "" {
+	profileID := chi.URLParam(r, "profileID")
+	if profileID == "" {
 		return ""
 	}
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
 		return ""
 	}
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	_, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
+		ID:     profileID,
+		UserID: userID,
 	})
 	if err != nil {
 		return ""
 	}
-	return projectID
+	return profileID
 }

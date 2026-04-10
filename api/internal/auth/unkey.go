@@ -12,11 +12,11 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
-const ProjectIDKey contextKey = "projectID"
+const WorkspaceIDKey contextKey = "workspaceID"
 
 // APIKeyMiddleware verifies API keys by hashing the presented key and looking up
 // the hash in the database. It checks revocation and expiration, updates last_used_at
-// in a background goroutine, and injects the project_id into the request context.
+// in a background goroutine, and injects the workspace_id into the request context.
 func APIKeyMiddleware(queries *db.Queries) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,15 +84,15 @@ func APIKeyMiddleware(queries *db.Queries) func(http.Handler) http.Handler {
 				}
 			}()
 
-			ctx := context.WithValue(r.Context(), ProjectIDKey, ak.ProjectID)
+			ctx := context.WithValue(r.Context(), WorkspaceIDKey, ak.WorkspaceID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-func GetProjectID(ctx context.Context) string {
-	projectID, _ := ctx.Value(ProjectIDKey).(string)
-	return projectID
+func GetWorkspaceID(ctx context.Context) string {
+	workspaceID, _ := ctx.Value(WorkspaceIDKey).(string)
+	return workspaceID
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

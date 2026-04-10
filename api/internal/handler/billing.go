@@ -39,11 +39,11 @@ type billingResponse struct {
 
 // GetBilling handles GET /v1/billing (Clerk auth, project-scoped)
 func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "projectID")
+	projectID := chi.URLParam(r, "workspaceID")
 	userID := auth.GetUserID(r.Context())
 
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID: projectID, OwnerID: userID,
+	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID: projectID, UserID: userID,
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
@@ -52,7 +52,7 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 
 	h.quota.EnsureSubscription(r.Context(), projectID)
 
-	sub, _ := h.queries.GetSubscriptionByProject(r.Context(), projectID)
+	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
 	plan, _ := h.queries.GetPlan(r.Context(), sub.PlanID)
 	status := h.quota.Check(r.Context(), projectID)
 
@@ -72,11 +72,11 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 
 // CreateCheckout handles POST /v1/billing/checkout
 func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "projectID")
+	projectID := chi.URLParam(r, "workspaceID")
 	userID := auth.GetUserID(r.Context())
 
-	project, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID: projectID, OwnerID: userID,
+	project, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID: projectID, UserID: userID,
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
@@ -119,7 +119,7 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 	// from live and sandbox don't overlap, so even if a project changes
 	// modes (user added/removed from SUPER_ADMINS), the previous mode's
 	// customer ID will be invalid in the new mode and we'll mint a new one.
-	sub, _ := h.queries.GetSubscriptionByProject(r.Context(), projectID)
+	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
 	customerID := ""
 	if sub.StripeCustomerID.String != "" {
 		customerID = sub.StripeCustomerID.String
@@ -188,18 +188,18 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 
 // CreatePortal handles POST /v1/billing/portal
 func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "projectID")
+	projectID := chi.URLParam(r, "workspaceID")
 	userID := auth.GetUserID(r.Context())
 
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID: projectID, OwnerID: userID,
+	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID: projectID, UserID: userID,
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
 		return
 	}
 
-	sub, err := h.queries.GetSubscriptionByProject(r.Context(), projectID)
+	sub, err := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
 	if err != nil || sub.StripeCustomerID.String == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "No active subscription")
 		return
@@ -232,7 +232,7 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 
 // GetUsage handles GET /v1/usage (API key auth)
 func (h *BillingHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -241,7 +241,7 @@ func (h *BillingHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	h.quota.EnsureSubscription(r.Context(), projectID)
 	status := h.quota.Check(r.Context(), projectID)
 
-	sub, _ := h.queries.GetSubscriptionByProject(r.Context(), projectID)
+	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
 	planID := "free"
 	if sub.PlanID != "" {
 		planID = sub.PlanID

@@ -72,7 +72,7 @@ func (h *SocialPostHandler) createDraft(
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		ProjectID:      projectID,
+		WorkspaceID:      projectID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "draft",
@@ -99,7 +99,7 @@ func (h *SocialPostHandler) createDraft(
 // so quota counting, event emission, and per-result caption
 // persistence stay in one place.
 func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -109,8 +109,8 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	// Optimistic lock — only one caller can win the draft → publishing
 	// transition. The loser sees pgx.ErrNoRows.
 	claimed, err := h.queries.ClaimDraftForPublish(r.Context(), db.ClaimDraftForPublishParams{
-		ID:        postID,
-		ProjectID: projectID,
+		ID:          postID,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -224,7 +224,7 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 
 	updated, err := h.queries.RescheduleSocialPost(r.Context(), db.RescheduleSocialPostParams{
 		ID:          postID,
-		ProjectID:   projectID,
+		WorkspaceID: projectID,
 		ScheduledAt: pgtype.Timestamptz{Time: t, Valid: true},
 	})
 	if err != nil {
@@ -246,7 +246,7 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 // action required. No webhook fired (cancellation is a customer
 // action, not a platform event).
 func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -254,8 +254,8 @@ func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
 	postID := chi.URLParam(r, "id")
 
 	cancelled, err := h.queries.CancelSocialPost(r.Context(), db.CancelSocialPostParams{
-		ID:        postID,
-		ProjectID: projectID,
+		ID:          postID,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -280,7 +280,7 @@ func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
 // locks so a row that flipped to 'publishing' between the read and
 // the write loses cleanly.
 func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -290,9 +290,9 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	// Read current state once. We don't trust this for the actual
 	// write — the locked UPDATE below has its own WHERE — but we use
 	// it to dispatch between the draft-edit and reschedule branches.
-	existing, err := h.queries.GetSocialPostByIDAndProject(r.Context(), db.GetSocialPostByIDAndProjectParams{
-		ID:        postID,
-		ProjectID: projectID,
+	existing, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
+		ID:          postID,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found in this project")
@@ -345,7 +345,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 
 	updated, err := h.queries.UpdateDraftContent(r.Context(), db.UpdateDraftContentParams{
 		ID:          postID,
-		ProjectID:   projectID,
+		WorkspaceID: projectID,
 		Caption:     canonicalCaption,
 		MediaUrls:   canonicalMedia,
 		Metadata:    metaJSON,

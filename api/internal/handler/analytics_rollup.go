@@ -88,7 +88,7 @@ type rollupResponse struct {
 
 // GetRollup handles GET /v1/analytics/rollup.
 func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -126,7 +126,7 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 
 	// Build the SQL with the validated group-by columns interpolated.
 	// Every interpolated string came from the allowedGroupBy map, so
-	// there's no injection vector — but we still bind project_id +
+	// there's no injection vector — but we still bind workspace_id +
 	// from + to as parameters.
 	groupCols := make([]string, len(groupBy))
 	for i, g := range groupBy {
@@ -144,7 +144,7 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 		FROM social_post_results spr
 		JOIN social_posts sp ON spr.post_id = sp.id
 		JOIN social_accounts sa ON spr.social_account_id = sa.id
-		WHERE sp.project_id = $1
+		WHERE sp.workspace_id = $1
 		  AND sp.created_at >= $2
 		  AND sp.created_at < $3
 		GROUP BY bucket, %s
@@ -153,7 +153,7 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 
 	rows, err := h.pool.Query(r.Context(), query, projectID, from, to)
 	if err != nil {
-		slog.Error("analytics rollup query failed", "project_id", projectID, "err", err)
+		slog.Error("analytics rollup query failed", "workspace_id", projectID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to query rollup")
 		return
 	}
@@ -298,8 +298,8 @@ func parseGroupBy(raw string) []string {
 
 // getProjectID resolves the project context for either auth mode
 // (API key or Clerk session via /v1/projects/{projectID}/...).
-func (h *AnalyticsRollupHandler) getProjectID(r *http.Request) string {
-	if pid := auth.GetProjectID(r.Context()); pid != "" {
+func (h *AnalyticsRollupHandler) getWorkspaceID(r *http.Request) string {
+	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
 		return pid
 	}
 	// Dashboard route fallback would go here if/when we wire one.

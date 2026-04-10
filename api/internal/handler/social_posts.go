@@ -106,7 +106,7 @@ type socialPostResponse struct {
 // overall publish doesn't get blocked by one bad account — preserves
 // legacy soft-failure semantics.
 func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -128,7 +128,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// the prior response unchanged. Cheap: one indexed lookup.
 	if parsed.IdempotencyKey != "" {
 		if existing, err := h.queries.GetSocialPostByIdempotencyKey(r.Context(), db.GetSocialPostByIdempotencyKeyParams{
-			ProjectID:      projectID,
+			WorkspaceID:      projectID,
 			IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
 		}); err == nil {
 			h.writeReplayedPost(w, r, existing)
@@ -219,7 +219,7 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		ProjectID:      projectID,
+		WorkspaceID:      projectID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "scheduled",
@@ -281,9 +281,9 @@ func (h *SocialPostHandler) executeImmediatePost(
 	uniqueIDs := uniqueAccountIDs(parsed.Posts)
 	dbAccounts := make(map[string]db.SocialAccount, len(uniqueIDs))
 	for _, id := range uniqueIDs {
-		acc, err := h.queries.GetSocialAccountByIDAndProject(r.Context(), db.GetSocialAccountByIDAndProjectParams{
-			ID:        id,
-			ProjectID: projectID,
+		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+			ID:          id,
+			WorkspaceID: projectID,
 		})
 		if err != nil {
 			// Missing accounts are reported as failed results below;
@@ -305,7 +305,7 @@ func (h *SocialPostHandler) executeImmediatePost(
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		ProjectID:      projectID,
+		WorkspaceID:      projectID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "publishing",
@@ -338,9 +338,9 @@ func (h *SocialPostHandler) publishExistingPost(
 	uniqueIDs := uniqueAccountIDs(parsed.Posts)
 	dbAccounts := make(map[string]db.SocialAccount, len(uniqueIDs))
 	for _, id := range uniqueIDs {
-		acc, err := h.queries.GetSocialAccountByIDAndProject(r.Context(), db.GetSocialAccountByIDAndProjectParams{
-			ID:        id,
-			ProjectID: projectID,
+		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+			ID:          id,
+			WorkspaceID: projectID,
 		})
 		if err != nil {
 			continue
@@ -390,8 +390,8 @@ func (h *SocialPostHandler) executePublishLoop(
 	// "no cap" rather than blocking — the legacy behavior is the
 	// safer fallback if metadata is briefly unavailable.
 	var perAccountLimit pgtype.Int4
-	if proj, projErr := h.queries.GetProject(r.Context(), projectID); projErr == nil {
-		perAccountLimit = proj.PerAccountMonthlyLimit
+	if ws, wsErr := h.queries.GetWorkspace(r.Context(), projectID); wsErr == nil {
+		perAccountLimit = ws.PerAccountMonthlyLimit
 	}
 	tracker := quota.NewPerAccountTracker(
 		r.Context(),
@@ -988,7 +988,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 
 	// Resolve platform + account name once per result via the project
 	// account map (cheaper than per-result GetSocialAccount calls).
-	allAccounts, _ := h.queries.ListAllSocialAccountsByProject(r.Context(), post.ProjectID)
+	allAccounts, _ := h.queries.ListSocialAccountsByWorkspace(r.Context(), post.WorkspaceID)
 	accountInfo := make(map[string]struct {
 		Platform string
 		Name     string
@@ -1049,15 +1049,15 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 
 // Get handles GET /v1/social-posts/{id}
 func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
 	}
 
-	post, err := h.queries.GetSocialPostByIDAndProject(r.Context(), db.GetSocialPostByIDAndProjectParams{
-		ID:        postID,
-		ProjectID: projectID,
+	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
+		ID:          postID,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -1148,7 +1148,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 // require EXISTS subqueries against social_post_results and a
 // separate index. Sprint 2 ships the filters that share one index.
 func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -1170,7 +1170,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 	to := parseRFC3339Param(r.URL.Query().Get("to"))
 
 	posts, err := h.queries.ListSocialPostsFiltered(r.Context(), db.ListSocialPostsFilteredParams{
-		ProjectID:   projectID,
+		WorkspaceID:   projectID,
 		Column2:     statusCSV,
 		Column3:     from,
 		Column4:     to,
@@ -1187,7 +1187,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 	// to resolve platform names AND display names. Historical post results
 	// may reference accounts that have since been disconnected — we still
 	// want their platform / handle to show up in the analytics list.
-	allAccounts, _ := h.queries.ListAllSocialAccountsByProject(r.Context(), projectID)
+	allAccounts, _ := h.queries.ListSocialAccountsByWorkspace(r.Context(), projectID)
 	accountMap := make(map[string]accountSummary, len(allAccounts))
 	for _, acc := range allAccounts {
 		name := ""
@@ -1334,15 +1334,15 @@ func decodeListCursor(raw string) (time.Time, string, error) {
 
 // Delete handles DELETE /v1/social-posts/{id}
 func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
 	}
 
-	post, err := h.queries.GetSocialPostByIDAndProject(r.Context(), db.GetSocialPostByIDAndProjectParams{
-		ID:        postID,
-		ProjectID: projectID,
+	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
+		ID:          postID,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -1382,25 +1382,25 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, map[string]bool{"deleted": true})
 }
 
-// getProjectID extracts project ID from API key context or URL param (dashboard routes).
-func (h *SocialPostHandler) getProjectID(r *http.Request) string {
-	if pid := auth.GetProjectID(r.Context()); pid != "" {
+// getWorkspaceID extracts workspace ID from API key context or URL param (dashboard routes).
+func (h *SocialPostHandler) getWorkspaceID(r *http.Request) string {
+	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
 		return pid
 	}
-	projectID := chi.URLParam(r, "projectID")
-	if projectID == "" {
+	workspaceID := chi.URLParam(r, "workspaceID")
+	if workspaceID == "" {
 		return ""
 	}
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
 		return ""
 	}
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID:     workspaceID,
+		UserID: userID,
 	})
 	if err != nil {
 		return ""
 	}
-	return projectID
+	return workspaceID
 }

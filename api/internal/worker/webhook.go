@@ -52,22 +52,22 @@ func (w *WebhookDeliveryWorker) Start(ctx context.Context) {
 // Publish satisfies the events.EventBus interface so handler /
 // scheduler can fire events without importing this package directly.
 // Best-effort: panics are recovered, errors are logged, no return.
-func (w *WebhookDeliveryWorker) Publish(ctx context.Context, projectID, event string, data any) {
+func (w *WebhookDeliveryWorker) Publish(ctx context.Context, workspaceID, event string, data any) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("webhook publish: panic recovered", "event", event, "project_id", projectID, "panic", r)
+			slog.Error("webhook publish: panic recovered", "event", event, "workspace_id", workspaceID, "panic", r)
 		}
 	}()
-	if err := w.Enqueue(ctx, projectID, event, data); err != nil {
-		slog.Warn("webhook publish: enqueue failed", "event", event, "project_id", projectID, "error", err)
+	if err := w.Enqueue(ctx, workspaceID, event, data); err != nil {
+		slog.Warn("webhook publish: enqueue failed", "event", event, "workspace_id", workspaceID, "error", err)
 	}
 }
 
 // Enqueue creates webhook delivery records for all matching webhooks.
-func (w *WebhookDeliveryWorker) Enqueue(ctx context.Context, projectID string, event string, data any) error {
-	webhooks, err := w.queries.ListWebhooksByProjectAndEvent(ctx, db.ListWebhooksByProjectAndEventParams{
-		ProjectID: projectID,
-		Event:     event,
+func (w *WebhookDeliveryWorker) Enqueue(ctx context.Context, workspaceID string, event string, data any) error {
+	webhooks, err := w.queries.ListWebhooksByWorkspaceAndEvent(ctx, db.ListWebhooksByWorkspaceAndEventParams{
+		WorkspaceID: workspaceID,
+		Event:       event,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list webhooks: %w", err)

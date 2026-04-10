@@ -64,16 +64,16 @@ type previewLinkResponse struct {
 // be re-shared via preview link (use the platform URLs from the
 // publish response instead).
 func (h *PreviewHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
 	}
 	postID := chi.URLParam(r, "id")
 
-	post, err := h.queries.GetSocialPostByIDAndProject(r.Context(), db.GetSocialPostByIDAndProjectParams{
+	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
 		ID:        postID,
-		ProjectID: projectID,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -169,7 +169,7 @@ func (h *PreviewHandler) PublicGet(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve account names + platforms in one DB hit so the response
 	// shows real handles in each preview column.
-	allAccounts, _ := h.queries.ListAllSocialAccountsByProject(r.Context(), post.ProjectID)
+	allAccounts, _ := h.queries.ListAllSocialAccountsByProfile(r.Context(), post.WorkspaceID)
 	accountInfo := make(map[string]struct {
 		Platform string
 		Name     string

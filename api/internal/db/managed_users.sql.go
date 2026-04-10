@@ -11,28 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countManagedUsersByProject = `-- name: CountManagedUsersByProject :one
+const countManagedUsersByProfile = `-- name: CountManagedUsersByProfile :one
 SELECT COUNT(DISTINCT external_user_id)::INTEGER AS total
 FROM social_accounts
-WHERE project_id = $1
+WHERE profile_id = $1
   AND external_user_id IS NOT NULL
   AND disconnected_at IS NULL
   AND connection_type = 'managed'
 `
 
-// Total distinct managed users in the project. Used by the
-// dashboard for the "X end users connected" header card.
-func (q *Queries) CountManagedUsersByProject(ctx context.Context, projectID string) (int32, error) {
-	row := q.db.QueryRow(ctx, countManagedUsersByProject, projectID)
+func (q *Queries) CountManagedUsersByProfile(ctx context.Context, profileID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countManagedUsersByProfile, profileID)
 	var total int32
 	err := row.Scan(&total)
 	return total, err
 }
 
 const listManagedAccountsByExternalUser = `-- name: ListManagedAccountsByExternalUser :many
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 FROM social_accounts
-WHERE project_id = $1
+WHERE profile_id = $1
   AND external_user_id = $2
   AND disconnected_at IS NULL
   AND connection_type = 'managed'
@@ -40,14 +38,12 @@ ORDER BY connected_at DESC
 `
 
 type ListManagedAccountsByExternalUserParams struct {
-	ProjectID      string      `json:"project_id"`
+	ProfileID      string      `json:"profile_id"`
 	ExternalUserID pgtype.Text `json:"external_user_id"`
 }
 
-// Detail view: every social_accounts row belonging to one end user.
-// Used by GET /v1/users/{external_user_id}.
 func (q *Queries) ListManagedAccountsByExternalUser(ctx context.Context, arg ListManagedAccountsByExternalUserParams) ([]SocialAccount, error) {
-	rows, err := q.db.Query(ctx, listManagedAccountsByExternalUser, arg.ProjectID, arg.ExternalUserID)
+	rows, err := q.db.Query(ctx, listManagedAccountsByExternalUser, arg.ProfileID, arg.ExternalUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +53,7 @@ func (q *Queries) ListManagedAccountsByExternalUser(ctx context.Context, arg Lis
 		var i SocialAccount
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
+			&i.ProfileID,
 			&i.Platform,
 			&i.AccessToken,
 			&i.RefreshToken,
@@ -86,14 +82,9 @@ func (q *Queries) ListManagedAccountsByExternalUser(ctx context.Context, arg Lis
 	return items, nil
 }
 
-const listManagedUsersByProject = `-- name: ListManagedUsersByProject :many
-
+const listManagedUsersByProfile = `-- name: ListManagedUsersByProfile :many
 SELECT
   external_user_id::TEXT AS external_user_id,
-  -- COALESCE keeps the result non-null when no row in the group
-  -- carries an email, so sqlc can use a plain ` + "`" + `string` + "`" + ` type instead
-  -- of pgtype.Text. Without this, pgx fails with "cannot scan NULL
-  -- into *string" the moment a managed user has no email on file.
   COALESCE(
     MAX(external_user_email) FILTER (WHERE external_user_email IS NOT NULL AND external_user_email <> ''),
     ''
@@ -106,7 +97,7 @@ SELECT
   MIN(connected_at)::TIMESTAMPTZ   AS first_connected_at,
   MAX(last_refreshed_at)::TIMESTAMPTZ AS last_refreshed_at
 FROM social_accounts
-WHERE project_id = $1
+WHERE profile_id = $1
   AND external_user_id IS NOT NULL
   AND disconnected_at IS NULL
   AND connection_type = 'managed'
@@ -115,12 +106,12 @@ ORDER BY MIN(connected_at) DESC, external_user_id DESC
 LIMIT $2
 `
 
-type ListManagedUsersByProjectParams struct {
-	ProjectID string `json:"project_id"`
+type ListManagedUsersByProfileParams struct {
+	ProfileID string `json:"profile_id"`
 	Limit     int32  `json:"limit"`
 }
 
-type ListManagedUsersByProjectRow struct {
+type ListManagedUsersByProfileRow struct {
 	ExternalUserID    string             `json:"external_user_id"`
 	ExternalUserEmail string             `json:"external_user_email"`
 	AccountCount      int32              `json:"account_count"`
@@ -132,36 +123,15 @@ type ListManagedUsersByProjectRow struct {
 	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
 }
 
-// Sprint 4 PR5: Managed Users view queries.
-//
-// "Managed users" here means the customer's END users — the people
-// whose social accounts were onboarded via Sprint 3 Connect. They
-// live as distinct external_user_id values on social_accounts rows;
-// this file groups + aggregates them so the dashboard can show one
-// row per end user instead of one row per connected account.
-//
-// We deliberately don't introduce a separate `managed_users` table —
-// aggregating on the fly keeps the data model identical to Sprint 3
-// and lets BYO rows (which have NULL external_user_id) silently drop
-// out of the aggregation, which is the right behavior for a
-// "Managed Users" view.
-//
-// Distinct from the existing `users` table in users.sql, which is
-// the Clerk-synced project-owner table.
-// One row per (external_user_id) for the project, with aggregate
-// fields the dashboard table needs. external_user_email is picked
-// via MAX FILTER because the same end user might have given
-// different emails on different connect sessions; the most-recent
-// non-null is the most useful display value.
-func (q *Queries) ListManagedUsersByProject(ctx context.Context, arg ListManagedUsersByProjectParams) ([]ListManagedUsersByProjectRow, error) {
-	rows, err := q.db.Query(ctx, listManagedUsersByProject, arg.ProjectID, arg.Limit)
+func (q *Queries) ListManagedUsersByProfile(ctx context.Context, arg ListManagedUsersByProfileParams) ([]ListManagedUsersByProfileRow, error) {
+	rows, err := q.db.Query(ctx, listManagedUsersByProfile, arg.ProfileID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListManagedUsersByProjectRow{}
+	items := []ListManagedUsersByProfileRow{}
 	for rows.Next() {
-		var i ListManagedUsersByProjectRow
+		var i ListManagedUsersByProfileRow
 		if err := rows.Scan(
 			&i.ExternalUserID,
 			&i.ExternalUserEmail,

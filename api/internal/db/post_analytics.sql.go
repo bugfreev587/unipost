@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getAnalyticsByPlatformByProject = `-- name: GetAnalyticsByPlatformByProject :many
+const getAnalyticsByPlatformByWorkspace = `-- name: GetAnalyticsByPlatformByWorkspace :many
 SELECT
   sa.platform::TEXT                                                          AS platform,
   COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
@@ -28,7 +28,7 @@ FROM social_posts sp
 JOIN social_post_results spr ON spr.post_id = sp.id
 JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa  ON pa.social_post_result_id = spr.id
-WHERE sp.project_id = $1
+WHERE sp.workspace_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
@@ -37,15 +37,15 @@ GROUP BY sa.platform
 ORDER BY sa.platform ASC
 `
 
-type GetAnalyticsByPlatformByProjectParams struct {
-	ProjectID   string             `json:"project_id"`
+type GetAnalyticsByPlatformByWorkspaceParams struct {
+	WorkspaceID string             `json:"workspace_id"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
 	Column4     string             `json:"column_4"`
 	Column5     string             `json:"column_5"`
 }
 
-type GetAnalyticsByPlatformByProjectRow struct {
+type GetAnalyticsByPlatformByWorkspaceRow struct {
 	Platform    string `json:"platform"`
 	Posts       int64  `json:"posts"`
 	Accounts    int64  `json:"accounts"`
@@ -59,14 +59,9 @@ type GetAnalyticsByPlatformByProjectRow struct {
 	VideoViews  int64  `json:"video_views"`
 }
 
-// Per-platform aggregates. Inner-joins social_accounts so that posts with
-// no results (still publishing or all-failed at validation) are excluded —
-// a post can't have a platform breakdown without a result.
-// platform/status filters use the same empty-string sentinel as the other
-// aggregation queries; passing platform='tiktok' degenerates to a single row.
-func (q *Queries) GetAnalyticsByPlatformByProject(ctx context.Context, arg GetAnalyticsByPlatformByProjectParams) ([]GetAnalyticsByPlatformByProjectRow, error) {
-	rows, err := q.db.Query(ctx, getAnalyticsByPlatformByProject,
-		arg.ProjectID,
+func (q *Queries) GetAnalyticsByPlatformByWorkspace(ctx context.Context, arg GetAnalyticsByPlatformByWorkspaceParams) ([]GetAnalyticsByPlatformByWorkspaceRow, error) {
+	rows, err := q.db.Query(ctx, getAnalyticsByPlatformByWorkspace,
+		arg.WorkspaceID,
 		arg.CreatedAt,
 		arg.CreatedAt_2,
 		arg.Column4,
@@ -76,9 +71,9 @@ func (q *Queries) GetAnalyticsByPlatformByProject(ctx context.Context, arg GetAn
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetAnalyticsByPlatformByProjectRow{}
+	items := []GetAnalyticsByPlatformByWorkspaceRow{}
 	for rows.Next() {
-		var i GetAnalyticsByPlatformByProjectRow
+		var i GetAnalyticsByPlatformByWorkspaceRow
 		if err := rows.Scan(
 			&i.Platform,
 			&i.Posts,
@@ -102,7 +97,7 @@ func (q *Queries) GetAnalyticsByPlatformByProject(ctx context.Context, arg GetAn
 	return items, nil
 }
 
-const getAnalyticsSummaryByProject = `-- name: GetAnalyticsSummaryByProject :one
+const getAnalyticsSummaryByWorkspace = `-- name: GetAnalyticsSummaryByWorkspace :one
 SELECT
   COUNT(DISTINCT sp.id)::BIGINT                                              AS total_posts,
   COUNT(DISTINCT sp.id) FILTER (WHERE sp.status = 'published')::BIGINT       AS published_posts,
@@ -120,22 +115,22 @@ FROM social_posts sp
 LEFT JOIN social_post_results spr ON spr.post_id = sp.id
 LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
-WHERE sp.project_id = $1
+WHERE sp.workspace_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
   AND ($5::text = '' OR sp.status   = $5)
 `
 
-type GetAnalyticsSummaryByProjectParams struct {
-	ProjectID   string             `json:"project_id"`
+type GetAnalyticsSummaryByWorkspaceParams struct {
+	WorkspaceID string             `json:"workspace_id"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
 	Column4     string             `json:"column_4"`
 	Column5     string             `json:"column_5"`
 }
 
-type GetAnalyticsSummaryByProjectRow struct {
+type GetAnalyticsSummaryByWorkspaceRow struct {
 	TotalPosts     int64 `json:"total_posts"`
 	PublishedPosts int64 `json:"published_posts"`
 	FailedPosts    int64 `json:"failed_posts"`
@@ -150,21 +145,15 @@ type GetAnalyticsSummaryByProjectRow struct {
 	VideoViews     int64 `json:"video_views"`
 }
 
-// Aggregate post counts and engagement totals for a project over a date range.
-// Filtering uses social_posts.created_at; analytics rows are joined via results.
-// Empty-string sentinel for the platform/status params disables that filter.
-// LEFT JOIN to social_accounts ensures posts with no results still count when
-// the platform filter is unset, but are correctly excluded when it is set
-// (NULL platform fails the equality test).
-func (q *Queries) GetAnalyticsSummaryByProject(ctx context.Context, arg GetAnalyticsSummaryByProjectParams) (GetAnalyticsSummaryByProjectRow, error) {
-	row := q.db.QueryRow(ctx, getAnalyticsSummaryByProject,
-		arg.ProjectID,
+func (q *Queries) GetAnalyticsSummaryByWorkspace(ctx context.Context, arg GetAnalyticsSummaryByWorkspaceParams) (GetAnalyticsSummaryByWorkspaceRow, error) {
+	row := q.db.QueryRow(ctx, getAnalyticsSummaryByWorkspace,
+		arg.WorkspaceID,
 		arg.CreatedAt,
 		arg.CreatedAt_2,
 		arg.Column4,
 		arg.Column5,
 	)
-	var i GetAnalyticsSummaryByProjectRow
+	var i GetAnalyticsSummaryByWorkspaceRow
 	err := row.Scan(
 		&i.TotalPosts,
 		&i.PublishedPosts,
@@ -182,7 +171,7 @@ func (q *Queries) GetAnalyticsSummaryByProject(ctx context.Context, arg GetAnaly
 	return i, err
 }
 
-const getAnalyticsTrendByProject = `-- name: GetAnalyticsTrendByProject :many
+const getAnalyticsTrendByWorkspace = `-- name: GetAnalyticsTrendByWorkspace :many
 SELECT
   date_trunc('day', sp.created_at)::TIMESTAMPTZ                              AS day,
   COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
@@ -194,7 +183,7 @@ FROM social_posts sp
 LEFT JOIN social_post_results spr ON spr.post_id = sp.id
 LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
-WHERE sp.project_id = $1
+WHERE sp.workspace_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
@@ -203,15 +192,15 @@ GROUP BY day
 ORDER BY day ASC
 `
 
-type GetAnalyticsTrendByProjectParams struct {
-	ProjectID   string             `json:"project_id"`
+type GetAnalyticsTrendByWorkspaceParams struct {
+	WorkspaceID string             `json:"workspace_id"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
 	Column4     string             `json:"column_4"`
 	Column5     string             `json:"column_5"`
 }
 
-type GetAnalyticsTrendByProjectRow struct {
+type GetAnalyticsTrendByWorkspaceRow struct {
 	Day         pgtype.Timestamptz `json:"day"`
 	Posts       int64              `json:"posts"`
 	Impressions int64              `json:"impressions"`
@@ -220,12 +209,9 @@ type GetAnalyticsTrendByProjectRow struct {
 	Shares      int64              `json:"shares"`
 }
 
-// Daily time series. Days with no posts are NOT returned by SQL — the
-// handler zero-fills them in Go to keep the query simple. Same platform/status
-// filter convention as the summary query.
-func (q *Queries) GetAnalyticsTrendByProject(ctx context.Context, arg GetAnalyticsTrendByProjectParams) ([]GetAnalyticsTrendByProjectRow, error) {
-	rows, err := q.db.Query(ctx, getAnalyticsTrendByProject,
-		arg.ProjectID,
+func (q *Queries) GetAnalyticsTrendByWorkspace(ctx context.Context, arg GetAnalyticsTrendByWorkspaceParams) ([]GetAnalyticsTrendByWorkspaceRow, error) {
+	rows, err := q.db.Query(ctx, getAnalyticsTrendByWorkspace,
+		arg.WorkspaceID,
 		arg.CreatedAt,
 		arg.CreatedAt_2,
 		arg.Column4,
@@ -235,9 +221,9 @@ func (q *Queries) GetAnalyticsTrendByProject(ctx context.Context, arg GetAnalyti
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetAnalyticsTrendByProjectRow{}
+	items := []GetAnalyticsTrendByWorkspaceRow{}
 	for rows.Next() {
-		var i GetAnalyticsTrendByProjectRow
+		var i GetAnalyticsTrendByWorkspaceRow
 		if err := rows.Scan(
 			&i.Day,
 			&i.Posts,
@@ -293,10 +279,6 @@ type GetDuePostAnalyticsRefreshRow struct {
 	TokenExpiresAt     pgtype.Timestamptz `json:"token_expires_at"`
 }
 
-// Returns published results whose cached analytics are stale per the PRD §9.3
-// tier policy. NULL fetched_at (never fetched) is always due. Older-than-90-day
-// posts are excluded so the worker doesn't spin forever on a long backfill.
-// LIMIT bounds the work per tick.
 func (q *Queries) GetDuePostAnalyticsRefresh(ctx context.Context) ([]GetDuePostAnalyticsRefreshRow, error) {
 	rows, err := q.db.Query(ctx, getDuePostAnalyticsRefresh)
 	if err != nil {

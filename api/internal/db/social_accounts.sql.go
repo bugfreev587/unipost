@@ -12,13 +12,13 @@ import (
 )
 
 const createSocialAccount = `-- name: CreateSocialAccount :one
-INSERT INTO social_accounts (project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata)
+INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `
 
 type CreateSocialAccountParams struct {
-	ProjectID         string             `json:"project_id"`
+	ProfileID         string             `json:"profile_id"`
 	Platform          string             `json:"platform"`
 	AccessToken       string             `json:"access_token"`
 	RefreshToken      pgtype.Text        `json:"refresh_token"`
@@ -31,7 +31,7 @@ type CreateSocialAccountParams struct {
 
 func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccountParams) (SocialAccount, error) {
 	row := q.db.QueryRow(ctx, createSocialAccount,
-		arg.ProjectID,
+		arg.ProfileID,
 		arg.Platform,
 		arg.AccessToken,
 		arg.RefreshToken,
@@ -44,7 +44,7 @@ func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccou
 	var i SocialAccount
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.AccessToken,
 		&i.RefreshToken,
@@ -68,21 +68,21 @@ func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccou
 
 const disconnectSocialAccount = `-- name: DisconnectSocialAccount :one
 UPDATE social_accounts SET disconnected_at = NOW()
-WHERE id = $1 AND project_id = $2
-RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+WHERE id = $1 AND profile_id = $2
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `
 
 type DisconnectSocialAccountParams struct {
 	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ProfileID string `json:"profile_id"`
 }
 
 func (q *Queries) DisconnectSocialAccount(ctx context.Context, arg DisconnectSocialAccountParams) (SocialAccount, error) {
-	row := q.db.QueryRow(ctx, disconnectSocialAccount, arg.ID, arg.ProjectID)
+	row := q.db.QueryRow(ctx, disconnectSocialAccount, arg.ID, arg.ProfileID)
 	var i SocialAccount
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.AccessToken,
 		&i.RefreshToken,
@@ -105,7 +105,7 @@ func (q *Queries) DisconnectSocialAccount(ctx context.Context, arg DisconnectSoc
 }
 
 const getExpiringTokens = `-- name: GetExpiringTokens :many
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
 WHERE disconnected_at IS NULL
   AND token_expires_at IS NOT NULL
   AND token_expires_at < NOW() + INTERVAL '24 hours'
@@ -122,7 +122,7 @@ func (q *Queries) GetExpiringTokens(ctx context.Context) ([]SocialAccount, error
 		var i SocialAccount
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
+			&i.ProfileID,
 			&i.Platform,
 			&i.AccessToken,
 			&i.RefreshToken,
@@ -152,8 +152,8 @@ func (q *Queries) GetExpiringTokens(ctx context.Context) ([]SocialAccount, error
 }
 
 const getManagedBlueskyAccount = `-- name: GetManagedBlueskyAccount :one
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
-WHERE project_id = $1
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
+WHERE profile_id = $1
   AND platform = 'bluesky'
   AND external_account_id = $2
   AND connection_type = 'managed'
@@ -162,24 +162,16 @@ LIMIT 1
 `
 
 type GetManagedBlueskyAccountParams struct {
-	ProjectID         string `json:"project_id"`
+	ProfileID         string `json:"profile_id"`
 	ExternalAccountID string `json:"external_account_id"`
 }
 
-// Bluesky-specific upsert lookup. Bluesky allows the same external_user_id
-// to map to multiple handles, so app code looks up by (project_id,
-// external_account_id) — the handle/DID is the unique identity.
-//
-// IMPORTANT: scoped to connection_type='managed' so a project that has
-// the same Bluesky handle connected via BOTH the BYO dashboard flow
-// AND the Sprint 3 Connect flow gets two distinct rows. Without this
-// filter, the Connect form would clobber the existing BYO row.
 func (q *Queries) GetManagedBlueskyAccount(ctx context.Context, arg GetManagedBlueskyAccountParams) (SocialAccount, error) {
-	row := q.db.QueryRow(ctx, getManagedBlueskyAccount, arg.ProjectID, arg.ExternalAccountID)
+	row := q.db.QueryRow(ctx, getManagedBlueskyAccount, arg.ProfileID, arg.ExternalAccountID)
 	var i SocialAccount
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.AccessToken,
 		&i.RefreshToken,
@@ -202,7 +194,7 @@ func (q *Queries) GetManagedBlueskyAccount(ctx context.Context, arg GetManagedBl
 }
 
 const getSocialAccount = `-- name: GetSocialAccount :one
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts WHERE id = $1
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts WHERE id = $1
 `
 
 func (q *Queries) GetSocialAccount(ctx context.Context, id string) (SocialAccount, error) {
@@ -210,7 +202,7 @@ func (q *Queries) GetSocialAccount(ctx context.Context, id string) (SocialAccoun
 	var i SocialAccount
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.AccessToken,
 		&i.RefreshToken,
@@ -232,21 +224,21 @@ func (q *Queries) GetSocialAccount(ctx context.Context, id string) (SocialAccoun
 	return i, err
 }
 
-const getSocialAccountByIDAndProject = `-- name: GetSocialAccountByIDAndProject :one
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts WHERE id = $1 AND project_id = $2
+const getSocialAccountByIDAndProfile = `-- name: GetSocialAccountByIDAndProfile :one
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts WHERE id = $1 AND profile_id = $2
 `
 
-type GetSocialAccountByIDAndProjectParams struct {
+type GetSocialAccountByIDAndProfileParams struct {
 	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ProfileID string `json:"profile_id"`
 }
 
-func (q *Queries) GetSocialAccountByIDAndProject(ctx context.Context, arg GetSocialAccountByIDAndProjectParams) (SocialAccount, error) {
-	row := q.db.QueryRow(ctx, getSocialAccountByIDAndProject, arg.ID, arg.ProjectID)
+func (q *Queries) GetSocialAccountByIDAndProfile(ctx context.Context, arg GetSocialAccountByIDAndProfileParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, getSocialAccountByIDAndProfile, arg.ID, arg.ProfileID)
 	var i SocialAccount
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.AccessToken,
 		&i.RefreshToken,
@@ -268,17 +260,54 @@ func (q *Queries) GetSocialAccountByIDAndProject(ctx context.Context, arg GetSoc
 	return i, err
 }
 
-const listAllSocialAccountsByProject = `-- name: ListAllSocialAccountsByProject :many
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
-WHERE project_id = $1
+const getSocialAccountByIDAndWorkspace = `-- name: GetSocialAccountByIDAndWorkspace :one
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = $1 AND p.workspace_id = $2
+`
+
+type GetSocialAccountByIDAndWorkspaceParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+// Workspace-level ownership check for a single account.
+// Used by the cross-profile posting path to verify account belongs to workspace.
+func (q *Queries) GetSocialAccountByIDAndWorkspace(ctx context.Context, arg GetSocialAccountByIDAndWorkspaceParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, getSocialAccountByIDAndWorkspace, arg.ID, arg.WorkspaceID)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+	)
+	return i, err
+}
+
+const listAllSocialAccountsByProfile = `-- name: ListAllSocialAccountsByProfile :many
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
+WHERE profile_id = $1
 ORDER BY connected_at DESC
 `
 
-// Includes disconnected accounts. Used when resolving the platform for
-// historical post results, where the originating account may have been
-// disconnected after publishing.
-func (q *Queries) ListAllSocialAccountsByProject(ctx context.Context, projectID string) ([]SocialAccount, error) {
-	rows, err := q.db.Query(ctx, listAllSocialAccountsByProject, projectID)
+func (q *Queries) ListAllSocialAccountsByProfile(ctx context.Context, profileID string) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listAllSocialAccountsByProfile, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +317,7 @@ func (q *Queries) ListAllSocialAccountsByProject(ctx context.Context, projectID 
 		var i SocialAccount
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
+			&i.ProfileID,
 			&i.Platform,
 			&i.AccessToken,
 			&i.RefreshToken,
@@ -318,7 +347,7 @@ func (q *Queries) ListAllSocialAccountsByProject(ctx context.Context, projectID 
 }
 
 const listManagedAccountsDueForRefresh = `-- name: ListManagedAccountsDueForRefresh :many
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 FROM social_accounts
 WHERE connection_type = 'managed'
   AND status = 'active'
@@ -330,10 +359,6 @@ LIMIT 50
 FOR UPDATE SKIP LOCKED
 `
 
-// Refresh worker query. FOR UPDATE SKIP LOCKED so multiple API
-// instances ticking concurrently each get a disjoint slice.
-// Excludes Bluesky (no token_expires_at) and the BYO accounts
-// managed by the legacy worker.
 func (q *Queries) ListManagedAccountsDueForRefresh(ctx context.Context) ([]SocialAccount, error) {
 	rows, err := q.db.Query(ctx, listManagedAccountsDueForRefresh)
 	if err != nil {
@@ -345,7 +370,7 @@ func (q *Queries) ListManagedAccountsDueForRefresh(ctx context.Context) ([]Socia
 		var i SocialAccount
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
+			&i.ProfileID,
 			&i.Platform,
 			&i.AccessToken,
 			&i.RefreshToken,
@@ -374,14 +399,14 @@ func (q *Queries) ListManagedAccountsDueForRefresh(ctx context.Context) ([]Socia
 	return items, nil
 }
 
-const listSocialAccountsByProject = `-- name: ListSocialAccountsByProject :many
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
-WHERE project_id = $1 AND disconnected_at IS NULL
+const listSocialAccountsByProfile = `-- name: ListSocialAccountsByProfile :many
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
+WHERE profile_id = $1 AND disconnected_at IS NULL
 ORDER BY connected_at DESC
 `
 
-func (q *Queries) ListSocialAccountsByProject(ctx context.Context, projectID string) ([]SocialAccount, error) {
-	rows, err := q.db.Query(ctx, listSocialAccountsByProject, projectID)
+func (q *Queries) ListSocialAccountsByProfile(ctx context.Context, profileID string) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listSocialAccountsByProfile, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +416,7 @@ func (q *Queries) ListSocialAccountsByProject(ctx context.Context, projectID str
 		var i SocialAccount
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
+			&i.ProfileID,
 			&i.Platform,
 			&i.AccessToken,
 			&i.RefreshToken,
@@ -420,26 +445,23 @@ func (q *Queries) ListSocialAccountsByProject(ctx context.Context, projectID str
 	return items, nil
 }
 
-const listSocialAccountsByProjectFiltered = `-- name: ListSocialAccountsByProjectFiltered :many
-SELECT id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
-WHERE project_id = $1
+const listSocialAccountsByProfileFiltered = `-- name: ListSocialAccountsByProfileFiltered :many
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
+WHERE profile_id = $1
   AND disconnected_at IS NULL
   AND ($2::TEXT IS NULL OR external_user_id = $2::TEXT)
   AND ($3::TEXT IS NULL OR platform = $3::TEXT)
 ORDER BY connected_at DESC
 `
 
-type ListSocialAccountsByProjectFilteredParams struct {
-	ProjectID      string      `json:"project_id"`
+type ListSocialAccountsByProfileFilteredParams struct {
+	ProfileID      string      `json:"profile_id"`
 	ExternalUserID pgtype.Text `json:"external_user_id"`
 	Platform       pgtype.Text `json:"platform"`
 }
 
-// Sprint 3 PR1: list with optional external_user_id and platform filters.
-// Sprint 3 exit gate step 4 requires the external_user_id filter so the
-// customer can look up the row created by a Connect flow.
-func (q *Queries) ListSocialAccountsByProjectFiltered(ctx context.Context, arg ListSocialAccountsByProjectFilteredParams) ([]SocialAccount, error) {
-	rows, err := q.db.Query(ctx, listSocialAccountsByProjectFiltered, arg.ProjectID, arg.ExternalUserID, arg.Platform)
+func (q *Queries) ListSocialAccountsByProfileFiltered(ctx context.Context, arg ListSocialAccountsByProfileFilteredParams) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listSocialAccountsByProfileFiltered, arg.ProfileID, arg.ExternalUserID, arg.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -449,7 +471,120 @@ func (q *Queries) ListSocialAccountsByProjectFiltered(ctx context.Context, arg L
 		var i SocialAccount
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
+			&i.ProfileID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+			&i.Status,
+			&i.ConnectionType,
+			&i.ConnectSessionID,
+			&i.ExternalUserID,
+			&i.ExternalUserEmail,
+			&i.LastRefreshedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSocialAccountsByWorkspace = `-- name: ListSocialAccountsByWorkspace :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1 AND sa.disconnected_at IS NULL
+ORDER BY sa.connected_at DESC
+`
+
+// Returns all active accounts across all profiles in a workspace.
+// Used by the API key auth path where the caller has workspace-level access.
+func (q *Queries) ListSocialAccountsByWorkspace(ctx context.Context, workspaceID string) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listSocialAccountsByWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+			&i.Status,
+			&i.ConnectionType,
+			&i.ConnectSessionID,
+			&i.ExternalUserID,
+			&i.ExternalUserEmail,
+			&i.LastRefreshedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSocialAccountsByWorkspaceFiltered = `-- name: ListSocialAccountsByWorkspaceFiltered :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.disconnected_at IS NULL
+  AND ($2::TEXT IS NULL OR sa.profile_id = $2::TEXT)
+  AND ($3::TEXT IS NULL OR sa.external_user_id = $3::TEXT)
+  AND ($4::TEXT IS NULL OR sa.platform = $4::TEXT)
+ORDER BY sa.connected_at DESC
+`
+
+type ListSocialAccountsByWorkspaceFilteredParams struct {
+	WorkspaceID    string      `json:"workspace_id"`
+	ProfileID      pgtype.Text `json:"profile_id"`
+	ExternalUserID pgtype.Text `json:"external_user_id"`
+	Platform       pgtype.Text `json:"platform"`
+}
+
+// Workspace-level list with optional profile_id, external_user_id, and platform filters.
+func (q *Queries) ListSocialAccountsByWorkspaceFiltered(ctx context.Context, arg ListSocialAccountsByWorkspaceFilteredParams) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listSocialAccountsByWorkspaceFiltered,
+		arg.WorkspaceID,
+		arg.ProfileID,
+		arg.ExternalUserID,
+		arg.Platform,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
 			&i.Platform,
 			&i.AccessToken,
 			&i.RefreshToken,
@@ -484,9 +619,6 @@ SET status = 'reconnect_required'
 WHERE id = $1
 `
 
-// Used by the token refresh worker (PR7) when a managed account's
-// refresh token is rejected by the platform. The dashboard / API
-// response surfaces this as status='reconnect_required'.
 func (q *Queries) MarkSocialAccountReconnectRequired(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, markSocialAccountReconnectRequired, id)
 	return err
@@ -505,7 +637,7 @@ SET access_token       = $2,
     disconnected_at    = NULL,
     last_refreshed_at  = NOW()
 WHERE id = $1 AND connection_type = 'managed'
-RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `
 
 type UpdateManagedBlueskyAccountParams struct {
@@ -518,11 +650,6 @@ type UpdateManagedBlueskyAccountParams struct {
 	ConnectSessionID  pgtype.Text `json:"connect_session_id"`
 }
 
-// Companion to GetManagedBlueskyAccount. Refreshes the encrypted app
-// password and account metadata for an existing Bluesky managed row.
-// WHERE clause defensively requires connection_type='managed' so this
-// can never accidentally clobber a BYO row even if the lookup query
-// regresses.
 func (q *Queries) UpdateManagedBlueskyAccount(ctx context.Context, arg UpdateManagedBlueskyAccountParams) (SocialAccount, error) {
 	row := q.db.QueryRow(ctx, updateManagedBlueskyAccount,
 		arg.ID,
@@ -536,7 +663,7 @@ func (q *Queries) UpdateManagedBlueskyAccount(ctx context.Context, arg UpdateMan
 	var i SocialAccount
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.AccessToken,
 		&i.RefreshToken,
@@ -574,9 +701,6 @@ type UpdateManagedTokenRefreshParams struct {
 	TokenExpiresAt pgtype.Timestamptz `json:"token_expires_at"`
 }
 
-// Refresh worker happy path: stash new tokens + bump last_refreshed_at.
-// Does not fire any webhook on its own (the worker decides whether to
-// emit events; per Sprint 3 decision #5 the success path is silent).
 func (q *Queries) UpdateManagedTokenRefresh(ctx context.Context, arg UpdateManagedTokenRefreshParams) error {
 	_, err := q.db.Exec(ctx, updateManagedTokenRefresh,
 		arg.ID,
@@ -612,7 +736,7 @@ func (q *Queries) UpdateSocialAccountTokens(ctx context.Context, arg UpdateSocia
 
 const upsertManagedSocialAccount = `-- name: UpsertManagedSocialAccount :one
 INSERT INTO social_accounts (
-  project_id, platform, access_token, refresh_token, token_expires_at,
+  profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, metadata, scope,
   connection_type, connect_session_id, external_user_id, external_user_email,
   status, last_refreshed_at
@@ -623,7 +747,7 @@ VALUES (
   'managed', $11, $12, $13,
   'active', NOW()
 )
-ON CONFLICT (project_id, platform, external_user_id)
+ON CONFLICT (profile_id, platform, external_user_id)
   WHERE external_user_id IS NOT NULL AND platform <> 'bluesky'
 DO UPDATE SET
   access_token       = EXCLUDED.access_token,
@@ -639,11 +763,11 @@ DO UPDATE SET
   status             = 'active',
   disconnected_at    = NULL,
   last_refreshed_at  = NOW()
-RETURNING id, project_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `
 
 type UpsertManagedSocialAccountParams struct {
-	ProjectID         string             `json:"project_id"`
+	ProfileID         string             `json:"profile_id"`
 	Platform          string             `json:"platform"`
 	AccessToken       string             `json:"access_token"`
 	RefreshToken      pgtype.Text        `json:"refresh_token"`
@@ -658,14 +782,9 @@ type UpsertManagedSocialAccountParams struct {
 	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
 }
 
-// Sprint 3 PR1: re-connect target for OAuth-flow Connect (Twitter, LinkedIn).
-// Reuses an existing row when (project_id, platform, external_user_id)
-// already exists, so historical post_results FK references stay intact.
-// The partial unique index excludes Bluesky — Bluesky upsert detection
-// happens in app code via GetManagedBlueskyAccount.
 func (q *Queries) UpsertManagedSocialAccount(ctx context.Context, arg UpsertManagedSocialAccountParams) (SocialAccount, error) {
 	row := q.db.QueryRow(ctx, upsertManagedSocialAccount,
-		arg.ProjectID,
+		arg.ProfileID,
 		arg.Platform,
 		arg.AccessToken,
 		arg.RefreshToken,
@@ -682,7 +801,7 @@ func (q *Queries) UpsertManagedSocialAccount(ctx context.Context, arg UpsertMana
 	var i SocialAccount
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.AccessToken,
 		&i.RefreshToken,

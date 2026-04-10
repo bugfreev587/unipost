@@ -10,13 +10,13 @@ import (
 )
 
 const createMedia = `-- name: CreateMedia :one
-INSERT INTO media (project_id, storage_key, content_type, size_bytes, status)
+INSERT INTO media (workspace_id, storage_key, content_type, size_bytes, status)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, project_id, storage_key, content_type, size_bytes, status, created_at, uploaded_at
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id
 `
 
 type CreateMediaParams struct {
-	ProjectID   string `json:"project_id"`
+	WorkspaceID string `json:"workspace_id"`
 	StorageKey  string `json:"storage_key"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
@@ -25,7 +25,7 @@ type CreateMediaParams struct {
 
 func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Media, error) {
 	row := q.db.QueryRow(ctx, createMedia,
-		arg.ProjectID,
+		arg.WorkspaceID,
 		arg.StorageKey,
 		arg.ContentType,
 		arg.SizeBytes,
@@ -34,19 +34,19 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Media
 	var i Media
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.StorageKey,
 		&i.ContentType,
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UploadedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const getMedia = `-- name: GetMedia :one
-SELECT id, project_id, storage_key, content_type, size_bytes, status, created_at, uploaded_at FROM media WHERE id = $1
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id FROM media WHERE id = $1
 `
 
 func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
@@ -54,40 +54,38 @@ func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
 	var i Media
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.StorageKey,
 		&i.ContentType,
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UploadedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
-const getMediaByIDAndProject = `-- name: GetMediaByIDAndProject :one
-SELECT id, project_id, storage_key, content_type, size_bytes, status, created_at, uploaded_at FROM media WHERE id = $1 AND project_id = $2
+const getMediaByIDAndWorkspace = `-- name: GetMediaByIDAndWorkspace :one
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id FROM media WHERE id = $1 AND workspace_id = $2
 `
 
-type GetMediaByIDAndProjectParams struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+type GetMediaByIDAndWorkspaceParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
-// Project-scoped lookup so the publish path can confirm the caller
-// owns the media_id before staging it for an adapter.
-func (q *Queries) GetMediaByIDAndProject(ctx context.Context, arg GetMediaByIDAndProjectParams) (Media, error) {
-	row := q.db.QueryRow(ctx, getMediaByIDAndProject, arg.ID, arg.ProjectID)
+func (q *Queries) GetMediaByIDAndWorkspace(ctx context.Context, arg GetMediaByIDAndWorkspaceParams) (Media, error) {
+	row := q.db.QueryRow(ctx, getMediaByIDAndWorkspace, arg.ID, arg.WorkspaceID)
 	var i Media
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.StorageKey,
 		&i.ContentType,
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UploadedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
@@ -97,20 +95,18 @@ DELETE FROM media
 WHERE id = $1
 `
 
-// Used by the abandoned-upload sweeper.
 func (q *Queries) HardDeleteMedia(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, hardDeleteMedia, id)
 	return err
 }
 
 const listAbandonedMedia = `-- name: ListAbandonedMedia :many
-SELECT id, project_id, storage_key, content_type, size_bytes, status, created_at, uploaded_at FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id FROM media
 WHERE status = 'pending'
   AND created_at < NOW() - INTERVAL '7 days'
 LIMIT 100
 `
 
-// Pending uploads older than 7 days that the sweeper should clean up.
 func (q *Queries) ListAbandonedMedia(ctx context.Context) ([]Media, error) {
 	rows, err := q.db.Query(ctx, listAbandonedMedia)
 	if err != nil {
@@ -122,13 +118,13 @@ func (q *Queries) ListAbandonedMedia(ctx context.Context) ([]Media, error) {
 		var i Media
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
 			&i.StorageKey,
 			&i.ContentType,
 			&i.SizeBytes,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UploadedAt,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -140,21 +136,21 @@ func (q *Queries) ListAbandonedMedia(ctx context.Context) ([]Media, error) {
 	return items, nil
 }
 
-const listMediaByProject = `-- name: ListMediaByProject :many
-SELECT id, project_id, storage_key, content_type, size_bytes, status, created_at, uploaded_at FROM media
-WHERE project_id = $1 AND status != 'deleted'
+const listMediaByWorkspace = `-- name: ListMediaByWorkspace :many
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id FROM media
+WHERE workspace_id = $1 AND status != 'deleted'
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
 `
 
-type ListMediaByProjectParams struct {
-	ProjectID string `json:"project_id"`
-	Limit     int32  `json:"limit"`
-	Offset    int32  `json:"offset"`
+type ListMediaByWorkspaceParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	Limit       int32  `json:"limit"`
+	Offset      int32  `json:"offset"`
 }
 
-func (q *Queries) ListMediaByProject(ctx context.Context, arg ListMediaByProjectParams) ([]Media, error) {
-	rows, err := q.db.Query(ctx, listMediaByProject, arg.ProjectID, arg.Limit, arg.Offset)
+func (q *Queries) ListMediaByWorkspace(ctx context.Context, arg ListMediaByWorkspaceParams) ([]Media, error) {
+	rows, err := q.db.Query(ctx, listMediaByWorkspace, arg.WorkspaceID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -164,13 +160,13 @@ func (q *Queries) ListMediaByProject(ctx context.Context, arg ListMediaByProject
 		var i Media
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
 			&i.StorageKey,
 			&i.ContentType,
 			&i.SizeBytes,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UploadedAt,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -189,7 +185,7 @@ SET status = 'uploaded',
     content_type = $3,
     uploaded_at = NOW()
 WHERE id = $1
-RETURNING id, project_id, storage_key, content_type, size_bytes, status, created_at, uploaded_at
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id
 `
 
 type MarkMediaUploadedParams struct {
@@ -198,44 +194,41 @@ type MarkMediaUploadedParams struct {
 	ContentType string `json:"content_type"`
 }
 
-// Called by the publish path the first time a media_id is referenced
-// and the R2 HEAD confirms the object exists. Updates status, copies
-// the actual size + content type from R2, and stamps uploaded_at.
 func (q *Queries) MarkMediaUploaded(ctx context.Context, arg MarkMediaUploadedParams) (Media, error) {
 	row := q.db.QueryRow(ctx, markMediaUploaded, arg.ID, arg.SizeBytes, arg.ContentType)
 	var i Media
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.StorageKey,
 		&i.ContentType,
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UploadedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const softDeleteMedia = `-- name: SoftDeleteMedia :exec
 UPDATE media SET status = 'deleted'
-WHERE id = $1 AND project_id = $2
+WHERE id = $1 AND workspace_id = $2
 `
 
 type SoftDeleteMediaParams struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 func (q *Queries) SoftDeleteMedia(ctx context.Context, arg SoftDeleteMediaParams) error {
-	_, err := q.db.Exec(ctx, softDeleteMedia, arg.ID, arg.ProjectID)
+	_, err := q.db.Exec(ctx, softDeleteMedia, arg.ID, arg.WorkspaceID)
 	return err
 }
 
 const updateMediaStorageKey = `-- name: UpdateMediaStorageKey :one
 UPDATE media SET storage_key = $2
 WHERE id = $1
-RETURNING id, project_id, storage_key, content_type, size_bytes, status, created_at, uploaded_at
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id
 `
 
 type UpdateMediaStorageKeyParams struct {
@@ -243,21 +236,18 @@ type UpdateMediaStorageKeyParams struct {
 	StorageKey string `json:"storage_key"`
 }
 
-// Set after the row is inserted with a placeholder, so the storage
-// key can include the row's ID. Two-step insert keeps the
-// storage_key UNIQUE constraint enforceable.
 func (q *Queries) UpdateMediaStorageKey(ctx context.Context, arg UpdateMediaStorageKeyParams) (Media, error) {
 	row := q.db.QueryRow(ctx, updateMediaStorageKey, arg.ID, arg.StorageKey)
 	var i Media
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.StorageKey,
 		&i.ContentType,
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UploadedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }

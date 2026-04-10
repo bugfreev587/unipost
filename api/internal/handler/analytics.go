@@ -64,15 +64,15 @@ func computeEngagementRate(m *platform.PostMetrics) float64 {
 // platform. Without it, cached rows are served whenever fresh — the
 // AnalyticsRefreshWorker keeps them up to date in the background.
 func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
 	}
 	forceRefresh := r.URL.Query().Get("refresh") == "1"
 
-	post, err := h.queries.GetSocialPostByIDAndProject(r.Context(), db.GetSocialPostByIDAndProjectParams{
-		ID: postID, ProjectID: projectID,
+	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
+		ID: postID, WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -193,25 +193,25 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 	writeSuccess(w, analytics)
 }
 
-func (h *AnalyticsHandler) getProjectID(r *http.Request) string {
-	if pid := auth.GetProjectID(r.Context()); pid != "" {
+func (h *AnalyticsHandler) getWorkspaceID(r *http.Request) string {
+	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
 		return pid
 	}
-	projectID := chi.URLParam(r, "projectID")
-	if projectID == "" {
+	workspaceID := chi.URLParam(r, "workspaceID")
+	if workspaceID == "" {
 		return ""
 	}
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
 		return ""
 	}
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID: projectID, OwnerID: userID,
+	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID: workspaceID, UserID: userID,
 	})
 	if err != nil {
 		return ""
 	}
-	return projectID
+	return workspaceID
 }
 
 func float64FromNumeric(n pgtype.Numeric) float64 {

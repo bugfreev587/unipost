@@ -10,15 +10,15 @@ import (
 )
 
 const createPlatformCredential = `-- name: CreatePlatformCredential :one
-INSERT INTO platform_credentials (project_id, platform, client_id, client_secret)
+INSERT INTO platform_credentials (workspace_id, platform, client_id, client_secret)
 VALUES ($1, $2, $3, $4)
-ON CONFLICT (project_id, platform) DO UPDATE
+ON CONFLICT (workspace_id, platform) DO UPDATE
 SET client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret
-RETURNING id, project_id, platform, client_id, client_secret, created_at
+RETURNING id, platform, client_id, client_secret, created_at, workspace_id
 `
 
 type CreatePlatformCredentialParams struct {
-	ProjectID    string `json:"project_id"`
+	WorkspaceID  string `json:"workspace_id"`
 	Platform     string `json:"platform"`
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
@@ -26,7 +26,7 @@ type CreatePlatformCredentialParams struct {
 
 func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatformCredentialParams) (PlatformCredential, error) {
 	row := q.db.QueryRow(ctx, createPlatformCredential,
-		arg.ProjectID,
+		arg.WorkspaceID,
 		arg.Platform,
 		arg.ClientID,
 		arg.ClientSecret,
@@ -34,62 +34,62 @@ func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatfo
 	var i PlatformCredential
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Platform,
 		&i.ClientID,
 		&i.ClientSecret,
 		&i.CreatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const deletePlatformCredential = `-- name: DeletePlatformCredential :exec
 DELETE FROM platform_credentials
-WHERE project_id = $1 AND platform = $2
+WHERE workspace_id = $1 AND platform = $2
 `
 
 type DeletePlatformCredentialParams struct {
-	ProjectID string `json:"project_id"`
-	Platform  string `json:"platform"`
+	WorkspaceID string `json:"workspace_id"`
+	Platform    string `json:"platform"`
 }
 
 func (q *Queries) DeletePlatformCredential(ctx context.Context, arg DeletePlatformCredentialParams) error {
-	_, err := q.db.Exec(ctx, deletePlatformCredential, arg.ProjectID, arg.Platform)
+	_, err := q.db.Exec(ctx, deletePlatformCredential, arg.WorkspaceID, arg.Platform)
 	return err
 }
 
 const getPlatformCredential = `-- name: GetPlatformCredential :one
-SELECT id, project_id, platform, client_id, client_secret, created_at FROM platform_credentials
-WHERE project_id = $1 AND platform = $2
+SELECT id, platform, client_id, client_secret, created_at, workspace_id FROM platform_credentials
+WHERE workspace_id = $1 AND platform = $2
 `
 
 type GetPlatformCredentialParams struct {
-	ProjectID string `json:"project_id"`
-	Platform  string `json:"platform"`
+	WorkspaceID string `json:"workspace_id"`
+	Platform    string `json:"platform"`
 }
 
 func (q *Queries) GetPlatformCredential(ctx context.Context, arg GetPlatformCredentialParams) (PlatformCredential, error) {
-	row := q.db.QueryRow(ctx, getPlatformCredential, arg.ProjectID, arg.Platform)
+	row := q.db.QueryRow(ctx, getPlatformCredential, arg.WorkspaceID, arg.Platform)
 	var i PlatformCredential
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Platform,
 		&i.ClientID,
 		&i.ClientSecret,
 		&i.CreatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
-const listPlatformCredentialsByProject = `-- name: ListPlatformCredentialsByProject :many
-SELECT id, project_id, platform, client_id, client_secret, created_at FROM platform_credentials
-WHERE project_id = $1
+const listPlatformCredentialsByWorkspace = `-- name: ListPlatformCredentialsByWorkspace :many
+SELECT id, platform, client_id, client_secret, created_at, workspace_id FROM platform_credentials
+WHERE workspace_id = $1
 ORDER BY platform
 `
 
-func (q *Queries) ListPlatformCredentialsByProject(ctx context.Context, projectID string) ([]PlatformCredential, error) {
-	rows, err := q.db.Query(ctx, listPlatformCredentialsByProject, projectID)
+func (q *Queries) ListPlatformCredentialsByWorkspace(ctx context.Context, workspaceID string) ([]PlatformCredential, error) {
+	rows, err := q.db.Query(ctx, listPlatformCredentialsByWorkspace, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -99,11 +99,11 @@ func (q *Queries) ListPlatformCredentialsByProject(ctx context.Context, projectI
 		var i PlatformCredential
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
 			&i.Platform,
 			&i.ClientID,
 			&i.ClientSecret,
 			&i.CreatedAt,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}

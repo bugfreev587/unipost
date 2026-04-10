@@ -167,7 +167,7 @@ func parsePublishRequest(body publishRequestBody) (parsedRequest, int, string) {
 // — projects rarely have more than a few dozen accounts) so the
 // validator can resolve any account_id without a per-id round trip.
 func (h *SocialPostHandler) loadValidateAccounts(r *http.Request, projectID string) (map[string]platform.ValidateAccount, error) {
-	accounts, err := h.queries.ListAllSocialAccountsByProject(r.Context(), projectID)
+	accounts, err := h.queries.ListSocialAccountsByWorkspace(r.Context(), projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +203,9 @@ func (h *SocialPostHandler) loadValidateMedia(r *http.Request, projectID string,
 	}
 	out := make(map[string]platform.ValidateMedia, len(wanted))
 	for mid := range wanted {
-		row, err := h.queries.GetMediaByIDAndProject(r.Context(), db.GetMediaByIDAndProjectParams{
-			ID:        mid,
-			ProjectID: projectID,
+		row, err := h.queries.GetMediaByIDAndWorkspace(r.Context(), db.GetMediaByIDAndWorkspaceParams{
+			ID:          mid,
+			WorkspaceID: projectID,
 		})
 		if err != nil {
 			// Not in this project (or not found at all). The
@@ -232,7 +232,7 @@ func (h *SocialPostHandler) loadValidateMedia(r *http.Request, projectID string,
 // project-wide social_accounts list, which is bounded and cached at
 // the pgx layer.
 func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return

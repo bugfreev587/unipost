@@ -69,7 +69,7 @@ type bulkErrorEnvelope struct {
 
 // CreateBulk handles POST /v1/social-posts/bulk.
 func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -162,7 +162,7 @@ func (h *SocialPostHandler) processBulkOne(
 	// safe and the natural retry pattern.
 	if parsed.IdempotencyKey != "" {
 		if existing, err := h.queries.GetSocialPostByIdempotencyKey(r.Context(), db.GetSocialPostByIdempotencyKeyParams{
-			ProjectID:      projectID,
+			WorkspaceID:    projectID,
 			IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
 		}); err == nil {
 			resp := h.replayedPostResponse(r, existing)

@@ -86,7 +86,7 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 
 	// Use upsert to handle both new and existing subscription rows
 	_, err := h.queries.CreateSubscription(r.Context(), db.CreateSubscriptionParams{
-		ProjectID:            projectID,
+		WorkspaceID:            projectID,
 		PlanID:               planID,
 		StripeCustomerID:     pgtype.Text{String: customerID, Valid: customerID != ""},
 		StripeSubscriptionID: pgtype.Text{String: subscriptionID, Valid: subscriptionID != ""},

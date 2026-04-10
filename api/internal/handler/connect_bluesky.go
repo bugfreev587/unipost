@@ -185,7 +185,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	// post_results FKs stay intact (Sprint 3 decision #1). Otherwise
 	// insert a fresh managed row.
 	existing, lookupErr := h.queries.GetManagedBlueskyAccount(r.Context(), db.GetManagedBlueskyAccountParams{
-		ProjectID:         session.ProjectID,
+		ProfileID:         session.ProfileID,
 		ExternalAccountID: connectResult.ExternalAccountID,
 	})
 
@@ -222,7 +222,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 		// Fresh insert. Mirrors the BYO Connect handler with the
 		// managed-flow extras populated.
 		created, err := h.queries.UpsertManagedSocialAccount(r.Context(), db.UpsertManagedSocialAccountParams{
-			ProjectID:         session.ProjectID,
+			ProfileID:         session.ProfileID,
 			Platform:          "bluesky",
 			AccessToken:       encAccess,
 			RefreshToken:      pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
@@ -251,7 +251,12 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	})
 
 	// Fire account.connected webhook. Best-effort — never blocks.
-	h.bus.Publish(r.Context(), session.ProjectID, events.EventAccountConnected, map[string]any{
+	// Webhooks are workspace-scoped; resolve workspace_id from profile.
+	wsID := session.ProfileID
+	if prof, pErr := h.queries.GetProfile(r.Context(), session.ProfileID); pErr == nil {
+		wsID = prof.WorkspaceID
+	}
+	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
 		"social_account_id": savedID,
 		"platform":          "bluesky",
 		"account_name":      connectResult.AccountName,

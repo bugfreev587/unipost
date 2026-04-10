@@ -1,39 +1,39 @@
 -- name: CreateWebhook :one
-INSERT INTO webhooks (project_id, url, secret, events)
+INSERT INTO webhooks (workspace_id, url, secret, events)
 VALUES ($1, $2, $3, $4)
 RETURNING *;
 
--- name: ListWebhooksByProject :many
-SELECT * FROM webhooks WHERE project_id = $1 AND active = true;
+-- name: ListWebhooksByWorkspace :many
+SELECT * FROM webhooks WHERE workspace_id = $1 AND active = true;
 
 -- name: GetWebhook :one
 SELECT * FROM webhooks WHERE id = $1;
 
--- name: GetWebhookByIDAndProject :one
-SELECT * FROM webhooks WHERE id = $1 AND project_id = $2;
+-- name: GetWebhookByIDAndWorkspace :one
+SELECT * FROM webhooks WHERE id = $1 AND workspace_id = $2;
 
 -- name: DeleteWebhook :exec
-UPDATE webhooks SET active = false WHERE id = $1 AND project_id = $2;
+UPDATE webhooks SET active = false WHERE id = $1 AND workspace_id = $2;
 
 -- name: HardDeleteWebhook :exec
-DELETE FROM webhooks WHERE id = $1 AND project_id = $2;
+DELETE FROM webhooks WHERE id = $1 AND workspace_id = $2;
 
 -- name: UpdateWebhookURLEventsActive :one
 UPDATE webhooks
 SET url    = $3,
     events = $4,
     active = $5
-WHERE id = $1 AND project_id = $2
+WHERE id = $1 AND workspace_id = $2
 RETURNING *;
 
 -- name: RotateWebhookSecret :one
 UPDATE webhooks SET secret = $3
-WHERE id = $1 AND project_id = $2
+WHERE id = $1 AND workspace_id = $2
 RETURNING *;
 
--- name: ListWebhooksByProjectAndEvent :many
+-- name: ListWebhooksByWorkspaceAndEvent :many
 SELECT * FROM webhooks
-WHERE project_id = $1 AND active = true AND @event::text = ANY(events);
+WHERE workspace_id = $1 AND active = true AND @event::text = ANY(events);
 
 -- name: CreateWebhookDelivery :one
 INSERT INTO webhook_deliveries (webhook_id, event, payload)

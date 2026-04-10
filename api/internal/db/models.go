@@ -10,7 +10,6 @@ import (
 
 type ApiKey struct {
 	ID          string             `json:"id"`
-	ProjectID   string             `json:"project_id"`
 	Name        string             `json:"name"`
 	Prefix      string             `json:"prefix"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
@@ -19,11 +18,12 @@ type ApiKey struct {
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
 	KeyHash     string             `json:"key_hash"`
 	Environment string             `json:"environment"`
+	WorkspaceID string             `json:"workspace_id"`
 }
 
 type ConnectSession struct {
 	ID                       string             `json:"id"`
-	ProjectID                string             `json:"project_id"`
+	ProfileID                string             `json:"profile_id"`
 	Platform                 string             `json:"platform"`
 	ExternalUserID           string             `json:"external_user_id"`
 	ExternalUserEmail        pgtype.Text        `json:"external_user_email"`
@@ -39,18 +39,18 @@ type ConnectSession struct {
 
 type Media struct {
 	ID          string             `json:"id"`
-	ProjectID   string             `json:"project_id"`
 	StorageKey  string             `json:"storage_key"`
 	ContentType string             `json:"content_type"`
 	SizeBytes   int64              `json:"size_bytes"`
 	Status      string             `json:"status"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UploadedAt  pgtype.Timestamptz `json:"uploaded_at"`
+	WorkspaceID string             `json:"workspace_id"`
 }
 
 type OauthState struct {
 	State       string             `json:"state"`
-	ProjectID   string             `json:"project_id"`
+	ProfileID   string             `json:"profile_id"`
 	Platform    string             `json:"platform"`
 	RedirectUrl pgtype.Text        `json:"redirect_url"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
@@ -69,11 +69,11 @@ type Plan struct {
 
 type PlatformCredential struct {
 	ID           string             `json:"id"`
-	ProjectID    string             `json:"project_id"`
 	Platform     string             `json:"platform"`
 	ClientID     string             `json:"client_id"`
 	ClientSecret string             `json:"client_secret"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	WorkspaceID  string             `json:"workspace_id"`
 }
 
 type PostAnalytic struct {
@@ -94,21 +94,20 @@ type PostAnalytic struct {
 	PlatformSpecific   []byte             `json:"platform_specific"`
 }
 
-type Project struct {
-	ID                     string             `json:"id"`
-	OwnerID                string             `json:"owner_id"`
-	Name                   string             `json:"name"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	BrandingLogoUrl        pgtype.Text        `json:"branding_logo_url"`
-	BrandingDisplayName    pgtype.Text        `json:"branding_display_name"`
-	BrandingPrimaryColor   pgtype.Text        `json:"branding_primary_color"`
-	PerAccountMonthlyLimit pgtype.Int4        `json:"per_account_monthly_limit"`
+type Profile struct {
+	ID                   string             `json:"id"`
+	Name                 string             `json:"name"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	BrandingLogoUrl      pgtype.Text        `json:"branding_logo_url"`
+	BrandingDisplayName  pgtype.Text        `json:"branding_display_name"`
+	BrandingPrimaryColor pgtype.Text        `json:"branding_primary_color"`
+	WorkspaceID          string             `json:"workspace_id"`
 }
 
 type SocialAccount struct {
 	ID                string             `json:"id"`
-	ProjectID         string             `json:"project_id"`
+	ProfileID         string             `json:"profile_id"`
 	Platform          string             `json:"platform"`
 	AccessToken       string             `json:"access_token"`
 	RefreshToken      pgtype.Text        `json:"refresh_token"`
@@ -130,7 +129,6 @@ type SocialAccount struct {
 
 type SocialPost struct {
 	ID             string             `json:"id"`
-	ProjectID      string             `json:"project_id"`
 	Caption        pgtype.Text        `json:"caption"`
 	MediaUrls      []string           `json:"media_urls"`
 	Status         string             `json:"status"`
@@ -139,6 +137,7 @@ type SocialPost struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	Metadata       []byte             `json:"metadata"`
 	IdempotencyKey pgtype.Text        `json:"idempotency_key"`
+	WorkspaceID    string             `json:"workspace_id"`
 }
 
 type SocialPostResult struct {
@@ -154,7 +153,6 @@ type SocialPostResult struct {
 
 type Subscription struct {
 	ID                   string             `json:"id"`
-	ProjectID            string             `json:"project_id"`
 	PlanID               string             `json:"plan_id"`
 	StripeCustomerID     pgtype.Text        `json:"stripe_customer_id"`
 	StripeSubscriptionID pgtype.Text        `json:"stripe_subscription_id"`
@@ -165,15 +163,16 @@ type Subscription struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	TrialUsed            bool               `json:"trial_used"`
+	WorkspaceID          string             `json:"workspace_id"`
 }
 
 type Usage struct {
-	ID        string             `json:"id"`
-	ProjectID string             `json:"project_id"`
-	Period    string             `json:"period"`
-	PostCount int32              `json:"post_count"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID          string             `json:"id"`
+	Period      string             `json:"period"`
+	PostCount   int32              `json:"post_count"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID string             `json:"workspace_id"`
 }
 
 type User struct {
@@ -182,18 +181,18 @@ type User struct {
 	Name             pgtype.Text        `json:"name"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	DefaultProjectID pgtype.Text        `json:"default_project_id"`
-	LastProjectID    pgtype.Text        `json:"last_project_id"`
+	DefaultProfileID pgtype.Text        `json:"default_profile_id"`
+	LastProfileID    pgtype.Text        `json:"last_profile_id"`
 }
 
 type Webhook struct {
-	ID        string             `json:"id"`
-	ProjectID string             `json:"project_id"`
-	Url       string             `json:"url"`
-	Secret    string             `json:"secret"`
-	Events    []string           `json:"events"`
-	Active    bool               `json:"active"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID          string             `json:"id"`
+	Url         string             `json:"url"`
+	Secret      string             `json:"secret"`
+	Events      []string           `json:"events"`
+	Active      bool               `json:"active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	WorkspaceID string             `json:"workspace_id"`
 }
 
 type WebhookDelivery struct {
@@ -206,4 +205,13 @@ type WebhookDelivery struct {
 	DeliveredAt pgtype.Timestamptz `json:"delivered_at"`
 	NextRetryAt pgtype.Timestamptz `json:"next_retry_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type Workspace struct {
+	ID                     string             `json:"id"`
+	UserID                 string             `json:"user_id"`
+	Name                   string             `json:"name"`
+	PerAccountMonthlyLimit pgtype.Int4        `json:"per_account_monthly_limit"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }

@@ -180,7 +180,12 @@ func (w *ManagedTokenRefreshWorker) markReconnectRequired(ctx context.Context, a
 	if acc.ExternalUserID.Valid {
 		externalUserID = acc.ExternalUserID.String
 	}
-	w.bus.Publish(ctx, acc.ProjectID, events.EventAccountDisconnected, map[string]any{
+	// Webhooks are workspace-scoped; look up workspace_id from the profile.
+	workspaceID := acc.ProfileID // fallback (won't match webhooks, but is safe)
+	if profile, err := w.queries.GetProfile(ctx, acc.ProfileID); err == nil {
+		workspaceID = profile.WorkspaceID
+	}
+	w.bus.Publish(ctx, workspaceID, events.EventAccountDisconnected, map[string]any{
 		"social_account_id": acc.ID,
 		"platform":          acc.Platform,
 		"account_name":      accountName,

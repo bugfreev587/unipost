@@ -141,7 +141,7 @@ type publicBrandingPayload struct {
 // /authorize endpoint (PR3) can derive the challenge from the row
 // without re-rolling the verifier on every click.
 func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -208,7 +208,7 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Add(connectSessionTTL)
 
 	session, err := h.queries.CreateConnectSession(r.Context(), db.CreateConnectSessionParams{
-		ProjectID:         projectID,
+		ProfileID:         projectID,
 		Platform:          body.Platform,
 		ExternalUserID:    body.ExternalUserID,
 		ExternalUserEmail: pgtype.Text{String: body.ExternalUserEmail, Valid: body.ExternalUserEmail != ""},
@@ -231,7 +231,7 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 // run a webhook receiver. Webhooks remain the recommended path —
 // this is here for the curl-loop dev case.
 func (h *ConnectSessionHandler) Get(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -240,7 +240,7 @@ func (h *ConnectSessionHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	session, err := h.queries.GetConnectSessionByID(r.Context(), db.GetConnectSessionByIDParams{
 		ID:        sessionID,
-		ProjectID: projectID,
+		ProfileID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -306,7 +306,7 @@ func (h *ConnectSessionHandler) PublicGet(w http.ResponseWriter, r *http.Request
 	}
 
 	// Look up the project name for display in the hosted page.
-	project, err := h.queries.GetProject(r.Context(), session.ProjectID)
+	project, err := h.queries.GetProfile(r.Context(), session.ProfileID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Connect session not found")
 		return

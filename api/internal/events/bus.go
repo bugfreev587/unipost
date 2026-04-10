@@ -18,13 +18,13 @@ import "context"
 // internal/worker (real delivery) or in tests (recording stubs).
 type EventBus interface {
 	// Publish enqueues an event for every webhook subscription in
-	// the project that's listening for the named event. Returns
+	// the workspace that's listening for the named event. Returns
 	// nothing — failures are logged, never propagated.
 	//
 	// data is the JSON-serializable event body. By convention it's
 	// the post / account object the event is about, plus any extra
 	// fields documented in the event-specific schema.
-	Publish(ctx context.Context, projectID, event string, data any)
+	Publish(ctx context.Context, workspaceID, event string, data any)
 }
 
 // Standard event names. Keep these in sync with the events documented
@@ -42,4 +42,4 @@ const (
 // unconditionally.
 type NoopBus struct{}
 
-func (NoopBus) Publish(ctx context.Context, projectID, event string, data any) {}
+func (NoopBus) Publish(ctx context.Context, workspaceID, event string, data any) {}

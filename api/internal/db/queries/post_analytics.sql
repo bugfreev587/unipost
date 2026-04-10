@@ -23,13 +23,7 @@ RETURNING *;
 -- name: GetPostAnalytics :one
 SELECT * FROM post_analytics WHERE social_post_result_id = $1;
 
--- name: GetAnalyticsSummaryByProject :one
--- Aggregate post counts and engagement totals for a project over a date range.
--- Filtering uses social_posts.created_at; analytics rows are joined via results.
--- Empty-string sentinel for the platform/status params disables that filter.
--- LEFT JOIN to social_accounts ensures posts with no results still count when
--- the platform filter is unset, but are correctly excluded when it is set
--- (NULL platform fails the equality test).
+-- name: GetAnalyticsSummaryByWorkspace :one
 SELECT
   COUNT(DISTINCT sp.id)::BIGINT                                              AS total_posts,
   COUNT(DISTINCT sp.id) FILTER (WHERE sp.status = 'published')::BIGINT       AS published_posts,
@@ -47,16 +41,13 @@ FROM social_posts sp
 LEFT JOIN social_post_results spr ON spr.post_id = sp.id
 LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
-WHERE sp.project_id = $1
+WHERE sp.workspace_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
   AND ($5::text = '' OR sp.status   = $5);
 
--- name: GetAnalyticsTrendByProject :many
--- Daily time series. Days with no posts are NOT returned by SQL — the
--- handler zero-fills them in Go to keep the query simple. Same platform/status
--- filter convention as the summary query.
+-- name: GetAnalyticsTrendByWorkspace :many
 SELECT
   date_trunc('day', sp.created_at)::TIMESTAMPTZ                              AS day,
   COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
@@ -68,7 +59,7 @@ FROM social_posts sp
 LEFT JOIN social_post_results spr ON spr.post_id = sp.id
 LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
-WHERE sp.project_id = $1
+WHERE sp.workspace_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
@@ -77,10 +68,6 @@ GROUP BY day
 ORDER BY day ASC;
 
 -- name: GetDuePostAnalyticsRefresh :many
--- Returns published results whose cached analytics are stale per the PRD §9.3
--- tier policy. NULL fetched_at (never fetched) is always due. Older-than-90-day
--- posts are excluded so the worker doesn't spin forever on a long backfill.
--- LIMIT bounds the work per tick.
 SELECT
   spr.id                  AS social_post_result_id,
   spr.social_account_id,
@@ -106,12 +93,7 @@ WHERE spr.status = 'published'
 ORDER BY pa.fetched_at NULLS FIRST
 LIMIT 200;
 
--- name: GetAnalyticsByPlatformByProject :many
--- Per-platform aggregates. Inner-joins social_accounts so that posts with
--- no results (still publishing or all-failed at validation) are excluded —
--- a post can't have a platform breakdown without a result.
--- platform/status filters use the same empty-string sentinel as the other
--- aggregation queries; passing platform='tiktok' degenerates to a single row.
+-- name: GetAnalyticsByPlatformByWorkspace :many
 SELECT
   sa.platform::TEXT                                                          AS platform,
   COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
@@ -128,7 +110,7 @@ FROM social_posts sp
 JOIN social_post_results spr ON spr.post_id = sp.id
 JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa  ON pa.social_post_result_id = spr.id
-WHERE sp.project_id = $1
+WHERE sp.workspace_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)

@@ -85,7 +85,7 @@ func generateWebhookSecret() (string, error) {
 // it's generated server-side and returned in the response exactly
 // once. Pass {url, events} only.
 func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -125,7 +125,7 @@ func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Reque
 	}
 
 	wh, err := h.queries.CreateWebhook(r.Context(), db.CreateWebhookParams{
-		ProjectID: projectID,
+		WorkspaceID: projectID,
 		Url:       body.URL,
 		Secret:    secret,
 		Events:    body.Events,
@@ -143,13 +143,13 @@ func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Reque
 
 // List handles GET /v1/webhooks.
 func (h *WebhookSubscriptionHandler) List(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
 	}
 
-	webhooks, err := h.queries.ListWebhooksByProject(r.Context(), projectID)
+	webhooks, err := h.queries.ListWebhooksByWorkspace(r.Context(), projectID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list webhooks")
 		return
@@ -165,15 +165,15 @@ func (h *WebhookSubscriptionHandler) List(w http.ResponseWriter, r *http.Request
 
 // Get handles GET /v1/webhooks/{id}.
 func (h *WebhookSubscriptionHandler) Get(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
 	}
 	id := chi.URLParam(r, "id")
-	wh, err := h.queries.GetWebhookByIDAndProject(r.Context(), db.GetWebhookByIDAndProjectParams{
+	wh, err := h.queries.GetWebhookByIDAndWorkspace(r.Context(), db.GetWebhookByIDAndWorkspaceParams{
 		ID:        id,
-		ProjectID: projectID,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -189,7 +189,7 @@ func (h *WebhookSubscriptionHandler) Get(w http.ResponseWriter, r *http.Request)
 // Update handles PATCH /v1/webhooks/{id}. Allows updating url,
 // events, and active. CANNOT touch the secret — use /rotate for that.
 func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -199,9 +199,9 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 	// Load the existing row first so we can pass through unchanged
 	// fields. The patch query writes ALL three columns; sqlc doesn't
 	// have great partial-update support without per-field flags.
-	existing, err := h.queries.GetWebhookByIDAndProject(r.Context(), db.GetWebhookByIDAndProjectParams{
+	existing, err := h.queries.GetWebhookByIDAndWorkspace(r.Context(), db.GetWebhookByIDAndWorkspaceParams{
 		ID:        id,
-		ProjectID: projectID,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -243,7 +243,7 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 
 	updated, err := h.queries.UpdateWebhookURLEventsActive(r.Context(), db.UpdateWebhookURLEventsActiveParams{
 		ID:        id,
-		ProjectID: projectID,
+		WorkspaceID: projectID,
 		Url:       url,
 		Events:    evs,
 		Active:    active,
@@ -258,7 +258,7 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 // Rotate handles POST /v1/webhooks/{id}/rotate. Generates a new
 // signing secret and returns it once.
 func (h *WebhookSubscriptionHandler) Rotate(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -273,7 +273,7 @@ func (h *WebhookSubscriptionHandler) Rotate(w http.ResponseWriter, r *http.Reque
 
 	wh, err := h.queries.RotateWebhookSecret(r.Context(), db.RotateWebhookSecretParams{
 		ID:        id,
-		ProjectID: projectID,
+		WorkspaceID: projectID,
 		Secret:    secret,
 	})
 	if err != nil {
@@ -294,7 +294,7 @@ func (h *WebhookSubscriptionHandler) Rotate(w http.ResponseWriter, r *http.Reque
 // Delete handles DELETE /v1/webhooks/{id}. Hard delete — removes the
 // row entirely. Pending deliveries cascade-delete via the FK.
 func (h *WebhookSubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -302,8 +302,8 @@ func (h *WebhookSubscriptionHandler) Delete(w http.ResponseWriter, r *http.Reque
 	id := chi.URLParam(r, "id")
 
 	if err := h.queries.HardDeleteWebhook(r.Context(), db.HardDeleteWebhookParams{
-		ID:        id,
-		ProjectID: projectID,
+		ID:          id,
+		WorkspaceID: projectID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete webhook")
 		return

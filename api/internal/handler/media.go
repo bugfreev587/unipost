@@ -93,7 +93,7 @@ func toMediaResponse(m db.Media) mediaResponse {
 // size, mints a row in `pending` status, and returns a presigned PUT
 // URL the client can upload to directly.
 func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -140,7 +140,7 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Insert the row first with a placeholder storage_key.
 	row, err := h.queries.CreateMedia(r.Context(), db.CreateMediaParams{
-		ProjectID:   projectID,
+		WorkspaceID:   projectID,
 		StorageKey:  "placeholder", // overwritten just below
 		ContentType: body.ContentType,
 		SizeBytes:   body.SizeBytes,
@@ -183,16 +183,16 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Triggers a HEAD-and-hydrate when the row is still in 'pending'
 // status — the same poll-on-attach pattern the publish path uses.
 func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
 	}
 	id := chi.URLParam(r, "id")
 
-	row, err := h.queries.GetMediaByIDAndProject(r.Context(), db.GetMediaByIDAndProjectParams{
-		ID:        id,
-		ProjectID: projectID,
+	row, err := h.queries.GetMediaByIDAndWorkspace(r.Context(), db.GetMediaByIDAndWorkspaceParams{
+		ID:          id,
+		WorkspaceID: projectID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -223,15 +223,15 @@ func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Delete handles DELETE /v1/media/{id}. Soft-delete only — the
 // sweeper hard-deletes the row + R2 object on its next tick.
 func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	projectID := auth.GetProjectID(r.Context())
+	projectID := auth.GetWorkspaceID(r.Context())
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
 	}
 	id := chi.URLParam(r, "id")
 	if err := h.queries.SoftDeleteMedia(r.Context(), db.SoftDeleteMediaParams{
-		ID:        id,
-		ProjectID: projectID,
+		ID:          id,
+		WorkspaceID: projectID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete media")
 		return

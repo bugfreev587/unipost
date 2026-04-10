@@ -14,26 +14,20 @@ import (
 const cancelSocialPost = `-- name: CancelSocialPost :one
 UPDATE social_posts
 SET status = 'cancelled'
-WHERE id = $1 AND project_id = $2 AND status IN ('draft', 'scheduled')
-RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
 `
 
 type CancelSocialPostParams struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
-// Sprint 3 PR8: POST /v1/social-posts/{id}/cancel. Allowed for drafts
-// and scheduled posts; anything else is in-flight or already done and
-// cannot be cancelled. Same optimistic lock pattern as the publish
-// transition. Cancelled rows are filtered out by the scheduler's
-// WHERE status='scheduled' clause on the next tick.
 func (q *Queries) CancelSocialPost(ctx context.Context, arg CancelSocialPostParams) (SocialPost, error) {
-	row := q.db.QueryRow(ctx, cancelSocialPost, arg.ID, arg.ProjectID)
+	row := q.db.QueryRow(ctx, cancelSocialPost, arg.ID, arg.WorkspaceID)
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -42,6 +36,7 @@ func (q *Queries) CancelSocialPost(ctx context.Context, arg CancelSocialPostPara
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
@@ -49,26 +44,20 @@ func (q *Queries) CancelSocialPost(ctx context.Context, arg CancelSocialPostPara
 const claimDraftForPublish = `-- name: ClaimDraftForPublish :one
 UPDATE social_posts
 SET status = 'publishing'
-WHERE id = $1 AND project_id = $2 AND status = 'draft'
-RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
 `
 
 type ClaimDraftForPublishParams struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
-// Optimistic lock for the POST /v1/social-posts/{id}/publish
-// transition. Two clients clicking publish simultaneously is the
-// canonical race; the loser sees no rows and returns 409. We
-// restrict to status='draft' so re-publishing an already-published
-// post is also a no-op (the second call gets 0 rows back).
 func (q *Queries) ClaimDraftForPublish(ctx context.Context, arg ClaimDraftForPublishParams) (SocialPost, error) {
-	row := q.db.QueryRow(ctx, claimDraftForPublish, arg.ID, arg.ProjectID)
+	row := q.db.QueryRow(ctx, claimDraftForPublish, arg.ID, arg.WorkspaceID)
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -77,6 +66,7 @@ func (q *Queries) ClaimDraftForPublish(ctx context.Context, arg ClaimDraftForPub
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
@@ -84,7 +74,7 @@ func (q *Queries) ClaimDraftForPublish(ctx context.Context, arg ClaimDraftForPub
 const claimScheduledPost = `-- name: ClaimScheduledPost :one
 UPDATE social_posts SET status = 'publishing'
 WHERE id = $1 AND status = 'scheduled'
-RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
 `
 
 func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost, error) {
@@ -92,7 +82,6 @@ func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -101,18 +90,19 @@ func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const createSocialPost = `-- name: CreateSocialPost :one
-INSERT INTO social_posts (project_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key)
+INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
 `
 
 type CreateSocialPostParams struct {
-	ProjectID      string             `json:"project_id"`
+	WorkspaceID    string             `json:"workspace_id"`
 	Caption        pgtype.Text        `json:"caption"`
 	MediaUrls      []string           `json:"media_urls"`
 	Status         string             `json:"status"`
@@ -123,7 +113,7 @@ type CreateSocialPostParams struct {
 
 func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostParams) (SocialPost, error) {
 	row := q.db.QueryRow(ctx, createSocialPost,
-		arg.ProjectID,
+		arg.WorkspaceID,
 		arg.Caption,
 		arg.MediaUrls,
 		arg.Status,
@@ -134,7 +124,6 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -143,25 +132,23 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const deleteDraft = `-- name: DeleteDraft :exec
 DELETE FROM social_posts
-WHERE id = $1 AND project_id = $2 AND status = 'draft'
+WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
 `
 
 type DeleteDraftParams struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
-// DELETE /v1/social-posts/{id} for drafts. Hard delete since drafts
-// never made it out the door — there's no platform state to clean up
-// and no analytics to preserve.
 func (q *Queries) DeleteDraft(ctx context.Context, arg DeleteDraftParams) error {
-	_, err := q.db.Exec(ctx, deleteDraft, arg.ID, arg.ProjectID)
+	_, err := q.db.Exec(ctx, deleteDraft, arg.ID, arg.WorkspaceID)
 	return err
 }
 
@@ -181,16 +168,13 @@ WHERE idempotency_key IS NOT NULL
   AND created_at <= NOW() - INTERVAL '24 hours'
 `
 
-// Nullifies idempotency_key on rows older than 24h so the partial
-// unique index stays small. Run this from a periodic worker; it's
-// idempotent and safe to run on every tick.
 func (q *Queries) ExpireOldIdempotencyKeys(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, expireOldIdempotencyKeys)
 	return err
 }
 
 const getDueScheduledPosts = `-- name: GetDueScheduledPosts :many
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
 WHERE status = 'scheduled' AND scheduled_at <= NOW()
 ORDER BY scheduled_at ASC
 LIMIT 100
@@ -207,7 +191,6 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 		var i SocialPost
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
 			&i.Caption,
 			&i.MediaUrls,
 			&i.Status,
@@ -216,6 +199,7 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 			&i.CreatedAt,
 			&i.Metadata,
 			&i.IdempotencyKey,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -227,14 +211,14 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 	return items, nil
 }
 
-const getScheduledPostsByProject = `-- name: GetScheduledPostsByProject :many
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
-WHERE project_id = $1 AND status = 'scheduled'
+const getScheduledPostsByWorkspace = `-- name: GetScheduledPostsByWorkspace :many
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
+WHERE workspace_id = $1 AND status = 'scheduled'
 ORDER BY scheduled_at ASC
 `
 
-func (q *Queries) GetScheduledPostsByProject(ctx context.Context, projectID string) ([]SocialPost, error) {
-	rows, err := q.db.Query(ctx, getScheduledPostsByProject, projectID)
+func (q *Queries) GetScheduledPostsByWorkspace(ctx context.Context, workspaceID string) ([]SocialPost, error) {
+	rows, err := q.db.Query(ctx, getScheduledPostsByWorkspace, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +228,6 @@ func (q *Queries) GetScheduledPostsByProject(ctx context.Context, projectID stri
 		var i SocialPost
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
 			&i.Caption,
 			&i.MediaUrls,
 			&i.Status,
@@ -253,6 +236,7 @@ func (q *Queries) GetScheduledPostsByProject(ctx context.Context, projectID stri
 			&i.CreatedAt,
 			&i.Metadata,
 			&i.IdempotencyKey,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -265,19 +249,18 @@ func (q *Queries) GetScheduledPostsByProject(ctx context.Context, projectID stri
 }
 
 const getSocialPostByID = `-- name: GetSocialPostByID :one
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts WHERE id = $1
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts WHERE id = $1
 `
 
-// Cross-project lookup. Used by the public preview endpoint where
+// Cross-workspace lookup. Used by the public preview endpoint where
 // the JWT signature IS the authorization (the caller doesn't have
 // a session). Do NOT use from any auth-required handler — those
-// should always join via project_id.
+// should always join via workspace_id.
 func (q *Queries) GetSocialPostByID(ctx context.Context, id string) (SocialPost, error) {
 	row := q.db.QueryRow(ctx, getSocialPostByID, id)
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -286,25 +269,25 @@ func (q *Queries) GetSocialPostByID(ctx context.Context, id string) (SocialPost,
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
-const getSocialPostByIDAndProject = `-- name: GetSocialPostByIDAndProject :one
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts WHERE id = $1 AND project_id = $2
+const getSocialPostByIDAndWorkspace = `-- name: GetSocialPostByIDAndWorkspace :one
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts WHERE id = $1 AND workspace_id = $2
 `
 
-type GetSocialPostByIDAndProjectParams struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+type GetSocialPostByIDAndWorkspaceParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
-func (q *Queries) GetSocialPostByIDAndProject(ctx context.Context, arg GetSocialPostByIDAndProjectParams) (SocialPost, error) {
-	row := q.db.QueryRow(ctx, getSocialPostByIDAndProject, arg.ID, arg.ProjectID)
+func (q *Queries) GetSocialPostByIDAndWorkspace(ctx context.Context, arg GetSocialPostByIDAndWorkspaceParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, getSocialPostByIDAndWorkspace, arg.ID, arg.WorkspaceID)
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -313,32 +296,28 @@ func (q *Queries) GetSocialPostByIDAndProject(ctx context.Context, arg GetSocial
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const getSocialPostByIdempotencyKey = `-- name: GetSocialPostByIdempotencyKey :one
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
-WHERE project_id = $1
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
+WHERE workspace_id = $1
   AND idempotency_key = $2
   AND created_at > NOW() - INTERVAL '24 hours'
 `
 
 type GetSocialPostByIdempotencyKeyParams struct {
-	ProjectID      string      `json:"project_id"`
+	WorkspaceID    string      `json:"workspace_id"`
 	IdempotencyKey pgtype.Text `json:"idempotency_key"`
 }
 
-// Returns the row that already used this idempotency key for the
-// project, IF it was created within the 24h conceptual TTL. Beyond
-// that window the index entry is GC'd by a nightly worker, so this
-// query naturally returns no rows.
 func (q *Queries) GetSocialPostByIdempotencyKey(ctx context.Context, arg GetSocialPostByIdempotencyKeyParams) (SocialPost, error) {
-	row := q.db.QueryRow(ctx, getSocialPostByIdempotencyKey, arg.ProjectID, arg.IdempotencyKey)
+	row := q.db.QueryRow(ctx, getSocialPostByIdempotencyKey, arg.WorkspaceID, arg.IdempotencyKey)
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -347,25 +326,26 @@ func (q *Queries) GetSocialPostByIdempotencyKey(ctx context.Context, arg GetSoci
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
-const listSocialPostsByProject = `-- name: ListSocialPostsByProject :many
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
-WHERE project_id = $1
+const listSocialPostsByWorkspace = `-- name: ListSocialPostsByWorkspace :many
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
+WHERE workspace_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
 `
 
-type ListSocialPostsByProjectParams struct {
-	ProjectID string `json:"project_id"`
-	Limit     int32  `json:"limit"`
-	Offset    int32  `json:"offset"`
+type ListSocialPostsByWorkspaceParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	Limit       int32  `json:"limit"`
+	Offset      int32  `json:"offset"`
 }
 
-func (q *Queries) ListSocialPostsByProject(ctx context.Context, arg ListSocialPostsByProjectParams) ([]SocialPost, error) {
-	rows, err := q.db.Query(ctx, listSocialPostsByProject, arg.ProjectID, arg.Limit, arg.Offset)
+func (q *Queries) ListSocialPostsByWorkspace(ctx context.Context, arg ListSocialPostsByWorkspaceParams) ([]SocialPost, error) {
+	rows, err := q.db.Query(ctx, listSocialPostsByWorkspace, arg.WorkspaceID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +355,6 @@ func (q *Queries) ListSocialPostsByProject(ctx context.Context, arg ListSocialPo
 		var i SocialPost
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
 			&i.Caption,
 			&i.MediaUrls,
 			&i.Status,
@@ -384,6 +363,7 @@ func (q *Queries) ListSocialPostsByProject(ctx context.Context, arg ListSocialPo
 			&i.CreatedAt,
 			&i.Metadata,
 			&i.IdempotencyKey,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -396,8 +376,8 @@ func (q *Queries) ListSocialPostsByProject(ctx context.Context, arg ListSocialPo
 }
 
 const listSocialPostsFiltered = `-- name: ListSocialPostsFiltered :many
-SELECT id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key FROM social_posts
-WHERE project_id = $1
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
+WHERE workspace_id = $1
   AND ($2::text = ''  OR status     = ANY(string_to_array($2, ',')))
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <  $4)
@@ -407,32 +387,18 @@ LIMIT $7
 `
 
 type ListSocialPostsFilteredParams struct {
-	ProjectID string             `json:"project_id"`
-	Column2   string             `json:"column_2"`
-	Column3   pgtype.Timestamptz `json:"column_3"`
-	Column4   pgtype.Timestamptz `json:"column_4"`
-	Column5   pgtype.Timestamptz `json:"column_5"`
-	Column6   string             `json:"column_6"`
-	Limit     int32              `json:"limit"`
+	WorkspaceID string             `json:"workspace_id"`
+	Column2     string             `json:"column_2"`
+	Column3     pgtype.Timestamptz `json:"column_3"`
+	Column4     pgtype.Timestamptz `json:"column_4"`
+	Column5     pgtype.Timestamptz `json:"column_5"`
+	Column6     string             `json:"column_6"`
+	Limit       int32              `json:"limit"`
 }
 
-// Sprint 2 PR7 — keyset pagination + multi-filter list. Each
-// optional filter uses the empty-string / empty-array sentinel
-// pattern (the WHERE clause checks both the slot value and a
-// "filter active" hint) so a single query handles every combo.
-//
-// Cursor encoding: the caller passes the (created_at, id) of the
-// last row from the previous page. The WHERE clause uses Postgres
-// tuple comparison (`(created_at, id) < (cursor_at, cursor_id)`)
-// which matches the (created_at DESC, id DESC) index added in
-// migration 019, giving a clean keyset seek.
-//
-// For the "no cursor" case (page 1), the caller passes a sentinel
-// max-future timestamp + a high-sorting id; the tuple comparison
-// naturally returns the first page.
 func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPostsFilteredParams) ([]SocialPost, error) {
 	rows, err := q.db.Query(ctx, listSocialPostsFiltered,
-		arg.ProjectID,
+		arg.WorkspaceID,
 		arg.Column2,
 		arg.Column3,
 		arg.Column4,
@@ -449,7 +415,6 @@ func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPos
 		var i SocialPost
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
 			&i.Caption,
 			&i.MediaUrls,
 			&i.Status,
@@ -458,6 +423,7 @@ func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPos
 			&i.CreatedAt,
 			&i.Metadata,
 			&i.IdempotencyKey,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -472,26 +438,21 @@ func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPos
 const rescheduleSocialPost = `-- name: RescheduleSocialPost :one
 UPDATE social_posts
 SET scheduled_at = $3
-WHERE id = $1 AND project_id = $2 AND status = 'scheduled'
-RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+WHERE id = $1 AND workspace_id = $2 AND status = 'scheduled'
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
 `
 
 type RescheduleSocialPostParams struct {
 	ID          string             `json:"id"`
-	ProjectID   string             `json:"project_id"`
+	WorkspaceID string             `json:"workspace_id"`
 	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 }
 
-// Sprint 3 PR8: PATCH /v1/social-posts/{id} for status='scheduled' rows.
-// Only scheduled_at is editable in this state. Optimistic-locked on
-// status='scheduled' so a row that just flipped to 'publishing' (or
-// already published) loses cleanly with pgx.ErrNoRows → 409.
 func (q *Queries) RescheduleSocialPost(ctx context.Context, arg RescheduleSocialPostParams) (SocialPost, error) {
-	row := q.db.QueryRow(ctx, rescheduleSocialPost, arg.ID, arg.ProjectID, arg.ScheduledAt)
+	row := q.db.QueryRow(ctx, rescheduleSocialPost, arg.ID, arg.WorkspaceID, arg.ScheduledAt)
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -500,6 +461,7 @@ func (q *Queries) RescheduleSocialPost(ctx context.Context, arg RescheduleSocial
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
@@ -510,27 +472,23 @@ SET caption = $3,
     media_urls = $4,
     metadata = $5,
     scheduled_at = $6
-WHERE id = $1 AND project_id = $2 AND status = 'draft'
-RETURNING id, project_id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key
+WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
 `
 
 type UpdateDraftContentParams struct {
 	ID          string             `json:"id"`
-	ProjectID   string             `json:"project_id"`
+	WorkspaceID string             `json:"workspace_id"`
 	Caption     pgtype.Text        `json:"caption"`
 	MediaUrls   []string           `json:"media_urls"`
 	Metadata    []byte             `json:"metadata"`
 	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 }
 
-// PATCH /v1/social-posts/{id} for drafts. Replaces the canonical
-// caption + media + metadata + scheduled_at in one shot. Refuses to
-// touch non-draft rows so a race against publish can't sneak in
-// under the rug.
 func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContentParams) (SocialPost, error) {
 	row := q.db.QueryRow(ctx, updateDraftContent,
 		arg.ID,
-		arg.ProjectID,
+		arg.WorkspaceID,
 		arg.Caption,
 		arg.MediaUrls,
 		arg.Metadata,
@@ -539,7 +497,6 @@ func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContent
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Caption,
 		&i.MediaUrls,
 		&i.Status,
@@ -548,6 +505,7 @@ func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContent
 		&i.CreatedAt,
 		&i.Metadata,
 		&i.IdempotencyKey,
+		&i.WorkspaceID,
 	)
 	return i, err
 }

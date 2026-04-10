@@ -1,5 +1,5 @@
 -- name: CreateOAuthState :one
-INSERT INTO oauth_states (state, project_id, platform, redirect_url)
+INSERT INTO oauth_states (state, profile_id, platform, redirect_url)
 VALUES ($1, $2, $3, $4)
 RETURNING *;
 

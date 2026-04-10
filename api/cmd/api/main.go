@@ -360,55 +360,55 @@ func main() {
 		// is_admin flag derived from ADMIN_USERS. The dashboard reads
 		// this on mount to decide whether to render the Admin link.
 		r.Get("/v1/me", meHandler.Get)
-		// Dashboard root resolver: returns default_project_id +
-		// last_project_id, lazily creating a "Default" project for
-		// fresh signups and backfilling default_project_id for legacy
-		// users with existing projects but no stamped default.
+		// Dashboard root resolver: returns default_profile_id +
+		// last_profile_id, lazily creating a "Default" profile for
+		// fresh signups and backfilling default_profile_id for legacy
+		// users with existing profiles but no stamped default.
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
 
-		r.Get("/v1/projects", projectHandler.List)
-		r.Post("/v1/projects", projectHandler.Create)
-		r.Get("/v1/projects/{id}", projectHandler.Get)
-		r.Patch("/v1/projects/{id}", projectHandler.Update)
-		r.Delete("/v1/projects/{id}", projectHandler.Delete)
+		r.Get("/v1/profiles", projectHandler.List)
+		r.Post("/v1/profiles", projectHandler.Create)
+		r.Get("/v1/profiles/{id}", projectHandler.Get)
+		r.Patch("/v1/profiles/{id}", projectHandler.Update)
+		r.Delete("/v1/profiles/{id}", projectHandler.Delete)
 
-		r.Get("/v1/projects/{projectID}/api-keys", apiKeyHandler.List)
-		r.Post("/v1/projects/{projectID}/api-keys", apiKeyHandler.Create)
-		r.Delete("/v1/projects/{projectID}/api-keys/{keyID}", apiKeyHandler.Revoke)
+		// Workspace-scoped dashboard routes
+		r.Get("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.List)
+		r.Post("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.Create)
+		r.Delete("/v1/workspaces/{workspaceID}/api-keys/{keyID}", apiKeyHandler.Revoke)
 
-		// Social accounts (dashboard)
-		r.Get("/v1/projects/{projectID}/social-accounts", socialAccountHandler.List)
-		r.Post("/v1/projects/{projectID}/social-accounts/connect", socialAccountHandler.Connect)
-		r.Delete("/v1/projects/{projectID}/social-accounts/{accountID}", socialAccountHandler.Disconnect)
+		// Social accounts (dashboard, profile-scoped)
+		r.Get("/v1/profiles/{profileID}/social-accounts", socialAccountHandler.List)
+		r.Post("/v1/profiles/{profileID}/social-accounts/connect", socialAccountHandler.Connect)
+		r.Delete("/v1/profiles/{profileID}/social-accounts/{accountID}", socialAccountHandler.Disconnect)
 
-		// Sprint 4 PR5: Managed Users view (dashboard).
-		r.Get("/v1/projects/{projectID}/users", managedUsersHandler.List)
-		r.Get("/v1/projects/{projectID}/users/{external_user_id}", managedUsersHandler.Get)
+		// Managed Users view (dashboard, profile-scoped).
+		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
+		r.Get("/v1/profiles/{profileID}/users/{external_user_id}", managedUsersHandler.Get)
 
-		// Social posts (dashboard)
-		r.Get("/v1/projects/{projectID}/social-posts", socialPostHandler.List)
-		r.Post("/v1/projects/{projectID}/social-posts", socialPostHandler.Create)
+		// Social posts (dashboard, workspace-scoped)
+		r.Get("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.List)
+		r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)
 
-		// OAuth connect (dashboard)
-		r.Get("/v1/projects/{projectID}/oauth/connect/{platform}", oauthHandler.Connect)
+		// OAuth connect (dashboard, profile-scoped)
+		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
 
-		// Platform credentials (White Label)
-		r.Post("/v1/projects/{projectID}/platform-credentials", platformCredHandler.Create)
-		r.Get("/v1/projects/{projectID}/platform-credentials", platformCredHandler.List)
-		r.Delete("/v1/projects/{projectID}/platform-credentials/{platform}", platformCredHandler.Delete)
+		// Platform credentials (White Label, workspace-scoped)
+		r.Post("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.Create)
+		r.Get("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.List)
+		r.Delete("/v1/workspaces/{workspaceID}/platform-credentials/{platform}", platformCredHandler.Delete)
 
-		// Billing (dashboard)
-		r.Get("/v1/projects/{projectID}/billing", billingHandler.GetBilling)
-		r.Post("/v1/projects/{projectID}/billing/checkout", billingHandler.CreateCheckout)
-		r.Post("/v1/projects/{projectID}/billing/portal", billingHandler.CreatePortal)
+		// Billing (dashboard, workspace-scoped)
+		r.Get("/v1/workspaces/{workspaceID}/billing", billingHandler.GetBilling)
+		r.Post("/v1/workspaces/{workspaceID}/billing/checkout", billingHandler.CreateCheckout)
+		r.Post("/v1/workspaces/{workspaceID}/billing/portal", billingHandler.CreatePortal)
 
-		// Analytics (dashboard)
-		r.Get("/v1/projects/{projectID}/analytics/summary", analyticsHandler.GetSummary)
-		r.Get("/v1/projects/{projectID}/analytics/trend", analyticsHandler.GetTrend)
-		r.Get("/v1/projects/{projectID}/analytics/by-platform", analyticsHandler.GetByPlatform)
-		// Per-post analytics (project-scoped). Mirrors the API-key route below;
-		// the dashboard has been calling this URL but it wasn't wired until now.
-		r.Get("/v1/projects/{projectID}/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
+		// Analytics (dashboard, workspace-scoped)
+		r.Get("/v1/workspaces/{workspaceID}/analytics/summary", analyticsHandler.GetSummary)
+		r.Get("/v1/workspaces/{workspaceID}/analytics/trend", analyticsHandler.GetTrend)
+		r.Get("/v1/workspaces/{workspaceID}/analytics/by-platform", analyticsHandler.GetByPlatform)
+		// Per-post analytics (workspace-scoped). Mirrors the API-key route below.
+		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
 	})
 
 	// Admin routes — Clerk session + ADMIN_USERS gate. The middleware

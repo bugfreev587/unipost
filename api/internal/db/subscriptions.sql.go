@@ -24,19 +24,19 @@ func (q *Queries) CancelSubscription(ctx context.Context, stripeSubscriptionID p
 }
 
 const createSubscription = `-- name: CreateSubscription :one
-INSERT INTO subscriptions (project_id, plan_id, stripe_customer_id, stripe_subscription_id, status)
+INSERT INTO subscriptions (workspace_id, plan_id, stripe_customer_id, stripe_subscription_id, status)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (project_id) DO UPDATE
+ON CONFLICT (workspace_id) DO UPDATE
 SET plan_id = EXCLUDED.plan_id,
     stripe_customer_id = EXCLUDED.stripe_customer_id,
     stripe_subscription_id = EXCLUDED.stripe_subscription_id,
     status = EXCLUDED.status,
     updated_at = NOW()
-RETURNING id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used
+RETURNING id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used, workspace_id
 `
 
 type CreateSubscriptionParams struct {
-	ProjectID            string      `json:"project_id"`
+	WorkspaceID          string      `json:"workspace_id"`
 	PlanID               string      `json:"plan_id"`
 	StripeCustomerID     pgtype.Text `json:"stripe_customer_id"`
 	StripeSubscriptionID pgtype.Text `json:"stripe_subscription_id"`
@@ -45,7 +45,7 @@ type CreateSubscriptionParams struct {
 
 func (q *Queries) CreateSubscription(ctx context.Context, arg CreateSubscriptionParams) (Subscription, error) {
 	row := q.db.QueryRow(ctx, createSubscription,
-		arg.ProjectID,
+		arg.WorkspaceID,
 		arg.PlanID,
 		arg.StripeCustomerID,
 		arg.StripeSubscriptionID,
@@ -54,7 +54,6 @@ func (q *Queries) CreateSubscription(ctx context.Context, arg CreateSubscription
 	var i Subscription
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.PlanID,
 		&i.StripeCustomerID,
 		&i.StripeSubscriptionID,
@@ -65,47 +64,24 @@ func (q *Queries) CreateSubscription(ctx context.Context, arg CreateSubscription
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TrialUsed,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const ensureSubscription = `-- name: EnsureSubscription :exec
-INSERT INTO subscriptions (project_id, plan_id, status)
+INSERT INTO subscriptions (workspace_id, plan_id, status)
 VALUES ($1, 'free', 'active')
-ON CONFLICT (project_id) DO NOTHING
+ON CONFLICT (workspace_id) DO NOTHING
 `
 
-func (q *Queries) EnsureSubscription(ctx context.Context, projectID string) error {
-	_, err := q.db.Exec(ctx, ensureSubscription, projectID)
+func (q *Queries) EnsureSubscription(ctx context.Context, workspaceID string) error {
+	_, err := q.db.Exec(ctx, ensureSubscription, workspaceID)
 	return err
 }
 
-const getSubscriptionByProject = `-- name: GetSubscriptionByProject :one
-SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used FROM subscriptions WHERE project_id = $1
-`
-
-func (q *Queries) GetSubscriptionByProject(ctx context.Context, projectID string) (Subscription, error) {
-	row := q.db.QueryRow(ctx, getSubscriptionByProject, projectID)
-	var i Subscription
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.PlanID,
-		&i.StripeCustomerID,
-		&i.StripeSubscriptionID,
-		&i.Status,
-		&i.CurrentPeriodStart,
-		&i.CurrentPeriodEnd,
-		&i.CancelAtPeriodEnd,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.TrialUsed,
-	)
-	return i, err
-}
-
 const getSubscriptionByStripeCustomer = `-- name: GetSubscriptionByStripeCustomer :one
-SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used FROM subscriptions WHERE stripe_customer_id = $1
+SELECT id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used, workspace_id FROM subscriptions WHERE stripe_customer_id = $1
 `
 
 func (q *Queries) GetSubscriptionByStripeCustomer(ctx context.Context, stripeCustomerID pgtype.Text) (Subscription, error) {
@@ -113,7 +89,6 @@ func (q *Queries) GetSubscriptionByStripeCustomer(ctx context.Context, stripeCus
 	var i Subscription
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.PlanID,
 		&i.StripeCustomerID,
 		&i.StripeSubscriptionID,
@@ -124,12 +99,13 @@ func (q *Queries) GetSubscriptionByStripeCustomer(ctx context.Context, stripeCus
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TrialUsed,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const getSubscriptionByStripeSubscription = `-- name: GetSubscriptionByStripeSubscription :one
-SELECT id, project_id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used FROM subscriptions WHERE stripe_subscription_id = $1
+SELECT id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used, workspace_id FROM subscriptions WHERE stripe_subscription_id = $1
 `
 
 func (q *Queries) GetSubscriptionByStripeSubscription(ctx context.Context, stripeSubscriptionID pgtype.Text) (Subscription, error) {
@@ -137,7 +113,6 @@ func (q *Queries) GetSubscriptionByStripeSubscription(ctx context.Context, strip
 	var i Subscription
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.PlanID,
 		&i.StripeCustomerID,
 		&i.StripeSubscriptionID,
@@ -148,33 +123,58 @@ func (q *Queries) GetSubscriptionByStripeSubscription(ctx context.Context, strip
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.TrialUsed,
+		&i.WorkspaceID,
+	)
+	return i, err
+}
+
+const getSubscriptionByWorkspace = `-- name: GetSubscriptionByWorkspace :one
+SELECT id, plan_id, stripe_customer_id, stripe_subscription_id, status, current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at, trial_used, workspace_id FROM subscriptions WHERE workspace_id = $1
+`
+
+func (q *Queries) GetSubscriptionByWorkspace(ctx context.Context, workspaceID string) (Subscription, error) {
+	row := q.db.QueryRow(ctx, getSubscriptionByWorkspace, workspaceID)
+	var i Subscription
+	err := row.Scan(
+		&i.ID,
+		&i.PlanID,
+		&i.StripeCustomerID,
+		&i.StripeSubscriptionID,
+		&i.Status,
+		&i.CurrentPeriodStart,
+		&i.CurrentPeriodEnd,
+		&i.CancelAtPeriodEnd,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TrialUsed,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const markTrialUsed = `-- name: MarkTrialUsed :exec
-UPDATE subscriptions SET trial_used = TRUE, updated_at = NOW() WHERE project_id = $1
+UPDATE subscriptions SET trial_used = TRUE, updated_at = NOW() WHERE workspace_id = $1
 `
 
-func (q *Queries) MarkTrialUsed(ctx context.Context, projectID string) error {
-	_, err := q.db.Exec(ctx, markTrialUsed, projectID)
+func (q *Queries) MarkTrialUsed(ctx context.Context, workspaceID string) error {
+	_, err := q.db.Exec(ctx, markTrialUsed, workspaceID)
 	return err
 }
 
 const updateSubscriptionPlan = `-- name: UpdateSubscriptionPlan :exec
 UPDATE subscriptions
 SET plan_id = $2, status = $3, updated_at = NOW()
-WHERE project_id = $1
+WHERE workspace_id = $1
 `
 
 type UpdateSubscriptionPlanParams struct {
-	ProjectID string `json:"project_id"`
-	PlanID    string `json:"plan_id"`
-	Status    string `json:"status"`
+	WorkspaceID string `json:"workspace_id"`
+	PlanID      string `json:"plan_id"`
+	Status      string `json:"status"`
 }
 
 func (q *Queries) UpdateSubscriptionPlan(ctx context.Context, arg UpdateSubscriptionPlanParams) error {
-	_, err := q.db.Exec(ctx, updateSubscriptionPlan, arg.ProjectID, arg.PlanID, arg.Status)
+	_, err := q.db.Exec(ctx, updateSubscriptionPlan, arg.WorkspaceID, arg.PlanID, arg.Status)
 	return err
 }
 
@@ -196,11 +196,11 @@ const updateSubscriptionStripe = `-- name: UpdateSubscriptionStripe :exec
 UPDATE subscriptions
 SET stripe_customer_id = $2, stripe_subscription_id = $3, plan_id = $4, status = $5,
     current_period_start = $6, current_period_end = $7, updated_at = NOW()
-WHERE project_id = $1
+WHERE workspace_id = $1
 `
 
 type UpdateSubscriptionStripeParams struct {
-	ProjectID            string             `json:"project_id"`
+	WorkspaceID          string             `json:"workspace_id"`
 	StripeCustomerID     pgtype.Text        `json:"stripe_customer_id"`
 	StripeSubscriptionID pgtype.Text        `json:"stripe_subscription_id"`
 	PlanID               string             `json:"plan_id"`
@@ -211,7 +211,7 @@ type UpdateSubscriptionStripeParams struct {
 
 func (q *Queries) UpdateSubscriptionStripe(ctx context.Context, arg UpdateSubscriptionStripeParams) error {
 	_, err := q.db.Exec(ctx, updateSubscriptionStripe,
-		arg.ProjectID,
+		arg.WorkspaceID,
 		arg.StripeCustomerID,
 		arg.StripeSubscriptionID,
 		arg.PlanID,

@@ -21,7 +21,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, name, created_at, updated_at, default_project_id, last_project_id FROM users WHERE id = $1
+SELECT id, email, name, created_at, updated_at, default_profile_id, last_profile_id FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
@@ -33,47 +33,38 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DefaultProjectID,
-		&i.LastProjectID,
+		&i.DefaultProfileID,
+		&i.LastProfileID,
 	)
 	return i, err
 }
 
-const setUserDefaultProject = `-- name: SetUserDefaultProject :exec
-UPDATE users SET default_project_id = $2, updated_at = NOW()
+const setUserDefaultProfile = `-- name: SetUserDefaultProfile :exec
+UPDATE users SET default_profile_id = $2, updated_at = NOW()
 WHERE id = $1
 `
 
-type SetUserDefaultProjectParams struct {
+type SetUserDefaultProfileParams struct {
 	ID               string      `json:"id"`
-	DefaultProjectID pgtype.Text `json:"default_project_id"`
+	DefaultProfileID pgtype.Text `json:"default_profile_id"`
 }
 
-// Stamps the user's auto-created "Default" project. Called once
-// from /me/bootstrap when default_project_id IS NULL — either at
-// first signup (create + stamp) or as a lazy backfill for legacy
-// users with existing projects (oldest project gets stamped).
-func (q *Queries) SetUserDefaultProject(ctx context.Context, arg SetUserDefaultProjectParams) error {
-	_, err := q.db.Exec(ctx, setUserDefaultProject, arg.ID, arg.DefaultProjectID)
+func (q *Queries) SetUserDefaultProfile(ctx context.Context, arg SetUserDefaultProfileParams) error {
+	_, err := q.db.Exec(ctx, setUserDefaultProfile, arg.ID, arg.DefaultProfileID)
 	return err
 }
 
-const setUserLastProject = `-- name: SetUserLastProject :exec
-UPDATE users SET last_project_id = $2 WHERE id = $1
+const setUserLastProfile = `-- name: SetUserLastProfile :exec
+UPDATE users SET last_profile_id = $2 WHERE id = $1
 `
 
-type SetUserLastProjectParams struct {
+type SetUserLastProfileParams struct {
 	ID            string      `json:"id"`
-	LastProjectID pgtype.Text `json:"last_project_id"`
+	LastProfileID pgtype.Text `json:"last_profile_id"`
 }
 
-// Side-effect of GET /v1/projects/{id}: tracks the last project the
-// user actually rendered, so the dashboard root can redirect them
-// back to it on the next visit. No updated_at touch — this fires
-// on every project page navigation and we don't want it to look
-// like the user row was edited every time.
-func (q *Queries) SetUserLastProject(ctx context.Context, arg SetUserLastProjectParams) error {
-	_, err := q.db.Exec(ctx, setUserLastProject, arg.ID, arg.LastProjectID)
+func (q *Queries) SetUserLastProfile(ctx context.Context, arg SetUserLastProfileParams) error {
+	_, err := q.db.Exec(ctx, setUserLastProfile, arg.ID, arg.LastProfileID)
 	return err
 }
 
@@ -82,7 +73,7 @@ INSERT INTO users (id, email, name)
 VALUES ($1, $2, $3)
 ON CONFLICT (id)
 DO UPDATE SET email = $2, name = $3, updated_at = NOW()
-RETURNING id, email, name, created_at, updated_at, default_project_id, last_project_id
+RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id
 `
 
 type UpsertUserParams struct {
@@ -100,8 +91,8 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.Name,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DefaultProjectID,
-		&i.LastProjectID,
+		&i.DefaultProfileID,
+		&i.LastProfileID,
 	)
 	return i, err
 }

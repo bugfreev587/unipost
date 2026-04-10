@@ -49,9 +49,9 @@ type accountHealthResponse struct {
 // AccountHealth handles GET /v1/social-accounts/{id}/health.
 // Project-scoped — refuses to expose another project's account.
 func (h *SocialAccountHandler) AccountHealth(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
-	if projectID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
+	profileID := h.getProfileID(r)
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 	accountID := chi.URLParam(r, "id")
@@ -59,9 +59,9 @@ func (h *SocialAccountHandler) AccountHealth(w http.ResponseWriter, r *http.Requ
 		accountID = chi.URLParam(r, "accountID")
 	}
 
-	acc, err := h.queries.GetSocialAccountByIDAndProject(r.Context(), db.GetSocialAccountByIDAndProjectParams{
+	acc, err := h.queries.GetSocialAccountByIDAndProfile(r.Context(), db.GetSocialAccountByIDAndProfileParams{
 		ID:        accountID,
-		ProjectID: projectID,
+		ProfileID: profileID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {

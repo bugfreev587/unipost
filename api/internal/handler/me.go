@@ -76,8 +76,8 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 // 200 from this endpoint should always include a default_project_id
 // for any user who is allowed to use the dashboard.
 type bootstrapResponse struct {
-	DefaultProjectID *string `json:"default_project_id"`
-	LastProjectID    *string `json:"last_project_id"`
+	DefaultProfileID *string `json:"default_profile_id"`
+	LastProfileID    *string `json:"last_profile_id"`
 }
 
 // Bootstrap is the dashboard root resolver. Three states it handles:
@@ -116,12 +116,12 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defaultID := user.DefaultProjectID
-	lastID := user.LastProjectID
+	defaultID := user.DefaultProfileID
+	lastID := user.LastProfileID
 
 	if !defaultID.Valid {
 		// Branch 1 vs branch 2: do they already have any projects?
-		existing, err := h.queries.ListProjectsByOwner(r.Context(), userID)
+		existing, err := h.queries.ListProfilesByWorkspace(r.Context(), userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list projects: "+err.Error())
 			return
@@ -132,9 +132,9 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 			// Fresh user — auto-create the Default project. Hard-coded
 			// name "Default" per product spec; users can rename it via
 			// the project settings page like any other project.
-			created, err := h.queries.CreateProject(r.Context(), db.CreateProjectParams{
-				OwnerID: userID,
-				Name:    "Default",
+			created, err := h.queries.CreateProfile(r.Context(), db.CreateProfileParams{
+				WorkspaceID: userID,
+				Name:        "Default",
 			})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create default project: "+err.Error())
@@ -143,14 +143,14 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 			pickedID = created.ID
 		} else {
 			// Legacy user — backfill default_project_id from the oldest
-			// existing project. ListProjectsByOwner returns rows in
+			// existing project. ListProfilesByWorkspace returns rows in
 			// `created_at DESC` order, so the last entry is the oldest.
 			pickedID = existing[len(existing)-1].ID
 		}
 
-		if err := h.queries.SetUserDefaultProject(r.Context(), db.SetUserDefaultProjectParams{
+		if err := h.queries.SetUserDefaultProfile(r.Context(), db.SetUserDefaultProfileParams{
 			ID:               userID,
-			DefaultProjectID: pgtype.Text{String: pickedID, Valid: true},
+			DefaultProfileID: pgtype.Text{String: pickedID, Valid: true},
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to set default project: "+err.Error())
 			return
@@ -162,9 +162,9 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		// default so the dashboard root has somewhere to redirect on the
 		// very next request.
 		if !lastID.Valid {
-			if err := h.queries.SetUserLastProject(r.Context(), db.SetUserLastProjectParams{
+			if err := h.queries.SetUserLastProfile(r.Context(), db.SetUserLastProfileParams{
 				ID:            userID,
-				LastProjectID: pgtype.Text{String: pickedID, Valid: true},
+				LastProfileID: pgtype.Text{String: pickedID, Valid: true},
 			}); err != nil {
 				// Non-fatal: the dashboard will fall back to default_project_id.
 				lastID = pgtype.Text{}
@@ -181,14 +181,14 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 	resp := bootstrapResponse{}
 	if defaultID.Valid {
 		v := defaultID.String
-		resp.DefaultProjectID = &v
+		resp.DefaultProfileID = &v
 	}
 	if lastID.Valid {
 		v := lastID.String
-		resp.LastProjectID = &v
+		resp.LastProfileID = &v
 	} else if defaultID.Valid {
 		v := defaultID.String
-		resp.LastProjectID = &v
+		resp.LastProfileID = &v
 	}
 	writeSuccess(w, resp)
 }

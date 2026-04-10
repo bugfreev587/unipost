@@ -25,11 +25,11 @@ func NewProjectHandler(queries *db.Queries) *ProjectHandler {
 }
 
 type projectResponse struct {
-	ID        string    `json:"id"`
-	OwnerID   string    `json:"owner_id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	WorkspaceID string    `json:"workspace_id"`
+	Name        string    `json:"name"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 	// Sprint 4 PR4: white-label Connect branding. All three are
 	// optional; the hosted Connect page falls back to UniPost defaults
 	// when null. Pointer types so absent vs empty-string is meaningful
@@ -37,20 +37,15 @@ type projectResponse struct {
 	BrandingLogoURL      *string `json:"branding_logo_url,omitempty"`
 	BrandingDisplayName  *string `json:"branding_display_name,omitempty"`
 	BrandingPrimaryColor *string `json:"branding_primary_color,omitempty"`
-	// Sprint 5 PR2: per-social-account monthly publish cap. nil = no
-	// cap (the default — unlimited per-account, only the project-wide
-	// quota applies). Set to a positive integer to enforce; 0 is a
-	// valid emergency-lockout value.
-	PerAccountMonthlyLimit *int32 `json:"per_account_monthly_limit"`
 }
 
-func toProjectResponse(p db.Project) projectResponse {
+func toProjectResponse(p db.Profile) projectResponse {
 	resp := projectResponse{
-		ID:        p.ID,
-		OwnerID:   p.OwnerID,
-		Name:      p.Name,
-		CreatedAt: p.CreatedAt.Time,
-		UpdatedAt: p.UpdatedAt.Time,
+		ID:          p.ID,
+		WorkspaceID: p.WorkspaceID,
+		Name:        p.Name,
+		CreatedAt:   p.CreatedAt.Time,
+		UpdatedAt:   p.UpdatedAt.Time,
 	}
 	if p.BrandingLogoUrl.Valid {
 		v := p.BrandingLogoUrl.String
@@ -64,24 +59,20 @@ func toProjectResponse(p db.Project) projectResponse {
 		v := p.BrandingPrimaryColor.String
 		resp.BrandingPrimaryColor = &v
 	}
-	if p.PerAccountMonthlyLimit.Valid {
-		v := p.PerAccountMonthlyLimit.Int32
-		resp.PerAccountMonthlyLimit = &v
-	}
 	return resp
 }
 
 func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserID(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
 
-	projects, err := h.queries.ListProjectsByOwner(r.Context(), userID)
+	profiles, err := h.queries.ListProfilesByWorkspace(r.Context(), workspaceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list projects")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list profiles")
 		return
 	}
 
-	result := make([]projectResponse, len(projects))
-	for i, p := range projects {
+	result := make([]projectResponse, len(profiles))
+	for i, p := range profiles {
 		result[i] = toProjectResponse(p)
 	}
 
@@ -89,7 +80,7 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserID(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
 
 	var body struct {
 		Name string `json:"name"`
@@ -104,65 +95,65 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, err := h.queries.CreateProject(r.Context(), db.CreateProjectParams{
-		OwnerID: userID,
-		Name:    body.Name,
+	profile, err := h.queries.CreateProfile(r.Context(), db.CreateProfileParams{
+		WorkspaceID: workspaceID,
+		Name:        body.Name,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create project")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create profile")
 		return
 	}
 
-	writeCreated(w, toProjectResponse(project))
+	writeCreated(w, toProjectResponse(profile))
 }
 
 func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "id")
+	profileID := chi.URLParam(r, "id")
 
-	project, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	profile, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
+		ID:     profileID,
+		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get project")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get profile")
 		return
 	}
 
-	// Stamp last_project_id as a side-effect of fetching a project the
-	// user owns. The dashboard hits this endpoint on every project page
+	// Stamp last_profile_id as a side-effect of fetching a profile the
+	// user owns. The dashboard hits this endpoint on every profile page
 	// mount, so it's the natural hook for "last visited" tracking. We
 	// log on failure but never block the response — the user-facing
 	// page must render even if the side-effect write fails.
-	if err := h.queries.SetUserLastProject(r.Context(), db.SetUserLastProjectParams{
+	if err := h.queries.SetUserLastProfile(r.Context(), db.SetUserLastProfileParams{
 		ID:            userID,
-		LastProjectID: pgtype.Text{String: projectID, Valid: true},
+		LastProfileID: pgtype.Text{String: profileID, Valid: true},
 	}); err != nil {
-		slog.Warn("failed to update last_project_id", "user_id", userID, "project_id", projectID, "error", err)
+		slog.Warn("failed to update last_profile_id", "user_id", userID, "profile_id", profileID, "error", err)
 	}
 
-	writeSuccess(w, toProjectResponse(project))
+	writeSuccess(w, toProjectResponse(profile))
 }
 
 func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "id")
+	profileID := chi.URLParam(r, "id")
 
 	// Verify ownership
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	_, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
+		ID:     profileID,
+		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get project")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get profile")
 		return
 	}
 
@@ -171,20 +162,11 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// — customers patching just the logo shouldn't have to re-supply
 	// name + color, and customers wanting to remove a logo entirely
 	// need a way to clear it.
-	// Sprint 5 PR2: per_account_monthly_limit uses a two-level pointer
-	// (**int32) so we can distinguish three states in the JSON body:
-	//   absent       → leave the column unchanged
-	//   "...": null  → clear the cap (back to unlimited)
-	//   "...": 50    → set the cap to 50
-	// json.Unmarshal handles this naturally — absent leaves the
-	// outer pointer nil; explicit null sets it non-nil with the
-	// inner pointer nil; a number sets both.
 	var body struct {
 		Name                   *string  `json:"name"`
 		BrandingLogoURL        *string  `json:"branding_logo_url"`
 		BrandingDisplayName    *string  `json:"branding_display_name"`
 		BrandingPrimaryColor   *string  `json:"branding_primary_color"`
-		PerAccountMonthlyLimit **int32  `json:"per_account_monthly_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -217,28 +199,15 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Sprint 5 PR2: validate per_account_monthly_limit. Negative
-	// values make no sense; explicit null clears the cap; 0 is
-	// allowed (an emergency lockout). Upper bound 1_000_000 is a
-	// sanity ceiling — anything above is almost certainly a typo.
-	if body.PerAccountMonthlyLimit != nil && *body.PerAccountMonthlyLimit != nil {
-		v := **body.PerAccountMonthlyLimit
-		if v < 0 || v > 1_000_000 {
-			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
-				"per_account_monthly_limit must be between 0 and 1000000 (or null to disable)")
-			return
-		}
-	}
-
 	// Apply name update first (separate query — keeps the existing
-	// UpdateProject signature unchanged for callers that don't touch
+	// UpdateProfile signature unchanged for callers that don't touch
 	// branding).
 	if body.Name != nil {
-		if _, err := h.queries.UpdateProject(r.Context(), db.UpdateProjectParams{
-			ID:   projectID,
+		if _, err := h.queries.UpdateProfile(r.Context(), db.UpdateProfileParams{
+			ID:   profileID,
 			Name: *body.Name,
 		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update project")
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update profile")
 			return
 		}
 	}
@@ -246,8 +215,8 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Apply branding updates if any of the three fields was provided.
 	// COALESCE on the SQL side leaves untouched columns alone.
 	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil {
-		if _, err := h.queries.UpdateProjectBranding(r.Context(), db.UpdateProjectBrandingParams{
-			ID:           projectID,
+		if _, err := h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
+			ID:           profileID,
 			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
 			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
 			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
@@ -257,30 +226,11 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Sprint 5 PR2: per_account_monthly_limit. The double-pointer
-	// shape collapses to one of three pgtype.Int4 values:
-	//   body.PerAccountMonthlyLimit == nil      → no-op (don't touch)
-	//   *body.PerAccountMonthlyLimit == nil     → set NULL  (clear cap)
-	//   **body.PerAccountMonthlyLimit          → set to that integer
-	if body.PerAccountMonthlyLimit != nil {
-		var quotaParam pgtype.Int4
-		if *body.PerAccountMonthlyLimit != nil {
-			quotaParam = pgtype.Int4{Int32: **body.PerAccountMonthlyLimit, Valid: true}
-		}
-		if _, err := h.queries.UpdateProjectPerAccountQuota(r.Context(), db.UpdateProjectPerAccountQuotaParams{
-			ID:                     projectID,
-			PerAccountMonthlyLimit: quotaParam,
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update per-account quota")
-			return
-		}
-	}
-
 	// Re-fetch so the response reflects the latest state including
 	// columns we didn't touch.
-	final, err := h.queries.GetProject(r.Context(), projectID)
+	final, err := h.queries.GetProfile(r.Context(), profileID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read project")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read profile")
 		return
 	}
 	writeSuccess(w, toProjectResponse(final))
@@ -339,26 +289,26 @@ func isHexColor(s string) bool {
 
 func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "id")
+	profileID := chi.URLParam(r, "id")
 
 	// Verify ownership
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	_, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
+		ID:     profileID,
+		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Project not found")
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get project")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get profile")
 		return
 	}
 
-	// Refuse to drop the user's auto-created Default project — it's the
+	// Refuse to drop the user's auto-created Default profile — it's the
 	// guaranteed fallback the dashboard root resolver redirects to when
 	// the user has nowhere else to go. Without this guard a user could
-	// delete their Default and end up with no project at all (zero-state
+	// delete their Default and end up with no profile at all (zero-state
 	// would be self-healing via /me/bootstrap, but we'd lose the "can't
 	// delete the default" guarantee that documentation will rely on).
 	user, err := h.queries.GetUser(r.Context(), userID)
@@ -366,13 +316,13 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load user")
 		return
 	}
-	if user.DefaultProjectID.Valid && user.DefaultProjectID.String == projectID {
-		writeError(w, http.StatusConflict, "DEFAULT_PROJECT_PROTECTED", "The default project cannot be deleted")
+	if user.DefaultProfileID.Valid && user.DefaultProfileID.String == profileID {
+		writeError(w, http.StatusConflict, "DEFAULT_PROFILE_PROTECTED", "The default profile cannot be deleted")
 		return
 	}
 
-	if err := h.queries.DeleteProject(r.Context(), projectID); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete project")
+	if err := h.queries.DeleteProfile(r.Context(), profileID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete profile")
 		return
 	}
 

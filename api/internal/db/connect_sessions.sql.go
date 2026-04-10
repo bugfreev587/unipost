@@ -13,14 +13,14 @@ import (
 
 const createConnectSession = `-- name: CreateConnectSession :one
 INSERT INTO connect_sessions (
-  project_id, platform, external_user_id, external_user_email,
+  profile_id, platform, external_user_id, external_user_email,
   return_url, oauth_state, pkce_verifier, expires_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, project_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
+RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
 `
 
 type CreateConnectSessionParams struct {
-	ProjectID         string             `json:"project_id"`
+	ProfileID         string             `json:"profile_id"`
 	Platform          string             `json:"platform"`
 	ExternalUserID    string             `json:"external_user_id"`
 	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
@@ -32,7 +32,7 @@ type CreateConnectSessionParams struct {
 
 func (q *Queries) CreateConnectSession(ctx context.Context, arg CreateConnectSessionParams) (ConnectSession, error) {
 	row := q.db.QueryRow(ctx, createConnectSession,
-		arg.ProjectID,
+		arg.ProfileID,
 		arg.Platform,
 		arg.ExternalUserID,
 		arg.ExternalUserEmail,
@@ -44,7 +44,7 @@ func (q *Queries) CreateConnectSession(ctx context.Context, arg CreateConnectSes
 	var i ConnectSession
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.ExternalUserID,
 		&i.ExternalUserEmail,
@@ -66,29 +66,27 @@ SET status = 'expired'
 WHERE id = $1 AND status = 'pending' AND expires_at < NOW()
 `
 
-// Lazy expiry: called from the read path when expires_at < NOW().
-// No background sweeper required for Sprint 3.
 func (q *Queries) ExpireConnectSession(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, expireConnectSession, id)
 	return err
 }
 
 const getConnectSessionByID = `-- name: GetConnectSessionByID :one
-SELECT id, project_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
-WHERE id = $1 AND project_id = $2
+SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
+WHERE id = $1 AND profile_id = $2
 `
 
 type GetConnectSessionByIDParams struct {
 	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ProfileID string `json:"profile_id"`
 }
 
 func (q *Queries) GetConnectSessionByID(ctx context.Context, arg GetConnectSessionByIDParams) (ConnectSession, error) {
-	row := q.db.QueryRow(ctx, getConnectSessionByID, arg.ID, arg.ProjectID)
+	row := q.db.QueryRow(ctx, getConnectSessionByID, arg.ID, arg.ProfileID)
 	var i ConnectSession
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.ExternalUserID,
 		&i.ExternalUserEmail,
@@ -105,18 +103,16 @@ func (q *Queries) GetConnectSessionByID(ctx context.Context, arg GetConnectSessi
 }
 
 const getConnectSessionByOAuthState = `-- name: GetConnectSessionByOAuthState :one
-SELECT id, project_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
+SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
 WHERE oauth_state = $1
 `
 
-// Public lookup used by both the hosted dashboard page and the OAuth
-// callback. The oauth_state is the bearer — no project_id check here.
 func (q *Queries) GetConnectSessionByOAuthState(ctx context.Context, oauthState string) (ConnectSession, error) {
 	row := q.db.QueryRow(ctx, getConnectSessionByOAuthState, oauthState)
 	var i ConnectSession
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.ExternalUserID,
 		&i.ExternalUserEmail,
@@ -137,7 +133,7 @@ UPDATE connect_sessions
 SET status = 'cancelled',
     completed_at = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, project_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
+RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
 `
 
 func (q *Queries) MarkConnectSessionCancelled(ctx context.Context, id string) (ConnectSession, error) {
@@ -145,7 +141,7 @@ func (q *Queries) MarkConnectSessionCancelled(ctx context.Context, id string) (C
 	var i ConnectSession
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.ExternalUserID,
 		&i.ExternalUserEmail,
@@ -167,7 +163,7 @@ SET status = 'completed',
     completed_social_account_id = $2,
     completed_at = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, project_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
+RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
 `
 
 type MarkConnectSessionCompletedParams struct {
@@ -180,7 +176,7 @@ func (q *Queries) MarkConnectSessionCompleted(ctx context.Context, arg MarkConne
 	var i ConnectSession
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
+		&i.ProfileID,
 		&i.Platform,
 		&i.ExternalUserID,
 		&i.ExternalUserEmail,

@@ -31,11 +31,11 @@ type platformCredentialResponse struct {
 // Create handles POST /v1/projects/{projectID}/platform-credentials
 func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "projectID")
+	projectID := chi.URLParam(r, "workspaceID")
 
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID:     projectID,
+		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -47,7 +47,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Native mode requires a paid plan
-	sub, _ := h.queries.GetSubscriptionByProject(r.Context(), projectID)
+	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), projectID)
 	if sub.PlanID == "free" || sub.PlanID == "" {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "Native mode requires a paid plan. Please upgrade to use your own platform credentials.")
 		return
@@ -75,7 +75,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	cred, err := h.queries.CreatePlatformCredential(r.Context(), db.CreatePlatformCredentialParams{
-		ProjectID:    projectID,
+		WorkspaceID:    projectID,
 		Platform:     body.Platform,
 		ClientID:     body.ClientID,
 		ClientSecret: encSecret,
@@ -95,11 +95,11 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 // List handles GET /v1/projects/{projectID}/platform-credentials
 func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "projectID")
+	projectID := chi.URLParam(r, "workspaceID")
 
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID:     projectID,
+		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -110,7 +110,7 @@ func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	creds, err := h.queries.ListPlatformCredentialsByProject(r.Context(), projectID)
+	creds, err := h.queries.ListPlatformCredentialsByWorkspace(r.Context(), projectID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list credentials")
 		return
@@ -131,12 +131,12 @@ func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request)
 // Delete handles DELETE /v1/projects/{projectID}/platform-credentials/{platform}
 func (h *PlatformCredentialHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
-	projectID := chi.URLParam(r, "projectID")
+	projectID := chi.URLParam(r, "workspaceID")
 	platformName := chi.URLParam(r, "platform")
 
-	_, err := h.queries.GetProjectByIDAndOwner(r.Context(), db.GetProjectByIDAndOwnerParams{
-		ID:      projectID,
-		OwnerID: userID,
+	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+		ID:     projectID,
+		UserID: userID,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -148,7 +148,7 @@ func (h *PlatformCredentialHandler) Delete(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
-		ProjectID: projectID,
+		WorkspaceID: projectID,
 		Platform:  platformName,
 	})
 

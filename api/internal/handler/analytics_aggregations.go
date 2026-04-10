@@ -136,7 +136,7 @@ type summaryResponse struct {
 // GetSummary handles GET /v1/analytics/summary
 // and  GET /v1/projects/{projectID}/analytics/summary
 func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -154,8 +154,8 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 	prevStart := start.Add(-windowLen)
 	prevEnd := start
 
-	curr, err := h.queries.GetAnalyticsSummaryByProject(r.Context(), db.GetAnalyticsSummaryByProjectParams{
-		ProjectID:   projectID,
+	curr, err := h.queries.GetAnalyticsSummaryByWorkspace(r.Context(), db.GetAnalyticsSummaryByWorkspaceParams{
+		WorkspaceID:   projectID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
 		Column4:     platform,
@@ -165,8 +165,8 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load summary")
 		return
 	}
-	prev, err := h.queries.GetAnalyticsSummaryByProject(r.Context(), db.GetAnalyticsSummaryByProjectParams{
-		ProjectID:   projectID,
+	prev, err := h.queries.GetAnalyticsSummaryByWorkspace(r.Context(), db.GetAnalyticsSummaryByWorkspaceParams{
+		WorkspaceID:   projectID,
 		CreatedAt:   tsParam(prevStart),
 		CreatedAt_2: tsParam(prevEnd),
 		Column4:     platform,
@@ -242,7 +242,7 @@ type trendResponse struct {
 // metric query param is a CSV of: posts, impressions, likes, comments, shares.
 // Defaults to "posts,impressions,likes" if absent.
 func (h *AnalyticsHandler) GetTrend(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -270,8 +270,8 @@ func (h *AnalyticsHandler) GetTrend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.queries.GetAnalyticsTrendByProject(r.Context(), db.GetAnalyticsTrendByProjectParams{
-		ProjectID:   projectID,
+	rows, err := h.queries.GetAnalyticsTrendByWorkspace(r.Context(), db.GetAnalyticsTrendByWorkspaceParams{
+		WorkspaceID:   projectID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
 		Column4:     platformFilter(r),
@@ -283,7 +283,7 @@ func (h *AnalyticsHandler) GetTrend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build a date → row map for zero-fill.
-	rowByDay := make(map[string]db.GetAnalyticsTrendByProjectRow, len(rows))
+	rowByDay := make(map[string]db.GetAnalyticsTrendByWorkspaceRow, len(rows))
 	for _, row := range rows {
 		key := row.Day.Time.UTC().Format("2006-01-02")
 		rowByDay[key] = row
@@ -339,7 +339,7 @@ type byPlatformRow struct {
 // GetByPlatform handles GET /v1/analytics/by-platform
 // and  GET /v1/projects/{projectID}/analytics/by-platform
 func (h *AnalyticsHandler) GetByPlatform(w http.ResponseWriter, r *http.Request) {
-	projectID := h.getProjectID(r)
+	projectID := h.getWorkspaceID(r)
 	if projectID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing project context")
 		return
@@ -350,8 +350,8 @@ func (h *AnalyticsHandler) GetByPlatform(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := h.queries.GetAnalyticsByPlatformByProject(r.Context(), db.GetAnalyticsByPlatformByProjectParams{
-		ProjectID:   projectID,
+	rows, err := h.queries.GetAnalyticsByPlatformByWorkspace(r.Context(), db.GetAnalyticsByPlatformByWorkspaceParams{
+		WorkspaceID:   projectID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
 		Column4:     platformFilter(r),

@@ -109,8 +109,8 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 	// way the immediate path does — load the project for the limit,
 	// dedupe the account ids, snapshot current-month counts.
 	var perAccountLimit pgtype.Int4
-	if proj, projErr := w.queries.GetProject(ctx, post.ProjectID); projErr == nil {
-		perAccountLimit = proj.PerAccountMonthlyLimit
+	if ws, wsErr := w.queries.GetWorkspace(ctx, post.WorkspaceID); wsErr == nil {
+		perAccountLimit = ws.PerAccountMonthlyLimit
 	}
 	uniqueIDs := make([]string, 0, len(posts))
 	seen := make(map[string]struct{}, len(posts))
@@ -191,7 +191,7 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 	// internally and never blocks the worker. Payload is a minimal
 	// post object so subscribers can correlate by ID without
 	// re-fetching anything.
-	w.bus.Publish(ctx, post.ProjectID, eventForStatus(postStatus), map[string]any{
+	w.bus.Publish(ctx, post.WorkspaceID, eventForStatus(postStatus), map[string]any{
 		"post_id":      post.ID,
 		"status":       postStatus,
 		"scheduled_at": post.ScheduledAt.Time,

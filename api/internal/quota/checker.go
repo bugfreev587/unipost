@@ -29,9 +29,9 @@ func NewChecker(queries *db.Queries) *Checker {
 	return &Checker{queries: queries}
 }
 
-// Check returns the quota status for a project. Never blocks — soft limit only.
-func (c *Checker) Check(ctx context.Context, projectID string) QuotaStatus {
-	sub, err := c.queries.GetSubscriptionByProject(ctx, projectID)
+// Check returns the quota status for a workspace. Never blocks — soft limit only.
+func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
+	sub, err := c.queries.GetSubscriptionByWorkspace(ctx, workspaceID)
 	if err != nil {
 		// No subscription = free plan defaults
 		return QuotaStatus{Allowed: true, Usage: 0, Limit: 100}
@@ -48,8 +48,8 @@ func (c *Checker) Check(ctx context.Context, projectID string) QuotaStatus {
 
 	period := currentPeriod()
 	usage, err := c.queries.GetUsage(ctx, db.GetUsageParams{
-		ProjectID: projectID,
-		Period:    period,
+		WorkspaceID: workspaceID,
+		Period:      period,
 	})
 
 	postCount := 0
@@ -79,18 +79,18 @@ func (c *Checker) Check(ctx context.Context, projectID string) QuotaStatus {
 }
 
 // Increment adds to the usage count for the current period.
-func (c *Checker) Increment(ctx context.Context, projectID string, count int) {
+func (c *Checker) Increment(ctx context.Context, workspaceID string, count int) {
 	c.queries.IncrementUsage(ctx, db.IncrementUsageParams{
-		ProjectID: projectID,
-		Period:    currentPeriod(),
-		PostCount: int32(count),
+		WorkspaceID: workspaceID,
+		Period:      currentPeriod(),
+		PostCount:   int32(count),
 	})
 }
 
 // EnsureSubscription creates a free subscription if one doesn't exist.
 // Uses DO NOTHING to avoid overwriting an existing paid subscription.
-func (c *Checker) EnsureSubscription(ctx context.Context, projectID string) {
-	c.queries.EnsureSubscription(ctx, projectID)
+func (c *Checker) EnsureSubscription(ctx context.Context, workspaceID string) {
+	c.queries.EnsureSubscription(ctx, workspaceID)
 }
 
 func currentPeriod() string {

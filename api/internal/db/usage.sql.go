@@ -10,68 +10,68 @@ import (
 )
 
 const getUsage = `-- name: GetUsage :one
-SELECT id, project_id, period, post_count, created_at, updated_at FROM usage WHERE project_id = $1 AND period = $2
+SELECT id, period, post_count, created_at, updated_at, workspace_id FROM usage WHERE workspace_id = $1 AND period = $2
 `
 
 type GetUsageParams struct {
-	ProjectID string `json:"project_id"`
-	Period    string `json:"period"`
+	WorkspaceID string `json:"workspace_id"`
+	Period      string `json:"period"`
 }
 
 func (q *Queries) GetUsage(ctx context.Context, arg GetUsageParams) (Usage, error) {
-	row := q.db.QueryRow(ctx, getUsage, arg.ProjectID, arg.Period)
+	row := q.db.QueryRow(ctx, getUsage, arg.WorkspaceID, arg.Period)
 	var i Usage
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Period,
 		&i.PostCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const incrementUsage = `-- name: IncrementUsage :exec
-INSERT INTO usage (project_id, period, post_count)
+INSERT INTO usage (workspace_id, period, post_count)
 VALUES ($1, $2, $3)
-ON CONFLICT (project_id, period)
+ON CONFLICT (workspace_id, period)
 DO UPDATE SET post_count = usage.post_count + $3, updated_at = NOW()
 `
 
 type IncrementUsageParams struct {
-	ProjectID string `json:"project_id"`
-	Period    string `json:"period"`
-	PostCount int32  `json:"post_count"`
+	WorkspaceID string `json:"workspace_id"`
+	Period      string `json:"period"`
+	PostCount   int32  `json:"post_count"`
 }
 
 func (q *Queries) IncrementUsage(ctx context.Context, arg IncrementUsageParams) error {
-	_, err := q.db.Exec(ctx, incrementUsage, arg.ProjectID, arg.Period, arg.PostCount)
+	_, err := q.db.Exec(ctx, incrementUsage, arg.WorkspaceID, arg.Period, arg.PostCount)
 	return err
 }
 
 const upsertUsage = `-- name: UpsertUsage :one
-INSERT INTO usage (project_id, period, post_count)
+INSERT INTO usage (workspace_id, period, post_count)
 VALUES ($1, $2, 0)
-ON CONFLICT (project_id, period) DO UPDATE SET updated_at = NOW()
-RETURNING id, project_id, period, post_count, created_at, updated_at
+ON CONFLICT (workspace_id, period) DO UPDATE SET updated_at = NOW()
+RETURNING id, period, post_count, created_at, updated_at, workspace_id
 `
 
 type UpsertUsageParams struct {
-	ProjectID string `json:"project_id"`
-	Period    string `json:"period"`
+	WorkspaceID string `json:"workspace_id"`
+	Period      string `json:"period"`
 }
 
 func (q *Queries) UpsertUsage(ctx context.Context, arg UpsertUsageParams) (Usage, error) {
-	row := q.db.QueryRow(ctx, upsertUsage, arg.ProjectID, arg.Period)
+	row := q.db.QueryRow(ctx, upsertUsage, arg.WorkspaceID, arg.Period)
 	var i Usage
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Period,
 		&i.PostCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }

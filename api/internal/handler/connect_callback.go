@@ -246,7 +246,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	})
 
 	saved, err := h.queries.UpsertManagedSocialAccount(r.Context(), db.UpsertManagedSocialAccountParams{
-		ProjectID:         session.ProjectID,
+		ProfileID:         session.ProfileID,
 		Platform:          platformName,
 		AccessToken:       encAccess,
 		RefreshToken:      pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
@@ -271,7 +271,12 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		CompletedSocialAccountID: pgtype.Text{String: saved.ID, Valid: true},
 	})
 
-	h.bus.Publish(r.Context(), session.ProjectID, events.EventAccountConnected, map[string]any{
+	// Webhooks are workspace-scoped; resolve workspace_id from profile.
+	wsID := session.ProfileID
+	if prof, pErr := h.queries.GetProfile(r.Context(), session.ProfileID); pErr == nil {
+		wsID = prof.WorkspaceID
+	}
+	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
 		"social_account_id": saved.ID,
 		"platform":          platformName,
 		"account_name":      profile.Username,
@@ -281,7 +286,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 
 	slog.Info("connect.callback: account connected",
 		"platform", platformName,
-		"project_id", session.ProjectID,
+		"project_id", session.ProfileID,
 		"external_user_id", session.ExternalUserID,
 		"account_id", saved.ID,
 	)

@@ -12,14 +12,14 @@ import (
 )
 
 const createAPIKey = `-- name: CreateAPIKey :one
-INSERT INTO api_keys (id, project_id, name, prefix, key_hash, environment, expires_at)
+INSERT INTO api_keys (id, workspace_id, name, prefix, key_hash, environment, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, project_id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment
+RETURNING id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id
 `
 
 type CreateAPIKeyParams struct {
 	ID          string             `json:"id"`
-	ProjectID   string             `json:"project_id"`
+	WorkspaceID string             `json:"workspace_id"`
 	Name        string             `json:"name"`
 	Prefix      string             `json:"prefix"`
 	KeyHash     string             `json:"key_hash"`
@@ -30,7 +30,7 @@ type CreateAPIKeyParams struct {
 func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (ApiKey, error) {
 	row := q.db.QueryRow(ctx, createAPIKey,
 		arg.ID,
-		arg.ProjectID,
+		arg.WorkspaceID,
 		arg.Name,
 		arg.Prefix,
 		arg.KeyHash,
@@ -40,7 +40,6 @@ func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (Api
 	var i ApiKey
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Name,
 		&i.Prefix,
 		&i.CreatedAt,
@@ -49,12 +48,13 @@ func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (Api
 		&i.RevokedAt,
 		&i.KeyHash,
 		&i.Environment,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const getAPIKey = `-- name: GetAPIKey :one
-SELECT id, project_id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment FROM api_keys WHERE id = $1
+SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id FROM api_keys WHERE id = $1
 `
 
 func (q *Queries) GetAPIKey(ctx context.Context, id string) (ApiKey, error) {
@@ -62,7 +62,6 @@ func (q *Queries) GetAPIKey(ctx context.Context, id string) (ApiKey, error) {
 	var i ApiKey
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Name,
 		&i.Prefix,
 		&i.CreatedAt,
@@ -71,12 +70,13 @@ func (q *Queries) GetAPIKey(ctx context.Context, id string) (ApiKey, error) {
 		&i.RevokedAt,
 		&i.KeyHash,
 		&i.Environment,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
 const getAPIKeyByHash = `-- name: GetAPIKeyByHash :one
-SELECT id, project_id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment FROM api_keys WHERE key_hash = $1
+SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id FROM api_keys WHERE key_hash = $1
 `
 
 func (q *Queries) GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error) {
@@ -84,7 +84,6 @@ func (q *Queries) GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, 
 	var i ApiKey
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Name,
 		&i.Prefix,
 		&i.CreatedAt,
@@ -93,18 +92,19 @@ func (q *Queries) GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, 
 		&i.RevokedAt,
 		&i.KeyHash,
 		&i.Environment,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
 
-const listAPIKeysByProject = `-- name: ListAPIKeysByProject :many
-SELECT id, project_id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment FROM api_keys
-WHERE project_id = $1 AND revoked_at IS NULL
+const listAPIKeysByWorkspace = `-- name: ListAPIKeysByWorkspace :many
+SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id FROM api_keys
+WHERE workspace_id = $1 AND revoked_at IS NULL
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListAPIKeysByProject(ctx context.Context, projectID string) ([]ApiKey, error) {
-	rows, err := q.db.Query(ctx, listAPIKeysByProject, projectID)
+func (q *Queries) ListAPIKeysByWorkspace(ctx context.Context, workspaceID string) ([]ApiKey, error) {
+	rows, err := q.db.Query(ctx, listAPIKeysByWorkspace, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,6 @@ func (q *Queries) ListAPIKeysByProject(ctx context.Context, projectID string) ([
 		var i ApiKey
 		if err := rows.Scan(
 			&i.ID,
-			&i.ProjectID,
 			&i.Name,
 			&i.Prefix,
 			&i.CreatedAt,
@@ -123,6 +122,7 @@ func (q *Queries) ListAPIKeysByProject(ctx context.Context, projectID string) ([
 			&i.RevokedAt,
 			&i.KeyHash,
 			&i.Environment,
+			&i.WorkspaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -136,21 +136,20 @@ func (q *Queries) ListAPIKeysByProject(ctx context.Context, projectID string) ([
 
 const revokeAPIKey = `-- name: RevokeAPIKey :one
 UPDATE api_keys SET revoked_at = NOW()
-WHERE id = $1 AND project_id = $2
-RETURNING id, project_id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id
 `
 
 type RevokeAPIKeyParams struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (ApiKey, error) {
-	row := q.db.QueryRow(ctx, revokeAPIKey, arg.ID, arg.ProjectID)
+	row := q.db.QueryRow(ctx, revokeAPIKey, arg.ID, arg.WorkspaceID)
 	var i ApiKey
 	err := row.Scan(
 		&i.ID,
-		&i.ProjectID,
 		&i.Name,
 		&i.Prefix,
 		&i.CreatedAt,
@@ -159,6 +158,7 @@ func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (Api
 		&i.RevokedAt,
 		&i.KeyHash,
 		&i.Environment,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
