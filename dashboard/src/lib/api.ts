@@ -77,6 +77,40 @@ async function request<T>(
   return res.json();
 }
 
+// Workspaces
+
+export interface Workspace {
+  id: string;
+  name: string;
+  per_account_monthly_limit: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listWorkspaces(
+  token: string
+): Promise<ApiResponse<Workspace[]>> {
+  return request("/v1/workspaces", token);
+}
+
+export async function getWorkspace(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<Workspace>> {
+  return request(`/v1/workspaces/${workspaceId}`, token);
+}
+
+export async function updateWorkspace(
+  token: string,
+  workspaceId: string,
+  data: { name: string }
+): Promise<ApiResponse<Workspace>> {
+  return request(`/v1/workspaces/${workspaceId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
 // Profiles
 
 export async function listProfiles(

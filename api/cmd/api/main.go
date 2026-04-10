@@ -367,6 +367,11 @@ func main() {
 		// users with existing profiles but no stamped default.
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
 
+		// Workspace management (dashboard)
+		r.Get("/v1/workspaces", workspaceHandler.DashboardList)
+		r.Get("/v1/workspaces/{workspaceID}", workspaceHandler.DashboardGet)
+		r.Patch("/v1/workspaces/{workspaceID}", workspaceHandler.DashboardUpdate)
+
 		r.Get("/v1/profiles", profileHandler.List)
 		r.Post("/v1/profiles", profileHandler.Create)
 		r.Get("/v1/profiles/{id}", profileHandler.Get)
