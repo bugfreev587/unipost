@@ -3,7 +3,7 @@
 import { useEffect, useCallback, useState, useRef, useMemo, memo } from "react";
 import { Plus } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { AccountCardGrid } from "./account-card-grid";
+import { ConnectedAccountsGrid, PostToGrid } from "./account-card-grid";
 import { PlatformEditorBlock } from "./platform-editor-block";
 import { EmptyPlatformState } from "./empty-platform-state";
 import { PublishModePanel } from "./publish-mode-panel";
@@ -308,12 +308,10 @@ export function CreatePostDrawer({
 
           {/* RIGHT: Accounts + Publish panel */}
           <aside className="w-[360px] flex-shrink-0 overflow-y-auto px-6 py-7 bg-[#0a0a0b]/40 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2e2e38] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-[#3a3a46]">
-            <AccountCardGrid
+            <ConnectedAccountsGrid
               accounts={form.activeAccounts}
               selectedIds={form.selectedAccountIds}
               onToggle={form.toggleAccount}
-              onToggleAll={form.toggleAll}
-              profileName={profileName}
             />
 
             {/* Divider */}
