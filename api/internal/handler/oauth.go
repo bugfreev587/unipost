@@ -169,6 +169,24 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Dedup: check if this platform account is already connected in the workspace
+	if result.ExternalAccountID != "" {
+		profile, profErr := h.queries.GetProfile(r.Context(), oauthState.ProfileID)
+		if profErr == nil {
+			existing, dupErr := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{
+				Platform:          platformName,
+				ExternalAccountID: result.ExternalAccountID,
+				WorkspaceID:       profile.WorkspaceID,
+			})
+			if dupErr == nil && existing.ID != "" {
+				slog.Warn("oauth callback: duplicate account", "platform", platformName, "external_id", result.ExternalAccountID)
+				h.redirectWithError(w, r, oauthState.RedirectUrl.String,
+					"This "+platformName+" account is already connected in your workspace")
+				return
+			}
+		}
+	}
+
 	// Store account
 	_, err = h.queries.CreateSocialAccount(r.Context(), db.CreateSocialAccountParams{
 		ProfileID:         oauthState.ProfileID,

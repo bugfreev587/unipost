@@ -104,6 +104,52 @@ func (q *Queries) DisconnectSocialAccount(ctx context.Context, arg DisconnectSoc
 	return i, err
 }
 
+const findSocialAccountByExternalID = `-- name: FindSocialAccountByExternalID :one
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.external_account_id = $2
+  AND p.workspace_id = $3
+  AND sa.status = 'active'
+LIMIT 1
+`
+
+type FindSocialAccountByExternalIDParams struct {
+	Platform          string `json:"platform"`
+	ExternalAccountID string `json:"external_account_id"`
+	WorkspaceID       string `json:"workspace_id"`
+}
+
+// Dedup check: find an existing active account with the same platform +
+// external_account_id anywhere in the workspace. Used during connect to
+// prevent the same platform account from being connected multiple times.
+func (q *Queries) FindSocialAccountByExternalID(ctx context.Context, arg FindSocialAccountByExternalIDParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, findSocialAccountByExternalID, arg.Platform, arg.ExternalAccountID, arg.WorkspaceID)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+	)
+	return i, err
+}
+
 const getExpiringTokens = `-- name: GetExpiringTokens :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
 WHERE disconnected_at IS NULL

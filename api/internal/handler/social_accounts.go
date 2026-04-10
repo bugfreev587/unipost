@@ -112,6 +112,27 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dedup: check if this platform account is already connected in the workspace
+	if result.ExternalAccountID != "" {
+		profile, err := h.queries.GetProfile(r.Context(), profileID)
+		if err == nil {
+			existing, err := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{
+				Platform:          body.Platform,
+				ExternalAccountID: result.ExternalAccountID,
+				WorkspaceID:       profile.WorkspaceID,
+			})
+			if err == nil && existing.ID != "" {
+				existingName := ""
+				if existing.AccountName.Valid {
+					existingName = existing.AccountName.String
+				}
+				writeError(w, http.StatusConflict, "ACCOUNT_ALREADY_CONNECTED",
+					"This "+body.Platform+" account ("+existingName+") is already connected in your workspace. Disconnect the existing one first if you want to reconnect.")
+				return
+			}
+		}
+	}
+
 	// Encrypt tokens
 	encAccess, err := h.encryptor.Encrypt(result.AccessToken)
 	if err != nil {

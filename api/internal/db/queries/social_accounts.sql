@@ -148,3 +148,15 @@ ORDER BY sa.connected_at DESC;
 SELECT sa.* FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = $1 AND p.workspace_id = $2;
+
+-- name: FindSocialAccountByExternalID :one
+-- Dedup check: find an existing active account with the same platform +
+-- external_account_id anywhere in the workspace. Used during connect to
+-- prevent the same platform account from being connected multiple times.
+SELECT sa.* FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.external_account_id = $2
+  AND p.workspace_id = $3
+  AND sa.status = 'active'
+LIMIT 1;
