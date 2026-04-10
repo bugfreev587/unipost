@@ -44,7 +44,10 @@ const ALL_NAV_ITEMS = [
     { href: "/posts/queue", label: "Queue" },
   ]},
   { href: "/api-keys", label: "API Keys", icon: Key, modes: ["whitelabel", "api"] },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
+    { href: "/analytics", label: "Posts" },
+    { href: "/analytics/api", label: "API" },
+  ]},
 ];
 
 // Filter nav items based on workspace usage modes.

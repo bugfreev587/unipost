@@ -21,6 +21,16 @@ type ApiKey struct {
 	WorkspaceID string             `json:"workspace_id"`
 }
 
+type ApiMetric struct {
+	ID          int64              `json:"id"`
+	WorkspaceID string             `json:"workspace_id"`
+	Method      string             `json:"method"`
+	Path        string             `json:"path"`
+	StatusCode  int32              `json:"status_code"`
+	DurationMs  int32              `json:"duration_ms"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type ConnectSession struct {
 	ID                       string             `json:"id"`
 	ProfileID                string             `json:"profile_id"`

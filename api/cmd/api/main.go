@@ -26,6 +26,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
+	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -275,6 +276,8 @@ func main() {
 	analyticsRollupHandler := handler.NewAnalyticsRollupHandler(pool)
 	platformHandler := handler.NewPlatformHandler(queries)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
+	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
+	apiMetricsRecorder := metrics.NewRecorder(queries)
 	adminChecker := auth.NewAdminChecker(queries)
 	meHandler := handler.NewMeHandler(queries, adminChecker)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
@@ -427,6 +430,11 @@ func main() {
 		r.Get("/v1/workspaces/{workspaceID}/analytics/by-platform", analyticsHandler.GetByPlatform)
 		// Per-post analytics (workspace-scoped). Mirrors the API-key route below.
 		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
+
+		// API metrics (dashboard, workspace-scoped)
+		r.Get("/v1/workspaces/{workspaceID}/api-metrics/summary", apiMetricsHandler.Summary)
+		r.Get("/v1/workspaces/{workspaceID}/api-metrics/trend", apiMetricsHandler.Trend)
+		r.Get("/v1/workspaces/{workspaceID}/api-metrics/overall", apiMetricsHandler.Overall)
 	})
 
 	// Admin routes — Clerk session + ADMIN_USERS gate. The middleware
@@ -445,6 +453,7 @@ func main() {
 	// Public API routes (API key auth)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.APIKeyMiddleware(queries))
+		r.Use(apiMetricsRecorder.Middleware)
 
 		// Workspace info (API key scoped)
 		r.Get("/v1/workspace", workspaceHandler.Get)

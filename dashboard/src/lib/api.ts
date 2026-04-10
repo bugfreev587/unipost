@@ -780,3 +780,63 @@ export async function getAdminUser(
 ): Promise<ApiResponse<AdminUserDetail>> {
   return request(`/v1/admin/users/${id}`, token);
 }
+
+// API Metrics
+
+export interface APIMetricsSummaryRow {
+  path: string;
+  method: string;
+  total_calls: number;
+  success_count: number;
+  client_error_count: number;
+  server_error_count: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  avg_ms: number;
+}
+
+export interface APIMetricsTrendRow {
+  bucket: string;
+  total_calls: number;
+  success_count: number;
+  error_count: number;
+}
+
+export interface APIMetricsOverall {
+  total_calls: number;
+  success_count: number;
+  client_error_count: number;
+  server_error_count: number;
+  reliability_pct: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+}
+
+export async function getAPIMetricsSummary(
+  token: string,
+  workspaceId: string,
+  from: string,
+  to: string
+): Promise<ApiResponse<APIMetricsSummaryRow[]>> {
+  return request(`/v1/workspaces/${workspaceId}/api-metrics/summary?from=${from}&to=${to}`, token);
+}
+
+export async function getAPIMetricsTrend(
+  token: string,
+  workspaceId: string,
+  from: string,
+  to: string
+): Promise<ApiResponse<APIMetricsTrendRow[]>> {
+  return request(`/v1/workspaces/${workspaceId}/api-metrics/trend?from=${from}&to=${to}`, token);
+}
+
+export async function getAPIMetricsOverall(
+  token: string,
+  workspaceId: string,
+  from: string,
+  to: string
+): Promise<ApiResponse<APIMetricsOverall>> {
+  return request(`/v1/workspaces/${workspaceId}/api-metrics/overall?from=${from}&to=${to}`, token);
+}
