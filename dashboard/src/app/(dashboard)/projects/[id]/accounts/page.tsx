@@ -11,7 +11,7 @@ import {
 import {
   listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, type SocialAccount, type Profile,
 } from "@/lib/api";
-import { Plus, Unplug, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
+import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { ConfirmModal } from "@/components/confirm-modal";
 
@@ -205,25 +205,14 @@ export default function AccountsPage() {
         </Dialog>
       </div>
 
-      {(() => {
-        const filtered = profileFilter === "all" ? accounts : accounts.filter((a) => a.profile_id === profileFilter);
-        return loading ? (
+      {loading ? (
         <div style={{ color: "var(--dmuted)" }}>Loading...</div>
-      ) : filtered.length === 0 ? (
-        <div className="empty-state">
-          <Unplug style={{ width: 32, height: 32, opacity: 0.4, marginBottom: 12 }} />
-          <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 6 }}>No accounts connected</div>
-          <div style={{ fontSize: 12.5, color: "var(--dmuted)", maxWidth: 280, lineHeight: 1.6 }}>Connect a social account to start posting.</div>
-          <button className="dbtn dbtn-primary" onClick={() => setConnectOpen(true)} style={{ marginTop: 16 }}>
-            <Plus style={{ width: 13, height: 13 }} /> Connect Account
-          </button>
-        </div>
       ) : (
         <div className="table-wrap">
           <table>
             <thead><tr><th>Account</th><th>Profile</th><th>Platform</th><th>Connected</th><th>Status</th><th></th></tr></thead>
             <tbody>
-              {filtered.map((a) => (
+              {(profileFilter === "all" ? accounts : accounts.filter((a) => a.profile_id === profileFilter)).map((a) => (
                 <tr key={a.id}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -254,8 +243,7 @@ export default function AccountsPage() {
             </tbody>
           </table>
         </div>
-      );
-      })()}
+      )}
 
       <ConfirmModal
         open={!!disconnectTarget}
