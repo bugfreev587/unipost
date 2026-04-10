@@ -554,7 +554,16 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 	}
 
 	// Step 3: media count + mixing rules.
+	// Count media from both MediaURLs and MediaIDs.
 	mediaItems := MediaFromURLs(post.MediaURLs)
+	// Also count media from media_ids (R2 uploads)
+	if opts.Media != nil {
+		for _, mid := range post.MediaIDs {
+			if m, ok := opts.Media[mid]; ok && (m.Status == "uploaded" || m.Status == "attached") {
+				mediaItems = append(mediaItems, MediaFromContentType(m.ContentType))
+			}
+		}
+	}
 	imageCount := len(FilterByKind(mediaItems, MediaKindImage, MediaKindGIF, MediaKindUnknown))
 	videoCount := len(FilterByKind(mediaItems, MediaKindVideo))
 

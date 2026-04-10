@@ -68,6 +68,22 @@ func MediaFromURLs(urls []string) []MediaItem {
 	return out
 }
 
+// MediaFromContentType creates a MediaItem from a content-type string.
+// Used by the validator to count media_ids (R2 uploads) alongside media_urls.
+func MediaFromContentType(contentType string) MediaItem {
+	ct := strings.ToLower(contentType)
+	switch {
+	case strings.HasPrefix(ct, "video/"):
+		return MediaItem{Kind: MediaKindVideo}
+	case ct == "image/gif":
+		return MediaItem{Kind: MediaKindGIF}
+	case strings.HasPrefix(ct, "image/"):
+		return MediaItem{Kind: MediaKindImage}
+	default:
+		return MediaItem{Kind: MediaKindUnknown}
+	}
+}
+
 // FilterByKind returns only the items whose Kind matches one of the provided
 // kinds. Adapters use it to split a heterogeneous media list into image-only
 // and video-only halves when the platform requires separate API paths.
