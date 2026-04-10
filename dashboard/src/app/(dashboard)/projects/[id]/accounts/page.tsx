@@ -40,6 +40,7 @@ export default function AccountsPage() {
   const [appPassword, setAppPassword] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
+  const [connectProfileId, setConnectProfileId] = useState(profileId);
 
   const callbackStatus = searchParams.get("status");
   const callbackAccount = searchParams.get("account_name");
@@ -70,7 +71,7 @@ export default function AccountsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await connectSocialAccount(token, profileId, { platform: "bluesky", credentials: { handle: handle.trim(), app_password: appPassword.trim() } });
+      await connectSocialAccount(token, connectProfileId, { platform: "bluesky", credentials: { handle: handle.trim(), app_password: appPassword.trim() } });
       setConnectOpen(false); setSelectedPlatform(null); setHandle(""); setAppPassword(""); loadAccounts();
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "Failed to connect");
@@ -83,7 +84,7 @@ export default function AccountsPage() {
       const token = await getToken();
       if (!token) return;
       const redirectUrl = window.location.href.split("?")[0];
-      const res = await getOAuthConnectURL(token, profileId, platform, redirectUrl);
+      const res = await getOAuthConnectURL(token, connectProfileId, platform, redirectUrl);
       window.location.href = res.data.auth_url;
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "Failed to start OAuth");
@@ -141,7 +142,7 @@ export default function AccountsPage() {
             </div>
           )}
         </div>
-        <Dialog open={connectOpen} onOpenChange={(open) => { setConnectOpen(open); if (!open) { setSelectedPlatform(null); setConnectError(""); } }}>
+        <Dialog open={connectOpen} onOpenChange={(open) => { setConnectOpen(open); if (!open) { setSelectedPlatform(null); setConnectError(""); } else { setConnectProfileId(profileId); } }}>
           <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
             <Plus style={{ width: 13, height: 13 }} /> Connect Account
           </DialogTrigger>
@@ -150,6 +151,32 @@ export default function AccountsPage() {
               <DialogTitle>{selectedPlatform ? `Connect ${PLATFORMS.find((p) => p.id === selectedPlatform)?.name}` : "Connect Account"}</DialogTitle>
               <DialogDescription>{selectedPlatform === "bluesky" ? "Enter your handle and App Password." : selectedPlatform ? "Redirecting to authorize." : "Choose a platform."}</DialogDescription>
             </DialogHeader>
+
+            {/* Profile selector */}
+            {profiles.length > 1 && !selectedPlatform && (
+              <div style={{ padding: "0 0 4px", borderBottom: "1px solid var(--dborder)", marginBottom: 4 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--dmuted2)", display: "block", marginBottom: 6 }}>
+                  Add to profile
+                </label>
+                <select
+                  value={connectProfileId}
+                  onChange={(e) => setConnectProfileId(e.target.value)}
+                  style={{
+                    width: "100%", padding: "7px 10px", fontSize: 13,
+                    background: "var(--surface1)", border: "1px solid var(--dborder)",
+                    borderRadius: 6, color: "var(--dtext)", outline: "none",
+                    fontFamily: "inherit", cursor: "pointer",
+                  }}
+                >
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}{p.id === profileId ? " (current)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {!selectedPlatform ? (
               <div style={{ padding: "8px 0" }}>
                 {PLATFORMS.map((p) => {
