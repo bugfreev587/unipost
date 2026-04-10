@@ -11,12 +11,19 @@ interface ConnectedAccountsGridProps {
   accounts: SocialAccount[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
+  onToggleAll?: () => void;
+  profileName?: string;
 }
+
+// Alias for backward compatibility with the drawer
+export { ConnectedAccountsGrid as AccountCardGrid };
 
 export function ConnectedAccountsGrid({
   accounts,
   selectedIds,
   onToggle,
+  onToggleAll,
+  profileName,
 }: ConnectedAccountsGridProps) {
   if (accounts.length === 0) {
     return (
@@ -30,15 +37,36 @@ export function ConnectedAccountsGrid({
   }
 
   return (
-    <div className="grid grid-cols-2 gap-2">
-      {accounts.map((account) => (
-        <AccountCardSmall
-          key={account.id}
-          account={account}
-          selected={selectedIds.has(account.id)}
-          onToggle={onToggle}
-        />
-      ))}
+    <div>
+      {onToggleAll && (
+        <div className="flex items-center justify-between mb-3">
+          <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium">
+            Post to
+          </label>
+          <button
+            type="button"
+            className="text-[11px] text-[#8a8a93] hover:text-[#f4f4f5] font-mono transition-colors"
+            onClick={onToggleAll}
+          >
+            toggle all
+          </button>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        {accounts.map((account) => (
+          <AccountCardSmall
+            key={account.id}
+            account={account}
+            selected={selectedIds.has(account.id)}
+            onToggle={onToggle}
+          />
+        ))}
+      </div>
+      {profileName && (
+        <div className="mt-3 text-[11px] text-[#55555c] font-mono">
+          connected to <span className="text-[#8a8a93]">{profileName}</span> profile
+        </div>
+      )}
     </div>
   );
 }

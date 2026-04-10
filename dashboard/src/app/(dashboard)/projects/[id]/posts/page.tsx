@@ -311,8 +311,6 @@ export default function PostsPage() {
         open={showCreateModal}
         onOpenChange={setShowCreateModal}
         accounts={accounts}
-        profiles={profiles}
-        initialProfileId={profileId}
         workspaceId={workspaceId}
         getToken={getToken}
         onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import type { SocialAccount } from "@/lib/api";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus } from "@/components/tools/platform-limits";
 
@@ -204,26 +204,41 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     []
   );
 
-  // Returns true if the file was already uploaded (cache hit → no upload needed)
+  // Returns true if the file was already uploaded (cache hit → no upload needed).
+  // Uses a ref for uploadCache to avoid stale closure issues.
+  const uploadCacheRef = useRef(uploadCache);
+  uploadCacheRef.current = uploadCache;
+
   const addMediaItem = useCallback((file: File): { cached: boolean; mediaId: string | null } => {
     const fp = fileFingerprint(file);
-    // Check if already displayed
-    const alreadyDisplayed = mediaItems.some((m) => m.fingerprint === fp);
-    if (alreadyDisplayed) return { cached: true, mediaId: null };
+    let result: { cached: boolean; mediaId: string | null } = { cached: false, mediaId: null };
 
-    // Check upload cache — file was uploaded before in this session
-    const cachedId = uploadCache.get(fp);
-    if (cachedId) {
-      setMediaItems((prev) => [...prev, { file, fingerprint: fp, mediaId: cachedId, progress: 100, error: null }]);
+    setMediaItems((prev) => {
+      // Check if already displayed (uses current state, not stale closure)
+      if (prev.some((m) => m.fingerprint === fp)) {
+        result = { cached: true, mediaId: null };
+        return prev; // no change
+      }
+
+      // Check upload cache — file was uploaded before in this session
+      const cachedId = uploadCacheRef.current.get(fp);
+      if (cachedId) {
+        result = { cached: true, mediaId: cachedId };
+        return [...prev, { file, fingerprint: fp, mediaId: cachedId, progress: 100, error: null }];
+      }
+
+      // New file — needs upload
+      result = { cached: false, mediaId: null };
+      return [...prev, { file, fingerprint: fp, mediaId: null, progress: 0, error: null }];
+    });
+
+    // Add to mediaFiles unless it was already displayed (duplicate)
+    if (!(result.cached && !result.mediaId)) {
       setMediaFiles((prev) => [...prev, file]);
-      return { cached: true, mediaId: cachedId };
     }
 
-    // New file — needs upload
-    setMediaItems((prev) => [...prev, { file, fingerprint: fp, mediaId: null, progress: 0, error: null }]);
-    setMediaFiles((prev) => [...prev, file]);
-    return { cached: false, mediaId: null };
-  }, [mediaItems, uploadCache]);
+    return result;
+  }, []);
 
   const updateMediaItem = useCallback((index: number, update: Partial<MediaItem>) => {
     setMediaItems((prev) => {
