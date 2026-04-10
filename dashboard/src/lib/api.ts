@@ -90,6 +90,7 @@ export interface Workspace {
   id: string;
   name: string;
   per_account_monthly_limit: number | null;
+  usage_modes: string[];
   created_at: string;
   updated_at: string;
 }
@@ -736,6 +737,17 @@ export async function getMe(token: string): Promise<ApiResponse<MeResponse>> {
 export interface BootstrapResponse {
   default_profile_id: string | null;
   last_profile_id: string | null;
+  onboarding_completed: boolean;
+}
+
+export async function completeOnboarding(
+  token: string,
+  data: { first_name: string; org_name?: string; usage_modes: string[] }
+): Promise<ApiResponse<{ completed: boolean }>> {
+  return request("/v1/me/onboarding", token, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
 }
 
 export async function getBootstrap(
