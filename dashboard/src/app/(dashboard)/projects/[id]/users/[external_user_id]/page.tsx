@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { ArrowLeft, Unplug, Mail, Calendar } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ManagedUserDetailPage() {
   const { id: profileId, external_user_id: rawExternalUserID } = useParams<{
@@ -27,6 +28,7 @@ export default function ManagedUserDetailPage() {
   const [user, setUser] = useState<ManagedUserDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -45,14 +47,13 @@ export default function ManagedUserDetailPage() {
     load();
   }, [load]);
 
-  async function handleDisconnect(accountId: string) {
-    if (!confirm("Disconnect this account? The end user will need to re-Connect to publish again.")) {
-      return;
-    }
+  async function handleDisconnect() {
+    if (!disconnectTarget) return;
     try {
       const token = await getToken();
       if (!token) return;
-      await disconnectSocialAccount(token, profileId, accountId);
+      await disconnectSocialAccount(token, profileId, disconnectTarget);
+      setDisconnectTarget(null);
       load();
     } catch (err) {
       console.error("Disconnect failed:", err);
@@ -130,7 +131,7 @@ export default function ManagedUserDetailPage() {
               )}
             </div>
             <button
-              onClick={() => handleDisconnect(acc.id)}
+              onClick={() => setDisconnectTarget(acc.id)}
               className="text-[#888] hover:text-[#ef4444] p-2"
               title="Disconnect"
             >
@@ -139,6 +140,16 @@ export default function ManagedUserDetailPage() {
           </div>
         ))}
       </div>
+
+      <ConfirmModal
+        open={disconnectTarget !== null}
+        title="Disconnect Account"
+        message="Disconnect this account? The end user will need to re-Connect to publish again."
+        confirmLabel="Disconnect"
+        variant="danger"
+        onConfirm={handleDisconnect}
+        onCancel={() => setDisconnectTarget(null)}
+      />
     </div>
   );
 }
