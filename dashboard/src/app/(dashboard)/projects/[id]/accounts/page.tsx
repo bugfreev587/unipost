@@ -14,6 +14,7 @@ import {
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { QuickstartStats } from "@/components/dashboard/connection-stats";
 
 const PLATFORMS = [
   { id: "bluesky", name: "Bluesky", type: "credentials" as const },
@@ -235,6 +236,10 @@ export default function AccountsPage() {
         </Dialog>
       </div>
 
+      {!loading && accounts.length > 0 && (
+        <QuickstartStats accounts={accounts.filter((a) => a.connection_type === "byo")} profiles={profiles} />
+      )}
+
       {loading ? (
         <div style={{ color: "var(--dmuted)" }}>Loading...</div>
       ) : (
@@ -242,7 +247,7 @@ export default function AccountsPage() {
           <table>
             <thead><tr><th>Account</th><th>Profile</th><th>Platform</th><th>Connected</th><th>Status</th><th></th></tr></thead>
             <tbody>
-              {(profileFilter === "all" ? accounts : accounts.filter((a) => a.profile_id === profileFilter)).map((a) => (
+              {(profileFilter === "all" ? accounts : accounts.filter((a) => a.profile_id === profileFilter)).filter((a) => a.connection_type === "byo").map((a) => (
                 <tr key={a.id}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

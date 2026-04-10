@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { ExternalLink } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { WhiteLabelStats } from "@/components/dashboard/connection-stats";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -86,6 +87,8 @@ export default function NativeModePage() {
           </div>
         </div>
       </div>
+
+      <WhiteLabelStats configuredCount={configuredPlatforms.size} totalPlatforms={CRED_PLATFORMS.length} />
 
       {credError && (
         <div style={{ padding: "10px 14px", borderRadius: 8, background: "#ef444410", border: "1px solid #ef444425", fontSize: 13, color: "var(--danger)", marginBottom: 20 }}>

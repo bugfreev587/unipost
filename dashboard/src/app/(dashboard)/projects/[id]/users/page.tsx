@@ -14,6 +14,7 @@ import { useAuth } from "@clerk/nextjs";
 import { listManagedUsers, type ManagedUserListEntry } from "@/lib/api";
 import { Users, AlertTriangle, ArrowRight } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
+import { ManagedUsersStats } from "@/components/dashboard/connection-stats";
 
 export default function ManagedUsersPage() {
   const { id: profileId } = useParams<{ id: string }>();
@@ -57,6 +58,10 @@ export default function ManagedUsersPage() {
           </p>
         </div>
       </div>
+
+      {users.length > 0 && (
+        <ManagedUsersStats users={users} />
+      )}
 
       {users.length === 0 ? (
         <EmptyState />
