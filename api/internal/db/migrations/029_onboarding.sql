@@ -3,20 +3,16 @@
 -- Onboarding flow: track whether a user has completed the post-signup
 -- onboarding and store their selected usage modes on the workspace.
 --
--- usage_modes is a TEXT[] with values from {"personal", "whitelabel", "api"}.
--- An empty array means "show all features" (backward compatible).
---
--- Existing users are marked as onboarding-completed so they skip the flow.
+-- IF NOT EXISTS guards because this migration was originally numbered
+-- 028 and may have partially applied before being renumbered to 029.
 
 ALTER TABLE users
-  ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE;
+  ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE workspaces
-  ADD COLUMN usage_modes TEXT[] NOT NULL DEFAULT '{}';
+  ADD COLUMN IF NOT EXISTS usage_modes TEXT[] NOT NULL DEFAULT '{}';
 
--- Backfill: existing users have already been using the dashboard,
--- so they don't need onboarding.
-UPDATE users SET onboarding_completed = TRUE;
+UPDATE users SET onboarding_completed = TRUE WHERE onboarding_completed = FALSE;
 
 -- +goose Down
 ALTER TABLE workspaces DROP COLUMN IF EXISTS usage_modes;
