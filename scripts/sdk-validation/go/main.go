@@ -63,9 +63,6 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if len(accs) == 0 {
-			return fmt.Errorf("no accounts found")
-		}
 		accounts = accs
 		return nil
 	})
