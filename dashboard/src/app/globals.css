@@ -135,7 +135,7 @@
   body {
     background: var(--bg);
     color: var(--dtext);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
@@ -221,7 +221,7 @@
 .table-wrap th {
   padding: 12px 20px;
   text-align: left;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -293,7 +293,7 @@
 .dbtn svg { width: 13px; height: 13px; }
 
 /* ── Forms ── */
-.dform-label { display: block; font-size: 12px; font-weight: 500; color: var(--dmuted); margin-bottom: 6px; }
+.dform-label { display: block; font-size: 13px; font-weight: 500; color: var(--dmuted); margin-bottom: 6px; }
 .dform-input {
   width: 100%;
   background: var(--surface2);
@@ -413,7 +413,7 @@
 .settings-section-header {
   padding: 14px 18px;
   border-bottom: 1px solid var(--dborder);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--dtext);
   display: flex; align-items: center; justify-content: space-between;
@@ -445,7 +445,7 @@
   width: fit-content;
 }
 .dtab {
-  padding: 5px 14px; border-radius: 5px; font-size: 12.5px; font-weight: 500;
+  padding: 5px 14px; border-radius: 5px; font-size: 13px; font-weight: 500;
   cursor: pointer; color: var(--dmuted); transition: all 0.1s;
 }
 .dtab.active { background: var(--surface3); color: var(--dtext); box-shadow: 0 1px 3px #0005; }
