@@ -9,7 +9,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, type SocialAccount,
+  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, type SocialAccount, type Profile,
 } from "@/lib/api";
 import { Plus, Unplug, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
@@ -30,6 +30,7 @@ export default function AccountsPage() {
   const searchParams = useSearchParams();
   const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
@@ -46,8 +47,12 @@ export default function AccountsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await listSocialAccounts(token, profileId);
-      setAccounts(res.data);
+      const [acctRes, profRes] = await Promise.all([
+        listSocialAccounts(token, profileId),
+        listProfiles(token),
+      ]);
+      setAccounts(acctRes.data);
+      setProfiles(profRes.data);
     } catch (err) {
       console.error("Failed to load accounts:", err);
     } finally {
@@ -191,7 +196,7 @@ export default function AccountsPage() {
       ) : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Account</th><th>Platform</th><th>Connected</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Account</th><th>Profile</th><th>Platform</th><th>Connected</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {accounts.map((a) => (
                 <tr key={a.id}>
@@ -200,6 +205,9 @@ export default function AccountsPage() {
                       <div className="platform-icon-wrap"><PlatformIcon platform={a.platform} /></div>
                       <span style={{ fontWeight: 500 }}>{a.account_name || a.id}</span>
                     </div>
+                  </td>
+                  <td style={{ color: "var(--dmuted)", fontSize: 12.5 }}>
+                    {profiles.find((p) => p.id === a.profile_id)?.name || "—"}
                   </td>
                   <td style={{ color: "var(--dmuted)", textTransform: "capitalize" }}>{a.platform}</td>
                   <td style={{ color: "var(--dmuted)" }}>

@@ -193,6 +193,7 @@ export async function revokeApiKey(
 
 export interface SocialAccount {
   id: string;
+  profile_id: string;
   platform: string;
   account_name: string | null;
   connected_at: string;

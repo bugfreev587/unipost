@@ -31,6 +31,7 @@ func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor
 
 type socialAccountResponse struct {
 	ID               string    `json:"id"`
+	ProfileID        string    `json:"profile_id"`
 	Platform         string    `json:"platform"`
 	AccountName      *string   `json:"account_name"`
 	ConnectedAt      time.Time `json:"connected_at"`
@@ -65,6 +66,7 @@ func toSocialAccountResponse(a db.SocialAccount) socialAccountResponse {
 	}
 	return socialAccountResponse{
 		ID:                a.ID,
+		ProfileID:         a.ProfileID,
 		Platform:          a.Platform,
 		AccountName:       name,
 		ConnectedAt:       a.ConnectedAt.Time,
