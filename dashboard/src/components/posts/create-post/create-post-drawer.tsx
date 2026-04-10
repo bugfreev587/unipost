@@ -13,7 +13,7 @@ import {
   type PublishMode,
 } from "./use-create-post-form";
 import type { SocialAccount } from "@/lib/api";
-import { createSocialPost } from "@/lib/api";
+import { createSocialPost, createMedia } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
@@ -73,7 +73,7 @@ function MediaThumbnails({ files, onRemove, onAdd }: {
             multiple
             className="hidden"
             accept="image/png,image/jpeg,video/mp4"
-            onChange={(e) => { if (e.target.files) onAdd(Array.from(e.target.files)); }}
+            onChange={(e) => { if (e.target.files) { onAdd(Array.from(e.target.files)); e.target.value = ""; } }}
           />
         </label>
       </div>
@@ -152,6 +152,62 @@ export function CreatePostDrawer({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, form.canSubmit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Compute SHA-256 hash of a file
+  async function hashFile(file: File): Promise<string> {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function handleFileUpload(file: File) {
+    const { cached } = form.addMediaItem(file);
+    if (cached) return;
+    const index = form.mediaItems.length;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      form.updateMediaItem(index, { progress: 5 });
+      const contentHash = await hashFile(file);
+      form.updateMediaItem(index, { progress: 10 });
+      const res = await createMedia(token, workspaceId, {
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+        content_hash: contentHash,
+      });
+      // Dedup hit — file already in R2
+      if (res.data.status === "uploaded") {
+        form.updateMediaItem(index, { progress: 100, mediaId: res.data.id });
+        return;
+      }
+      // New file — PUT to R2
+      form.updateMediaItem(index, { progress: 30 });
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", res.data.upload_url);
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round(30 + (e.loaded / e.total) * 65);
+            form.updateMediaItem(index, { progress: pct });
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`Upload failed: ${xhr.status}`));
+        };
+        xhr.onerror = () => reject(new Error("Upload failed"));
+        xhr.send(file);
+      });
+      form.updateMediaItem(index, { progress: 100, mediaId: res.data.id });
+    } catch (err) {
+      console.error("Media upload failed:", err);
+      form.updateMediaItem(index, { error: (err as Error).message, progress: 0 });
+    }
+  }
 
   async function handleSubmit() {
     if (!form.canSubmit) return;
@@ -260,8 +316,8 @@ export function CreatePostDrawer({
             {/* Media upload */}
             <MediaThumbnails
               files={form.mediaFiles}
-              onRemove={(i) => form.setMediaFiles(form.mediaFiles.filter((_, j) => j !== i))}
-              onAdd={(newFiles) => form.setMediaFiles([...form.mediaFiles, ...newFiles])}
+              onRemove={(i) => form.removeMediaItem(i)}
+              onAdd={(newFiles) => newFiles.forEach((f) => handleFileUpload(f))}
             />
 
             {/* Per-platform overrides */}
