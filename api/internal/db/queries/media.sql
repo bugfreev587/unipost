@@ -8,7 +8,7 @@ SELECT * FROM media WHERE id = $1;
 
 -- name: GetMediaByHash :one
 SELECT * FROM media
-WHERE workspace_id = $1 AND content_hash = $2 AND status != 'deleted'
+WHERE workspace_id = $1 AND content_hash = $2 AND status = 'uploaded'
 LIMIT 1;
 
 -- name: UpdateMediaStorageKey :one

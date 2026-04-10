@@ -73,7 +73,7 @@ func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
 
 const getMediaByHash = `-- name: GetMediaByHash :one
 SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
-WHERE workspace_id = $1 AND content_hash = $2 AND status != 'deleted'
+WHERE workspace_id = $1 AND content_hash = $2 AND status = 'uploaded'
 LIMIT 1
 `
 
