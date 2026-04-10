@@ -117,12 +117,14 @@ func (w *WebhookDeliveryWorker) deliverPending(ctx context.Context) {
 			// Schedule retry with exponential backoff (max 3 attempts)
 			if attempts >= 3 {
 				slog.Warn("webhook delivery: giving up", "delivery_id", d.ID, "attempts", attempts)
+				// Mark delivered_at so the pending query stops picking it up.
+				// The delivery is considered terminal even though it failed.
 				w.queries.UpdateWebhookDelivery(ctx, db.UpdateWebhookDeliveryParams{
 					ID:          d.ID,
 					StatusCode:  pgtype.Int4{Int32: int32(statusCode), Valid: statusCode > 0},
 					Attempts:    attempts,
 					NextRetryAt: pgtype.Timestamptz{},
-					DeliveredAt: pgtype.Timestamptz{},
+					DeliveredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 				})
 			} else {
 				delays := []time.Duration{1 * time.Minute, 5 * time.Minute, 30 * time.Minute}
