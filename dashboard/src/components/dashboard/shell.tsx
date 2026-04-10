@@ -27,12 +27,14 @@ import {
   User,
   CreditCard,
   Mail,
+  Cable,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/api-keys", label: "API Keys", icon: Key },
-  { href: "/accounts", label: "Accounts", icon: Users, submenu: [
-    { href: "/accounts", label: "Quickstart Mode" },
+  { href: "/accounts", label: "Connections", icon: Cable, submenu: [
+    { href: "/settings", label: "Profile" },
+    { href: "/accounts", label: "Quickstart" },
     { href: "/accounts/native", label: "White-label" },
   ]},
   { href: "/users", label: "Managed Users", icon: User },
