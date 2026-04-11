@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
@@ -19,7 +19,20 @@ const PLANS: Plan[] = [
   { id: "p1000", name: "Custom", price_cents: 100000, post_limit: 200000 },
 ];
 
-export default function BillingSettingsTab() {
+// The page default export wraps the content in a Suspense boundary.
+// useSearchParams() on a statically prerenderable route (this one has
+// no dynamic segments) triggers Next.js's "missing-suspense-with-csr-
+// bailout" build error; the boundary lets the build skip CSR-reliant
+// subtrees during static generation and render them on the client.
+export default function BillingSettingsPage() {
+  return (
+    <Suspense fallback={<div style={{ color: "var(--dmuted)" }}>Loading...</div>}>
+      <BillingSettingsContent />
+    </Suspense>
+  );
+}
+
+function BillingSettingsContent() {
   const { workspace, loading: workspaceLoading } = useCurrentWorkspace();
   const workspaceId = workspace?.id ?? "";
   const searchParams = useSearchParams();
