@@ -17,12 +17,14 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -150,16 +152,26 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	ext := pickExt(body.Filename, body.ContentType)
 
-	// Insert the row first with a placeholder storage_key.
+	// Insert the row with a *unique* placeholder storage_key. We can't
+	// know the real key until the row's id is generated, but the column
+	// has a global UNIQUE constraint — using a hardcoded literal here
+	// (the original implementation) meant that any orphaned row left
+	// behind by a crash between INSERT and the UPDATE below would
+	// permanently block every future upload across every workspace
+	// with a unique-violation error. A per-request UUID guarantees the
+	// placeholder collides with nothing, so a leak only ever loses one
+	// row instead of bricking the endpoint.
+	placeholderKey := "placeholder/" + uuid.New().String()
 	row, err := h.queries.CreateMedia(r.Context(), db.CreateMediaParams{
 		WorkspaceID: workspaceID,
-		StorageKey:  "placeholder", // overwritten just below
+		StorageKey:  placeholderKey, // overwritten just below
 		ContentType: body.ContentType,
 		SizeBytes:   body.SizeBytes,
 		Status:      "pending",
 		ContentHash: pgtype.Text{String: body.ContentHash, Valid: body.ContentHash != ""},
 	})
 	if err != nil {
+		slog.Error("media.Create: insert row failed", "err", err, "workspace_id", workspaceID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create media row")
 		return
 	}
@@ -171,6 +183,7 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 		StorageKey: finalKey,
 	})
 	if err != nil {
+		slog.Error("media.Create: update storage_key failed", "err", err, "media_id", row.ID)
 		// Cleanup: delete the orphan row so we don't leak it.
 		_ = h.queries.HardDeleteMedia(r.Context(), row.ID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to set storage key")
@@ -180,6 +193,7 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Add(15 * time.Minute)
 	uploadURL, err := h.storage.PresignPut(r.Context(), finalKey, body.ContentType, 15*time.Minute)
 	if err != nil {
+		slog.Error("media.Create: presign upload URL failed", "err", err, "media_id", row.ID)
 		_ = h.queries.HardDeleteMedia(r.Context(), row.ID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to presign upload URL")
 		return
