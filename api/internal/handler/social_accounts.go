@@ -32,6 +32,7 @@ func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor
 type socialAccountResponse struct {
 	ID               string    `json:"id"`
 	ProfileID        string    `json:"profile_id"`
+	ProfileName      string    `json:"profile_name"`
 	Platform         string    `json:"platform"`
 	AccountName      *string   `json:"account_name"`
 	ConnectedAt      time.Time `json:"connected_at"`
@@ -41,7 +42,7 @@ type socialAccountResponse struct {
 	ExternalUserEmail *string  `json:"external_user_email,omitempty"`
 }
 
-func toSocialAccountResponse(a db.SocialAccount) socialAccountResponse {
+func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAccountResponse {
 	// Sprint 3: status comes from the column directly. Refresh worker
 	// flips it to reconnect_required when a managed token can't be
 	// refreshed; the dashboard surfaces that to prompt re-Connect.
@@ -64,9 +65,14 @@ func toSocialAccountResponse(a db.SocialAccount) socialAccountResponse {
 	if a.ExternalUserEmail.Valid {
 		extUserEmail = &a.ExternalUserEmail.String
 	}
+	pName := ""
+	if len(profileName) > 0 {
+		pName = profileName[0]
+	}
 	return socialAccountResponse{
 		ID:                a.ID,
 		ProfileID:         a.ProfileID,
+		ProfileName:       pName,
 		Platform:          a.Platform,
 		AccountName:       name,
 		ConnectedAt:       a.ConnectedAt.Time,
@@ -213,9 +219,19 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build profile name map for denormalized response
+	profileNames := make(map[string]string)
+	for _, a := range accounts {
+		if _, ok := profileNames[a.ProfileID]; !ok {
+			if p, pErr := h.queries.GetProfile(r.Context(), a.ProfileID); pErr == nil {
+				profileNames[p.ID] = p.Name
+			}
+		}
+	}
+
 	result := make([]socialAccountResponse, len(accounts))
 	for i, a := range accounts {
-		result[i] = toSocialAccountResponse(a)
+		result[i] = toSocialAccountResponse(a, profileNames[a.ProfileID])
 	}
 
 	writeSuccessWithMeta(w, result, len(result))
