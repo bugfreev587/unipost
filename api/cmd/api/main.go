@@ -376,11 +376,15 @@ func main() {
 		r.Get("/v1/workspaces/{workspaceID}", workspaceHandler.DashboardGet)
 		r.Patch("/v1/workspaces/{workspaceID}", workspaceHandler.DashboardUpdate)
 
-		r.Get("/v1/profiles", profileHandler.List)
-		r.Post("/v1/profiles", profileHandler.Create)
-		r.Get("/v1/profiles/{id}", profileHandler.Get)
-		r.Patch("/v1/profiles/{id}", profileHandler.Update)
-		r.Delete("/v1/profiles/{id}", profileHandler.Delete)
+		// Dashboard profile routes are namespaced under /v1/dashboard/
+		// to avoid colliding with the API-key-auth /v1/profiles routes
+		// registered in the API key group below — both groups attach to
+		// the same root mux, so identical paths shadow each other.
+		r.Get("/v1/dashboard/profiles", profileHandler.List)
+		r.Post("/v1/dashboard/profiles", profileHandler.Create)
+		r.Get("/v1/dashboard/profiles/{id}", profileHandler.Get)
+		r.Patch("/v1/dashboard/profiles/{id}", profileHandler.Update)
+		r.Delete("/v1/dashboard/profiles/{id}", profileHandler.Delete)
 
 		// Workspace-scoped dashboard routes
 		r.Get("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.List)

@@ -119,26 +119,29 @@ export async function updateWorkspace(
   });
 }
 
-// Profiles
+// Profiles (dashboard / Clerk auth).
+// Path is /v1/dashboard/profiles to avoid colliding with the
+// API-key-auth /v1/profiles routes the public SDK uses — both are
+// registered on the same root mux on the backend.
 
 export async function listProfiles(
   token: string
 ): Promise<ApiResponse<Profile[]>> {
-  return request("/v1/profiles", token);
+  return request("/v1/dashboard/profiles", token);
 }
 
 export async function getProfile(
   token: string,
   id: string
 ): Promise<ApiResponse<Profile>> {
-  return request(`/v1/profiles/${id}`, token);
+  return request(`/v1/dashboard/profiles/${id}`, token);
 }
 
 export async function createProfile(
   token: string,
   data: { name: string }
 ): Promise<ApiResponse<Profile>> {
-  return request("/v1/profiles", token, {
+  return request("/v1/dashboard/profiles", token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -154,7 +157,7 @@ export async function updateProfile(
     branding_primary_color?: string;
   }
 ): Promise<ApiResponse<Profile>> {
-  return request(`/v1/profiles/${id}`, token, {
+  return request(`/v1/dashboard/profiles/${id}`, token, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
@@ -164,7 +167,7 @@ export async function deleteProfile(
   token: string,
   id: string
 ): Promise<void> {
-  return request(`/v1/profiles/${id}`, token, { method: "DELETE" });
+  return request(`/v1/dashboard/profiles/${id}`, token, { method: "DELETE" });
 }
 
 // API Keys (workspace-scoped)
