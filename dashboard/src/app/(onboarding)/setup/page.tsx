@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { completeOnboarding } from "@/lib/api";
 
+// "later" is a sentinel: it's mutually exclusive with the real modes, and on
+// submit it gets stripped so the workspace is saved with `usage_modes: []`
+// (which the dashboard treats as "show every feature").
+const LATER_ID = "later";
+
 const USE_CASES = [
   {
     id: "personal",
@@ -36,6 +41,16 @@ const USE_CASES = [
       </svg>
     ),
   },
+  {
+    id: LATER_ID,
+    title: "I'll decide later",
+    description: "Not sure yet? Show me everything for now. I can narrow this down anytime in Workspace Settings.",
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+      </svg>
+    ),
+  },
 ];
 
 export default function SetupPage() {
@@ -46,7 +61,13 @@ export default function SetupPage() {
 
   function toggle(id: string) {
     setSelected((prev) => {
+      // "later" is mutually exclusive with the real modes — picking it
+      // clears everything else, and picking anything else clears "later".
+      if (id === LATER_ID) {
+        return prev.has(LATER_ID) ? new Set() : new Set([LATER_ID]);
+      }
       const next = new Set(prev);
+      next.delete(LATER_ID);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
@@ -61,12 +82,21 @@ export default function SetupPage() {
       if (!token) return;
       const stored = sessionStorage.getItem("onboarding_data");
       const data = stored ? JSON.parse(stored) : { first_name: "User" };
+      // Strip the sentinel before sending — backend stores [] which the
+      // dashboard reads as "show all features".
+      const modes = [...selected].filter((m) => m !== LATER_ID);
       await completeOnboarding(token, {
         first_name: data.first_name,
         org_name: data.org_name,
-        usage_modes: [...selected],
+        usage_modes: modes,
       });
       sessionStorage.removeItem("onboarding_data");
+      // Signal the dashboard shell to auto-start the product tour once the
+      // sidebar nav has rendered. The shell only mounts those `data-tour`
+      // anchors after the `/` resolver redirects to `/projects/[id]`, so a
+      // plain mount-time timer can fire before the targets exist.
+      sessionStorage.setItem("unipost_start_tour", "1");
+      localStorage.removeItem("unipost_tour_completed");
       router.push("/");
     } catch (err) {
       console.error("Onboarding failed:", err);

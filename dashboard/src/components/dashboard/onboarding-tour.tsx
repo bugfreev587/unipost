@@ -1,10 +1,12 @@
 "use client";
 
 import { TourProvider, useTour } from "@reactour/tour";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Sparkles } from "lucide-react";
 
 const TOUR_STORAGE_KEY = "unipost_tour_completed";
+const TOUR_START_FLAG = "unipost_start_tour";
+const FIRST_STEP_SELECTOR = '[data-tour="profiles"]';
 
 const TOUR_STEPS = [
   {
@@ -87,17 +89,49 @@ const TOUR_STEPS = [
   },
 ];
 
-// Wrapper that auto-starts the tour for new users
+// Wrapper that auto-starts the tour for new users.
+//
+// Why this is more elaborate than `setTimeout(setIsOpen, 800)`:
+// the dashboard root resolver (`/`) redirects through the (dashboard)
+// layout to `/projects/[id]`, and the sidebar nav items — which the tour
+// anchors to via `data-tour` attributes — only render once `profileId` is
+// in the URL. So a plain mount-time timer can fire while the targets
+// don't exist yet, leaving the tour silently broken.
+//
+// Instead we poll for the first selector to appear and only then open
+// the tour. The setup page sets `unipost_start_tour` to force-trigger
+// even if a stale `unipost_tour_completed` flag exists from a prior run.
 function TourAutoStart() {
   const { setIsOpen } = useTour();
 
   useEffect(() => {
-    const completed = localStorage.getItem(TOUR_STORAGE_KEY);
-    if (!completed) {
-      // Small delay so the DOM is fully rendered
-      const timer = setTimeout(() => setIsOpen(true), 800);
-      return () => clearTimeout(timer);
+    const forced = sessionStorage.getItem(TOUR_START_FLAG) === "1";
+    if (forced) {
+      sessionStorage.removeItem(TOUR_START_FLAG);
+      localStorage.removeItem(TOUR_STORAGE_KEY);
+    } else if (localStorage.getItem(TOUR_STORAGE_KEY)) {
+      return;
     }
+
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60; // ~12s at 200ms cadence
+
+    function tryOpen() {
+      if (cancelled) return;
+      if (document.querySelector(FIRST_STEP_SELECTOR)) {
+        setIsOpen(true);
+        return;
+      }
+      if (++attempts >= MAX_ATTEMPTS) return;
+      window.setTimeout(tryOpen, 200);
+    }
+
+    const initial = window.setTimeout(tryOpen, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initial);
+    };
   }, [setIsOpen]);
 
   return null;
