@@ -4,6 +4,7 @@ import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
+const SIGN_UP_REDIRECT_URL = `${APP_URL}/onboarding/welcome`;
 
 const userButtonAppearance = {
   elements: {
@@ -34,12 +35,12 @@ export function MarketingNav() {
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <SignInButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+      <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
         <button className="lp-btn lp-btn-ghost" style={{ cursor: "pointer" }}>
           Sign in
         </button>
       </SignInButton>
-      <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+      <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
         <button className="lp-btn lp-btn-primary" style={{ cursor: "pointer" }}>
           Get Started Free
         </button>
@@ -62,7 +63,7 @@ export function MarketingCTA() {
   }
 
   return (
-    <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+    <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
       <button className="lp-btn lp-btn-primary lp-btn-lg" style={{ cursor: "pointer" }}>
         Get Started Free
       </button>
@@ -84,7 +85,7 @@ export function MarketingCTALight() {
   }
 
   return (
-    <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+    <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
       <button className="lp-btn lp-btn-outline lp-btn-lg" style={{ cursor: "pointer" }}>
         Sign Up Free
       </button>
@@ -113,12 +114,12 @@ export function PricingNav() {
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <SignInButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+      <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
         <button className="pr-btn pr-btn-ghost" style={{ cursor: "pointer" }}>
           Sign in
         </button>
       </SignInButton>
-      <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+      <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
         <button className="pr-btn pr-btn-primary" style={{ cursor: "pointer" }}>
           Get Started Free
         </button>
@@ -150,7 +151,7 @@ export function PricingCTA({ className = "pr-btn-free", label, href }: { classNa
   }
 
   return (
-    <SignUpButton mode="redirect" fallbackRedirectUrl={APP_URL}>
+    <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
       <button className={`pr-btn ${className}`} style={{ cursor: "pointer" }}>
         {className.includes("paid") ? "Get Started" : "Get Started Free"}
       </button>
