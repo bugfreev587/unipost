@@ -26,7 +26,6 @@ import {
   Zap,
   LogOut,
   User,
-  CreditCard,
   Mail,
   Cable,
   Layers,
@@ -213,14 +212,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 Radix). Earlier handlers used onSelect and were silently
                 ignored, which is why these items did nothing on click.
               */}
-              <DropdownMenuItem onClick={() => router.push("/account")} style={{ padding: "10px 14px" }}>
+              <DropdownMenuItem onClick={() => router.push("/settings/account")} style={{ padding: "10px 14px" }}>
                 <User style={{ width: 14, height: 14 }} /><span>Account</span>
               </DropdownMenuItem>
-              {profileId && (
-                <DropdownMenuItem onClick={() => router.push(`/projects/${profileId}/billing`)} style={{ padding: "10px 14px" }}>
-                  <CreditCard style={{ width: 14, height: 14 }} /><span>Billing</span>
-                </DropdownMenuItem>
-              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => router.push("/contact")} style={{ padding: "10px 14px" }}>
                 <Mail style={{ width: 14, height: 14 }} /><span>Contact us</span>
@@ -358,7 +352,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               {workspace.name}
             </span>
             <Link
-              href={`/projects/${profileId}/workspace`}
+              href="/settings"
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 width: 28, height: 28, borderRadius: 6,
@@ -366,7 +360,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               }}
               onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
-              title="Workspace settings"
+              title="Settings"
             >
               <Settings style={{ width: 14, height: 14 }} strokeWidth={1.75} />
             </Link>

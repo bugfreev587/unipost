@@ -155,8 +155,8 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{Price: stripe.String(priceID), Quantity: stripe.Int64(1)},
 		},
-		SuccessURL: stripe.String(appURL + "/workspaces/" + workspaceID + "/billing?status=success"),
-		CancelURL:  stripe.String(appURL + "/workspaces/" + workspaceID + "/billing?status=canceled"),
+		SuccessURL: stripe.String(appURL + "/settings/billing?status=success"),
+		CancelURL:  stripe.String(appURL + "/settings/billing?status=canceled"),
 		Params: stripe.Params{
 			Metadata: map[string]string{
 				"workspace_id": workspaceID,
@@ -218,7 +218,7 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 
 	params := &stripe.BillingPortalSessionParams{
 		Customer:  stripe.String(sub.StripeCustomerID.String),
-		ReturnURL: stripe.String(appURL + "/workspaces/" + workspaceID + "/billing"),
+		ReturnURL: stripe.String(appURL + "/settings/billing"),
 	}
 
 	s, err := mode.Client.BillingPortalSessions.New(params)

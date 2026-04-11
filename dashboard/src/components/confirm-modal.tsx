@@ -5,10 +5,12 @@ import { useEffect, useRef } from "react";
 interface ConfirmModalProps {
   open: boolean;
   title: string;
-  message: string;
+  message: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: "danger" | "default";
+  confirmDisabled?: boolean;
+  wide?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -20,6 +22,8 @@ export function ConfirmModal({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   variant = "default",
+  confirmDisabled = false,
+  wide = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -57,7 +61,7 @@ export function ConfirmModal({
           background: "var(--surface)",
           border: "1px solid var(--dborder2)",
           borderRadius: 12,
-          width: 420, maxWidth: "90vw",
+          width: wide ? 520 : 420, maxWidth: "90vw",
           padding: "24px 28px",
           boxShadow: "0 20px 50px #00000060",
           animation: "slideUp 0.2s ease",
@@ -79,8 +83,16 @@ export function ConfirmModal({
           </button>
           <button
             onClick={onConfirm}
+            disabled={confirmDisabled}
             className="dbtn"
-            style={{ padding: "8px 20px", fontSize: 13, fontWeight: 600, ...confirmBtnStyle }}
+            style={{
+              padding: "8px 20px",
+              fontSize: 13,
+              fontWeight: 600,
+              ...confirmBtnStyle,
+              opacity: confirmDisabled ? 0.5 : 1,
+              cursor: confirmDisabled ? "not-allowed" : "pointer",
+            }}
           >
             {confirmLabel}
           </button>
