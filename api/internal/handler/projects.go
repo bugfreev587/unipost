@@ -312,3 +312,50 @@ func (h *ProfileHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// ── API key auth routes ─────────────────────────────────────────────
+
+// APIList returns profiles for the workspace associated with the API key.
+// API key auth route: GET /v1/profiles
+func (h *ProfileHandler) APIList(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	profiles, err := h.queries.ListProfilesByWorkspace(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list profiles")
+		return
+	}
+	result := make([]profileResponse, len(profiles))
+	for i, p := range profiles {
+		result[i] = toProfileResponse(p)
+	}
+	writeSuccessWithMeta(w, result, len(result))
+}
+
+// APIGet returns a single profile, verified to belong to the API key's workspace.
+// API key auth route: GET /v1/profiles/{id}
+func (h *ProfileHandler) APIGet(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	profileID := chi.URLParam(r, "id")
+	profile, err := h.queries.GetProfile(r.Context(), profileID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get profile")
+		return
+	}
+	if profile.WorkspaceID != workspaceID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+		return
+	}
+	writeSuccess(w, toProfileResponse(profile))
+}

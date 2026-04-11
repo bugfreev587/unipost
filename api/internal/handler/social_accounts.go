@@ -174,18 +174,19 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	extUserID := r.URL.Query().Get("external_user_id")
 	platformFilter := r.URL.Query().Get("platform")
+	profileIDFilter := r.URL.Query().Get("profile_id")
 
 	var accounts []db.SocialAccount
 	var err error
 
 	// API key path — workspace-scoped (all profiles)
 	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
-		if extUserID == "" && platformFilter == "" {
+		if extUserID == "" && platformFilter == "" && profileIDFilter == "" {
 			accounts, err = h.queries.ListSocialAccountsByWorkspace(r.Context(), workspaceID)
 		} else {
 			accounts, err = h.queries.ListSocialAccountsByWorkspaceFiltered(r.Context(), db.ListSocialAccountsByWorkspaceFilteredParams{
 				WorkspaceID:    workspaceID,
-				ProfileID:      pgtype.Text{},
+				ProfileID:      pgtype.Text{String: profileIDFilter, Valid: profileIDFilter != ""},
 				ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
 				Platform:       pgtype.Text{String: platformFilter, Valid: platformFilter != ""},
 			})

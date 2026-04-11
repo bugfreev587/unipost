@@ -459,6 +459,10 @@ func main() {
 		r.Get("/v1/workspace", workspaceHandler.Get)
 		r.Patch("/v1/workspace", workspaceHandler.Update)
 
+		// Profiles (API key scoped)
+		r.Get("/v1/profiles", profileHandler.APIList)
+		r.Get("/v1/profiles/{id}", profileHandler.APIGet)
+
 		r.Get("/v1/social-accounts", socialAccountHandler.List)
 		r.Post("/v1/social-accounts/connect", socialAccountHandler.Connect)
 		r.Delete("/v1/social-accounts/{id}", socialAccountHandler.Disconnect)
