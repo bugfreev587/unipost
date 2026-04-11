@@ -91,8 +91,39 @@ async function main() {
     }
   }
 
-  // ── 2. Posts — list ─────────────────────────────────────────────────────────
-  section('2. Posts — list & get');
+  // ── 2. Profiles — list (raw API, pending SDK v0.2.0) ──────────────────────
+  section('2. Profiles — list & filter accounts by profile');
+
+  const profilesRes = await test('GET /v1/profiles', async () => {
+    const res = await fetch(`${API_URL}/v1/profiles`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!Array.isArray(json.data)) throw new Error('Expected data array');
+    return json.data;
+  });
+
+  if (profilesRes && profilesRes.length > 0) {
+    console.log(`\n  Found ${profilesRes.length} profiles:`);
+    profilesRes.forEach(p => console.log(`    • ${p.name}  (id: ${p.id})`));
+
+    // Test profile_id filter on accounts
+    const firstProfile = profilesRes[0];
+    await test(`GET /v1/social-accounts?profile_id=${firstProfile.id.slice(0, 8)}...`, async () => {
+      const res = await fetch(`${API_URL}/v1/social-accounts?profile_id=${firstProfile.id}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (!Array.isArray(json.data)) throw new Error('Expected data array');
+      console.log(`    → ${json.data.length} accounts in profile "${firstProfile.name}"`);
+      return json.data;
+    });
+  }
+
+  // ── 3. Posts — list ─────────────────────────────────────────────────────────
+  section('3. Posts — list & get');
 
   const posts = await test('posts.list()', async () => {
     const res = await client.posts.list({ limit: 5 });
@@ -115,7 +146,7 @@ async function main() {
   }
 
   // ── 3. Posts — create (only if TEST_ACCOUNT_ID is set) ──────────────────────
-  section('3. Posts — create (draft mode, no actual publishing)');
+  section('4. Posts — create (draft mode, no actual publishing)');
 
   if (!TEST_ACCOUNT_ID) {
     console.log('  ⏭  Skipped — set TEST_ACCOUNT_ID env var to run post creation tests');
@@ -191,7 +222,7 @@ async function main() {
   }
 
   // ── 4. Analytics ────────────────────────────────────────────────────────────
-  section('4. Analytics');
+  section('5. Analytics');
 
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -208,7 +239,7 @@ async function main() {
 
   // ── Cleanup ─────────────────────────────────────────────────────────────────
   if (createdPostIds.length > 0) {
-    section('5. Cleanup — deleting test posts');
+    section('6. Cleanup — deleting test posts');
     for (const id of createdPostIds) {
       try {
         await fetch(`${API_URL}/v1/social-posts/${id}`, {
