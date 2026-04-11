@@ -233,26 +233,26 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   const uploadCacheRef = useRef(uploadCache);
   uploadCacheRef.current = uploadCache;
 
-  const addMediaItem = useCallback((file: File): { cached: boolean; mediaId: string | null } => {
+  const addMediaItem = useCallback((file: File): { cached: boolean; fingerprint: string; mediaId: string | null } => {
     const fp = fileFingerprint(file);
-    let result: { cached: boolean; mediaId: string | null } = { cached: false, mediaId: null };
+    let result: { cached: boolean; fingerprint: string; mediaId: string | null } = { cached: false, fingerprint: fp, mediaId: null };
 
     setMediaItems((prev) => {
       // Check if already displayed (uses current state, not stale closure)
       if (prev.some((m) => m.fingerprint === fp)) {
-        result = { cached: true, mediaId: null };
+        result = { cached: true, fingerprint: fp, mediaId: null };
         return prev; // no change
       }
 
       // Check upload cache — file was uploaded before in this session
       const cachedId = uploadCacheRef.current.get(fp);
       if (cachedId) {
-        result = { cached: true, mediaId: cachedId };
+        result = { cached: true, fingerprint: fp, mediaId: cachedId };
         return [...prev, { file, fingerprint: fp, mediaId: cachedId, progress: 100, error: null }];
       }
 
       // New file — needs upload
-      result = { cached: false, mediaId: null };
+      result = { cached: false, fingerprint: fp, mediaId: null };
       return [...prev, { file, fingerprint: fp, mediaId: null, progress: 0, error: null }];
     });
 
@@ -264,19 +264,19 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     return result;
   }, []);
 
-  const updateMediaItem = useCallback((index: number, update: Partial<MediaItem>) => {
+  // Indexed by fingerprint, not array index — multiple in-flight uploads
+  // queued via Array.forEach all share the same component-render closure,
+  // so an index-based lookup races and overwrites the wrong slot.
+  const updateMediaItem = useCallback((fingerprint: string, update: Partial<MediaItem>) => {
     setMediaItems((prev) => {
-      const updated = prev.map((item, i) => i === index ? { ...item, ...update } : item);
+      const updated = prev.map((item) => item.fingerprint === fingerprint ? { ...item, ...update } : item);
       // When upload completes, cache the fingerprint → mediaId
       if (update.mediaId) {
-        const item = prev[index];
-        if (item) {
-          setUploadCache((cache) => {
-            const next = new Map(cache);
-            next.set(item.fingerprint, update.mediaId!);
-            return next;
-          });
-        }
+        setUploadCache((cache) => {
+          const next = new Map(cache);
+          next.set(fingerprint, update.mediaId!);
+          return next;
+        });
       }
       return updated;
     });

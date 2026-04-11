@@ -11,6 +11,7 @@ import {
   useCreatePostForm,
   PRIMARY_BUTTON_LABELS,
   type PublishMode,
+  type MediaItem,
 } from "./use-create-post-form";
 import { ChevronDown } from "lucide-react";
 import type { SocialAccount, Profile } from "@/lib/api";
@@ -19,13 +20,34 @@ import { cn } from "@/lib/utils";
 
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
 
-const MediaThumb = memo(function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const url = useMemo(() => URL.createObjectURL(file), [file]);
+const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
+  item: MediaItem;
+  onRemove: () => void;
+  onRetry?: () => void;
+}) {
+  const url = useMemo(() => URL.createObjectURL(item.file), [item.file]);
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
 
+  const uploading = item.mediaId === null && !item.error;
+  const failed = !!item.error;
+  const ready = item.mediaId !== null;
+
   return (
-    <div className="relative w-[88px] h-[88px] rounded-lg overflow-hidden border border-[#2e2e38] bg-[#0a0a0b] flex-shrink-0 group/thumb">
-      {file.type.startsWith("video/") ? (
+    <div
+      className={cn(
+        "relative w-[88px] h-[88px] rounded-lg overflow-hidden bg-[#0a0a0b] flex-shrink-0 group/thumb",
+        "border",
+        failed ? "border-[#ef4444]" : ready ? "border-[#2e2e38]" : "border-[#10b981]/60"
+      )}
+      title={
+        failed
+          ? `Upload failed: ${item.error}`
+          : uploading
+          ? `Uploading… ${item.progress}%`
+          : item.file.name
+      }
+    >
+      {item.file.type.startsWith("video/") ? (
         <video
           src={url}
           className="w-full h-full object-cover"
@@ -34,26 +56,48 @@ const MediaThumb = memo(function MediaThumb({ file, onRemove }: { file: File; on
           onLoadedData={(e) => { (e.target as HTMLVideoElement).currentTime = 0.5; }}
         />
       ) : (
-        <img src={url} alt={file.name} className="w-full h-full object-cover" />
+        <img src={url} alt={item.file.name} className="w-full h-full object-cover" />
       )}
+
+      {/* Upload-in-progress overlay */}
+      {uploading && (
+        <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center text-[10px] font-mono text-[#10b981]">
+          <div className="w-8 h-8 rounded-full border-2 border-[#10b981]/30 border-t-[#10b981] animate-spin mb-1" />
+          {item.progress}%
+        </div>
+      )}
+
+      {/* Failure overlay */}
+      {failed && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onRetry?.(); }}
+          className="absolute inset-0 bg-black/65 flex flex-col items-center justify-center text-[10px] text-[#ef4444] hover:text-[#fca5a5] transition-colors"
+        >
+          <div className="w-6 h-6 rounded-full border-2 border-[#ef4444] flex items-center justify-center mb-1 text-sm font-bold">!</div>
+          Retry
+        </button>
+      )}
+
       <button
         type="button"
         onClick={onRemove}
-        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity text-xs"
+        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity text-xs z-10"
       >
         &times;
       </button>
       <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[9px] text-[#ccc] px-1.5 py-0.5 truncate font-mono">
-        {file.name}
+        {item.file.name}
       </div>
     </div>
   );
 });
 
-function MediaThumbnails({ files, onRemove, onAdd }: {
-  files: File[];
+function MediaThumbnails({ items, onRemove, onAdd, onRetry }: {
+  items: MediaItem[];
   onRemove: (index: number) => void;
   onAdd: (files: File[]) => void;
+  onRetry: (index: number) => void;
 }) {
   return (
     <section className="mt-6">
@@ -61,8 +105,13 @@ function MediaThumbnails({ files, onRemove, onAdd }: {
         Media
       </label>
       <div className="flex gap-2.5 flex-wrap">
-        {files.map((file, i) => (
-          <MediaThumb key={`${file.name}-${file.size}-${i}`} file={file} onRemove={() => onRemove(i)} />
+        {items.map((item, i) => (
+          <MediaThumb
+            key={item.fingerprint}
+            item={item}
+            onRemove={() => onRemove(i)}
+            onRetry={() => onRetry(i)}
+          />
         ))}
         <label className="group flex flex-col items-center justify-center w-[88px] h-[88px] rounded-lg border border-dashed border-[#2e2e38] hover:border-[#8a8a93] bg-[#0a0a0b]/40 cursor-pointer transition-colors flex-shrink-0">
           <Plus className="w-4 h-4 text-[#8a8a93] group-hover:text-[#f4f4f5] transition-colors" />
@@ -204,15 +253,14 @@ export function CreatePostDrawer({
   }
 
   async function handleFileUpload(file: File) {
-    const { cached } = form.addMediaItem(file);
+    const { cached, fingerprint } = form.addMediaItem(file);
     if (cached) return;
-    const index = form.mediaItems.length;
     try {
       const token = await getToken();
       if (!token) return;
-      form.updateMediaItem(index, { progress: 5 });
+      form.updateMediaItem(fingerprint, { progress: 5 });
       const contentHash = await hashFile(file);
-      form.updateMediaItem(index, { progress: 10 });
+      form.updateMediaItem(fingerprint, { progress: 10 });
       const res = await createMedia(token, workspaceId, {
         filename: file.name,
         content_type: file.type || "application/octet-stream",
@@ -221,11 +269,11 @@ export function CreatePostDrawer({
       });
       // Dedup hit — file already in R2
       if (res.data.status === "uploaded") {
-        form.updateMediaItem(index, { progress: 100, mediaId: res.data.id });
+        form.updateMediaItem(fingerprint, { progress: 100, mediaId: res.data.id });
         return;
       }
       // New file — PUT to R2
-      form.updateMediaItem(index, { progress: 30 });
+      form.updateMediaItem(fingerprint, { progress: 30 });
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("PUT", res.data.upload_url);
@@ -233,7 +281,7 @@ export function CreatePostDrawer({
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             const pct = Math.round(30 + (e.loaded / e.total) * 65);
-            form.updateMediaItem(index, { progress: pct });
+            form.updateMediaItem(fingerprint, { progress: pct });
           }
         };
         xhr.onload = () => {
@@ -246,10 +294,10 @@ export function CreatePostDrawer({
       // Trigger server-side hydration: HEAD the R2 object, flip status
       // from 'pending' to 'uploaded' so the publish validator accepts it.
       await getMedia(token, workspaceId, res.data.id);
-      form.updateMediaItem(index, { progress: 100, mediaId: res.data.id });
+      form.updateMediaItem(fingerprint, { progress: 100, mediaId: res.data.id });
     } catch (err) {
       console.error("Media upload failed:", err);
-      form.updateMediaItem(index, { error: (err as Error).message, progress: 0 });
+      form.updateMediaItem(fingerprint, { error: (err as Error).message, progress: 0 });
     }
   }
 
@@ -301,6 +349,39 @@ export function CreatePostDrawer({
   );
 
   const primaryLabel = PRIMARY_BUTTON_LABELS[form.publishMode];
+
+  // Why is the primary button disabled? Surface the first blocking reason
+  // as a tooltip + inline hint — otherwise the grayed-out button looks
+  // like a bug (especially when uploads are silently in flight).
+  const disabledReason = useMemo(() => {
+    if (form.submitting) return null;
+    if (form.selectedAccountIds.size === 0) return "Select at least one account to post to.";
+    const uploading = form.mediaItems.filter((m) => m.mediaId === null && !m.error).length;
+    if (uploading > 0) return `Waiting for ${uploading} media upload${uploading === 1 ? "" : "s"} to finish…`;
+    const failed = form.mediaItems.filter((m) => m.error).length;
+    if (failed > 0) return `${failed} media upload${failed === 1 ? "" : "s"} failed — retry or remove.`;
+    if (form.hasOverLimit) return "One of your captions is over its platform limit.";
+    const hasContent =
+      form.mainContent.trim() ||
+      Object.values(form.overrides).some((o) => o.caption?.trim()) ||
+      form.mediaItems.length > 0;
+    if (!hasContent) return "Add caption text or media to publish.";
+    if (form.publishMode === "schedule" && !form.scheduledAt) return "Pick a time to schedule this post.";
+    if (form.publishMode === "schedule" && form.scheduledAt && new Date(form.scheduledAt) <= new Date())
+      return "Scheduled time must be in the future.";
+    if (form.publishMode === "queue" && !form.queueId) return "Pick a queue to add this post to.";
+    return null;
+  }, [
+    form.submitting,
+    form.selectedAccountIds,
+    form.mediaItems,
+    form.hasOverLimit,
+    form.mainContent,
+    form.overrides,
+    form.publishMode,
+    form.scheduledAt,
+    form.queueId,
+  ]);
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange} modal>
@@ -361,9 +442,15 @@ export function CreatePostDrawer({
 
             {/* Media upload */}
             <MediaThumbnails
-              files={form.mediaFiles}
+              items={form.mediaItems}
               onRemove={(i) => form.removeMediaItem(i)}
               onAdd={(newFiles) => newFiles.forEach((f) => handleFileUpload(f))}
+              onRetry={(i) => {
+                const failed = form.mediaItems[i];
+                if (!failed) return;
+                form.removeMediaItem(i);
+                handleFileUpload(failed.file);
+              }}
             />
 
             {/* Per-platform overrides */}
@@ -489,6 +576,11 @@ export function CreatePostDrawer({
             <span>to publish</span>
           </div>
           <div className="flex items-center gap-2.5">
+            {disabledReason && (
+              <span className="text-[11px] text-[#8a8a93] max-w-[260px] text-right leading-snug">
+                {disabledReason}
+              </span>
+            )}
             <button
               type="button"
               onClick={attemptClose}
@@ -510,6 +602,7 @@ export function CreatePostDrawer({
               type="button"
               onClick={handleSubmit}
               disabled={!form.canSubmit}
+              title={disabledReason ?? undefined}
               className={cn(
                 "px-5 py-2 text-sm font-medium rounded-lg transition-colors",
                 "bg-[#10b981] hover:bg-emerald-400 text-black",
