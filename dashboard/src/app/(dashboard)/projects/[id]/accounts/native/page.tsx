@@ -6,8 +6,13 @@ import { useAuth } from "@clerk/nextjs";
 import { ExternalLink } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { WhiteLabelStats } from "@/components/dashboard/connection-stats";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+import {
+  getProfile,
+  listPlatformCredentials,
+  createPlatformCredential,
+  deletePlatformCredential,
+  type PlatformCredential,
+} from "@/lib/api";
 
 const CRED_PLATFORMS = [
   { id: "instagram", name: "Meta (Instagram / Threads)", idLabel: "App ID", secretLabel: "App Secret", docs: "https://developers.facebook.com" },
@@ -17,25 +22,30 @@ const CRED_PLATFORMS = [
   { id: "twitter", name: "X / Twitter", idLabel: "Client ID", secretLabel: "Client Secret", docs: "https://developer.x.com" },
 ];
 
-interface PlatformCred { platform: string; client_id: string; created_at: string; }
-
 export default function NativeModePage() {
   const { id: profileId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
-  const [creds, setCreds] = useState<PlatformCred[]>([]);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [creds, setCreds] = useState<PlatformCredential[]>([]);
   const [loading, setLoading] = useState(true);
   const [credForms, setCredForms] = useState<Record<string, { clientId: string; clientSecret: string }>>({});
   const [credSaving, setCredSaving] = useState<string | null>(null);
   const [credError, setCredError] = useState("");
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
+  // Resolve the profile's workspace_id once on mount. Platform
+  // credentials are workspace-scoped, not profile-scoped, so the URL
+  // param (a profile_id) is not directly usable as the resource
+  // identifier — we have to look up the parent workspace first.
   const loadCreds = useCallback(async () => {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await fetch(`${API_URL}/v1/profiles/${profileId}/platform-credentials`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
-      setCreds(data.data || []);
+      const profileRes = await getProfile(token, profileId);
+      const wsId = profileRes.data.workspace_id;
+      setWorkspaceId(wsId);
+      const credsRes = await listPlatformCredentials(token, wsId);
+      setCreds(credsRes.data ?? []);
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, [getToken, profileId]);
@@ -48,26 +58,31 @@ export default function NativeModePage() {
 
   async function handleCredSave(platform: string) {
     const form = credForms[platform];
-    if (!form?.clientId || !form?.clientSecret) return;
+    if (!form?.clientId || !form?.clientSecret || !workspaceId) return;
     setCredSaving(platform); setCredError("");
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await fetch(`${API_URL}/v1/profiles/${profileId}/platform-credentials`, {
-        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ platform, client_id: form.clientId, client_secret: form.clientSecret }),
+      await createPlatformCredential(token, workspaceId, {
+        platform,
+        client_id: form.clientId,
+        client_secret: form.clientSecret,
       });
-      if (!res.ok) { const err = await res.json(); setCredError(err.error?.message || "Failed"); return; }
       setCredForms((prev) => ({ ...prev, [platform]: { clientId: "", clientSecret: "" } }));
       loadCreds();
-    } catch { setCredError("Failed to save"); } finally { setCredSaving(null); }
+    } catch (e) {
+      setCredError((e as Error).message || "Failed to save");
+    } finally {
+      setCredSaving(null);
+    }
   }
 
   async function handleCredDelete(platform: string) {
+    if (!workspaceId) { setRemoveTarget(null); return; }
     try {
       const token = await getToken();
       if (!token) return;
-      await fetch(`${API_URL}/v1/profiles/${profileId}/platform-credentials/${platform}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      await deletePlatformCredential(token, workspaceId, platform);
       loadCreds();
     } catch { /* silent */ }
     finally { setRemoveTarget(null); }

@@ -170,6 +170,44 @@ export async function deleteProfile(
   return request(`/v1/dashboard/profiles/${id}`, token, { method: "DELETE" });
 }
 
+// Platform credentials (White Label, workspace-scoped)
+
+export interface PlatformCredential {
+  platform: string;
+  client_id: string;
+  created_at: string;
+}
+
+export async function listPlatformCredentials(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<PlatformCredential[]>> {
+  return request(`/v1/workspaces/${workspaceId}/platform-credentials`, token);
+}
+
+export async function createPlatformCredential(
+  token: string,
+  workspaceId: string,
+  data: { platform: string; client_id: string; client_secret: string }
+): Promise<ApiResponse<PlatformCredential>> {
+  return request(`/v1/workspaces/${workspaceId}/platform-credentials`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePlatformCredential(
+  token: string,
+  workspaceId: string,
+  platform: string
+): Promise<void> {
+  return request(
+    `/v1/workspaces/${workspaceId}/platform-credentials/${platform}`,
+    token,
+    { method: "DELETE" }
+  );
+}
+
 // API Keys (workspace-scoped)
 
 export async function listApiKeys(
