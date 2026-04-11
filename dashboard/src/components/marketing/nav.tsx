@@ -4,7 +4,7 @@ import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
-const SIGN_UP_REDIRECT_URL = `${APP_URL}/onboarding/welcome`;
+const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
 
 const userButtonAppearance = {
   elements: {
