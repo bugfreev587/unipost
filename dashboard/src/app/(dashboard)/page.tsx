@@ -33,7 +33,7 @@ export default function DashboardRootPage() {
         if (cancelled) return;
         // Redirect to onboarding if not completed
         if (!res.data.onboarding_completed) {
-          router.replace("/onboarding/welcome");
+          router.replace("/welcome");
           return;
         }
 

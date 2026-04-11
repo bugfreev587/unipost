@@ -22,7 +22,7 @@ export default function WelcomePage() {
       first_name: firstName.trim(),
       org_name: orgName.trim() || undefined,
     }));
-    router.push("/onboarding/setup");
+    router.push("/setup");
   }
 
   return (
