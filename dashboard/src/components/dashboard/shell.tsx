@@ -90,7 +90,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
 
   const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
-  const profileId = profileMatch?.[1];
+  const urlProfileId = profileMatch?.[1];
+  const profileId = urlProfileId ?? profiles[0]?.id;
   const currentProfile = profiles.find((p) => p.id === profileId);
 
   const navItems = filterNavItems(workspace?.usage_modes ?? []);
