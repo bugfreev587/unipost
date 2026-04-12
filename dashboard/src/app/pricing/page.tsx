@@ -86,7 +86,7 @@ export default function PricingPage() {
       if (!profiles.data || profiles.data.length === 0) return;
       const pid = profiles.data[0].id;
       setProjectId(pid);
-      const billing = await getBilling(token, pid);
+      const billing = await getBilling(token, profiles.data[0].workspace_id);
       const plan = billing.data.plan;
       setCurrentPlan(plan);
       setTrialEligible(billing.data.trial_eligible);

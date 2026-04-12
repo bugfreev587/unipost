@@ -42,15 +42,16 @@ export default function ProfileOverviewPage() {
       try {
         const token = await getToken();
         if (!token) return;
-        const [profileRes, billingRes, accountsRes, postsRes, keysRes] =
-          await Promise.all([
-            getProfile(token, id),
-            getBilling(token, id).catch(() => null),
-            listSocialAccounts(token, id).catch(() => ({ data: [] as SocialAccount[] })),
-            listSocialPosts(token, id).catch(() => ({ data: [] as SocialPost[] })),
-            listApiKeys(token, id).catch(() => ({ data: [] as ApiKey[] })),
-          ]);
+        const profileRes = await getProfile(token, id);
         setProfile(profileRes.data);
+        const wsId = profileRes.data.workspace_id;
+        const [billingRes, accountsRes, postsRes, keysRes] =
+          await Promise.all([
+            getBilling(token, wsId).catch(() => null),
+            listSocialAccounts(token, id).catch(() => ({ data: [] as SocialAccount[] })),
+            listSocialPosts(token, wsId).catch(() => ({ data: [] as SocialPost[] })),
+            listApiKeys(token, wsId).catch(() => ({ data: [] as ApiKey[] })),
+          ]);
         if (billingRes) setBilling(billingRes.data);
         setAccounts(accountsRes.data);
         setPosts(postsRes.data);
