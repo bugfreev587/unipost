@@ -204,21 +204,20 @@ export default function PostsPage() {
         </button>
       </div>
 
-      {/* Tabs */}
-      <div className="dtabs" style={{ marginBottom: 16 }}>
-        {(["all", "published", "scheduled", "failed", "draft"] as FilterTab[]).map((t) => (
-          <div key={t} className={`dtab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
-            {t === "failed" ? "s" : t === "draft" ? "s" : ""}
-            <span style={{ fontSize: 10, color: "var(--dmuted2)", marginLeft: 4 }}>
-              {tabCounts[t]}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* Filters */}
-      <div className="posts-filters">
+      {/* Tabs + search + platform filter — single row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <div className="dtabs" style={{ marginBottom: 0 }}>
+          {(["all", "published", "scheduled", "failed", "draft"] as FilterTab[]).map((t) => (
+            <div key={t} className={`dtab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
+              {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === "draft" ? "s" : ""}
+              <span style={{ fontSize: 10, color: "var(--dmuted2)", marginLeft: 4 }}>
+                {tabCounts[t]}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div style={{ flex: 1 }} />
         <div className="posts-search">
           <Search style={{ width: 13, height: 13 }} />
           <input placeholder="Search posts..." value={search} onChange={(e) => setSearch(e.target.value)} />
