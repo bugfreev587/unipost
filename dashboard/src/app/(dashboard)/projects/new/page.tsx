@@ -29,14 +29,14 @@ export default function NewProfilePage() {
 
   return (
     <div style={{ maxWidth: 440, margin: "0 auto", paddingTop: 32 }}>
-      <Link href="/projects" style={{ fontSize: 12.5, color: "var(--dmuted)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
+      <Link href="/projects" style={{ fontSize: 13, lineHeight: "18px", color: "var(--dmuted)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 20 }}>
         ← Back to Profiles
       </Link>
 
       <div className="settings-section">
         <div className="settings-section-header">New Profile</div>
         <div className="settings-section-body">
-          <div style={{ fontSize: 12.5, color: "var(--dmuted)", marginBottom: 16, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 13, color: "var(--dmuted)", marginBottom: 16, lineHeight: 1.6 }}>
             Each profile has isolated API keys, accounts, and billing.
           </div>
           <form onSubmit={handleSubmit}>

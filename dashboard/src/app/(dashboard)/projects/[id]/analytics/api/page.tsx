@@ -22,7 +22,7 @@ const TIME_RANGES = [
 ];
 
 export default function APIMetricsPage() {
-  const { id: profileId } = useParams<{ id: string }>();
+  useParams<{ id: string }>();
   const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
 
@@ -64,11 +64,11 @@ export default function APIMetricsPage() {
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>
             API Metrics
           </div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>
+          <div style={{ fontSize: 14, color: "var(--dmuted)", marginTop: 6 }}>
             Usage, performance, and reliability of your API endpoints.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 4, background: "var(--surface1)", borderRadius: 6, padding: 2 }}>
+        <div style={{ display: "flex", gap: 4, background: "var(--surface1)", borderRadius: 6, padding: 2, border: "1px solid var(--dborder)" }}>
           {TIME_RANGES.map((t) => (
             <button
               key={t.days}
@@ -85,7 +85,7 @@ export default function APIMetricsPage() {
       {loading ? (
         <div style={{ color: "var(--dmuted)", padding: 40, textAlign: "center" }}>Loading metrics...</div>
       ) : !overall || overall.total_calls === 0 ? (
-        <div style={{ textAlign: "center", padding: 60, color: "#888" }}>
+        <div style={{ textAlign: "center", padding: 60, color: "var(--dmuted)" }}>
           <Activity style={{ width: 40, height: 40, margin: "0 auto 12px", opacity: 0.3 }} />
           <div style={{ fontSize: 15, fontWeight: 600, color: "var(--dtext)", marginBottom: 6 }}>No API calls yet</div>
           <div style={{ fontSize: 13 }}>API metrics will appear here once your API keys are used.</div>
@@ -104,14 +104,14 @@ export default function APIMetricsPage() {
               icon={<CheckCircle2 className="w-4 h-4" />}
               label="Success Rate"
               value={`${overall.reliability_pct.toFixed(1)}%`}
-              color={overall.reliability_pct >= 99 ? "#10b981" : overall.reliability_pct >= 95 ? "#f59e0b" : "#ef4444"}
+              color={overall.reliability_pct >= 99 ? "var(--success)" : overall.reliability_pct >= 95 ? "var(--warning)" : "var(--danger)"}
             />
             <MetricCard
               icon={<AlertTriangle className="w-4 h-4" />}
               label="Errors"
               value={`${overall.client_error_count + overall.server_error_count}`}
               sub={`${overall.client_error_count} client · ${overall.server_error_count} server`}
-              color={overall.server_error_count > 0 ? "#ef4444" : "#f59e0b"}
+              color={overall.server_error_count > 0 ? "var(--danger)" : "var(--warning)"}
             />
             <MetricCard
               icon={<Clock className="w-4 h-4" />}
@@ -147,7 +147,7 @@ export default function APIMetricsPage() {
                       style={{
                         flex: 1,
                         height: `${Math.max(height, 2)}%`,
-                        background: errorPct > 0.1 ? "#f59e0b" : "#10b981",
+                        background: errorPct > 0.1 ? "var(--warning)" : "var(--success)",
                         borderRadius: "2px 2px 0 0",
                         minWidth: 3,
                         opacity: 0.8,
@@ -199,15 +199,15 @@ export default function APIMetricsPage() {
                         </span>
                       </td>
                       <td style={{ textAlign: "right", fontFamily: "var(--font-geist-mono), monospace" }}>{row.total_calls}</td>
-                      <td style={{ textAlign: "right", color: "#10b981", fontFamily: "var(--font-geist-mono), monospace" }}>{row.success_count}</td>
-                      <td style={{ textAlign: "right", color: row.client_error_count > 0 ? "#f59e0b" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.client_error_count}</td>
-                      <td style={{ textAlign: "right", color: row.server_error_count > 0 ? "#ef4444" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.server_error_count}</td>
-                      <td style={{ textAlign: "right", color: errorRate > 10 ? "#ef4444" : errorRate > 5 ? "#f59e0b" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>
+                      <td style={{ textAlign: "right", color: "var(--success)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.success_count}</td>
+                      <td style={{ textAlign: "right", color: row.client_error_count > 0 ? "var(--warning)" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.client_error_count}</td>
+                      <td style={{ textAlign: "right", color: row.server_error_count > 0 ? "var(--danger)" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.server_error_count}</td>
+                      <td style={{ textAlign: "right", color: errorRate > 10 ? "var(--danger)" : errorRate > 5 ? "var(--warning)" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>
                         {errorRate.toFixed(1)}%
                       </td>
                       <td style={{ textAlign: "right", fontFamily: "var(--font-geist-mono), monospace", color: "var(--dmuted)" }}>{row.p50_ms}ms</td>
-                      <td style={{ textAlign: "right", fontFamily: "var(--font-geist-mono), monospace", color: row.p95_ms > 1000 ? "#f59e0b" : "var(--dmuted)" }}>{row.p95_ms}ms</td>
-                      <td style={{ textAlign: "right", fontFamily: "var(--font-geist-mono), monospace", color: row.p99_ms > 2000 ? "#ef4444" : "var(--dmuted)" }}>{row.p99_ms}ms</td>
+                      <td style={{ textAlign: "right", fontFamily: "var(--font-geist-mono), monospace", color: row.p95_ms > 1000 ? "var(--warning)" : "var(--dmuted)" }}>{row.p95_ms}ms</td>
+                      <td style={{ textAlign: "right", fontFamily: "var(--font-geist-mono), monospace", color: row.p99_ms > 2000 ? "var(--danger)" : "var(--dmuted)" }}>{row.p99_ms}ms</td>
                     </tr>
                   );
                 })}
@@ -252,11 +252,11 @@ function MetricCard({ icon, label, value, sub, color }: {
 
 function methodColor(method: string): string {
   switch (method) {
-    case "GET": return "#10b981";
-    case "POST": return "#3b82f6";
-    case "PUT": return "#f59e0b";
-    case "PATCH": return "#f59e0b";
-    case "DELETE": return "#ef4444";
+    case "GET": return "var(--success)";
+    case "POST": return "var(--info)";
+    case "PUT": return "var(--warning)";
+    case "PATCH": return "var(--warning)";
+    case "DELETE": return "var(--danger)";
     default: return "var(--dmuted)";
   }
 }

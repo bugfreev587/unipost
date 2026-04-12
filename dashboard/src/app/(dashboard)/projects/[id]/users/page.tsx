@@ -42,18 +42,18 @@ export default function ManagedUsersPage() {
   }, [load]);
 
   if (loading) {
-    return <div className="p-8 text-[#888]">Loading…</div>;
+    return <div className="p-8 text-[var(--dmuted)]">Loading…</div>;
   }
 
   return (
     <div className="p-8 max-w-6xl">
       <div className="flex items-center gap-3 mb-6">
-        <div className="p-2 bg-[#10b981]/10 rounded-lg">
-          <Users className="w-5 h-5 text-[#10b981]" />
+        <div className="p-2 rounded-lg" style={{ background: "var(--success-soft)" }}>
+          <Users className="w-5 h-5 text-[var(--success)]" />
         </div>
         <div>
-          <h1 className="text-2xl font-semibold text-[#f0f0f0]">Managed Users</h1>
-          <p className="text-sm text-[#888]">
+          <h1 className="text-2xl font-semibold text-[var(--dtext)]">Managed Users</h1>
+          <p className="text-sm text-[var(--dmuted)]">
             End users onboarded via Connect — {total} total
           </p>
         </div>
@@ -66,9 +66,9 @@ export default function ManagedUsersPage() {
       {users.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="border border-[#242424] rounded-lg overflow-hidden">
+        <div className="rounded-lg overflow-hidden border border-[var(--dborder)] bg-[var(--surface)]">
           <table className="w-full">
-            <thead className="bg-[#141414] text-xs uppercase text-[#888]">
+            <thead className="bg-[var(--surface2)] text-xs uppercase text-[var(--dmuted)]">
               <tr>
                 <th className="text-left px-4 py-3">External User</th>
                 <th className="text-left px-4 py-3">Email</th>
@@ -82,12 +82,12 @@ export default function ManagedUsersPage() {
               {users.map((u) => (
                 <tr
                   key={u.external_user_id}
-                  className="border-t border-[#242424] hover:bg-[#141414] transition"
+                  className="border-t border-[var(--dborder)] transition hover:bg-[var(--surface2)]"
                 >
-                  <td className="px-4 py-4 text-[#f0f0f0] font-mono text-sm">
+                  <td className="px-4 py-4 text-[var(--dtext)] font-mono text-sm">
                     {u.external_user_id}
                   </td>
-                  <td className="px-4 py-4 text-[#bbb] text-sm">
+                  <td className="px-4 py-4 text-[var(--dmuted)] text-sm">
                     {u.external_user_email || "—"}
                   </td>
                   <td className="px-4 py-4">
@@ -103,17 +103,17 @@ export default function ManagedUsersPage() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-4 text-[#bbb] text-sm">
+                  <td className="px-4 py-4 text-[var(--dmuted)] text-sm">
                     {new Date(u.first_connected_at).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-4">
                     {u.reconnect_count > 0 ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-[#f59e0b] bg-[#f59e0b]/10 px-2 py-1 rounded">
+                      <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--warning)]" style={{ background: "var(--warning-soft)" }}>
                         <AlertTriangle className="w-3 h-3" />
                         {u.reconnect_count} need reconnect
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-[#10b981] bg-[#10b981]/10 px-2 py-1 rounded">
+                      <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--success)]" style={{ background: "var(--success-soft)" }}>
                         Active
                       </span>
                     )}
@@ -121,7 +121,7 @@ export default function ManagedUsersPage() {
                   <td className="px-4 py-4 text-right">
                     <Link
                       href={`/projects/${profileId}/users/${encodeURIComponent(u.external_user_id)}`}
-                      className="inline-flex items-center gap-1 text-sm text-[#10b981] hover:text-[#0d9668]"
+                      className="inline-flex items-center gap-1 text-sm text-[var(--success)] hover:opacity-80"
                     >
                       Detail <ArrowRight className="w-3 h-3" />
                     </Link>
@@ -138,7 +138,7 @@ export default function ManagedUsersPage() {
 
 function PlatformBadge({ platform, count }: { platform: string; count: number }) {
   return (
-    <div className="inline-flex items-center gap-1 text-xs text-[#bbb] bg-[#1a1a1a] border border-[#242424] rounded px-2 py-1">
+    <div className="inline-flex items-center gap-1 rounded border border-[var(--dborder)] bg-[var(--surface2)] px-2 py-1 text-xs text-[var(--dmuted)]">
       <PlatformIcon platform={platform} size={12} />
       {count}
     </div>
@@ -147,15 +147,15 @@ function PlatformBadge({ platform, count }: { platform: string; count: number })
 
 function EmptyState() {
   return (
-    <div className="border border-dashed border-[#242424] rounded-lg p-12 text-center">
-      <Users className="w-10 h-10 mx-auto text-[#444] mb-4" />
-      <h3 className="text-lg font-medium text-[#f0f0f0] mb-2">
+    <div className="rounded-lg border border-dashed border-[var(--dborder)] p-12 text-center">
+      <Users className="mx-auto mb-4 h-10 w-10 text-[var(--dmuted2)]" />
+      <h3 className="mb-2 text-lg font-medium text-[var(--dtext)]">
         No managed users yet
       </h3>
-      <p className="text-sm text-[#888] max-w-md mx-auto mb-4">
+      <p className="mx-auto mb-4 max-w-md text-sm text-[var(--dmuted)]">
         End users will appear here after they complete a Connect flow.
         Use{" "}
-        <code className="bg-[#1a1a1a] px-1.5 py-0.5 rounded text-[#bbb]">
+        <code className="rounded bg-[var(--surface2)] px-1.5 py-0.5 text-[var(--dmuted)]">
           POST /v1/connect/sessions
         </code>{" "}
         to generate a hosted link, then email it to your user.
@@ -163,7 +163,7 @@ function EmptyState() {
       <Link
         href="https://docs.unipost.dev#connect"
         target="_blank"
-        className="text-sm text-[#10b981] hover:text-[#0d9668]"
+        className="text-sm text-[var(--success)] hover:opacity-80"
       >
         See Connect docs →
       </Link>

@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { X, Send, Calendar, FileText, ChevronDown, Pencil } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, Send, Calendar, FileText, Pencil } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus, STATUS_COLORS } from "@/components/tools/platform-limits";
 import type { SocialAccount, SocialPost } from "@/lib/api";
 import { createSocialPost } from "@/lib/api";
 
-const CSS = `.cpm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;animation:cpm-fade .15s ease}
+const CSS = `.cpm-overlay{position:fixed;inset:0;background:var(--overlay);z-index:50;animation:cpm-fade .15s ease}
 @keyframes cpm-fade{from{opacity:0}to{opacity:1}}
-.cpm-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:820px;max-width:95vw;max-height:90vh;background:var(--bg);border:1px solid var(--dborder);border-radius:14px;z-index:51;display:flex;flex-direction:column;animation:cpm-scale .2s ease}
+.cpm-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:820px;max-width:95vw;max-height:90vh;background:var(--surface-raised);border:1px solid var(--dborder);border-radius:14px;z-index:51;display:flex;flex-direction:column;animation:cpm-scale .2s ease}
 @keyframes cpm-scale{from{opacity:0;transform:translate(-50%,-50%) scale(.96)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
 .cpm-header{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--dborder);flex-shrink:0}
 .cpm-header-title{font-size:16px;font-weight:700;color:var(--dtext)}
@@ -27,7 +27,7 @@ const CSS = `.cpm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-ind
 .cpm-overrides{margin-top:20px}
 .cpm-override-item{margin-bottom:8px}
 .cpm-override-header{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--surface1);border:1px solid var(--dborder);border-radius:6px;cursor:pointer;transition:all .1s}
-.cpm-override-header:hover{border-color:#333}
+.cpm-override-header:hover{border-color:var(--dborder2)}
 .cpm-override-left{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--dtext)}
 .cpm-override-tag{font-size:10.5px;color:var(--dmuted2)}
 .cpm-override-edit{font-size:11px;color:var(--daccent);display:flex;align-items:center;gap:3px}
@@ -59,6 +59,14 @@ interface Props {
   onCreated: () => void;
   editDraft?: SocialPost | null;
 }
+
+type CreatePostPayload = {
+  caption?: string;
+  account_ids?: string[];
+  platform_posts?: Array<{ account_id: string; caption: string }>;
+  scheduled_at?: string;
+  draft?: boolean;
+};
 
 export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCreated, editDraft }: Props) {
   const [caption, setCaption] = useState(editDraft?.caption || "");
@@ -100,7 +108,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
 
       // Build platform_posts if any overrides exist
       const hasOverrides = Object.values(overrides).some(v => v.trim());
-      const payload: any = {};
+      const payload: CreatePostPayload = {};
 
       if (hasOverrides) {
         payload.platform_posts = ids.map(id => ({

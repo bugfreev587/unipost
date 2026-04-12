@@ -66,7 +66,7 @@ export default function ProfileOverviewPage() {
   }, [getToken, id]);
 
   if (loading) {
-    return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+    return <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>;
   }
 
   if (!profile) {

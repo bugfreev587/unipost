@@ -3,11 +3,11 @@
 import { useEffect, useRef } from "react";
 import { X, ExternalLink, Copy } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
-import type { SocialPost, SocialPostResult } from "@/lib/api";
+import type { SocialPost } from "@/lib/api";
 
-const CSS = `.pdd-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;animation:pdd-fade-in .15s ease}
+const CSS = `.pdd-overlay{position:fixed;inset:0;background:var(--overlay);z-index:50;animation:pdd-fade-in .15s ease}
 @keyframes pdd-fade-in{from{opacity:0}to{opacity:1}}
-.pdd-drawer{position:fixed;top:0;right:0;bottom:0;width:420px;max-width:90vw;background:var(--bg);border-left:1px solid var(--dborder);z-index:51;overflow-y:auto;animation:pdd-slide-in .2s ease;display:flex;flex-direction:column}
+.pdd-drawer{position:fixed;top:0;right:0;bottom:0;width:420px;max-width:90vw;background:var(--surface-raised);border-left:1px solid var(--dborder);z-index:51;overflow-y:auto;animation:pdd-slide-in .2s ease;display:flex;flex-direction:column}
 @keyframes pdd-slide-in{from{transform:translateX(100%)}to{transform:translateX(0)}}
 .pdd-header{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--dborder);flex-shrink:0}
 .pdd-header-title{font-size:16px;font-weight:700;color:var(--dtext)}
@@ -23,16 +23,16 @@ const CSS = `.pdd-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-ind
 .pdd-result-name{font-size:13px;font-weight:600;color:var(--dtext)}
 .pdd-result-link{font-size:11px;color:var(--daccent);text-decoration:none;display:inline-flex;align-items:center;gap:3px;margin-top:2px}
 .pdd-result-link:hover{text-decoration:underline}
-.pdd-result-error{font-size:12px;color:#ef4444;margin-top:3px;line-height:1.4}
+.pdd-result-error{font-size:12px;color:var(--danger);margin-top:3px;line-height:1.4}
 .pdd-meta-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px}
 .pdd-meta-label{color:var(--dmuted)}
 .pdd-meta-value{color:var(--dtext);font-weight:500}
 .pdd-footer{padding:16px 24px;border-top:1px solid var(--dborder);display:flex;gap:8px;flex-shrink:0}`;
 
 const RESULT_BADGE: Record<string, { color: string; label: string }> = {
-  published: { color: "#10b981", label: "published" },
-  failed: { color: "#ef4444", label: "failed" },
-  pending: { color: "#3b82f6", label: "pending" },
+  published: { color: "var(--success)", label: "published" },
+  failed: { color: "var(--danger)", label: "failed" },
+  pending: { color: "var(--info)", label: "pending" },
 };
 
 function externalUrl(platform: string | undefined, externalId: string): string | null {

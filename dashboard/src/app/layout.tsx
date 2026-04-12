@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { DM_Sans, Fira_Code } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -31,6 +32,22 @@ export const metadata: Metadata = {
   description: "Unified Social Media API for developers",
 };
 
+const themeInitScript = `
+(() => {
+  try {
+    const storageKey = "unipost-theme";
+    const storedTheme = localStorage.getItem(storageKey) || "system";
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const resolvedTheme = storedTheme === "system" ? (prefersDark ? "dark" : "light") : storedTheme;
+    const root = document.documentElement;
+    root.classList.toggle("dark", resolvedTheme === "dark");
+    root.classList.toggle("light", resolvedTheme === "light");
+    root.style.colorScheme = resolvedTheme;
+    root.dataset.theme = resolvedTheme;
+  } catch (_) {}
+})();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -43,73 +60,77 @@ export default function RootLayout({
       afterSignOutUrl={process.env.NEXT_PUBLIC_LANDING_URL || "https://unipost.dev"}
       appearance={{
         variables: {
-          colorBackground: "#ffffff",
-          colorInputBackground: "#f5f5f5",
-          colorText: "#1a1a1a",
-          colorTextSecondary: "#666666",
-          colorTextOnPrimaryBackground: "#ffffff",
-          colorPrimary: "#10b981",
-          colorDanger: "#ef4444",
-          colorNeutral: "#1a1a1a",
-          colorInputText: "#1a1a1a",
+          colorBackground: "var(--clerk-bg)",
+          colorInputBackground: "var(--clerk-muted-bg)",
+          colorText: "var(--clerk-text)",
+          colorTextSecondary: "var(--clerk-text-secondary)",
+          colorTextOnPrimaryBackground: "var(--primary-foreground)",
+          colorPrimary: "var(--clerk-primary)",
+          colorDanger: "var(--clerk-danger)",
+          colorNeutral: "var(--clerk-neutral)",
+          colorInputText: "var(--clerk-text)",
           borderRadius: "8px",
         },
         elements: {
-          // Modal / card — white background, dark text
-          card: "!bg-white !shadow-2xl",
-          modalBackdrop: "!bg-black/60 !backdrop-blur-sm",
+          // Modal / card
+          card: "!bg-[var(--clerk-card-bg)] !text-[var(--clerk-text)] !border !border-[var(--clerk-border)] !shadow-2xl",
+          modalBackdrop: "!bg-[var(--clerk-overlay)] !backdrop-blur-sm",
           // Nav tabs in profile modal
-          navbar: "!bg-[#f8f8f8] !border-r !border-[#e5e5e5]",
-          navbarButton: "!text-[#666] hover:!text-[#1a1a1a] hover:!bg-[#f0f0f0]",
-          "navbarButton__active": "!text-[#10b981] !bg-[#10b98110]",
+          navbar: "!bg-[var(--clerk-muted-bg)] !border-r !border-[var(--clerk-border)]",
+          navbarButton: "!text-[var(--clerk-text-secondary)] hover:!text-[var(--clerk-text)] hover:!bg-[var(--clerk-muted-bg)]",
+          "navbarButton__active": "!text-[var(--clerk-primary)] !bg-[var(--accent-dim)]",
           // Page content
-          pageScrollBox: "!bg-white",
-          page: "!bg-white",
+          pageScrollBox: "!bg-[var(--clerk-card-bg)]",
+          page: "!bg-[var(--clerk-card-bg)]",
           // Header text
-          headerTitle: "!text-[#1a1a1a]",
-          headerSubtitle: "!text-[#888]",
+          headerTitle: "!text-[var(--clerk-text)]",
+          headerSubtitle: "!text-[var(--clerk-text-secondary)]",
           // Profile details
-          profileSectionTitle: "!text-[#1a1a1a]",
-          profileSectionTitleText: "!text-[#1a1a1a]",
-          profileSectionContent: "!text-[#444]",
-          profileSectionPrimaryButton: "!text-[#10b981]",
+          profileSectionTitle: "!text-[var(--clerk-text)]",
+          profileSectionTitleText: "!text-[var(--clerk-text)]",
+          profileSectionContent: "!text-[var(--clerk-text-secondary)]",
+          profileSectionPrimaryButton: "!text-[var(--clerk-primary)]",
           // Form labels & inputs
-          formFieldLabel: "!text-[#444]",
-          formFieldInput: "!bg-[#f5f5f5] !border-[#e0e0e0] !text-[#1a1a1a]",
-          formButtonPrimary: "!bg-[#10b981] !text-white",
-          formButtonReset: "!text-[#888] hover:!text-[#1a1a1a]",
+          formFieldLabel: "!text-[var(--clerk-text-secondary)]",
+          formFieldInput: "!bg-[var(--clerk-muted-bg)] !border-[var(--clerk-border)] !text-[var(--clerk-text)]",
+          formButtonPrimary: "!bg-[var(--clerk-primary)] !text-[var(--primary-foreground)]",
+          formButtonReset: "!text-[var(--clerk-text-secondary)] hover:!text-[var(--clerk-text)]",
           // Accordion / sections
-          accordionTriggerButton: "!text-[#1a1a1a]",
-          accordionContent: "!text-[#444]",
+          accordionTriggerButton: "!text-[var(--clerk-text)]",
+          accordionContent: "!text-[var(--clerk-text-secondary)]",
           // Badges
-          badge: "!text-[#666] !bg-[#f0f0f0] !border-[#e0e0e0]",
-          badgePrimary: "!text-[#10b981] !bg-[#10b98110]",
+          badge: "!text-[var(--clerk-text-secondary)] !bg-[var(--clerk-muted-bg)] !border-[var(--clerk-border)]",
+          badgePrimary: "!text-[var(--clerk-primary)] !bg-[var(--accent-dim)]",
           // Table rows
-          tableHead: "!text-[#888]",
+          tableHead: "!text-[var(--clerk-text-secondary)]",
           // Footer
-          footer: "!bg-[#f8f8f8] !border-t !border-[#e5e5e5]",
-          footerAction: "!text-[#888]",
-          footerActionLink: "!text-[#888]",
-          // User button popover (small dropdown) — keep dark
-          userButtonPopoverCard: "!bg-[#141414] !border !border-[#242424] !w-[240px]",
+          footer: "!bg-[var(--clerk-muted-bg)] !border-t !border-[var(--clerk-border)]",
+          footerAction: "!text-[var(--clerk-text-secondary)]",
+          footerActionLink: "!text-[var(--clerk-text-secondary)]",
+          // User button popover
+          userButtonPopoverCard: "!bg-[var(--surface-raised)] !border !border-[var(--border)] !w-[240px]",
           userButtonPopoverMain: "!w-[240px]",
           userButtonPopoverActions: "!bg-transparent",
-          userButtonPopoverActionButton: "!text-[#ededed] hover:!bg-[#1a1a1a]",
-          userButtonPopoverActionButtonText: "!text-[#ededed]",
-          userButtonPopoverActionButtonIcon: "!text-[#888]",
+          userButtonPopoverActionButton: "!text-[var(--text)] hover:!bg-[var(--surface2)]",
+          userButtonPopoverActionButtonText: "!text-[var(--text)]",
+          userButtonPopoverActionButtonIcon: "!text-[var(--text-muted)]",
           userButtonPopoverFooter: "!hidden",
-          userPreviewMainIdentifier: "!text-[#f0f0f0]",
-          userPreviewSecondaryIdentifier: "!text-[#666]",
+          userPreviewMainIdentifier: "!text-[var(--text)]",
+          userPreviewSecondaryIdentifier: "!text-[var(--text-muted)]",
         },
       }}
     >
       <html
         lang="en"
-        className={`dark ${dmSans.variable} ${firaCode.variable} ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+        suppressHydrationWarning
+        className={`${dmSans.variable} ${firaCode.variable} ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
         style={{ fontFamily: "var(--font-dm-sans), system-ui, sans-serif" }}
       >
-        <body className="min-h-full flex flex-col" style={{ background: "#080808", color: "#ededed" }}>
-          {children}
+        <head>
+          <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        </head>
+        <body className="min-h-full flex flex-col bg-[var(--app-bg)] text-[var(--text)]">
+          <ThemeProvider>{children}</ThemeProvider>
         </body>
       </html>
     </ClerkProvider>

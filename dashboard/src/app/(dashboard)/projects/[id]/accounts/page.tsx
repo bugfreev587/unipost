@@ -110,12 +110,12 @@ export default function AccountsPage() {
   return (
     <>
       {callbackStatus === "success" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "#10b98110", border: "1px solid #10b98125", fontSize: 13, color: "var(--daccent)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "var(--success-soft)", border: "1px solid color-mix(in srgb, var(--success) 24%, transparent)", fontSize: 13, color: "var(--daccent)", marginBottom: 20 }}>
           <CheckCircle2 style={{ width: 14, height: 14 }} /> Connected {callbackAccount || "account"} successfully.
         </div>
       )}
       {callbackStatus === "error" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "#ef444410", border: "1px solid #ef444425", fontSize: 13, color: "var(--danger)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", fontSize: 13, color: "var(--danger)", marginBottom: 20 }}>
           <XCircle style={{ width: 14, height: 14 }} /> Failed to connect. Please try again.
         </div>
       )}
@@ -241,7 +241,7 @@ export default function AccountsPage() {
       )}
 
       {loading ? (
-        <div style={{ color: "var(--dmuted)" }}>Loading...</div>
+        <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>
       ) : (
         <div className="table-wrap">
           <table>

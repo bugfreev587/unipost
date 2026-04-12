@@ -50,14 +50,14 @@ export default function SettingsPage() {
     } catch (err) { console.error("Failed:", err); } finally { setDeleting(false); setShowDeleteConfirm(false); }
   }
 
-  if (!profile) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+  if (!profile) return <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>;
 
   return (
     <>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Settings</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Profile configuration</div>
+          <div style={{ fontSize: 14, color: "var(--dmuted)", marginTop: 6 }}>Profile configuration</div>
         </div>
       </div>
 
@@ -75,12 +75,12 @@ export default function SettingsPage() {
             </div>
           </form>
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Profile ID</span>
+            <span style={{ fontSize: 12, lineHeight: "16px", fontWeight: 600, color: "var(--dmuted)" }}>Profile ID</span>
             <span className="mono">{profile.id}</span>
           </div>
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Created</span>
-            <span style={{ fontSize: 13, color: "var(--dtext)" }}>
+            <span style={{ fontSize: 12, lineHeight: "16px", fontWeight: 600, color: "var(--dmuted)" }}>Created</span>
+            <span style={{ fontSize: 13, lineHeight: "18px", color: "var(--dtext)" }}>
               {new Date(profile.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
             </span>
           </div>
@@ -94,7 +94,7 @@ export default function SettingsPage() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, color: "var(--dtext)" }}>Delete Profile</div>
-              <div style={{ fontSize: 13, color: "var(--dmuted)" }}>Permanently delete this profile and all associated data.</div>
+              <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--dmuted)" }}>Permanently delete this profile and all associated data.</div>
             </div>
             <button className="dbtn dbtn-danger" onClick={() => setShowDeleteConfirm(true)} disabled={deleting}>
               {deleting ? "Deleting..." : "Delete Profile"}

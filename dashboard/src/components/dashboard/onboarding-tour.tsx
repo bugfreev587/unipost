@@ -13,10 +13,10 @@ const TOUR_STEPS = [
     selector: '[data-tour="profiles"]',
     content: (
       <div>
-        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "#f4f4f5" }}>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "var(--text)" }}>
           Profiles
         </div>
-        <div style={{ fontSize: 13, lineHeight: 1.6, color: "#aaa" }}>
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--text-muted)" }}>
           Profiles organize your brand identities. Each profile has its own set of connected social accounts. Create separate profiles for different brands, products, or teams.
         </div>
       </div>
@@ -26,11 +26,11 @@ const TOUR_STEPS = [
     selector: '[data-tour="connections"]',
     content: (
       <div>
-        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "#f4f4f5" }}>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "var(--text)" }}>
           Connections
         </div>
-        <div style={{ fontSize: 13, lineHeight: 1.6, color: "#aaa" }}>
-          Connect your social media accounts here. UniPost supports Twitter/X, LinkedIn, Bluesky, Instagram, Threads, TikTok, and YouTube. Click <strong style={{ color: "#f4f4f5" }}>Accounts</strong> to get started.
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--text-muted)" }}>
+          Connect your social media accounts here. UniPost supports Twitter/X, LinkedIn, Bluesky, Instagram, Threads, TikTok, and YouTube. Click <strong style={{ color: "var(--text)" }}>Accounts</strong> to get started.
         </div>
       </div>
     ),
@@ -39,11 +39,11 @@ const TOUR_STEPS = [
     selector: '[data-tour="posts"]',
     content: (
       <div>
-        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "#f4f4f5" }}>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "var(--text)" }}>
           Posts
         </div>
-        <div style={{ fontSize: 13, lineHeight: 1.6, color: "#aaa" }}>
-          Manage all your content from one place. View published, scheduled, and draft posts. Click <strong style={{ color: "#f4f4f5" }}>Create</strong> to compose a post for multiple platforms at once.
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--text-muted)" }}>
+          Manage all your content from one place. View published, scheduled, and draft posts. Click <strong style={{ color: "var(--text)" }}>Create</strong> to compose a post for multiple platforms at once.
         </div>
       </div>
     ),
@@ -52,10 +52,10 @@ const TOUR_STEPS = [
     selector: '[data-tour="api-keys"]',
     content: (
       <div>
-        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "#f4f4f5" }}>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "var(--text)" }}>
           API Keys
         </div>
-        <div style={{ fontSize: 13, lineHeight: 1.6, color: "#aaa" }}>
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--text-muted)" }}>
           Generate API keys to integrate UniPost into your own app. Use our SDKs (JavaScript, Python, Go) or call the REST API directly.
         </div>
       </div>
@@ -65,10 +65,10 @@ const TOUR_STEPS = [
     selector: '[data-tour="analytics"]',
     content: (
       <div>
-        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "#f4f4f5" }}>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "var(--text)" }}>
           Analytics
         </div>
-        <div style={{ fontSize: 13, lineHeight: 1.6, color: "#aaa" }}>
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--text-muted)" }}>
           Track post performance across platforms and monitor your API usage, latency, and reliability — all in real time.
         </div>
       </div>
@@ -78,10 +78,10 @@ const TOUR_STEPS = [
     selector: '[data-tour="workspace"]',
     content: (
       <div>
-        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "#f4f4f5" }}>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "var(--text)" }}>
           Workspace
         </div>
-        <div style={{ fontSize: 13, lineHeight: 1.6, color: "#aaa" }}>
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--text-muted)" }}>
           Your workspace is the top-level container for everything — API keys, billing, and posts. Click the gear icon to manage workspace settings.
         </div>
       </div>
@@ -184,12 +184,13 @@ export function OnboardingTourProvider({ children }: { children: React.ReactNode
       styles={{
         popover: (base) => ({
           ...base,
-          background: "#1a1a1e",
-          border: "1px solid #2e2e38",
+          background: "var(--surface-raised)",
+          border: "1px solid var(--border)",
           borderRadius: 12,
           padding: "20px 24px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+          boxShadow: "0 20px 60px var(--shadow-color)",
           maxWidth: 360,
+          color: "var(--text)",
         }),
         maskArea: (base) => ({
           ...base,
@@ -197,12 +198,12 @@ export function OnboardingTourProvider({ children }: { children: React.ReactNode
         }),
         maskWrapper: (base) => ({
           ...base,
-          color: "rgba(0,0,0,0.7)",
+          color: "var(--overlay)",
         }),
         badge: (base) => ({
           ...base,
-          background: "#10b981",
-          color: "#000",
+          background: "var(--primary)",
+          color: "var(--primary-foreground)",
           fontWeight: 700,
           fontSize: 11,
         }),
@@ -212,21 +213,21 @@ export function OnboardingTourProvider({ children }: { children: React.ReactNode
         }),
         close: (base) => ({
           ...base,
-          color: "#8a8a93",
+          color: "var(--text-muted)",
           top: 12,
           right: 12,
         }),
         dot: (base, state) => ({
           ...base,
-          background: (state as any)?.current ? "#10b981" : "#2e2e38",
+          background: state.current ? "var(--primary)" : "var(--border-strong)",
           border: "none",
           width: 8,
           height: 8,
         }),
         button: (base) => ({
           ...base,
-          background: "#10b981",
-          color: "#000",
+          background: "var(--primary)",
+          color: "var(--primary-foreground)",
           fontWeight: 600,
           fontSize: 12,
           padding: "6px 16px",
