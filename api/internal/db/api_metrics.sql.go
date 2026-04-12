@@ -133,7 +133,7 @@ func (q *Queries) GetAPIMetricsSummary(ctx context.Context, arg GetAPIMetricsSum
 
 const getAPIMetricsTrend = `-- name: GetAPIMetricsTrend :many
 SELECT
-  date_trunc('hour', created_at) AS bucket,
+  date_trunc('hour', created_at)::timestamptz AS bucket,
   COUNT(*)::INTEGER AS total_calls,
   COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
   COUNT(*) FILTER (WHERE status_code >= 400)::INTEGER AS error_count
@@ -152,10 +152,10 @@ type GetAPIMetricsTrendParams struct {
 }
 
 type GetAPIMetricsTrendRow struct {
-	Bucket       pgtype.Interval `json:"bucket"`
-	TotalCalls   int32           `json:"total_calls"`
-	SuccessCount int32           `json:"success_count"`
-	ErrorCount   int32           `json:"error_count"`
+	Bucket       pgtype.Timestamptz `json:"bucket"`
+	TotalCalls   int32              `json:"total_calls"`
+	SuccessCount int32              `json:"success_count"`
+	ErrorCount   int32              `json:"error_count"`
 }
 
 // Hourly call counts for a workspace within a time range.

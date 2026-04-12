@@ -28,7 +28,7 @@ ORDER BY total_calls DESC;
 -- Hourly call counts for a workspace within a time range.
 -- Used for the usage-over-time chart.
 SELECT
-  date_trunc('hour', created_at) AS bucket,
+  date_trunc('hour', created_at)::timestamptz AS bucket,
   COUNT(*)::INTEGER AS total_calls,
   COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
   COUNT(*) FILTER (WHERE status_code >= 400)::INTEGER AS error_count

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -30,6 +31,7 @@ func (h *APIMetricsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		CreatedAt_2: pgtype.Timestamptz{Time: to, Valid: true},
 	})
 	if err != nil {
+		slog.Error("api_metrics.Summary: query failed", "err", err, "workspace_id", workspaceID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load metrics")
 		return
 	}
@@ -49,6 +51,7 @@ func (h *APIMetricsHandler) Trend(w http.ResponseWriter, r *http.Request) {
 		CreatedAt_2: pgtype.Timestamptz{Time: to, Valid: true},
 	})
 	if err != nil {
+		slog.Error("api_metrics.Trend: query failed", "err", err, "workspace_id", workspaceID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load trend")
 		return
 	}
@@ -68,6 +71,7 @@ func (h *APIMetricsHandler) Overall(w http.ResponseWriter, r *http.Request) {
 		CreatedAt_2: pgtype.Timestamptz{Time: to, Valid: true},
 	})
 	if err != nil {
+		slog.Error("api_metrics.Overall: query failed", "err", err, "workspace_id", workspaceID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load overall metrics")
 		return
 	}
