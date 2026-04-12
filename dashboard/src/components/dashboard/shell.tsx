@@ -168,7 +168,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       <aside
         style={{
           width: 220, minWidth: 220,
-          background: "var(--surface)",
+          background: "var(--sidebar)",
           borderRight: "1px solid var(--dborder)",
           display: "flex", flexDirection: "column",
           overflow: "hidden",
@@ -186,7 +186,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                     background: "transparent", cursor: "pointer",
                     transition: "background 0.1s", textAlign: "left",
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--sidebar-accent)"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                 />
               }
@@ -302,7 +302,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                                 marginBottom: 2,
                                 background: subActive ? "var(--accent-dim)" : "transparent",
                               }}
-                              onMouseEnter={(e) => { if (!subActive) { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--surface2)"; } }}
+                              onMouseEnter={(e) => { if (!subActive) { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--sidebar-accent)"; } }}
                               onMouseLeave={(e) => { if (!subActive) { e.currentTarget.style.color = "var(--dmuted)"; e.currentTarget.style.background = "transparent"; } }}
                             >
                               {sub.label}
@@ -368,7 +368,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 width: 28, height: 28, borderRadius: 6,
                 color: "var(--dmuted)", transition: "background 0.1s, color 0.1s", flexShrink: 0,
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; e.currentTarget.style.color = "var(--dtext)"; }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--sidebar-accent)"; e.currentTarget.style.color = "var(--dtext)"; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
               title="Settings"
             >

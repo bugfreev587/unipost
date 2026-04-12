@@ -51,19 +51,19 @@
 :root {
   color-scheme: light;
 
-  --app-bg: #f5f7fb;
+  --app-bg: #f3f5f9;
   --surface: #ffffff;
-  --surface2: #f7f9fc;
-  --surface3: #eef2f7;
+  --surface2: #f5f7fb;
+  --surface3: #ebeff5;
   --surface-raised: #ffffff;
-  --surface-inset: #edf2f7;
+  --surface-inset: #e9eef5;
   --text: #0f172a;
-  --text-muted: #667085;
-  --text-subtle: #98a2b3;
-  --border-soft: #e6eaf0;
-  --border-strong: #d6dce5;
+  --text-muted: #5f6f86;
+  --text-subtle: #8794a8;
+  --border-soft: #dde4ee;
+  --border-strong: #cad4e1;
   --overlay: rgb(15 23 42 / 0.42);
-  --shadow-color: rgb(15 23 42 / 0.12);
+  --shadow-color: rgb(15 23 42 / 0.1);
 
   --primary: #10b981;
   --primary-hover: #0ea371;
@@ -76,8 +76,8 @@
   --danger-soft: rgb(220 38 38 / 0.1);
   --info: #2563eb;
   --info-soft: rgb(37 99 235 / 0.12);
-  --focus-ring: rgb(16 185 129 / 0.18);
-  --accent-dim: rgb(16 185 129 / 0.12);
+  --focus-ring: rgb(16 185 129 / 0.16);
+  --accent-dim: rgb(16 185 129 / 0.11);
   --accent-glow: rgb(16 185 129 / 0.08);
 
   --bg: var(--app-bg);
@@ -111,11 +111,11 @@
   --chart-4: #7c3aed;
   --chart-5: var(--danger);
   --radius: 6px;
-  --sidebar: #fbfcfe;
-  --sidebar-foreground: var(--text-muted);
+  --sidebar: #f8fafc;
+  --sidebar-foreground: #55657d;
   --sidebar-primary: var(--text);
   --sidebar-primary-foreground: var(--surface);
-  --sidebar-accent: var(--surface2);
+  --sidebar-accent: #eef3f8;
   --sidebar-accent-foreground: var(--text);
   --sidebar-border: var(--border-soft);
   --sidebar-ring: var(--primary);
@@ -259,10 +259,10 @@
 .dt-card-title    { font-size: 16px; line-height: 24px; font-weight: 600; color: var(--dtext); }
 .dt-body          { font-size: 14px; line-height: 20px; color: var(--dtext); }
 .dt-body-sm       { font-size: 13px; line-height: 18px; color: var(--dmuted); }
-.dt-label         { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--dmuted); text-transform: uppercase; letter-spacing: 0.06em; }
+.dt-label         { font-size: 12px; line-height: 16px; font-weight: 600; color: color-mix(in srgb, var(--dmuted) 92%, var(--dtext)); text-transform: uppercase; letter-spacing: 0.06em; }
 .dt-label-plain   { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--dmuted); }
 .dt-mono          { font-size: 12px; line-height: 16px; font-weight: 500; font-family: var(--font-geist-mono), monospace; color: var(--dmuted); }
-.dt-micro         { font-size: 11px; line-height: 16px; font-weight: 500; color: var(--dmuted); }
+.dt-micro         { font-size: 11px; line-height: 16px; font-weight: 500; color: color-mix(in srgb, var(--dmuted) 90%, var(--dtext)); }
 .dt-subtitle      { font-size: 14px; line-height: 20px; color: var(--dmuted); margin-top: 6px; }
 
 /* ── Mono ── */
@@ -313,7 +313,7 @@
   padding: 10px 12px;
   border-radius: 8px;
   cursor: pointer;
-  color: var(--dmuted);
+  color: color-mix(in srgb, var(--dmuted) 94%, var(--dtext));
   font-size: 14px;
   font-weight: 500;
   transition: all 0.15s;
@@ -321,14 +321,14 @@
   border: 1px solid transparent;
   text-decoration: none;
 }
-.sidebar-nav-item:hover { background: var(--surface2); color: var(--dtext); }
+.sidebar-nav-item:hover { background: var(--sidebar-accent); color: var(--dtext); }
 .sidebar-nav-item[data-active="true"] {
-  background: var(--accent-dim);
+  background: color-mix(in srgb, var(--accent-dim) 78%, white);
   color: var(--daccent);
   border-color: #10b98125;
   font-weight: 600;
 }
-.sidebar-nav-item svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.6; }
+.sidebar-nav-item svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.72; }
 .sidebar-nav-item[data-active="true"] svg { opacity: 1; }
 
 /* ── Tables ── */
@@ -338,7 +338,7 @@
   overflow: hidden;
 }
 .table-wrap table { width: 100%; border-collapse: collapse; }
-.table-wrap thead { background: var(--surface2); }
+.table-wrap thead { background: color-mix(in srgb, var(--surface2) 90%, white); }
 .table-wrap th {
   padding: 12px 20px;
   text-align: left;
@@ -346,7 +346,7 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--dmuted);
+  color: color-mix(in srgb, var(--dmuted) 92%, var(--dtext));
   border-bottom: 1px solid var(--dborder);
 }
 .table-wrap td {
@@ -358,7 +358,7 @@
 }
 .table-wrap tr:last-child td { border-bottom: none; }
 .table-wrap tbody tr { transition: background 0.1s; }
-.table-wrap tbody tr:hover { background: var(--surface2); }
+.table-wrap tbody tr:hover { background: color-mix(in srgb, var(--surface2) 88%, white); }
 
 /* ── Badges ── */
 .dbadge {
@@ -371,10 +371,11 @@
   font-weight: 500;
   font-family: var(--font-geist-mono), monospace;
 }
-.dbadge-green { background: var(--success-soft); color: var(--success); border: 1px solid color-mix(in srgb, var(--success) 24%, transparent); }
-.dbadge-red   { background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent); }
-.dbadge-blue  { background: var(--info-soft); color: var(--info); border: 1px solid color-mix(in srgb, var(--info) 24%, transparent); }
-.dbadge-amber { background: var(--warning-soft); color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 24%, transparent); }
+.dbadge-green { background: color-mix(in srgb, var(--success-soft) 88%, white); color: color-mix(in srgb, var(--success) 92%, #0b1220); border: 1px solid color-mix(in srgb, var(--success) 26%, transparent); }
+.dbadge-red   { background: color-mix(in srgb, var(--danger-soft) 88%, white); color: color-mix(in srgb, var(--danger) 92%, #0b1220); border: 1px solid color-mix(in srgb, var(--danger) 26%, transparent); }
+.dbadge-blue  { background: color-mix(in srgb, var(--info-soft) 88%, white); color: color-mix(in srgb, var(--info) 92%, #0b1220); border: 1px solid color-mix(in srgb, var(--info) 26%, transparent); }
+.dbadge-amber { background: color-mix(in srgb, var(--warning-soft) 88%, white); color: color-mix(in srgb, var(--warning) 92%, #0b1220); border: 1px solid color-mix(in srgb, var(--warning) 26%, transparent); }
+.dbadge-gray  { background: color-mix(in srgb, var(--surface2) 82%, white); color: var(--dmuted); border: 1px solid var(--dborder); }
 .dbadge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
 /* ── Buttons ── */
@@ -499,14 +500,14 @@
 /* ── Plan cards ── */
 .plan-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 20px; }
 .plan-card {
-  background: var(--surface2);
+  background: color-mix(in srgb, var(--surface2) 84%, white);
   border: 1px solid var(--dborder);
   border-radius: 8px;
   padding: 14px;
   cursor: pointer;
   transition: all 0.15s;
 }
-.plan-card:hover { border-color: var(--dborder2); background: var(--surface3); }
+.plan-card:hover { border-color: var(--dborder2); background: color-mix(in srgb, var(--surface3) 78%, white); }
 .plan-card.current { border-color: color-mix(in srgb, var(--primary) 24%, transparent); background: var(--accent-glow); }
 
 /* ── Stat cards ── */
@@ -522,7 +523,7 @@
    plan-card, project-overview nav cards). Stat cards aren't clickable
    on most pages, so we don't add cursor:pointer here — pages that DO
    make a stat card clickable should set their own cursor. */
-.stat-card:hover { border-color: var(--dborder2); background: var(--surface2); }
+.stat-card:hover { border-color: var(--dborder2); background: color-mix(in srgb, var(--surface2) 90%, white); }
 
 /* ── Settings sections ── */
 .settings-section {
@@ -570,7 +571,7 @@
   padding: 5px 14px; border-radius: 5px; font-size: 13px; font-weight: 500;
   cursor: pointer; color: var(--dmuted); transition: all 0.1s;
 }
-.dtab.active { background: var(--surface); color: var(--dtext); box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-color) 80%, transparent); }
+.dtab.active { background: var(--surface); color: var(--dtext); box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-color) 70%, transparent), 0 0 0 1px color-mix(in srgb, var(--dborder) 80%, white); }
 .dtab:hover:not(.active) { color: var(--dtext); }
 
 /* ── Empty state ── */
@@ -679,7 +680,7 @@ textarea:focus-visible, input:focus-visible {
   border-radius: 14px;
   border: 1px solid var(--theme-toggle-border);
   background: var(--surface-raised);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 18px 40px color-mix(in srgb, var(--shadow-color) 120%, transparent), 0 0 0 1px color-mix(in srgb, var(--dborder) 65%, white);
 }
 
 .theme-picker-option {
