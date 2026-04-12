@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useAuth, useUser } from "@clerk/nextjs";
 import {
   getAdminStats,
@@ -181,7 +182,7 @@ export default function AdminPage() {
 
       {/* Sidebar */}
       <aside className="ad-sidebar">
-        <div className="ad-sb-logo">
+        <Link href="/" className="ad-sb-logo">
           <div className="ad-sb-mark">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" />
@@ -189,7 +190,7 @@ export default function AdminPage() {
           </div>
           <span className="ad-sb-name">UniPost</span>
           <span className="ad-sb-badge">ADMIN</span>
-        </div>
+        </Link>
         <nav className="ad-nav">
           <div className="ad-nav-label">Overview</div>
           <div className="ad-nav-item ad-nav-active">Dashboard</div>
@@ -579,7 +580,9 @@ const shellStyle: React.CSSProperties = {
 
 const adminCss = `
 .ad-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--dborder); display: flex; flex-direction: column; }
-.ad-sb-logo { display: flex; align-items: center; gap: 8px; padding: 14px 14px 12px; border-bottom: 1px solid var(--dborder); }
+.ad-sb-logo { display: flex; align-items: center; gap: 8px; padding: 14px 14px 12px; border-bottom: 1px solid var(--dborder); color: inherit; text-decoration: none; transition: background-color 120ms ease, color 120ms ease; }
+.ad-sb-logo:hover { background: var(--sidebar-accent); }
+.ad-sb-logo:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
 .ad-sb-mark { width: 22px; height: 22px; background: #10b981; border-radius: 5px; display: flex; align-items: center; justify-content: center; }
 .ad-sb-mark svg { width: 11px; height: 11px; color: var(--primary-foreground); }
 .ad-sb-name { font-size: 13px; font-weight: 700; letter-spacing: -0.3px; }
