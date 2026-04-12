@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef } from "react";
+import { Fragment, useCallback, useEffect, useState, useRef } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
@@ -8,9 +9,8 @@ import {
   listSocialAccounts, listSocialPosts, cancelSocialPost, listProfiles,
   type SocialAccount, type SocialPost, type Profile,
 } from "@/lib/api";
-import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
-import { PostDetailDrawer } from "@/components/dashboard/post-detail-drawer";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft";
@@ -57,7 +57,28 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-menu-item.danger:hover{background:#ef444410}
 .posts-empty{text-align:center;padding:60px 20px}
 .posts-empty-title{font-size:16px;font-weight:600;color:var(--dtext);margin-bottom:6px}
-.posts-empty-sub{font-size:13px;color:var(--dmuted)}`;
+.posts-empty-sub{font-size:13px;color:var(--dmuted)}
+.posts-expand-cell{background:var(--surface);padding:18px 24px;border-bottom:1px solid var(--dborder)}
+.posts-expand-layout{display:flex;flex-direction:column;gap:18px}
+.posts-meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.posts-meta-card{background:var(--surface2);border:1px solid var(--dborder);border-radius:10px;padding:12px 14px}
+.posts-meta-label{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dmuted2);margin-bottom:6px}
+.posts-meta-value{font-size:13px;color:var(--dtext);line-height:1.5;word-break:break-word}
+.posts-results-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.posts-result-card{background:var(--surface2);border:1px solid var(--dborder);border-radius:10px;padding:14px}
+.posts-result-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.posts-result-title{display:flex;align-items:center;gap:8px;min-width:0}
+.posts-result-name{font-size:13px;font-weight:600;color:var(--dtext);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.posts-result-meta{display:flex;flex-direction:column;gap:3px;margin-bottom:10px}
+.posts-result-text{font-size:12px;color:var(--dmuted);line-height:1.5}
+.posts-result-link{display:inline-flex;align-items:center;gap:4px;color:var(--daccent);text-decoration:none;font-size:12px;font-weight:500}
+.posts-result-link:hover{text-decoration:underline}
+.posts-error{font-size:11px;color:var(--danger);background:var(--danger-soft);border:1px solid color-mix(in srgb,var(--danger) 22%,transparent);border-radius:8px;padding:8px 10px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-geist-mono),monospace;line-height:1.55;max-height:148px;overflow:auto}
+.posts-hint{font-size:12px;color:var(--dtext);line-height:1.55}
+.posts-hint-label{color:var(--dmuted)}
+.posts-row-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dmuted2)}
+@media (max-width: 900px){.posts-expand-cell{padding:14px 16px}.posts-results-grid{grid-template-columns:1fr}}
+`;
 
 export default function PostsPage() {
   const { id: profileId } = useParams<{ id: string }>();
@@ -71,7 +92,7 @@ export default function PostsPage() {
   const [search, setSearch] = useState("");
   const [platformFilter, setPlatformFilter] = useState("all");
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
-  const [drawerPost, setDrawerPost] = useState<SocialPost | null>(null);
+  const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -171,7 +192,7 @@ export default function PostsPage() {
 
   function actionsMenu(post: SocialPost) {
     const items: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean }[] = [
-      { icon: <Eye />, label: "View details", action: () => { setDrawerPost(post); setMenuOpen(null); } },
+      { icon: <Eye />, label: "View details", action: () => { setExpandedPostId((current) => current === post.id ? null : post.id); setMenuOpen(null); } },
       { icon: <Copy />, label: "Duplicate", action: () => handleDuplicate(post) },
     ];
     if (post.status === "draft") {
@@ -255,54 +276,78 @@ export default function PostsPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((post) => (
-                <tr key={post.id} className="posts-row" onClick={() => setDrawerPost(post)}>
-                  <td>
-                    <span className="posts-caption" title={post.caption || undefined}>
-                      {post.caption || "(no caption)"}
-                    </span>
-                  </td>
-                  <td>{platformIcons(post)}</td>
-                  <td>{statusBadge(post.status)}</td>
-                  <td><span className="posts-time">{getTime(post)}</span></td>
-                  <td>
-                    <div className="posts-actions" ref={menuOpen === post.id ? menuRef : undefined}>
-                      <button
-                        className="posts-actions-btn"
-                        onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === post.id ? null : post.id); }}
-                      >
-                        <MoreHorizontal style={{ width: 16, height: 16 }} />
-                      </button>
-                      {menuOpen === post.id && (
-                        <div className="posts-menu">
-                          {actionsMenu(post).map((item) => (
-                            <button
-                              key={item.label}
-                              className={`posts-menu-item${item.danger ? " danger" : ""}`}
-                              onClick={(e) => { e.stopPropagation(); item.action(); }}
-                            >
-                              {item.icon}
-                              {item.label}
-                            </button>
-                          ))}
+              {filtered.map((post) => {
+                const isExpanded = expandedPostId === post.id;
+                return (
+                  <Fragment key={post.id}>
+                    <tr className="posts-row" onClick={() => setExpandedPostId((current) => current === post.id ? null : post.id)}>
+                      <td>
+                        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span className="posts-row-toggle">
+                            {isExpanded ? (
+                              <ChevronDown style={{ width: 14, height: 14 }} />
+                            ) : (
+                              <ChevronRight style={{ width: 14, height: 14 }} />
+                            )}
+                          </span>
+                          <span className="posts-caption" title={post.caption || undefined}>
+                            {post.caption || "(no caption)"}
+                          </span>
+                        </span>
+                      </td>
+                      <td>{platformIcons(post)}</td>
+                      <td>{statusBadge(post.status)}</td>
+                      <td><span className="posts-time">{getTime(post)}</span></td>
+                      <td>
+                        <div className="posts-actions" ref={menuOpen === post.id ? menuRef : undefined}>
+                          <button
+                            className="posts-actions-btn"
+                            onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === post.id ? null : post.id); }}
+                          >
+                            <MoreHorizontal style={{ width: 16, height: 16 }} />
+                          </button>
+                          {menuOpen === post.id && (
+                            <div className="posts-menu">
+                              {actionsMenu(post).map((item) => (
+                                <button
+                                  key={item.label}
+                                  className={`posts-menu-item${item.danger ? " danger" : ""}`}
+                                  onClick={(e) => { e.stopPropagation(); item.action(); }}
+                                >
+                                  {item.icon}
+                                  {item.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={5} className="posts-expand-cell">
+                          <div className="posts-expand-layout">
+                            <div className="posts-meta-grid">
+                              <MetaCard label="Caption" value={post.caption || "(no caption)"} />
+                              <MetaCard label="Mode" value={post.scheduled_at ? "Scheduled" : post.status === "draft" ? "Draft" : "Immediate"} />
+                              <MetaCard label="Status" value={post.status} />
+                              <MetaCard label="Created" value={formatLongDate(post.created_at)} />
+                              <MetaCard label="Published" value={post.published_at ? formatLongDate(post.published_at) : "—"} />
+                            </div>
+                            <div>
+                              <div className="posts-meta-label" style={{ marginBottom: 10 }}>Platform Results</div>
+                              <PostResultsGrid post={post} workspaceId={workspaceId} />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
-      )}
-
-      {/* Detail drawer */}
-      {drawerPost && (
-        <PostDetailDrawer
-          post={drawerPost}
-          onClose={() => setDrawerPost(null)}
-          onDuplicate={() => { setDrawerPost(null); setShowCreateModal(true); }}
-        />
       )}
 
       {/* Create post drawer */}
@@ -316,4 +361,167 @@ export default function PostsPage() {
       />
     </>
   );
+}
+
+function MetaCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="posts-meta-card">
+      <div className="posts-meta-label">{label}</div>
+      <div className="posts-meta-value">{value}</div>
+    </div>
+  );
+}
+
+function PostResultsGrid({ post, workspaceId }: { post: SocialPost; workspaceId: string }) {
+  const results = post.results || [];
+  if (results.length === 0) {
+    return <div className="posts-result-text">No platform results yet.</div>;
+  }
+  return (
+    <div className="posts-results-grid">
+      {results.map((result) => (
+        <PostResultCard key={result.social_account_id} post={post} workspaceId={workspaceId} result={result} />
+      ))}
+    </div>
+  );
+}
+
+function PostResultCard({
+  post,
+  result,
+  workspaceId,
+}: {
+  post: SocialPost;
+  result: NonNullable<SocialPost["results"]>[number];
+  workspaceId: string;
+}) {
+  const url = result.external_id && result.platform ? postUrlFor(result.platform, result.external_id) : null;
+  const hint = result.status === "failed" ? categorizeError(result.error_message || "") : null;
+
+  return (
+    <div className="posts-result-card">
+      <div className="posts-result-head">
+        <div className="posts-result-title">
+          <PlatformIcon platform={result.platform || ""} size={15} />
+          <span className="posts-result-name">{result.account_name || result.platform || "Unknown"}</span>
+          <InlineStatusPill status={result.status} />
+        </div>
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="posts-result-link"
+            title="Open original post"
+          >
+            <ExternalLink style={{ width: 12, height: 12 }} />
+          </a>
+        ) : null}
+      </div>
+
+      <div className="posts-result-meta">
+        {result.account_name ? <div className="posts-result-text">{result.platform || "Unknown"}</div> : null}
+        <div className="posts-result-text">
+          {result.published_at ? formatLongDate(result.published_at) : post.published_at ? formatLongDate(post.published_at) : "Not published yet"}
+        </div>
+      </div>
+
+      {result.status === "failed" ? (
+        <>
+          <div className="posts-error">
+            {result.error_message || "Publish failed (no error message reported)."}
+          </div>
+          {hint ? (
+            <div className="posts-hint" style={{ marginTop: 10 }}>
+              <span className="posts-hint-label">{hint.label}: </span>
+              {hint.body}
+              {hint.action ? (
+                <>
+                  {" "}
+                  {hint.action.href.startsWith("http") ? (
+                    <a href={hint.action.href} target="_blank" rel="noreferrer" className="posts-result-link">
+                      {hint.action.label}
+                    </a>
+                  ) : (
+                    <Link href={hint.action.href.replace(":id", workspaceId)} className="posts-result-link">
+                      {hint.action.label}
+                    </Link>
+                  )}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="posts-hint">
+          {result.status === "published" ? "Published successfully." : result.status === "partial" ? "Partially completed. Review other platform cards for failures." : `Status: ${result.status}`}
+          {result.external_id ? <div className="posts-result-text" style={{ marginTop: 10 }}>ID: {result.external_id}</div> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function postUrlFor(platform: string, externalId: string): string | null {
+  switch (platform) {
+    case "youtube":
+      return `https://www.youtube.com/watch?v=${externalId}`;
+    case "twitter":
+      return `https://x.com/i/status/${externalId}`;
+    case "instagram":
+      return `https://www.instagram.com/p/${externalId}/`;
+    case "threads":
+      return `https://www.threads.net/post/${externalId}`;
+    case "linkedin":
+      if (externalId.startsWith("urn:li:")) return `https://www.linkedin.com/feed/update/${externalId}/`;
+      return null;
+    case "bluesky": {
+      const match = externalId.match(/^at:\/\/(did:[^/]+)\/app\.bsky\.feed\.post\/(.+)$/);
+      return match ? `https://bsky.app/profile/${match[1]}/post/${match[2]}` : null;
+    }
+    default:
+      return null;
+  }
+}
+
+function formatLongDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+type ErrorHint = {
+  label: string;
+  body: string;
+  action?: { label: string; href: string };
+};
+
+function categorizeError(error: string): ErrorHint | null {
+  const e = error.toLowerCase();
+  if (e.includes("account is disconnected") || e.includes("account not found")) {
+    return { label: "What to do", body: "The connected social account was disconnected before this post was published.", action: { label: "Reconnect on Accounts page", href: "/projects/:id/accounts" } };
+  }
+  if (e.includes("token") && (e.includes("expired") || e.includes("invalid") || e.includes("revoked") || e.includes("unauthorized"))) {
+    return { label: "What to do", body: "The platform access token is no longer valid.", action: { label: "Reconnect on Accounts page", href: "/projects/:id/accounts" } };
+  }
+  if (e.includes("rate limit") || e.includes("too many requests") || e.includes("429")) {
+    return { label: "What to do", body: "The platform rate-limited this request. Wait a few minutes and retry." };
+  }
+  if (e.includes("instagram requires at least one")) {
+    return { label: "What to do", body: "Instagram does not support text-only posts. Attach at least one image or video." };
+  }
+  if (e.includes("duplicate") || e.includes("duplicate_post")) {
+    return { label: "Likely cause", body: "The platform rejected this post because the content looks like a duplicate of a recent post." };
+  }
+  return null;
+}
+
+function InlineStatusPill({ status }: { status: string }) {
+  return statusBadge(status);
 }
