@@ -172,7 +172,7 @@ export default function AdminPage() {
   if (!userLoaded || isAdmin === null) {
     return (
       <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}>
-        <div style={{ color: "#666" }}>Loading…</div>
+        <div style={{ color: "var(--dmuted)" }}>Loading…</div>
       </div>
     );
   }
@@ -181,7 +181,7 @@ export default function AdminPage() {
     return (
       <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 18, fontWeight: 600 }}>403 — Not authorized</div>
-        <div style={{ fontSize: 13, color: "#666" }}>This page is restricted to admins.</div>
+        <div style={{ fontSize: 13, color: "var(--dmuted)" }}>This page is restricted to admins.</div>
       </div>
     );
   }
@@ -231,7 +231,7 @@ export default function AdminPage() {
             <span className="ad-bc-cur">Dashboard</span>
           </div>
           <div className="ad-topbar-right">
-            <span style={{ fontSize: 11, color: "#666", fontFamily: "var(--font-geist-mono), monospace" }}>
+            <span style={{ fontSize: 11, color: "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>
               {loading ? "Loading…" : "Last updated: just now"}
             </span>
             <button className="ad-btn ad-btn-ghost" onClick={loadAll} disabled={loading}>
@@ -242,7 +242,7 @@ export default function AdminPage() {
 
         <div className="ad-content">
           {error && (
-            <div style={{ background: "#ef444412", border: "1px solid #ef444430", borderRadius: 8, padding: 12, marginBottom: 16, color: "#ef4444", fontSize: 13 }}>
+            <div style={{ background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 22%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
               {error}
             </div>
           )}
@@ -272,7 +272,7 @@ export default function AdminPage() {
               sub={
                 stats ? (
                   <>
-                    Failed rate: <span style={{ color: failedPct > 5 ? "#ef4444" : "#f59e0b" }}>{failedPct.toFixed(1)}%</span>
+                    Failed rate: <span style={{ color: failedPct > 5 ? "var(--danger)" : "var(--warning)" }}>{failedPct.toFixed(1)}%</span>
                   </>
                 ) : (
                   "—"
@@ -353,9 +353,9 @@ export default function AdminPage() {
               </thead>
               <tbody>
                 {loading && users.length === 0 ? (
-                  <tr><td colSpan={9} style={{ padding: 24, color: "#666", textAlign: "center" }}>Loading…</td></tr>
+                  <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
                 ) : users.length === 0 ? (
-                  <tr><td colSpan={9} style={{ padding: 24, color: "#666", textAlign: "center" }}>No users found</td></tr>
+                  <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
                 ) : (
                   users.map((u) => {
                     const usagePct = u.post_limit > 0 ? Math.min(100, (u.posts_used / u.post_limit) * 100) : 0;
@@ -377,7 +377,7 @@ export default function AdminPage() {
                           {u.mrr_cents > 0 ? (
                             <span className="ad-mrr-chip">{fmtCents(u.mrr_cents)}</span>
                           ) : (
-                            <span style={{ color: "#3a3a3a", fontSize: 11 }}>—</span>
+                            <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>
                           )}
                         </td>
                         <td>{u.workspace_count}</td>
@@ -391,7 +391,7 @@ export default function AdminPage() {
                               ))}
                             </div>
                           ) : (
-                            <span style={{ color: "#3a3a3a", fontSize: 11 }}>—</span>
+                            <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>
                           )}
                         </td>
                         <td>
@@ -400,7 +400,7 @@ export default function AdminPage() {
                             <div className={`ad-usage-fill ${usageClass}`} style={{ width: `${usagePct}%` }} />
                           </div>
                         </td>
-                        <td style={{ color: "#666", fontSize: 11.5 }}>{fmtRelative(u.last_post_at)}</td>
+                        <td style={{ color: "var(--dmuted)", fontSize: 11.5 }}>{fmtRelative(u.last_post_at)}</td>
                         <td>
                           <button
                             className="ad-btn ad-btn-ghost"
@@ -429,7 +429,7 @@ export default function AdminPage() {
                 </div>
 
                 {detailLoading && !detail ? (
-                  <div style={{ color: "#666", fontSize: 13 }}>Loading…</div>
+                  <div style={{ color: "var(--dmuted)", fontSize: 13 }}>Loading…</div>
                 ) : detail ? (
                   <>
                     <div className="ad-panel-section">
@@ -455,7 +455,7 @@ export default function AdminPage() {
                       <PanelRow
                         k="Posts used (this month)"
                         v={
-                          <span style={{ color: detail.post_limit > 0 && detail.posts_used_this_month / detail.post_limit > 0.7 ? "#f59e0b" : undefined }}>
+                          <span style={{ color: detail.post_limit > 0 && detail.posts_used_this_month / detail.post_limit > 0.7 ? "var(--warning)" : undefined }}>
                             {fmtNumber(detail.posts_used_this_month)} / {fmtNumber(detail.post_limit || 100)}
                           </span>
                         }
@@ -477,7 +477,7 @@ export default function AdminPage() {
                       <PanelRow k="Total posts (all time)" v={fmtNumber(detail.total_posts)} />
                       <PanelRow
                         k="Failed posts (30d)"
-                        v={<span style={{ color: detail.failed_posts_30d > 0 ? "#f59e0b" : undefined }}>{fmtNumber(detail.failed_posts_30d)}</span>}
+                        v={<span style={{ color: detail.failed_posts_30d > 0 ? "var(--warning)" : undefined }}>{fmtNumber(detail.failed_posts_30d)}</span>}
                       />
                     </div>
 
@@ -506,7 +506,7 @@ export default function AdminPage() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, padding: "0 2px" }}>
-            <span style={{ fontSize: 12, color: "#666" }}>
+            <span style={{ fontSize: 12, color: "var(--dmuted)" }}>
               Showing {users.length === 0 ? 0 : offset + 1}–{offset + users.length} of {fmtNumber(total)} users
             </span>
             <div style={{ display: "flex", gap: 6 }}>
@@ -552,13 +552,13 @@ function StatCard({
   return (
     <div className="ad-stat-card">
       <div className="ad-stat-label">{label}</div>
-      <div className="ad-stat-value" style={{ color: valueColor === "accent" ? "#10b981" : undefined }}>
+      <div className="ad-stat-value" style={{ color: valueColor === "accent" ? "var(--daccent)" : undefined }}>
         {value}
       </div>
       <div
         className="ad-stat-sub"
         style={{
-          color: subColor === "up" ? "#10b981" : subColor === "down" ? "#ef4444" : "#666",
+          color: subColor === "up" ? "var(--success)" : subColor === "down" ? "var(--danger)" : "var(--dmuted)",
         }}
       >
         {sub}
@@ -582,93 +582,93 @@ const shellStyle: React.CSSProperties = {
   display: "flex",
   height: "100vh",
   minHeight: 700,
-  background: "#080808",
-  color: "#ededed",
-  fontFamily: "system-ui, sans-serif",
+  background: "var(--bg)",
+  color: "var(--dtext)",
+  fontFamily: "var(--font-dm-sans), var(--font-geist-sans), system-ui, sans-serif",
   fontSize: 13,
   lineHeight: 1.5,
 };
 
 const adminCss = `
-.ad-sidebar { width: 200px; min-width: 200px; background: #0f0f0f; border-right: 1px solid #1f1f1f; display: flex; flex-direction: column; }
-.ad-sb-logo { display: flex; align-items: center; gap: 8px; padding: 14px 14px 12px; border-bottom: 1px solid #1f1f1f; }
+.ad-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--dborder); display: flex; flex-direction: column; }
+.ad-sb-logo { display: flex; align-items: center; gap: 8px; padding: 14px 14px 12px; border-bottom: 1px solid var(--dborder); }
 .ad-sb-mark { width: 22px; height: 22px; background: #10b981; border-radius: 5px; display: flex; align-items: center; justify-content: center; }
-.ad-sb-mark svg { width: 11px; height: 11px; color: #000; }
+.ad-sb-mark svg { width: 11px; height: 11px; color: var(--primary-foreground); }
 .ad-sb-name { font-size: 13px; font-weight: 700; letter-spacing: -0.3px; }
-.ad-sb-badge { font-size: 9px; font-weight: 700; background: #ef444420; color: #ef4444; border: 1px solid #ef444430; border-radius: 3px; padding: 1px 5px; font-family: var(--font-geist-mono), monospace; letter-spacing: 0.05em; }
+.ad-sb-badge { font-size: 9px; font-weight: 700; background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent); border-radius: 3px; padding: 1px 5px; font-family: var(--font-geist-mono), monospace; letter-spacing: 0.05em; }
 .ad-nav { padding: 10px 8px; flex: 1; }
-.ad-nav-label { font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #3a3a3a; padding: 0 6px; margin: 10px 0 3px; }
-.ad-nav-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 6px; color: #666; font-size: 12px; margin-bottom: 1px; border: 1px solid transparent; }
-.ad-nav-active { background: #10b98115; color: #10b981; border-color: #10b98118; font-weight: 500; }
-.ad-nav-disabled { color: #444; cursor: not-allowed; }
-.ad-sb-footer { padding: 8px; border-top: 1px solid #1f1f1f; }
+.ad-nav-label { font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dmuted2); padding: 0 6px; margin: 10px 0 3px; }
+.ad-nav-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 6px; color: var(--dmuted); font-size: 12px; margin-bottom: 1px; border: 1px solid transparent; }
+.ad-nav-active { background: var(--accent-dim); color: var(--daccent); border-color: color-mix(in srgb, var(--primary) 18%, transparent); font-weight: 500; }
+.ad-nav-disabled { color: var(--dmuted2); cursor: not-allowed; }
+.ad-sb-footer { padding: 8px; border-top: 1px solid var(--dborder); }
 .ad-sb-user { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 6px; }
-.ad-sb-ava { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #000; flex-shrink: 0; }
-.ad-sb-email { font-size: 11px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ad-sb-ava { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: var(--primary-foreground); flex-shrink: 0; }
+.ad-sb-email { font-size: 11px; color: var(--dmuted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .ad-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-.ad-topbar { height: 44px; border-bottom: 1px solid #1f1f1f; display: flex; align-items: center; padding: 0 20px; gap: 8px; flex-shrink: 0; justify-content: space-between; }
-.ad-bc { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #666; }
-.ad-bc-sep { color: #3a3a3a; }
-.ad-bc-cur { color: #ededed; font-weight: 500; }
+.ad-topbar { height: 44px; border-bottom: 1px solid var(--dborder); display: flex; align-items: center; padding: 0 20px; gap: 8px; flex-shrink: 0; justify-content: space-between; }
+.ad-bc { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dmuted); }
+.ad-bc-sep { color: var(--dmuted2); }
+.ad-bc-cur { color: var(--dtext); font-weight: 500; }
 .ad-topbar-right { display: flex; align-items: center; gap: 8px; }
 .ad-content { flex: 1; overflow-y: auto; padding: 20px 24px; }
 
 .ad-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid transparent; font-family: inherit; white-space: nowrap; }
-.ad-btn-ghost { background: transparent; color: #666; border-color: #2a2a2a; }
-.ad-btn-ghost:hover:not(:disabled) { background: #141414; color: #ededed; }
+.ad-btn-ghost { background: transparent; color: var(--dmuted); border-color: var(--dborder2); }
+.ad-btn-ghost:hover:not(:disabled) { background: var(--surface2); color: var(--dtext); }
 .ad-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .ad-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
-.ad-stat-card { background: #0f0f0f; border: 1px solid #1f1f1f; border-radius: 8px; padding: 14px 16px; }
-.ad-stat-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600; margin-bottom: 6px; }
-.ad-stat-value { font-family: var(--font-geist-mono), monospace; font-size: 22px; font-weight: 700; color: #ededed; letter-spacing: -0.5px; }
+.ad-stat-card { background: var(--surface); border: 1px solid var(--dborder); border-radius: 8px; padding: 14px 16px; }
+.ad-stat-label { font-size: 10px; color: var(--dmuted); text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600; margin-bottom: 6px; }
+.ad-stat-value { font-family: var(--font-geist-mono), monospace; font-size: 22px; font-weight: 700; color: var(--dtext); letter-spacing: -0.5px; }
 .ad-stat-sub { font-size: 11px; margin-top: 3px; }
 
 .ad-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .ad-section-title { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; }
 
 .ad-filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-.ad-search { background: #141414; border: 1px solid #2a2a2a; border-radius: 6px; color: #ededed; font-size: 12px; padding: 6px 10px; font-family: inherit; outline: none; width: 220px; }
-.ad-search:focus { border-color: #10b98150; }
-.ad-search::placeholder { color: #3a3a3a; }
-.ad-filter-bar select { background: #141414; border: 1px solid #2a2a2a; border-radius: 6px; color: #ededed; font-size: 12px; padding: 5px 10px; font-family: inherit; outline: none; cursor: pointer; }
-.ad-filter-bar select:focus { border-color: #10b98150; }
+.ad-search { background: var(--surface2); border: 1px solid var(--dborder2); border-radius: 6px; color: var(--dtext); font-size: 12px; padding: 6px 10px; font-family: inherit; outline: none; width: 220px; }
+.ad-search:focus { border-color: color-mix(in srgb, var(--primary) 32%, transparent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.ad-search::placeholder { color: var(--dmuted2); }
+.ad-filter-bar select { background: var(--surface2); border: 1px solid var(--dborder2); border-radius: 6px; color: var(--dtext); font-size: 12px; padding: 5px 10px; font-family: inherit; outline: none; cursor: pointer; }
+.ad-filter-bar select:focus { border-color: color-mix(in srgb, var(--primary) 32%, transparent); box-shadow: 0 0 0 3px var(--focus-ring); }
 
-.ad-tbl-wrap { border: 1px solid #1f1f1f; border-radius: 8px; overflow: hidden; }
+.ad-tbl-wrap { border: 1px solid var(--dborder); border-radius: 8px; overflow: hidden; background: var(--surface); }
 .ad-tbl-wrap table { width: 100%; border-collapse: collapse; }
-.ad-tbl-wrap thead { background: #141414; }
-.ad-tbl-wrap th { padding: 8px 12px; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #666; border-bottom: 1px solid #1f1f1f; white-space: nowrap; }
-.ad-tbl-wrap td { padding: 10px 12px; font-size: 12px; border-bottom: 1px solid #1f1f1f; color: #ededed; }
+.ad-tbl-wrap thead { background: var(--surface2); }
+.ad-tbl-wrap th { padding: 8px 12px; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dmuted); border-bottom: 1px solid var(--dborder); white-space: nowrap; }
+.ad-tbl-wrap td { padding: 10px 12px; font-size: 12px; border-bottom: 1px solid var(--dborder); color: var(--dtext); }
 .ad-tbl-wrap tr:last-child td { border-bottom: none; }
 .ad-tbl-wrap tbody tr { cursor: pointer; }
-.ad-tbl-wrap tbody tr:hover { background: #141414; }
+.ad-tbl-wrap tbody tr:hover { background: var(--surface2); }
 
-.ad-mono { font-family: var(--font-geist-mono), monospace; font-size: 11px; color: #666; }
+.ad-mono { font-family: var(--font-geist-mono), monospace; font-size: 11px; color: var(--dmuted); }
 .ad-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 20px; font-size: 10.5px; font-weight: 600; font-family: var(--font-geist-mono), monospace; }
-.ad-b-blue { background: #3b82f612; color: #3b82f6; border: 1px solid #3b82f620; }
-.ad-b-gray { background: #1a1a1a; color: #666; border: 1px solid #2a2a2a; }
-.ad-mrr-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #10b981; font-family: var(--font-geist-mono), monospace; background: #10b98115; border: 1px solid #10b98120; padding: 1px 6px; border-radius: 3px; }
+.ad-b-blue { background: var(--info-soft); color: var(--info); border: 1px solid color-mix(in srgb, var(--info) 22%, transparent); }
+.ad-b-gray { background: var(--surface2); color: var(--dmuted); border: 1px solid var(--dborder2); }
+.ad-mrr-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--success); font-family: var(--font-geist-mono), monospace; background: var(--success-soft); border: 1px solid color-mix(in srgb, var(--success) 20%, transparent); padding: 1px 6px; border-radius: 3px; }
 
 .ad-plat-icons { display: flex; gap: 3px; flex-wrap: wrap; }
-.ad-plat-dot { width: 18px; height: 18px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; background: #1a1a1a; border: 1px solid #2a2a2a; }
+.ad-plat-dot { width: 18px; height: 18px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; background: var(--surface2); border: 1px solid var(--dborder2); }
 
-.ad-usage-bar { height: 3px; background: #1a1a1a; border-radius: 2px; overflow: hidden; margin-top: 3px; width: 60px; }
+.ad-usage-bar { height: 3px; background: var(--surface3); border-radius: 2px; overflow: hidden; margin-top: 3px; width: 60px; }
 .ad-usage-fill { height: 100%; border-radius: 2px; }
 .ad-uf-g { background: #10b981; }
 .ad-uf-a { background: #f59e0b; }
 .ad-uf-r { background: #ef4444; }
 
-.ad-detail-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 360px; background: #0f0f0f; border-left: 1px solid #1f1f1f; padding: 20px; overflow-y: auto; z-index: 10; animation: ad-slideIn 0.18s ease-out; }
+.ad-detail-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 360px; background: var(--surface-raised); border-left: 1px solid var(--dborder); padding: 20px; overflow-y: auto; z-index: 10; animation: ad-slideIn 0.18s ease-out; box-shadow: -12px 0 32px color-mix(in srgb, var(--shadow-color) 90%, transparent); }
 @keyframes ad-slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 .ad-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .ad-panel-title { font-size: 14px; font-weight: 600; word-break: break-all; }
-.ad-close-btn { background: none; border: none; color: #666; cursor: pointer; font-size: 16px; padding: 2px; }
-.ad-close-btn:hover { color: #ededed; }
+.ad-close-btn { background: none; border: none; color: var(--dmuted); cursor: pointer; font-size: 16px; padding: 2px; }
+.ad-close-btn:hover { color: var(--dtext); }
 .ad-panel-section { margin-bottom: 18px; }
-.ad-panel-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #3a3a3a; font-weight: 700; margin-bottom: 10px; }
-.ad-panel-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #1f1f1f; gap: 12px; }
+.ad-panel-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dmuted2); font-weight: 700; margin-bottom: 10px; }
+.ad-panel-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--dborder); gap: 12px; }
 .ad-panel-row:last-child { border-bottom: none; }
-.ad-panel-key { font-size: 12px; color: #666; }
-.ad-panel-val { font-size: 12px; color: #ededed; text-align: right; max-width: 200px; word-break: break-all; }
+.ad-panel-key { font-size: 12px; color: var(--dmuted); }
+.ad-panel-val { font-size: 12px; color: var(--dtext); text-align: right; max-width: 200px; word-break: break-all; }
 `;
