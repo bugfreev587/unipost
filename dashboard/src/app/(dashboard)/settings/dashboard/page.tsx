@@ -118,7 +118,7 @@ export default function DashboardSettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">Dashboard Features</div>
         <div className="settings-section-body">
-          <div style={{ fontSize: 13, color: "var(--dmuted)", marginBottom: 16, lineHeight: 1.6 }}>
+          <div className="dt-body-sm" style={{ marginBottom: 16, lineHeight: 1.6 }}>
             Choose which workflow modes are active. The dashboard sidebar will
             show only the features relevant to your selected modes. Changes take
             effect after you click Save and refresh the page.
@@ -185,17 +185,11 @@ export default function DashboardSettingsTab() {
                     )}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: "var(--dtext)",
-                        marginBottom: 3,
-                      }}
-                    >
+                    <div className="dt-body" style={{ fontWeight: 600, marginBottom: 3 }}>
+
                       {mode.title}
                     </div>
-                    <div style={{ fontSize: 12.5, color: "var(--dmuted)", lineHeight: 1.5 }}>
+                    <div className="dt-body-sm" style={{ lineHeight: 1.5 }}>
                       {mode.description}
                     </div>
                     {mode.features.length > 0 && (
@@ -211,7 +205,7 @@ export default function DashboardSettingsTab() {
                           <span
                             key={f}
                             style={{
-                              fontSize: 10.5,
+                              fontSize: 11,
                               padding: "2px 8px",
                               borderRadius: 4,
                               background: active
@@ -240,7 +234,7 @@ export default function DashboardSettingsTab() {
                 borderRadius: 6,
                 background: "#f59e0b10",
                 border: "1px solid #f59e0b25",
-                fontSize: 12.5,
+                fontSize: 13,
                 color: "var(--warning)",
               }}
             >

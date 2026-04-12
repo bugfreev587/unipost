@@ -78,14 +78,14 @@ export default function WorkspaceSettingsTab() {
             </div>
           </form>
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>
+            <span className="dt-label-plain">
               Workspace ID
             </span>
             <span className="mono">{workspace.id}</span>
           </div>
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Created</span>
-            <span style={{ fontSize: 13, color: "var(--dtext)" }}>
+            <span className="dt-label-plain">Created</span>
+            <span className="dt-body-sm" style={{ color: "var(--dtext)" }}>
               {new Date(workspace.created_at).toLocaleDateString("en-US", {
                 month: "long",
                 day: "numeric",
@@ -100,7 +100,7 @@ export default function WorkspaceSettingsTab() {
         <div className="settings-section-header">All Workspaces</div>
         <div className="settings-section-body">
           {workspaces.length === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--dmuted)" }}>No workspaces yet.</div>
+            <div className="dt-body-sm">No workspaces yet.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {workspaces.map((ws) => {
@@ -119,13 +119,8 @@ export default function WorkspaceSettingsTab() {
                     }}
                   >
                     <div>
-                      <div
-                        style={{
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: "var(--dtext)",
-                        }}
-                      >
+                      <div className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)" }}>
+
                         {ws.name}
                         {isCurrent && (
                           <span
@@ -171,17 +166,11 @@ export default function WorkspaceSettingsTab() {
             }}
           >
             <div>
-              <div
-                style={{
-                  fontSize: 14,
-                  fontWeight: 500,
-                  marginBottom: 3,
-                  color: "var(--dtext)",
-                }}
-              >
+              <div className="dt-body" style={{ fontWeight: 500, marginBottom: 3 }}>
+
                 Create New Workspace
               </div>
-              <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
+              <div className="dt-body-sm">
                 Separate security boundary with its own API keys, billing, and posts.
               </div>
             </div>
@@ -197,17 +186,11 @@ export default function WorkspaceSettingsTab() {
             }}
           >
             <div>
-              <div
-                style={{
-                  fontSize: 14,
-                  fontWeight: 500,
-                  marginBottom: 3,
-                  color: "var(--dtext)",
-                }}
-              >
+              <div className="dt-body" style={{ fontWeight: 500, marginBottom: 3 }}>
+
                 Switch Workspace
               </div>
-              <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
+              <div className="dt-body-sm">
                 Switch between your workspaces.
               </div>
             </div>
@@ -229,17 +212,11 @@ export default function WorkspaceSettingsTab() {
             }}
           >
             <div>
-              <div
-                style={{
-                  fontSize: 14,
-                  fontWeight: 500,
-                  marginBottom: 3,
-                  color: "var(--dtext)",
-                }}
-              >
+              <div className="dt-body" style={{ fontWeight: 500, marginBottom: 3 }}>
+
                 Delete Workspace
               </div>
-              <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
+              <div className="dt-body-sm">
                 {onlyWorkspace
                   ? "Cannot delete your only workspace. Default workspaces (auto-created at signup) also cannot be deleted."
                   : "Deleting a workspace removes all its profiles, accounts, and posts."}

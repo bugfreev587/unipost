@@ -35,28 +35,28 @@ const CSS = `.dbadge-gray{background:#ffffff08;color:#666;border:1px solid #333}
 .posts-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
 .posts-filters{display:flex;align-items:center;gap:8px;margin-bottom:16px}
 .posts-search{display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;padding:0 10px;height:32px;flex:0 1 240px}
-.posts-search input{background:none;border:none;outline:none;color:var(--dtext);font-size:12.5px;font-family:inherit;width:100%}
+.posts-search input{background:none;border:none;outline:none;color:var(--dtext);font-size:13px;font-family:inherit;width:100%}
 .posts-search input::placeholder{color:var(--dmuted2)}
 .posts-search svg{color:var(--dmuted2);flex-shrink:0}
-.posts-select{background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;padding:0 10px;height:32px;color:var(--dtext);font-size:12.5px;font-family:inherit;cursor:pointer;outline:none}
+.posts-select{background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;padding:0 10px;height:32px;color:var(--dtext);font-size:13px;font-family:inherit;cursor:pointer;outline:none}
 .posts-select:focus{border-color:var(--daccent)}
 .posts-row{cursor:pointer;transition:background .1s}
 .posts-row:hover{background:var(--surface2)}
-.posts-caption{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:360px;font-size:13.5px;color:var(--dtext)}
+.posts-caption{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:360px;font-size:14px;color:var(--dtext)}
 .posts-plats{display:flex;gap:3px;align-items:center}
 .posts-plats-more{font-size:10px;color:var(--dmuted2);font-weight:600}
-.posts-time{font-size:12.5px;color:var(--dmuted)}
+.posts-time{font-size:13px;color:var(--dmuted)}
 .posts-actions{position:relative}
 .posts-actions-btn{background:none;border:1px solid transparent;border-radius:4px;padding:4px;cursor:pointer;color:var(--dmuted2);transition:all .1s;display:flex;align-items:center}
 .posts-actions-btn:hover{background:var(--surface2);border-color:var(--dborder);color:var(--dtext)}
 .posts-menu{position:absolute;right:0;top:100%;margin-top:4px;background:#1a1a1e;border:1px solid var(--dborder);border-radius:8px;padding:4px;min-width:180px;z-index:20;box-shadow:0 8px 24px #00000080}
-.posts-menu-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px;font-size:12.5px;color:var(--dmuted);cursor:pointer;transition:all .1s;border:none;background:none;width:100%;text-align:left;font-family:inherit}
+.posts-menu-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px;font-size:13px;color:var(--dmuted);cursor:pointer;transition:all .1s;border:none;background:none;width:100%;text-align:left;font-family:inherit}
 .posts-menu-item:hover{background:var(--surface2);color:var(--dtext)}
 .posts-menu-item svg{width:13px;height:13px;flex-shrink:0}
 .posts-menu-item.danger{color:#ef4444}
 .posts-menu-item.danger:hover{background:#ef444410}
 .posts-empty{text-align:center;padding:60px 20px}
-.posts-empty-title{font-size:15px;font-weight:600;color:var(--dtext);margin-bottom:6px}
+.posts-empty-title{font-size:16px;font-weight:600;color:var(--dtext);margin-bottom:6px}
 .posts-empty-sub{font-size:13px;color:var(--dmuted)}`;
 
 export default function PostsPage() {
@@ -196,8 +196,8 @@ export default function PostsPage() {
       {/* Header */}
       <div className="posts-header">
         <div>
-          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Posts</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Published and scheduled content</div>
+          <div className="dt-page-title">Posts</div>
+          <div className="dt-subtitle">Published and scheduled content</div>
         </div>
         <button className="dbtn dbtn-primary" style={{ gap: 5 }} onClick={() => setShowCreateModal(true)}>
           <Plus style={{ width: 14, height: 14 }} /> Create

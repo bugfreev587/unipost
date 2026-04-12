@@ -119,7 +119,7 @@ function BillingSettingsContent() {
             borderRadius: 6,
             background: "#10b98110",
             border: "1px solid #10b98125",
-            fontSize: 12.5,
+            fontSize: 13,
             color: "var(--daccent)",
             marginBottom: 20,
           }}
@@ -145,27 +145,12 @@ function BillingSettingsContent() {
 
       <div className="stat-grid">
         <div className="stat-card">
-          <div
-            style={{
-              fontSize: 11,
-              color: "var(--dmuted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              fontWeight: 600,
-              marginBottom: 8,
-            }}
-          >
+          <div className="dt-label" style={{ marginBottom: 8 }}>
+
             Posts This Month
           </div>
-          <div
-            style={{
-              fontFamily: "var(--font-geist-mono), monospace",
-              fontSize: 22,
-              fontWeight: 600,
-              color: "var(--dtext)",
-              letterSpacing: -0.5,
-            }}
-          >
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
+
             {used.toLocaleString()}
           </div>
           <div style={{ margin: "8px 0 4px" }}>
@@ -178,7 +163,7 @@ function BillingSettingsContent() {
           </div>
           <div
             style={{
-              fontSize: 11.5,
+              fontSize: 12,
               color: pct >= 80 ? "var(--warning)" : "var(--dmuted)",
             }}
           >
@@ -186,58 +171,28 @@ function BillingSettingsContent() {
           </div>
         </div>
         <div className="stat-card">
-          <div
-            style={{
-              fontSize: 11,
-              color: "var(--dmuted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              fontWeight: 600,
-              marginBottom: 8,
-            }}
-          >
+          <div className="dt-label" style={{ marginBottom: 8 }}>
+
             Current Plan
           </div>
-          <div
-            style={{
-              fontFamily: "var(--font-geist-mono), monospace",
-              fontSize: 22,
-              fontWeight: 600,
-              color: "var(--dtext)",
-              letterSpacing: -0.5,
-            }}
-          >
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
+
             {billing?.plan_name || "Free"}
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 4 }}>
             {billing?.period || ""}
           </div>
         </div>
         <div className="stat-card">
-          <div
-            style={{
-              fontSize: 11,
-              color: "var(--dmuted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              fontWeight: 600,
-              marginBottom: 8,
-            }}
-          >
+          <div className="dt-label" style={{ marginBottom: 8 }}>
+
             Status
           </div>
-          <div
-            style={{
-              fontFamily: "var(--font-geist-mono), monospace",
-              fontSize: 22,
-              fontWeight: 600,
-              color: "var(--dtext)",
-              letterSpacing: -0.5,
-            }}
-          >
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
+
             {billing?.status || "active"}
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 4 }}>
             Unlimited accounts
           </div>
         </div>
@@ -253,7 +208,7 @@ function BillingSettingsContent() {
             border: `1px solid ${
               billing.warning === "over_limit" ? "#ef444425" : "#f59e0b25"
             }`,
-            fontSize: 12.5,
+            fontSize: 13,
             color:
               billing.warning === "over_limit" ? "var(--danger)" : "var(--warning)",
           }}
@@ -266,14 +221,14 @@ function BillingSettingsContent() {
 
       <div style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--dtext)" }}>Upgrade Plan</div>
+          <div className="dt-body" style={{ fontWeight: 600 }}>Upgrade Plan</div>
           {billing?.trial_eligible && billing?.plan === "free" && (
             <span className="dbadge dbadge-green" style={{ fontSize: 10 }}>
               14-day free trial
             </span>
           )}
         </div>
-        <div style={{ color: "var(--dmuted)", fontSize: 12.5 }}>
+        <div className="dt-body-sm">
           All plans include the same features. Only post volume differs.
         </div>
       </div>
@@ -316,7 +271,7 @@ function BillingSettingsContent() {
                   /mo
                 </span>
               </div>
-              <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 4 }}>
                 {plan.post_limit.toLocaleString()} posts
               </div>
               {!isCurrent && plan.id !== "free" && (
@@ -378,7 +333,7 @@ function BillingSettingsContent() {
                     /mo
                   </span>
                 </div>
-                <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 4 }}>
                   {plan.post_limit.toLocaleString()} posts
                 </div>
                 {!isCurrent && (

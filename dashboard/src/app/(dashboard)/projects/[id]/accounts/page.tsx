@@ -110,20 +110,20 @@ export default function AccountsPage() {
   return (
     <>
       {callbackStatus === "success" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "#10b98110", border: "1px solid #10b98125", fontSize: 12.5, color: "var(--daccent)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "#10b98110", border: "1px solid #10b98125", fontSize: 13, color: "var(--daccent)", marginBottom: 20 }}>
           <CheckCircle2 style={{ width: 14, height: 14 }} /> Connected {callbackAccount || "account"} successfully.
         </div>
       )}
       {callbackStatus === "error" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "#ef444410", border: "1px solid #ef444425", fontSize: 12.5, color: "var(--danger)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "#ef444410", border: "1px solid #ef444425", fontSize: 13, color: "var(--danger)", marginBottom: 20 }}>
           <XCircle style={{ width: 14, height: 14 }} /> Failed to connect. Please try again.
         </div>
       )}
 
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Quickstart Mode</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6, maxWidth: 520, lineHeight: 1.6 }}>Connect social accounts instantly — no developer approvals or platform credentials needed. UniPost handles OAuth so you can start posting in minutes.</div>
+          <div className="dt-page-title">Quickstart Mode</div>
+          <div className="dt-subtitle" style={{ maxWidth: 520, lineHeight: 1.6 }}>Connect social accounts instantly — no developer approvals or platform credentials needed. UniPost handles OAuth so you can start posting in minutes.</div>
           {profiles.length > 1 && (
             <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
               <button
@@ -159,7 +159,7 @@ export default function AccountsPage() {
             {/* Profile selector */}
             {profiles.length > 1 && !selectedPlatform && (
               <div style={{ padding: "0 0 4px", borderBottom: "1px solid var(--dborder)", marginBottom: 4 }}>
-                <label style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--dmuted2)", display: "block", marginBottom: 6 }}>
+                <label className="dt-label" style={{ color: "var(--dmuted2)", display: "block", marginBottom: 6 }}>
                   Add to profile
                 </label>
                 <select
@@ -195,11 +195,11 @@ export default function AccountsPage() {
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <div className="platform-icon-wrap"><PlatformIcon platform={p.id} /></div>
-                        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dtext)" }}>{p.name}</span>
+                        <span className="dt-body-sm" style={{ fontWeight: 500, color: "var(--dtext)" }}>{p.name}</span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         {connectedCount > 0 && (
-                          <span style={{ fontSize: 11, color: "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>
+                          <span className="dt-micro" style={{ fontFamily: "var(--font-geist-mono), monospace" }}>
                             {connectedCount} connected
                           </span>
                         )}
@@ -219,7 +219,7 @@ export default function AccountsPage() {
                   <Label className="dform-label">App Password</Label>
                   <Input type="password" placeholder="xxxx-xxxx-xxxx-xxxx" value={appPassword} onChange={(e) => setAppPassword(e.target.value)} className="dform-input" />
                 </div>
-                <div style={{ fontSize: 11, color: "var(--dmuted2)" }}>Generate at bsky.app → Settings → App Passwords</div>
+                <div className="dt-micro" style={{ color: "var(--dmuted2)" }}>Generate at bsky.app → Settings → App Passwords</div>
                 {connectError && <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 8 }}>{connectError}</div>}
               </div>
             ) : null}
@@ -255,7 +255,7 @@ export default function AccountsPage() {
                       <span style={{ fontWeight: 500 }}>{a.account_name || a.id}</span>
                     </div>
                   </td>
-                  <td style={{ color: "var(--dmuted)", fontSize: 12.5 }}>
+                  <td style={{ color: "var(--dmuted)", fontSize: 13 }}>
                     {profiles.find((p) => p.id === a.profile_id)?.name || "—"}
                   </td>
                   <td style={{ color: "var(--dmuted)", textTransform: "capitalize" }}>{a.platform}</td>
@@ -269,7 +269,7 @@ export default function AccountsPage() {
                     </span>
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 11.5 }} onClick={() => setDisconnectTarget(a.id)}>
+                    <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setDisconnectTarget(a.id)}>
                       Disconnect
                     </button>
                   </td>

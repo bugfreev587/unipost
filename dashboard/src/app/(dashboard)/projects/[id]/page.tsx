@@ -82,11 +82,11 @@ export default function ProfileOverviewPage() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>
+            <div className="dt-page-title">
               {profile.name}
             </div>
           </div>
-          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 11, color: "var(--dmuted2)", marginTop: 4 }}>
+          <div className="dt-micro" style={{ fontFamily: "var(--font-geist-mono), monospace", color: "var(--dmuted2)", marginTop: 4 }}>
             {profile.id}
           </div>
         </div>
@@ -100,10 +100,10 @@ export default function ProfileOverviewPage() {
       {/* Stats */}
       <div className="stat-grid">
         <div className="stat-card">
-          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>
+          <div className="dt-label" style={{ marginBottom: 8 }}>
             Posts This Month
           </div>
-          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
             {billing?.usage ?? 0}
           </div>
           {billing && (
@@ -113,29 +113,29 @@ export default function ProfileOverviewPage() {
                   <div className={`usage-bar-fill ${barClass}`} style={{ width: `${usagePct}%` }} />
                 </div>
               </div>
-              <div style={{ fontSize: 11.5, color: usagePct >= 80 ? "var(--warning)" : "var(--dmuted)" }}>
+              <div style={{ fontSize: 12, color: usagePct >= 80 ? "var(--warning)" : "var(--dmuted)" }}>
                 {billing.usage} / {billing.limit} &middot; {Math.round(billing.percentage)}%
               </div>
             </>
           )}
         </div>
         <div className="stat-card">
-          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>
+          <div className="dt-label" style={{ marginBottom: 8 }}>
             Connected Accounts
           </div>
-          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
             {accounts.length}
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>Unlimited on all plans</div>
+          <div className="dt-micro" style={{ marginTop: 4 }}>Unlimited on all plans</div>
         </div>
         <div className="stat-card">
-          <div style={{ fontSize: 11, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>
+          <div className="dt-label" style={{ marginBottom: 8 }}>
             API Keys
           </div>
-          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, color: "var(--dtext)", letterSpacing: -0.5 }}>
+          <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
             {keys.length}
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 4 }}>{posts.length} total posts</div>
+          <div className="dt-micro" style={{ marginTop: 4 }}>{posts.length} total posts</div>
         </div>
       </div>
 
@@ -164,8 +164,8 @@ export default function ProfileOverviewPage() {
             >
               <Icon style={{ width: 16, height: 16, color: "var(--dmuted2)" }} strokeWidth={1.75} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--dtext)" }}>{item.label}</div>
-                <div style={{ fontSize: 11.5, color: "var(--dmuted2)" }}>{item.desc}</div>
+                <div className="dt-body-sm" style={{ fontWeight: 500, color: "var(--dtext)" }}>{item.label}</div>
+                <div className="dt-micro" style={{ color: "var(--dmuted2)" }}>{item.desc}</div>
               </div>
               <ChevronRight style={{ width: 14, height: 14, color: "var(--dmuted2)" }} />
             </Link>

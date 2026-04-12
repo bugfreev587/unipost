@@ -197,13 +197,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 </div>
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--dtext)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
-                <div style={{ fontSize: 11, fontWeight: 500, color: "var(--daccent)" }}>{planName}</div>
+                <div className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
+                <div className="dt-micro" style={{ color: "var(--daccent)" }}>{planName}</div>
               </div>
               <ChevronDown style={{ width: 14, height: 14, color: "var(--dmuted2)", flexShrink: 0 }} />
             </DropdownMenuTrigger>
             <DropdownMenuContent side="bottom" align="start" sideOffset={4} className="w-[210px]">
-              <div style={{ padding: "10px 14px 8px", fontSize: 12, color: "var(--dmuted)", lineHeight: 1.5 }}>
+              <div className="dt-mono" style={{ padding: "10px 14px 8px", lineHeight: 1.5 }}>
                 Signed in as<br />
                 <span style={{ color: "var(--dtext)", fontWeight: 500 }}>{user?.primaryEmailAddress?.emailAddress || ""}</span>
               </div>
@@ -283,11 +283,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                             <Link
                               key={sub.href}
                               href={`/projects/${profileId}${sub.href}`}
+                              className="dt-body-sm"
                               style={{
                                 display: "block",
                                 padding: "6px 12px",
                                 borderRadius: 6,
-                                fontSize: 13,
                                 fontWeight: subActive ? 600 : 400,
                                 color: subActive ? "var(--daccent)" : "#888",
                                 textDecoration: "none",
@@ -345,8 +345,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             }}
           >
             <span
+              className="dt-mono"
               style={{
-                flex: 1, fontSize: 12, fontWeight: 500, color: "var(--dmuted)",
+                flex: 1,
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}
             >

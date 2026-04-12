@@ -358,8 +358,8 @@ export default function AnalyticsPage() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Analytics</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>
+          <div className="dt-page-title">Analytics</div>
+          <div className="dt-subtitle">
             Post performance and engagement metrics
           </div>
         </div>
@@ -671,14 +671,7 @@ function KPICard({ label, value, color, change, subtext, subtextColor, footnote 
   const ch = change !== undefined ? formatChange(change) : null;
   return (
     <div className="stat-card">
-      <div style={{
-        fontSize: 11,
-        color: "var(--dmuted)",
-        textTransform: "uppercase",
-        letterSpacing: "0.06em",
-        fontWeight: 600,
-        marginBottom: 8,
-      }}>
+      <div className="dt-label" style={{ marginBottom: 8 }}>
         {label}
       </div>
       <div style={{
@@ -1556,10 +1549,10 @@ function EmptyState() {
   return (
     <div className="empty-state" style={{ padding: 60, textAlign: "center" }}>
       <BarChart3 style={{ width: 32, height: 32, color: "var(--dmuted2)", marginBottom: 12 }} />
-      <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 4 }}>
+      <div className="dt-body" style={{ fontWeight: 500, marginBottom: 4 }}>
         No posts yet
       </div>
-      <div style={{ fontSize: 12.5, color: "var(--dmuted)", lineHeight: 1.6 }}>
+      <div className="dt-body-sm" style={{ lineHeight: 1.6 }}>
         Post performance and engagement metrics will appear here once you publish your first post.
       </div>
     </div>

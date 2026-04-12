@@ -85,30 +85,30 @@ export default function AccountSettingsPage() {
         <div className="settings-section-header">Profile</div>
         <div className="settings-section-body">
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Name</span>
-            <span style={{ fontSize: 13, color: "var(--dtext)" }}>{displayName}</span>
+            <span className="dt-label-plain">Name</span>
+            <span className="dt-body-sm" style={{ color: "var(--dtext)" }}>{displayName}</span>
           </div>
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Email</span>
-            <span style={{ fontSize: 13, color: "var(--dtext)" }}>{primaryEmail}</span>
+            <span className="dt-label-plain">Email</span>
+            <span className="dt-body-sm" style={{ color: "var(--dtext)" }}>{primaryEmail}</span>
           </div>
           {orgName && (
             <div className="settings-row">
-              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>
+              <span className="dt-label-plain">
                 Organization
               </span>
-              <span style={{ fontSize: 13, color: "var(--dtext)" }}>{orgName}</span>
+              <span className="dt-body-sm" style={{ color: "var(--dtext)" }}>{orgName}</span>
             </div>
           )}
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>User ID</span>
+            <span className="dt-label-plain">User ID</span>
             <span className="mono">{user.id}</span>
           </div>
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--dborder)" }}>
             <button
               className="dbtn dbtn-ghost"
               onClick={() => openUserProfile()}
-              style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}
+              style={{ fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}
             >
               Manage email, password, and 2FA
               <ExternalLink style={{ width: 11, height: 11 }} />
@@ -129,17 +129,10 @@ export default function AccountSettingsPage() {
             }}
           >
             <div>
-              <div
-                style={{
-                  fontSize: 14,
-                  fontWeight: 500,
-                  marginBottom: 3,
-                  color: "var(--dtext)",
-                }}
-              >
+              <div className="dt-body" style={{ fontWeight: 500, marginBottom: 3 }}>
                 Delete Account
               </div>
-              <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
+              <div className="dt-body-sm">
                 Permanently delete your account and all associated data. This cannot be undone.
               </div>
             </div>
@@ -236,7 +229,7 @@ export default function AccountSettingsPage() {
                   borderRadius: 6,
                   background: "#ef444410",
                   border: "1px solid #ef444425",
-                  fontSize: 12.5,
+                  fontSize: 13,
                   color: "var(--danger)",
                 }}
               >
