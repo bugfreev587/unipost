@@ -60,6 +60,14 @@ interface Props {
   editDraft?: SocialPost | null;
 }
 
+type CreatePostPayload = {
+  caption?: string;
+  account_ids?: string[];
+  platform_posts?: Array<{ account_id: string; caption: string }>;
+  scheduled_at?: string;
+  draft?: boolean;
+};
+
 export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCreated, editDraft }: Props) {
   const [caption, setCaption] = useState(editDraft?.caption || "");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {

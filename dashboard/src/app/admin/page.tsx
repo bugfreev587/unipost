@@ -12,19 +12,7 @@ import {
   type AdminUserListParams,
   type AdminUserRow,
 } from "@/lib/api";
-
-// ── platform → emoji (mockup uses these as identicons) ───────────────
-const PLATFORM_ICON: Record<string, string> = {
-  bluesky: "🦋",
-  linkedin: "💼",
-  instagram: "📸",
-  threads: "🧵",
-  facebook: "👤",
-  tiktok: "🎵",
-  youtube: "▶️",
-  twitter: "🐦",
-};
-const platformEmoji = (p: string) => PLATFORM_ICON[p.toLowerCase()] || "•";
+import { PlatformIcon } from "@/components/platform-icons";
 
 // ── format helpers ───────────────────────────────────────────────────
 const fmtCents = (cents: number) => {
@@ -387,7 +375,7 @@ export default function AdminPage() {
                           {u.platforms.length > 0 ? (
                             <div className="ad-plat-icons">
                               {u.platforms.map((p) => (
-                                <div key={p} className="ad-plat-dot" title={p}>{platformEmoji(p)}</div>
+                                <div key={p} className="ad-plat-dot" title={p}><PlatformIcon platform={p} size={14} /></div>
                               ))}
                             </div>
                           ) : (
@@ -470,7 +458,7 @@ export default function AdminPage() {
                         k="Connected platforms"
                         v={
                           detail.platforms.length > 0
-                            ? detail.platforms.map(platformEmoji).join(" ")
+                            ? <span style={{ display: "inline-flex", gap: 4 }}>{detail.platforms.map((p) => <PlatformIcon key={p} platform={p} size={14} />)}</span>
                             : "—"
                         }
                       />

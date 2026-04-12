@@ -51,19 +51,19 @@
 :root {
   color-scheme: light;
 
-  --app-bg: #f3f5f9;
+  --app-bg: #f5f7fb;
   --surface: #ffffff;
-  --surface2: #f5f7fb;
-  --surface3: #ebeff5;
+  --surface2: #f7f9fc;
+  --surface3: #eef2f7;
   --surface-raised: #ffffff;
-  --surface-inset: #e9eef5;
+  --surface-inset: #edf2f7;
   --text: #0f172a;
-  --text-muted: #5f6f86;
-  --text-subtle: #8794a8;
-  --border-soft: #dde4ee;
-  --border-strong: #cad4e1;
+  --text-muted: #667085;
+  --text-subtle: #98a2b3;
+  --border-soft: #e6eaf0;
+  --border-strong: #d6dce5;
   --overlay: rgb(15 23 42 / 0.42);
-  --shadow-color: rgb(15 23 42 / 0.1);
+  --shadow-color: rgb(15 23 42 / 0.12);
 
   --primary: #10b981;
   --primary-hover: #0ea371;
@@ -76,8 +76,8 @@
   --danger-soft: rgb(220 38 38 / 0.1);
   --info: #2563eb;
   --info-soft: rgb(37 99 235 / 0.12);
-  --focus-ring: rgb(16 185 129 / 0.16);
-  --accent-dim: rgb(16 185 129 / 0.11);
+  --focus-ring: rgb(16 185 129 / 0.18);
+  --accent-dim: rgb(16 185 129 / 0.12);
   --accent-glow: rgb(16 185 129 / 0.08);
 
   --bg: var(--app-bg);
@@ -111,11 +111,11 @@
   --chart-4: #7c3aed;
   --chart-5: var(--danger);
   --radius: 6px;
-  --sidebar: #f8fafc;
-  --sidebar-foreground: #55657d;
+  --sidebar: #fbfcfe;
+  --sidebar-foreground: var(--text-muted);
   --sidebar-primary: var(--text);
   --sidebar-primary-foreground: var(--surface);
-  --sidebar-accent: #eef3f8;
+  --sidebar-accent: var(--surface2);
   --sidebar-accent-foreground: var(--text);
   --sidebar-border: var(--border-soft);
   --sidebar-ring: var(--primary);
@@ -371,10 +371,10 @@
   font-weight: 500;
   font-family: var(--font-geist-mono), monospace;
 }
-.dbadge-green { background: color-mix(in srgb, var(--success-soft) 88%, white); color: color-mix(in srgb, var(--success) 92%, #0b1220); border: 1px solid color-mix(in srgb, var(--success) 26%, transparent); }
-.dbadge-red   { background: color-mix(in srgb, var(--danger-soft) 88%, white); color: color-mix(in srgb, var(--danger) 92%, #0b1220); border: 1px solid color-mix(in srgb, var(--danger) 26%, transparent); }
-.dbadge-blue  { background: color-mix(in srgb, var(--info-soft) 88%, white); color: color-mix(in srgb, var(--info) 92%, #0b1220); border: 1px solid color-mix(in srgb, var(--info) 26%, transparent); }
-.dbadge-amber { background: color-mix(in srgb, var(--warning-soft) 88%, white); color: color-mix(in srgb, var(--warning) 92%, #0b1220); border: 1px solid color-mix(in srgb, var(--warning) 26%, transparent); }
+.dbadge-green { background: var(--success-soft); color: var(--success); border: 1px solid color-mix(in srgb, var(--success) 24%, transparent); }
+.dbadge-red   { background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent); }
+.dbadge-blue  { background: var(--info-soft); color: var(--info); border: 1px solid color-mix(in srgb, var(--info) 24%, transparent); }
+.dbadge-amber { background: var(--warning-soft); color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 24%, transparent); }
 .dbadge-gray  { background: color-mix(in srgb, var(--surface2) 82%, white); color: var(--dmuted); border: 1px solid var(--dborder); }
 .dbadge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
@@ -507,7 +507,7 @@
   cursor: pointer;
   transition: all 0.15s;
 }
-.plan-card:hover { border-color: var(--dborder2); background: color-mix(in srgb, var(--surface3) 78%, white); }
+.plan-card:hover { border-color: var(--dborder2); background: var(--surface3); }
 .plan-card.current { border-color: color-mix(in srgb, var(--primary) 24%, transparent); background: var(--accent-glow); }
 
 /* ── Stat cards ── */
