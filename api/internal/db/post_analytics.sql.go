@@ -307,6 +307,18 @@ func (q *Queries) GetDuePostAnalyticsRefresh(ctx context.Context) ([]GetDuePostA
 	return items, nil
 }
 
+const touchPostAnalyticsFetchedAt = `-- name: TouchPostAnalyticsFetchedAt :exec
+INSERT INTO post_analytics (social_post_result_id, fetched_at)
+VALUES ($1, NOW())
+ON CONFLICT (social_post_result_id) DO UPDATE
+SET fetched_at = NOW()
+`
+
+func (q *Queries) TouchPostAnalyticsFetchedAt(ctx context.Context, socialPostResultID string) error {
+	_, err := q.db.Exec(ctx, touchPostAnalyticsFetchedAt, socialPostResultID)
+	return err
+}
+
 const getPostAnalytics = `-- name: GetPostAnalytics :one
 SELECT id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific FROM post_analytics WHERE social_post_result_id = $1
 `

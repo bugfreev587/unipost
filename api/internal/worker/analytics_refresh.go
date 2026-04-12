@@ -191,6 +191,11 @@ func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePost
 	if metErr != nil {
 		slog.Warn("analytics refresh: GetAnalytics failed",
 			"result_id", r.SocialPostResultID, "platform", r.Platform, "error", metErr)
+		// Touch fetched_at so the tier-based TTL applies and we don't
+		// hammer a permanently-gone post every hour. Uses a separate
+		// query that only bumps fetched_at, preserving any real metrics
+		// from a prior successful fetch (important for transient errors).
+		_ = w.queries.TouchPostAnalyticsFetchedAt(ctx, r.SocialPostResultID)
 		return
 	}
 

@@ -20,6 +20,16 @@ SET views             = EXCLUDED.views,
     fetched_at        = NOW()
 RETURNING *;
 
+-- name: TouchPostAnalyticsFetchedAt :exec
+-- Bump fetched_at so the tier-based refresh TTL kicks in after a
+-- failed platform fetch. Inserts a minimal row if none exists yet;
+-- when a row already exists the ON CONFLICT only touches fetched_at,
+-- preserving any real metrics from a prior successful fetch.
+INSERT INTO post_analytics (social_post_result_id, fetched_at)
+VALUES ($1, NOW())
+ON CONFLICT (social_post_result_id) DO UPDATE
+SET fetched_at = NOW();
+
 -- name: GetPostAnalytics :one
 SELECT * FROM post_analytics WHERE social_post_result_id = $1;
 
