@@ -56,8 +56,8 @@
   --dborder:   #1f1f1f;
   --dborder2:  #2a2a2a;
   --dtext:     #ededed;
-  --dmuted:    #666666;
-  --dmuted2:   #444444;
+  --dmuted:    #888888;
+  --dmuted2:   #555555;
   --daccent:   #10b981;
   --accent-dim:#10b98120;
   --accent-glow:#10b98108;
@@ -76,7 +76,7 @@
   --secondary: #141414;
   --secondary-foreground: #999999;
   --muted: #141414;
-  --muted-foreground: #666666;
+  --muted-foreground: #888888;
   --accent: #141414;
   --accent-foreground: #ededed;
   --destructive: #ef4444;
@@ -90,7 +90,7 @@
   --chart-5: #ef4444;
   --radius: 6px;
   --sidebar: #0f0f0f;
-  --sidebar-foreground: #666666;
+  --sidebar-foreground: #888888;
   --sidebar-primary: #ededed;
   --sidebar-primary-foreground: #0f0f0f;
   --sidebar-accent: #141414;
@@ -111,7 +111,7 @@
   --secondary: #141414;
   --secondary-foreground: #999999;
   --muted: #141414;
-  --muted-foreground: #666666;
+  --muted-foreground: #888888;
   --accent: #141414;
   --accent-foreground: #ededed;
   --destructive: #ef4444;
@@ -119,7 +119,7 @@
   --input: #2a2a2a;
   --ring: #10b981;
   --sidebar: #0f0f0f;
-  --sidebar-foreground: #666666;
+  --sidebar-foreground: #888888;
   --sidebar-primary: #ededed;
   --sidebar-primary-foreground: #0f0f0f;
   --sidebar-accent: #141414;
@@ -192,8 +192,8 @@
   padding: 10px 12px;
   border-radius: 8px;
   cursor: pointer;
-  color: #b0b0b0;
-  font-size: 14.5px;
+  color: #c8c8c8;
+  font-size: 15px;
   font-weight: 500;
   transition: all 0.15s;
   margin-bottom: 4px;
@@ -221,7 +221,7 @@
 .table-wrap th {
   padding: 12px 20px;
   text-align: left;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -230,7 +230,7 @@
 }
 .table-wrap td {
   padding: 14px 20px;
-  font-size: 14px;
+  font-size: 14.5px;
   border-bottom: 1px solid var(--dborder);
   color: var(--dtext);
   line-height: 1.5;
@@ -246,7 +246,7 @@
   gap: 5px;
   padding: 2px 8px;
   border-radius: 20px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   font-family: var(--font-geist-mono), monospace;
 }
@@ -263,7 +263,7 @@
   gap: 6px;
   padding: 6px 14px;
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
@@ -293,14 +293,14 @@
 .dbtn svg { width: 13px; height: 13px; }
 
 /* ── Forms ── */
-.dform-label { display: block; font-size: 13px; font-weight: 500; color: var(--dmuted); margin-bottom: 6px; }
+.dform-label { display: block; font-size: 14px; font-weight: 500; color: var(--dmuted); margin-bottom: 6px; }
 .dform-input {
   width: 100%;
   background: var(--surface2);
   border: 1px solid var(--dborder2);
   border-radius: 6px;
   color: var(--dtext);
-  font-size: 13px;
+  font-size: 14px;
   padding: 8px 12px;
   font-family: inherit;
   outline: none;
@@ -323,7 +323,7 @@
 }
 .key-value {
   font-family: var(--font-geist-mono), monospace;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--daccent);
   flex: 1;
   overflow: hidden;
@@ -335,7 +335,7 @@
   border: 1px solid #f59e0b25;
   border-radius: 6px;
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--warning);
   margin-bottom: 12px;
   display: flex;
@@ -350,7 +350,7 @@
   color: var(--dmuted);
   border-radius: 4px;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
   font-family: inherit;
   transition: all 0.15s;
@@ -413,7 +413,7 @@
 .settings-section-header {
   padding: 14px 18px;
   border-bottom: 1px solid var(--dborder);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--dtext);
   display: flex; align-items: center; justify-content: space-between;
@@ -445,7 +445,7 @@
   width: fit-content;
 }
 .dtab {
-  padding: 5px 14px; border-radius: 5px; font-size: 13px; font-weight: 500;
+  padding: 5px 14px; border-radius: 5px; font-size: 14px; font-weight: 500;
   cursor: pointer; color: var(--dmuted); transition: all 0.1s;
 }
 .dtab.active { background: var(--surface3); color: var(--dtext); box-shadow: 0 1px 3px #0005; }
