@@ -1259,6 +1259,27 @@ function ResultCard({
         </div>
       )}
 
+      {/* Analytics refresh failure warning */}
+      {!isFailed && metrics && metrics.consecutive_failures >= 3 && (
+        <div
+          style={{
+            fontSize: 11,
+            color: "#f59e0b",
+            background: "rgba(245,158,11,0.08)",
+            border: "1px solid rgba(245,158,11,0.2)",
+            borderRadius: 6,
+            padding: "6px 10px",
+            marginBottom: 8,
+            lineHeight: 1.5,
+          }}
+          title={metrics.last_failure_reason || ""}
+        >
+          Analytics temporarily unavailable — the platform has returned errors
+          for the last {metrics.consecutive_failures} refresh attempts. Data
+          below may be outdated.
+        </div>
+      )}
+
       {/* Published with analytics → full per-platform breakdown */}
       {!isFailed && metrics && (
         <>

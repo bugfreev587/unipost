@@ -308,19 +308,26 @@ func (q *Queries) GetDuePostAnalyticsRefresh(ctx context.Context) ([]GetDuePostA
 }
 
 const touchPostAnalyticsFetchedAt = `-- name: TouchPostAnalyticsFetchedAt :exec
-INSERT INTO post_analytics (social_post_result_id, fetched_at)
-VALUES ($1, NOW())
+INSERT INTO post_analytics (social_post_result_id, fetched_at, consecutive_failures, last_failure_reason)
+VALUES ($1, NOW(), 1, $2)
 ON CONFLICT (social_post_result_id) DO UPDATE
-SET fetched_at = NOW()
+SET fetched_at           = NOW(),
+    consecutive_failures = post_analytics.consecutive_failures + 1,
+    last_failure_reason  = $2
 `
 
-func (q *Queries) TouchPostAnalyticsFetchedAt(ctx context.Context, socialPostResultID string) error {
-	_, err := q.db.Exec(ctx, touchPostAnalyticsFetchedAt, socialPostResultID)
+type TouchPostAnalyticsFetchedAtParams struct {
+	SocialPostResultID string `json:"social_post_result_id"`
+	LastFailureReason  string `json:"last_failure_reason"`
+}
+
+func (q *Queries) TouchPostAnalyticsFetchedAt(ctx context.Context, arg TouchPostAnalyticsFetchedAtParams) error {
+	_, err := q.db.Exec(ctx, touchPostAnalyticsFetchedAt, arg.SocialPostResultID, arg.LastFailureReason)
 	return err
 }
 
 const getPostAnalytics = `-- name: GetPostAnalytics :one
-SELECT id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific FROM post_analytics WHERE social_post_result_id = $1
+SELECT id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific, consecutive_failures, last_failure_reason FROM post_analytics WHERE social_post_result_id = $1
 `
 
 func (q *Queries) GetPostAnalytics(ctx context.Context, socialPostResultID string) (PostAnalytic, error) {
@@ -342,6 +349,8 @@ func (q *Queries) GetPostAnalytics(ctx context.Context, socialPostResultID strin
 		&i.Clicks,
 		&i.VideoViews,
 		&i.PlatformSpecific,
+		&i.ConsecutiveFailures,
+		&i.LastFailureReason,
 	)
 	return i, err
 }
@@ -353,20 +362,22 @@ INSERT INTO post_analytics (
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (social_post_result_id) DO UPDATE
-SET views             = EXCLUDED.views,
-    likes             = EXCLUDED.likes,
-    comments          = EXCLUDED.comments,
-    shares            = EXCLUDED.shares,
-    reach             = EXCLUDED.reach,
-    impressions       = EXCLUDED.impressions,
-    saves             = EXCLUDED.saves,
-    clicks            = EXCLUDED.clicks,
-    video_views       = EXCLUDED.video_views,
-    platform_specific = EXCLUDED.platform_specific,
-    engagement_rate   = EXCLUDED.engagement_rate,
-    raw_data          = EXCLUDED.raw_data,
-    fetched_at        = NOW()
-RETURNING id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific
+SET views                = EXCLUDED.views,
+    likes                = EXCLUDED.likes,
+    comments             = EXCLUDED.comments,
+    shares               = EXCLUDED.shares,
+    reach                = EXCLUDED.reach,
+    impressions          = EXCLUDED.impressions,
+    saves                = EXCLUDED.saves,
+    clicks               = EXCLUDED.clicks,
+    video_views          = EXCLUDED.video_views,
+    platform_specific    = EXCLUDED.platform_specific,
+    engagement_rate      = EXCLUDED.engagement_rate,
+    raw_data             = EXCLUDED.raw_data,
+    fetched_at           = NOW(),
+    consecutive_failures = 0,
+    last_failure_reason  = NULL
+RETURNING id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific, consecutive_failures, last_failure_reason
 `
 
 type UpsertPostAnalyticsParams struct {
@@ -418,6 +429,8 @@ func (q *Queries) UpsertPostAnalytics(ctx context.Context, arg UpsertPostAnalyti
 		&i.Clicks,
 		&i.VideoViews,
 		&i.PlatformSpecific,
+		&i.ConsecutiveFailures,
+		&i.LastFailureReason,
 	)
 	return i, err
 }

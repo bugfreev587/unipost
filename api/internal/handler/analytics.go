@@ -25,22 +25,24 @@ func NewAnalyticsHandler(queries *db.Queries, encryptor *crypto.AESEncryptor) *A
 }
 
 type analyticsResponse struct {
-	PostID           string         `json:"post_id"`
-	SocialAccountID  string         `json:"social_account_id"`
-	Platform         string         `json:"platform"`
-	ExternalID       string         `json:"external_id"`
-	Impressions      int64          `json:"impressions"`
-	Reach            int64          `json:"reach"`
-	Likes            int64          `json:"likes"`
-	Comments         int64          `json:"comments"`
-	Shares           int64          `json:"shares"`
-	Saves            int64          `json:"saves"`
-	Clicks           int64          `json:"clicks"`
-	VideoViews       int64          `json:"video_views"`
-	Views            int64          `json:"views"` // legacy alias for video_views; phased out in PR 5
-	EngagementRate   float64        `json:"engagement_rate"`
-	PlatformSpecific map[string]any `json:"platform_specific,omitempty"`
-	FetchedAt        string         `json:"fetched_at"`
+	PostID              string         `json:"post_id"`
+	SocialAccountID     string         `json:"social_account_id"`
+	Platform            string         `json:"platform"`
+	ExternalID          string         `json:"external_id"`
+	Impressions         int64          `json:"impressions"`
+	Reach               int64          `json:"reach"`
+	Likes               int64          `json:"likes"`
+	Comments            int64          `json:"comments"`
+	Shares              int64          `json:"shares"`
+	Saves               int64          `json:"saves"`
+	Clicks              int64          `json:"clicks"`
+	VideoViews          int64          `json:"video_views"`
+	Views               int64          `json:"views"` // legacy alias for video_views; phased out in PR 5
+	EngagementRate      float64        `json:"engagement_rate"`
+	PlatformSpecific    map[string]any `json:"platform_specific,omitempty"`
+	FetchedAt           string         `json:"fetched_at"`
+	ConsecutiveFailures int32          `json:"consecutive_failures"`
+	LastFailureReason   string         `json:"last_failure_reason,omitempty"`
 }
 
 // computeEngagementRate implements the unified PRD §9.1 formula:
@@ -99,21 +101,23 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 				_ = json.Unmarshal(cached.PlatformSpecific, &ps)
 			}
 			analytics = append(analytics, analyticsResponse{
-				PostID:           post.ID,
-				SocialAccountID:  res.SocialAccountID,
-				ExternalID:       res.ExternalID.String,
-				Impressions:      cached.Impressions.Int64,
-				Reach:            cached.Reach.Int64,
-				Likes:            cached.Likes.Int64,
-				Comments:         cached.Comments.Int64,
-				Shares:           cached.Shares.Int64,
-				Saves:            cached.Saves.Int64,
-				Clicks:           cached.Clicks.Int64,
-				VideoViews:       cached.VideoViews.Int64,
-				Views:            cached.Views.Int64,
-				EngagementRate:   float64FromNumeric(cached.EngagementRate),
-				PlatformSpecific: ps,
-				FetchedAt:        cached.FetchedAt.Time.Format(time.RFC3339),
+				PostID:              post.ID,
+				SocialAccountID:     res.SocialAccountID,
+				ExternalID:          res.ExternalID.String,
+				Impressions:         cached.Impressions.Int64,
+				Reach:               cached.Reach.Int64,
+				Likes:               cached.Likes.Int64,
+				Comments:            cached.Comments.Int64,
+				Shares:              cached.Shares.Int64,
+				Saves:               cached.Saves.Int64,
+				Clicks:              cached.Clicks.Int64,
+				VideoViews:          cached.VideoViews.Int64,
+				Views:               cached.Views.Int64,
+				EngagementRate:      float64FromNumeric(cached.EngagementRate),
+				PlatformSpecific:    ps,
+				FetchedAt:           cached.FetchedAt.Time.Format(time.RFC3339),
+				ConsecutiveFailures: cached.ConsecutiveFailures,
+				LastFailureReason:   cached.LastFailureReason.String,
 			})
 			continue
 		}

@@ -102,7 +102,9 @@ type PostAnalytic struct {
 	Saves              pgtype.Int8        `json:"saves"`
 	Clicks             pgtype.Int8        `json:"clicks"`
 	VideoViews         pgtype.Int8        `json:"video_views"`
-	PlatformSpecific   []byte             `json:"platform_specific"`
+	PlatformSpecific    []byte             `json:"platform_specific"`
+	ConsecutiveFailures int32              `json:"consecutive_failures"`
+	LastFailureReason   pgtype.Text        `json:"last_failure_reason"`
 }
 
 type Profile struct {

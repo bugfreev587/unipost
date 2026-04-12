@@ -580,6 +580,8 @@ export interface PostAnalytics {
   engagement_rate: number;
   platform_specific?: Record<string, unknown>;
   fetched_at: string;
+  consecutive_failures: number;
+  last_failure_reason?: string;
 }
 
 export async function getPostAnalytics(

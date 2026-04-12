@@ -5,30 +5,35 @@ INSERT INTO post_analytics (
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (social_post_result_id) DO UPDATE
-SET views             = EXCLUDED.views,
-    likes             = EXCLUDED.likes,
-    comments          = EXCLUDED.comments,
-    shares            = EXCLUDED.shares,
-    reach             = EXCLUDED.reach,
-    impressions       = EXCLUDED.impressions,
-    saves             = EXCLUDED.saves,
-    clicks            = EXCLUDED.clicks,
-    video_views       = EXCLUDED.video_views,
-    platform_specific = EXCLUDED.platform_specific,
-    engagement_rate   = EXCLUDED.engagement_rate,
-    raw_data          = EXCLUDED.raw_data,
-    fetched_at        = NOW()
+SET views                = EXCLUDED.views,
+    likes                = EXCLUDED.likes,
+    comments             = EXCLUDED.comments,
+    shares               = EXCLUDED.shares,
+    reach                = EXCLUDED.reach,
+    impressions          = EXCLUDED.impressions,
+    saves                = EXCLUDED.saves,
+    clicks               = EXCLUDED.clicks,
+    video_views          = EXCLUDED.video_views,
+    platform_specific    = EXCLUDED.platform_specific,
+    engagement_rate      = EXCLUDED.engagement_rate,
+    raw_data             = EXCLUDED.raw_data,
+    fetched_at           = NOW(),
+    consecutive_failures = 0,
+    last_failure_reason  = NULL
 RETURNING *;
 
 -- name: TouchPostAnalyticsFetchedAt :exec
 -- Bump fetched_at so the tier-based refresh TTL kicks in after a
 -- failed platform fetch. Inserts a minimal row if none exists yet;
--- when a row already exists the ON CONFLICT only touches fetched_at,
--- preserving any real metrics from a prior successful fetch.
-INSERT INTO post_analytics (social_post_result_id, fetched_at)
-VALUES ($1, NOW())
+-- when a row already exists the ON CONFLICT only touches fetched_at
+-- and the failure counter, preserving any real metrics from a prior
+-- successful fetch.
+INSERT INTO post_analytics (social_post_result_id, fetched_at, consecutive_failures, last_failure_reason)
+VALUES ($1, NOW(), 1, $2)
 ON CONFLICT (social_post_result_id) DO UPDATE
-SET fetched_at = NOW();
+SET fetched_at           = NOW(),
+    consecutive_failures = post_analytics.consecutive_failures + 1,
+    last_failure_reason  = $2;
 
 -- name: GetPostAnalytics :one
 SELECT * FROM post_analytics WHERE social_post_result_id = $1;
