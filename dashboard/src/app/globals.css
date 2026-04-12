@@ -144,6 +144,23 @@
   }
 }
 
+/* ── Dashboard typography tokens ──────────────────────────────────────
+   Type scale: 24 / 20 / 16 / 14 / 13 / 12 / 11
+   Font stack: DM Sans (body), Geist Mono (code/IDs/badges)
+   Use these classes to avoid inline fontSize/fontWeight scattered
+   across page components. Each token maps to one role in the UI
+   hierarchy so pages stay visually consistent. */
+.dt-page-title    { font-size: 24px; line-height: 32px; font-weight: 700; color: var(--dtext); letter-spacing: -0.5px; }
+.dt-section-title { font-size: 20px; line-height: 28px; font-weight: 700; color: var(--dtext); }
+.dt-card-title    { font-size: 16px; line-height: 24px; font-weight: 600; color: var(--dtext); }
+.dt-body          { font-size: 14px; line-height: 20px; color: var(--dtext); }
+.dt-body-sm       { font-size: 13px; line-height: 18px; color: var(--dmuted); }
+.dt-label         { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--dmuted); text-transform: uppercase; letter-spacing: 0.06em; }
+.dt-label-plain   { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--dmuted); }
+.dt-mono          { font-size: 12px; line-height: 16px; font-weight: 500; font-family: var(--font-geist-mono), monospace; color: var(--dmuted); }
+.dt-micro         { font-size: 11px; line-height: 16px; font-weight: 500; color: var(--dmuted); }
+.dt-subtitle      { font-size: 14px; line-height: 20px; color: #aaa; margin-top: 6px; }
+
 /* ── Mono ── */
 .mono {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
@@ -193,7 +210,7 @@
   border-radius: 8px;
   cursor: pointer;
   color: #c8c8c8;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   transition: all 0.15s;
   margin-bottom: 4px;
@@ -221,7 +238,7 @@
 .table-wrap th {
   padding: 12px 20px;
   text-align: left;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -230,7 +247,7 @@
 }
 .table-wrap td {
   padding: 14px 20px;
-  font-size: 14.5px;
+  font-size: 14px;
   border-bottom: 1px solid var(--dborder);
   color: var(--dtext);
   line-height: 1.5;
@@ -246,7 +263,7 @@
   gap: 5px;
   padding: 2px 8px;
   border-radius: 20px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   font-family: var(--font-geist-mono), monospace;
 }
@@ -263,7 +280,7 @@
   gap: 6px;
   padding: 6px 14px;
   border-radius: 6px;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
@@ -293,7 +310,7 @@
 .dbtn svg { width: 13px; height: 13px; }
 
 /* ── Forms ── */
-.dform-label { display: block; font-size: 14px; font-weight: 500; color: var(--dmuted); margin-bottom: 6px; }
+.dform-label { display: block; font-size: 13px; font-weight: 500; color: var(--dmuted); margin-bottom: 6px; }
 .dform-input {
   width: 100%;
   background: var(--surface2);
@@ -323,7 +340,7 @@
 }
 .key-value {
   font-family: var(--font-geist-mono), monospace;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--daccent);
   flex: 1;
   overflow: hidden;
@@ -350,7 +367,7 @@
   color: var(--dmuted);
   border-radius: 4px;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
   font-family: inherit;
   transition: all 0.15s;
@@ -413,7 +430,7 @@
 .settings-section-header {
   padding: 14px 18px;
   border-bottom: 1px solid var(--dborder);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--dtext);
   display: flex; align-items: center; justify-content: space-between;
@@ -445,7 +462,7 @@
   width: fit-content;
 }
 .dtab {
-  padding: 5px 14px; border-radius: 5px; font-size: 14px; font-weight: 500;
+  padding: 5px 14px; border-radius: 5px; font-size: 13px; font-weight: 500;
   cursor: pointer; color: var(--dmuted); transition: all 0.1s;
 }
 .dtab.active { background: var(--surface3); color: var(--dtext); box-shadow: 0 1px 3px #0005; }
