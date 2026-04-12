@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
 import { OnboardingTourProvider, TourTriggerButton } from "@/components/dashboard/onboarding-tour";
+import { ThemeToggle } from "@/components/theme-toggle";
 // useClerk kept for signOut
 import {
   DropdownMenu,
@@ -16,11 +17,9 @@ import {
 import { listProfiles, getWorkspace, getBilling, getMe, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
 import {
   Key,
-  Users,
   Send,
   BarChart3,
   ChevronDown,
-  ChevronsUpDown,
   Settings,
   Shield,
   Zap,
@@ -73,7 +72,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { getToken } = useAuth();
   const { user } = useUser();
-  const { signOut, openUserProfile } = useClerk();
+  const { signOut } = useClerk();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -96,16 +95,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   const navItems = filterNavItems(workspace?.usage_modes ?? []);
 
-  const loadProfiles = useCallback(async () => {
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const res = await listProfiles(token);
-      setProfiles(res.data);
-    } catch { /* silent */ }
-  }, [getToken]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await listProfiles(token);
+        if (!cancelled) setProfiles(res.data);
+      } catch { /* silent */ }
+    })();
 
-  useEffect(() => { loadProfiles(); }, [loadProfiles]);
+    return () => { cancelled = true; };
+  }, [getToken]);
 
   // Resolve admin status from the backend ADMIN_USERS allowlist. We
   // intentionally don't read a NEXT_PUBLIC_* env var here — keeping the
@@ -192,7 +194,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               {avatarUrl ? (
                 <img src={avatarUrl} alt="" style={{ width: 32, height: 32, borderRadius: "50%", flexShrink: 0, objectFit: "cover" }} />
               ) : (
-                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg, var(--daccent), #059669)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "#000", flexShrink: 0 }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg, var(--daccent), var(--primary-hover))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "var(--primary-foreground)", flexShrink: 0 }}>
                   {displayName.charAt(0).toUpperCase()}
                 </div>
               )}
@@ -220,6 +222,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuItem onClick={() => router.push("/contact")} style={{ padding: "10px 14px" }}>
                 <Mail style={{ width: 14, height: 14 }} /><span>Contact us</span>
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <span style={{ fontSize: 12, fontWeight: 500, color: "var(--dmuted)" }}>Theme</span>
+                <ThemeToggle />
+              </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => signOut({ redirectUrl: "https://unipost.dev" })} style={{ padding: "10px 14px" }}>
                 <LogOut style={{ width: 14, height: 14 }} /><span>Log out</span>
@@ -289,14 +296,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                                 borderRadius: 6,
                                 fontSize: 13,
                                 fontWeight: subActive ? 600 : 400,
-                                color: subActive ? "var(--daccent)" : "#888",
+                                color: subActive ? "var(--daccent)" : "var(--dmuted)",
                                 textDecoration: "none",
                                 transition: "all 0.1s",
                                 marginBottom: 2,
                                 background: subActive ? "var(--accent-dim)" : "transparent",
                               }}
                               onMouseEnter={(e) => { if (!subActive) { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--surface2)"; } }}
-                              onMouseLeave={(e) => { if (!subActive) { e.currentTarget.style.color = "#888"; e.currentTarget.style.background = "transparent"; } }}
+                              onMouseLeave={(e) => { if (!subActive) { e.currentTarget.style.color = "var(--dmuted)"; e.currentTarget.style.background = "transparent"; } }}
                             >
                               {sub.label}
                             </Link>
@@ -328,8 +335,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         {/* ── Take a tour ── */}
-        <div style={{ padding: "4px 10px" }}>
+        <div style={{ padding: "4px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <TourTriggerButton />
+          <ThemeToggle />
         </div>
 
         {/* ── Bottom: Workspace ── */}

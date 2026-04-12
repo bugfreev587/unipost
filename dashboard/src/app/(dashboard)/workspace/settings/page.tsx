@@ -46,19 +46,19 @@ export default function WorkspaceSettingsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await updateWorkspace(token, workspace.id, { name: workspace.name, usage_modes: modes } as any);
+      const res = await updateWorkspace(token, workspace.id, { name: workspace.name, usage_modes: modes });
       setWorkspace(res.data);
     } catch (err) { console.error("Failed to update:", err); }
   }
 
-  if (!workspace) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+  if (!workspace) return <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>;
 
   return (
     <>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>Workspace Settings</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Manage your workspace</div>
+          <div style={{ fontSize: 14, color: "var(--dmuted)", marginTop: 6 }}>Manage your workspace</div>
         </div>
       </div>
 
@@ -76,12 +76,12 @@ export default function WorkspaceSettingsPage() {
             </div>
           </form>
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Workspace ID</span>
+            <span style={{ fontSize: 12, lineHeight: "16px", fontWeight: 600, color: "var(--dmuted)" }}>Workspace ID</span>
             <span className="mono">{workspace.id}</span>
           </div>
           <div className="settings-row">
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--dmuted)" }}>Created</span>
-            <span style={{ fontSize: 13, color: "var(--dtext)" }}>
+            <span style={{ fontSize: 12, lineHeight: "16px", fontWeight: 600, color: "var(--dmuted)" }}>Created</span>
+            <span style={{ fontSize: 13, lineHeight: "18px", color: "var(--dtext)" }}>
               {new Date(workspace.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
             </span>
           </div>
@@ -115,11 +115,11 @@ export default function WorkspaceSettingsPage() {
                       : [...workspace.usage_modes, feature.id];
                     handleUsageModesChange(next);
                   }}
-                  style={{ marginTop: 2, accentColor: "#10b981" }}
+                  style={{ marginTop: 2, accentColor: "var(--primary)" }}
                 />
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 2 }}>{feature.label}</div>
-                  <div style={{ fontSize: 12.5, color: "var(--dmuted)" }}>{feature.desc}</div>
+                  <div style={{ fontSize: 13, color: "var(--dmuted)" }}>{feature.desc}</div>
                 </div>
               </label>
             );

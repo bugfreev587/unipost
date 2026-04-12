@@ -14,7 +14,7 @@ export default function QueuePage() {
       <p style={{ fontSize: 14, color: "var(--dmuted)", maxWidth: 400, lineHeight: 1.6, marginBottom: 24 }}>
         Scheduled posting queues are under development. Queues let you create a recurring posting schedule and automatically publish posts at the next available time slot.
       </p>
-      <a href="https://github.com/unipost-dev" target="_blank" rel="noopener noreferrer" className="dbtn dbtn-ghost" style={{ fontSize: 12 }}>
+      <a href="https://github.com/unipost-dev" target="_blank" rel="noopener noreferrer" className="dbtn dbtn-ghost" style={{ fontSize: 13 }}>
         View roadmap &rarr;
       </a>
     </div>

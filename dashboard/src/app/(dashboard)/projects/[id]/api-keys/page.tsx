@@ -90,7 +90,7 @@ export default function ApiKeysPage() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>API Keys</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>Manage authentication keys for your workspace</div>
+          <div style={{ fontSize: 14, color: "var(--dmuted)", marginTop: 6 }}>Manage authentication keys for your workspace</div>
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
@@ -146,7 +146,7 @@ export default function ApiKeysPage() {
           onClick={() => { setNewKey(null); setCopied(false); }}
           style={{
             position: "fixed", inset: 0, zIndex: 200,
-            background: "#000000aa", backdropFilter: "blur(4px)",
+            background: "var(--overlay)", backdropFilter: "blur(4px)",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}
         >
@@ -155,7 +155,7 @@ export default function ApiKeysPage() {
             style={{
               background: "var(--surface)", border: "1px solid var(--dborder2)",
               borderRadius: 12, width: 520, maxWidth: "90vw", padding: "24px 28px",
-              boxShadow: "0 20px 50px #00000060", animation: "slideUp 0.2s ease",
+              boxShadow: "0 20px 50px var(--shadow-color)", animation: "slideUp 0.2s ease",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
@@ -167,7 +167,7 @@ export default function ApiKeysPage() {
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 4L4 12M4 4l8 8" /></svg>
               </button>
             </div>
-            <div style={{ fontSize: 13, color: "#aaa", marginBottom: 20 }}>Copy this key now — it won&apos;t be shown again.</div>
+            <div style={{ fontSize: 13, color: "var(--dmuted)", marginBottom: 20 }}>Copy this key now — it won&apos;t be shown again.</div>
             <div className="key-warning">
               <AlertTriangle style={{ width: 14, height: 14, flexShrink: 0, marginTop: 1 }} />
               <span>Store this key securely. You won&apos;t be able to see it again.</span>
@@ -188,12 +188,12 @@ export default function ApiKeysPage() {
 
       {/* Table */}
       {loading ? (
-        <div style={{ color: "var(--dmuted)" }}>Loading...</div>
+        <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>
       ) : keys.length === 0 ? (
         <div className="empty-state">
           <Key style={{ width: 32, height: 32, opacity: 0.4, marginBottom: 12 }} />
           <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 6 }}>No API keys</div>
-          <div style={{ fontSize: 12.5, color: "var(--dmuted)", maxWidth: 280, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 13, color: "var(--dmuted)", maxWidth: 280, lineHeight: 1.6 }}>
             Create a key to start making API requests.
           </div>
           <button className="dbtn dbtn-primary" onClick={() => setCreateOpen(true)} style={{ marginTop: 16 }}>
@@ -233,7 +233,7 @@ export default function ApiKeysPage() {
                   <td style={{ textAlign: "right" }}>
                     <button
                       className="dbtn dbtn-danger"
-                      style={{ padding: "4px 10px", fontSize: 11.5 }}
+                      style={{ padding: "4px 10px", fontSize: 12 }}
                       onClick={() => setRevokeTarget(key.id)}
                     >
                       Revoke

@@ -90,14 +90,14 @@ export default function NativeModePage() {
 
   const configuredPlatforms = new Set(creds.map((c) => c.platform));
 
-  if (loading) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+  if (loading) return <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>;
 
   return (
     <>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>White-label Credentials</div>
-          <div style={{ fontSize: 14, color: "#aaa", marginTop: 6 }}>
+          <div style={{ fontSize: 14, color: "var(--dmuted)", marginTop: 6 }}>
             Configure your own platform credentials (Native mode). Users will see your app name during OAuth instead of &quot;UniPost&quot;.
           </div>
         </div>
@@ -106,7 +106,7 @@ export default function NativeModePage() {
       <WhiteLabelStats configuredCount={configuredPlatforms.size} totalPlatforms={CRED_PLATFORMS.length} />
 
       {credError && (
-        <div style={{ padding: "10px 14px", borderRadius: 8, background: "#ef444410", border: "1px solid #ef444425", fontSize: 13, color: "var(--danger)", marginBottom: 20 }}>
+        <div style={{ padding: "10px 14px", borderRadius: 8, background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", fontSize: 13, color: "var(--danger)", marginBottom: 20 }}>
           {credError}
         </div>
       )}

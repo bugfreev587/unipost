@@ -66,7 +66,7 @@ export default function ProfileOverviewPage() {
   }, [getToken, id]);
 
   if (loading) {
-    return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+    return <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>;
   }
 
   if (!profile) {
@@ -165,7 +165,7 @@ export default function ProfileOverviewPage() {
               <Icon style={{ width: 16, height: 16, color: "var(--dmuted2)" }} strokeWidth={1.75} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: "var(--dtext)" }}>{item.label}</div>
-                <div style={{ fontSize: 11.5, color: "var(--dmuted2)" }}>{item.desc}</div>
+                <div style={{ fontSize: 12, lineHeight: "16px", color: "var(--dmuted2)" }}>{item.desc}</div>
               </div>
               <ChevronRight style={{ width: 14, height: 14, color: "var(--dmuted2)" }} />
             </Link>

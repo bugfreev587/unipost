@@ -54,6 +54,6 @@ export default function DashboardRootPage() {
   }, [isLoaded, isSignedIn, getToken, router]);
 
   return (
-    <div style={{ color: "var(--dmuted)", fontSize: 13 }}>Loading...</div>
+    <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>
   );
 }
