@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef } from "react";
-import type { SocialAccount } from "@/lib/api";
+import type { CreateSocialPostPayload, SocialAccount } from "@/lib/api";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus } from "@/components/tools/platform-limits";
 
 // --- Types ---
@@ -330,11 +330,11 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
 
   // Not wrapped in useCallback — always reads latest state to avoid
   // stale closure issues with mediaItems/uploadedMediaIds.
-  function buildPayload() {
+  function buildPayload(): CreateSocialPostPayload {
     const accountIds = uniqueSelectedAccounts.map((a) => a.id);
     const hasOverrides = accountIds.some((id) => overrides[id]?.caption?.trim());
 
-    const payload: Record<string, unknown> = {};
+    const payload: CreateSocialPostPayload = {};
 
     // Read from ref to always get the absolute latest mediaItems
     const latestMediaItems = mediaItemsRef.current;
@@ -345,7 +345,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (hasOverrides || mediaIds) {
       payload.platform_posts = accountIds.map((id) => {
         const o = overrides[id];
-        const entry: Record<string, unknown> = {
+        const entry: NonNullable<CreateSocialPostPayload["platform_posts"]>[number] = {
           account_id: id,
           caption: o?.caption?.trim() || mainContent.trim(),
         };

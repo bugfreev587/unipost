@@ -219,7 +219,7 @@ export function OnboardingTourProvider({ children }: { children: React.ReactNode
         }),
         dot: (base, state) => ({
           ...base,
-          background: state.current ? "var(--primary)" : "var(--border-strong)",
+          background: state?.current ? "var(--primary)" : "var(--border-strong)",
           border: "none",
           width: 8,
           height: 8,

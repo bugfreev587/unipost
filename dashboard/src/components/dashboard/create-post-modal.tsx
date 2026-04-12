@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { X, Send, Calendar, FileText, Pencil } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus, STATUS_COLORS } from "@/components/tools/platform-limits";
-import type { SocialAccount, SocialPost } from "@/lib/api";
+import type { CreateSocialPostPayload, SocialAccount, SocialPost } from "@/lib/api";
 import { createSocialPost } from "@/lib/api";
 
 const CSS = `.cpm-overlay{position:fixed;inset:0;background:var(--overlay);z-index:50;animation:cpm-fade .15s ease}
@@ -60,14 +60,6 @@ interface Props {
   editDraft?: SocialPost | null;
 }
 
-type CreatePostPayload = {
-  caption?: string;
-  account_ids?: string[];
-  platform_posts?: Array<{ account_id: string; caption: string }>;
-  scheduled_at?: string;
-  draft?: boolean;
-};
-
 export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCreated, editDraft }: Props) {
   const [caption, setCaption] = useState(editDraft?.caption || "");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
@@ -108,7 +100,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
 
       // Build platform_posts if any overrides exist
       const hasOverrides = Object.values(overrides).some(v => v.trim());
-      const payload: CreatePostPayload = {};
+      const payload: CreateSocialPostPayload = {};
 
       if (hasOverrides) {
         payload.platform_posts = ids.map(id => ({

@@ -49,6 +49,24 @@ export interface ApiError {
   };
 }
 
+export interface CreateSocialPostPayload {
+  caption?: string;
+  account_ids?: string[];
+  media_urls?: string[];
+  scheduled_at?: string;
+  status?: "draft";
+  platform_posts?: Array<{
+    account_id: string;
+    caption: string;
+    media_urls?: string[];
+    media_ids?: string[];
+    platform_options?: Record<string, unknown>;
+    in_reply_to?: string;
+    thread_position?: number;
+    first_comment?: string;
+  }>;
+}
+
 // Client
 
 async function request<T>(
@@ -386,7 +404,7 @@ export async function listPlans(): Promise<ApiResponse<Plan[]>> {
 export async function createSocialPost(
   token: string,
   workspaceId: string,
-  data: { caption: string; account_ids: string[]; media_urls?: string[]; scheduled_at?: string }
+  data: CreateSocialPostPayload
 ): Promise<ApiResponse<SocialPost>> {
   return request(`/v1/workspaces/${workspaceId}/social-posts`, token, {
     method: "POST",
