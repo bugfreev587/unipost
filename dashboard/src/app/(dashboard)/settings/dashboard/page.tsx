@@ -95,7 +95,7 @@ export default function DashboardSettingsTab() {
       });
       setWorkspace(res.data);
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      setTimeout(() => window.location.reload(), 600);
     } catch (err) {
       console.error("Failed to save:", err);
     } finally {
