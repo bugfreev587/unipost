@@ -1531,14 +1531,6 @@ function StatusPill({ status }: { status: string }) {
 
 // ─── EmptyState ────────────────────────────────────────────────────────────
 
-const CURL_EXAMPLE = `curl -X POST https://api.unipost.dev/v1/social-posts \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "caption": "Hello from UniPost! 🚀",
-    "account_ids": ["sa_instagram_123"]
-  }'`;
-
 function EmptyState() {
   return (
     <div className="empty-state" style={{ padding: 60, textAlign: "center" }}>
@@ -1546,24 +1538,9 @@ function EmptyState() {
       <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 4 }}>
         No posts yet
       </div>
-      <div style={{ fontSize: 12.5, color: "var(--dmuted)", marginBottom: 24 }}>
-        Start posting via the API to see your analytics here.
+      <div style={{ fontSize: 12.5, color: "var(--dmuted)", lineHeight: 1.6 }}>
+        Post performance and engagement metrics will appear here once you publish your first post.
       </div>
-      <pre style={{
-        display: "inline-block",
-        textAlign: "left",
-        background: "var(--surface2)",
-        border: "1px solid var(--dborder)",
-        borderRadius: 8,
-        padding: "16px 20px",
-        fontSize: 12,
-        fontFamily: "var(--font-geist-mono), monospace",
-        color: "var(--dtext)",
-        lineHeight: 1.65,
-        margin: 0,
-      }}>
-        {CURL_EXAMPLE}
-      </pre>
     </div>
   );
 }
