@@ -17,6 +17,7 @@ type NavGroup = {
 
 type NavSection = {
   title: string;
+  description?: string;
   groups?: NavGroup[];
   items?: NavLeaf[];
 };
@@ -30,6 +31,7 @@ type HeadingItem = {
 export const DOCS_NAV: NavSection[] = [
   {
     title: "Get Started",
+    description: "Fastest path from API key to first publish.",
     items: [
       { label: "Quickstart", href: "/docs/quickstart" },
       { label: "SDKs", href: "/docs/sdk" },
@@ -39,6 +41,7 @@ export const DOCS_NAV: NavSection[] = [
   },
   {
     title: "Platforms",
+    description: "Per-platform support, constraints, and examples.",
     items: [
       { label: "Overview", href: "/docs/platforms" },
       { label: "Twitter/X", href: "/docs/platforms/twitter" },
@@ -51,7 +54,8 @@ export const DOCS_NAV: NavSection[] = [
     ],
   },
   {
-    title: "API Reference",
+    title: "API References",
+    description: "Endpoint-level docs for auth, publishing, and analytics.",
     groups: [
       {
         title: "Core",
@@ -112,7 +116,11 @@ linear-gradient(180deg, #090909 0%, #050505 38%, #050505 100%)}
 .docs-layout{max-width:1560px;margin:0 auto;padding:32px 28px 80px;display:grid;grid-template-columns:260px minmax(0,1fr) 240px;gap:32px}
 .docs-sidebar,.docs-toc{position:sticky;top:94px;align-self:start;max-height:calc(100vh - 120px);overflow:auto;padding-bottom:16px}
 .docs-sidebar-card,.docs-toc-card{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:18px;padding:16px 14px;box-shadow:var(--docs-shadow)}
-.docs-section-label{padding:10px 10px 8px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--docs-muted-2)}
+.docs-sidebar-section{padding:12px 10px 10px;border:1px solid rgba(255,255,255,.05);border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));margin-bottom:14px}
+.docs-sidebar-section:last-child{margin-bottom:0}
+.docs-sidebar-section-header{padding:2px 2px 10px;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,.05)}
+.docs-section-label{padding:0;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--docs-muted-2)}
+.docs-section-desc{margin-top:6px;font-size:12.5px;line-height:1.55;color:var(--docs-muted-2)}
 .docs-nav-group-title{padding:12px 10px 6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-muted-2)}
 .docs-nav-link{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:10px;font-size:13.5px;color:var(--docs-muted);text-decoration:none;transition:all .12s}
 .docs-nav-link:hover{color:var(--docs-text);background:rgba(255,255,255,.04)}
@@ -247,8 +255,11 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
         <aside className="docs-sidebar">
           <div className="docs-sidebar-card">
             {DOCS_NAV.map((section) => (
-              <div key={section.title}>
-                <div className="docs-section-label">{section.title}</div>
+              <section key={section.title} className="docs-sidebar-section">
+                <div className="docs-sidebar-section-header">
+                  <div className="docs-section-label">{section.title}</div>
+                  {section.description ? <div className="docs-section-desc">{section.description}</div> : null}
+                </div>
                 {section.items?.map((item) => (
                   <Link
                     key={item.href}
@@ -274,7 +285,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                     ))}
                   </div>
                 ))}
-              </div>
+              </section>
             ))}
           </div>
         </aside>
