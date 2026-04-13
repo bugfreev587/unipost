@@ -28,7 +28,7 @@ export default function TermsPage() {
         <h1 className="text-3xl font-bold text-zinc-900 mb-2">
           Terms of Service
         </h1>
-        <p className="text-sm text-zinc-500 mb-10">Last updated: April 2, 2026</p>
+        <p className="text-sm text-zinc-500 mb-10">Last updated: April 13, 2026</p>
 
         <div className="space-y-8 text-zinc-700 text-[15px] leading-relaxed">
           <p>
@@ -164,6 +164,19 @@ export default function TermsPage() {
               TikTok, and YouTube. Your use of third-party services is subject to their respective
               terms and privacy policies. UniPost is not responsible for third-party services&apos;
               availability, security, or practices.
+            </p>
+            <p className="mt-2">
+              When you connect a YouTube account to UniPost, you acknowledge and agree that your
+              use of YouTube through the Service is also governed by the{" "}
+              <a
+                href="https://www.youtube.com/t/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 underline"
+              >
+                YouTube Terms of Service
+              </a>
+              , in addition to these Terms.
             </p>
           </section>
 

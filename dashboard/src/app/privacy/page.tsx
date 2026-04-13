@@ -28,7 +28,7 @@ export default function PrivacyPage() {
         <h1 className="text-3xl font-bold text-zinc-900 mb-2">
           Privacy Policy
         </h1>
-        <p className="text-sm text-zinc-500 mb-10">Last updated: April 2, 2026</p>
+        <p className="text-sm text-zinc-500 mb-10">Last updated: April 13, 2026</p>
 
         <div className="space-y-8 text-zinc-700 text-[15px] leading-relaxed">
           <p>
@@ -153,7 +153,89 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-zinc-900 mb-3">5. Data Retention</h2>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-3">5. YouTube API Services</h2>
+            <p>
+              UniPost uses YouTube API Services to enable users to publish videos to their own
+              YouTube channels through our unified publishing API.
+            </p>
+            <p className="mt-2">
+              By connecting your YouTube account to UniPost, you agree to be bound by the{" "}
+              <a
+                href="https://www.youtube.com/t/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 underline"
+              >
+                YouTube Terms of Service
+              </a>.
+            </p>
+            <p className="mt-2">
+              Our use and transfer of information received from Google APIs adheres to the{" "}
+              <a
+                href="https://developers.google.com/terms/api-services-user-data-policy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 underline"
+              >
+                Google API Services User Data Policy
+              </a>
+              , including the Limited Use requirements.
+            </p>
+            <p className="mt-2">
+              Please also review the{" "}
+              <a
+                href="http://www.google.com/policies/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 underline"
+              >
+                Google Privacy Policy
+              </a>.
+            </p>
+
+            <h3 className="text-lg font-medium text-zinc-800 mt-4 mb-2">5.1 Data We Access from YouTube</h3>
+            <ul className="list-disc pl-6 mt-2 space-y-1">
+              <li>Channel name, channel ID, and channel thumbnail to confirm the correct account connection</li>
+              <li>Video upload status and related metadata needed to confirm successful publishing</li>
+            </ul>
+
+            <h3 className="text-lg font-medium text-zinc-800 mt-4 mb-2">5.2 Data We Store</h3>
+            <ul className="list-disc pl-6 mt-2 space-y-1">
+              <li>OAuth access and refresh tokens, encrypted at rest</li>
+              <li>YouTube channel identifiers linked to your UniPost workspace</li>
+              <li>Metadata for videos published through UniPost</li>
+            </ul>
+
+            <h3 className="text-lg font-medium text-zinc-800 mt-4 mb-2">5.3 How We Use YouTube Data</h3>
+            <p>
+              We use YouTube data solely to connect your account, publish videos you instruct us to
+              publish, and confirm delivery status inside UniPost.
+            </p>
+
+            <h3 className="text-lg font-medium text-zinc-800 mt-4 mb-2">5.4 What We Do Not Do with YouTube Data</h3>
+            <ul className="list-disc pl-6 mt-2 space-y-1">
+              <li>We do not use YouTube data for advertising</li>
+              <li>We do not share YouTube data with third parties except as required to provide the publishing service</li>
+              <li>We do not use YouTube data to train machine learning models</li>
+            </ul>
+
+            <h3 className="text-lg font-medium text-zinc-800 mt-4 mb-2">5.5 Revoking Access</h3>
+            <p>
+              You can revoke UniPost&apos;s access to your YouTube account at any time by visiting{" "}
+              <a
+                href="https://security.google.com/settings/security/permissions"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 underline"
+              >
+                Google Security Settings
+              </a>
+              , or by disconnecting the account from your UniPost dashboard.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-3">6. Data Retention</h2>
             <ul className="list-disc pl-6 mt-2 space-y-1">
               <li>Account and project data: retained while your account is active</li>
               <li>Social media tokens: retained while the account is connected; deleted on disconnect</li>
@@ -167,7 +249,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-zinc-900 mb-3">6. Your Rights</h2>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-3">7. Your Rights</h2>
             <p>Depending on your jurisdiction, you may have the right to:</p>
             <ul className="list-disc pl-6 mt-2 space-y-1">
               <li>Access your personal information</li>
@@ -185,7 +267,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-zinc-900 mb-3">7. Security</h2>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-3">8. Security</h2>
             <p>We implement industry-standard safeguards, including:</p>
             <ul className="list-disc pl-6 mt-2 space-y-1">
               <li>Encrypted data transmission (HTTPS)</li>
@@ -198,7 +280,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-zinc-900 mb-3">8. Children&apos;s Privacy</h2>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-3">9. Children&apos;s Privacy</h2>
             <p>
               The Service is not intended for individuals under 16 years of age. We do not knowingly
               collect personal information from children.
@@ -206,7 +288,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-zinc-900 mb-3">9. International Data Transfers</h2>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-3">10. International Data Transfers</h2>
             <p>
               UniPost is hosted in the United States. By using the Service, you acknowledge that your
               data will be processed and stored in the United States.
@@ -214,7 +296,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-zinc-900 mb-3">10. Changes to This Policy</h2>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-3">11. Changes to This Policy</h2>
             <p>
               We may update this Privacy Policy periodically. Material changes will be posted on
               this page with an updated &quot;Last updated&quot; date.
@@ -222,7 +304,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-zinc-900 mb-3">11. Contact</h2>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-3">12. Contact</h2>
             <p>
               Email:{" "}
               <a href="mailto:support@unipost.dev" className="text-blue-600 hover:text-blue-800 underline">
