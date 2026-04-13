@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { CodeBlock, CodeTabs, codeBlockStyles, type CodeSnippet } from "./code-block";
 
 type NavLeaf = {
   label: string;
@@ -139,7 +140,7 @@ linear-gradient(180deg, #090909 0%, #050505 38%, #050505 100%)}
 .docs-page p{font-size:15px;line-height:1.8;color:var(--docs-muted);margin:0 0 16px}
 .docs-page a{color:var(--docs-blue);text-decoration:none}
 .docs-page a:hover{text-decoration:underline}
-.docs-page code{font-family:var(--docs-mono);font-size:12.5px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);padding:1px 6px;border-radius:7px;color:var(--docs-text)}
+.docs-page :where(p,li,td,th,h1,h2,h3,h4,h5,h6,blockquote,strong,em,a) > code{font-family:var(--docs-mono);font-size:12.5px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);padding:1px 6px;border-radius:7px;color:var(--docs-text)}
 .docs-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:22px 0}
 .docs-card{background:var(--docs-panel);border:1px solid var(--docs-border);border-radius:18px;padding:18px}
 .docs-card h3{margin-top:0}
@@ -152,7 +153,6 @@ linear-gradient(180deg, #090909 0%, #050505 38%, #050505 100%)}
 .docs-table th{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-muted-2);text-align:left;padding:12px 14px;background:var(--docs-panel-2);border-bottom:1px solid var(--docs-border)}
 .docs-table td{padding:14px;color:var(--docs-muted);font-size:14px;border-bottom:1px solid var(--docs-border)}
 .docs-table tr:last-child td{border-bottom:none}
-.docs-code{margin:18px 0;padding:18px 20px;border-radius:18px;background:#0f1011;border:1px solid #212325;color:#ddded7;font-family:var(--docs-mono);font-size:13px;line-height:1.75;overflow:auto}
 .docs-callout{margin:20px 0;padding:16px 18px;border-radius:16px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.16);color:var(--docs-muted)}
 .docs-callout strong{color:var(--docs-text)}
 .docs-toc-title{padding:6px 8px 10px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--docs-muted-2)}
@@ -235,7 +235,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="docs-shell">
-      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: `${CSS}\n${codeBlockStyles()}` }} />
       <header className="docs-topbar">
         <div className="docs-topbar-inner">
           <Link href="/docs" className="docs-brand">
@@ -385,44 +385,14 @@ export function DocsTable({
   );
 }
 
-export function DocsCode({ code }: { code: string }) {
-  return <pre className="docs-code"><code>{code}</code></pre>;
+export function DocsCode({ code, language }: { code: string; language?: string }) {
+  return <CodeBlock code={code} language={language} />;
 }
 
 export function DocsCodeTabs({
   snippets,
 }: {
-  snippets: Array<{ label: string; code: string }>;
+  snippets: CodeSnippet[];
 }) {
-  const [active, setActive] = useState(0);
-
-  return (
-    <div className="docs-card" style={{ padding: 0, overflow: "hidden" }}>
-      <div style={{ display: "flex", gap: 6, padding: 12, borderBottom: "1px solid var(--docs-border)", background: "var(--docs-panel-2)", flexWrap: "wrap" }}>
-        {snippets.map((snippet, index) => (
-          <button
-            key={snippet.label}
-            type="button"
-            onClick={() => setActive(index)}
-            style={{
-              padding: "7px 12px",
-              borderRadius: 10,
-              border: "1px solid",
-              borderColor: index === active ? "rgba(34,197,94,.24)" : "rgba(255,255,255,.06)",
-              background: index === active ? "rgba(34,197,94,.08)" : "rgba(255,255,255,.03)",
-              color: index === active ? "var(--docs-text)" : "var(--docs-muted)",
-              fontSize: 12.5,
-              fontFamily: "var(--docs-mono)",
-              cursor: "pointer",
-            }}
-          >
-            {snippet.label}
-          </button>
-        ))}
-      </div>
-      <pre className="docs-code" style={{ margin: 0, border: "none", borderRadius: 0 }}>
-        <code>{snippets[active].code}</code>
-      </pre>
-    </div>
-  );
+  return <CodeTabs snippets={snippets} />;
 }

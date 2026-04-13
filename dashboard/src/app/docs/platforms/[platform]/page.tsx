@@ -448,7 +448,7 @@ export default async function PlatformDetailPage({
         <div key={example.title}>
           <h3 id={example.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}>{example.title}</h3>
           {example.note ? <p>{example.note}</p> : null}
-          <DocsCode code={example.body} />
+          <DocsCode code={example.body} language="json" />
         </div>
       ))}
 

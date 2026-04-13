@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
 import Link from "next/link";
+import { CodeBlock, CodeTabs as SharedCodeTabs, codeBlockStyles } from "../../_components/code-block";
 
 // ── Method badge ──
 const METHOD_COLORS: Record<string, { bg: string; text: string }> = {
@@ -111,55 +111,21 @@ export function ParamTable({ params, title }: { params: ParamRow[]; title?: stri
 
 // ── Code tabs with copy ──
 export function CodeTabs({ snippets }: { snippets: { lang: string; label: string; code: string }[] }) {
-  const [active, setActive] = useState(0);
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(snippets[active].code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }, [active, snippets]);
-
   return (
-    <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid #1a1a1a", marginBottom: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0a0a0a", borderBottom: "1px solid #1a1a1a", padding: "8px 14px" }}>
-        <div style={{ display: "flex", gap: 2 }}>
-          {snippets.map((s, i) => (
-            <button key={s.lang} onClick={() => setActive(i)} style={{
-              padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, fontFamily: "var(--mono)",
-              cursor: "pointer", border: "1px solid transparent", transition: "all .1s",
-              background: i === active ? "#1a1a1a" : "transparent",
-              color: i === active ? "#f0f0f0" : "#666",
-              borderColor: i === active ? "#242424" : "transparent",
-            }}>{s.label}</button>
-          ))}
-        </div>
-        <button onClick={handleCopy} style={{
-          padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, fontFamily: "var(--mono)",
-          cursor: "pointer", border: "1px solid #242424", background: "#111", color: copied ? "#10b981" : "#888",
-          transition: "color .15s",
-        }}>{copied ? "Copied!" : "Copy"}</button>
-      </div>
-      <pre style={{ margin: 0, padding: "18px 20px", background: "#0f0f0f", fontSize: 13, lineHeight: 1.7, fontFamily: "var(--mono)", color: "#cdd6f4", overflowX: "auto" }}>
-        {snippets[active].code}
-      </pre>
-    </div>
+    <>
+      <style dangerouslySetInnerHTML={{ __html: codeBlockStyles() }} />
+      <SharedCodeTabs snippets={snippets} />
+    </>
   );
 }
 
 // ── JSON response block ──
 export function ResponseBlock({ title, code }: { title: string; code: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => { navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1500); };
-
   return (
-    <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid #1a1a1a", marginBottom: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0a0a0a", borderBottom: "1px solid #1a1a1a", padding: "8px 14px" }}>
-        <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "var(--mono)", color: "#888" }}>{title}</span>
-        <button onClick={handleCopy} style={{ padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, fontFamily: "var(--mono)", cursor: "pointer", border: "1px solid #242424", background: "#111", color: copied ? "#10b981" : "#888" }}>{copied ? "Copied!" : "Copy"}</button>
-      </div>
-      <pre style={{ margin: 0, padding: "18px 20px", background: "#0f0f0f", fontSize: 13, lineHeight: 1.7, fontFamily: "var(--mono)", color: "#cdd6f4", overflowX: "auto" }}>{code}</pre>
-    </div>
+    <>
+      <style dangerouslySetInnerHTML={{ __html: codeBlockStyles() }} />
+      <CodeBlock code={code} language="json" title={title} />
+    </>
   );
 }
 
