@@ -344,12 +344,12 @@ export function CreatePostContent() {
       {/* Related */}
       <DocSection id="related" title="Related Endpoints">
         <RelatedEndpoints items={[
-          { method: "GET", path: "/v1/social-posts", label: "List posts", href: "/docs/api/posts/list" },
-          { method: "GET", path: "/v1/social-posts/:id", label: "Get post details", href: "/docs/api/posts/get" },
-          { method: "GET", path: "/v1/social-posts/:id/analytics", label: "Post analytics", href: "/docs/api/posts/analytics" },
-          { method: "POST", path: "/v1/social-posts/bulk", label: "Bulk publish (up to 50)", href: "/docs/api/posts/bulk" },
+          { method: "GET", path: "/v1/social-posts", label: "List posts", href: "/docs/api" },
+          { method: "GET", path: "/v1/social-posts/:id", label: "Get post details", href: "/docs/api" },
+          { method: "GET", path: "/v1/social-posts/:id/analytics", label: "Post analytics", href: "/docs/api/analytics" },
+          { method: "POST", path: "/v1/social-posts/bulk", label: "Bulk publish (up to 50)", href: "/docs/api/posts/create" },
           { method: "GET", path: "/v1/social-accounts", label: "List connected accounts", href: "/docs/api/accounts/list" },
-          { method: "GET", path: "/v1/platforms/capabilities", label: "Platform capabilities", href: "/docs/api/capabilities" },
+          { method: "GET", path: "/v1/platforms/capabilities", label: "Platform capabilities", href: "/docs/platforms" },
         ]} />
       </DocSection>
 

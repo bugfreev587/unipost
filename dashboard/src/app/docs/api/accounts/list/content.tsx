@@ -157,7 +157,7 @@ export function ListAccountsContent() {
           { method: "POST", path: "/v1/social-posts", label: "Create post", href: "/docs/api/posts/create" },
           { method: "GET", path: "/v1/social-accounts/:id/health", label: "Account health", href: "/docs/api/accounts/health" },
           { method: "POST", path: "/v1/connect/sessions", label: "Create Connect session", href: "/docs/api/connect/sessions" },
-          { method: "DELETE", path: "/v1/social-accounts/:id", label: "Disconnect account", href: "/docs/api/accounts/disconnect" },
+          { method: "DELETE", path: "/v1/social-accounts/:id", label: "Disconnect account", href: "/docs/api/accounts/list" },
         ]} />
       </DocSection>
 
