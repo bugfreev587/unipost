@@ -91,6 +91,24 @@ func toMediaResponse(m db.Media) mediaResponse {
 	}
 }
 
+func (h *MediaHandler) writeExistingMediaResponse(w http.ResponseWriter, r *http.Request, row db.Media) {
+	resp := toMediaResponse(row)
+	resp.Status = row.Status
+
+	if row.Status == "pending" && h.storage != nil {
+		uploadURL, err := h.storage.PresignPut(r.Context(), row.StorageKey, row.ContentType, 15*time.Minute)
+		if err != nil {
+			slog.Error("media.Create: presign existing upload URL failed", "err", err, "media_id", row.ID)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to presign upload URL")
+			return
+		}
+		resp.UploadURL = uploadURL
+		resp.ExpiresAt = time.Now().Add(15 * time.Minute)
+	}
+
+	writeSuccess(w, resp)
+}
+
 // Create handles POST /v1/media. Validates filename / content_type /
 // size, mints a row in `pending` status, and returns a presigned PUT
 // URL the client can upload to directly.
@@ -134,18 +152,17 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Dedup: if the client sent a content_hash, check for an existing
-	// media row with the same hash in this workspace. Return it directly
-	// without creating a new row or presigned URL — the file is already
-	// in R2.
+	// media row with the same hash in this workspace. Return it directly.
+	// If it's already uploaded/attached we can reuse it immediately; if
+	// it's still pending we return a fresh presigned PUT URL so retries
+	// of the same file can resume instead of failing on the unique index.
 	if body.ContentHash != "" {
-		existing, err := h.queries.GetMediaByHash(r.Context(), db.GetMediaByHashParams{
+		existing, err := h.queries.GetActiveMediaByHash(r.Context(), db.GetActiveMediaByHashParams{
 			WorkspaceID: workspaceID,
 			ContentHash: pgtype.Text{String: body.ContentHash, Valid: true},
 		})
 		if err == nil && existing.ID != "" {
-			resp := toMediaResponse(existing)
-			resp.Status = existing.Status
-			writeSuccess(w, resp)
+			h.writeExistingMediaResponse(w, r, existing)
 			return
 		}
 	}
@@ -171,6 +188,16 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ContentHash: pgtype.Text{String: body.ContentHash, Valid: body.ContentHash != ""},
 	})
 	if err != nil {
+		if body.ContentHash != "" {
+			existing, lookupErr := h.queries.GetActiveMediaByHash(r.Context(), db.GetActiveMediaByHashParams{
+				WorkspaceID: workspaceID,
+				ContentHash: pgtype.Text{String: body.ContentHash, Valid: true},
+			})
+			if lookupErr == nil && existing.ID != "" {
+				h.writeExistingMediaResponse(w, r, existing)
+				return
+			}
+		}
 		slog.Error("media.Create: insert row failed", "err", err, "workspace_id", workspaceID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create media row")
 		return

@@ -11,6 +11,19 @@ SELECT * FROM media
 WHERE workspace_id = $1 AND content_hash = $2 AND status = 'uploaded'
 LIMIT 1;
 
+-- name: GetActiveMediaByHash :one
+SELECT * FROM media
+WHERE workspace_id = $1 AND content_hash = $2 AND status != 'deleted'
+ORDER BY
+  CASE status
+    WHEN 'uploaded' THEN 0
+    WHEN 'attached' THEN 1
+    WHEN 'pending' THEN 2
+    ELSE 3
+  END,
+  created_at DESC
+LIMIT 1;
+
 -- name: UpdateMediaStorageKey :one
 UPDATE media SET storage_key = $2
 WHERE id = $1

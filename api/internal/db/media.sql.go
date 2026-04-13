@@ -99,6 +99,42 @@ func (q *Queries) GetMediaByHash(ctx context.Context, arg GetMediaByHashParams) 
 	return i, err
 }
 
+const getActiveMediaByHash = `-- name: GetActiveMediaByHash :one
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
+WHERE workspace_id = $1 AND content_hash = $2 AND status != 'deleted'
+ORDER BY
+  CASE status
+    WHEN 'uploaded' THEN 0
+    WHEN 'attached' THEN 1
+    WHEN 'pending' THEN 2
+    ELSE 3
+  END,
+  created_at DESC
+LIMIT 1
+`
+
+type GetActiveMediaByHashParams struct {
+	WorkspaceID string      `json:"workspace_id"`
+	ContentHash pgtype.Text `json:"content_hash"`
+}
+
+func (q *Queries) GetActiveMediaByHash(ctx context.Context, arg GetActiveMediaByHashParams) (Media, error) {
+	row := q.db.QueryRow(ctx, getActiveMediaByHash, arg.WorkspaceID, arg.ContentHash)
+	var i Media
+	err := row.Scan(
+		&i.ID,
+		&i.StorageKey,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UploadedAt,
+		&i.WorkspaceID,
+		&i.ContentHash,
+	)
+	return i, err
+}
+
 const getMediaByIDAndWorkspace = `-- name: GetMediaByIDAndWorkspace :one
 SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media WHERE id = $1 AND workspace_id = $2
 `
