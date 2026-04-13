@@ -1,14 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { MarketingNav, MarketingCTA } from "@/components/marketing/nav";
 import { UNIPOST } from "@/data/competitors/unipost";
 import { ALL_COMPETITORS } from "@/data/competitors";
 
 // ── Icons ──
-function ZapIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="14" height="14"><path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" /></svg>; }
 function CheckIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" width="14" height="14" style={{ flexShrink: 0 }}><path d="M3 8l4 4 6-7" /></svg>; }
-function ArrowIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14" style={{ flexShrink: 0 }}><path d="M3 8h10M9 4l4 4-4 4" /></svg>; }
 
 type RowValue = boolean | string | number;
 function renderVal(v: RowValue): React.ReactNode {
@@ -82,8 +81,7 @@ export default function ComparePage() {
       <nav className="cmp-nav">
         <div className="cmp-nav-inner">
           <Link href="/" className="cmp-logo">
-            <div className="cmp-logo-mark"><ZapIcon /></div>
-            <span className="cmp-logo-name">UniPost</span>
+            <UniPostLogo markSize={28} wordmarkColor="var(--text)" />
           </Link>
           <div className="cmp-nav-links">
             <Link href="/docs" className="cmp-nav-link">Docs</Link>
@@ -161,7 +159,7 @@ export default function ComparePage() {
         <div className="cmp-footer-inner">
           <div className="cmp-footer-top">
             <div>
-              <div className="cmp-footer-logo"><div className="cmp-footer-mark"><ZapIcon /></div><span className="cmp-footer-name">UniPost</span></div>
+              <div className="cmp-footer-logo"><UniPostLogo markSize={26} wordmarkColor="var(--text)" wordmarkClassName="cmp-footer-name" /></div>
               <p className="cmp-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p>
             </div>
             <div>

@@ -1,15 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { MarketingNav, MarketingCTA } from "@/components/marketing/nav";
 import { UNIPOST } from "@/data/competitors/unipost";
 import { ALL_COMPETITORS, getCompetitorBySlug } from "@/data/competitors";
 import type { Competitor } from "@/data/competitors";
 
 // ── Icons ──
-function ZapIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="14" height="14"><path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" /></svg>; }
 function CheckIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" width="14" height="14" style={{ flexShrink: 0 }}><path d="M3 8l4 4 6-7" /></svg>; }
 function ArrowIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14" style={{ flexShrink: 0 }}><path d="M3 8h10M9 4l4 4-4 4" /></svg>; }
 
@@ -181,8 +180,7 @@ export default function AlternativePage() {
       <nav className="alt-nav">
         <div className="alt-nav-inner">
           <Link href="/" className="alt-logo">
-            <div className="alt-logo-mark"><ZapIcon /></div>
-            <span className="alt-logo-name">UniPost</span>
+            <UniPostLogo markSize={28} wordmarkColor="var(--text)" />
           </Link>
           <div className="alt-nav-links">
             <Link href="/docs" className="alt-nav-link">Docs</Link>
@@ -303,7 +301,7 @@ export default function AlternativePage() {
           </p>
           <div className="alt-mcp-grid">
             <div>
-              <div className="alt-mcp-code-label">// Claude Desktop config</div>
+              <div className="alt-mcp-code-label">{"// Claude Desktop config"}</div>
               <div className="alt-mcp-code">{MCP_CONFIG}</div>
             </div>
             <div>
@@ -397,7 +395,7 @@ export default function AlternativePage() {
         <div className="alt-footer-inner">
           <div className="alt-footer-top">
             <div>
-              <div className="alt-footer-logo"><div className="alt-footer-mark"><ZapIcon /></div><span className="alt-footer-name">UniPost</span></div>
+              <div className="alt-footer-logo"><UniPostLogo markSize={26} wordmarkColor="var(--text)" wordmarkClassName="alt-footer-name" /></div>
               <p className="alt-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p>
             </div>
             <div>

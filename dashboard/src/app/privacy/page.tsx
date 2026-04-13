@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { UniPostMark } from "@/components/brand/unipost-logo";
 
 export const metadata: Metadata = {
   title: "Privacy Policy — UniPost",
@@ -9,22 +11,15 @@ export default function PrivacyPage() {
     <div className="min-h-screen bg-white">
       <div className="max-w-3xl mx-auto px-6 py-16">
         {/*
-          UniPost app icon. TikTok's developer review compares the icon
-          shown on the linked Privacy / Terms pages against the one
-          uploaded to the dev portal — if they don't match, production
-          access is rejected. The file under /public/unipost-logo.png is
-          byte-identical to the asset uploaded to TikTok.
+          Keep the public-facing legal pages aligned with the current
+          UniPost brand mark so app review flows see the same identity
+          across the website and the product.
         */}
-        <a href="/" aria-label="UniPost home" className="inline-block mb-8">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/unipost-logo.png"
-            alt="UniPost"
-            width={96}
-            height={96}
-            className="block rounded-2xl"
-          />
-        </a>
+        <Link href="/" aria-label="UniPost home" className="inline-block mb-8">
+          <span className="block">
+            <UniPostMark size={96} />
+          </span>
+        </Link>
         <h1 className="text-3xl font-bold text-zinc-900 mb-2">
           Privacy Policy
         </h1>

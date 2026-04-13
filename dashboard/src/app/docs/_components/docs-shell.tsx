@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { UniPostMark } from "@/components/brand/unipost-logo";
 import { CodeBlock, CodeTabs, codeBlockStyles, type CodeSnippet } from "./code-block";
 
 type NavLeaf = {
@@ -108,7 +109,7 @@ linear-gradient(180deg, #090909 0%, #050505 38%, #050505 100%)}
 .docs-topbar{position:sticky;top:0;z-index:50;border-bottom:1px solid rgba(255,255,255,.05);background:rgba(5,5,5,.78);backdrop-filter:blur(14px)}
 .docs-topbar-inner{max-width:1560px;margin:0 auto;padding:0 28px;height:62px;display:flex;align-items:center;justify-content:space-between;gap:18px}
 .docs-brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;min-width:0}
-.docs-brand-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#22c55e,#7dd3fc);display:flex;align-items:center;justify-content:center;color:#041108;box-shadow:0 10px 26px rgba(34,197,94,.18)}
+.docs-brand-mark{width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .docs-brand-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
 .docs-brand-name{display:block;font-size:15px;font-weight:700;letter-spacing:-.02em;line-height:1.2}
 .docs-brand-context{display:block;font-size:12px;line-height:1.45;color:var(--docs-muted)}
@@ -164,14 +165,6 @@ linear-gradient(180deg, #090909 0%, #050505 38%, #050505 100%)}
 @media (max-width:1240px){.docs-layout{grid-template-columns:240px minmax(0,1fr)}.docs-toc{display:none}}
 @media (max-width:900px){.docs-topbar-inner{padding:0 18px;height:auto;min-height:62px;align-items:flex-start;flex-direction:column;justify-content:center;padding-top:10px;padding-bottom:10px}.docs-topbar-links{width:100%}.docs-layout{grid-template-columns:1fr;padding:20px 16px 56px}.docs-sidebar{display:none}.docs-page{padding:28px 22px;border-radius:20px}.docs-page h1{font-size:34px}.docs-grid{grid-template-columns:1fr}}
 `;
-
-function markSvg() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="15" height="15">
-      <path d="M9 2 4 9h4l-1 5 5-7H8l1-5Z" />
-    </svg>
-  );
-}
 
 function isLeafActive(current: string, href: string) {
   return current === href.split("#")[0];
@@ -295,7 +288,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
       <header className="docs-topbar">
         <div className="docs-topbar-inner">
           <Link href="/docs" className="docs-brand">
-            <span className="docs-brand-mark">{markSvg()}</span>
+            <span className="docs-brand-mark"><UniPostMark size={30} /></span>
             <span className="docs-brand-copy">
               <span className="docs-brand-name">UniPost Docs</span>
               <span className="docs-brand-context">Build social publishing, account onboarding, and analytics.</span>

@@ -1,0 +1,12 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="unipost-mark-gradient" x1="16" y1="112" x2="112" y2="16" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#48A4FF"/>
+      <stop offset="1" stop-color="#A020F0"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="48" width="56" height="56" rx="2" fill="url(#unipost-mark-gradient)"/>
+  <rect x="44" y="28" width="56" height="56" rx="2" stroke="url(#unipost-mark-gradient)" stroke-width="8"/>
+  <rect x="52" y="56" width="30" height="30" rx="1.5" fill="url(#unipost-mark-gradient)"/>
+  <rect x="62" y="66" width="10" height="10" rx="1" fill="white"/>
+</svg>

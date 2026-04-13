@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { MarketingNav } from "@/components/marketing/nav";
 
 // Shared CSS for all /tools/* pages. Each page adds its own
@@ -76,14 +77,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px
 @media(max-width:1024px){.tl-grid{grid-template-columns:1fr 1fr}.tl-hero-title{font-size:40px}}
 @media(max-width:680px){.tl-grid{grid-template-columns:1fr}.tl-hero-title{font-size:32px}.tl-cta-inner{padding:40px 24px}.tl-cta-title{font-size:26px}}`;
 
-function ZapIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
-      <path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" />
-    </svg>
-  );
-}
-
 export default function ToolsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
@@ -95,8 +88,7 @@ export default function ToolsLayout({ children }: { children: React.ReactNode })
         <div className="tl-nav-inner">
           <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
             <Link href="/" className="tl-logo">
-              <span className="tl-logo-mark"><ZapIcon /></span>
-              <span className="tl-logo-name">UniPost</span>
+              <UniPostLogo markSize={28} wordmarkColor="var(--text)" />
             </Link>
             <div className="tl-nav-links">
               <Link href="/solutions" className={`tl-nav-link${pathname === "/solutions" ? " active" : ""}`}>Solutions</Link>

@@ -30,6 +30,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || "https://unipost.dev"),
   title: "UniPost",
   description: "Unified Social Media API for developers",
+  icons: {
+    icon: "/unipost-mark.svg",
+    shortcut: "/unipost-mark.svg",
+    apple: "/unipost-mark.svg",
+  },
 };
 
 const themeInitScript = `

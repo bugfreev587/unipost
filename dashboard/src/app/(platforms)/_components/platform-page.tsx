@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { MarketingNav, MarketingCTA } from "@/components/marketing/nav";
 import type { PlatformConfig } from "../_config/platforms";
 import { ALL_PLATFORMS } from "../_config/platforms";
@@ -23,13 +24,6 @@ function CheckIcon({ color = "currentColor" }: { color?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth="2.2" width="14" height="14" style={{ flexShrink: 0 }}>
       <path d="M3 8l4 4 6-7" />
-    </svg>
-  );
-}
-function ZapIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
-      <path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" />
     </svg>
   );
 }
@@ -241,8 +235,7 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
       <nav className="pp-nav">
         <div className="pp-nav-inner">
           <a href={LANDING} className="pp-logo">
-            <div className="pp-logo-mark"><ZapIcon /></div>
-            <span className="pp-logo-name">UniPost</span>
+            <UniPostLogo markSize={28} wordmarkColor="var(--text)" />
           </a>
           <div className="pp-nav-links">
             <a href={`${LANDING}/solutions`} className="pp-nav-link">Solutions</a>
@@ -566,7 +559,7 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
         <div className="pp-footer-inner">
           <div className="pp-footer-top">
             <div>
-              <div className="pp-footer-logo"><div className="pp-footer-mark"><ZapIcon /></div><span className="pp-footer-name">UniPost</span></div>
+              <div className="pp-footer-logo"><UniPostLogo markSize={26} wordmarkColor="var(--text)" wordmarkClassName="pp-footer-name" /></div>
               <p className="pp-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p>
             </div>
             <div>

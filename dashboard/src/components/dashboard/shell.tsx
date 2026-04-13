@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
 import { OnboardingTourProvider, TourTriggerButton } from "@/components/dashboard/onboarding-tour";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { UniPostMark } from "@/components/brand/unipost-logo";
 // useClerk kept for signOut
 import {
   DropdownMenu,
@@ -22,7 +23,6 @@ import {
   ChevronDown,
   Settings,
   Shield,
-  Zap,
   LogOut,
   User,
   Mail,
@@ -97,10 +97,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const activeSubmenuParent = navItems.find((item) => item.submenu && pathname.includes(item.href));
-    if (activeSubmenuParent) {
+    if (!activeSubmenuParent || activeSubmenuParent.href === expandedMenu) return;
+
+    const timer = window.setTimeout(() => {
       setExpandedMenu(activeSubmenuParent.href);
-    }
-  }, [navItems, pathname]);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [expandedMenu, navItems, pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -319,7 +323,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </>
           ) : (
             <Link href="/projects" data-active={pathname === "/projects"} className="sidebar-nav-item">
-              <Zap style={{ width: 14, height: 14 }} strokeWidth={1.75} />
+              <UniPostMark size={14} />
               Profiles
             </Link>
           )}

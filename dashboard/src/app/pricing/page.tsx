@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
+import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { PricingNav, PricingCTA } from "@/components/marketing/nav";
 import { listProfiles, getBilling } from "@/lib/api";
 
@@ -57,7 +58,6 @@ const FAQS = [
 ];
 
 // ── Icons ──
-function ZapIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="14" height="14"><path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" /></svg>; }
 function CheckIcon({ className = "" }: { className?: string }) { return <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" width="15" height="15" style={{ flexShrink: 0 }}><path d="M3 8l4 4 6-7" /></svg>; }
 function ChevronIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14" style={{ flexShrink: 0 }}><path d="M4 6l4 4 4-4" /></svg>; }
 
@@ -100,7 +100,12 @@ export default function PricingPage() {
     }
   }, [isSignedIn, getToken]);
 
-  useEffect(() => { loadPlan(); }, [loadPlan]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadPlan();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadPlan]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -117,7 +122,7 @@ export default function PricingPage() {
       {/* NAV */}
       <nav className="pr-nav">
         <div className="pr-nav-inner">
-          <Link href="/" className="pr-logo"><div className="pr-logo-mark"><ZapIcon /></div><span className="pr-logo-name">UniPost</span></Link>
+          <Link href="/" className="pr-logo"><UniPostLogo markSize={28} wordmarkColor="var(--text)" /></Link>
           <div className="pr-nav-links">
             <Link href="/solutions" className="pr-nav-link">Solutions</Link>
             <Link href="/docs" className="pr-nav-link">Docs</Link>
@@ -260,7 +265,7 @@ export default function PricingPage() {
       {/* Footer */}
       <footer className="pr-footer">
         <div className="pr-footer-inner">
-          <div className="pr-foot-logo"><div className="pr-foot-mark"><ZapIcon /></div><span className="pr-foot-name">UniPost</span></div>
+          <div className="pr-foot-logo"><UniPostLogo markSize={24} wordmarkColor="var(--text)" wordmarkClassName="pr-foot-name" /></div>
           <div className="pr-foot-links">
             <Link href="/docs" className="pr-foot-link">Docs</Link>
             <Link href="/pricing" className="pr-foot-link">Pricing</Link>
