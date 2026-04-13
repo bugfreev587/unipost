@@ -189,18 +189,30 @@ function isTopLevelActive(current: string, href: string) {
 
 export function DocsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [headings, setHeadings] = useState<HeadingItem[]>([]);
   const [activeHeading, setActiveHeading] = useState("");
 
-  const headings =
-    typeof document === "undefined"
-      ? ([] as HeadingItem[])
-      : Array.from(document.querySelectorAll<HTMLElement>(".docs-page h2[id], .docs-page h3[id]"))
-          .map((node) => ({
-            id: node.id,
-            text: node.textContent?.trim() || "",
-            level: node.tagName.toLowerCase() as "h2" | "h3",
-          }))
-          .filter((item) => item.id && item.text);
+  useEffect(() => {
+    let frame = 0;
+
+    const syncHeadings = () => {
+      const nextHeadings = Array.from(
+        document.querySelectorAll<HTMLElement>(".docs-page h2[id], .docs-page h3[id]")
+      )
+        .map((node) => ({
+          id: node.id,
+          text: node.textContent?.trim() || "",
+          level: node.tagName.toLowerCase() as "h2" | "h3",
+        }))
+        .filter((item) => item.id && item.text);
+
+      setHeadings(nextHeadings);
+      setActiveHeading(nextHeadings[0]?.id || "");
+    };
+
+    frame = window.requestAnimationFrame(syncHeadings);
+    return () => window.cancelAnimationFrame(frame);
+  }, [pathname, children]);
 
   useEffect(() => {
     const headingNodes = Array.from(
@@ -221,7 +233,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
     headingNodes.forEach((node) => observer.observe(node));
     return () => observer.disconnect();
-  }, [pathname]);
+  }, [pathname, headings]);
 
   const topLinks = useMemo(
     () => [
