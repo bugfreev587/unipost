@@ -187,6 +187,61 @@ function isTopLevelActive(current: string, href: string) {
   return current === href || current.startsWith(`${href}/`);
 }
 
+function collectHeadingItems() {
+  const seen = new Set<string>();
+  const items: HeadingItem[] = [];
+
+  const directHeadings = Array.from(
+    document.querySelectorAll<HTMLElement>(".docs-main .docs-page h2[id], .docs-main .docs-page h3[id]")
+  );
+
+  directHeadings.forEach((node) => {
+    const id = node.id;
+    const text = node.textContent?.trim() || "";
+    if (!id || !text || seen.has(id)) return;
+    seen.add(id);
+    items.push({
+      id,
+      text,
+      level: node.tagName.toLowerCase() as "h2" | "h3",
+    });
+  });
+
+  const sectionHeadings = Array.from(
+    document.querySelectorAll<HTMLElement>(".docs-main section[id]")
+  );
+
+  sectionHeadings.forEach((section) => {
+    const id = section.id;
+    if (!id || seen.has(id)) return;
+
+    const titleNode = section.querySelector<HTMLElement>("h2, h3");
+    const text = titleNode?.textContent?.trim() || "";
+    const level = (titleNode?.tagName.toLowerCase() as "h2" | "h3" | undefined) || "h3";
+    if (!text) return;
+
+    seen.add(id);
+    items.push({ id, text, level });
+  });
+
+  return items;
+}
+
+function collectObservedNodes() {
+  const nodes = [
+    ...Array.from(document.querySelectorAll<HTMLElement>(".docs-main .docs-page h2[id], .docs-main .docs-page h3[id]")),
+    ...Array.from(document.querySelectorAll<HTMLElement>(".docs-main section[id]")),
+  ];
+
+  const seen = new Set<string>();
+  return nodes.filter((node) => {
+    const id = node.id;
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 export function DocsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [headings, setHeadings] = useState<HeadingItem[]>([]);
@@ -196,16 +251,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     let frame = 0;
 
     const syncHeadings = () => {
-      const nextHeadings = Array.from(
-        document.querySelectorAll<HTMLElement>(".docs-page h2[id], .docs-page h3[id]")
-      )
-        .map((node) => ({
-          id: node.id,
-          text: node.textContent?.trim() || "",
-          level: node.tagName.toLowerCase() as "h2" | "h3",
-        }))
-        .filter((item) => item.id && item.text);
-
+      const nextHeadings = collectHeadingItems();
       setHeadings(nextHeadings);
       setActiveHeading(nextHeadings[0]?.id || "");
     };
@@ -215,9 +261,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   }, [pathname, children]);
 
   useEffect(() => {
-    const headingNodes = Array.from(
-      document.querySelectorAll<HTMLElement>(".docs-page h2[id], .docs-page h3[id]")
-    );
+    const headingNodes = collectObservedNodes();
 
     const observer = new IntersectionObserver(
       (entries) => {
