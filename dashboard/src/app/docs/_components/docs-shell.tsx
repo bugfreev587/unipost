@@ -104,10 +104,11 @@ radial-gradient(circle at top left, rgba(34,197,94,.08), transparent 30%),
 linear-gradient(180deg, #090909 0%, #050505 38%, #050505 100%)}
 .docs-topbar{position:sticky;top:0;z-index:50;border-bottom:1px solid rgba(255,255,255,.05);background:rgba(5,5,5,.78);backdrop-filter:blur(14px)}
 .docs-topbar-inner{max-width:1560px;margin:0 auto;padding:0 28px;height:62px;display:flex;align-items:center;justify-content:space-between;gap:18px}
-.docs-brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit}
+.docs-brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;min-width:0}
 .docs-brand-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#22c55e,#7dd3fc);display:flex;align-items:center;justify-content:center;color:#041108;box-shadow:0 10px 26px rgba(34,197,94,.18)}
-.docs-brand-name{font-size:15px;font-weight:700;letter-spacing:-.02em}
-.docs-brand-context{font-size:12px;color:var(--docs-muted)}
+.docs-brand-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.docs-brand-name{display:block;font-size:15px;font-weight:700;letter-spacing:-.02em;line-height:1.2}
+.docs-brand-context{display:block;font-size:12px;line-height:1.45;color:var(--docs-muted)}
 .docs-topbar-links{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .docs-topbar-link{padding:8px 12px;border-radius:999px;font-size:13px;color:var(--docs-muted);text-decoration:none;transition:all .14s}
 .docs-topbar-link:hover{color:var(--docs-text);background:rgba(255,255,255,.04)}
@@ -170,11 +171,17 @@ function markSvg() {
   );
 }
 
-function isActivePath(current: string, href: string) {
+function isLeafActive(current: string, href: string) {
+  return current === href.split("#")[0];
+}
+
+function isTopLevelActive(current: string, href: string) {
   if (href.includes("#")) {
     return current === href.split("#")[0];
   }
-  if (href === "/docs") return current === "/docs";
+  if (href === "/docs") {
+    return current === "/docs" || current.startsWith("/docs/");
+  }
   return current === href || current.startsWith(`${href}/`);
 }
 
@@ -231,7 +238,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
         <div className="docs-topbar-inner">
           <Link href="/docs" className="docs-brand">
             <span className="docs-brand-mark">{markSvg()}</span>
-            <span>
+            <span className="docs-brand-copy">
               <span className="docs-brand-name">UniPost Docs</span>
               <span className="docs-brand-context">Build social publishing, account onboarding, and analytics.</span>
             </span>
@@ -241,7 +248,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`docs-topbar-link${isActivePath(pathname, link.href) ? " active" : ""}`}
+                className={`docs-topbar-link${isTopLevelActive(pathname, link.href) ? " active" : ""}`}
               >
                 {link.label}
               </Link>
@@ -263,7 +270,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`docs-nav-link${isActivePath(pathname, item.href) ? " active" : ""}`}
+                    className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
                   >
                     <span>{item.label}</span>
                     {item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
@@ -276,7 +283,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                       <Link
                         key={item.href}
                         href={item.href}
-                        className={`docs-nav-link${isActivePath(pathname, item.href) ? " active" : ""}`}
+                        className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
                       >
                         <span>{item.label}</span>
                         {item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
