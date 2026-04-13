@@ -175,13 +175,13 @@ export default function PostsPage() {
       if (!token) return;
       setActionBusy(true);
       if (action.kind === "archive") {
-        await Promise.all(action.ids.map((id) => archiveSocialPost(token, id)));
+        await Promise.all(action.ids.map((id) => archiveSocialPost(token, workspaceId, id)));
       }
       if (action.kind === "restore") {
-        await Promise.all(action.ids.map((id) => restoreSocialPost(token, id)));
+        await Promise.all(action.ids.map((id) => restoreSocialPost(token, workspaceId, id)));
       }
       if (action.kind === "delete") {
-        await Promise.all(action.ids.map((id) => deleteSocialPost(token, id)));
+        await Promise.all(action.ids.map((id) => deleteSocialPost(token, workspaceId, id)));
       }
       setSelectedPostIds((current) => {
         const next = new Set(current);

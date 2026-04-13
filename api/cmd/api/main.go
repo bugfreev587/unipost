@@ -418,6 +418,7 @@ func main() {
 		r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)
 		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", socialPostHandler.Archive)
 		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", socialPostHandler.Restore)
+		r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", socialPostHandler.Delete)
 
 		// OAuth connect (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)

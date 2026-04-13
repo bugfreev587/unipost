@@ -350,27 +350,30 @@ export async function listSocialPosts(
 
 export async function archiveSocialPost(
   token: string,
+  workspaceId: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/social-posts/${postId}/archive`, token, {
+  return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}/archive`, token, {
     method: "POST",
   });
 }
 
 export async function restoreSocialPost(
   token: string,
+  workspaceId: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/social-posts/${postId}/restore`, token, {
+  return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}/restore`, token, {
     method: "POST",
   });
 }
 
 export async function deleteSocialPost(
   token: string,
+  workspaceId: string,
   postId: string
 ): Promise<ApiResponse<{ deleted: boolean }>> {
-  return request(`/v1/social-posts/${postId}`, token, {
+  return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}`, token, {
     method: "DELETE",
   });
 }
