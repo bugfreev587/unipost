@@ -6,14 +6,14 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
-  listSocialAccounts, listSocialPosts, cancelSocialPost, listProfiles,
-  type SocialAccount, type SocialPost, type Profile,
+  listSocialAccounts, listSocialPosts, cancelSocialPost,
+  type SocialAccount, type SocialPost,
 } from "@/lib/api";
-import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 
-type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft";
+type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft" | "archived";
 
 const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
   published: { cls: "dbadge-green", label: "published" },
@@ -33,6 +33,13 @@ function statusBadge(status: string) {
 // Extra CSS for this page
 const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white);color:var(--dmuted);border:1px solid var(--dborder)}
 .posts-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.posts-header-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.posts-bulk-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 12px;border-radius:8px;border:1px solid var(--dborder);background:var(--surface2);color:var(--dtext);font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;transition:all .12s}
+.posts-bulk-btn:hover:not(:disabled){background:var(--surface3);border-color:var(--dborder2)}
+.posts-bulk-btn:disabled{opacity:.45;cursor:not-allowed}
+.posts-bulk-btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 26%,var(--dborder))}
+.posts-bulk-btn.danger:hover:not(:disabled){background:var(--danger-soft);border-color:color-mix(in srgb,var(--danger) 38%,var(--dborder))}
+.posts-selection-hint{font-size:12px;color:var(--dmuted2);min-width:92px;text-align:right}
 .posts-filters{display:flex;align-items:center;gap:8px;margin-bottom:16px}
 .posts-search{display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;padding:0 10px;height:32px;flex:0 1 240px}
 .posts-search input{background:none;border:none;outline:none;color:var(--dtext);font-size:13px;font-family:inherit;width:100%}
@@ -55,6 +62,11 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-menu-item svg{width:13px;height:13px;flex-shrink:0}
 .posts-menu-item.danger{color:#ef4444}
 .posts-menu-item.danger:hover{background:#ef444410}
+.posts-select-cell{width:42px}
+.posts-checkbox{appearance:none;width:16px;height:16px;border-radius:4px;border:1px solid var(--dborder2);background:var(--surface2);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;position:relative;transition:all .12s}
+.posts-checkbox:hover{border-color:var(--daccent)}
+.posts-checkbox:checked{background:var(--daccent);border-color:var(--daccent)}
+.posts-checkbox:checked::after{content:"";width:8px;height:5px;border-left:2px solid #03120e;border-bottom:2px solid #03120e;transform:rotate(-45deg);margin-top:-1px}
 .posts-empty{text-align:center;padding:60px 20px}
 .posts-empty-title{font-size:16px;font-weight:600;color:var(--dtext);margin-bottom:6px}
 .posts-empty-sub{font-size:13px;color:var(--dmuted)}
@@ -77,8 +89,18 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-hint{font-size:12px;color:var(--dtext);line-height:1.55}
 .posts-hint-label{color:var(--dmuted)}
 .posts-row-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dmuted2)}
+.posts-dialog-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:120}
+.posts-dialog{width:min(100%,420px);background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;padding:22px;box-shadow:0 28px 70px color-mix(in srgb,var(--shadow-color) 120%,transparent)}
+.posts-dialog-title{font-size:18px;font-weight:700;color:var(--dtext);margin-bottom:8px}
+.posts-dialog-body{font-size:14px;color:var(--dmuted);line-height:1.65;margin-bottom:18px}
+.posts-dialog-actions{display:flex;justify-content:flex-end;gap:10px}
 @media (max-width: 900px){.posts-expand-cell{padding:14px 16px}.posts-results-grid{grid-template-columns:1fr}}
 `;
+
+type ConfirmAction =
+  | { kind: "archive"; ids: string[] }
+  | { kind: "delete"; ids: string[] }
+  | { kind: "restore"; ids: string[] };
 
 export default function PostsPage() {
   const { id: profileId } = useParams<{ id: string }>();
@@ -86,7 +108,6 @@ export default function PostsPage() {
   const { getToken } = useAuth();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<FilterTab>("all");
   const [search, setSearch] = useState("");
@@ -94,7 +115,12 @@ export default function PostsPage() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [archivedPostIds, setArchivedPostIds] = useState<Set<string>>(new Set());
+  const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set());
+  const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const storageKeyBase = workspaceId ? `unipost-posts:${workspaceId}:${profileId}` : null;
 
   const loadData = useCallback(async () => {
     if (!workspaceId) return; // wait for workspace resolution
@@ -107,13 +133,6 @@ export default function PostsPage() {
       ]);
       setAccounts(a.data);
       setPosts(p.data);
-      // Load profiles separately — don't block posts/accounts if it fails
-      try {
-        const pr = await listProfiles(token);
-        setProfiles(pr.data);
-      } catch (profileErr) {
-        console.error("Failed to load profiles:", profileErr);
-      }
     } catch (err) {
       console.error("Failed to load:", err);
     } finally {
@@ -122,6 +141,29 @@ export default function PostsPage() {
   }, [getToken, profileId, workspaceId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    if (!storageKeyBase) return;
+    try {
+      const archivedRaw = window.localStorage.getItem(`${storageKeyBase}:archived`);
+      const deletedRaw = window.localStorage.getItem(`${storageKeyBase}:deleted`);
+      setArchivedPostIds(new Set(archivedRaw ? JSON.parse(archivedRaw) : []));
+      setDeletedPostIds(new Set(deletedRaw ? JSON.parse(deletedRaw) : []));
+    } catch {
+      setArchivedPostIds(new Set());
+      setDeletedPostIds(new Set());
+    }
+  }, [storageKeyBase]);
+
+  useEffect(() => {
+    if (!storageKeyBase) return;
+    window.localStorage.setItem(`${storageKeyBase}:archived`, JSON.stringify([...archivedPostIds]));
+  }, [archivedPostIds, storageKeyBase]);
+
+  useEffect(() => {
+    if (!storageKeyBase) return;
+    window.localStorage.setItem(`${storageKeyBase}:deleted`, JSON.stringify([...deletedPostIds]));
+  }, [deletedPostIds, storageKeyBase]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -142,13 +184,72 @@ export default function PostsPage() {
     setMenuOpen(null);
   }
 
-  async function handleDuplicate(post: SocialPost) {
+  async function handleDuplicate() {
     // TODO: open create modal pre-filled with post content
     setMenuOpen(null);
   }
 
+  function runConfirmAction(action: ConfirmAction) {
+    if (action.kind === "archive") {
+      setArchivedPostIds((current) => new Set([...current, ...action.ids]));
+    }
+    if (action.kind === "restore") {
+      setArchivedPostIds((current) => {
+        const next = new Set(current);
+        action.ids.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+    if (action.kind === "delete") {
+      setDeletedPostIds((current) => new Set([...current, ...action.ids]));
+      setArchivedPostIds((current) => {
+        const next = new Set(current);
+        action.ids.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+    setSelectedPostIds((current) => {
+      const next = new Set(current);
+      action.ids.forEach((id) => next.delete(id));
+      return next;
+    });
+    if (expandedPostId && action.ids.includes(expandedPostId)) setExpandedPostId(null);
+    setConfirmAction(null);
+  }
+
+  function requestArchive(ids: string[]) {
+    if (ids.length === 0) return;
+    setConfirmAction({ kind: "archive", ids });
+    setMenuOpen(null);
+  }
+
+  function requestRestore(ids: string[]) {
+    if (ids.length === 0) return;
+    setConfirmAction({ kind: "restore", ids });
+    setMenuOpen(null);
+  }
+
+  function requestDelete(ids: string[]) {
+    if (ids.length === 0) return;
+    setConfirmAction({ kind: "delete", ids });
+    setMenuOpen(null);
+  }
+
+  function toggleSelected(postId: string, checked: boolean) {
+    setSelectedPostIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(postId);
+      else next.delete(postId);
+      return next;
+    });
+  }
+
   // Filter logic
-  const filtered = posts.filter((p) => {
+  const nonDeletedPosts = posts.filter((p) => !deletedPostIds.has(p.id));
+  const filtered = nonDeletedPosts.filter((p) => {
+    const isArchived = archivedPostIds.has(p.id);
+    if (tab === "archived") return isArchived;
+    if (isArchived) return false;
     // Tab filter
     if (tab === "published" && p.status !== "published") return false;
     if (tab === "scheduled" && p.status !== "scheduled") return false;
@@ -165,11 +266,12 @@ export default function PostsPage() {
   });
 
   const tabCounts = {
-    all: posts.length,
-    published: posts.filter((p) => p.status === "published").length,
-    scheduled: posts.filter((p) => p.status === "scheduled").length,
-    failed: posts.filter((p) => p.status === "failed" || p.status === "partial").length,
-    draft: posts.filter((p) => p.status === "draft").length,
+    all: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id)).length,
+    published: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id) && p.status === "published").length,
+    scheduled: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id) && p.status === "scheduled").length,
+    failed: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id) && (p.status === "failed" || p.status === "partial")).length,
+    draft: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id) && p.status === "draft").length,
+    archived: nonDeletedPosts.filter((p) => archivedPostIds.has(p.id)).length,
   };
 
   function getTime(post: SocialPost) {
@@ -191,20 +293,26 @@ export default function PostsPage() {
   }
 
   function actionsMenu(post: SocialPost) {
+    const isArchived = archivedPostIds.has(post.id);
     const items: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean }[] = [
       { icon: <Eye />, label: "View details", action: () => { setExpandedPostId((current) => current === post.id ? null : post.id); setMenuOpen(null); } },
-      { icon: <Copy />, label: "Duplicate", action: () => handleDuplicate(post) },
+      { icon: <Copy />, label: "Duplicate", action: () => handleDuplicate() },
     ];
+    if (isArchived) {
+      items.push({ icon: <RotateCcw />, label: "Restore", action: () => requestRestore([post.id]) });
+    } else {
+      items.push({ icon: <Archive />, label: "Archive", action: () => requestArchive([post.id]) });
+    }
     if (post.status === "draft") {
       items.push({ icon: <Pencil />, label: "Edit", action: () => { setMenuOpen(null); } });
       items.push({ icon: <Send />, label: "Publish now", action: () => { setMenuOpen(null); } });
       items.push({ icon: <Calendar />, label: "Schedule", action: () => { setMenuOpen(null); } });
-      items.push({ icon: <XCircle />, label: "Delete", action: () => { setMenuOpen(null); }, danger: true });
     }
     if (post.status === "scheduled") {
       items.push({ icon: <Calendar />, label: "Edit scheduled time", action: () => { setMenuOpen(null); } });
       items.push({ icon: <XCircle />, label: "Cancel", action: () => handleCancel(post.id), danger: true });
     }
+    items.push({ icon: <Trash2 />, label: "Delete", action: () => requestDelete([post.id]), danger: true });
     return items;
   }
 
@@ -220,15 +328,35 @@ export default function PostsPage() {
           <div className="dt-page-title">Posts</div>
           <div className="dt-subtitle">Published and scheduled content</div>
         </div>
-        <button className="dbtn dbtn-primary" style={{ gap: 5 }} onClick={() => setShowCreateModal(true)}>
-          <Plus style={{ width: 14, height: 14 }} /> Create
-        </button>
+        <div className="posts-header-actions">
+          <div className="posts-selection-hint">
+            {selectedPostIds.size > 0 ? `${selectedPostIds.size} selected` : "Select posts"}
+          </div>
+          {tab === "archived" ? (
+            <button className="posts-bulk-btn" disabled={selectedPostIds.size === 0} onClick={() => requestRestore([...selectedPostIds])}>
+              <RotateCcw style={{ width: 14, height: 14 }} />
+              Restore
+            </button>
+          ) : (
+            <button className="posts-bulk-btn" disabled={selectedPostIds.size === 0} onClick={() => requestArchive([...selectedPostIds])}>
+              <Archive style={{ width: 14, height: 14 }} />
+              Archive
+            </button>
+          )}
+          <button className="posts-bulk-btn danger" disabled={selectedPostIds.size === 0} onClick={() => requestDelete([...selectedPostIds])}>
+            <Trash2 style={{ width: 14, height: 14 }} />
+            Delete
+          </button>
+          <button className="dbtn dbtn-primary" style={{ gap: 5 }} onClick={() => setShowCreateModal(true)}>
+            <Plus style={{ width: 14, height: 14 }} /> Create
+          </button>
+        </div>
       </div>
 
       {/* Tabs + search + platform filter — single row */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <div className="dtabs" style={{ marginBottom: 0 }}>
-          {(["all", "published", "scheduled", "failed", "draft"] as FilterTab[]).map((t) => (
+          {(["all", "published", "scheduled", "failed", "draft", "archived"] as FilterTab[]).map((t) => (
             <div key={t} className={`dtab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
               {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
               {t === "draft" ? "s" : ""}
@@ -268,6 +396,24 @@ export default function PostsPage() {
           <table>
             <thead>
               <tr>
+                <th className="posts-select-cell">
+                  <input
+                    type="checkbox"
+                    className="posts-checkbox"
+                    checked={filtered.length > 0 && filtered.every((post) => selectedPostIds.has(post.id))}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setSelectedPostIds((current) => {
+                        const next = new Set(current);
+                        filtered.forEach((post) => {
+                          if (checked) next.add(post.id);
+                          else next.delete(post.id);
+                        });
+                        return next;
+                      });
+                    }}
+                  />
+                </th>
                 <th>Caption</th>
                 <th style={{ width: 100 }}>Platforms</th>
                 <th style={{ width: 110 }}>Status</th>
@@ -281,6 +427,14 @@ export default function PostsPage() {
                 return (
                   <Fragment key={post.id}>
                     <tr className="posts-row" onClick={() => setExpandedPostId((current) => current === post.id ? null : post.id)}>
+                      <td className="posts-select-cell" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          className="posts-checkbox"
+                          checked={selectedPostIds.has(post.id)}
+                          onChange={(e) => toggleSelected(post.id, e.target.checked)}
+                        />
+                      </td>
                       <td>
                         <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span className="posts-row-toggle">
@@ -325,7 +479,7 @@ export default function PostsPage() {
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={5} className="posts-expand-cell">
+                        <td colSpan={6} className="posts-expand-cell">
                           <div className="posts-expand-layout">
                             <div className="posts-meta-grid">
                               <MetaCard label="Caption" value={post.caption || "(no caption)"} />
@@ -359,6 +513,34 @@ export default function PostsPage() {
         getToken={getToken}
         onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}
       />
+
+      {confirmAction ? (
+        <div className="posts-dialog-backdrop" onClick={() => setConfirmAction(null)}>
+          <div className="posts-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="posts-dialog-title">
+              {confirmAction.kind === "archive" ? "Archive posts?" : confirmAction.kind === "restore" ? "Restore posts?" : "Delete posts?"}
+            </div>
+            <div className="posts-dialog-body">
+              {confirmAction.kind === "archive"
+                ? `Archive ${confirmAction.ids.length} post${confirmAction.ids.length === 1 ? "" : "s"} from the overview list? You can still find them in the Archived tab.`
+                : confirmAction.kind === "restore"
+                  ? `Restore ${confirmAction.ids.length} archived post${confirmAction.ids.length === 1 ? "" : "s"} back to the main overview?`
+                  : `Delete ${confirmAction.ids.length} post${confirmAction.ids.length === 1 ? "" : "s"} from this overview? This is a strong hide action and should be used carefully.`}
+            </div>
+            <div className="posts-dialog-actions">
+              <button className="dbtn dbtn-ghost" onClick={() => setConfirmAction(null)}>
+                Cancel
+              </button>
+              <button
+                className={confirmAction.kind === "delete" ? "posts-bulk-btn danger" : "posts-bulk-btn"}
+                onClick={() => runConfirmAction(confirmAction)}
+              >
+                {confirmAction.kind === "archive" ? "Archive" : confirmAction.kind === "restore" ? "Restore" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
