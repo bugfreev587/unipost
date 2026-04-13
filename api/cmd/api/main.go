@@ -278,6 +278,7 @@ func main() {
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
 	apiMetricsRecorder := metrics.NewRecorder(queries)
+	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
 	meHandler := handler.NewMeHandler(queries, adminChecker)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
@@ -329,6 +330,7 @@ func main() {
 	// Public preview endpoint — no auth, JWT in query string. The
 	// dashboard preview page hits this route to render a draft.
 	r.Get("/v1/public/drafts/{id}", previewHandler.PublicGet)
+	r.Post("/v1/public/landing-visit", landingAttributionHandler.RecordVisit)
 
 	// Sprint 3 PR2: public Connect session lookup — no API key, the
 	// hosted dashboard page reads it via ?state=<oauth_state> as the
@@ -450,6 +452,7 @@ func main() {
 		r.Use(auth.AdminMiddleware(adminChecker))
 
 		r.Get("/v1/admin/stats", adminHandler.GetStats)
+		r.Get("/v1/admin/landing-sources", landingAttributionHandler.GetAdminSources)
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
 	})

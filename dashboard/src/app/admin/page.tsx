@@ -4,10 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth, useUser } from "@clerk/nextjs";
 import {
+  getAdminLandingSources,
   getAdminStats,
   getAdminUser,
   getMe,
   listAdminUsers,
+  type AdminLandingSourceRow,
+  type AdminLandingSourcesResponse,
   type AdminStats,
   type AdminUserDetail,
   type AdminUserListParams,
@@ -43,6 +46,7 @@ export default function AdminPage() {
   const { user, isLoaded: userLoaded } = useUser();
 
   const [stats, setStats] = useState<AdminStats | null>(null);
+  const [landingSources, setLandingSources] = useState<AdminLandingSourcesResponse | null>(null);
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -87,11 +91,13 @@ export default function AdminPage() {
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      const [statsRes, usersRes] = await Promise.all([
+      const [statsRes, landingSourcesRes, usersRes] = await Promise.all([
         getAdminStats(token),
+        getAdminLandingSources(token),
         listAdminUsers(token, { search, plan, sort, limit, offset }),
       ]);
       setStats(statsRes.data);
+      setLandingSources(landingSourcesRes.data);
       setUsers(usersRes.data);
       setTotal(usersRes.meta?.total ?? usersRes.data.length);
     } catch (e) {
@@ -156,6 +162,16 @@ export default function AdminPage() {
     const change = ((stats.new_signups_7d - stats.prev_signups_7d) / stats.prev_signups_7d) * 100;
     return change;
   }, [stats]);
+
+  const topLandingSource = useMemo(() => landingSources?.rows[0] ?? null, [landingSources]);
+  const latestLandingVisit = useMemo(() => {
+    if (!landingSources?.rows.length) return null;
+    return landingSources.rows.reduce<string | null>((latest, row) => {
+      if (!row.last_visit_at) return latest;
+      if (!latest) return row.last_visit_at;
+      return new Date(row.last_visit_at).getTime() > new Date(latest).getTime() ? row.last_visit_at : latest;
+    }, null);
+  }, [landingSources]);
 
   // ── Gating: still loading user / admin check, or not admin ────────
   if (!userLoaded || isAdmin === null) {
@@ -298,6 +314,60 @@ export default function AdminPage() {
               sub="last 30 days"
               subColor={stats && stats.churn_30d > 0 ? "down" : undefined}
             />
+          </div>
+
+          <div className="ad-section-header">
+            <div className="ad-section-title">Landing Sources</div>
+            <div className="ad-section-meta">Last {landingSources?.range_days ?? 30} days</div>
+          </div>
+
+          <div className="ad-stat-grid" style={{ marginBottom: 14 }}>
+            <StatCard
+              label="Landing Visits"
+              value={landingSources ? fmtNumber(landingSources.total_visits) : "—"}
+              sub="Tracked on marketing page"
+            />
+            <StatCard
+              label="Unique Visitors"
+              value={landingSources ? fmtNumber(landingSources.unique_visitors) : "—"}
+              sub={landingSources && landingSources.total_visits > 0 ? `${((landingSources.unique_visitors / landingSources.total_visits) * 100).toFixed(0)}% unique rate` : "—"}
+            />
+            <StatCard
+              label="Top Source"
+              value={topLandingSource?.label ?? "—"}
+              sub={topLandingSource ? `${fmtNumber(topLandingSource.visits)} visits` : "—"}
+              valueColor="accent"
+            />
+            <StatCard
+              label="Most Recent"
+              value={latestLandingVisit ? fmtRelative(latestLandingVisit) : "—"}
+              sub={latestLandingVisit ? fmtDate(latestLandingVisit) : "—"}
+            />
+          </div>
+
+          <div className="ad-tbl-wrap ad-tbl-static" style={{ marginBottom: 24 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Code</th>
+                  <th>Visits</th>
+                  <th>Unique Visitors</th>
+                  <th>Last Visit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {landingSources && landingSources.rows.length > 0 ? (
+                  landingSources.rows.map((row) => <LandingSourceRowView key={row.source_code} row={row} />)
+                ) : (
+                  <tr>
+                    <td colSpan={5} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>
+                      {loading ? "Loading…" : "No landing source data yet"}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
 
           {/* User table */}
@@ -565,6 +635,22 @@ function PanelRow({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
+function LandingSourceRowView({ row }: { row: AdminLandingSourceRow }) {
+  return (
+    <tr>
+      <td>
+        <div style={{ fontWeight: 500 }}>{row.label}</div>
+      </td>
+      <td>
+        <span className="ad-badge ad-b-gray">{row.source_code}</span>
+      </td>
+      <td>{fmtNumber(row.visits)}</td>
+      <td>{fmtNumber(row.unique_visitors)}</td>
+      <td style={{ color: "var(--dmuted)", fontSize: 11.5 }}>{fmtRelative(row.last_visit_at)}</td>
+    </tr>
+  );
+}
+
 // ── styles (scoped via .ad-* prefix) ─────────────────────────────────
 
 const shellStyle: React.CSSProperties = {
@@ -618,6 +704,7 @@ const adminCss = `
 
 .ad-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .ad-section-title { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; }
+.ad-section-meta { font-size: 11px; color: var(--dmuted); }
 
 .ad-filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .ad-search { background: var(--surface2); border: 1px solid var(--dborder2); border-radius: 6px; color: var(--dtext); font-size: 12px; padding: 6px 10px; font-family: inherit; outline: none; width: 220px; }
@@ -634,6 +721,8 @@ const adminCss = `
 .ad-tbl-wrap tr:last-child td { border-bottom: none; }
 .ad-tbl-wrap tbody tr { cursor: pointer; }
 .ad-tbl-wrap tbody tr:hover { background: var(--surface2); }
+.ad-tbl-static tbody tr { cursor: default; }
+.ad-tbl-static tbody tr:hover { background: transparent; }
 
 .ad-mono { font-family: var(--font-geist-mono), monospace; font-size: 11px; color: var(--dmuted); }
 .ad-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 20px; font-size: 10.5px; font-weight: 600; font-family: var(--font-geist-mono), monospace; }

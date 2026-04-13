@@ -720,6 +720,21 @@ export interface AdminStats {
   churn_30d: number;
 }
 
+export interface AdminLandingSourceRow {
+  source_code: string;
+  label: string;
+  visits: number;
+  unique_visitors: number;
+  last_visit_at: string | null;
+}
+
+export interface AdminLandingSourcesResponse {
+  range_days: number;
+  total_visits: number;
+  unique_visitors: number;
+  rows: AdminLandingSourceRow[];
+}
+
 export interface AdminUserRow {
   id: string;
   email: string;
@@ -821,6 +836,13 @@ export async function getAdminStats(token: string): Promise<ApiResponse<AdminSta
   return request("/v1/admin/stats", token);
 }
 
+export async function getAdminLandingSources(
+  token: string,
+  days = 30
+): Promise<ApiResponse<AdminLandingSourcesResponse>> {
+  return request(`/v1/admin/landing-sources?days=${days}`, token);
+}
+
 export async function listAdminUsers(
   token: string,
   params?: AdminUserListParams
@@ -840,6 +862,20 @@ export async function getAdminUser(
   id: string
 ): Promise<ApiResponse<AdminUserDetail>> {
   return request(`/v1/admin/users/${id}`, token);
+}
+
+export async function recordLandingVisit(data: {
+  path: string;
+  source?: string;
+  session_id: string;
+  referrer?: string;
+}): Promise<void> {
+  await fetch(`${API_URL}/v1/public/landing-visit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+    keepalive: true,
+  });
 }
 
 // API Metrics

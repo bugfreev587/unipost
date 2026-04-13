@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { recordLandingVisit } from "@/lib/api";
 import { MarketingNav, MarketingCTA, MarketingCTALight } from "@/components/marketing/nav";
 
 // ── Rotating subtitle hook (slide animation) ──
@@ -49,6 +50,51 @@ const FEATURES = [
   { number: "02", title: "Token management, handled", desc: "OAuth flows, token refresh, expiry handling — all managed automatically. Your users connect once, and UniPost handles everything in the background forever.", code: `// No token refresh code needed.\n// UniPost handles it automatically.\n\nGET /v1/social-accounts\n→ Always returns valid, active accounts` },
   { number: "03", title: "AI Agent ready via MCP", desc: "The first unified social API with native MCP Server support. Let Claude, GPT, or any AI agent post on behalf of your users — no code required.", code: `// Claude Desktop config\n{\n  "mcpServers": {\n    "unipost": {\n      "url": "https://mcp.unipost.dev/sse",\n      "headers": {\n        "Authorization": "Bearer up_live_xxx"\n      }\n    }\n  }\n}` },
 ];
+const LANDING_SESSION_KEY = "unipost-landing-session-id";
+const LANDING_SOURCE_KEY = "unipost-landing-source";
+const LANDING_SOURCE_AT_KEY = "unipost-landing-source-at";
+const LANDING_SOURCE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const KNOWN_LANDING_SOURCES = new Set(["x", "rd", "ih", "ph", "o", "direct"]);
+
+function generateLandingSessionId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `lp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeLandingSource(raw: string | null) {
+  const source = raw?.trim().toLowerCase();
+  return source && KNOWN_LANDING_SOURCES.has(source) ? source : undefined;
+}
+
+function getStoredLandingSource() {
+  try {
+    const source = normalizeLandingSource(window.localStorage.getItem(LANDING_SOURCE_KEY));
+    const rawAt = window.localStorage.getItem(LANDING_SOURCE_AT_KEY);
+    const savedAt = rawAt ? Number(rawAt) : 0;
+    if (!source || !savedAt || Date.now() - savedAt > LANDING_SOURCE_TTL_MS) {
+      window.localStorage.removeItem(LANDING_SOURCE_KEY);
+      window.localStorage.removeItem(LANDING_SOURCE_AT_KEY);
+      return undefined;
+    }
+    return source;
+  } catch {
+    return undefined;
+  }
+}
+
+function getLandingSessionId() {
+  try {
+    const existing = window.localStorage.getItem(LANDING_SESSION_KEY);
+    if (existing) return existing;
+    const next = generateLandingSessionId();
+    window.localStorage.setItem(LANDING_SESSION_KEY, next);
+    return next;
+  } catch {
+    return generateLandingSessionId();
+  }
+}
 const CODE_SNIPPETS: Record<string, string> = {
   js: `const response = await fetch(\n  'https://api.unipost.dev/v1/social-posts',\n  {\n    method: 'POST',\n    headers: {\n      'Authorization': 'Bearer up_live_xxxx',\n      'Content-Type':  'application/json',\n    },\n    body: JSON.stringify({\n      caption:     'Hello from UniPost! 🚀',\n      account_ids: ['sa_instagram_123', 'sa_linkedin_456'],\n    }),\n  }\n);\n\nconst { data } = await response.json();\nconsole.log(data.id); // post_abc123`,
   python: `import requests\n\nresponse = requests.post(\n    'https://api.unipost.dev/v1/social-posts',\n    headers={\n        'Authorization': 'Bearer up_live_xxxx',\n        'Content-Type':  'application/json',\n    },\n    json={\n        'caption':     'Hello from UniPost! 🚀',\n        'account_ids': ['sa_instagram_123', 'sa_linkedin_456'],\n    }\n)\n\ndata = response.json()['data']\nprint(data['id'])  # post_abc123`,
@@ -77,6 +123,31 @@ export default function LandingPage() {
   const { item: rotatingItem, phase: rotatePhase } = useRotatingText(ROTATING_ITEMS);
   const [activeLang, setActiveLang] = useState("js");
   const langs = [{ id: "js", label: "JavaScript" }, { id: "python", label: "Python" }, { id: "go", label: "Go" }, { id: "curl", label: "cURL" }];
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sourceFromUrl = normalizeLandingSource(params.get("r"));
+    const source = sourceFromUrl ?? getStoredLandingSource();
+    const sessionId = getLandingSessionId();
+
+    if (sourceFromUrl) {
+      try {
+        window.localStorage.setItem(LANDING_SOURCE_KEY, sourceFromUrl);
+        window.localStorage.setItem(LANDING_SOURCE_AT_KEY, String(Date.now()));
+      } catch {
+        // Ignore storage failures and still record the visit.
+      }
+    }
+
+    void recordLandingVisit({
+      path: window.location.pathname || "/",
+      source,
+      session_id: sessionId,
+      referrer: document.referrer || undefined,
+    }).catch(() => {
+      // Ignore attribution write failures to keep landing UX uninterrupted.
+    });
+  }, []);
 
   return (
     <>
