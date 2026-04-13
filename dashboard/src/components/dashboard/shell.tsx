@@ -76,15 +76,15 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  // Auto-expand submenus that match the current path on initial render
-  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(() => {
-    const initial = new Set<string>();
+  // Only one submenu should be expanded at a time.
+  const [expandedMenu, setExpandedMenu] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
     for (const item of ALL_NAV_ITEMS) {
-      if (item.submenu && typeof window !== "undefined" && window.location.pathname.includes(item.href)) {
-        initial.add(item.href);
+      if (item.submenu && window.location.pathname.includes(item.href)) {
+        return item.href;
       }
     }
-    return initial;
+    return null;
   });
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -94,6 +94,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const currentProfile = profiles.find((p) => p.id === profileId);
 
   const navItems = filterNavItems(workspace?.usage_modes ?? []);
+
+  useEffect(() => {
+    const activeSubmenuParent = navItems.find((item) => item.submenu && pathname.includes(item.href));
+    if (activeSubmenuParent) {
+      setExpandedMenu(activeSubmenuParent.href);
+    }
+  }, [navItems, pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,19 +253,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 const active = isActive(item.href);
                 const Icon = item.icon;
                 const hasSubmenu = !!item.submenu;
-                const submenuOpen = hasSubmenu && expandedMenus.has(item.href);
+                const submenuOpen = hasSubmenu && expandedMenu === item.href;
 
                 const tourId = item.label.toLowerCase().replace(/\s+/g, "-");
                 return (
                   <div key={item.href} data-tour={tourId}>
                     {hasSubmenu ? (
                       <button
-                        onClick={() => setExpandedMenus(prev => {
-                          const next = new Set(prev);
-                          if (next.has(item.href)) next.delete(item.href);
-                          else next.add(item.href);
-                          return next;
-                        })}
+                        onClick={() => setExpandedMenu((current) => current === item.href ? null : item.href)}
                         className="sidebar-nav-item"
                         style={{ width: "100%", border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", justifyContent: "space-between" }}
                       >
