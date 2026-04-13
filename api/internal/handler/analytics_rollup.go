@@ -52,10 +52,10 @@ var allowedGranularity = map[string]string{
 // expression is plain SQL the handler interpolates into the query;
 // the keys are what the API client sends.
 var allowedGroupBy = map[string]string{
-	"platform":         "sa.platform",
+	"platform":          "sa.platform",
 	"social_account_id": "sa.id",
-	"external_user_id": "sa.external_user_id",
-	"status":           "spr.status",
+	"external_user_id":  "sa.external_user_id",
+	"status":            "spr.status",
 }
 
 // MaxRollupRangeDays is the upper bound on (to - from). One year is
@@ -66,13 +66,13 @@ const MaxRollupRangeDays = 366
 // rollupGroup is one row in the response — the dimension columns
 // are populated based on what the client asked for.
 type rollupGroup struct {
-	Platform         string `json:"platform,omitempty"`
-	SocialAccountID  string `json:"social_account_id,omitempty"`
-	ExternalUserID   string `json:"external_user_id,omitempty"`
-	Status           string `json:"status,omitempty"`
-	PublishedCount   int    `json:"published_count"`
-	FailedCount      int    `json:"failed_count"`
-	PartialCount     int    `json:"partial_count"`
+	Platform        string `json:"platform,omitempty"`
+	SocialAccountID string `json:"social_account_id,omitempty"`
+	ExternalUserID  string `json:"external_user_id,omitempty"`
+	Status          string `json:"status,omitempty"`
+	PublishedCount  int    `json:"published_count"`
+	FailedCount     int    `json:"failed_count"`
+	PartialCount    int    `json:"partial_count"`
 }
 
 type rollupBucket struct {
@@ -145,6 +145,7 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 		JOIN social_posts sp ON spr.post_id = sp.id
 		JOIN social_accounts sa ON spr.social_account_id = sa.id
 		WHERE sp.workspace_id = $1
+		  AND sp.deleted_at IS NULL
 		  AND sp.created_at >= $2
 		  AND sp.created_at < $3
 		GROUP BY bucket, %s

@@ -57,6 +57,7 @@ LEFT JOIN social_post_results spr ON spr.post_id = sp.id
 LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
 WHERE sp.workspace_id = $1
+  AND sp.deleted_at IS NULL
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
@@ -75,6 +76,7 @@ LEFT JOIN social_post_results spr ON spr.post_id = sp.id
 LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
 WHERE sp.workspace_id = $1
+  AND sp.deleted_at IS NULL
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
@@ -92,9 +94,11 @@ SELECT
   sa.refresh_token,
   sa.token_expires_at
 FROM social_post_results spr
+JOIN social_posts sp       ON sp.id = spr.post_id
 JOIN social_accounts sa     ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa ON pa.social_post_result_id = spr.id
 WHERE spr.status = 'published'
+  AND sp.deleted_at IS NULL
   AND spr.external_id IS NOT NULL
   AND spr.published_at IS NOT NULL
   AND spr.published_at > NOW() - INTERVAL '90 days'
@@ -126,6 +130,7 @@ JOIN social_post_results spr ON spr.post_id = sp.id
 JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa  ON pa.social_post_result_id = spr.id
 WHERE sp.workspace_id = $1
+  AND sp.deleted_at IS NULL
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)

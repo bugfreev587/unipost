@@ -47,6 +47,16 @@ type ConnectSession struct {
 	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
 }
 
+type LandingVisit struct {
+	ID         int64              `json:"id"`
+	Path       string             `json:"path"`
+	SourceCode string             `json:"source_code"`
+	Referer    string             `json:"referer"`
+	SessionID  string             `json:"session_id"`
+	UserAgent  string             `json:"user_agent"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type Media struct {
 	ID          string             `json:"id"`
 	StorageKey  string             `json:"storage_key"`
@@ -88,20 +98,20 @@ type PlatformCredential struct {
 }
 
 type PostAnalytic struct {
-	ID                 string             `json:"id"`
-	SocialPostResultID string             `json:"social_post_result_id"`
-	Views              pgtype.Int8        `json:"views"`
-	Likes              pgtype.Int8        `json:"likes"`
-	Comments           pgtype.Int8        `json:"comments"`
-	Shares             pgtype.Int8        `json:"shares"`
-	Reach              pgtype.Int8        `json:"reach"`
-	Impressions        pgtype.Int8        `json:"impressions"`
-	EngagementRate     pgtype.Numeric     `json:"engagement_rate"`
-	RawData            []byte             `json:"raw_data"`
-	FetchedAt          pgtype.Timestamptz `json:"fetched_at"`
-	Saves              pgtype.Int8        `json:"saves"`
-	Clicks             pgtype.Int8        `json:"clicks"`
-	VideoViews         pgtype.Int8        `json:"video_views"`
+	ID                  string             `json:"id"`
+	SocialPostResultID  string             `json:"social_post_result_id"`
+	Views               pgtype.Int8        `json:"views"`
+	Likes               pgtype.Int8        `json:"likes"`
+	Comments            pgtype.Int8        `json:"comments"`
+	Shares              pgtype.Int8        `json:"shares"`
+	Reach               pgtype.Int8        `json:"reach"`
+	Impressions         pgtype.Int8        `json:"impressions"`
+	EngagementRate      pgtype.Numeric     `json:"engagement_rate"`
+	RawData             []byte             `json:"raw_data"`
+	FetchedAt           pgtype.Timestamptz `json:"fetched_at"`
+	Saves               pgtype.Int8        `json:"saves"`
+	Clicks              pgtype.Int8        `json:"clicks"`
+	VideoViews          pgtype.Int8        `json:"video_views"`
 	PlatformSpecific    []byte             `json:"platform_specific"`
 	ConsecutiveFailures int32              `json:"consecutive_failures"`
 	LastFailureReason   pgtype.Text        `json:"last_failure_reason"`
@@ -151,6 +161,8 @@ type SocialPost struct {
 	Metadata       []byte             `json:"metadata"`
 	IdempotencyKey pgtype.Text        `json:"idempotency_key"`
 	WorkspaceID    string             `json:"workspace_id"`
+	ArchivedAt     pgtype.Timestamptz `json:"archived_at"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type SocialPostResult struct {

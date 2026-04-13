@@ -82,6 +82,7 @@ type socialPostResponse struct {
 	CreatedAt   time.Time            `json:"created_at"`
 	ScheduledAt *time.Time           `json:"scheduled_at,omitempty"`
 	PublishedAt *time.Time           `json:"published_at,omitempty"`
+	ArchivedAt  *time.Time           `json:"archived_at,omitempty"`
 	Results     []postResultResponse `json:"results,omitempty"`
 }
 
@@ -128,7 +129,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// the prior response unchanged. Cheap: one indexed lookup.
 	if parsed.IdempotencyKey != "" {
 		if existing, err := h.queries.GetSocialPostByIdempotencyKey(r.Context(), db.GetSocialPostByIdempotencyKeyParams{
-			WorkspaceID:      workspaceID,
+			WorkspaceID:    workspaceID,
 			IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
 		}); err == nil {
 			h.writeReplayedPost(w, r, existing)
@@ -224,7 +225,7 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		WorkspaceID:      workspaceID,
+		WorkspaceID:    workspaceID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "scheduled",
@@ -310,7 +311,7 @@ func (h *SocialPostHandler) executeImmediatePost(
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		WorkspaceID:      workspaceID,
+		WorkspaceID:    workspaceID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "publishing",
@@ -618,7 +619,7 @@ func (h *SocialPostHandler) runDispatchGroup(
 	// (frozen after post 1) and parent URI+CID (updated each iteration).
 	// Other platforms ignore everything in here.
 	var (
-		prevExternalID  string // twitter
+		prevExternalID                         string // twitter
 		rootURI, rootCID, parentURI, parentCID string // bluesky
 	)
 	for chainIdx, postIdx := range groupIndices {
@@ -916,37 +917,37 @@ func idempotencyKeyParam(key string) pgtype.Text {
 // record them as per-account failures and let the rest succeed —
 // preserves legacy partial-success semantics.
 var fatalErrorCodes = map[string]bool{
-	platform.CodeExceedsMaxLength:            true,
-	platform.CodeBelowMinLength:              true,
-	platform.CodeMissingRequired:             true,
-	platform.CodeMaxImagesExceeded:           true,
-	platform.CodeMaxVideosExceeded:           true,
-	platform.CodeMixedMediaUnsupported:       true,
-	platform.CodeUnsupportedInReplyTo:        true,
-	platform.CodeScheduledTooSoon:            true,
-	platform.CodeScheduledTooFar:             true,
-	platform.CodeUnknownPlatform:             true,
-	platform.CodeEmptyPosts:                  true,
-	platform.CodeTooManyPosts:                true,
-	platform.CodeUnsupportedFormat:           true,
-	platform.CodeFileTooLarge:                true,
-	platform.CodeDimensionsOutOfRange:        true,
-	platform.CodeAspectRatioUnsupported:      true,
-	platform.CodeDurationOutOfRange:          true,
+	platform.CodeExceedsMaxLength:       true,
+	platform.CodeBelowMinLength:         true,
+	platform.CodeMissingRequired:        true,
+	platform.CodeMaxImagesExceeded:      true,
+	platform.CodeMaxVideosExceeded:      true,
+	platform.CodeMixedMediaUnsupported:  true,
+	platform.CodeUnsupportedInReplyTo:   true,
+	platform.CodeScheduledTooSoon:       true,
+	platform.CodeScheduledTooFar:        true,
+	platform.CodeUnknownPlatform:        true,
+	platform.CodeEmptyPosts:             true,
+	platform.CodeTooManyPosts:           true,
+	platform.CodeUnsupportedFormat:      true,
+	platform.CodeFileTooLarge:           true,
+	platform.CodeDimensionsOutOfRange:   true,
+	platform.CodeAspectRatioUnsupported: true,
+	platform.CodeDurationOutOfRange:     true,
 	// Sprint 2 thread codes — fatal because the post can't be
 	// dispatched in a meaningful way without the structure being
 	// intelligible.
-	platform.CodeThreadsUnsupported:          true,
+	platform.CodeThreadsUnsupported:           true,
 	platform.CodeThreadPositionsNotContiguous: true,
-	platform.CodeThreadMixedWithSingle:       true,
+	platform.CodeThreadMixedWithSingle:        true,
 	// Sprint 2 media-library codes — fatal because the publish path
 	// would 4xx if it tried to dispatch with a missing media id.
-	platform.CodeMediaIDNotFound:             true,
-	platform.CodeMediaIDNotInWorkspace:         true,
-	platform.CodeMediaNotUploaded:            true,
+	platform.CodeMediaIDNotFound:       true,
+	platform.CodeMediaIDNotInWorkspace: true,
+	platform.CodeMediaNotUploaded:      true,
 	// Sprint 4 PR3 first_comment codes.
-	platform.CodeFirstCommentUnsupported:     true,
-	platform.CodeFirstCommentTooLong:         true,
+	platform.CodeFirstCommentUnsupported: true,
+	platform.CodeFirstCommentTooLong:     true,
 }
 
 // filterFatalIssues splits the validator's full Errors slice into
@@ -1025,6 +1026,10 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 	if post.ScheduledAt.Valid {
 		t := post.ScheduledAt.Time
 		resp.ScheduledAt = &t
+	}
+	if post.ArchivedAt.Valid {
+		t := post.ArchivedAt.Time
+		resp.ArchivedAt = &t
 	}
 
 	for _, res := range results {
@@ -1139,11 +1144,11 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 // List handles GET /v1/social-posts. Sprint 2 added query-string
 // filters and cursor pagination:
 //
-//   ?status=draft,published    multi-status (comma-separated)
-//   ?from=2026-04-01T00:00:00Z RFC3339, inclusive lower bound on created_at
-//   ?to=2026-04-08T00:00:00Z   RFC3339, exclusive upper bound on created_at
-//   ?limit=25                  default 25, max 100
-//   ?cursor=...                opaque, returned as next_cursor in the prior page
+//	?status=draft,published    multi-status (comma-separated)
+//	?from=2026-04-01T00:00:00Z RFC3339, inclusive lower bound on created_at
+//	?to=2026-04-08T00:00:00Z   RFC3339, exclusive upper bound on created_at
+//	?limit=25                  default 25, max 100
+//	?cursor=...                opaque, returned as next_cursor in the prior page
 //
 // Cursor format: base64url(created_at|id) — keyset on the
 // (created_at DESC, id DESC) index added in migration 019. Stable
@@ -1175,7 +1180,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 	to := parseRFC3339Param(r.URL.Query().Get("to"))
 
 	posts, err := h.queries.ListSocialPostsFiltered(r.Context(), db.ListSocialPostsFilteredParams{
-		WorkspaceID:   workspaceID,
+		WorkspaceID: workspaceID,
 		Column2:     statusCSV,
 		Column3:     from,
 		Column4:     to,
@@ -1216,6 +1221,10 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		if p.PublishedAt.Valid {
 			publishedAt = &p.PublishedAt.Time
 		}
+		var archivedAt *time.Time
+		if p.ArchivedAt.Valid {
+			archivedAt = &p.ArchivedAt.Time
+		}
 
 		// Fetch results for this post
 		postResults, _ := h.queries.ListSocialPostResultsByPost(r.Context(), p.ID)
@@ -1248,6 +1257,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:   p.CreatedAt.Time,
 			ScheduledAt: scheduledAt,
 			PublishedAt: publishedAt,
+			ArchivedAt:  archivedAt,
 			Results:     responseResults,
 		})
 	}
@@ -1337,15 +1347,15 @@ func decodeListCursor(raw string) (time.Time, string, error) {
 	return time.Unix(0, nanos), parts[1], nil
 }
 
-// Delete handles DELETE /v1/social-posts/{id}
-func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
+// Archive handles POST /v1/social-posts/{id}/archive.
+func (h *SocialPostHandler) Archive(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
 	}
 
-	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
+	post, err := h.queries.ArchiveSocialPost(r.Context(), db.ArchiveSocialPostParams{
 		ID:          postID,
 		WorkspaceID: workspaceID,
 	})
@@ -1354,35 +1364,57 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get post")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to archive post")
 		return
 	}
 
-	// Delete from platforms
-	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
-	for _, res := range results {
-		if !res.ExternalID.Valid {
-			continue
-		}
-		acc, err := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID)
-		if err != nil {
-			continue
-		}
-		adapter, err := platform.Get(acc.Platform)
-		if err != nil {
-			continue
-		}
-		accessToken, err := h.encryptor.Decrypt(acc.AccessToken)
-		if err != nil {
-			continue
-		}
-		if err := adapter.DeletePost(r.Context(), accessToken, res.ExternalID.String); err != nil {
-			slog.Error("failed to delete post from platform", "platform", acc.Platform, "error", err)
-		}
+	writeSuccess(w, socialPostResponseFromRow(post))
+}
+
+// Restore handles POST /v1/social-posts/{id}/restore.
+func (h *SocialPostHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.getWorkspaceID(r)
+	postID := chi.URLParam(r, "id")
+	if postID == "" {
+		postID = chi.URLParam(r, "postID")
 	}
 
-	h.queries.DeleteSocialPostResultsByPost(r.Context(), post.ID)
-	h.queries.DeleteSocialPost(r.Context(), post.ID)
+	post, err := h.queries.RestoreSocialPost(r.Context(), db.RestoreSocialPostParams{
+		ID:          postID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to restore post")
+		return
+	}
+
+	writeSuccess(w, socialPostResponseFromRow(post))
+}
+
+// Delete handles DELETE /v1/social-posts/{id}
+func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.getWorkspaceID(r)
+	postID := chi.URLParam(r, "id")
+	if postID == "" {
+		postID = chi.URLParam(r, "postID")
+	}
+
+	_, err := h.queries.SoftDeleteSocialPost(r.Context(), db.SoftDeleteSocialPostParams{
+		ID:          postID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete post")
+		return
+	}
 
 	writeSuccess(w, map[string]bool{"deleted": true})
 }

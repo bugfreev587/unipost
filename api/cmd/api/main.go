@@ -416,6 +416,8 @@ func main() {
 		// Social posts (dashboard, workspace-scoped)
 		r.Get("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.List)
 		r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", socialPostHandler.Archive)
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", socialPostHandler.Restore)
 
 		// OAuth connect (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
@@ -502,6 +504,8 @@ func main() {
 		r.Post("/v1/social-posts/validate", socialPostHandler.Validate)
 		r.Get("/v1/social-posts/{id}", socialPostHandler.Get)
 		r.Get("/v1/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
+		r.Post("/v1/social-posts/{id}/archive", socialPostHandler.Archive)
+		r.Post("/v1/social-posts/{id}/restore", socialPostHandler.Restore)
 		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
 		// Drafts API (Sprint 2). Drafts are social_posts rows in
 		// status='draft' — no platform dispatch, no quota charge,

@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
-  listSocialAccounts, listSocialPosts, cancelSocialPost,
+  listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost,
   type SocialAccount, type SocialPost,
 } from "@/lib/api";
 import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
@@ -62,6 +62,10 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-menu-item svg{width:13px;height:13px;flex-shrink:0}
 .posts-menu-item.danger{color:#ef4444}
 .posts-menu-item.danger:hover{background:#ef444410}
+.posts-tooltip-anchor{position:relative;display:inline-flex}
+.posts-tooltip{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%) translateY(4px);padding:8px 10px;border-radius:10px;border:1px solid var(--dborder);background:color-mix(in srgb,var(--surface-raised) 96%,black);color:var(--dtext);font-size:12px;line-height:1.45;white-space:nowrap;box-shadow:0 14px 30px color-mix(in srgb,var(--shadow-color) 120%,transparent);opacity:0;pointer-events:none;transition:opacity .12s,transform .12s;z-index:40}
+.posts-tooltip-anchor:hover .posts-tooltip,.posts-tooltip-anchor:focus-within .posts-tooltip{opacity:1;transform:translateX(-50%) translateY(0)}
+.posts-tooltip::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);border:6px solid transparent;border-top-color:color-mix(in srgb,var(--surface-raised) 96%,black)}
 .posts-select-cell{width:42px}
 .posts-checkbox{appearance:none;width:16px;height:16px;border-radius:4px;border:1px solid var(--dborder2);background:var(--surface2);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;position:relative;transition:all .12s}
 .posts-checkbox:hover{border-color:var(--daccent)}
@@ -115,15 +119,14 @@ export default function PostsPage() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [archivedPostIds, setArchivedPostIds] = useState<Set<string>>(new Set());
-  const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set());
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const storageKeyBase = workspaceId ? `unipost-posts:${workspaceId}:${profileId}` : null;
 
   const loadData = useCallback(async () => {
     if (!workspaceId) return; // wait for workspace resolution
+    setLoading(true);
     try {
       const token = await getToken();
       if (!token) return;
@@ -141,29 +144,6 @@ export default function PostsPage() {
   }, [getToken, profileId, workspaceId]);
 
   useEffect(() => { loadData(); }, [loadData]);
-
-  useEffect(() => {
-    if (!storageKeyBase) return;
-    try {
-      const archivedRaw = window.localStorage.getItem(`${storageKeyBase}:archived`);
-      const deletedRaw = window.localStorage.getItem(`${storageKeyBase}:deleted`);
-      setArchivedPostIds(new Set(archivedRaw ? JSON.parse(archivedRaw) : []));
-      setDeletedPostIds(new Set(deletedRaw ? JSON.parse(deletedRaw) : []));
-    } catch {
-      setArchivedPostIds(new Set());
-      setDeletedPostIds(new Set());
-    }
-  }, [storageKeyBase]);
-
-  useEffect(() => {
-    if (!storageKeyBase) return;
-    window.localStorage.setItem(`${storageKeyBase}:archived`, JSON.stringify([...archivedPostIds]));
-  }, [archivedPostIds, storageKeyBase]);
-
-  useEffect(() => {
-    if (!storageKeyBase) return;
-    window.localStorage.setItem(`${storageKeyBase}:deleted`, JSON.stringify([...deletedPostIds]));
-  }, [deletedPostIds, storageKeyBase]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -189,32 +169,33 @@ export default function PostsPage() {
     setMenuOpen(null);
   }
 
-  function runConfirmAction(action: ConfirmAction) {
-    if (action.kind === "archive") {
-      setArchivedPostIds((current) => new Set([...current, ...action.ids]));
-    }
-    if (action.kind === "restore") {
-      setArchivedPostIds((current) => {
+  async function runConfirmAction(action: ConfirmAction) {
+    try {
+      const token = await getToken();
+      if (!token) return;
+      setActionBusy(true);
+      if (action.kind === "archive") {
+        await Promise.all(action.ids.map((id) => archiveSocialPost(token, id)));
+      }
+      if (action.kind === "restore") {
+        await Promise.all(action.ids.map((id) => restoreSocialPost(token, id)));
+      }
+      if (action.kind === "delete") {
+        await Promise.all(action.ids.map((id) => deleteSocialPost(token, id)));
+      }
+      setSelectedPostIds((current) => {
         const next = new Set(current);
         action.ids.forEach((id) => next.delete(id));
         return next;
       });
+      if (expandedPostId && action.ids.includes(expandedPostId)) setExpandedPostId(null);
+      setConfirmAction(null);
+      await loadData();
+    } catch (err) {
+      console.error("Post action failed:", err);
+    } finally {
+      setActionBusy(false);
     }
-    if (action.kind === "delete") {
-      setDeletedPostIds((current) => new Set([...current, ...action.ids]));
-      setArchivedPostIds((current) => {
-        const next = new Set(current);
-        action.ids.forEach((id) => next.delete(id));
-        return next;
-      });
-    }
-    setSelectedPostIds((current) => {
-      const next = new Set(current);
-      action.ids.forEach((id) => next.delete(id));
-      return next;
-    });
-    if (expandedPostId && action.ids.includes(expandedPostId)) setExpandedPostId(null);
-    setConfirmAction(null);
   }
 
   function requestArchive(ids: string[]) {
@@ -245,9 +226,8 @@ export default function PostsPage() {
   }
 
   // Filter logic
-  const nonDeletedPosts = posts.filter((p) => !deletedPostIds.has(p.id));
-  const filtered = nonDeletedPosts.filter((p) => {
-    const isArchived = archivedPostIds.has(p.id);
+  const filtered = posts.filter((p) => {
+    const isArchived = Boolean(p.archived_at);
     if (tab === "archived") return isArchived;
     if (isArchived) return false;
     // Tab filter
@@ -266,12 +246,12 @@ export default function PostsPage() {
   });
 
   const tabCounts = {
-    all: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id)).length,
-    published: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id) && p.status === "published").length,
-    scheduled: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id) && p.status === "scheduled").length,
-    failed: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id) && (p.status === "failed" || p.status === "partial")).length,
-    draft: nonDeletedPosts.filter((p) => !archivedPostIds.has(p.id) && p.status === "draft").length,
-    archived: nonDeletedPosts.filter((p) => archivedPostIds.has(p.id)).length,
+    all: posts.filter((p) => !p.archived_at).length,
+    published: posts.filter((p) => !p.archived_at && p.status === "published").length,
+    scheduled: posts.filter((p) => !p.archived_at && p.status === "scheduled").length,
+    failed: posts.filter((p) => !p.archived_at && (p.status === "failed" || p.status === "partial")).length,
+    draft: posts.filter((p) => !p.archived_at && p.status === "draft").length,
+    archived: posts.filter((p) => Boolean(p.archived_at)).length,
   };
 
   function getTime(post: SocialPost) {
@@ -293,8 +273,8 @@ export default function PostsPage() {
   }
 
   function actionsMenu(post: SocialPost) {
-    const isArchived = archivedPostIds.has(post.id);
-    const items: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean }[] = [
+    const isArchived = Boolean(post.archived_at);
+    const items: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean; tooltip?: string }[] = [
       { icon: <Eye />, label: "View details", action: () => { setExpandedPostId((current) => current === post.id ? null : post.id); setMenuOpen(null); } },
       { icon: <Copy />, label: "Duplicate", action: () => handleDuplicate() },
     ];
@@ -312,7 +292,13 @@ export default function PostsPage() {
       items.push({ icon: <Calendar />, label: "Edit scheduled time", action: () => { setMenuOpen(null); } });
       items.push({ icon: <XCircle />, label: "Cancel", action: () => handleCancel(post.id), danger: true });
     }
-    items.push({ icon: <Trash2 />, label: "Delete", action: () => requestDelete([post.id]), danger: true });
+    items.push({
+      icon: <Trash2 />,
+      label: "Delete",
+      action: () => requestDelete([post.id]),
+      danger: true,
+      tooltip: "Deletes from UniPost only. Published posts stay live on social platforms.",
+    });
     return items;
   }
 
@@ -343,10 +329,12 @@ export default function PostsPage() {
               Archive
             </button>
           )}
-          <button className="posts-bulk-btn danger" disabled={selectedPostIds.size === 0} onClick={() => requestDelete([...selectedPostIds])}>
-            <Trash2 style={{ width: 14, height: 14 }} />
-            Delete
-          </button>
+          <HoverHint text="Deletes from UniPost only. Published posts stay live on social platforms.">
+            <button className="posts-bulk-btn danger" disabled={selectedPostIds.size === 0} onClick={() => requestDelete([...selectedPostIds])}>
+              <Trash2 style={{ width: 14, height: 14 }} />
+              Delete
+            </button>
+          </HoverHint>
           <button className="dbtn dbtn-primary" style={{ gap: 5 }} onClick={() => setShowCreateModal(true)}>
             <Plus style={{ width: 14, height: 14 }} /> Create
           </button>
@@ -462,16 +450,23 @@ export default function PostsPage() {
                           </button>
                           {menuOpen === post.id && (
                             <div className="posts-menu">
-                              {actionsMenu(post).map((item) => (
-                                <button
-                                  key={item.label}
-                                  className={`posts-menu-item${item.danger ? " danger" : ""}`}
-                                  onClick={(e) => { e.stopPropagation(); item.action(); }}
-                                >
-                                  {item.icon}
-                                  {item.label}
-                                </button>
-                              ))}
+                              {actionsMenu(post).map((item) => {
+                                const button = (
+                                  <button
+                                    key={item.label}
+                                    className={`posts-menu-item${item.danger ? " danger" : ""}`}
+                                    onClick={(e) => { e.stopPropagation(); item.action(); }}
+                                  >
+                                    {item.icon}
+                                    {item.label}
+                                  </button>
+                                );
+                                return item.tooltip ? (
+                                  <HoverHint key={item.label} text={item.tooltip}>
+                                    {button}
+                                  </HoverHint>
+                                ) : button;
+                              })}
                             </div>
                           )}
                         </div>
@@ -525,7 +520,7 @@ export default function PostsPage() {
                 ? `Archive ${confirmAction.ids.length} post${confirmAction.ids.length === 1 ? "" : "s"} from the overview list? You can still find them in the Archived tab.`
                 : confirmAction.kind === "restore"
                   ? `Restore ${confirmAction.ids.length} archived post${confirmAction.ids.length === 1 ? "" : "s"} back to the main overview?`
-                  : `Delete ${confirmAction.ids.length} post${confirmAction.ids.length === 1 ? "" : "s"} from this overview? This is a strong hide action and should be used carefully.`}
+                  : `Delete ${confirmAction.ids.length} post${confirmAction.ids.length === 1 ? "" : "s"} from UniPost? This removes the post from your UniPost dashboard and analytics only. It does not delete the published post on social platforms.`}
             </div>
             <div className="posts-dialog-actions">
               <button className="dbtn dbtn-ghost" onClick={() => setConfirmAction(null)}>
@@ -533,9 +528,10 @@ export default function PostsPage() {
               </button>
               <button
                 className={confirmAction.kind === "delete" ? "posts-bulk-btn danger" : "posts-bulk-btn"}
-                onClick={() => runConfirmAction(confirmAction)}
+                disabled={actionBusy}
+                onClick={() => { void runConfirmAction(confirmAction); }}
               >
-                {confirmAction.kind === "archive" ? "Archive" : confirmAction.kind === "restore" ? "Restore" : "Delete"}
+                {actionBusy ? "Working..." : confirmAction.kind === "archive" ? "Archive" : confirmAction.kind === "restore" ? "Restore" : "Delete"}
               </button>
             </div>
           </div>
@@ -551,6 +547,15 @@ function MetaCard({ label, value }: { label: string; value: string }) {
       <div className="posts-meta-label">{label}</div>
       <div className="posts-meta-value">{value}</div>
     </div>
+  );
+}
+
+function HoverHint({ children, text }: { children: React.ReactNode; text: string }) {
+  return (
+    <span className="posts-tooltip-anchor">
+      {children}
+      <span className="posts-tooltip" role="tooltip">{text}</span>
+    </span>
   );
 }
 

@@ -29,6 +29,7 @@ JOIN social_post_results spr ON spr.post_id = sp.id
 JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa  ON pa.social_post_result_id = spr.id
 WHERE sp.workspace_id = $1
+  AND sp.deleted_at IS NULL
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
@@ -116,6 +117,7 @@ LEFT JOIN social_post_results spr ON spr.post_id = sp.id
 LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
 WHERE sp.workspace_id = $1
+  AND sp.deleted_at IS NULL
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
@@ -184,6 +186,7 @@ LEFT JOIN social_post_results spr ON spr.post_id = sp.id
 LEFT JOIN social_accounts sa      ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa       ON pa.social_post_result_id = spr.id
 WHERE sp.workspace_id = $1
+  AND sp.deleted_at IS NULL
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
@@ -252,9 +255,11 @@ SELECT
   sa.refresh_token,
   sa.token_expires_at
 FROM social_post_results spr
+JOIN social_posts sp       ON sp.id = spr.post_id
 JOIN social_accounts sa     ON sa.id = spr.social_account_id
 LEFT JOIN post_analytics pa ON pa.social_post_result_id = spr.id
 WHERE spr.status = 'published'
+  AND sp.deleted_at IS NULL
   AND spr.external_id IS NOT NULL
   AND spr.published_at IS NOT NULL
   AND spr.published_at > NOW() - INTERVAL '90 days'
@@ -307,25 +312,6 @@ func (q *Queries) GetDuePostAnalyticsRefresh(ctx context.Context) ([]GetDuePostA
 	return items, nil
 }
 
-const touchPostAnalyticsFetchedAt = `-- name: TouchPostAnalyticsFetchedAt :exec
-INSERT INTO post_analytics (social_post_result_id, fetched_at, consecutive_failures, last_failure_reason)
-VALUES ($1, NOW(), 1, $2)
-ON CONFLICT (social_post_result_id) DO UPDATE
-SET fetched_at           = NOW(),
-    consecutive_failures = post_analytics.consecutive_failures + 1,
-    last_failure_reason  = $2
-`
-
-type TouchPostAnalyticsFetchedAtParams struct {
-	SocialPostResultID string `json:"social_post_result_id"`
-	LastFailureReason  string `json:"last_failure_reason"`
-}
-
-func (q *Queries) TouchPostAnalyticsFetchedAt(ctx context.Context, arg TouchPostAnalyticsFetchedAtParams) error {
-	_, err := q.db.Exec(ctx, touchPostAnalyticsFetchedAt, arg.SocialPostResultID, arg.LastFailureReason)
-	return err
-}
-
 const getPostAnalytics = `-- name: GetPostAnalytics :one
 SELECT id, social_post_result_id, views, likes, comments, shares, reach, impressions, engagement_rate, raw_data, fetched_at, saves, clicks, video_views, platform_specific, consecutive_failures, last_failure_reason FROM post_analytics WHERE social_post_result_id = $1
 `
@@ -353,6 +339,30 @@ func (q *Queries) GetPostAnalytics(ctx context.Context, socialPostResultID strin
 		&i.LastFailureReason,
 	)
 	return i, err
+}
+
+const touchPostAnalyticsFetchedAt = `-- name: TouchPostAnalyticsFetchedAt :exec
+INSERT INTO post_analytics (social_post_result_id, fetched_at, consecutive_failures, last_failure_reason)
+VALUES ($1, NOW(), 1, $2)
+ON CONFLICT (social_post_result_id) DO UPDATE
+SET fetched_at           = NOW(),
+    consecutive_failures = post_analytics.consecutive_failures + 1,
+    last_failure_reason  = $2
+`
+
+type TouchPostAnalyticsFetchedAtParams struct {
+	SocialPostResultID string      `json:"social_post_result_id"`
+	LastFailureReason  pgtype.Text `json:"last_failure_reason"`
+}
+
+// Bump fetched_at so the tier-based refresh TTL kicks in after a
+// failed platform fetch. Inserts a minimal row if none exists yet;
+// when a row already exists the ON CONFLICT only touches fetched_at
+// and the failure counter, preserving any real metrics from a prior
+// successful fetch.
+func (q *Queries) TouchPostAnalyticsFetchedAt(ctx context.Context, arg TouchPostAnalyticsFetchedAtParams) error {
+	_, err := q.db.Exec(ctx, touchPostAnalyticsFetchedAt, arg.SocialPostResultID, arg.LastFailureReason)
+	return err
 }
 
 const upsertPostAnalytics = `-- name: UpsertPostAnalytics :one

@@ -337,6 +337,7 @@ export interface SocialPost {
   scheduled_at?: string;
   created_at: string;
   published_at?: string;
+  archived_at?: string;
   results?: SocialPostResult[];
 }
 
@@ -345,6 +346,33 @@ export async function listSocialPosts(
   workspaceId: string
 ): Promise<ApiResponse<SocialPost[]>> {
   return request(`/v1/workspaces/${workspaceId}/social-posts`, token);
+}
+
+export async function archiveSocialPost(
+  token: string,
+  postId: string
+): Promise<ApiResponse<SocialPost>> {
+  return request(`/v1/social-posts/${postId}/archive`, token, {
+    method: "POST",
+  });
+}
+
+export async function restoreSocialPost(
+  token: string,
+  postId: string
+): Promise<ApiResponse<SocialPost>> {
+  return request(`/v1/social-posts/${postId}/restore`, token, {
+    method: "POST",
+  });
+}
+
+export async function deleteSocialPost(
+  token: string,
+  postId: string
+): Promise<ApiResponse<{ deleted: boolean }>> {
+  return request(`/v1/social-posts/${postId}`, token, {
+    method: "DELETE",
+  });
 }
 
 // Billing (workspace-scoped)

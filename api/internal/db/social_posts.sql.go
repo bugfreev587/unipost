@@ -11,11 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveSocialPost = `-- name: ArchiveSocialPost :one
+UPDATE social_posts
+SET archived_at = NOW()
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
+`
+
+type ArchiveSocialPostParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) ArchiveSocialPost(ctx context.Context, arg ArchiveSocialPostParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, archiveSocialPost, arg.ID, arg.WorkspaceID)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const cancelSocialPost = `-- name: CancelSocialPost :one
 UPDATE social_posts
 SET status = 'cancelled'
 WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
 `
 
 type CancelSocialPostParams struct {
@@ -37,6 +71,8 @@ func (q *Queries) CancelSocialPost(ctx context.Context, arg CancelSocialPostPara
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -45,7 +81,7 @@ const claimDraftForPublish = `-- name: ClaimDraftForPublish :one
 UPDATE social_posts
 SET status = 'publishing'
 WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
 `
 
 type ClaimDraftForPublishParams struct {
@@ -67,6 +103,8 @@ func (q *Queries) ClaimDraftForPublish(ctx context.Context, arg ClaimDraftForPub
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -74,7 +112,7 @@ func (q *Queries) ClaimDraftForPublish(ctx context.Context, arg ClaimDraftForPub
 const claimScheduledPost = `-- name: ClaimScheduledPost :one
 UPDATE social_posts SET status = 'publishing'
 WHERE id = $1 AND status = 'scheduled'
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
 `
 
 func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost, error) {
@@ -91,6 +129,8 @@ func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -98,7 +138,7 @@ func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost
 const createSocialPost = `-- name: CreateSocialPost :one
 INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
 `
 
 type CreateSocialPostParams struct {
@@ -133,13 +173,20 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const deleteDraft = `-- name: DeleteDraft :exec
-DELETE FROM social_posts
-WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
+UPDATE social_posts
+SET deleted_at = NOW(),
+    archived_at = NULL
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
+  AND status = 'draft'
 `
 
 type DeleteDraftParams struct {
@@ -149,15 +196,6 @@ type DeleteDraftParams struct {
 
 func (q *Queries) DeleteDraft(ctx context.Context, arg DeleteDraftParams) error {
 	_, err := q.db.Exec(ctx, deleteDraft, arg.ID, arg.WorkspaceID)
-	return err
-}
-
-const deleteSocialPost = `-- name: DeleteSocialPost :exec
-DELETE FROM social_posts WHERE id = $1
-`
-
-func (q *Queries) DeleteSocialPost(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, deleteSocialPost, id)
 	return err
 }
 
@@ -174,8 +212,10 @@ func (q *Queries) ExpireOldIdempotencyKeys(ctx context.Context) error {
 }
 
 const getDueScheduledPosts = `-- name: GetDueScheduledPosts :many
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
-WHERE status = 'scheduled' AND scheduled_at <= NOW()
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at FROM social_posts
+WHERE status = 'scheduled'
+  AND deleted_at IS NULL
+  AND scheduled_at <= NOW()
 ORDER BY scheduled_at ASC
 LIMIT 100
 `
@@ -200,6 +240,8 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 			&i.Metadata,
 			&i.IdempotencyKey,
 			&i.WorkspaceID,
+			&i.ArchivedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -212,8 +254,10 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 }
 
 const getScheduledPostsByWorkspace = `-- name: GetScheduledPostsByWorkspace :many
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
-WHERE workspace_id = $1 AND status = 'scheduled'
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at FROM social_posts
+WHERE workspace_id = $1
+  AND deleted_at IS NULL
+  AND status = 'scheduled'
 ORDER BY scheduled_at ASC
 `
 
@@ -237,6 +281,8 @@ func (q *Queries) GetScheduledPostsByWorkspace(ctx context.Context, workspaceID 
 			&i.Metadata,
 			&i.IdempotencyKey,
 			&i.WorkspaceID,
+			&i.ArchivedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -249,7 +295,9 @@ func (q *Queries) GetScheduledPostsByWorkspace(ctx context.Context, workspaceID 
 }
 
 const getSocialPostByID = `-- name: GetSocialPostByID :one
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts WHERE id = $1
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at FROM social_posts
+WHERE id = $1
+  AND deleted_at IS NULL
 `
 
 // Cross-workspace lookup. Used by the public preview endpoint where
@@ -270,12 +318,17 @@ func (q *Queries) GetSocialPostByID(ctx context.Context, id string) (SocialPost,
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getSocialPostByIDAndWorkspace = `-- name: GetSocialPostByIDAndWorkspace :one
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts WHERE id = $1 AND workspace_id = $2
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at FROM social_posts
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
 `
 
 type GetSocialPostByIDAndWorkspaceParams struct {
@@ -297,12 +350,14 @@ func (q *Queries) GetSocialPostByIDAndWorkspace(ctx context.Context, arg GetSoci
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getSocialPostByIdempotencyKey = `-- name: GetSocialPostByIdempotencyKey :one
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at FROM social_posts
 WHERE workspace_id = $1
   AND idempotency_key = $2
   AND created_at > NOW() - INTERVAL '24 hours'
@@ -327,13 +382,16 @@ func (q *Queries) GetSocialPostByIdempotencyKey(ctx context.Context, arg GetSoci
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listSocialPostsByWorkspace = `-- name: ListSocialPostsByWorkspace :many
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at FROM social_posts
 WHERE workspace_id = $1
+  AND deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
 `
@@ -364,6 +422,8 @@ func (q *Queries) ListSocialPostsByWorkspace(ctx context.Context, arg ListSocial
 			&i.Metadata,
 			&i.IdempotencyKey,
 			&i.WorkspaceID,
+			&i.ArchivedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -376,8 +436,9 @@ func (q *Queries) ListSocialPostsByWorkspace(ctx context.Context, arg ListSocial
 }
 
 const listSocialPostsFiltered = `-- name: ListSocialPostsFiltered :many
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at FROM social_posts
 WHERE workspace_id = $1
+  AND deleted_at IS NULL
   AND ($2::text = ''  OR status     = ANY(string_to_array($2, ',')))
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <  $4)
@@ -424,6 +485,8 @@ func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPos
 			&i.Metadata,
 			&i.IdempotencyKey,
 			&i.WorkspaceID,
+			&i.ArchivedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -439,7 +502,7 @@ const rescheduleSocialPost = `-- name: RescheduleSocialPost :one
 UPDATE social_posts
 SET scheduled_at = $3
 WHERE id = $1 AND workspace_id = $2 AND status = 'scheduled'
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
 `
 
 type RescheduleSocialPostParams struct {
@@ -462,6 +525,77 @@ func (q *Queries) RescheduleSocialPost(ctx context.Context, arg RescheduleSocial
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const restoreSocialPost = `-- name: RestoreSocialPost :one
+UPDATE social_posts
+SET archived_at = NULL
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
+`
+
+type RestoreSocialPostParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) RestoreSocialPost(ctx context.Context, arg RestoreSocialPostParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, restoreSocialPost, arg.ID, arg.WorkspaceID)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const softDeleteSocialPost = `-- name: SoftDeleteSocialPost :one
+UPDATE social_posts
+SET deleted_at = NOW(),
+    archived_at = NULL
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
+`
+
+type SoftDeleteSocialPostParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) SoftDeleteSocialPost(ctx context.Context, arg SoftDeleteSocialPostParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, softDeleteSocialPost, arg.ID, arg.WorkspaceID)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -473,7 +607,7 @@ SET caption = $3,
     metadata = $5,
     scheduled_at = $6
 WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at
 `
 
 type UpdateDraftContentParams struct {
@@ -506,6 +640,8 @@ func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContent
 		&i.Metadata,
 		&i.IdempotencyKey,
 		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

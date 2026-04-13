@@ -198,7 +198,7 @@ func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePost
 		// fetch (important for transient errors).
 		_ = w.queries.TouchPostAnalyticsFetchedAt(ctx, db.TouchPostAnalyticsFetchedAtParams{
 			SocialPostResultID: r.SocialPostResultID,
-			LastFailureReason:  metErr.Error(),
+			LastFailureReason:  pgtype.Text{String: metErr.Error(), Valid: true},
 		})
 		return
 	}

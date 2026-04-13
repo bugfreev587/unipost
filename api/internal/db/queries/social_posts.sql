@@ -16,24 +16,31 @@ WHERE idempotency_key IS NOT NULL
   AND created_at <= NOW() - INTERVAL '24 hours';
 
 -- name: GetSocialPostByIDAndWorkspace :one
-SELECT * FROM social_posts WHERE id = $1 AND workspace_id = $2;
+SELECT * FROM social_posts
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL;
 
 -- name: GetSocialPostByID :one
 -- Cross-workspace lookup. Used by the public preview endpoint where
 -- the JWT signature IS the authorization (the caller doesn't have
 -- a session). Do NOT use from any auth-required handler — those
 -- should always join via workspace_id.
-SELECT * FROM social_posts WHERE id = $1;
+SELECT * FROM social_posts
+WHERE id = $1
+  AND deleted_at IS NULL;
 
 -- name: ListSocialPostsByWorkspace :many
 SELECT * FROM social_posts
 WHERE workspace_id = $1
+  AND deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
 -- name: ListSocialPostsFiltered :many
 SELECT * FROM social_posts
 WHERE workspace_id = $1
+  AND deleted_at IS NULL
   AND ($2::text = ''  OR status     = ANY(string_to_array($2, ',')))
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <  $4)
@@ -45,12 +52,36 @@ LIMIT $7;
 UPDATE social_posts SET status = $2, published_at = $3
 WHERE id = $1;
 
--- name: DeleteSocialPost :exec
-DELETE FROM social_posts WHERE id = $1;
+-- name: SoftDeleteSocialPost :one
+UPDATE social_posts
+SET deleted_at = NOW(),
+    archived_at = NULL
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ArchiveSocialPost :one
+UPDATE social_posts
+SET archived_at = NOW()
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: RestoreSocialPost :one
+UPDATE social_posts
+SET archived_at = NULL
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
+RETURNING *;
 
 -- name: GetDueScheduledPosts :many
 SELECT * FROM social_posts
-WHERE status = 'scheduled' AND scheduled_at <= NOW()
+WHERE status = 'scheduled'
+  AND deleted_at IS NULL
+  AND scheduled_at <= NOW()
 ORDER BY scheduled_at ASC
 LIMIT 100;
 
@@ -61,7 +92,9 @@ RETURNING *;
 
 -- name: GetScheduledPostsByWorkspace :many
 SELECT * FROM social_posts
-WHERE workspace_id = $1 AND status = 'scheduled'
+WHERE workspace_id = $1
+  AND deleted_at IS NULL
+  AND status = 'scheduled'
 ORDER BY scheduled_at ASC;
 
 -- name: ClaimDraftForPublish :one
@@ -80,8 +113,13 @@ WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
 RETURNING *;
 
 -- name: DeleteDraft :exec
-DELETE FROM social_posts
-WHERE id = $1 AND workspace_id = $2 AND status = 'draft';
+UPDATE social_posts
+SET deleted_at = NOW(),
+    archived_at = NULL
+WHERE id = $1
+  AND workspace_id = $2
+  AND deleted_at IS NULL
+  AND status = 'draft';
 
 -- name: RescheduleSocialPost :one
 UPDATE social_posts

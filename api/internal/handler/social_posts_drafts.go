@@ -72,7 +72,7 @@ func (h *SocialPostHandler) createDraft(
 	}
 
 	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		WorkspaceID:      workspaceID,
+		WorkspaceID:    workspaceID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
 		Status:         "draft",
@@ -399,6 +399,10 @@ func socialPostResponseFromRow(post db.SocialPost) socialPostResponse {
 	if post.ScheduledAt.Valid {
 		t := post.ScheduledAt.Time
 		resp.ScheduledAt = &t
+	}
+	if post.ArchivedAt.Valid {
+		t := post.ArchivedAt.Time
+		resp.ArchivedAt = &t
 	}
 	return resp
 }
