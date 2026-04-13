@@ -28,6 +28,8 @@ type HeadingItem = {
   level: "h2" | "h3";
 };
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
+
 export const DOCS_NAV: NavSection[] = [
   {
     title: "Get Started",
@@ -225,7 +227,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     () => [
       { label: "Docs", href: "/docs" },
       { label: "API", href: "/docs/api" },
-      { label: "Dashboard", href: "/projects" },
+      { label: "Dashboard", href: APP_URL, external: true },
       { label: "Pricing", href: "/pricing" },
     ],
     []
@@ -245,13 +247,23 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
           </Link>
           <nav className="docs-topbar-links">
             {topLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`docs-topbar-link${isTopLevelActive(pathname, link.href) ? " active" : ""}`}
-              >
-                {link.label}
-              </Link>
+              link.external ? (
+                <a
+                  key={link.label}
+                  href={link.href}
+                  className="docs-topbar-link"
+                >
+                  {link.label}
+                </a>
+              ) : (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className={`docs-topbar-link${isTopLevelActive(pathname, link.href) ? " active" : ""}`}
+                >
+                  {link.label}
+                </Link>
+              )
             ))}
           </nav>
         </div>
