@@ -370,3 +370,41 @@ export function DocsTable({
 export function DocsCode({ code }: { code: string }) {
   return <pre className="docs-code"><code>{code}</code></pre>;
 }
+
+export function DocsCodeTabs({
+  snippets,
+}: {
+  snippets: Array<{ label: string; code: string }>;
+}) {
+  const [active, setActive] = useState(0);
+
+  return (
+    <div className="docs-card" style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 6, padding: 12, borderBottom: "1px solid var(--docs-border)", background: "var(--docs-panel-2)", flexWrap: "wrap" }}>
+        {snippets.map((snippet, index) => (
+          <button
+            key={snippet.label}
+            type="button"
+            onClick={() => setActive(index)}
+            style={{
+              padding: "7px 12px",
+              borderRadius: 10,
+              border: "1px solid",
+              borderColor: index === active ? "rgba(34,197,94,.24)" : "rgba(255,255,255,.06)",
+              background: index === active ? "rgba(34,197,94,.08)" : "rgba(255,255,255,.03)",
+              color: index === active ? "var(--docs-text)" : "var(--docs-muted)",
+              fontSize: 12.5,
+              fontFamily: "var(--docs-mono)",
+              cursor: "pointer",
+            }}
+          >
+            {snippet.label}
+          </button>
+        ))}
+      </div>
+      <pre className="docs-code" style={{ margin: 0, border: "none", borderRadius: 0 }}>
+        <code>{snippets[active].code}</code>
+      </pre>
+    </div>
+  );
+}
