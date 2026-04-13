@@ -19,8 +19,17 @@ const CODE_SNIPPETS: Record<(typeof LANGS)[number]["id"], string> = {
       'Content-Type':  'application/json',
     },
     body: JSON.stringify({
-      caption:     'Hello from UniPost! 🚀',
-      account_ids: ['sa_instagram_123', 'sa_linkedin_456'],
+      platform_posts: [
+        {
+          account_id: 'sa_x_123',
+          caption: 'shipped validate + preview today',
+        },
+        {
+          account_id: 'sa_linkedin_456',
+          caption: 'Today we shipped draft validation, branded connect, and preview links.',
+        },
+      ],
+      idempotency_key: 'launch-2026-04-13-001',
     }),
   }
 );
@@ -36,8 +45,17 @@ response = requests.post(
         'Content-Type':  'application/json',
     },
     json={
-        'caption':     'Hello from UniPost! 🚀',
-        'account_ids': ['sa_instagram_123', 'sa_linkedin_456'],
+        'platform_posts': [
+            {
+                'account_id': 'sa_x_123',
+                'caption': 'shipped validate + preview today',
+            },
+            {
+                'account_id': 'sa_linkedin_456',
+                'caption': 'Today we shipped draft validation, branded connect, and preview links.',
+            },
+        ],
+        'idempotency_key': 'launch-2026-04-13-001',
     }
 )
 
@@ -46,8 +64,17 @@ print(data['id'])  # post_abc123`,
   go: `req, _ := http.NewRequest("POST",
     "https://api.unipost.dev/v1/social-posts",
     strings.NewReader(\`{
-      "caption":     "Hello from UniPost! 🚀",
-      "account_ids": ["sa_instagram_123", "sa_linkedin_456"]
+      "platform_posts": [
+        {
+          "account_id": "sa_x_123",
+          "caption": "shipped validate + preview today"
+        },
+        {
+          "account_id": "sa_linkedin_456",
+          "caption": "Today we shipped draft validation, branded connect, and preview links."
+        }
+      ],
+      "idempotency_key": "launch-2026-04-13-001"
     }\`),
 )
 
@@ -60,8 +87,17 @@ resp, _ := http.DefaultClient.Do(req)
   -H "Authorization: Bearer up_live_xxxx" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "caption":     "Hello from UniPost! 🚀",
-    "account_ids": ["sa_instagram_123", "sa_linkedin_456"]
+    "platform_posts": [
+      {
+        "account_id": "sa_x_123",
+        "caption": "shipped validate + preview today"
+      },
+      {
+        "account_id": "sa_linkedin_456",
+        "caption": "Today we shipped draft validation, branded connect, and preview links."
+      }
+    ],
+    "idempotency_key": "launch-2026-04-13-001"
   }'`,
 };
 

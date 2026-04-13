@@ -9,7 +9,7 @@ import { LandingHeroRotation } from "@/components/marketing/landing-hero-rotatio
 export const metadata: Metadata = {
   title: "UniPost | Unified Social Media API for Developers",
   description:
-    "Ship posting, scheduling, analytics, and AI-agent workflows across X, Bluesky, LinkedIn, Instagram, Threads, TikTok, and YouTube with one API.",
+    "Onboard user accounts, validate drafts, publish per-platform content, and track analytics across X, Bluesky, LinkedIn, Instagram, Threads, TikTok, and YouTube.",
   alternates: {
     canonical: "https://unipost.dev/",
   },
@@ -31,9 +31,48 @@ const PLATFORMS = [
   { name: "Threads", slug: "threads" }, { name: "TikTok", slug: "tiktok" }, { name: "YouTube", slug: "youtube" },
 ];
 const FEATURES = [
-  { number: "01", title: "One API, every platform", desc: "Stop maintaining 7 different integrations. One endpoint, one auth token, one response format. Post to X, Bluesky, LinkedIn, Instagram, Threads, TikTok, and YouTube with a single call.", code: `POST /v1/social-posts\n{\n  "caption": "Hello from UniPost!",\n  "account_ids": ["sa_instagram", "sa_linkedin"],\n  "scheduled_at": "2026-04-07T09:00:00Z"\n}` },
-  { number: "02", title: "Token management, handled", desc: "OAuth flows, token refresh, expiry handling — all managed automatically. Your users connect once, and UniPost handles everything in the background forever.", code: `// No token refresh code needed.\n// UniPost handles it automatically.\n\nGET /v1/social-accounts\n→ Always returns valid, active accounts` },
-  { number: "03", title: "AI Agent ready via MCP", desc: "The first unified social API with native MCP Server support. Let Claude, GPT, or any AI agent post on behalf of your users — no code required.", code: `// Claude Desktop config\n{\n  "mcpServers": {\n    "unipost": {\n      "url": "https://mcp.unipost.dev/sse",\n      "headers": {\n        "Authorization": "Bearer up_live_xxx"\n      }\n    }\n  }\n}` },
+  { number: "01", title: "Connect end users, not just your own accounts", desc: "UniPost is built for products that onboard customer social accounts. Create branded Connect flows, map accounts to your own external_user_id, and keep the OAuth surface out of your app.", code: `POST /v1/connect/sessions\n{\n  "platform": "linkedin",\n  "external_user_id": "user_123",\n  "return_url": "https://app.example.com/settings"\n}` },
+  { number: "02", title: "Validate, preview, then publish", desc: "Catch bad payloads before publish time, generate read-only preview links for review, and ship with more confidence when you are posting across multiple platforms and users.", code: `POST /v1/social-posts/validate\nPOST /v1/drafts\nGET  /v1/public/drafts/{id}?token=...` },
+  { number: "03", title: "AI and automation ready by default", desc: "Per-platform captions, idempotency keys, MCP support, and bulk publish are already in the product. UniPost fits AI agents and workflow systems without forcing them into a single-caption model.", code: `{\n  "platform_posts": [\n    { "account_id": "sa_x", "caption": "short version" },\n    { "account_id": "sa_li", "caption": "longer LinkedIn version" }\n  ],\n  "idempotency_key": "launch-001"\n}` },
+];
+const CAPABILITIES = [
+  {
+    title: "Multi-tenant Connect",
+    desc: "Create a public Connect link for each end user, store your own external_user_id, and let UniPost handle the OAuth exchange and token refresh lifecycle.",
+    points: ["Public connect sessions", "external_user_id mapping", "Hosted OAuth flow"],
+  },
+  {
+    title: "Draft validation + preview",
+    desc: "Validate posts before publish, generate shareable preview links, and catch character-limit or thread-shape issues before your users hit send.",
+    points: ["Preflight validation", "Read-only preview links", "Per-platform counters"],
+  },
+  {
+    title: "Branded white-label onboarding",
+    desc: "Paid plans can inject customer branding into the hosted Connect surface so your product owns the onboarding experience instead of handing trust to a generic tool.",
+    points: ["Logo + display name", "Primary brand color", "Your app in the flow"],
+  },
+  {
+    title: "Operational analytics",
+    desc: "Track what was published, what failed, which accounts need attention, and how usage trends over time instead of debugging platform behavior blind.",
+    points: ["Analytics rollups", "Account health", "Usage warnings"],
+  },
+];
+const PROOF_STEPS = [
+  {
+    step: "01",
+    title: "Create a Connect session",
+    body: "Your app starts a hosted onboarding flow for a specific end user and platform.",
+  },
+  {
+    step: "02",
+    title: "Preview or validate content",
+    body: "Generate per-platform drafts, validate the payload, and share a preview link before publishing.",
+  },
+  {
+    step: "03",
+    title: "Publish and monitor",
+    body: "Send platform_posts, receive webhooks, and monitor analytics, usage, and account health in one place.",
+  },
 ];
 const MODES = [
   { badge: "Quickstart Mode", badgeColor: "#10b981", title: "Start posting in minutes", desc: "Use UniPost's developer credentials. No platform approval process, no waiting.", features: ["Instant access to all 7 platforms", "No developer approval needed", "OAuth shows 'UniPost' branding", "Available on all plans including Free"], ctaVariant: "ghost" },
@@ -42,7 +81,7 @@ const MODES = [
 const FAQS = [
   { q: "Why UniPost over direct platform APIs?", a: "We handle OAuth, token refresh, media processing, and platform-specific quirks — reducing integration time from weeks to hours." },
   { q: "What counts as a post?", a: "One successful publish to a single social account. Posting to 3 platforms counts as 3 posts. Failed posts are never counted." },
-  { q: "What's the difference between Quickstart and White-label?", a: "Quickstart uses UniPost's credentials so you start immediately. White-label (called Native mode in API docs) lets you bring your own credentials so users see your app name." },
+  { q: "What's the difference between Quickstart and White-label?", a: "Quickstart uses UniPost's credentials so you start immediately. White-label lets you brand the hosted Connect experience so your end users see your product during onboarding." },
   { q: "Do I need to handle OAuth flows?", a: "No. UniPost handles the entire OAuth flow. Your users connect once through our hosted flow, and you get a simple account_id to use in API calls." },
 ];
 
@@ -95,17 +134,17 @@ export default function LandingPage() {
         {/* HERO */}
         <div className="lp-hero">
           <div className="lp-hero-badge"><span className="lp-hero-badge-dot" />Now supporting 7 platforms</div>
-          <h1 className="lp-hero-title">Ship social media<br />integrations for <em>your</em></h1>
+          <h1 className="lp-hero-title">Onboard accounts.<br />Publish everywhere.<br /><em>Stay in control.</em></h1>
           <LandingHeroRotation />
-          <p className="lp-hero-sub">UniPost gives your app a unified API to post, schedule, and analyze across all major social platforms. Ship in hours, not weeks.</p>
+          <p className="lp-hero-sub">UniPost is the social infrastructure layer for SaaS products and AI agents: branded Connect flows, per-platform publishing, draft preview, validation, webhooks, and analytics across every major network.</p>
           <div className="lp-hero-actions">
             <MarketingCTA />
             <Link href="/docs" className="lp-btn lp-btn-outline lp-btn-lg">View Docs →</Link>
           </div>
           <div className="lp-hero-meta">
             <div className="lp-hero-meta-item"><CheckIcon /><span>Free plan · 100 posts/month</span></div>
-            <div className="lp-hero-meta-item"><CheckIcon /><span>No credit card required</span></div>
-            <div className="lp-hero-meta-item"><CheckIcon /><span>7 platforms supported</span></div>
+            <div className="lp-hero-meta-item"><CheckIcon /><span>Hosted Connect + white-label</span></div>
+            <div className="lp-hero-meta-item"><CheckIcon /><span>Validate, preview, and publish</span></div>
           </div>
         </div>
 
@@ -117,12 +156,35 @@ export default function LandingPage() {
           </div>
         </div>
 
+        <div style={{ padding: "0 0 var(--section-py)" }}>
+          <div className="lp-section-eyebrow">Built For Products</div>
+          <h2 className="lp-section-title" style={{ marginBottom: 12 }}>More than a posting wrapper.</h2>
+          <p className="lp-section-sub" style={{ marginBottom: 36 }}>
+            UniPost already has the primitives you need when your product is publishing on behalf of end users, not just your own internal team.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
+            {CAPABILITIES.map((item) => (
+              <div key={item.title} style={{ background: "var(--s1)", border: "1px solid var(--border)", borderRadius: 14, padding: 24 }}>
+                <h3 style={{ fontSize: 20, fontWeight: 800, marginBottom: 10, letterSpacing: "-0.3px" }}>{item.title}</h3>
+                <p style={{ fontSize: 14.5, color: "#bbb", lineHeight: 1.75, marginBottom: 14 }}>{item.desc}</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {item.points.map((point) => (
+                    <span key={point} style={{ fontSize: 12, color: "var(--text)", background: "var(--s2)", border: "1px solid var(--b2)", borderRadius: 999, padding: "6px 10px", fontFamily: "var(--mono)" }}>
+                      {point}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* CODE DEMO — two-column layout */}
         <div className="lp-code-section">
           <div className="lp-integ-grid">
             {/* Left: title + integration cards */}
             <div className="lp-integ-left">
-              <h2 className="lp-integ-title">One API call. Seven platforms. Zero token headaches.</h2>
+              <h2 className="lp-integ-title">Per-platform publishing for real products.</h2>
 
               <div className="lp-integ-cards">
                 <div className="lp-integ-card">
@@ -130,8 +192,8 @@ export default function LandingPage() {
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
                   </div>
                   <div>
-                    <div className="lp-integ-card-title">REST API</div>
-                    <div className="lp-integ-card-desc">Simple, single point of entry for every platform.</div>
+                    <div className="lp-integ-card-title">Recommended request shape</div>
+                    <div className="lp-integ-card-desc">Use `platform_posts[]` when AI or product logic needs different copy per destination.</div>
                     <Link href="/docs" className="lp-integ-card-link">Docs ↗</Link>
                   </div>
                 </div>
@@ -141,9 +203,9 @@ export default function LandingPage() {
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                   </div>
                   <div>
-                    <div className="lp-integ-card-title">Webhooks</div>
-                    <div className="lp-integ-card-desc">Real-time account connections and post status.</div>
-                    <Link href="/docs#webhooks" className="lp-integ-card-link">Docs ↗</Link>
+                    <div className="lp-integ-card-title">AgentPost-ready</div>
+                    <div className="lp-integ-card-desc">The same API shape powers preview, AI-generated drafts, and per-platform publishing flows.</div>
+                    <Link href="/tools/agentpost" className="lp-integ-card-link">See AgentPost ↗</Link>
                   </div>
                 </div>
               </div>
@@ -157,8 +219,8 @@ export default function LandingPage() {
         {/* FEATURES */}
         <div className="lp-features">
           <div className="lp-section-eyebrow">Why UniPost</div>
-          <h2 className="lp-section-title">Everything you need.<br />Nothing you don&apos;t.</h2>
-          <p className="lp-section-sub" style={{ marginBottom: 64 }}>Stop maintaining 7 different API integrations. One integration handles everything.</p>
+          <h2 className="lp-section-title">Infrastructure for SaaS teams and AI agents.</h2>
+          <p className="lp-section-sub" style={{ marginBottom: 64 }}>Not just posting. UniPost covers onboarding, validation, preview, publish, and monitoring.</p>
           <div className="lp-feat-list">
             {FEATURES.map((f, i) => (
               <div key={f.number} className={`lp-feat-item ${i % 2 !== 0 ? "reverse" : ""}`}>
@@ -169,10 +231,48 @@ export default function LandingPage() {
           </div>
         </div>
 
+        <div style={{ padding: "0 0 var(--section-py)" }}>
+          <div className="lp-section-eyebrow">Proof</div>
+          <h2 className="lp-section-title" style={{ marginBottom: 12 }}>How UniPost fits into your product.</h2>
+          <p className="lp-section-sub" style={{ marginBottom: 36 }}>
+            The winning workflow is not “generate one caption and spray it everywhere.” It is onboarding users cleanly, validating drafts, then publishing with visibility.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1.1fr .9fr", gap: 18, alignItems: "stretch" }}>
+            <div style={{ background: "linear-gradient(180deg,#101010,#0a0a0a)", border: "1px solid var(--border)", borderRadius: 16, padding: 24 }}>
+              <div style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)", marginBottom: 14 }}>Branded Connect Flow</div>
+              <div style={{ background: "#ffffff", color: "#111", borderRadius: 14, padding: 24, maxWidth: 420, boxShadow: "0 16px 50px #00000040" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: 10, background: "#0f172a", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>A</div>
+                  <div>
+                    <div style={{ fontWeight: 700 }}>Acme Social</div>
+                    <div style={{ fontSize: 12, color: "#666" }}>Powered by UniPost</div>
+                  </div>
+                </div>
+                <h3 style={{ fontSize: 22, fontWeight: 800, marginBottom: 8 }}>Connect your LinkedIn account</h3>
+                <p style={{ fontSize: 14, lineHeight: 1.6, color: "#555", marginBottom: 18 }}>
+                  Your users see your brand during onboarding while UniPost handles the OAuth mechanics and token lifecycle underneath.
+                </p>
+                <div style={{ background: "#111827", color: "#fff", borderRadius: 10, textAlign: "center", padding: "12px 16px", fontWeight: 700 }}>
+                  Continue with LinkedIn
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              {PROOF_STEPS.map((item) => (
+                <div key={item.step} style={{ background: "var(--s1)", border: "1px solid var(--border)", borderRadius: 14, padding: 20 }}>
+                  <div style={{ fontSize: 12, fontFamily: "var(--mono)", color: "var(--accent)", marginBottom: 8 }}>{item.step}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{item.title}</div>
+                  <p style={{ fontSize: 14, color: "#bbb", lineHeight: 1.7 }}>{item.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
         {/* STATS */}
         <div className="lp-stats">
           <div className="lp-stats-inner">
-            {[{ num: "7", label: "Platforms supported" }, { num: "1", label: "API call to post everywhere" }, { num: "<1h", label: "Average integration time" }, { num: "∞", label: "Social accounts per project" }].map((s) => (
+            {[{ num: "7", label: "Platforms supported" }, { num: "1", label: "Connect + publish stack" }, { num: "24h", label: "Preview links lifetime" }, { num: "∞", label: "Social accounts per project" }].map((s) => (
               <div key={s.num} className="lp-stat"><div className="lp-stat-num">{s.num}</div><div className="lp-stat-label">{s.label}</div></div>
             ))}
           </div>
@@ -181,8 +281,8 @@ export default function LandingPage() {
         {/* MODES */}
         <div className="lp-modes">
           <div className="lp-section-eyebrow">Two Modes</div>
-          <h2 className="lp-section-title" style={{ marginBottom: 12 }}>Start fast. Scale properly.</h2>
-          <p className="lp-section-sub">Choose how UniPost integrates into your product. Switch anytime.</p>
+          <h2 className="lp-section-title" style={{ marginBottom: 12 }}>Start fast. Then make it yours.</h2>
+          <p className="lp-section-sub">Quickstart gets your product live fast. White-label turns the onboarding surface into your own brand.</p>
           <div className="lp-modes-grid">
             {MODES.map((m, i) => (
               <div key={m.badge} className={`lp-mode-card ${i === 0 ? "mode-quickstart" : "mode-native"}`}>
@@ -214,9 +314,9 @@ export default function LandingPage() {
 
       {/* FAQ — full-width dark band */}
       <div className="lp-faq-band">
-        <div className="lp-faq-band-inner">
-          <div className="lp-section-eyebrow" style={{ textAlign: "center" }}>FAQ</div>
-          <h2 className="lp-section-title" style={{ textAlign: "center", marginBottom: 48 }}>Common questions</h2>
+          <div className="lp-faq-band-inner">
+            <div className="lp-section-eyebrow" style={{ textAlign: "center" }}>FAQ</div>
+            <h2 className="lp-section-title" style={{ textAlign: "center", marginBottom: 48 }}>Common questions</h2>
           <div className="lp-faq-grid">
             {FAQS.map((f) => (<div key={f.q} className="lp-faq-item"><div className="lp-faq-q">{f.q}</div><div className="lp-faq-a">{f.a}</div></div>))}
           </div>
@@ -228,13 +328,13 @@ export default function LandingPage() {
         <div className="lp-cta-band-inner">
           <div className="lp-cta-inner">
             <div className="lp-cta-glow" />
-            <h2 className="lp-cta-title">Start building today</h2>
-            <p className="lp-cta-sub">Free plan includes 100 posts/month. No credit card required.</p>
+            <h2 className="lp-cta-title">Build the social layer once.</h2>
+            <p className="lp-cta-sub">Start with the free plan, wire up Connect and publish flows, then scale into white-label onboarding and higher volume when your product is ready.</p>
             <div className="lp-cta-actions">
               <MarketingCTA />
               <Link href="/docs" className="lp-btn lp-btn-outline lp-btn-lg">Read the Docs →</Link>
             </div>
-            <p style={{ fontSize: 13, color: "#555", marginTop: 20, position: "relative" }}>Switching from <Link href="/alternatives/ayrshare" style={{ color: "#999", textDecoration: "underline" }}>Ayrshare</Link> or <Link href="/alternatives/zernio" style={{ color: "#999", textDecoration: "underline" }}>Zernio</Link>? <Link href="/compare" style={{ color: "#999", textDecoration: "underline" }}>See how UniPost compares →</Link></p>
+            <p style={{ fontSize: 13, color: "#555", marginTop: 20, position: "relative" }}>Need to prove the AI-native path too? <Link href="/tools/agentpost" style={{ color: "#999", textDecoration: "underline" }}>Try AgentPost</Link> or <Link href="/compare" style={{ color: "#999", textDecoration: "underline" }}>see competitor comparisons →</Link></p>
           </div>
         </div>
       </div>
