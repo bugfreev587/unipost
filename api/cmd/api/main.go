@@ -474,15 +474,17 @@ func main() {
 		// Inbox (dashboard, workspace-scoped) — unified view of
 		// Instagram comments/DMs and Threads replies.
 		inboxHandler := handler.NewInboxHandler(queries, encryptor)
-		r.Get("/v1/workspaces/{workspaceID}/inbox", inboxHandler.List)
-		r.Get("/v1/workspaces/{workspaceID}/inbox/unread-count", inboxHandler.UnreadCount)
-		r.Get("/v1/workspaces/{workspaceID}/inbox/{id}", inboxHandler.Get)
-		r.Get("/v1/workspaces/{workspaceID}/inbox/{id}/media-context", inboxHandler.MediaContext)
-		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/read", inboxHandler.MarkRead)
-		r.Post("/v1/workspaces/{workspaceID}/inbox/mark-all-read", inboxHandler.MarkAllRead)
-		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/reply", inboxHandler.Reply)
-		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/thread-state", inboxHandler.UpdateThreadState)
-		r.Post("/v1/workspaces/{workspaceID}/inbox/sync", inboxHandler.Sync)
+		r.Route("/v1/workspaces/{workspaceID}/inbox", func(r chi.Router) {
+			r.Get("/", inboxHandler.List)
+			r.Get("/unread-count", inboxHandler.UnreadCount)
+			r.Post("/mark-all-read", inboxHandler.MarkAllRead)
+			r.Post("/sync", inboxHandler.Sync)
+			r.Get("/{id}", inboxHandler.Get)
+			r.Get("/{id}/media-context", inboxHandler.MediaContext)
+			r.Post("/{id}/read", inboxHandler.MarkRead)
+			r.Post("/{id}/reply", inboxHandler.Reply)
+			r.Post("/{id}/thread-state", inboxHandler.UpdateThreadState)
+		})
 	})
 
 	// Admin routes — Clerk session + ADMIN_USERS gate. The middleware
