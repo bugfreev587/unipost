@@ -50,6 +50,37 @@ func (q *Queries) FindAnyActiveAccountByPlatform(ctx context.Context, platform s
 	return i, err
 }
 
+const findDMThreadKeyBySender = `-- name: FindDMThreadKeyBySender :one
+SELECT thread_key, parent_external_id
+FROM inbox_items
+WHERE social_account_id = $1
+  AND source = 'ig_dm'
+  AND author_id = $2
+  AND thread_key != ''
+ORDER BY received_at DESC
+LIMIT 1
+`
+
+type FindDMThreadKeyBySenderParams struct {
+	SocialAccountID string      `json:"social_account_id"`
+	AuthorID        pgtype.Text `json:"author_id"`
+}
+
+type FindDMThreadKeyBySenderRow struct {
+	ThreadKey        string      `json:"thread_key"`
+	ParentExternalID pgtype.Text `json:"parent_external_id"`
+}
+
+// Find the thread_key and parent_external_id for an existing DM
+// conversation with a given sender, so webhook-delivered messages
+// can join the same thread as sync-fetched ones.
+func (q *Queries) FindDMThreadKeyBySender(ctx context.Context, arg FindDMThreadKeyBySenderParams) (FindDMThreadKeyBySenderRow, error) {
+	row := q.db.QueryRow(ctx, findDMThreadKeyBySender, arg.SocialAccountID, arg.AuthorID)
+	var i FindDMThreadKeyBySenderRow
+	err := row.Scan(&i.ThreadKey, &i.ParentExternalID)
+	return i, err
+}
+
 const findInboxAccountsByWorkspace = `-- name: FindInboxAccountsByWorkspace :many
 SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at
 FROM social_accounts sa

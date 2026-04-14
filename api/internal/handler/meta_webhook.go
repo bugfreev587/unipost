@@ -201,19 +201,39 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 		isOwn := msg.Sender.ID == account.ExternalAccountID
 		ts := time.Unix(msg.Timestamp, 0)
 
+		// Look up the existing thread for this sender so webhook
+		// messages join the same conversation as sync-fetched ones.
+		// Sync uses the conversation ID as thread_key; without this
+		// lookup, webhook messages would create a separate thread
+		// keyed by sender ID.
+		senderID := msg.Sender.ID
+		if isOwn {
+			senderID = msg.Recipient.ID
+		}
+		threadKey := senderID // fallback
+		parentExternalID := pgtype.Text{}
+		existing, lookupErr := h.queries.FindDMThreadKeyBySender(r.Context(), db.FindDMThreadKeyBySenderParams{
+			SocialAccountID: account.ID,
+			AuthorID:        pgtype.Text{String: senderID, Valid: true},
+		})
+		if lookupErr == nil && existing.ThreadKey != "" {
+			threadKey = existing.ThreadKey
+			parentExternalID = existing.ParentExternalID
+		}
+
 		_, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 			SocialAccountID:  account.ID,
 			WorkspaceID:      account.WorkspaceID,
 			Source:           "ig_dm",
 			ExternalID:       msg.Message.Mid,
-			ParentExternalID: pgtype.Text{}, // DM conversations don't map to a parent post
+			ParentExternalID: parentExternalID,
 			AuthorName:       pgtype.Text{},
 			AuthorID:         pgtype.Text{String: msg.Sender.ID, Valid: true},
 			Body:             pgtype.Text{String: msg.Message.Text, Valid: msg.Message.Text != ""},
 			IsOwn:            isOwn,
 			ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
 			Metadata:         []byte("{}"),
-			ThreadKey:        inboxThreadKey("ig_dm", msg.Message.Mid, "", msg.Sender.ID),
+			ThreadKey:        threadKey,
 			ThreadStatus:     "open",
 			AssignedTo:       pgtype.Text{},
 			LinkedPostID:     pgtype.Text{},

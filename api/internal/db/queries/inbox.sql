@@ -64,6 +64,19 @@ WHERE spr.social_account_id = $1
   AND spr.external_id = $2
 LIMIT 1;
 
+-- name: FindDMThreadKeyBySender :one
+-- Find the thread_key and parent_external_id for an existing DM
+-- conversation with a given sender, so webhook-delivered messages
+-- can join the same thread as sync-fetched ones.
+SELECT thread_key, parent_external_id
+FROM inbox_items
+WHERE social_account_id = $1
+  AND source = 'ig_dm'
+  AND author_id = $2
+  AND thread_key != ''
+ORDER BY received_at DESC
+LIMIT 1;
+
 -- name: FindAnyActiveAccountByPlatform :one
 -- Webhook fallback: find any active account for a platform.
 -- Used when Meta sends a different ID format than what we store.
