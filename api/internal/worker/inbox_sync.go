@@ -75,41 +75,36 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 			continue
 		}
 
-		results, err := w.queries.ListRecentResultsByAccount(ctx, db.ListRecentResultsByAccountParams{
-			SocialAccountID: acc.ID,
-			Limit:           5,
-		})
-		if err != nil {
-			continue
-		}
-
 		switch acc.Platform {
 		case "instagram":
 			adapter := platform.NewInstagramAdapter()
-			for _, res := range results {
-				if !res.ExternalID.Valid || res.ExternalID.String == "" {
-					continue
-				}
-				entries, fetchErr := adapter.FetchComments(ctx, accessToken, res.ExternalID.String)
-				if fetchErr != nil {
-					continue
-				}
-				for _, e := range entries {
-					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
-						SocialAccountID:  acc.ID,
-						WorkspaceID:      acc.WorkspaceID,
-						Source:           e.Source,
-						ExternalID:       e.ExternalID,
-						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
-						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
-						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
-						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
-						IsOwn:            false,
-						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
-						Metadata:         []byte("{}"),
-					})
-					if uErr == nil {
-						totalNew++
+			// Fetch recent media directly from IG API.
+			mediaIDs, mediaErr := adapter.FetchRecentMedia(ctx, accessToken)
+			if mediaErr != nil {
+				slog.Warn("inbox sync worker: fetch ig media failed", "account_id", acc.ID, "err", mediaErr)
+			} else {
+				for _, mediaID := range mediaIDs {
+					entries, fetchErr := adapter.FetchComments(ctx, accessToken, mediaID)
+					if fetchErr != nil {
+						continue
+					}
+					for _, e := range entries {
+						_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
+							SocialAccountID:  acc.ID,
+							WorkspaceID:      acc.WorkspaceID,
+							Source:           e.Source,
+							ExternalID:       e.ExternalID,
+							ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+							AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+							AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+							Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+							IsOwn:            false,
+							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
+							Metadata:         []byte("{}"),
+						})
+						if uErr == nil {
+							totalNew++
+						}
 					}
 				}
 			}
@@ -140,31 +135,34 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 
 		case "threads":
 			adapter := platform.NewThreadsAdapter()
-			for _, res := range results {
-				if !res.ExternalID.Valid || res.ExternalID.String == "" {
-					continue
-				}
-				entries, fetchErr := adapter.FetchComments(ctx, accessToken, res.ExternalID.String)
-				if fetchErr != nil {
-					continue
-				}
-				for _, e := range entries {
-					isOwn := e.AuthorName == acc.AccountName.String
-					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
-						SocialAccountID:  acc.ID,
-						WorkspaceID:      acc.WorkspaceID,
-						Source:           e.Source,
-						ExternalID:       e.ExternalID,
-						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
-						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
-						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
-						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
-						IsOwn:            isOwn,
-						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
-						Metadata:         []byte("{}"),
-					})
-					if uErr == nil {
-						totalNew++
+			// Fetch recent posts directly from Threads API.
+			postIDs, mediaErr := adapter.FetchRecentMedia(ctx, accessToken)
+			if mediaErr != nil {
+				slog.Warn("inbox sync worker: fetch threads media failed", "account_id", acc.ID, "err", mediaErr)
+			} else {
+				for _, postID := range postIDs {
+					entries, fetchErr := adapter.FetchComments(ctx, accessToken, postID)
+					if fetchErr != nil {
+						continue
+					}
+					for _, e := range entries {
+						isOwn := e.AuthorName == acc.AccountName.String
+						_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
+							SocialAccountID:  acc.ID,
+							WorkspaceID:      acc.WorkspaceID,
+							Source:           e.Source,
+							ExternalID:       e.ExternalID,
+							ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+							AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+							AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+							Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+							IsOwn:            isOwn,
+							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
+							Metadata:         []byte("{}"),
+						})
+						if uErr == nil {
+							totalNew++
+						}
 					}
 				}
 			}

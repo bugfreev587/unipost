@@ -379,6 +379,44 @@ func (a *InstagramAdapter) SendDM(ctx context.Context, accessToken string, recip
 	return &PostResult{ExternalID: result.MessageID}, nil
 }
 
+// FetchRecentMedia returns the IDs of the account's recent posts
+// directly from the IG API. This covers posts published natively
+// on Instagram, not just those published through UniPost.
+func (a *InstagramAdapter) FetchRecentMedia(ctx context.Context, accessToken string) ([]string, error) {
+	igUserID, err := a.getIGUserID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/media?fields=id&limit=10&access_token=%s",
+		igUserID, accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram fetch recent media: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("instagram fetch recent media %d: %s", resp.StatusCode, string(body))
+	}
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		ids = append(ids, m.ID)
+	}
+	return ids, nil
+}
+
 // createSingleContainer creates a non-carousel media container. caption is
 // only attached when isCarouselChild is false (children inherit it from the
 // parent CAROUSEL container).

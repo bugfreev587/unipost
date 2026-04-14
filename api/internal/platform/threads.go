@@ -247,6 +247,44 @@ func (a *ThreadsAdapter) postContainer(ctx context.Context, userID string, param
 	return container.ID, nil
 }
 
+// FetchRecentMedia returns the IDs of the account's recent Threads posts
+// directly from the API. Covers posts published natively, not just
+// those published through UniPost.
+func (a *ThreadsAdapter) FetchRecentMedia(ctx context.Context, accessToken string) ([]string, error) {
+	userID, err := a.getUserID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	u := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads?fields=id&limit=10&access_token=%s",
+		userID, accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("threads fetch recent media: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("threads fetch recent media %d: %s", resp.StatusCode, string(body))
+	}
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		ids = append(ids, m.ID)
+	}
+	return ids, nil
+}
+
 // FetchComments returns replies on a Threads post.
 // GET /v1.0/{post-id}/replies?fields=id,text,username,timestamp
 func (a *ThreadsAdapter) FetchComments(ctx context.Context, accessToken string, postExternalID string) ([]InboxEntry, error) {
