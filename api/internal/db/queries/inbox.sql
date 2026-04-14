@@ -53,6 +53,18 @@ WHERE sa.platform = $1
   AND sa.status = 'active'
 LIMIT 1;
 
+-- name: ListAllInboxAccounts :many
+-- All active IG/Threads accounts across all workspaces, for the
+-- background inbox sync worker. Returns account fields plus workspace_id.
+SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
+       sa.account_name, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+  AND sa.platform IN ('instagram', 'threads')
+ORDER BY sa.connected_at DESC;
+
 -- name: FindInboxAccountsByWorkspace :many
 -- Distinct social accounts that have inbox items, for the sync handler.
 SELECT DISTINCT sa.*

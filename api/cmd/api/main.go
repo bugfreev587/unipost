@@ -243,6 +243,9 @@ func main() {
 	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
 	go analyticsRefreshWorker.Start(workerCtx)
 
+	inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor)
+	go inboxSyncWorker.Start(workerCtx)
+
 	r := chi.NewRouter()
 
 	// Global middleware

@@ -138,6 +138,55 @@ func (q *Queries) GetInboxItem(ctx context.Context, arg GetInboxItemParams) (Inb
 	return i, err
 }
 
+const listAllInboxAccounts = `-- name: ListAllInboxAccounts :many
+SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
+       sa.account_name, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+  AND sa.platform IN ('instagram', 'threads')
+ORDER BY sa.connected_at DESC
+`
+
+type ListAllInboxAccountsRow struct {
+	ID                string      `json:"id"`
+	Platform          string      `json:"platform"`
+	AccessToken       string      `json:"access_token"`
+	ExternalAccountID string      `json:"external_account_id"`
+	AccountName       pgtype.Text `json:"account_name"`
+	WorkspaceID       string      `json:"workspace_id"`
+}
+
+// All active IG/Threads accounts across all workspaces, for the
+// background inbox sync worker. Returns account fields plus workspace_id.
+func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccountsRow, error) {
+	rows, err := q.db.Query(ctx, listAllInboxAccounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllInboxAccountsRow{}
+	for rows.Next() {
+		var i ListAllInboxAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.WorkspaceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInboxItemsByParent = `-- name: ListInboxItemsByParent :many
 SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata FROM inbox_items
 WHERE social_account_id = $1

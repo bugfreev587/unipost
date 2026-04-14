@@ -1,0 +1,177 @@
+// inbox_sync.go is a background worker that periodically polls
+// Instagram and Threads for new comments/replies and inserts them
+// into the inbox_items table.
+//
+// Instagram comments/DMs also arrive via webhooks (meta_webhook.go),
+// but the poller serves as a backfill mechanism and covers Threads
+// which has no webhook support for replies.
+//
+// Runs every 5 minutes. Each tick iterates all active IG/Threads
+// social accounts, fetches comments on their 5 most recent posts,
+// and upserts into inbox_items (idempotent via the UNIQUE constraint
+// on social_account_id + external_id).
+
+package worker
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/xiaoboyu/unipost-api/internal/crypto"
+	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
+)
+
+type InboxSyncWorker struct {
+	queries   *db.Queries
+	encryptor *crypto.AESEncryptor
+}
+
+func NewInboxSyncWorker(queries *db.Queries, encryptor *crypto.AESEncryptor) *InboxSyncWorker {
+	return &InboxSyncWorker{queries: queries, encryptor: encryptor}
+}
+
+func (w *InboxSyncWorker) Start(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	slog.Info("inbox sync worker started")
+
+	// Run once on startup after a short delay to let the DB warm up.
+	time.Sleep(30 * time.Second)
+	w.poll(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("inbox sync worker stopped")
+			return
+		case <-ticker.C:
+			w.poll(ctx)
+		}
+	}
+}
+
+func (w *InboxSyncWorker) poll(ctx context.Context) {
+	// Find all workspaces that have IG/Threads accounts by scanning
+	// all active accounts across all workspaces.
+	accounts, err := w.queries.ListAllInboxAccounts(ctx)
+	if err != nil {
+		slog.Error("inbox sync worker: list accounts failed", "err", err)
+		return
+	}
+	if len(accounts) == 0 {
+		return
+	}
+
+	totalNew := 0
+	for _, acc := range accounts {
+		accessToken, err := w.encryptor.Decrypt(acc.AccessToken)
+		if err != nil {
+			slog.Warn("inbox sync worker: decrypt failed", "account_id", acc.ID, "err", err)
+			continue
+		}
+
+		results, err := w.queries.ListRecentResultsByAccount(ctx, db.ListRecentResultsByAccountParams{
+			SocialAccountID: acc.ID,
+			Limit:           5,
+		})
+		if err != nil {
+			continue
+		}
+
+		switch acc.Platform {
+		case "instagram":
+			adapter := platform.NewInstagramAdapter()
+			for _, res := range results {
+				if !res.ExternalID.Valid || res.ExternalID.String == "" {
+					continue
+				}
+				entries, fetchErr := adapter.FetchComments(ctx, accessToken, res.ExternalID.String)
+				if fetchErr != nil {
+					continue
+				}
+				for _, e := range entries {
+					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
+						SocialAccountID:  acc.ID,
+						WorkspaceID:      acc.WorkspaceID,
+						Source:           e.Source,
+						ExternalID:       e.ExternalID,
+						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+						IsOwn:            false,
+						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
+						Metadata:         []byte("{}"),
+					})
+					if uErr == nil {
+						totalNew++
+					}
+				}
+			}
+
+			// Also fetch DMs.
+			dmEntries, dmErr := adapter.FetchConversations(ctx, accessToken)
+			if dmErr == nil {
+				for _, e := range dmEntries {
+					isOwn := e.AuthorID == acc.ExternalAccountID
+					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
+						SocialAccountID:  acc.ID,
+						WorkspaceID:      acc.WorkspaceID,
+						Source:           e.Source,
+						ExternalID:       e.ExternalID,
+						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+						IsOwn:            isOwn,
+						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
+						Metadata:         []byte("{}"),
+					})
+					if uErr == nil {
+						totalNew++
+					}
+				}
+			}
+
+		case "threads":
+			adapter := platform.NewThreadsAdapter()
+			for _, res := range results {
+				if !res.ExternalID.Valid || res.ExternalID.String == "" {
+					continue
+				}
+				entries, fetchErr := adapter.FetchComments(ctx, accessToken, res.ExternalID.String)
+				if fetchErr != nil {
+					continue
+				}
+				for _, e := range entries {
+					isOwn := e.AuthorName == acc.AccountName.String
+					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
+						SocialAccountID:  acc.ID,
+						WorkspaceID:      acc.WorkspaceID,
+						Source:           e.Source,
+						ExternalID:       e.ExternalID,
+						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+						IsOwn:            isOwn,
+						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
+						Metadata:         []byte("{}"),
+					})
+					if uErr == nil {
+						totalNew++
+					}
+				}
+			}
+		}
+	}
+
+	if totalNew > 0 {
+		slog.Info("inbox sync worker: new items", "count", totalNew)
+	}
+}
