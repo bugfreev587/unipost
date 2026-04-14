@@ -52,8 +52,8 @@ type MetaWebhookHandler struct {
 func NewMetaWebhookHandler(queries *db.Queries, appSecret, verifyToken string) *MetaWebhookHandler {
 	return &MetaWebhookHandler{
 		queries:     queries,
-		appSecret:   appSecret,
-		verifyToken: verifyToken,
+		appSecret:   strings.TrimSpace(appSecret),
+		verifyToken: strings.TrimSpace(verifyToken),
 	}
 }
 
@@ -129,10 +129,15 @@ func (h *MetaWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		mac := hmac.New(sha256.New, []byte(h.appSecret))
 		mac.Write(body)
 		computed := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		secretPreview := h.appSecret
+		if len(secretPreview) > 6 {
+			secretPreview = secretPreview[:3] + "..." + secretPreview[len(secretPreview)-3:]
+		}
 		slog.Warn("meta webhook: signature verification failed",
 			"received_header", sigHeader,
 			"computed", computed,
 			"secret_len", len(h.appSecret),
+			"secret_preview", secretPreview,
 			"body_len", len(body))
 		writeError(w, http.StatusUnauthorized, "INVALID_SIGNATURE", "Signature verification failed")
 		return
