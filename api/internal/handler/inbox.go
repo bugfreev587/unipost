@@ -242,11 +242,12 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		replyResult, err = adapter.ReplyToComment(r.Context(), accessToken, item.ExternalID, body.Text)
 	case "ig_dm":
 		adapter := platform.NewInstagramAdapter()
-		if !item.AuthorID.Valid {
-			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Cannot reply: missing author ID")
+		recipientID := resolveIGDMRecipientID(r.Context(), h.queries, item, account)
+		if recipientID == "" {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Cannot reply: missing DM recipient")
 			return
 		}
-		replyResult, err = adapter.SendDM(r.Context(), accessToken, item.AuthorID.String, body.Text)
+		replyResult, err = adapter.SendDM(r.Context(), accessToken, recipientID, body.Text)
 	case "threads_reply":
 		adapter := platform.NewThreadsAdapter()
 		replyResult, err = adapter.ReplyToComment(r.Context(), accessToken, item.ExternalID, body.Text)

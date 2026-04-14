@@ -47,3 +47,26 @@ func resolveInboxLinkedPostID(ctx context.Context, queries *db.Queries, socialAc
 
 	return pgtype.Text{}
 }
+
+func resolveIGDMRecipientID(ctx context.Context, queries *db.Queries, item db.InboxItem, account db.SocialAccount) string {
+	if item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
+		threadItems, err := queries.ListInboxItemsByParent(ctx, db.ListInboxItemsByParentParams{
+			SocialAccountID:  item.SocialAccountID,
+			ParentExternalID: item.ParentExternalID,
+		})
+		if err == nil {
+			for i := len(threadItems) - 1; i >= 0; i-- {
+				candidate := threadItems[i]
+				if candidate.AuthorID.Valid && candidate.AuthorID.String != "" && candidate.AuthorID.String != account.ExternalAccountID {
+					return candidate.AuthorID.String
+				}
+			}
+		}
+	}
+
+	if item.AuthorID.Valid && item.AuthorID.String != "" && item.AuthorID.String != account.ExternalAccountID {
+		return item.AuthorID.String
+	}
+
+	return ""
+}
