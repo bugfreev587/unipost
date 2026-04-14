@@ -12,6 +12,14 @@ const METHOD_COLORS: Record<string, { bg: string; text: string }> = {
   DELETE: { bg: "#ef444418", text: "#ef4444" },
 };
 
+function renderBooleanGlyph(value: boolean) {
+  if (value) {
+    return <span style={{ display: "inline-flex", alignItems: "center", color: "#22c55e", fontWeight: 700 }}>✓</span>;
+  }
+
+  return <span style={{ display: "inline-flex", alignItems: "center", color: "#ef4444", fontWeight: 700 }}>X</span>;
+}
+
 export function MethodBadge({ method }: { method: string }) {
   const c = METHOD_COLORS[method] || METHOD_COLORS.GET;
   return (
@@ -98,7 +106,7 @@ export function ParamTable({ params, title }: { params: ParamRow[]; title?: stri
               <tr key={p.name} style={{ borderBottom: i < params.length - 1 ? "1px solid #111" : undefined }}>
                 <td style={{ padding: "10px 14px", fontFamily: "var(--mono)", color: "#f0f0f0", fontWeight: 500 }}>{p.name}</td>
                 <td style={{ padding: "10px 14px", fontFamily: "var(--mono)", color: "#10b981", fontSize: 12 }}>{p.type}</td>
-                <td style={{ padding: "10px 14px", color: p.required ? "#f59e0b" : "#555" }}>{p.required ? "Yes" : "No"}</td>
+                <td style={{ padding: "10px 14px" }}>{renderBooleanGlyph(p.required)}</td>
                 <td style={{ padding: "10px 14px", color: "#999", lineHeight: 1.5 }}>{p.description}</td>
               </tr>
             ))}

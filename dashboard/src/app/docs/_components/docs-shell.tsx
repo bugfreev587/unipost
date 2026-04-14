@@ -31,6 +31,28 @@ type HeadingItem = {
   level: "h2" | "h3";
 };
 
+function renderDocsTableCell(cell: string) {
+  const normalized = cell.trim().toLowerCase();
+
+  if (normalized === "yes") {
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", color: "#22c55e", fontWeight: 700 }}>
+        ✓
+      </span>
+    );
+  }
+
+  if (normalized === "no") {
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", color: "#ef4444", fontWeight: 700 }}>
+        X
+      </span>
+    );
+  }
+
+  return cell;
+}
+
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
 
@@ -457,7 +479,7 @@ export function DocsTable({
           {rows.map((row, index) => (
             <tr key={index}>
               {row.map((cell, cellIndex) => (
-                <td key={cellIndex}>{cell}</td>
+                <td key={cellIndex}>{renderDocsTableCell(cell)}</td>
               ))}
             </tr>
           ))}
