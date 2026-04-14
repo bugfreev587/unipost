@@ -302,6 +302,14 @@ func main() {
 		os.Getenv("META_APP_SECRET"),
 		"https://app.unipost.dev/meta/data-deletion-status",
 	)
+	// Meta platform webhooks (Instagram + Threads). Single endpoint
+	// for both products since they share the same Meta App. Uses
+	// META_APP_SECRET for HMAC verification (already in env) and
+	// META_WEBHOOK_VERIFY_TOKEN for the subscribe handshake.
+	metaWebhookHandler := handler.NewMetaWebhookHandler(
+		os.Getenv("META_APP_SECRET"),
+		os.Getenv("META_WEBHOOK_VERIFY_TOKEN"),
+	)
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
@@ -323,6 +331,8 @@ func main() {
 	// Webhook routes (no API key auth, verified by signatures)
 	r.Post("/webhooks/clerk", webhookHandler.HandleClerk)
 	r.Post("/webhooks/stripe", stripeWebhookHandler.HandleStripe)
+	r.Get("/webhooks/meta", metaWebhookHandler.Verify)
+	r.Post("/webhooks/meta", metaWebhookHandler.Handle)
 
 	// OAuth callback routes (no auth — called by OAuth providers)
 	r.Get("/v1/oauth/callback/{platform}", oauthHandler.Callback)
