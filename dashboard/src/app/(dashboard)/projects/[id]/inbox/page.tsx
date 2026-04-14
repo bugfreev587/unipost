@@ -1017,8 +1017,9 @@ export default function InboxPage() {
                       {selectedPost.media_urls && selectedPost.media_urls.length > 0 ? (
                         <div
                           style={{
-                            width: 84,
-                            height: 84,
+                            width: 220,
+                            maxWidth: "100%",
+                            aspectRatio: "1 / 1",
                             borderRadius: 12,
                             overflow: "hidden",
                             border: "1px solid var(--dborder)",
@@ -1057,15 +1058,15 @@ export default function InboxPage() {
                 </div>
               ) : null}
 
-              <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "grid", gap: 14 }}>
+              <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "grid", gap: selectedGroup.source === "ig_dm" ? 14 : 8 }}>
                 {selectedGroup.source === "ig_dm"
                   ? selectedGroup.items.map((item) => renderConversationItem(item))
                   : commentTree.map(function renderNode(node, depth = 0) {
                       return (
-                        <div key={node.item.id} style={{ display: "grid", gap: 10 }}>
+                        <div key={node.item.id} style={{ display: "grid", gap: 4 }}>
                           {renderConversationItem(node.item, depth)}
                           {node.children.length > 0 ? (
-                            <div style={{ display: "grid", gap: 10, paddingLeft: 18, borderLeft: "1px solid rgba(255,255,255,.08)" }}>
+                            <div style={{ display: "grid", gap: 4, paddingLeft: 16, marginTop: -2, borderLeft: "1px solid rgba(255,255,255,.08)" }}>
                               {node.children.map((child) => renderNode(child, depth + 1))}
                             </div>
                           ) : null}
