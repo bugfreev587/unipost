@@ -125,7 +125,15 @@ func (h *MetaWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Verify X-Hub-Signature-256 header.
 	sigHeader := r.Header.Get("X-Hub-Signature-256")
 	if !verifyMetaWebhookSignature(body, sigHeader, h.appSecret) {
-		slog.Warn("meta webhook: signature verification failed")
+		// Log details for debugging
+		mac := hmac.New(sha256.New, []byte(h.appSecret))
+		mac.Write(body)
+		computed := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		slog.Warn("meta webhook: signature verification failed",
+			"received_header", sigHeader,
+			"computed", computed,
+			"secret_len", len(h.appSecret),
+			"body_len", len(body))
 		writeError(w, http.StatusUnauthorized, "INVALID_SIGNATURE", "Signature verification failed")
 		return
 	}
