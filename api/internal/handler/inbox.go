@@ -244,14 +244,27 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	case "ig_dm":
 		adapter := platform.NewInstagramAdapter()
 		recipientID := ""
+		resolveMethod := "none"
 		if item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
 			if resolvedRecipientID, resolveErr := adapter.ResolveDMRecipient(r.Context(), accessToken, item.ParentExternalID.String); resolveErr == nil {
 				recipientID = resolvedRecipientID
+				resolveMethod = "conversation_participant"
+			} else {
+				slog.Warn("inbox dm: ResolveDMRecipient failed",
+					"conversation_id", item.ParentExternalID.String, "err", resolveErr)
 			}
 		}
 		if recipientID == "" {
 			recipientID = resolveIGDMRecipientID(r.Context(), h.queries, item, account)
+			if recipientID != "" {
+				resolveMethod = "inbox_item_author"
+			}
 		}
+		slog.Info("inbox dm reply: resolved recipient",
+			"recipient_id", recipientID, "method", resolveMethod,
+			"author_id", item.AuthorID.String,
+			"parent_external_id", item.ParentExternalID.String,
+			"external_account_id", account.ExternalAccountID)
 		if recipientID == "" {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Cannot reply: missing DM recipient")
 			return

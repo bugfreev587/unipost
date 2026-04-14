@@ -417,6 +417,9 @@ func (a *InstagramAdapter) SendDM(ctx context.Context, accessToken string, recip
 		return nil, err
 	}
 
+	slog.Info("instagram send dm",
+		"ig_user_id", igUserID, "recipient_id", recipientID)
+
 	params := url.Values{
 		"recipient":    {fmt.Sprintf(`{"id":"%s"}`, recipientID)},
 		"message":      {fmt.Sprintf(`{"text":"%s"}`, text)},
