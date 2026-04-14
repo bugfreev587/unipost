@@ -1,7 +1,6 @@
 "use client";
 
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
-import Link from "next/link";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
@@ -15,6 +14,42 @@ const userButtonAppearance = {
   },
 };
 
+const authRowStyle = { display: "flex", alignItems: "center", gap: 8 } as const;
+
+const authGhostButtonStyle = {
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "8px 14px",
+  borderRadius: "999px",
+  border: "1px solid rgba(255,255,255,.08)",
+  background: "transparent",
+  color: "#a6a6a0",
+  fontSize: "13px",
+  fontWeight: 600,
+  lineHeight: 1,
+  transition: "all .14s",
+} as const;
+
+const authPrimaryButtonStyle = {
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "8px 14px",
+  borderRadius: "999px",
+  border: "1px solid transparent",
+  background: "#22c55e",
+  color: "#041108",
+  fontSize: "13px",
+  fontWeight: 600,
+  lineHeight: 1,
+  textDecoration: "none",
+  boxShadow: "0 10px 24px rgba(34,197,94,.22)",
+  transition: "all .14s",
+} as const;
+
 export function MarketingNav() {
   const { isSignedIn, isLoaded } = useAuth();
 
@@ -25,7 +60,7 @@ export function MarketingNav() {
   if (isSignedIn) {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <a href={APP_URL} className="lp-btn lp-btn-primary">
+        <a href={APP_URL} style={authPrimaryButtonStyle}>
           Go to Dashboard
         </a>
         <UserButton appearance={userButtonAppearance} />
@@ -34,14 +69,14 @@ export function MarketingNav() {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div style={authRowStyle}>
       <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
-        <button className="lp-btn lp-btn-ghost" style={{ cursor: "pointer" }}>
+        <button style={authGhostButtonStyle}>
           Sign in
         </button>
       </SignInButton>
       <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
-        <button className="lp-btn lp-btn-primary" style={{ cursor: "pointer" }}>
+        <button style={authPrimaryButtonStyle}>
           Get Started Free
         </button>
       </SignUpButton>
