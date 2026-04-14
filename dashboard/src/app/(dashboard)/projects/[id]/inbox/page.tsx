@@ -69,6 +69,11 @@ type ConversationGroup = {
   linkedPostID?: string;
 };
 
+type CommentNode = {
+  item: InboxItem;
+  children: CommentNode[];
+};
+
 function timeAgo(dateStr: string): string {
   const now = Date.now();
   const then = new Date(dateStr).getTime();
@@ -166,6 +171,40 @@ function groupItems(items: InboxItem[], source: ConversationGroup["source"]): Co
       linkedPostID: latest.linked_post_id,
     };
   });
+}
+
+function buildCommentTree(items: InboxItem[], threadKey: string): CommentNode[] {
+  const nodeMap = new Map<string, CommentNode>();
+  for (const item of items) {
+    nodeMap.set(item.external_id, { item, children: [] });
+  }
+
+  const roots: CommentNode[] = [];
+  for (const item of items) {
+    const node = nodeMap.get(item.external_id);
+    if (!node) continue;
+
+    const parentID = item.parent_external_id;
+    const parentNode = parentID ? nodeMap.get(parentID) : undefined;
+
+    if (parentNode && parentID !== threadKey) {
+      parentNode.children.push(node);
+      continue;
+    }
+
+    roots.push(node);
+  }
+
+  const sortNodes = (nodes: CommentNode[]) => {
+    nodes.sort(
+      (a, b) =>
+        new Date(a.item.received_at).getTime() - new Date(b.item.received_at).getTime()
+    );
+    nodes.forEach((node) => sortNodes(node.children));
+  };
+  sortNodes(roots);
+
+  return roots;
 }
 
 function StatusPill({ status, humanAgent = false }: { status: ThreadStatus; humanAgent?: boolean }) {
@@ -460,6 +499,115 @@ export default function InboxPage() {
 
   const detailStatus = selectedGroup ? selectedGroup.threadStatus || "open" : "open";
   const showHumanAgent = selectedGroup?.source === "ig_dm";
+  const commentTree = useMemo(
+    () =>
+      selectedGroup && selectedGroup.source !== "ig_dm"
+        ? buildCommentTree(selectedGroup.items, selectedGroup.threadKey)
+        : [],
+    [selectedGroup]
+  );
+
+  function renderConversationItem(item: InboxItem, depth = 0) {
+    if (!selectedGroup) return null;
+    const draft = replyDrafts[item.id] || "";
+
+    return (
+      <div key={item.id} style={{ display: "grid", gap: 10, marginLeft: depth * 28 }}>
+        <div
+          style={{
+            padding: 14,
+            borderRadius: 14,
+            border: item.is_own ? "1px solid rgba(16,185,129,.18)" : "1px solid var(--dborder)",
+            background: item.is_own ? "rgba(16,185,129,.08)" : "rgba(255,255,255,.02)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            {item.is_own ? <UserRound style={{ width: 14, height: 14, color: "var(--daccent)" }} /> : null}
+            <span className="dt-body-sm" style={{ fontWeight: 600, color: item.is_own ? "var(--daccent)" : "var(--dtext)" }}>
+              {item.is_own ? "You" : `@${item.author_name || item.author_id || "unknown"}`}
+            </span>
+            {item.is_own ? (
+              <span className="dt-mono" style={{ fontSize: 10, padding: "2px 6px", borderRadius: 999, background: "rgba(16,185,129,.15)", color: "var(--daccent)" }}>
+                you
+              </span>
+            ) : null}
+            {depth > 0 ? (
+              <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
+                reply
+              </span>
+            ) : null}
+            <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)", marginLeft: "auto" }}>
+              {timeAgo(item.received_at)}
+            </span>
+          </div>
+          <div className="dt-body-sm" style={{ color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
+            {item.body || "(no text)"}
+          </div>
+
+          {!item.is_own ? (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                <button
+                  onClick={() => setReplyDrafts((prev) => ({ ...prev, [item.id]: prev[item.id] || "" }))}
+                  className="dt-body-sm"
+                  style={{ border: "none", background: "transparent", color: "var(--daccent)", cursor: "pointer", padding: 0 }}
+                >
+                  Reply
+                </button>
+                <button
+                  onClick={() =>
+                    setItems((prev) => prev.map((candidate) => candidate.id === item.id ? { ...candidate, is_read: !candidate.is_read } : candidate))
+                  }
+                  className="dt-body-sm"
+                  style={{ border: "none", background: "transparent", color: "var(--dmuted)", cursor: "pointer", padding: 0 }}
+                >
+                  {item.is_read ? "Mark unread" : "Mark read"}
+                </button>
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={draft}
+                  onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                  placeholder={`Reply to @${item.author_name || item.author_id || "this user"}...`}
+                  className="dt-body-sm"
+                  style={{
+                    flex: 1,
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid var(--dborder)",
+                    background: "var(--sidebar)",
+                    color: "var(--dtext)",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  onClick={() => handleReply(selectedGroup, item)}
+                  disabled={replyingGroupId === selectedGroup.id || !draft.trim()}
+                  className="dt-body-sm"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: "var(--daccent)",
+                    color: "var(--primary-foreground)",
+                    cursor: replyingGroupId === selectedGroup.id || !draft.trim() ? "not-allowed" : "pointer",
+                    opacity: replyingGroupId === selectedGroup.id || !draft.trim() ? 0.5 : 1,
+                  }}
+                >
+                  <Send style={{ width: 14, height: 14 }} />
+                  {replyingGroupId === selectedGroup.id ? "Sending..." : "Send"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -824,101 +972,20 @@ export default function InboxPage() {
               ) : null}
 
               <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "grid", gap: 14 }}>
-                {selectedGroup.items.map((item) => {
-                  const draft = replyDrafts[item.id] || "";
-                  return (
-                    <div
-                      key={item.id}
-                      style={{
-                        marginLeft: item.is_own ? 56 : 0,
-                        marginRight: item.is_own ? 0 : 56,
-                        padding: 14,
-                        borderRadius: 14,
-                        border: item.is_own ? "1px solid rgba(16,185,129,.18)" : "1px solid var(--dborder)",
-                        background: item.is_own ? "rgba(16,185,129,.08)" : "rgba(255,255,255,.02)",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                        {item.is_own ? <UserRound style={{ width: 14, height: 14, color: "var(--daccent)" }} /> : null}
-                        <span className="dt-body-sm" style={{ fontWeight: 600, color: item.is_own ? "var(--daccent)" : "var(--dtext)" }}>
-                          {item.is_own ? "You" : `@${item.author_name || item.author_id || "unknown"}`}
-                        </span>
-                        {item.is_own ? (
-                          <span className="dt-mono" style={{ fontSize: 10, padding: "2px 6px", borderRadius: 999, background: "rgba(16,185,129,.15)", color: "var(--daccent)" }}>
-                            you
-                          </span>
-                        ) : null}
-                        <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)", marginLeft: "auto" }}>
-                          {timeAgo(item.received_at)}
-                        </span>
-                      </div>
-                      <div className="dt-body-sm" style={{ color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
-                        {item.body || "(no text)"}
-                      </div>
-
-                      {!item.is_own ? (
-                        <div style={{ marginTop: 12 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-                            <button
-                              onClick={() => setReplyDrafts((prev) => ({ ...prev, [item.id]: prev[item.id] || "" }))}
-                              className="dt-body-sm"
-                              style={{ border: "none", background: "transparent", color: "var(--daccent)", cursor: "pointer", padding: 0 }}
-                            >
-                              Reply
-                            </button>
-                            <button
-                              onClick={() =>
-                                setItems((prev) => prev.map((candidate) => candidate.id === item.id ? { ...candidate, is_read: !candidate.is_read } : candidate))
-                              }
-                              className="dt-body-sm"
-                              style={{ border: "none", background: "transparent", color: "var(--dmuted)", cursor: "pointer", padding: 0 }}
-                            >
-                              {item.is_read ? "Mark unread" : "Mark read"}
-                            </button>
-                          </div>
-
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <input
-                              value={draft}
-                              onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                              placeholder={`Reply to @${item.author_name || item.author_id || "this user"}...`}
-                              className="dt-body-sm"
-                              style={{
-                                flex: 1,
-                                padding: "10px 12px",
-                                borderRadius: 10,
-                                border: "1px solid var(--dborder)",
-                                background: "var(--sidebar)",
-                                color: "var(--dtext)",
-                                outline: "none",
-                              }}
-                            />
-                            <button
-                              onClick={() => handleReply(selectedGroup, item)}
-                              disabled={replyingGroupId === selectedGroup.id || !draft.trim()}
-                              className="dt-body-sm"
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 6,
-                                padding: "10px 14px",
-                                borderRadius: 10,
-                                border: "none",
-                                background: "var(--daccent)",
-                                color: "var(--primary-foreground)",
-                                cursor: replyingGroupId === selectedGroup.id || !draft.trim() ? "not-allowed" : "pointer",
-                                opacity: replyingGroupId === selectedGroup.id || !draft.trim() ? 0.5 : 1,
-                              }}
-                            >
-                              <Send style={{ width: 14, height: 14 }} />
-                              {replyingGroupId === selectedGroup.id ? "Sending..." : "Send"}
-                            </button>
-                          </div>
+                {selectedGroup.source === "ig_dm"
+                  ? selectedGroup.items.map((item) => renderConversationItem(item))
+                  : commentTree.map(function renderNode(node, depth = 0) {
+                      return (
+                        <div key={node.item.id} style={{ display: "grid", gap: 10 }}>
+                          {renderConversationItem(node.item, depth)}
+                          {node.children.length > 0 ? (
+                            <div style={{ display: "grid", gap: 10, paddingLeft: 18, borderLeft: "1px solid rgba(255,255,255,.08)" }}>
+                              {node.children.map((child) => renderNode(child, depth + 1))}
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                      );
+                    })}
               </div>
 
               {selectedGroup.source === "ig_dm" ? (

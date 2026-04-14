@@ -263,7 +263,9 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 	// Insert the reply as an inbox item so it appears in the thread view.
 	parentID := item.ParentExternalID
-	if !parentID.Valid {
+	if item.Source == "ig_comment" || item.Source == "threads_reply" {
+		parentID = pgtype.Text{String: item.ExternalID, Valid: true}
+	} else if !parentID.Valid {
 		parentID = pgtype.Text{String: item.ExternalID, Valid: true}
 	}
 	replyItem, _ := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
