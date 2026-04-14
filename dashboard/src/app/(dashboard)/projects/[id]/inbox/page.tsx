@@ -1077,7 +1077,7 @@ export default function InboxPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                     {sourceIcon(selectedGroup.source)}
                     <h2 className="dt-body" style={{ margin: 0, fontWeight: 700, color: "var(--dtext)" }}>
-                      {selectedGroup.source === "ig_dm" ? selectedGroup.title : `${selectedGroup.items.filter((item) => !item.is_own).length} ${sourceLabel(selectedGroup.source).toLowerCase()}${selectedGroup.items.filter((item) => !item.is_own).length === 1 ? "" : "s"}`}
+                      {selectedGroup.source === "ig_dm" ? selectedGroup.title : `${selectedGroup.items.length} ${sourceLabel(selectedGroup.source).toLowerCase()}${selectedGroup.items.length === 1 ? "" : "s"}`}
                     </h2>
                   </div>
                   <p className="dt-body-sm" style={{ margin: 0, color: "var(--dmuted)" }}>
