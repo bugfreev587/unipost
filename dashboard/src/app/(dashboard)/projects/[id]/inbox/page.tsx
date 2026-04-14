@@ -406,6 +406,15 @@ export default function InboxPage() {
     load();
   }, [load]);
 
+  // Auto-poll every 10 seconds for new messages.
+  useEffect(() => {
+    if (!workspaceId) return;
+    const interval = setInterval(() => {
+      load();
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [workspaceId, load]);
+
   const commentsGroups = useMemo(() => groupItems(items, "ig_comment"), [items]);
   const dmGroups = useMemo(() => groupItems(items, "ig_dm"), [items]);
   const threadsGroups = useMemo(() => groupItems(items, "threads_reply"), [items]);
