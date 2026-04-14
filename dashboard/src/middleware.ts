@@ -20,6 +20,8 @@ export default clerkMiddleware(async (auth, request) => {
     pathname.startsWith("/docs") ||
     pathname === "/pricing" ||
     pathname === "/solutions" ||
+    pathname === "/compare" ||
+    pathname.startsWith("/alternatives") ||
     pathname === "/contact" ||
     pathname.startsWith("/tools") ||
     pathname.endsWith("-api"); // platform landing pages: /twitter-api, /instagram-api, etc.
