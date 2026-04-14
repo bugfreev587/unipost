@@ -243,21 +243,16 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		replyResult, err = adapter.ReplyToComment(r.Context(), accessToken, item.ExternalID, body.Text)
 	case "ig_dm":
 		adapter := platform.NewInstagramAdapter()
-		recipientID := ""
-		resolveMethod := "none"
-		if item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
-			if resolvedRecipientID, resolveErr := adapter.ResolveDMRecipient(r.Context(), accessToken, item.ParentExternalID.String); resolveErr == nil {
-				recipientID = resolvedRecipientID
+		// Use the author_id from the last inbound message as the
+		// recipient IGSID. ResolveDMRecipient can return our own
+		// account's legacy IGBA ID (different from /me's ID), so
+		// the direct author_id is more reliable.
+		recipientID := resolveIGDMRecipientID(r.Context(), h.queries, item, account)
+		resolveMethod := "inbox_author"
+		if recipientID == "" && item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
+			if resolved, resolveErr := adapter.ResolveDMRecipient(r.Context(), accessToken, item.ParentExternalID.String); resolveErr == nil {
+				recipientID = resolved
 				resolveMethod = "conversation_participant"
-			} else {
-				slog.Warn("inbox dm: ResolveDMRecipient failed",
-					"conversation_id", item.ParentExternalID.String, "err", resolveErr)
-			}
-		}
-		if recipientID == "" {
-			recipientID = resolveIGDMRecipientID(r.Context(), h.queries, item, account)
-			if recipientID != "" {
-				resolveMethod = "inbox_item_author"
 			}
 		}
 		slog.Info("inbox dm reply: resolved recipient",
