@@ -281,6 +281,8 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("inbox sync starting", "workspace_id", workspaceID, "accounts", len(accounts))
+
 	totalNew := 0
 	for _, acc := range accounts {
 		accessToken, err := h.encryptor.Decrypt(acc.AccessToken)
@@ -299,12 +301,16 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		slog.Info("inbox sync: processing account",
+			"account_id", acc.ID, "platform", acc.Platform,
+			"post_results", len(results))
+
 		switch acc.Platform {
 		case "instagram":
 			adapter := platform.NewInstagramAdapter()
 			// Fetch comments on recent posts.
 			for _, res := range results {
-				if res.ExternalID.String == "" {
+				if !res.ExternalID.Valid || res.ExternalID.String == "" {
 					continue
 				}
 				entries, err := adapter.FetchComments(r.Context(), accessToken, res.ExternalID.String)
@@ -313,6 +319,8 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						"account_id", acc.ID, "external_id", res.ExternalID.String, "err", err)
 					continue
 				}
+				slog.Info("inbox sync: fetched ig comments",
+					"media_id", res.ExternalID.String, "count", len(entries))
 				for _, e := range entries {
 					isOwn := e.AuthorID == acc.ExternalAccountID
 					_, uErr := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
@@ -362,7 +370,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		case "threads":
 			adapter := platform.NewThreadsAdapter()
 			for _, res := range results {
-				if res.ExternalID.String == "" {
+				if !res.ExternalID.Valid || res.ExternalID.String == "" {
 					continue
 				}
 				entries, err := adapter.FetchComments(r.Context(), accessToken, res.ExternalID.String)

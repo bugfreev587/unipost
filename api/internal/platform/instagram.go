@@ -201,9 +201,12 @@ func (a *InstagramAdapter) PostComment(ctx context.Context, accessToken string, 
 }
 
 // FetchComments returns comments on an Instagram media object.
-// Calls GET /v21.0/{media-id}/comments?fields=id,text,username,timestamp,from
+// Uses the "Instagram API with Instagram Login" fields — the `from`
+// expansion is NOT available on this API surface, so we request only
+// id, text, username, timestamp. The `username` field identifies
+// the comment author.
 func (a *InstagramAdapter) FetchComments(ctx context.Context, accessToken string, mediaExternalID string) ([]InboxEntry, error) {
-	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/comments?fields=id,text,username,timestamp,from{id,username}&access_token=%s",
+	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/comments?fields=id,text,username,timestamp&access_token=%s",
 		mediaExternalID, accessToken)
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
@@ -216,6 +219,10 @@ func (a *InstagramAdapter) FetchComments(ctx context.Context, accessToken string
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		slog.Warn("instagram fetch comments failed",
+			"status", resp.StatusCode,
+			"media_id", mediaExternalID,
+			"body", string(body))
 		return nil, fmt.Errorf("instagram fetch comments %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -225,10 +232,6 @@ func (a *InstagramAdapter) FetchComments(ctx context.Context, accessToken string
 			Text      string `json:"text"`
 			Username  string `json:"username"`
 			Timestamp string `json:"timestamp"`
-			From      struct {
-				ID       string `json:"id"`
-				Username string `json:"username"`
-			} `json:"from"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -238,16 +241,10 @@ func (a *InstagramAdapter) FetchComments(ctx context.Context, accessToken string
 	entries := make([]InboxEntry, 0, len(result.Data))
 	for _, c := range result.Data {
 		ts, _ := time.Parse(time.RFC3339, c.Timestamp)
-		authorID := c.From.ID
-		authorName := c.From.Username
-		if authorName == "" {
-			authorName = c.Username
-		}
 		entries = append(entries, InboxEntry{
 			ExternalID:       c.ID,
 			ParentExternalID: mediaExternalID,
-			AuthorName:       authorName,
-			AuthorID:         authorID,
+			AuthorName:       c.Username,
 			Body:             c.Text,
 			Timestamp:        ts,
 			Source:            "ig_comment",
