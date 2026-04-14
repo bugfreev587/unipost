@@ -40,7 +40,11 @@ WHERE disconnected_at IS NULL
 
 -- name: UpdateSocialAccountTokens :exec
 UPDATE social_accounts
-SET access_token = $2, refresh_token = $3, token_expires_at = $4
+SET access_token = $2,
+    refresh_token = $3,
+    token_expires_at = $4,
+    status = 'active',
+    disconnected_at = NULL
 WHERE id = $1;
 
 -- name: UpsertManagedSocialAccount :one

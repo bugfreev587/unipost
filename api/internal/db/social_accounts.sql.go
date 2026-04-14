@@ -759,7 +759,11 @@ func (q *Queries) UpdateManagedTokenRefresh(ctx context.Context, arg UpdateManag
 
 const updateSocialAccountTokens = `-- name: UpdateSocialAccountTokens :exec
 UPDATE social_accounts
-SET access_token = $2, refresh_token = $3, token_expires_at = $4
+SET access_token = $2,
+    refresh_token = $3,
+    token_expires_at = $4,
+    status = 'active',
+    disconnected_at = NULL
 WHERE id = $1
 `
 
