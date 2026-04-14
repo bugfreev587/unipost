@@ -84,14 +84,14 @@ export function MarketingNav() {
   );
 }
 
-export function MarketingCTA() {
+export function MarketingCTA({ className = "lp-btn lp-btn-primary lp-btn-lg" }: { className?: string } = {}) {
   const { isSignedIn, isLoaded } = useAuth();
 
   if (!isLoaded) return <div style={{ height: 48 }} />;
 
   if (isSignedIn) {
     return (
-      <a href={APP_URL} className="lp-btn lp-btn-primary lp-btn-lg">
+      <a href={APP_URL} className={className}>
         Go to Dashboard
       </a>
     );
@@ -99,7 +99,7 @@ export function MarketingCTA() {
 
   return (
     <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
-      <button className="lp-btn lp-btn-primary lp-btn-lg" style={{ cursor: "pointer" }}>
+      <button className={className} style={{ cursor: "pointer" }}>
         Get Started Free
       </button>
     </SignUpButton>
