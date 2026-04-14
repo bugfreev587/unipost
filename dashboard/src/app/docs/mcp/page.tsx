@@ -21,7 +21,20 @@ const MCP_SNIPPETS = [
 }`,
   },
   {
-    label: "Cursor / Windsurf",
+    label: "Cursor",
+    code: `{
+  "mcpServers": {
+    "unipost": {
+      "url": "https://mcp.unipost.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}`,
+  },
+  {
+    label: "Windsurf",
     code: `{
   "mcpServers": {
     "unipost": {
@@ -109,6 +122,16 @@ export default function McpPage() {
       />
 
       <h2 id="client-config">Client configuration</h2>
+      <p>Here is the part that was missing: each client expects this config in a different place. Copy the matching snippet into the file below, then restart the client.</p>
+      <DocsTable
+        columns={["Client", "Put the config here", "Notes"]}
+        rows={[
+          ["Claude Desktop", "~/Library/Application Support/Claude/claude_desktop_config.json (macOS) or %APPDATA%\\Claude\\claude_desktop_config.json (Windows)", "Replace the whole `mcpServers` block or merge the `unipost` entry into your existing file"],
+          ["Cursor", ".cursor/mcp.json in your project or ~/.cursor/mcp.json for a global setup", "Project config is easiest when you want the same MCPs checked into a repo"],
+          ["Windsurf", "~/.codeium/windsurf/mcp_config.json", "You can also open MCP settings in Windsurf and edit the raw config there"],
+          ["Claude Code", "No file needed for the command below. Run it in your terminal instead.", "If you want a checked-in config, use `.mcp.json` at the project root with `claude mcp add --scope project`"],
+        ]}
+      />
       <DocsCodeTabs snippets={MCP_SNIPPETS} />
 
       <h2 id="testing">Test the server directly</h2>
