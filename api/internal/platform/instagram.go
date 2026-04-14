@@ -240,7 +240,13 @@ func (a *InstagramAdapter) FetchComments(ctx context.Context, accessToken string
 
 	entries := make([]InboxEntry, 0, len(result.Data))
 	for _, c := range result.Data {
-		ts, _ := time.Parse(time.RFC3339, c.Timestamp)
+		ts, _ := time.Parse(time.RFC3339Nano, c.Timestamp)
+		if ts.IsZero() {
+			ts, _ = time.Parse("2006-01-02T15:04:05-0700", c.Timestamp)
+		}
+		if ts.IsZero() {
+			ts = time.Now()
+		}
 		entries = append(entries, InboxEntry{
 			ExternalID:       c.ID,
 			ParentExternalID: mediaExternalID,

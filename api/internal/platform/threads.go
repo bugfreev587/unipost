@@ -322,7 +322,13 @@ func (a *ThreadsAdapter) FetchComments(ctx context.Context, accessToken string, 
 
 	entries := make([]InboxEntry, 0, len(result.Data))
 	for _, r := range result.Data {
-		ts, _ := time.Parse(time.RFC3339, r.Timestamp)
+		ts, _ := time.Parse(time.RFC3339Nano, r.Timestamp)
+		if ts.IsZero() {
+			ts, _ = time.Parse("2006-01-02T15:04:05-0700", r.Timestamp)
+		}
+		if ts.IsZero() {
+			ts = time.Now()
+		}
 		entries = append(entries, InboxEntry{
 			ExternalID:       r.ID,
 			ParentExternalID: postExternalID,

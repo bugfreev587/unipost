@@ -99,7 +99,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 							AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
 							Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 							IsOwn:            false,
-							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
+							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 							Metadata:         []byte("{}"),
 						})
 						if uErr == nil {
@@ -124,7 +124,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
 						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 						IsOwn:            isOwn,
-						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
+						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 						Metadata:         []byte("{}"),
 					})
 					if uErr == nil {
@@ -157,7 +157,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 							AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
 							Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 							IsOwn:            isOwn,
-							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: !e.Timestamp.IsZero()},
+							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 							Metadata:         []byte("{}"),
 						})
 						if uErr == nil {
