@@ -1,4 +1,4 @@
-import { useId } from "react";
+import Image from "next/image";
 
 function joinClassNames(...parts: Array<string | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -11,29 +11,48 @@ export function UniPostMark({
   size?: number;
   className?: string;
 }) {
-  const gradientId = useId().replace(/:/g, "");
-
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 128 128"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
+    <span
+      className={joinClassNames("unipost-mark", className)}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        width: size,
+        height: size,
+        flexShrink: 0,
+      }}
       aria-hidden="true"
     >
-      <defs>
-        <linearGradient id={gradientId} x1="16" y1="112" x2="112" y2="16" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#48A4FF" />
-          <stop offset="1" stopColor="#A020F0" />
-        </linearGradient>
-      </defs>
-      <rect x="16" y="48" width="56" height="56" rx="2" fill={`url(#${gradientId})`} />
-      <rect x="44" y="28" width="56" height="56" rx="2" stroke={`url(#${gradientId})`} strokeWidth="8" />
-      <rect x="52" y="56" width="30" height="30" rx="1.5" fill={`url(#${gradientId})`} />
-      <rect x="62" y="66" width="10" height="10" rx="1" fill="#FFFFFF" />
-    </svg>
+      <Image
+        src="/brand/unipost-icon-dark.png"
+        alt=""
+        width={size}
+        height={size}
+        style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: Math.max(6, Math.round(size * 0.22)), display: "block" }}
+        className="unipost-mark-dark"
+        priority={size >= 64}
+      />
+      <Image
+        src="/brand/unipost-icon-light.png"
+        alt=""
+        width={size}
+        height={size}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          borderRadius: Math.max(6, Math.round(size * 0.22)),
+          display: "none",
+          position: "absolute",
+          inset: 0,
+        }}
+        className="unipost-mark-light"
+      />
+      <style>{`
+        html.light .unipost-mark-dark{display:none !important}
+        html.light .unipost-mark-light{display:block !important}
+      `}</style>
+    </span>
   );
 }
 

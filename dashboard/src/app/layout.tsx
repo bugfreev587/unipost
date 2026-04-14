@@ -32,9 +32,14 @@ export const metadata: Metadata = {
   title: "UniPost",
   description: "Unified Social Media API for developers",
   icons: {
-    icon: "/unipost-mark.svg",
-    shortcut: "/unipost-mark.svg",
-    apple: "/unipost-mark.svg",
+    icon: [
+      { url: "/brand/unipost-favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/unipost-icon-64.png", sizes: "64x64", type: "image/png" },
+      { url: "/brand/unipost-icon-128.png", sizes: "128x128", type: "image/png" },
+      { url: "/brand/unipost-icon-dark.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: "/brand/unipost-favicon-32.png",
+    apple: "/brand/unipost-icon-128.png",
   },
 };
 
