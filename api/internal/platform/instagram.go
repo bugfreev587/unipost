@@ -30,7 +30,7 @@ func (a *InstagramAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfi
 		AuthURL:      "https://api.instagram.com/oauth/authorize",
 		TokenURL:     "https://api.instagram.com/oauth/access_token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/instagram",
-		Scopes:       []string{"instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights", "instagram_business_manage_comments", "instagram_business_manage_messages"},
+		Scopes:       []string{"instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights", "instagram_business_manage_comments"},
 	}
 }
 

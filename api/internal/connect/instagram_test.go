@@ -203,7 +203,7 @@ func TestInstagramRefresh_ReusesAccessTokenSlot(t *testing.T) {
 // analytics, comments, and DMs — all submitted together for Meta
 // App Review.
 func TestInstagramScopes_LockedToBusinessAPI(t *testing.T) {
-	wantScopes := "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments,instagram_business_manage_messages"
+	wantScopes := "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments"
 	if instagramScopes != wantScopes {
 		t.Errorf("instagramScopes drift: got %q, want %q", instagramScopes, wantScopes)
 	}
