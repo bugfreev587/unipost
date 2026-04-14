@@ -24,11 +24,13 @@ import {
   Archive,
   AtSign,
   CheckCheck,
+  CornerUpLeft,
   ChevronRight,
   Inbox as InboxIcon,
   Mail,
   MessageCircle,
   MessageSquare,
+  MoreHorizontal,
   RefreshCw,
   Search,
   Send,
@@ -510,7 +512,9 @@ export default function InboxPage() {
       if (res.data) {
         setItems((prev) => [...prev, res.data]);
       }
-      setReplyDrafts((prev) => ({ ...prev, [targetItem.id]: "" }));
+      setReplyDrafts((prev) =>
+        Object.fromEntries(Object.entries(prev).filter(([key]) => key !== targetItem.id))
+      );
     } finally {
       setReplyingGroupId(null);
     }
@@ -585,8 +589,169 @@ export default function InboxPage() {
     const draft = replyDrafts[item.id] || "";
     const replyOpen = Object.prototype.hasOwnProperty.call(replyDrafts, item.id);
     const isCommentLike = selectedGroup.source !== "ig_dm";
+    const isDM = selectedGroup.source === "ig_dm";
     const avatarSrc = item.is_own ? item.account_avatar_url : item.author_avatar_url;
     const avatarLabel = item.is_own ? selectedGroup.accountName || "You" : item.author_name || item.author_id || "unknown";
+
+    if (isDM) {
+      return (
+        <div
+          key={item.id}
+          className="dm-message"
+          style={{
+            display: "flex",
+            justifyContent: item.is_own ? "flex-end" : "flex-start",
+            gap: 10,
+            marginTop: 2,
+          }}
+        >
+          {!item.is_own ? <Avatar src={avatarSrc} label={avatarLabel} size={36} /> : null}
+          <div style={{ display: "grid", gap: 6, maxWidth: "78%", justifyItems: item.is_own ? "end" : "start" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-end",
+                gap: 8,
+                flexDirection: item.is_own ? "row-reverse" : "row",
+              }}
+            >
+              <div
+                style={{
+                  padding: "14px 18px",
+                  borderRadius: item.is_own ? "22px 22px 8px 22px" : "22px 22px 22px 8px",
+                  background: item.is_own ? "linear-gradient(135deg, rgba(16,185,129,.95), rgba(5,150,105,.95))" : "rgba(255,255,255,.06)",
+                  color: item.is_own ? "var(--primary-foreground)" : "var(--dtext)",
+                  border: item.is_own ? "none" : "1px solid rgba(255,255,255,.06)",
+                  boxShadow: item.is_own ? "0 8px 24px rgba(16,185,129,.18)" : "none",
+                }}
+              >
+                <div className="dt-body-sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+                  {item.body || "(no text)"}
+                </div>
+              </div>
+
+              {!item.is_own ? (
+                <div className="dm-actions" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button
+                    onClick={() =>
+                      setReplyDrafts((prev) =>
+                        replyOpen
+                          ? Object.fromEntries(Object.entries(prev).filter(([key]) => key !== item.id))
+                          : { ...prev, [item.id]: "" }
+                      )
+                    }
+                    aria-label="Reply"
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 999,
+                      border: "1px solid rgba(255,255,255,.08)",
+                      background: "rgba(255,255,255,.04)",
+                      color: "var(--dmuted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <CornerUpLeft style={{ width: 14, height: 14 }} />
+                  </button>
+                  <button
+                    onClick={() =>
+                      setItems((prev) => prev.map((candidate) => candidate.id === item.id ? { ...candidate, is_read: !candidate.is_read } : candidate))
+                    }
+                    aria-label={item.is_read ? "Mark unread" : "Mark read"}
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 999,
+                      border: "1px solid rgba(255,255,255,.08)",
+                      background: "rgba(255,255,255,.04)",
+                      color: "var(--dmuted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <MoreHorizontal style={{ width: 14, height: 14 }} />
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                justifyContent: item.is_own ? "flex-end" : "flex-start",
+                paddingInline: 4,
+              }}
+            >
+              {!item.is_own ? (
+                <span className="dt-body-sm" style={{ fontWeight: 700, color: "var(--dtext)" }}>
+                  @{item.author_name || item.author_id || "unknown"}
+                </span>
+              ) : (
+                <>
+                  <span className="dt-mono" style={{ fontSize: 10, padding: "2px 6px", borderRadius: 999, background: "rgba(16,185,129,.15)", color: "var(--daccent)" }}>
+                    you
+                  </span>
+                  <span className="dt-body-sm" style={{ fontWeight: 700, color: "var(--daccent)" }}>
+                    You
+                  </span>
+                </>
+              )}
+              <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
+                {timeAgo(item.received_at)}
+              </span>
+            </div>
+
+            {!item.is_own && replyOpen ? (
+              <div style={{ display: "flex", gap: 8, width: "100%" }}>
+                <input
+                  value={draft}
+                  onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                  placeholder={`Reply to @${item.author_name || item.author_id || "this user"}...`}
+                  className="dt-body-sm"
+                  style={{
+                    flex: 1,
+                    padding: "10px 12px",
+                    borderRadius: 999,
+                    border: "1px solid var(--dborder)",
+                    background: "var(--sidebar)",
+                    color: "var(--dtext)",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  onClick={() => handleReply(selectedGroup, item)}
+                  disabled={replyingGroupId === selectedGroup.id || !draft.trim()}
+                  className="dt-body-sm"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: "var(--daccent)",
+                    color: "var(--primary-foreground)",
+                    cursor: replyingGroupId === selectedGroup.id || !draft.trim() ? "not-allowed" : "pointer",
+                    opacity: replyingGroupId === selectedGroup.id || !draft.trim() ? 0.5 : 1,
+                  }}
+                >
+                  <Send style={{ width: 14, height: 14 }} />
+                  {replyingGroupId === selectedGroup.id ? "Sending..." : "Send"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+          {item.is_own ? <Avatar src={avatarSrc} label={avatarLabel} size={36} /> : null}
+        </div>
+      );
+    }
 
     return (
       <div key={item.id} style={{ display: "grid", gap: 10, marginLeft: depth * 28 }}>
@@ -1103,6 +1268,17 @@ export default function InboxPage() {
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+
+        .dm-message .dm-actions {
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity .15s ease;
+        }
+
+        .dm-message:hover .dm-actions {
+          opacity: 1;
+          pointer-events: auto;
         }
       `}</style>
     </div>
