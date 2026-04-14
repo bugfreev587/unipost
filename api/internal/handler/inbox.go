@@ -283,11 +283,20 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("inbox sync starting", "workspace_id", workspaceID, "accounts", len(accounts))
 
+	type syncError struct {
+		AccountID string `json:"account_id"`
+		Platform  string `json:"platform"`
+		Step      string `json:"step"`
+		Error     string `json:"error"`
+	}
+
 	totalNew := 0
+	var errors []syncError
 	for _, acc := range accounts {
 		accessToken, err := h.encryptor.Decrypt(acc.AccessToken)
 		if err != nil {
 			slog.Warn("inbox sync: decrypt failed", "account_id", acc.ID, "err", err)
+			errors = append(errors, syncError{acc.ID, acc.Platform, "decrypt", err.Error()})
 			continue
 		}
 
@@ -302,6 +311,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			mediaIDs, err := adapter.FetchRecentMedia(r.Context(), accessToken)
 			if err != nil {
 				slog.Warn("inbox sync: fetch ig recent media failed", "account_id", acc.ID, "err", err)
+				errors = append(errors, syncError{acc.ID, acc.Platform, "fetch_media", err.Error()})
 			} else {
 				slog.Info("inbox sync: fetched ig recent media", "account_id", acc.ID, "count", len(mediaIDs))
 				for _, mediaID := range mediaIDs {
@@ -366,6 +376,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			postIDs, err := adapter.FetchRecentMedia(r.Context(), accessToken)
 			if err != nil {
 				slog.Warn("inbox sync: fetch threads recent media failed", "account_id", acc.ID, "err", err)
+				errors = append(errors, syncError{acc.ID, acc.Platform, "fetch_media", err.Error()})
 			} else {
 				slog.Info("inbox sync: fetched threads recent media", "account_id", acc.ID, "count", len(postIDs))
 				for _, postID := range postIDs {
@@ -401,5 +412,10 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeSuccess(w, map[string]int{"new_items": totalNew})
+	slog.Info("inbox sync complete", "new_items", totalNew, "accounts", len(accounts), "errors", len(errors))
+	writeSuccess(w, map[string]any{
+		"new_items":        totalNew,
+		"accounts_checked": len(accounts),
+		"errors":           errors,
+	})
 }

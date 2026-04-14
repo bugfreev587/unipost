@@ -101,18 +101,24 @@ export default function InboxPage() {
     load();
   }, [load]);
 
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+
   async function handleSync() {
     if (!workspaceId) return;
     setSyncing(true);
+    setSyncResult(null);
     try {
       const token = await getToken();
       if (!token) return;
       const res = await syncInbox(token, workspaceId);
-      if (res.data.new_items > 0) {
-        await load();
+      const data = res.data as any;
+      setSyncResult(`Checked ${data.accounts_checked ?? 0} accounts, ${data.new_items ?? 0} new items${data.errors?.length ? `, ${data.errors.length} errors` : ""}`);
+      if (data.errors?.length) {
+        console.warn("Inbox sync errors:", data.errors);
       }
-    } catch {
-      /* silent */
+      await load();
+    } catch (e: any) {
+      setSyncResult(`Sync failed: ${e?.message || "unknown error"}`);
     } finally {
       setSyncing(false);
     }
@@ -242,6 +248,21 @@ export default function InboxPage() {
           </button>
         </div>
       </div>
+
+      {/* Sync result banner */}
+      {syncResult && (
+        <div className="dt-body-sm" style={{
+          padding: "8px 14px", marginBottom: 12, borderRadius: 6,
+          background: "var(--sidebar-accent)", color: "var(--dtext)",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <span>{syncResult}</span>
+          <button onClick={() => setSyncResult(null)} style={{
+            border: "none", background: "transparent", cursor: "pointer",
+            color: "var(--dmuted)", fontSize: 16, lineHeight: 1,
+          }}>×</button>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
