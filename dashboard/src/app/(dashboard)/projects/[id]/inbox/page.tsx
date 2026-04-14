@@ -13,9 +13,11 @@ import {
   updateInboxThreadState,
   listSocialAccounts,
   listSocialPosts,
+  getInboxMediaContext,
   type InboxItem,
   type SocialAccount,
   type SocialPost,
+  type IGMediaContext,
 } from "@/lib/api";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { useInboxWebSocket } from "@/lib/use-inbox-ws";
@@ -381,6 +383,7 @@ export default function InboxPage() {
   const [replyingGroupId, setReplyingGroupId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [syncData, setSyncData] = useState<SyncResponse | null>(null);
+  const [mediaContext, setMediaContext] = useState<Record<string, IGMediaContext>>({});
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -591,6 +594,32 @@ export default function InboxPage() {
 
     return null;
   }, [selectedGroup, socialPosts]);
+
+  // Fetch IG media context when post isn't linked (comment/threads views).
+  useEffect(() => {
+    if (!selectedGroup || !workspaceId) return;
+    if (selectedGroup.source === "ig_dm") return;
+    if (selectedPost) return; // already have post data
+    const parentID = selectedGroup.parentExternalID || selectedGroup.threadKey;
+    if (!parentID || mediaContext[parentID]) return;
+    const firstItem = selectedGroup.items[0];
+    if (!firstItem) return;
+
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await getInboxMediaContext(token, workspaceId, firstItem.id);
+        if (res.data) {
+          setMediaContext((prev) => ({ ...prev, [parentID]: res.data }));
+        }
+      } catch { /* silent */ }
+    })();
+  }, [selectedGroup, selectedPost, workspaceId, getToken, mediaContext]);
+
+  const currentMediaContext = selectedGroup
+    ? mediaContext[selectedGroup.parentExternalID || selectedGroup.threadKey || ""] || null
+    : null;
 
   const detailStatus = selectedGroup ? selectedGroup.threadStatus || "open" : "open";
   const showHumanAgent = selectedGroup?.source === "ig_dm";
@@ -1102,7 +1131,7 @@ export default function InboxPage() {
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <PlatformIcon platform={selectedGroup.accountPlatform || (selectedGroup.source === "threads_reply" ? "threads" : "instagram")} size={18} />
                       <span className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)" }}>
-                        {selectedPost ? "Original post" : selectedGroup.accountName ? `@${selectedGroup.accountName}` : "Post context"}
+                        {selectedPost || currentMediaContext ? "Original post" : selectedGroup.accountName ? `@${selectedGroup.accountName}` : "Post context"}
                       </span>
                     </div>
                     {selectedPost?.published_at || selectedPost?.created_at ? (
@@ -1153,9 +1182,40 @@ export default function InboxPage() {
                         ) : null}
                       </div>
                     </div>
+                  ) : currentMediaContext ? (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {currentMediaContext.media_url ? (
+                        <div
+                          style={{
+                            width: 220,
+                            maxWidth: "100%",
+                            aspectRatio: "1 / 1",
+                            borderRadius: 12,
+                            overflow: "hidden",
+                            border: "1px solid var(--dborder)",
+                            background: "rgba(255,255,255,.03)",
+                          }}
+                        >
+                          <img
+                            src={currentMediaContext.media_url}
+                            alt="Post media"
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          />
+                        </div>
+                      ) : null}
+                      <p className="dt-body-sm" style={{ margin: 0, color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
+                        {currentMediaContext.caption || "(no caption)"}
+                      </p>
+                      {currentMediaContext.permalink ? (
+                        <a href={currentMediaContext.permalink} target="_blank" rel="noopener noreferrer"
+                          className="dt-mono" style={{ fontSize: 10, color: "var(--daccent)" }}>
+                          View on Instagram
+                        </a>
+                      ) : null}
+                    </div>
                   ) : (
                     <p className="dt-body-sm" style={{ margin: 0, color: "var(--dmuted)" }}>
-                      UniPost could not map this conversation to a stored post yet. The inbox item is real, but the original post preview is unavailable until the comment or reply links back to a UniPost post result.
+                      Loading post preview...
                     </p>
                   )}
                 </div>

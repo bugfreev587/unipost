@@ -1046,6 +1046,23 @@ export async function replyToInboxItem(
   });
 }
 
+export interface IGMediaContext {
+  id: string;
+  caption: string;
+  media_url: string;
+  timestamp: string;
+  media_type: string;
+  permalink: string;
+}
+
+export async function getInboxMediaContext(
+  token: string,
+  workspaceId: string,
+  inboxItemId: string
+): Promise<ApiResponse<IGMediaContext>> {
+  return request(`/v1/workspaces/${workspaceId}/inbox/${inboxItemId}/media-context`, token);
+}
+
 export async function updateInboxThreadState(
   token: string,
   workspaceId: string,

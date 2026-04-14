@@ -199,6 +199,44 @@ func (h *InboxHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, map[string]int64{"marked": count})
 }
 
+// MediaContext returns media details for a comment's parent post.
+// GET /v1/workspaces/{workspaceID}/inbox/{id}/media-context
+func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
+	workspaceID := chi.URLParam(r, "workspaceID")
+	id := chi.URLParam(r, "id")
+
+	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID: id, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+		return
+	}
+	if !item.ParentExternalID.Valid || item.ParentExternalID.String == "" {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "No parent media ID")
+		return
+	}
+
+	account, err := h.queries.GetSocialAccount(r.Context(), item.SocialAccountID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Account not found")
+		return
+	}
+	accessToken, err := h.encryptor.Decrypt(account.AccessToken)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Token decrypt failed")
+		return
+	}
+
+	adapter := platform.NewInstagramAdapter()
+	details, err := adapter.FetchMediaDetails(r.Context(), accessToken, item.ParentExternalID.String)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "PLATFORM_ERROR", "Failed to fetch media: "+err.Error())
+		return
+	}
+	writeSuccess(w, details)
+}
+
 // Reply sends a reply to a comment/DM/thread reply.
 // POST /v1/workspaces/{workspaceID}/inbox/{id}/reply
 // Body: { "text": "..." }

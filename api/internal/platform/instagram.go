@@ -448,6 +448,40 @@ func (a *InstagramAdapter) SendDM(ctx context.Context, accessToken string, recip
 	return &PostResult{ExternalID: result.MessageID}, nil
 }
 
+// MediaDetails holds basic info about an Instagram media object.
+type MediaDetails struct {
+	ID        string `json:"id"`
+	Caption   string `json:"caption"`
+	MediaURL  string `json:"media_url"`
+	Timestamp string `json:"timestamp"`
+	MediaType string `json:"media_type"`
+	Permalink string `json:"permalink"`
+}
+
+// FetchMediaDetails returns details about a specific media object.
+func (a *InstagramAdapter) FetchMediaDetails(ctx context.Context, accessToken string, mediaID string) (*MediaDetails, error) {
+	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s?fields=id,caption,media_url,timestamp,media_type,permalink&access_token=%s",
+		mediaID, accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram fetch media details: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("instagram fetch media details %d: %s", resp.StatusCode, string(body))
+	}
+	var details MediaDetails
+	if err := json.Unmarshal(body, &details); err != nil {
+		return nil, err
+	}
+	return &details, nil
+}
+
 // FetchRecentMedia returns the IDs of the account's recent posts
 // directly from the IG API. This covers posts published natively
 // on Instagram, not just those published through UniPost.

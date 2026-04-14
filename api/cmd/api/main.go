@@ -477,6 +477,7 @@ func main() {
 		r.Get("/v1/workspaces/{workspaceID}/inbox", inboxHandler.List)
 		r.Get("/v1/workspaces/{workspaceID}/inbox/unread-count", inboxHandler.UnreadCount)
 		r.Get("/v1/workspaces/{workspaceID}/inbox/{id}", inboxHandler.Get)
+		r.Get("/v1/workspaces/{workspaceID}/inbox/{id}/media-context", inboxHandler.MediaContext)
 		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/read", inboxHandler.MarkRead)
 		r.Post("/v1/workspaces/{workspaceID}/inbox/mark-all-read", inboxHandler.MarkAllRead)
 		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/reply", inboxHandler.Reply)
