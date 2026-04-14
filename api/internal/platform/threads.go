@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -262,6 +263,10 @@ func (a *ThreadsAdapter) FetchComments(ctx context.Context, accessToken string, 
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		slog.Warn("threads fetch replies failed",
+			"status", resp.StatusCode,
+			"post_id", postExternalID,
+			"body", string(body))
 		return nil, fmt.Errorf("threads fetch replies %d: %s", resp.StatusCode, string(body))
 	}
 

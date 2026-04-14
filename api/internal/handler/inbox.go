@@ -379,6 +379,8 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						"account_id", acc.ID, "external_id", res.ExternalID.String, "err", err)
 					continue
 				}
+				slog.Info("inbox sync: fetched threads replies",
+					"post_id", res.ExternalID.String, "count", len(entries))
 				for _, e := range entries {
 					isOwn := e.AuthorName == acc.AccountName.String
 					_, uErr := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
