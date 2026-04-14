@@ -179,9 +179,34 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID:       profile.WorkspaceID,
 			})
 			if dupErr == nil && existing.ID != "" {
-				slog.Warn("oauth callback: duplicate account", "platform", platformName, "external_id", result.ExternalAccountID)
-				h.redirectWithError(w, r, oauthState.RedirectUrl.String,
-					"This "+platformName+" account is already connected in your workspace")
+				// Account already exists — update its tokens so the user
+				// gets fresh scopes without needing to disconnect first.
+				slog.Info("oauth callback: updating existing account tokens",
+					"platform", platformName,
+					"external_id", result.ExternalAccountID,
+					"account_id", existing.ID)
+				encAccess, aErr := h.encryptor.Encrypt(result.AccessToken)
+				encRefresh, rErr := h.encryptor.Encrypt(result.RefreshToken)
+				if aErr != nil || rErr != nil {
+					slog.Error("oauth callback: encrypt failed for token update", "err_a", aErr, "err_r", rErr)
+					h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to encrypt tokens")
+					return
+				}
+				_ = h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+					ID:             existing.ID,
+					AccessToken:    encAccess,
+					RefreshToken:   pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
+					TokenExpiresAt: pgtype.Timestamptz{Time: result.TokenExpiresAt, Valid: !result.TokenExpiresAt.IsZero()},
+				})
+				redirectURL := oauthState.RedirectUrl.String
+				if redirectURL == "" {
+					redirectURL = "https://app.unipost.dev"
+				}
+				sep := "?"
+				if strings.Contains(redirectURL, "?") {
+					sep = "&"
+				}
+				http.Redirect(w, r, redirectURL+sep+"status=success&account_name="+result.AccountName, http.StatusFound)
 				return
 			}
 		}
