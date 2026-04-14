@@ -33,7 +33,6 @@ import {
   Search,
   Send,
   ShieldAlert,
-  UserRound,
 } from "lucide-react";
 
 type FilterTab = "comments" | "dms" | "threads";
@@ -73,6 +72,60 @@ type CommentNode = {
   item: InboxItem;
   children: CommentNode[];
 };
+
+function initialsFromName(name?: string) {
+  const value = (name || "?").trim();
+  if (!value) return "?";
+  return value.replace(/^@/, "").charAt(0).toUpperCase();
+}
+
+function Avatar({
+  src,
+  label,
+  size = 36,
+}: {
+  src?: string;
+  label?: string;
+  size?: number;
+}) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={label || "avatar"}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "999px",
+          objectFit: "cover",
+          flexShrink: 0,
+          background: "rgba(255,255,255,.04)",
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="dt-mono"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "999px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        background: "rgba(255,255,255,.06)",
+        border: "1px solid rgba(255,255,255,.08)",
+        color: "var(--dmuted)",
+        fontSize: size <= 28 ? 11 : 12,
+      }}
+    >
+      {initialsFromName(label)}
+    </div>
+  );
+}
 
 function timeAgo(dateStr: string): string {
   const now = Date.now();
@@ -510,100 +563,107 @@ export default function InboxPage() {
   function renderConversationItem(item: InboxItem, depth = 0) {
     if (!selectedGroup) return null;
     const draft = replyDrafts[item.id] || "";
+    const replyOpen = Object.prototype.hasOwnProperty.call(replyDrafts, item.id);
+    const isCommentLike = selectedGroup.source !== "ig_dm";
+    const avatarSrc = item.is_own ? item.account_avatar_url : item.author_avatar_url;
+    const avatarLabel = item.is_own ? selectedGroup.accountName || "You" : item.author_name || item.author_id || "unknown";
 
     return (
       <div key={item.id} style={{ display: "grid", gap: 10, marginLeft: depth * 28 }}>
-        <div
-          style={{
-            padding: 14,
-            borderRadius: 14,
-            border: item.is_own ? "1px solid rgba(16,185,129,.18)" : "1px solid var(--dborder)",
-            background: item.is_own ? "rgba(16,185,129,.08)" : "rgba(255,255,255,.02)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            {item.is_own ? <UserRound style={{ width: 14, height: 14, color: "var(--daccent)" }} /> : null}
-            <span className="dt-body-sm" style={{ fontWeight: 600, color: item.is_own ? "var(--daccent)" : "var(--dtext)" }}>
-              {item.is_own ? "You" : `@${item.author_name || item.author_id || "unknown"}`}
-            </span>
-            {item.is_own ? (
-              <span className="dt-mono" style={{ fontSize: 10, padding: "2px 6px", borderRadius: 999, background: "rgba(16,185,129,.15)", color: "var(--daccent)" }}>
-                you
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+          <Avatar src={avatarSrc} label={avatarLabel} size={depth > 0 ? 28 : 36} />
+          <div style={{ flex: 1, minWidth: 0, paddingTop: isCommentLike ? 2 : 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <span className="dt-body-sm" style={{ fontWeight: 700, color: item.is_own ? "var(--daccent)" : "var(--dtext)" }}>
+                {item.is_own ? "You" : `@${item.author_name || item.author_id || "unknown"}`}
               </span>
-            ) : null}
-            {depth > 0 ? (
-              <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
-                reply
+              {item.is_own ? (
+                <span className="dt-mono" style={{ fontSize: 10, padding: "2px 6px", borderRadius: 999, background: "rgba(16,185,129,.15)", color: "var(--daccent)" }}>
+                  you
+                </span>
+              ) : null}
+              {depth > 0 ? (
+                <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
+                  reply
+                </span>
+              ) : null}
+              <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)", marginLeft: "auto" }}>
+                {timeAgo(item.received_at)}
               </span>
-            ) : null}
-            <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)", marginLeft: "auto" }}>
-              {timeAgo(item.received_at)}
-            </span>
-          </div>
-          <div className="dt-body-sm" style={{ color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
-            {item.body || "(no text)"}
-          </div>
-
-          {!item.is_own ? (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-                <button
-                  onClick={() => setReplyDrafts((prev) => ({ ...prev, [item.id]: prev[item.id] || "" }))}
-                  className="dt-body-sm"
-                  style={{ border: "none", background: "transparent", color: "var(--daccent)", cursor: "pointer", padding: 0 }}
-                >
-                  Reply
-                </button>
-                <button
-                  onClick={() =>
-                    setItems((prev) => prev.map((candidate) => candidate.id === item.id ? { ...candidate, is_read: !candidate.is_read } : candidate))
-                  }
-                  className="dt-body-sm"
-                  style={{ border: "none", background: "transparent", color: "var(--dmuted)", cursor: "pointer", padding: 0 }}
-                >
-                  {item.is_read ? "Mark unread" : "Mark read"}
-                </button>
-              </div>
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  value={draft}
-                  onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                  placeholder={`Reply to @${item.author_name || item.author_id || "this user"}...`}
-                  className="dt-body-sm"
-                  style={{
-                    flex: 1,
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    border: "1px solid var(--dborder)",
-                    background: "var(--sidebar)",
-                    color: "var(--dtext)",
-                    outline: "none",
-                  }}
-                />
-                <button
-                  onClick={() => handleReply(selectedGroup, item)}
-                  disabled={replyingGroupId === selectedGroup.id || !draft.trim()}
-                  className="dt-body-sm"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: "var(--daccent)",
-                    color: "var(--primary-foreground)",
-                    cursor: replyingGroupId === selectedGroup.id || !draft.trim() ? "not-allowed" : "pointer",
-                    opacity: replyingGroupId === selectedGroup.id || !draft.trim() ? 0.5 : 1,
-                  }}
-                >
-                  <Send style={{ width: 14, height: 14 }} />
-                  {replyingGroupId === selectedGroup.id ? "Sending..." : "Send"}
-                </button>
-              </div>
             </div>
-          ) : null}
+            <div className="dt-body-sm" style={{ color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
+              {item.body || "(no text)"}
+            </div>
+
+            {!item.is_own ? (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: replyOpen ? 10 : 0 }}>
+                  <button
+                    onClick={() =>
+                      setReplyDrafts((prev) =>
+                        replyOpen
+                          ? Object.fromEntries(Object.entries(prev).filter(([key]) => key !== item.id))
+                          : { ...prev, [item.id]: "" }
+                      )
+                    }
+                    className="dt-body-sm"
+                    style={{ border: "none", background: "transparent", color: "var(--daccent)", cursor: "pointer", padding: 0 }}
+                  >
+                    Reply
+                  </button>
+                  <button
+                    onClick={() =>
+                      setItems((prev) => prev.map((candidate) => candidate.id === item.id ? { ...candidate, is_read: !candidate.is_read } : candidate))
+                    }
+                    className="dt-body-sm"
+                    style={{ border: "none", background: "transparent", color: "var(--dmuted)", cursor: "pointer", padding: 0 }}
+                  >
+                    {item.is_read ? "Mark unread" : "Mark read"}
+                  </button>
+                </div>
+
+                {replyOpen ? (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      value={draft}
+                      onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                      placeholder={`Reply to @${item.author_name || item.author_id || "this user"}...`}
+                      className="dt-body-sm"
+                      style={{
+                        flex: 1,
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--dborder)",
+                        background: "var(--sidebar)",
+                        color: "var(--dtext)",
+                        outline: "none",
+                      }}
+                    />
+                    <button
+                      onClick={() => handleReply(selectedGroup, item)}
+                      disabled={replyingGroupId === selectedGroup.id || !draft.trim()}
+                      className="dt-body-sm"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: "none",
+                        background: "var(--daccent)",
+                        color: "var(--primary-foreground)",
+                        cursor: replyingGroupId === selectedGroup.id || !draft.trim() ? "not-allowed" : "pointer",
+                        opacity: replyingGroupId === selectedGroup.id || !draft.trim() ? 0.5 : 1,
+                      }}
+                    >
+                      <Send style={{ width: 14, height: 14 }} />
+                      {replyingGroupId === selectedGroup.id ? "Sending..." : "Send"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     );
@@ -945,7 +1005,25 @@ export default function InboxPage() {
                     ) : null}
                   </div>
                   {selectedPost ? (
-                    <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {selectedPost.media_urls && selectedPost.media_urls.length > 0 ? (
+                        <div
+                          style={{
+                            width: 84,
+                            height: 84,
+                            borderRadius: 12,
+                            overflow: "hidden",
+                            border: "1px solid var(--dborder)",
+                            background: "rgba(255,255,255,.03)",
+                          }}
+                        >
+                          <img
+                            src={selectedPost.media_urls[0]}
+                            alt="Post media"
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          />
+                        </div>
+                      ) : null}
                       <p className="dt-body-sm" style={{ margin: 0, color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
                         {selectedPost.caption || "(no caption)"}
                       </p>

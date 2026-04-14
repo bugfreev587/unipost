@@ -78,6 +78,7 @@ type accountSummary struct {
 type socialPostResponse struct {
 	ID          string               `json:"id"`
 	Caption     *string              `json:"caption"`
+	MediaURLs   []string             `json:"media_urls,omitempty"`
 	Status      string               `json:"status"`
 	CreatedAt   time.Time            `json:"created_at"`
 	ScheduledAt *time.Time           `json:"scheduled_at,omitempty"`
@@ -247,6 +248,7 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 	writeCreated(w, socialPostResponse{
 		ID:          post.ID,
 		Caption:     caption,
+		MediaURLs:   post.MediaUrls,
 		Status:      "scheduled",
 		CreatedAt:   post.CreatedAt.Time,
 		ScheduledAt: &scheduledAt,
@@ -517,6 +519,7 @@ func (h *SocialPostHandler) executePublishLoop(
 	resp := socialPostResponse{
 		ID:        post.ID,
 		Caption:   caption,
+		MediaURLs: post.MediaUrls,
 		Status:    postStatus,
 		CreatedAt: post.CreatedAt.Time,
 		Results:   responseResults,
@@ -1012,6 +1015,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 
 	resp := socialPostResponse{
 		ID:        post.ID,
+		MediaURLs: post.MediaUrls,
 		Status:    post.Status,
 		CreatedAt: post.CreatedAt.Time,
 	}
@@ -1134,6 +1138,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, socialPostResponse{
 		ID:          post.ID,
 		Caption:     caption,
+		MediaURLs:   post.MediaUrls,
 		Status:      post.Status,
 		CreatedAt:   post.CreatedAt.Time,
 		PublishedAt: publishedAt,
@@ -1253,6 +1258,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		result = append(result, socialPostResponse{
 			ID:          p.ID,
 			Caption:     caption,
+			MediaURLs:   p.MediaUrls,
 			Status:      p.Status,
 			CreatedAt:   p.CreatedAt.Time,
 			ScheduledAt: scheduledAt,

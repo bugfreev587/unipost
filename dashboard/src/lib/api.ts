@@ -333,6 +333,7 @@ export interface SocialPostResult {
 export interface SocialPost {
   id: string;
   caption: string | null;
+  media_urls?: string[];
   status: string;
   scheduled_at?: string;
   created_at: string;
