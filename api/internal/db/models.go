@@ -47,6 +47,24 @@ type ConnectSession struct {
 	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
 }
 
+type InboxItem struct {
+	ID               string             `json:"id"`
+	SocialAccountID  string             `json:"social_account_id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	Source           string             `json:"source"`
+	ExternalID       string             `json:"external_id"`
+	ParentExternalID pgtype.Text        `json:"parent_external_id"`
+	AuthorName       pgtype.Text        `json:"author_name"`
+	AuthorID         pgtype.Text        `json:"author_id"`
+	AuthorAvatarUrl  pgtype.Text        `json:"author_avatar_url"`
+	Body             pgtype.Text        `json:"body"`
+	IsRead           bool               `json:"is_read"`
+	IsOwn            bool               `json:"is_own"`
+	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	Metadata         []byte             `json:"metadata"`
+}
+
 type LandingVisit struct {
 	ID         int64              `json:"id"`
 	Path       string             `json:"path"`

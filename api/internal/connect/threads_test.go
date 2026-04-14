@@ -189,21 +189,18 @@ func TestThreadsRefresh_ReusesAccessTokenSlot(t *testing.T) {
 	}
 }
 
-// TestThreadsScopes_LockedToPublishTier locks the scope set against
-// drift. Sprint 5 PR4 ships only threads_basic + threads_content_publish
-// (matching the existing platform.ThreadsAdapter). Adding the
-// _manage_insights scope is a follow-up that needs its own Meta App
-// Review entry.
-func TestThreadsScopes_LockedToPublishTier(t *testing.T) {
-	wantScopes := "threads_basic,threads_content_publish"
+// TestThreadsScopes_LockedToFullTier locks the scope set against
+// drift. All scopes submitted together for Meta App Review:
+// basic + publish + replies + insights.
+func TestThreadsScopes_LockedToFullTier(t *testing.T) {
+	wantScopes := "threads_basic,threads_content_publish,threads_manage_replies,threads_manage_insights,threads_read_replies"
 	if threadsScopes != wantScopes {
 		t.Errorf("threadsScopes drift: got %q, want %q", threadsScopes, wantScopes)
 	}
-	// Anti-regression: don't accidentally request scopes that are
-	// not yet through Meta App Review.
-	for _, banned := range []string{"threads_manage_replies", "threads_read_replies", "threads_manage_insights"} {
+	// Anti-regression: legacy scopes must not appear.
+	for _, banned := range []string{"user_profile"} {
 		if strings.Contains(threadsScopes, banned) {
-			t.Errorf("must not request gated scope %s without explicit Meta App Review", banned)
+			t.Errorf("must not request deprecated scope %s", banned)
 		}
 	}
 }

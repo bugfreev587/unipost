@@ -59,7 +59,7 @@ const (
 	// Comma-separated per Instagram's API contract (LinkedIn uses
 	// space-separated, Twitter uses space-separated — Meta is the
 	// odd one out here, hence the explicit constant).
-	instagramScopes = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights"
+	instagramScopes = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments,instagram_business_manage_messages"
 )
 
 // InstagramConnector is the Connect Connector for Instagram.

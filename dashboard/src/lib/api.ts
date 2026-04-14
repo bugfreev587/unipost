@@ -968,3 +968,84 @@ export async function getAPIMetricsOverall(
 ): Promise<ApiResponse<APIMetricsOverall>> {
   return request(`/v1/workspaces/${workspaceId}/api-metrics/overall?from=${from}&to=${to}`, token);
 }
+
+// Inbox
+
+export interface InboxItem {
+  id: string;
+  social_account_id: string;
+  workspace_id: string;
+  source: "ig_comment" | "ig_dm" | "threads_reply";
+  external_id: string;
+  parent_external_id?: string;
+  author_name?: string;
+  author_id?: string;
+  author_avatar_url?: string;
+  body?: string;
+  is_read: boolean;
+  is_own: boolean;
+  received_at: string;
+  created_at: string;
+  account_name?: string;
+  account_platform?: string;
+  account_avatar_url?: string;
+}
+
+export async function listInboxItems(
+  token: string,
+  workspaceId: string,
+  filters?: { source?: string; is_read?: string }
+): Promise<ApiResponse<InboxItem[]>> {
+  const qs = new URLSearchParams();
+  if (filters?.source) qs.set("source", filters.source);
+  if (filters?.is_read) qs.set("is_read", filters.is_read);
+  const q = qs.toString();
+  return request(`/v1/workspaces/${workspaceId}/inbox${q ? `?${q}` : ""}`, token);
+}
+
+export async function getInboxUnreadCount(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<{ count: number }>> {
+  return request(`/v1/workspaces/${workspaceId}/inbox/unread-count`, token);
+}
+
+export async function markInboxItemRead(
+  token: string,
+  workspaceId: string,
+  id: string
+): Promise<void> {
+  return request(`/v1/workspaces/${workspaceId}/inbox/${id}/read`, token, {
+    method: "POST",
+  });
+}
+
+export async function markAllInboxRead(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<{ marked: number }>> {
+  return request(`/v1/workspaces/${workspaceId}/inbox/mark-all-read`, token, {
+    method: "POST",
+  });
+}
+
+export async function replyToInboxItem(
+  token: string,
+  workspaceId: string,
+  id: string,
+  text: string
+): Promise<ApiResponse<InboxItem>> {
+  return request(`/v1/workspaces/${workspaceId}/inbox/${id}/reply`, token, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function syncInbox(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<{ new_items: number }>> {
+  return request(`/v1/workspaces/${workspaceId}/inbox/sync`, token, {
+    method: "POST",
+  });
+}

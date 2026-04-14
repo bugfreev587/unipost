@@ -11,7 +11,7 @@ import (
 )
 
 func TestMetaWebhookVerify(t *testing.T) {
-	h := NewMetaWebhookHandler("test-secret", "my-verify-token")
+	h := NewMetaWebhookHandler(nil, "test-secret", "my-verify-token")
 
 	t.Run("valid subscribe", func(t *testing.T) {
 		req := httptest.NewRequest("GET",
@@ -55,7 +55,7 @@ func TestMetaWebhookVerify(t *testing.T) {
 
 func TestMetaWebhookHandle(t *testing.T) {
 	appSecret := "test-app-secret"
-	h := NewMetaWebhookHandler(appSecret, "tok")
+	h := NewMetaWebhookHandler(nil, appSecret, "tok")
 
 	sign := func(body string) string {
 		mac := hmac.New(sha256.New, []byte(appSecret))
@@ -64,7 +64,7 @@ func TestMetaWebhookHandle(t *testing.T) {
 	}
 
 	t.Run("valid payload", func(t *testing.T) {
-		body := `{"object":"instagram","entry":[{"id":"123","time":1700000000}]}`
+		body := `{"object":"page","entry":[{"id":"123","time":1700000000}]}`
 		req := httptest.NewRequest("POST", "/webhooks/meta", strings.NewReader(body))
 		req.Header.Set("X-Hub-Signature-256", sign(body))
 		rr := httptest.NewRecorder()
@@ -99,7 +99,7 @@ func TestMetaWebhookHandle(t *testing.T) {
 	})
 
 	t.Run("not configured", func(t *testing.T) {
-		unconfigured := NewMetaWebhookHandler("", "tok")
+		unconfigured := NewMetaWebhookHandler(nil, "", "tok")
 		body := `{"object":"instagram","entry":[]}`
 		req := httptest.NewRequest("POST", "/webhooks/meta", strings.NewReader(body))
 		rr := httptest.NewRecorder()

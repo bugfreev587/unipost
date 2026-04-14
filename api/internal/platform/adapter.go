@@ -184,6 +184,35 @@ type FirstCommentAdapter interface {
 	PostComment(ctx context.Context, accessToken string, parentExternalID string, text string) (*PostResult, error)
 }
 
+// InboxEntry represents a single comment, DM, or reply fetched from a platform.
+type InboxEntry struct {
+	ExternalID       string
+	ParentExternalID string // media ID (comments), conversation ID (DMs), parent post ID (Threads)
+	AuthorName       string
+	AuthorID         string
+	AuthorAvatarURL  string
+	Body             string
+	Timestamp        time.Time
+	Source           string // "ig_comment", "ig_dm", "threads_reply"
+}
+
+// InboxAdapter is optionally implemented by platforms that support
+// reading and replying to comments, messages, or replies.
+type InboxAdapter interface {
+	// FetchComments returns comments/replies on a given media/post.
+	FetchComments(ctx context.Context, accessToken string, mediaExternalID string) ([]InboxEntry, error)
+	// ReplyToComment posts a reply to a comment/message.
+	ReplyToComment(ctx context.Context, accessToken string, commentExternalID string, text string) (*PostResult, error)
+}
+
+// DMAdapter is optionally implemented by platforms that support DMs.
+type DMAdapter interface {
+	// FetchConversations returns recent DM conversations.
+	FetchConversations(ctx context.Context, accessToken string) ([]InboxEntry, error)
+	// SendDM sends a direct message.
+	SendDM(ctx context.Context, accessToken string, recipientID string, text string) (*PostResult, error)
+}
+
 // PlatformAdapter defines the interface all platform integrations must implement.
 type PlatformAdapter interface {
 	// Platform returns the platform identifier (e.g., "bluesky").

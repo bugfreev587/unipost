@@ -199,12 +199,11 @@ func TestInstagramRefresh_ReusesAccessTokenSlot(t *testing.T) {
 }
 
 // TestInstagramScopes_LockedToBusinessAPI locks the scope set against
-// drift. We must request only the three scopes Meta's "Instagram API
-// with Instagram Login" product grants without manual review:
-// instagram_business_basic, instagram_business_content_publish,
-// instagram_business_manage_insights.
+// drift. We request the full set of scopes needed for publishing,
+// analytics, comments, and DMs — all submitted together for Meta
+// App Review.
 func TestInstagramScopes_LockedToBusinessAPI(t *testing.T) {
-	wantScopes := "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights"
+	wantScopes := "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments,instagram_business_manage_messages"
 	if instagramScopes != wantScopes {
 		t.Errorf("instagramScopes drift: got %q, want %q", instagramScopes, wantScopes)
 	}

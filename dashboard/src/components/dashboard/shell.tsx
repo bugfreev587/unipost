@@ -28,6 +28,7 @@ import {
   Mail,
   Cable,
   Layers,
+  MessageSquare,
 } from "lucide-react";
 
 // Each nav item can be tagged with the usage modes that require it.
@@ -43,6 +44,7 @@ const ALL_NAV_ITEMS = [
     { href: "/posts", label: "Overview" },
     { href: "/posts/queue", label: "Queue" },
   ]},
+  { href: "/inbox", label: "Inbox", icon: MessageSquare },
   { href: "/api-keys", label: "API Keys", icon: Key, modes: ["whitelabel", "api"] },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },

@@ -57,7 +57,7 @@ const (
 	// Comma-separated like Instagram. Threads inherits the IG-style
 	// scope serialization since the API was shipped as a thin layer
 	// over the IG infrastructure.
-	threadsScopes = "threads_basic,threads_content_publish"
+	threadsScopes = "threads_basic,threads_content_publish,threads_manage_replies,threads_manage_insights,threads_read_replies"
 )
 
 // ThreadsConnector is the Connect Connector for Threads.

@@ -30,7 +30,7 @@ func (a *InstagramAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfi
 		AuthURL:      "https://api.instagram.com/oauth/authorize",
 		TokenURL:     "https://api.instagram.com/oauth/access_token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/instagram",
-		Scopes:       []string{"instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights"},
+		Scopes:       []string{"instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights", "instagram_business_manage_comments", "instagram_business_manage_messages"},
 	}
 }
 
@@ -198,6 +198,188 @@ func (a *InstagramAdapter) PostComment(ctx context.Context, accessToken string, 
 		ExternalID: result.ID,
 		URL:        fmt.Sprintf("https://www.instagram.com/p/%s/", parentExternalID),
 	}, nil
+}
+
+// FetchComments returns comments on an Instagram media object.
+// Calls GET /v21.0/{media-id}/comments?fields=id,text,username,timestamp,from
+func (a *InstagramAdapter) FetchComments(ctx context.Context, accessToken string, mediaExternalID string) ([]InboxEntry, error) {
+	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/comments?fields=id,text,username,timestamp,from{id,username}&access_token=%s",
+		mediaExternalID, accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram fetch comments: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("instagram fetch comments %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []struct {
+			ID        string `json:"id"`
+			Text      string `json:"text"`
+			Username  string `json:"username"`
+			Timestamp string `json:"timestamp"`
+			From      struct {
+				ID       string `json:"id"`
+				Username string `json:"username"`
+			} `json:"from"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("instagram fetch comments decode: %w", err)
+	}
+
+	entries := make([]InboxEntry, 0, len(result.Data))
+	for _, c := range result.Data {
+		ts, _ := time.Parse(time.RFC3339, c.Timestamp)
+		authorID := c.From.ID
+		authorName := c.From.Username
+		if authorName == "" {
+			authorName = c.Username
+		}
+		entries = append(entries, InboxEntry{
+			ExternalID:       c.ID,
+			ParentExternalID: mediaExternalID,
+			AuthorName:       authorName,
+			AuthorID:         authorID,
+			Body:             c.Text,
+			Timestamp:        ts,
+			Source:            "ig_comment",
+		})
+	}
+	return entries, nil
+}
+
+// ReplyToComment replies to an Instagram comment.
+// POST /v21.0/{comment-id}/replies?message=...
+func (a *InstagramAdapter) ReplyToComment(ctx context.Context, accessToken string, commentExternalID string, text string) (*PostResult, error) {
+	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/replies?message=%s&access_token=%s",
+		commentExternalID, url.QueryEscape(text), accessToken)
+	req, err := http.NewRequestWithContext(ctx, "POST", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram reply to comment: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("instagram reply to comment %d: %s", resp.StatusCode, string(body))
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(body, &result)
+	return &PostResult{ExternalID: result.ID}, nil
+}
+
+// FetchConversations returns recent Instagram DM messages.
+// GET /v21.0/{ig-user-id}/conversations?fields=participants,messages{id,message,from,created_time}
+func (a *InstagramAdapter) FetchConversations(ctx context.Context, accessToken string) ([]InboxEntry, error) {
+	igUserID, err := a.getIGUserID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/conversations?fields=id,messages{id,message,from,created_time}&platform=instagram&access_token=%s",
+		igUserID, accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram fetch conversations: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("instagram fetch conversations failed", "status", resp.StatusCode, "body", string(body))
+		return nil, fmt.Errorf("instagram fetch conversations %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []struct {
+			ID       string `json:"id"`
+			Messages struct {
+				Data []struct {
+					ID          string `json:"id"`
+					Message     string `json:"message"`
+					CreatedTime string `json:"created_time"`
+					From        struct {
+						Username string `json:"username"`
+						ID       string `json:"id"`
+					} `json:"from"`
+				} `json:"data"`
+			} `json:"messages"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("instagram fetch conversations decode: %w", err)
+	}
+
+	var entries []InboxEntry
+	for _, conv := range result.Data {
+		for _, msg := range conv.Messages.Data {
+			ts, _ := time.Parse("2006-01-02T15:04:05-0700", msg.CreatedTime)
+			isOwn := msg.From.ID == igUserID
+			entries = append(entries, InboxEntry{
+				ExternalID:       msg.ID,
+				ParentExternalID: conv.ID,
+				AuthorName:       msg.From.Username,
+				AuthorID:         msg.From.ID,
+				Body:             msg.Message,
+				Timestamp:        ts,
+				Source:            "ig_dm",
+			})
+			_ = isOwn // caller determines is_own by comparing AuthorID to account's external_account_id
+		}
+	}
+	return entries, nil
+}
+
+// SendDM sends a direct message on Instagram.
+// POST /v21.0/{ig-user-id}/messages
+func (a *InstagramAdapter) SendDM(ctx context.Context, accessToken string, recipientID string, text string) (*PostResult, error) {
+	igUserID, err := a.getIGUserID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	params := url.Values{
+		"recipient":    {fmt.Sprintf(`{"id":"%s"}`, recipientID)},
+		"message":      {fmt.Sprintf(`{"text":"%s"}`, text)},
+		"access_token": {accessToken},
+	}
+	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/messages", igUserID)
+	req, err := http.NewRequestWithContext(ctx, "POST", u, strings.NewReader(params.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram send dm: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("instagram send dm %d: %s", resp.StatusCode, string(body))
+	}
+	var result struct {
+		MessageID string `json:"message_id"`
+	}
+	json.Unmarshal(body, &result)
+	return &PostResult{ExternalID: result.MessageID}, nil
 }
 
 // createSingleContainer creates a non-carousel media container. caption is

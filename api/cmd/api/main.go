@@ -307,6 +307,7 @@ func main() {
 	// META_APP_SECRET for HMAC verification (already in env) and
 	// META_WEBHOOK_VERIFY_TOKEN for the subscribe handshake.
 	metaWebhookHandler := handler.NewMetaWebhookHandler(
+		queries,
 		os.Getenv("META_APP_SECRET"),
 		os.Getenv("META_WEBHOOK_VERIFY_TOKEN"),
 	)
@@ -454,6 +455,17 @@ func main() {
 		r.Get("/v1/workspaces/{workspaceID}/api-metrics/summary", apiMetricsHandler.Summary)
 		r.Get("/v1/workspaces/{workspaceID}/api-metrics/trend", apiMetricsHandler.Trend)
 		r.Get("/v1/workspaces/{workspaceID}/api-metrics/overall", apiMetricsHandler.Overall)
+
+		// Inbox (dashboard, workspace-scoped) — unified view of
+		// Instagram comments/DMs and Threads replies.
+		inboxHandler := handler.NewInboxHandler(queries, encryptor)
+		r.Get("/v1/workspaces/{workspaceID}/inbox", inboxHandler.List)
+		r.Get("/v1/workspaces/{workspaceID}/inbox/unread-count", inboxHandler.UnreadCount)
+		r.Get("/v1/workspaces/{workspaceID}/inbox/{id}", inboxHandler.Get)
+		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/read", inboxHandler.MarkRead)
+		r.Post("/v1/workspaces/{workspaceID}/inbox/mark-all-read", inboxHandler.MarkAllRead)
+		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/reply", inboxHandler.Reply)
+		r.Post("/v1/workspaces/{workspaceID}/inbox/sync", inboxHandler.Sync)
 	})
 
 	// Admin routes — Clerk session + ADMIN_USERS gate. The middleware

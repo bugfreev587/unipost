@@ -29,7 +29,7 @@ func (a *ThreadsAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig 
 		AuthURL:      "https://threads.net/oauth/authorize",
 		TokenURL:     "https://graph.threads.net/oauth/access_token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/threads",
-		Scopes:       []string{"threads_basic", "threads_content_publish"},
+		Scopes:       []string{"threads_basic", "threads_content_publish", "threads_manage_replies", "threads_manage_insights", "threads_read_replies"},
 	}
 }
 
@@ -244,6 +244,93 @@ func (a *ThreadsAdapter) postContainer(ctx context.Context, userID string, param
 		return "", err
 	}
 	return container.ID, nil
+}
+
+// FetchComments returns replies on a Threads post.
+// GET /v1.0/{post-id}/replies?fields=id,text,username,timestamp
+func (a *ThreadsAdapter) FetchComments(ctx context.Context, accessToken string, postExternalID string) ([]InboxEntry, error) {
+	u := fmt.Sprintf("https://graph.threads.net/v1.0/%s/replies?fields=id,text,username,timestamp&access_token=%s",
+		postExternalID, accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("threads fetch replies: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("threads fetch replies %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []struct {
+			ID        string `json:"id"`
+			Text      string `json:"text"`
+			Username  string `json:"username"`
+			Timestamp string `json:"timestamp"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("threads fetch replies decode: %w", err)
+	}
+
+	entries := make([]InboxEntry, 0, len(result.Data))
+	for _, r := range result.Data {
+		ts, _ := time.Parse(time.RFC3339, r.Timestamp)
+		entries = append(entries, InboxEntry{
+			ExternalID:       r.ID,
+			ParentExternalID: postExternalID,
+			AuthorName:       r.Username,
+			Body:             r.Text,
+			Timestamp:        ts,
+			Source:            "threads_reply",
+		})
+	}
+	return entries, nil
+}
+
+// ReplyToComment publishes a reply to a Threads post using the
+// two-step container flow with reply_to_id.
+func (a *ThreadsAdapter) ReplyToComment(ctx context.Context, accessToken string, replyToExternalID string, text string) (*PostResult, error) {
+	userID, err := a.getUserID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 1: create a TEXT container with reply_to_id
+	params := url.Values{
+		"media_type":   {"TEXT"},
+		"text":         {text},
+		"reply_to_id":  {replyToExternalID},
+		"access_token": {accessToken},
+	}
+	containerID, err := a.postContainer(ctx, userID, params)
+	if err != nil {
+		return nil, fmt.Errorf("threads reply container: %w", err)
+	}
+
+	// Step 2: publish
+	time.Sleep(3 * time.Second)
+	publishURL := fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads_publish?creation_id=%s&access_token=%s",
+		userID, containerID, accessToken)
+	pubResp, err := a.client.Post(publishURL, "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		return nil, fmt.Errorf("threads reply publish: %w", err)
+	}
+	defer pubResp.Body.Close()
+	body, _ := io.ReadAll(pubResp.Body)
+	if pubResp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("threads reply publish %d: %s", pubResp.StatusCode, string(body))
+	}
+
+	var published struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(body, &published)
+	return &PostResult{ExternalID: published.ID}, nil
 }
 
 func (a *ThreadsAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
