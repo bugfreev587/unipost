@@ -314,13 +314,16 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 				errors = append(errors, syncError{acc.ID, acc.Platform, "fetch_media", err.Error()})
 			} else {
 				slog.Info("inbox sync: fetched ig recent media", "account_id", acc.ID, "count", len(mediaIDs))
+				commentsFetched := 0
 				for _, mediaID := range mediaIDs {
 					entries, err := adapter.FetchComments(r.Context(), accessToken, mediaID)
 					if err != nil {
 						slog.Warn("inbox sync: fetch ig comments failed",
 							"account_id", acc.ID, "media_id", mediaID, "err", err)
+						errors = append(errors, syncError{acc.ID, acc.Platform, "fetch_comments:" + mediaID, err.Error()})
 						continue
 					}
+					commentsFetched += len(entries)
 					slog.Info("inbox sync: fetched ig comments",
 						"media_id", mediaID, "count", len(entries))
 					for _, e := range entries {
@@ -384,6 +387,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						slog.Warn("inbox sync: fetch threads replies failed",
 							"account_id", acc.ID, "post_id", postID, "err", err)
+						errors = append(errors, syncError{acc.ID, acc.Platform, "fetch_replies:" + postID, err.Error()})
 						continue
 					}
 					slog.Info("inbox sync: fetched threads replies",
