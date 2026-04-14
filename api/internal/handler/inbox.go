@@ -268,6 +268,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		slog.Error("inbox reply failed", "source", item.Source, "err", err)
 		message := "Reply failed: " + err.Error()
 		if item.Source == "ig_dm" && strings.Contains(err.Error(), "2534014") {
+			_ = h.queries.MarkSocialAccountReconnectRequired(r.Context(), item.SocialAccountID)
 			message = "Instagram DM reply failed because Meta could not resolve the recipient for this conversation. Reconnect the Instagram account with messaging permission and retry with an eligible tester or live account."
 		}
 		writeError(w, http.StatusUnprocessableEntity, "PLATFORM_ERROR", message)
