@@ -218,7 +218,10 @@ function groupItems(items: InboxItem[], source: ConversationGroup["source"]): Co
       accountPlatform: latest.account_platform || undefined,
       latestActivityAt: latest.received_at,
       unreadCount,
-      parentExternalID: latest.parent_external_id,
+      parentExternalID:
+        source === "ig_dm"
+          ? latest.parent_external_id
+          : latest.thread_key || latest.parent_external_id,
       threadStatus: latest.thread_status || "open",
       assignedTo: latest.assigned_to,
       linkedPostID: latest.linked_post_id,
@@ -539,10 +542,15 @@ export default function InboxPage() {
       if (post) return post;
     }
 
-    if (selectedGroup.parentExternalID) {
+    const rootExternalID =
+      selectedGroup.source === "ig_dm"
+        ? selectedGroup.parentExternalID
+        : selectedGroup.threadKey || selectedGroup.parentExternalID;
+
+    if (rootExternalID) {
       return (
         socialPosts.find((candidate) =>
-          (candidate.results || []).some((result) => result.external_id === selectedGroup.parentExternalID)
+          (candidate.results || []).some((result) => result.external_id === rootExternalID)
         ) || null
       );
     }
