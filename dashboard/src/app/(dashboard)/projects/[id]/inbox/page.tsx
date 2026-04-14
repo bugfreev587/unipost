@@ -113,7 +113,8 @@ export default function InboxPage() {
       const res = await syncInbox(token, workspaceId);
       const data = res.data as any;
       const errCount = data.errors?.length ?? 0;
-      setSyncResult(`Checked ${data.accounts_checked ?? 0} accounts, ${data.new_items ?? 0} new items${errCount ? `, ${errCount} errors — check console` : ""}`);
+      setSyncResult(`Checked ${data.accounts_checked ?? 0} accounts, ${data.new_items ?? 0} new items${errCount ? `, ${errCount} errors` : ""}`);
+      console.log("Inbox sync details:", JSON.stringify(data.details, null, 2));
       if (errCount) {
         console.warn("Inbox sync errors:", JSON.stringify(data.errors, null, 2));
       }
