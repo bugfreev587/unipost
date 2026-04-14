@@ -253,7 +253,7 @@ func (a *InstagramAdapter) FetchComments(ctx context.Context, accessToken string
 			AuthorName:       c.Username,
 			Body:             c.Text,
 			Timestamp:        ts,
-			Source:            "ig_comment",
+			Source:           "ig_comment",
 		})
 	}
 	return entries, nil
@@ -341,12 +341,66 @@ func (a *InstagramAdapter) FetchConversations(ctx context.Context, accessToken s
 				AuthorID:         msg.From.ID,
 				Body:             msg.Message,
 				Timestamp:        ts,
-				Source:            "ig_dm",
+				Source:           "ig_dm",
 			})
 			_ = isOwn // caller determines is_own by comparing AuthorID to account's external_account_id
 		}
 	}
 	return entries, nil
+}
+
+// ResolveDMRecipient looks up the participant ids for a specific
+// Instagram DM conversation and returns the recipient id that is not
+// the connected business account itself.
+func (a *InstagramAdapter) ResolveDMRecipient(ctx context.Context, accessToken string, conversationID string) (string, error) {
+	igUserID, err := a.getIGUserID(ctx, accessToken)
+	if err != nil {
+		return "", err
+	}
+
+	u := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/conversations?fields=id,participants{id,username}&platform=instagram&access_token=%s",
+		igUserID, accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("instagram resolve dm recipient: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("instagram resolve dm recipient %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []struct {
+			ID           string `json:"id"`
+			Participants struct {
+				Data []struct {
+					ID       string `json:"id"`
+					Username string `json:"username"`
+				} `json:"data"`
+			} `json:"participants"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("instagram resolve dm recipient decode: %w", err)
+	}
+
+	for _, conv := range result.Data {
+		if conv.ID != conversationID {
+			continue
+		}
+		for _, participant := range conv.Participants.Data {
+			if participant.ID != "" && participant.ID != igUserID {
+				return participant.ID, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("recipient not found for conversation %s", conversationID)
 }
 
 // SendDM sends a direct message on Instagram.

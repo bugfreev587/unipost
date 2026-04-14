@@ -242,7 +242,15 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		replyResult, err = adapter.ReplyToComment(r.Context(), accessToken, item.ExternalID, body.Text)
 	case "ig_dm":
 		adapter := platform.NewInstagramAdapter()
-		recipientID := resolveIGDMRecipientID(r.Context(), h.queries, item, account)
+		recipientID := ""
+		if item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
+			if resolvedRecipientID, resolveErr := adapter.ResolveDMRecipient(r.Context(), accessToken, item.ParentExternalID.String); resolveErr == nil {
+				recipientID = resolvedRecipientID
+			}
+		}
+		if recipientID == "" {
+			recipientID = resolveIGDMRecipientID(r.Context(), h.queries, item, account)
+		}
 		if recipientID == "" {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Cannot reply: missing DM recipient")
 			return
