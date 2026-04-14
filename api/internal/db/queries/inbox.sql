@@ -64,6 +64,18 @@ WHERE spr.social_account_id = $1
   AND spr.external_id = $2
 LIMIT 1;
 
+-- name: FindAnyActiveAccountByPlatform :one
+-- Webhook fallback: find any active account for a platform.
+-- Used when Meta sends a different ID format than what we store.
+SELECT sa.id, sa.external_account_id, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC
+LIMIT 1;
+
 -- name: FindSocialAccountByPlatformAndExternalID :one
 -- Webhook routing: find an active social account by platform + external_account_id,
 -- joining to profiles for workspace_id. Returns the first match.

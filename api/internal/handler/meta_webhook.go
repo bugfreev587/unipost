@@ -165,11 +165,21 @@ func (h *MetaWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 // Messaging contains DM events.
 func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWebhookEntry) {
 	// Look up the social account by external_account_id = entry.ID.
+	// Meta webhooks send the IGBA ID (e.g. 17841403079253527) while
+	// Instagram Login stores a different user ID (e.g. 24296723443358322).
+	// Try the direct lookup first, then fall back to finding ANY active
+	// IG account (most apps have only one).
 	account, err := h.findAccountByExternalID(r, "instagram", entry.ID)
 	if err != nil {
-		slog.Warn("meta webhook: account not found for IG user",
-			"ig_user_id", entry.ID, "err", err)
-		return
+		// Fallback: find any active Instagram account in any workspace.
+		account, err = h.findAnyActiveAccount(r, "instagram")
+		if err != nil {
+			slog.Warn("meta webhook: no active IG account found",
+				"webhook_ig_id", entry.ID, "err", err)
+			return
+		}
+		slog.Info("meta webhook: matched IG account via fallback",
+			"webhook_ig_id", entry.ID, "account_id", account.ID)
 	}
 
 	// Process changes (comments).
@@ -286,6 +296,20 @@ func (h *MetaWebhookHandler) findAccountByExternalID(r *http.Request, plat, exte
 			ExternalAccountID: externalAccountID,
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
+	return &webhookAccount{
+		ID:                acc.ID,
+		WorkspaceID:       acc.WorkspaceID,
+		ExternalAccountID: acc.ExternalAccountID,
+	}, nil
+}
+
+// findAnyActiveAccount is a fallback for when Meta sends a different
+// ID format than what we store. Returns any active account for the platform.
+func (h *MetaWebhookHandler) findAnyActiveAccount(r *http.Request, plat string) (*webhookAccount, error) {
+	acc, err := h.queries.FindAnyActiveAccountByPlatform(r.Context(), plat)
 	if err != nil {
 		return nil, err
 	}

@@ -24,6 +24,32 @@ func (q *Queries) CountUnreadByWorkspace(ctx context.Context, workspaceID string
 	return count, err
 }
 
+const findAnyActiveAccountByPlatform = `-- name: FindAnyActiveAccountByPlatform :one
+SELECT sa.id, sa.external_account_id, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC
+LIMIT 1
+`
+
+type FindAnyActiveAccountByPlatformRow struct {
+	ID                string `json:"id"`
+	ExternalAccountID string `json:"external_account_id"`
+	WorkspaceID       string `json:"workspace_id"`
+}
+
+// Webhook fallback: find any active account for a platform.
+// Used when Meta sends a different ID format than what we store.
+func (q *Queries) FindAnyActiveAccountByPlatform(ctx context.Context, platform string) (FindAnyActiveAccountByPlatformRow, error) {
+	row := q.db.QueryRow(ctx, findAnyActiveAccountByPlatform, platform)
+	var i FindAnyActiveAccountByPlatformRow
+	err := row.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID)
+	return i, err
+}
+
 const findInboxAccountsByWorkspace = `-- name: FindInboxAccountsByWorkspace :many
 SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at
 FROM social_accounts sa
