@@ -103,9 +103,7 @@ const CSS = `
 :root{--docs-bg:#050505;--docs-panel:#0b0b0b;--docs-panel-2:#101010;--docs-border:#1d1d1d;--docs-border-2:#292929;--docs-text:#f7f7f5;--docs-muted:#a6a6a0;--docs-muted-2:#6f6f69;--docs-accent:#22c55e;--docs-blue:#67b7ff;--docs-warm:#efe7d7;--docs-radius:14px;--docs-radius-sm:10px;--docs-shadow:0 18px 50px rgba(0,0,0,.28);--docs-mono:var(--font-fira-code),monospace;--docs-ui:var(--font-dm-sans),system-ui,sans-serif}
 *{box-sizing:border-box}
 body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui);-webkit-font-smoothing:antialiased}
-.docs-shell{min-height:100vh;background:
-radial-gradient(circle at top left, rgba(34,197,94,.08), transparent 30%),
-linear-gradient(180deg, #090909 0%, #050505 38%, #050505 100%)}
+.docs-shell{min-height:100vh;background:linear-gradient(180deg, #090909 0%, #050505 38%, #050505 100%)}
 .docs-topbar{position:sticky;top:0;z-index:50;border-bottom:1px solid rgba(255,255,255,.05);background:rgba(5,5,5,.78);backdrop-filter:blur(14px)}
 .docs-topbar-inner{max-width:1560px;margin:0 auto;padding:0 28px;height:62px;display:flex;align-items:center;justify-content:space-between;gap:18px}
 .docs-brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;min-width:0}
