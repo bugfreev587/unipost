@@ -260,7 +260,7 @@ function buildCommentTree(items: InboxItem[], threadKey: string): CommentNode[] 
     const parentID = item.parent_external_id;
     const parentNode = parentID ? nodeMap.get(parentID) : undefined;
 
-    if (parentNode && parentID !== threadKey) {
+    if (parentNode) {
       parentNode.children.push(node);
       continue;
     }
