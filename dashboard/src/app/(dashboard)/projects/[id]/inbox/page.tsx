@@ -501,7 +501,8 @@ export default function InboxPage() {
 
   async function handleReply(group: ConversationGroup, targetItem: InboxItem) {
     if (!workspaceId) return;
-    const draft = (replyDrafts[targetItem.id] || "").trim();
+    // Check bottom DM input first, then per-message draft
+    const draft = (replyDrafts["__dm_bottom__"] || replyDrafts[targetItem.id] || "").trim();
     if (!draft) return;
 
     setReplyingGroupId(group.id);
@@ -513,7 +514,7 @@ export default function InboxPage() {
         setItems((prev) => [...prev, res.data]);
       }
       setReplyDrafts((prev) =>
-        Object.fromEntries(Object.entries(prev).filter(([key]) => key !== targetItem.id))
+        Object.fromEntries(Object.entries(prev).filter(([key]) => key !== targetItem.id && key !== "__dm_bottom__"))
       );
     } finally {
       setReplyingGroupId(null);
@@ -594,161 +595,69 @@ export default function InboxPage() {
     const avatarLabel = item.is_own ? selectedGroup.accountName || "You" : item.author_name || item.author_id || "unknown";
 
     if (isDM) {
+      // Compact IG-style DM bubble — no per-message actions, no username
+      // between consecutive messages from same sender. Avatar only on
+      // the last message in a run from the same author.
+      const groupItems = selectedGroup.items;
+      const idx = groupItems.indexOf(item);
+      const prevItem = idx > 0 ? groupItems[idx - 1] : null;
+      const nextItem = idx < groupItems.length - 1 ? groupItems[idx + 1] : null;
+      const sameSenderAsPrev = prevItem && prevItem.is_own === item.is_own;
+      const sameSenderAsNext = nextItem && nextItem.is_own === item.is_own;
+      const showAvatar = !item.is_own && !sameSenderAsNext;
+
       return (
         <div
           key={item.id}
-          className="dm-message"
           style={{
             display: "flex",
             justifyContent: item.is_own ? "flex-end" : "flex-start",
-            gap: 10,
-            marginTop: 2,
+            alignItems: "flex-end",
+            gap: 8,
+            marginTop: sameSenderAsPrev ? 1 : 10,
+            paddingLeft: !item.is_own ? 0 : 40,
+            paddingRight: item.is_own ? 0 : 40,
           }}
         >
-          {!item.is_own ? <Avatar src={avatarSrc} label={avatarLabel} size={36} /> : null}
-          <div style={{ display: "grid", gap: 6, maxWidth: "78%", justifyItems: item.is_own ? "end" : "start" }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-end",
-                gap: 8,
-                flexDirection: item.is_own ? "row-reverse" : "row",
-              }}
-            >
-              <div
-                style={{
-                  padding: "14px 18px",
-                  borderRadius: item.is_own ? "22px 22px 8px 22px" : "22px 22px 22px 8px",
-                  background: item.is_own ? "linear-gradient(135deg, rgba(16,185,129,.95), rgba(5,150,105,.95))" : "rgba(255,255,255,.06)",
-                  color: item.is_own ? "var(--primary-foreground)" : "var(--dtext)",
-                  border: item.is_own ? "none" : "1px solid rgba(255,255,255,.06)",
-                  boxShadow: item.is_own ? "0 8px 24px rgba(16,185,129,.18)" : "none",
-                }}
-              >
-                <div className="dt-body-sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
-                  {item.body || "(no text)"}
-                </div>
-              </div>
-
-              {!item.is_own ? (
-                <div className="dm-actions" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <button
-                    onClick={() =>
-                      setReplyDrafts((prev) =>
-                        replyOpen
-                          ? Object.fromEntries(Object.entries(prev).filter(([key]) => key !== item.id))
-                          : { ...prev, [item.id]: "" }
-                      )
-                    }
-                    aria-label="Reply"
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 999,
-                      border: "1px solid rgba(255,255,255,.08)",
-                      background: "rgba(255,255,255,.04)",
-                      color: "var(--dmuted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <CornerUpLeft style={{ width: 14, height: 14 }} />
-                  </button>
-                  <button
-                    onClick={() =>
-                      setItems((prev) => prev.map((candidate) => candidate.id === item.id ? { ...candidate, is_read: !candidate.is_read } : candidate))
-                    }
-                    aria-label={item.is_read ? "Mark unread" : "Mark read"}
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 999,
-                      border: "1px solid rgba(255,255,255,.08)",
-                      background: "rgba(255,255,255,.04)",
-                      color: "var(--dmuted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <MoreHorizontal style={{ width: 14, height: 14 }} />
-                  </button>
-                </div>
-              ) : null}
+          {!item.is_own ? (
+            <div style={{ width: 28, flexShrink: 0 }}>
+              {showAvatar ? <Avatar src={avatarSrc} label={avatarLabel} size={28} /> : null}
             </div>
-
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                justifyContent: item.is_own ? "flex-end" : "flex-start",
-                paddingInline: 4,
-              }}
-            >
-              {!item.is_own ? (
-                <span className="dt-body-sm" style={{ fontWeight: 700, color: "var(--dtext)" }}>
-                  @{item.author_name || item.author_id || "unknown"}
-                </span>
-              ) : (
-                <>
-                  <span className="dt-mono" style={{ fontSize: 10, padding: "2px 6px", borderRadius: 999, background: "rgba(16,185,129,.15)", color: "var(--daccent)" }}>
-                    you
-                  </span>
-                  <span className="dt-body-sm" style={{ fontWeight: 700, color: "var(--daccent)" }}>
-                    You
-                  </span>
-                </>
-              )}
-              <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
-                {timeAgo(item.received_at)}
-              </span>
-            </div>
-
-            {!item.is_own && replyOpen ? (
-              <div style={{ display: "flex", gap: 8, width: "100%" }}>
-                <input
-                  value={draft}
-                  onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                  placeholder={`Reply to @${item.author_name || item.author_id || "this user"}...`}
-                  className="dt-body-sm"
-                  style={{
-                    flex: 1,
-                    padding: "10px 12px",
-                    borderRadius: 999,
-                    border: "1px solid var(--dborder)",
-                    background: "var(--sidebar)",
-                    color: "var(--dtext)",
-                    outline: "none",
-                  }}
-                />
-                <button
-                  onClick={() => handleReply(selectedGroup, item)}
-                  disabled={replyingGroupId === selectedGroup.id || !draft.trim()}
-                  className="dt-body-sm"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "10px 14px",
-                    borderRadius: 999,
-                    border: "none",
-                    background: "var(--daccent)",
-                    color: "var(--primary-foreground)",
-                    cursor: replyingGroupId === selectedGroup.id || !draft.trim() ? "not-allowed" : "pointer",
-                    opacity: replyingGroupId === selectedGroup.id || !draft.trim() ? 0.5 : 1,
-                  }}
-                >
-                  <Send style={{ width: 14, height: 14 }} />
-                  {replyingGroupId === selectedGroup.id ? "Sending..." : "Send"}
-                </button>
-              </div>
-            ) : null}
+          ) : null}
+          <div
+            style={{
+              padding: "8px 14px",
+              borderRadius: item.is_own
+                ? (sameSenderAsNext ? "18px 18px 4px 18px" : "18px 18px 4px 18px")
+                : (sameSenderAsNext ? "18px 18px 18px 4px" : "18px 18px 18px 4px"),
+              ...(item.is_own
+                ? sameSenderAsPrev && sameSenderAsNext
+                  ? { borderRadius: "18px 4px 4px 18px" }
+                  : sameSenderAsPrev
+                    ? { borderRadius: "18px 4px 18px 18px" }
+                    : sameSenderAsNext
+                      ? { borderRadius: "18px 18px 4px 18px" }
+                      : {}
+                : sameSenderAsPrev && sameSenderAsNext
+                  ? { borderRadius: "4px 18px 18px 4px" }
+                  : sameSenderAsPrev
+                    ? { borderRadius: "4px 18px 18px 18px" }
+                    : sameSenderAsNext
+                      ? { borderRadius: "18px 18px 18px 4px" }
+                      : {}),
+              background: item.is_own
+                ? "linear-gradient(135deg, #6366f1, #8b5cf6)"
+                : "rgba(255,255,255,.08)",
+              color: item.is_own ? "#fff" : "var(--dtext)",
+              maxWidth: "70%",
+              lineHeight: 1.45,
+              fontSize: 13,
+              wordBreak: "break-word",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {item.body || "(no text)"}
           </div>
-          {item.is_own ? <Avatar src={avatarSrc} label={avatarLabel} size={36} /> : null}
         </div>
       );
     }
@@ -1235,7 +1144,7 @@ export default function InboxPage() {
                 </div>
               ) : null}
 
-              <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "grid", gap: selectedGroup.source === "ig_dm" ? 14 : 8 }}>
+              <div style={{ flex: 1, overflowY: "auto", padding: selectedGroup.source === "ig_dm" ? "16px 14px" : "20px 20px", display: "grid", gap: 0, alignContent: "flex-end" }}>
                 {selectedGroup.source === "ig_dm"
                   ? selectedGroup.items.map((item) => renderConversationItem(item))
                   : commentTree.map(function renderNode(node, depth = 0) {
@@ -1253,10 +1162,59 @@ export default function InboxPage() {
               </div>
 
               {selectedGroup.source === "ig_dm" ? (
-                <div style={{ borderTop: "1px solid var(--dborder)", padding: 16, background: "rgba(0,0,0,.12)" }}>
-                  <div className="dt-body-sm" style={{ color: "var(--dmuted2)" }}>
-                    Human-agent workflow: DMs should visibly support assigned, open, and resolved states during the Meta review demo.
-                  </div>
+                <div style={{ borderTop: "1px solid var(--dborder)", padding: "10px 14px", background: "rgba(0,0,0,.08)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    value={replyDrafts["__dm_bottom__"] || ""}
+                    onChange={(e) => setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: e.target.value }))}
+                    placeholder="Message..."
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        const lastInbound = [...selectedGroup.items].reverse().find((i) => !i.is_own);
+                        if (lastInbound && (replyDrafts["__dm_bottom__"] || "").trim()) {
+                          handleReply(selectedGroup, lastInbound);
+                          setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
+                        }
+                      }
+                    }}
+                    className="dt-body-sm"
+                    style={{
+                      flex: 1,
+                      padding: "10px 16px",
+                      borderRadius: 999,
+                      border: "1px solid var(--dborder)",
+                      background: "rgba(255,255,255,.04)",
+                      color: "var(--dtext)",
+                      outline: "none",
+                      fontSize: 13,
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const lastInbound = [...selectedGroup.items].reverse().find((i) => !i.is_own);
+                      if (lastInbound && (replyDrafts["__dm_bottom__"] || "").trim()) {
+                        handleReply(selectedGroup, lastInbound);
+                        setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
+                      }
+                    }}
+                    disabled={replyingGroupId === selectedGroup.id || !(replyDrafts["__dm_bottom__"] || "").trim()}
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 999,
+                      border: "none",
+                      background: (replyDrafts["__dm_bottom__"] || "").trim() ? "linear-gradient(135deg, #6366f1, #8b5cf6)" : "rgba(255,255,255,.06)",
+                      color: (replyDrafts["__dm_bottom__"] || "").trim() ? "#fff" : "var(--dmuted2)",
+                      cursor: (replyDrafts["__dm_bottom__"] || "").trim() ? "pointer" : "default",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                      transition: "background .15s, color .15s",
+                    }}
+                  >
+                    <Send style={{ width: 16, height: 16 }} />
+                  </button>
                 </div>
               ) : null}
             </>
