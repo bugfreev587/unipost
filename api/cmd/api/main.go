@@ -254,6 +254,12 @@ func main() {
 
 	r := chi.NewRouter()
 
+	// WebSocket — must be registered BEFORE global middleware because
+	// chi's Recoverer/Logger wrap ResponseWriter and strip the
+	// http.Hijacker interface needed for WS upgrade.
+	wsHandler := ws.NewHandler(wsHub)
+	r.Get("/v1/workspaces/{workspaceID}/inbox/ws", wsHandler.ServeHTTP)
+
 	// Global middleware
 	r.Use(mw.Logger)
 	r.Use(chimw.Recoverer)
@@ -345,10 +351,7 @@ func main() {
 	r.Get("/webhooks/meta", metaWebhookHandler.Verify)
 	r.Post("/webhooks/meta", metaWebhookHandler.Handle)
 
-	// WebSocket — auth via ?token= query param (browser WS API
-	// doesn't support custom headers). Handler validates Clerk JWT.
-	wsHandler := ws.NewHandler(wsHub)
-	r.Get("/v1/workspaces/{workspaceID}/inbox/ws", wsHandler.ServeHTTP)
+	// (WebSocket route is registered before global middleware below)
 
 	// OAuth callback routes (no auth — called by OAuth providers)
 	r.Get("/v1/oauth/callback/{platform}", oauthHandler.Callback)
