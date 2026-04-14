@@ -32,6 +32,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
+	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
 
 func main() {
@@ -246,6 +247,11 @@ func main() {
 	inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor)
 	go inboxSyncWorker.Start(workerCtx)
 
+	// WebSocket hub for real-time inbox delivery.
+	wsHub := ws.NewHub()
+	pgListener := ws.NewPGListener(wsHub, pool)
+	go pgListener.Start(workerCtx)
+
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -311,6 +317,7 @@ func main() {
 	// META_WEBHOOK_VERIFY_TOKEN for the subscribe handshake.
 	metaWebhookHandler := handler.NewMetaWebhookHandler(
 		queries,
+		pool,
 		os.Getenv("META_APP_SECRET"),
 		os.Getenv("META_WEBHOOK_VERIFY_TOKEN"),
 	)
@@ -337,6 +344,11 @@ func main() {
 	r.Post("/webhooks/stripe", stripeWebhookHandler.HandleStripe)
 	r.Get("/webhooks/meta", metaWebhookHandler.Verify)
 	r.Post("/webhooks/meta", metaWebhookHandler.Handle)
+
+	// WebSocket — auth via ?token= query param (browser WS API
+	// doesn't support custom headers). Handler validates Clerk JWT.
+	wsHandler := ws.NewHandler(wsHub)
+	r.Get("/v1/workspaces/{workspaceID}/inbox/ws", wsHandler.ServeHTTP)
 
 	// OAuth callback routes (no auth — called by OAuth providers)
 	r.Get("/v1/oauth/callback/{platform}", oauthHandler.Callback)

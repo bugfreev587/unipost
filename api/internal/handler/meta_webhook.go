@@ -38,20 +38,24 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
 
 // MetaWebhookHandler owns GET/POST /webhooks/meta.
 type MetaWebhookHandler struct {
 	queries     *db.Queries
-	appSecret   string // META_APP_SECRET — HMAC-SHA256 key for signature verification
-	verifyToken string // META_WEBHOOK_VERIFY_TOKEN — shared secret for the subscribe handshake
+	pool        *pgxpool.Pool // for pg_notify (ws.Notify)
+	appSecret   string
+	verifyToken string
 }
 
-func NewMetaWebhookHandler(queries *db.Queries, appSecret, verifyToken string) *MetaWebhookHandler {
+func NewMetaWebhookHandler(queries *db.Queries, pool *pgxpool.Pool, appSecret, verifyToken string) *MetaWebhookHandler {
 	return &MetaWebhookHandler{
 		queries:     queries,
+		pool:        pool,
 		appSecret:   strings.TrimSpace(appSecret),
 		verifyToken: strings.TrimSpace(verifyToken),
 	}
@@ -221,7 +225,7 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 			parentExternalID = existing.ParentExternalID
 		}
 
-		_, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+		dmItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 			SocialAccountID:  account.ID,
 			WorkspaceID:      account.WorkspaceID,
 			Source:           "ig_dm",
@@ -240,6 +244,8 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 		})
 		if err != nil {
 			slog.Warn("meta webhook: upsert DM failed", "err", err)
+		} else {
+			ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
 		}
 	}
 }
@@ -275,7 +281,7 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 		ts = time.Now()
 	}
 
-	_, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+	commentItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 		SocialAccountID:  account.ID,
 		WorkspaceID:      account.WorkspaceID,
 		Source:           "ig_comment",
@@ -294,6 +300,8 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 	})
 	if err != nil {
 		slog.Warn("meta webhook: upsert comment failed", "err", err)
+	} else {
+		ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(commentItem))
 	}
 }
 

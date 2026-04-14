@@ -18,6 +18,7 @@ import {
   type SocialPost,
 } from "@/lib/api";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
+import { useInboxWebSocket } from "@/lib/use-inbox-ws";
 import { PlatformIcon } from "@/components/platform-icons";
 import {
   AlertTriangle,
@@ -406,14 +407,21 @@ export default function InboxPage() {
     load();
   }, [load]);
 
-  // Auto-poll every 10 seconds for new messages.
+  // Real-time: WebSocket pushes new items instantly.
+  const { connected: wsConnected } = useInboxWebSocket(workspaceId, (newItem) => {
+    setItems((prev) => {
+      if (prev.some((i) => i.id === newItem.id)) return prev;
+      return [...prev, newItem];
+    });
+    if (!newItem.is_own) setUnreadCount((c) => c + 1);
+  });
+
+  // Fallback: poll every 30s only when WebSocket is not connected.
   useEffect(() => {
-    if (!workspaceId) return;
-    const interval = setInterval(() => {
-      load();
-    }, 10_000);
+    if (wsConnected || !workspaceId) return;
+    const interval = setInterval(() => load(), 30_000);
     return () => clearInterval(interval);
-  }, [workspaceId, load]);
+  }, [workspaceId, wsConnected, load]);
 
   const commentsGroups = useMemo(() => groupItems(items, "ig_comment"), [items]);
   const dmGroups = useMemo(() => groupItems(items, "ig_dm"), [items]);

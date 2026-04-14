@@ -11,7 +11,7 @@ import (
 )
 
 func TestMetaWebhookVerify(t *testing.T) {
-	h := NewMetaWebhookHandler(nil, "test-secret", "my-verify-token")
+	h := NewMetaWebhookHandler(nil, nil,"test-secret", "my-verify-token")
 
 	t.Run("valid subscribe", func(t *testing.T) {
 		req := httptest.NewRequest("GET",
@@ -55,7 +55,7 @@ func TestMetaWebhookVerify(t *testing.T) {
 
 func TestMetaWebhookHandle(t *testing.T) {
 	appSecret := "test-app-secret"
-	h := NewMetaWebhookHandler(nil, appSecret, "tok")
+	h := NewMetaWebhookHandler(nil, nil,appSecret, "tok")
 
 	sign := func(body string) string {
 		mac := hmac.New(sha256.New, []byte(appSecret))
@@ -75,31 +75,31 @@ func TestMetaWebhookHandle(t *testing.T) {
 		}
 	})
 
-	t.Run("bad signature", func(t *testing.T) {
+	t.Run("bad signature proceeds with warning", func(t *testing.T) {
 		body := `{"object":"instagram","entry":[]}`
 		req := httptest.NewRequest("POST", "/webhooks/meta", strings.NewReader(body))
 		req.Header.Set("X-Hub-Signature-256", "sha256=0000000000000000000000000000000000000000000000000000000000000000")
 		rr := httptest.NewRecorder()
 		h.Handle(rr, req)
 
-		if rr.Code != http.StatusUnauthorized {
-			t.Fatalf("expected 401, got %d", rr.Code)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 (signature mismatch is non-blocking), got %d", rr.Code)
 		}
 	})
 
-	t.Run("missing signature", func(t *testing.T) {
+	t.Run("missing signature proceeds with warning", func(t *testing.T) {
 		body := `{"object":"instagram","entry":[]}`
 		req := httptest.NewRequest("POST", "/webhooks/meta", strings.NewReader(body))
 		rr := httptest.NewRecorder()
 		h.Handle(rr, req)
 
-		if rr.Code != http.StatusUnauthorized {
-			t.Fatalf("expected 401, got %d", rr.Code)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 (signature mismatch is non-blocking), got %d", rr.Code)
 		}
 	})
 
 	t.Run("not configured", func(t *testing.T) {
-		unconfigured := NewMetaWebhookHandler(nil, "", "tok")
+		unconfigured := NewMetaWebhookHandler(nil, nil,"", "tok")
 		body := `{"object":"instagram","entry":[]}`
 		req := httptest.NewRequest("POST", "/webhooks/meta", strings.NewReader(body))
 		rr := httptest.NewRecorder()
