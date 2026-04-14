@@ -1,5 +1,6 @@
 "use client";
 
+import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -31,6 +32,16 @@ type HeadingItem = {
 };
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
+const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
+
+const userButtonAppearance = {
+  elements: {
+    avatarBox: "w-8 h-8",
+    userButtonPopoverCard: {
+      color: "#1f2937",
+    },
+  },
+};
 
 export const DOCS_NAV: NavSection[] = [
   {
@@ -111,10 +122,17 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-brand-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
 .docs-brand-name{display:block;font-size:15px;font-weight:700;letter-spacing:-.02em;line-height:1.2}
 .docs-brand-context{display:block;font-size:12px;line-height:1.45;color:var(--docs-muted)}
+.docs-topbar-right{display:flex;align-items:center;gap:14px;justify-content:flex-end;flex-wrap:wrap}
 .docs-topbar-links{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .docs-topbar-link{padding:8px 12px;border-radius:999px;font-size:13px;color:var(--docs-muted);text-decoration:none;transition:all .14s}
 .docs-topbar-link:hover{color:var(--docs-text);background:rgba(255,255,255,.04)}
 .docs-topbar-link.active{color:var(--docs-text);background:rgba(255,255,255,.06)}
+.docs-auth-actions{display:flex;align-items:center;gap:8px}
+.docs-auth-btn{display:inline-flex;align-items:center;justify-content:center;padding:8px 14px;border-radius:999px;border:1px solid transparent;font-family:var(--docs-ui);font-size:13px;font-weight:600;line-height:1;text-decoration:none;cursor:pointer;transition:all .14s}
+.docs-auth-btn.ghost{background:transparent;color:var(--docs-muted);border-color:rgba(255,255,255,.08)}
+.docs-auth-btn.ghost:hover{background:rgba(255,255,255,.04);color:var(--docs-text);border-color:rgba(255,255,255,.12)}
+.docs-auth-btn.primary{background:#22c55e;color:#041108;box-shadow:0 10px 24px rgba(34,197,94,.22)}
+.docs-auth-btn.primary:hover{background:#4ade80}
 .docs-layout{max-width:1560px;margin:0 auto;padding:32px 28px 80px;display:grid;grid-template-columns:260px minmax(0,1fr) 240px;gap:32px}
 .docs-sidebar,.docs-toc{position:sticky;top:94px;align-self:start;max-height:calc(100vh - 120px);overflow:auto;padding-bottom:16px}
 .docs-sidebar-card,.docs-toc-card{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:18px;padding:16px 14px;box-shadow:var(--docs-shadow)}
@@ -161,7 +179,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-toc-link.level-h3{padding-left:18px;color:var(--docs-muted-2)}
 .docs-empty-toc{padding:8px;color:var(--docs-muted-2);font-size:12.5px;line-height:1.6}
 @media (max-width:1240px){.docs-layout{grid-template-columns:240px minmax(0,1fr)}.docs-toc{display:none}}
-@media (max-width:900px){.docs-topbar-inner{padding:0 18px;height:auto;min-height:62px;align-items:flex-start;flex-direction:column;justify-content:center;padding-top:10px;padding-bottom:10px}.docs-topbar-links{width:100%}.docs-layout{grid-template-columns:1fr;padding:20px 16px 56px}.docs-sidebar{display:none}.docs-page{padding:28px 22px;border-radius:20px}.docs-page h1{font-size:34px}.docs-grid{grid-template-columns:1fr}}
+@media (max-width:900px){.docs-topbar-inner{padding:0 18px;height:auto;min-height:62px;align-items:flex-start;flex-direction:column;justify-content:center;padding-top:10px;padding-bottom:10px}.docs-topbar-right{width:100%;align-items:flex-start;justify-content:flex-start;flex-direction:column}.docs-topbar-links{width:100%}.docs-layout{grid-template-columns:1fr;padding:20px 16px 56px}.docs-sidebar{display:none}.docs-page{padding:28px 22px;border-radius:20px}.docs-page h1{font-size:34px}.docs-grid{grid-template-columns:1fr}}
 `;
 
 function isLeafActive(current: string, href: string) {
@@ -235,6 +253,7 @@ function collectObservedNodes() {
 
 export function DocsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { isLoaded, isSignedIn } = useAuth();
   const [headings, setHeadings] = useState<HeadingItem[]>([]);
   const [activeHeading, setActiveHeading] = useState("");
 
@@ -274,7 +293,6 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     () => [
       { label: "Docs", href: "/docs" },
       { label: "API", href: "/docs/api" },
-      { label: "Dashboard", href: APP_URL, external: true },
       { label: "Pricing", href: "/pricing" },
     ],
     []
@@ -292,17 +310,9 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
               <span className="docs-brand-context">Build social publishing, account onboarding, and analytics.</span>
             </span>
           </Link>
-          <nav className="docs-topbar-links">
-            {topLinks.map((link) => (
-              link.external ? (
-                <a
-                  key={link.label}
-                  href={link.href}
-                  className="docs-topbar-link"
-                >
-                  {link.label}
-                </a>
-              ) : (
+          <div className="docs-topbar-right">
+            <nav className="docs-topbar-links">
+              {topLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
@@ -310,9 +320,34 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                 >
                   {link.label}
                 </Link>
+              ))}
+            </nav>
+            {isLoaded ? (
+              isSignedIn ? (
+                <div className="docs-auth-actions">
+                  <a href={APP_URL} className="docs-auth-btn primary">
+                    Go to Dashboard
+                  </a>
+                  <UserButton appearance={userButtonAppearance} />
+                </div>
+              ) : (
+                <div className="docs-auth-actions">
+                  <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
+                    <button type="button" className="docs-auth-btn ghost">
+                      Sign in
+                    </button>
+                  </SignInButton>
+                  <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
+                    <button type="button" className="docs-auth-btn primary">
+                      Get Started Free
+                    </button>
+                  </SignUpButton>
+                </div>
               )
-            ))}
-          </nav>
+            ) : (
+              <div className="docs-auth-actions" style={{ minHeight: 36 }} />
+            )}
+          </div>
         </div>
       </header>
 
