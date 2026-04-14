@@ -482,6 +482,24 @@ func (a *InstagramAdapter) FetchMediaDetails(ctx context.Context, accessToken st
 	return &details, nil
 }
 
+// FetchRaw makes a raw GET request to the IG Graph API and returns the response body.
+func (a *InstagramAdapter) FetchRaw(ctx context.Context, accessToken string, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url+"&access_token="+accessToken, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ig api %d: %s", resp.StatusCode, string(body))
+	}
+	return body, nil
+}
+
 // FetchRecentMedia returns the IDs of the account's recent posts
 // directly from the IG API. This covers posts published natively
 // on Instagram, not just those published through UniPost.

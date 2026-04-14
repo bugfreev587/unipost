@@ -212,11 +212,6 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
-	if !item.ParentExternalID.Valid || item.ParentExternalID.String == "" {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "No parent media ID")
-		return
-	}
-
 	account, err := h.queries.GetSocialAccount(r.Context(), item.SocialAccountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Account not found")
@@ -229,7 +224,35 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	adapter := platform.NewInstagramAdapter()
-	details, err := adapter.FetchMediaDetails(r.Context(), accessToken, item.ParentExternalID.String)
+
+	// Try parent_external_id first (media ID), then fall back to
+	// looking up the comment's own media via the IG API.
+	mediaID := ""
+	if item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
+		mediaID = item.ParentExternalID.String
+	} else if item.Source == "ig_comment" {
+		// The comment has no parent_external_id — look up which
+		// media it belongs to via the comment's own ID.
+		type commentInfo struct {
+			Media struct {
+				ID string `json:"id"`
+			} `json:"media"`
+		}
+		var info commentInfo
+		if infoBytes, fetchErr := adapter.FetchRaw(r.Context(), accessToken,
+			"https://graph.instagram.com/v21.0/"+item.ExternalID+"?fields=media{id}"); fetchErr == nil {
+			if jsonErr := json.Unmarshal(infoBytes, &info); jsonErr == nil && info.Media.ID != "" {
+				mediaID = info.Media.ID
+			}
+		}
+	}
+
+	if mediaID == "" {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Could not resolve parent media ID")
+		return
+	}
+
+	details, err := adapter.FetchMediaDetails(r.Context(), accessToken, mediaID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "PLATFORM_ERROR", "Failed to fetch media: "+err.Error())
 		return
