@@ -33,6 +33,9 @@ export default function MediaPage() {
       title="Media"
       lead="The media library gives you a two-step upload flow backed by UniPost-managed storage. Use it when you do not want to depend on public asset URLs or when you want UniPost to resolve media IDs server-side during publish."
     >
+      <h2 id="best-for">Best for</h2>
+      <p>The media library is the recommended path for large local files, especially video destined for YouTube. It is also the same flow the dashboard uses before publish.</p>
+
       <h2 id="reserve">Reserve an upload</h2>
       <p>Create a media row and receive a presigned upload URL. The media stays in a pending state until the file lands and UniPost resolves its final metadata.</p>
       <DocsCodeTabs snippets={[MEDIA_SNIPPETS[0]]} />
@@ -51,6 +54,9 @@ export default function MediaPage() {
       <h2 id="use-in-posts">Use media IDs in posts</h2>
       <p>Once uploaded, pass <code>media_ids</code> on a platform post entry. UniPost resolves those IDs to short-lived download URLs internally before handing off to platform adapters.</p>
       <DocsCodeTabs snippets={[MEDIA_SNIPPETS[1]]} />
+
+      <h2 id="youtube-note">YouTube note</h2>
+      <p>If you are publishing a local video to YouTube, prefer <code>media_ids</code> over trying to inline the file body or rely on an MCP client to move the raw bytes. The dashboard already follows this upload-to-storage-then-publish workflow because it is more reliable for larger assets.</p>
     </DocsPage>
   );
 }

@@ -53,6 +53,66 @@ async function apiRequest(path, apiKey, options) {
     });
     return res.json();
 }
+async function uploadMediaToLibrary(apiKey, args) {
+    if (!args.base64_data && !args.url) {
+        return { error: "Error: pass either base64_data or url." };
+    }
+    let sizeBytes;
+    let bytes = null;
+    if (args.base64_data) {
+        bytes = Uint8Array.from(Buffer.from(args.base64_data, "base64"));
+        sizeBytes = bytes.length;
+    }
+    else {
+        const head = await fetch(args.url, { method: "HEAD" });
+        const lenHeader = head.headers.get("content-length");
+        sizeBytes = lenHeader ? parseInt(lenHeader, 10) : 0;
+        if (!sizeBytes) {
+            return { error: "Error: could not determine size of remote URL via HEAD." };
+        }
+    }
+    const created = await apiRequest("/v1/media", apiKey, {
+        method: "POST",
+        body: JSON.stringify({
+            filename: args.filename,
+            content_type: args.content_type,
+            size_bytes: sizeBytes,
+        }),
+    });
+    if (!created?.data?.upload_url) {
+        return {
+            error: "Error: API did not return an upload URL: " + JSON.stringify(created),
+        };
+    }
+    let bodyToPut;
+    if (bytes) {
+        bodyToPut = new Blob([new Uint8Array(bytes)], { type: args.content_type });
+    }
+    else {
+        const remote = await fetch(args.url);
+        bodyToPut = await remote.arrayBuffer();
+    }
+    const putRes = await fetch(created.data.upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": args.content_type },
+        body: bodyToPut,
+    });
+    if (!putRes.ok) {
+        return {
+            error: `Error: PUT to R2 failed (${putRes.status}): ${await putRes.text()}`,
+        };
+    }
+    // Mirror the dashboard path: re-read the media row so the API can
+    // HEAD the object, hydrate metadata, and flip status from pending
+    // to uploaded before a later publish references media_ids.
+    const hydrated = await apiRequest(`/v1/media/${created.data.id}`, apiKey);
+    return {
+        media_id: created.data.id,
+        content_type: args.content_type,
+        size_bytes: sizeBytes,
+        media: hydrated?.data ?? null,
+    };
+}
 // ── Create MCP server with tools (API key injected per-session) ──
 function createMcpServer(apiKey) {
     const server = new mcp_js_1.McpServer({
@@ -302,75 +362,16 @@ function createMcpServer(apiKey) {
             .optional()
             .describe("Publicly fetchable URL the API can download from. Required when base64_data is not set."),
     }, async (args) => {
-        if (!args.base64_data && !args.url) {
-            return {
-                content: [
-                    { type: "text", text: "Error: pass either base64_data or url." },
-                ],
-            };
-        }
-        // Decode base64 to compute size_bytes accurately. The API
-        // validates size client-side as a hard cap (~25 MB). For url
-        // mode we let the API HEAD the URL itself.
-        let sizeBytes;
-        let bytes = null;
-        if (args.base64_data) {
-            bytes = Uint8Array.from(Buffer.from(args.base64_data, "base64"));
-            sizeBytes = bytes.length;
-        }
-        else {
-            // url mode: do a HEAD to learn the size before calling POST /v1/media.
-            const head = await fetch(args.url, { method: "HEAD" });
-            const lenHeader = head.headers.get("content-length");
-            sizeBytes = lenHeader ? parseInt(lenHeader, 10) : 0;
-            if (!sizeBytes) {
-                return {
-                    content: [
-                        { type: "text", text: "Error: could not determine size of remote URL via HEAD." },
-                    ],
-                };
-            }
-        }
-        // Step 1: register the upload, get the presigned PUT URL.
-        const createBody = {
+        const uploaded = await uploadMediaToLibrary(apiKey, {
             filename: args.filename,
             content_type: args.content_type,
-            size_bytes: sizeBytes,
-        };
-        const created = await apiRequest("/v1/media", apiKey, {
-            method: "POST",
-            body: JSON.stringify(createBody),
+            base64_data: args.base64_data,
+            url: args.url,
         });
-        if (!created?.data?.upload_url) {
+        if ("error" in uploaded) {
             return {
                 content: [
-                    { type: "text", text: "Error: API did not return an upload URL: " + JSON.stringify(created) },
-                ],
-            };
-        }
-        // Step 2: PUT the bytes to the presigned URL.
-        let bodyToPut;
-        if (bytes) {
-            // Wrap the Uint8Array in a Blob so the fetch BodyInit type
-            // is happy across both Node and edge runtimes.
-            bodyToPut = new Blob([new Uint8Array(bytes)], { type: args.content_type });
-        }
-        else {
-            const remote = await fetch(args.url);
-            bodyToPut = await remote.arrayBuffer();
-        }
-        const putRes = await fetch(created.data.upload_url, {
-            method: "PUT",
-            headers: { "Content-Type": args.content_type },
-            body: bodyToPut,
-        });
-        if (!putRes.ok) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: PUT to R2 failed (${putRes.status}): ${await putRes.text()}`,
-                    },
+                    { type: "text", text: uploaded.error },
                 ],
             };
         }
@@ -379,10 +380,115 @@ function createMcpServer(apiKey) {
                 {
                     type: "text",
                     text: JSON.stringify({
-                        media_id: created.data.id,
-                        content_type: args.content_type,
-                        size_bytes: sizeBytes,
-                        note: "Reference this media_id under platform_posts[].media_ids in unipost_create_post or unipost_create_draft.",
+                        media_id: uploaded.media_id,
+                        content_type: uploaded.content_type,
+                        size_bytes: uploaded.size_bytes,
+                        media: uploaded.media,
+                        note: "Reference this media_id under platform_posts[].media_ids in unipost_create_post or unipost_create_draft. The row has already been hydrated like the dashboard flow.",
+                    }, null, 2),
+                },
+            ],
+        };
+    });
+    server.tool("unipost_get_media", "Get a media row by id. Use this to confirm status=uploaded before publishing or to inspect the hydrated media metadata after upload.", {
+        media_id: zod_1.z.string().describe("Media library id returned by unipost_upload_media."),
+    }, async ({ media_id }) => {
+        const data = await apiRequest(`/v1/media/${media_id}`, apiKey);
+        return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
+    });
+    server.tool("unipost_create_youtube_video_post", [
+        "Create a YouTube video post with the friendliest current MCP workflow.",
+        "",
+        "Pass EITHER media_id, OR video_url, OR base64_data + filename + content_type.",
+        "If video_url or base64_data is provided, UniPost uploads into the media library",
+        "first, hydrates the media row, then publishes to YouTube with media_ids.",
+        "",
+        "This wraps the same upload-then-publish workflow the dashboard uses.",
+        "For large local videos, prefer video_url or an already-uploaded media_id.",
+        "Remote MCP servers are not ideal for moving large local binary files inline.",
+    ].join("\n"), {
+        account_id: zod_1.z.string().describe("YouTube social account id."),
+        caption: zod_1.z.string().optional().describe("Caption or description context."),
+        media_id: zod_1.z.string().optional().describe("Existing UniPost media id for the uploaded video."),
+        video_url: zod_1.z.string().optional().describe("Publicly fetchable video URL to upload and publish."),
+        filename: zod_1.z.string().optional().describe("Required when base64_data is set."),
+        content_type: zod_1.z.string().optional().describe("Required when base64_data is set. Usually video/mp4."),
+        base64_data: zod_1.z.string().optional().describe("Base64-encoded video body for smaller local files."),
+        privacy_status: zod_1.z.enum(["private", "public", "unlisted"]).optional(),
+        shorts: zod_1.z.boolean().optional(),
+        category_id: zod_1.z.string().optional(),
+        tags: zod_1.z.array(zod_1.z.string()).optional(),
+        scheduled_at: zod_1.z.string().optional(),
+        idempotency_key: zod_1.z.string().optional(),
+    }, async (args) => {
+        let mediaId = args.media_id;
+        if (!mediaId) {
+            if (!args.video_url && !args.base64_data) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: "Error: pass media_id, video_url, or base64_data + filename + content_type.",
+                        },
+                    ],
+                };
+            }
+            if (args.base64_data && (!args.filename || !args.content_type)) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: "Error: filename and content_type are required when base64_data is set.",
+                        },
+                    ],
+                };
+            }
+            const uploaded = await uploadMediaToLibrary(apiKey, {
+                filename: args.filename || "youtube-video.mp4",
+                content_type: args.content_type || "video/mp4",
+                base64_data: args.base64_data,
+                url: args.video_url,
+            });
+            if ("error" in uploaded) {
+                return {
+                    content: [{ type: "text", text: uploaded.error }],
+                };
+            }
+            mediaId = uploaded.media_id;
+        }
+        const body = {
+            platform_posts: [
+                {
+                    account_id: args.account_id,
+                    caption: args.caption ?? "",
+                    media_ids: [mediaId],
+                    platform_options: {
+                        youtube: {
+                            ...(args.privacy_status ? { privacy_status: args.privacy_status } : {}),
+                            ...(typeof args.shorts === "boolean" ? { shorts: args.shorts } : {}),
+                            ...(args.category_id ? { category_id: args.category_id } : {}),
+                            ...(args.tags?.length ? { tags: args.tags } : {}),
+                        },
+                    },
+                },
+            ],
+        };
+        if (args.scheduled_at)
+            body.scheduled_at = args.scheduled_at;
+        if (args.idempotency_key)
+            body.idempotency_key = args.idempotency_key;
+        const data = await apiRequest("/v1/social-posts", apiKey, {
+            method: "POST",
+            body: JSON.stringify(body),
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({
+                        media_id: mediaId,
+                        post: data.data ?? null,
+                        note: "Used the media-library-first YouTube workflow. For very large local files, prefer video_url or upload once and reuse media_id.",
                     }, null, 2),
                 },
             ],

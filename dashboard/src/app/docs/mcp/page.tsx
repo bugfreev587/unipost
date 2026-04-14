@@ -101,12 +101,16 @@ export default function McpPage() {
         columns={["Tool", "What it does"]}
         rows={[
           ["unipost_list_accounts", "List connected social media accounts"],
+          ["unipost_upload_media", "Upload media into UniPost's media library and return a media_id"],
+          ["unipost_get_media", "Check whether a media upload is hydrated and ready to publish"],
           ["unipost_create_post", "Create and publish a post to one or more accounts"],
+          ["unipost_create_youtube_video_post", "Wrap upload + publish into one YouTube-oriented video workflow"],
           ["unipost_get_post", "Get the status and details of a post"],
           ["unipost_get_analytics", "Read engagement metrics for a post"],
           ["unipost_list_posts", "List recent posts filtered by status"],
         ]}
       />
+      <p><strong>Important:</strong> the current MCP surface is strongest for account lookup, text publishing, analytics, and media that is already reachable by URL or already uploaded into UniPost. Large local video files are not the ideal path today.</p>
 
       <h2 id="recommended-flow">Recommended flow</h2>
       <p>The best MCP workflow is not &ldquo;generate text, then publish immediately.&rdquo; The safer pattern is generate, validate, preview if needed, then publish.</p>
@@ -120,6 +124,19 @@ export default function McpPage() {
           ["Publish", "Commit once the draft is approved"],
         ]}
       />
+
+      <h2 id="youtube-video-workflow">YouTube video workflow</h2>
+      <p>For YouTube specifically, the most reliable flow today is: upload the video into UniPost&rsquo;s media library first, then create the post with a <code>media_id</code>. That matches the dashboard flow and avoids trying to push a large local file through an MCP client or base64 payload.</p>
+      <DocsTable
+        columns={["Step", "What to do", "Why"]}
+        rows={[
+          ["1", "Create a media upload in UniPost", "Reserve a media row and get a presigned upload URL"],
+          ["2", "Upload the local video directly to storage", "Keep large file transfer out of the MCP request path"],
+          ["3", "Confirm the media row is uploaded", "Make sure UniPost can resolve the object before publish"],
+          ["4", "Call `unipost_create_post` with `media_ids`", "Publish to YouTube using the same workflow as the dashboard"],
+        ]}
+      />
+      <p>If you are posting from an agent, UniPost should ideally hide these steps behind one higher-level video publish flow. UniPost now exposes <code>unipost_create_youtube_video_post</code> for that wrapper, but for very large local files the most reliable path is still a hosted <code>video_url</code> or a reusable <code>media_id</code>.</p>
 
       <h2 id="client-config">Client configuration</h2>
       <p>Here is the part that was missing: each client expects this config in a different place. Copy the matching snippet into the file below, then restart the client.</p>
@@ -144,6 +161,7 @@ export default function McpPage() {
         columns={["Use case", "Best interface", "Why"]}
         rows={[
           ["LLM-driven operator or agent workflow", "MCP", "Native tool interface for accounts, posts, and analytics"],
+          ["Large local video upload before publish", "Media API + MCP", "Upload to UniPost storage first, then publish with `media_ids`"],
           ["Typed application integration", "SDK", "Better ergonomics and stronger language-native patterns"],
           ["Low-level debugging or custom client", "API Reference", "Direct control over raw requests and responses"],
         ]}

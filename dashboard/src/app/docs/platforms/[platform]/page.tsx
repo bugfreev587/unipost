@@ -357,7 +357,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
   youtube: {
     title: "YouTube",
     lead: "YouTube usually needs more metadata than short-form networks. UniPost exposes those controls in `platform_options.youtube` while keeping the publish flow consistent with the rest of the platform set.",
-    overview: "YouTube is a single-video publish surface. Use it for long-form videos or Shorts. The most important platform-specific controls are privacy status, Shorts mode, category, and tags.",
+    overview: "YouTube is a single-video publish surface. Use it for long-form videos or Shorts. The most important platform-specific controls are privacy status, Shorts mode, category, and tags. For local video files, the most reliable UniPost workflow is to upload into the media library first and then publish with `media_ids`.",
     capabilities: [
       ["Video posts", "Yes", "Exactly 1 video"],
       ["Shorts", "Yes", "Use `platform_options.youtube.shorts`"],
@@ -367,7 +367,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
       ["Analytics", "Yes", "Supported"],
     ],
     requirements: [
-      ["media_urls", "Required", "Exactly 1 video", "Primary requirement"],
+      ["media_urls or media_ids", "Required", "Exactly 1 video", "Prefer `media_ids` when starting from a local file"],
       ["caption", "Optional", "5,000 chars", "Used as title/description body context"],
       ["platform_options.youtube.privacy_status", "Optional", "private / public / unlisted", "Default is often private"],
       ["platform_options.youtube.shorts", "Optional", "boolean", "Routes the upload toward Shorts behavior"],
@@ -378,11 +378,26 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     examples: [
       {
-        title: "Long-form video",
+        title: "Long-form video from a hosted URL",
         body: `{
   "caption": "Quarterly product update",
   "account_ids": ["sa_youtube_1"],
   "media_urls": ["https://cdn.example.com/update.mp4"],
+  "platform_options": {
+    "youtube": {
+      "privacy_status": "public",
+      "category_id": "22",
+      "tags": ["product", "quarterly", "update"]
+    }
+        }
+}`,
+      },
+      {
+        title: "Long-form video from UniPost media library",
+        body: `{
+  "caption": "Quarterly product update",
+  "account_ids": ["sa_youtube_1"],
+  "media_ids": ["med_uploaded_video_1"],
   "platform_options": {
     "youtube": {
       "privacy_status": "public",
