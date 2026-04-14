@@ -132,6 +132,7 @@ export default function McpPage() {
           ["Claude Code", "No file needed for the command below. Run it in your terminal instead.", "If you want a checked-in config, use `.mcp.json` at the project root with `claude mcp add --scope project`"],
         ]}
       />
+      <p><strong>Important:</strong> <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> is the Claude Desktop config file. Claude Code uses the <code>claude mcp add</code> command or Claude Code settings files such as <code>~/.claude/settings.json</code> and <code>.claude/settings.json</code>.</p>
       <DocsCodeTabs snippets={MCP_SNIPPETS} />
 
       <h2 id="testing">Test the server directly</h2>
