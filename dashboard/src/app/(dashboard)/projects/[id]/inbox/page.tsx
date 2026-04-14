@@ -180,12 +180,22 @@ function byNewestActivity(a: ConversationGroup, b: ConversationGroup) {
   return new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime();
 }
 
+function conversationRootKey(item: InboxItem, source: ConversationGroup["source"]) {
+  if (source === "ig_dm") {
+    return item.thread_key || item.parent_external_id || item.author_id || item.external_id;
+  }
+
+  if (item.thread_key) return item.thread_key;
+  if (!item.is_own) return item.external_id;
+  return item.parent_external_id || item.external_id;
+}
+
 function groupItems(items: InboxItem[], source: ConversationGroup["source"]): ConversationGroup[] {
   const filtered = items.filter((item) => item.source === source);
   const map = new Map<string, InboxItem[]>();
 
   for (const item of filtered) {
-    const key = `${item.social_account_id}:${source}:${item.thread_key || item.parent_external_id || item.author_id || item.external_id}`;
+    const key = `${item.social_account_id}:${source}:${conversationRootKey(item, source)}`;
     const existing = map.get(key) || [];
     existing.push(item);
     map.set(key, existing);
@@ -197,6 +207,8 @@ function groupItems(items: InboxItem[], source: ConversationGroup["source"]): Co
     );
     const latest = sorted[sorted.length - 1];
     const firstInbound = sorted.find((item) => !item.is_own) || sorted[0];
+    const latestInbound =
+      [...sorted].reverse().find((item) => !item.is_own) || latest;
     const unreadCount = sorted.filter((item) => !item.is_read && !item.is_own).length;
     const title =
       source === "ig_dm"
@@ -209,19 +221,19 @@ function groupItems(items: InboxItem[], source: ConversationGroup["source"]): Co
 
     return {
       id: key,
-      threadKey: latest.thread_key || key,
+      threadKey: firstInbound.thread_key || conversationRootKey(firstInbound, source),
       source,
       title,
       subtitle,
       items: sorted,
       accountName: latest.account_name || undefined,
       accountPlatform: latest.account_platform || undefined,
-      latestActivityAt: latest.received_at,
+      latestActivityAt: source === "ig_dm" ? latest.received_at : latestInbound.received_at,
       unreadCount,
       parentExternalID:
         source === "ig_dm"
           ? latest.parent_external_id
-          : latest.thread_key || latest.parent_external_id,
+          : firstInbound.parent_external_id || latest.parent_external_id,
       threadStatus: latest.thread_status || "open",
       assignedTo: latest.assigned_to,
       linkedPostID: latest.linked_post_id,
