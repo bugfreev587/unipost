@@ -708,102 +708,82 @@ export default function InboxPage() {
       );
     }
 
+    // Facebook-style comment bubble
+    const avatarSize = depth > 0 ? 28 : 32;
     return (
-      <div key={item.id} style={{ display: "grid", gap: 10, marginLeft: depth * 28 }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-          <Avatar src={avatarSrc} label={avatarLabel} size={depth > 0 ? 28 : 36} />
-          <div style={{ flex: 1, minWidth: 0, paddingTop: isCommentLike ? 2 : 6 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <span className="dt-body-sm" style={{ fontWeight: 700, color: item.is_own ? "var(--daccent)" : "var(--dtext)" }}>
-                {item.is_own ? "You" : `@${item.author_name || item.author_id || "unknown"}`}
-              </span>
-              {item.is_own ? (
-                <span className="dt-mono" style={{ fontSize: 10, padding: "2px 6px", borderRadius: 999, background: "rgba(16,185,129,.15)", color: "var(--daccent)" }}>
-                  you
-                </span>
-              ) : null}
-              {depth > 0 ? (
-                <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
-                  reply
-                </span>
-              ) : null}
-              <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)", marginLeft: "auto" }}>
-                {timeAgo(item.received_at)}
-              </span>
-            </div>
-            <div className="dt-body-sm" style={{ color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
+      <div key={item.id} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+        <Avatar src={avatarSrc} label={avatarLabel} size={avatarSize} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Bubble */}
+          <div style={{
+            display: "inline-block",
+            padding: "8px 12px",
+            borderRadius: 18,
+            background: "rgba(255,255,255,.07)",
+            maxWidth: "100%",
+          }}>
+            <span className="dt-body-sm" style={{ fontWeight: 600, color: item.is_own ? "var(--daccent)" : "var(--dtext)", display: "block", marginBottom: 2, fontSize: 12 }}>
+              {item.is_own ? "You" : (item.author_name || item.author_id || "unknown")}
+            </span>
+            <span className="dt-body-sm" style={{ color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.5, fontSize: 13 }}>
               {item.body || "(no text)"}
-            </div>
-
-            {!item.is_own ? (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: replyOpen ? 10 : 0 }}>
-                  <button
-                    onClick={() =>
-                      setReplyDrafts((prev) =>
-                        replyOpen
-                          ? Object.fromEntries(Object.entries(prev).filter(([key]) => key !== item.id))
-                          : { ...prev, [item.id]: "" }
-                      )
-                    }
-                    className="dt-body-sm"
-                    style={{ border: "none", background: "transparent", color: "var(--daccent)", cursor: "pointer", padding: 0 }}
-                  >
-                    Reply
-                  </button>
-                  <button
-                    onClick={() =>
-                      setItems((prev) => prev.map((candidate) => candidate.id === item.id ? { ...candidate, is_read: !candidate.is_read } : candidate))
-                    }
-                    className="dt-body-sm"
-                    style={{ border: "none", background: "transparent", color: "var(--dmuted)", cursor: "pointer", padding: 0 }}
-                  >
-                    {item.is_read ? "Mark unread" : "Mark read"}
-                  </button>
-                </div>
-
-                {replyOpen ? (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <input
-                      value={draft}
-                      onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                      placeholder={`Reply to @${item.author_name || item.author_id || "this user"}...`}
-                      className="dt-body-sm"
-                      style={{
-                        flex: 1,
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        border: "1px solid var(--dborder)",
-                        background: "var(--sidebar)",
-                        color: "var(--dtext)",
-                        outline: "none",
-                      }}
-                    />
-                    <button
-                      onClick={() => handleReply(selectedGroup, item)}
-                      disabled={replyingGroupId === selectedGroup.id || !draft.trim()}
-                      className="dt-body-sm"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "10px 14px",
-                        borderRadius: 10,
-                        border: "none",
-                        background: "var(--daccent)",
-                        color: "var(--primary-foreground)",
-                        cursor: replyingGroupId === selectedGroup.id || !draft.trim() ? "not-allowed" : "pointer",
-                        opacity: replyingGroupId === selectedGroup.id || !draft.trim() ? 0.5 : 1,
-                      }}
-                    >
-                      <Send style={{ width: 14, height: 14 }} />
-                      {replyingGroupId === selectedGroup.id ? "Sending..." : "Send"}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            </span>
           </div>
+          {/* Meta row below bubble */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, paddingLeft: 4, marginTop: 3 }}>
+            <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>{timeAgo(item.received_at)}</span>
+            {!item.is_own ? (
+              <button
+                onClick={() =>
+                  setReplyDrafts((prev) =>
+                    replyOpen
+                      ? Object.fromEntries(Object.entries(prev).filter(([key]) => key !== item.id))
+                      : { ...prev, [item.id]: "" }
+                  )
+                }
+                style={{ border: "none", background: "transparent", color: "var(--dmuted)", cursor: "pointer", padding: 0, fontSize: 11, fontWeight: 600 }}
+              >
+                Reply
+              </button>
+            ) : null}
+            <button
+              onClick={() =>
+                setItems((prev) => prev.map((c) => c.id === item.id ? { ...c, is_read: !c.is_read } : c))
+              }
+              style={{ border: "none", background: "transparent", color: "var(--dmuted2)", cursor: "pointer", padding: 0, fontSize: 11 }}
+            >
+              {item.is_read ? "Mark unread" : "Mark read"}
+            </button>
+          </div>
+          {/* Inline reply input */}
+          {replyOpen ? (
+            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              <input
+                value={draft}
+                onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                placeholder={`Reply to ${item.author_name || "this comment"}...`}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && selectedGroup) { e.preventDefault(); handleReply(selectedGroup, item); } }}
+                className="dt-body-sm"
+                style={{
+                  flex: 1, padding: "7px 12px", borderRadius: 18,
+                  border: "1px solid var(--dborder)", background: "var(--sidebar)",
+                  color: "var(--dtext)", outline: "none", fontSize: 12,
+                }}
+              />
+              <button
+                onClick={() => selectedGroup && handleReply(selectedGroup, item)}
+                disabled={replyingGroupId === selectedGroup?.id || !draft.trim()}
+                style={{
+                  padding: "7px 12px", borderRadius: 18, border: "none",
+                  background: "var(--daccent)", color: "var(--primary-foreground)",
+                  cursor: !draft.trim() ? "not-allowed" : "pointer",
+                  opacity: !draft.trim() ? 0.5 : 1, fontSize: 12,
+                }}
+              >
+                {replyingGroupId === selectedGroup?.id ? "..." : "Reply"}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -1221,15 +1201,26 @@ export default function InboxPage() {
                 </div>
               ) : null}
 
-              <div style={{ flex: 1, overflowY: "auto", padding: selectedGroup.source === "ig_dm" ? "16px 14px" : "20px 20px", display: "grid", gap: 0, alignContent: "flex-end" }}>
+              <div style={{
+                flex: 1, overflowY: "auto",
+                padding: selectedGroup.source === "ig_dm" ? "16px 14px" : "16px 20px",
+                display: "flex", flexDirection: "column",
+                gap: 0,
+                ...(selectedGroup.source === "ig_dm" ? { justifyContent: "flex-end" } : {}),
+              }}>
                 {selectedGroup.source === "ig_dm"
                   ? selectedGroup.items.map((item) => renderConversationItem(item))
                   : commentTree.map(function renderNode(node, depth = 0) {
                       return (
-                        <div key={node.item.id} style={{ display: "grid", gap: 4 }}>
+                        <div key={node.item.id} style={{ marginTop: depth === 0 ? 10 : 6 }}>
                           {renderConversationItem(node.item, depth)}
                           {node.children.length > 0 ? (
-                            <div style={{ display: "grid", gap: 4, paddingLeft: 16, marginTop: -2, borderLeft: "1px solid rgba(255,255,255,.08)" }}>
+                            <div style={{
+                              marginLeft: 16,
+                              paddingLeft: 16,
+                              borderLeft: "2px solid rgba(255,255,255,.08)",
+                              marginTop: 2,
+                            }}>
                               {node.children.map((child) => renderNode(child, depth + 1))}
                             </div>
                           ) : null}
