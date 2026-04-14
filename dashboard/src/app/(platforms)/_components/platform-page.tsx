@@ -554,39 +554,6 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
         </div>
       </div>
 
-      {/* FOOTER */}
-      <footer className="pp-footer">
-        <div className="pp-footer-inner">
-          <div className="pp-footer-top">
-            <div>
-              <div className="pp-footer-logo"><UniPostLogo markSize={26} wordmarkColor="var(--text)" wordmarkClassName="pp-footer-name" /></div>
-              <p className="pp-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p>
-            </div>
-            <div>
-              <div className="pp-footer-col-title">Product</div>
-              <ul className="pp-footer-links-col"><li><a href={LANDING} className="pp-footer-col-link">Overview</a></li><li><a href={`${LANDING}/pricing`} className="pp-footer-col-link">Pricing</a></li><li><a href={`${LANDING}/docs`} className="pp-footer-col-link">Docs</a></li></ul>
-            </div>
-            <div>
-              <div className="pp-footer-col-title">Platforms</div>
-              <ul className="pp-footer-links-col">{ALL_PLATFORMS.map((p) => (<li key={p.slug}><a href={`${LANDING}/${p.slug}-api`} className="pp-footer-col-link">{p.name}</a></li>))}</ul>
-            </div>
-            <div>
-              <div className="pp-footer-col-title">Compare</div>
-              <ul className="pp-footer-links-col"><li><a href={`${LANDING}/alternatives/ayrshare`} className="pp-footer-col-link">vs Ayrshare</a></li><li><a href={`${LANDING}/alternatives/zernio`} className="pp-footer-col-link">vs Zernio</a></li><li><a href={`${LANDING}/alternatives/postforme`} className="pp-footer-col-link">vs PostForMe</a></li><li><a href={`${LANDING}/compare`} className="pp-footer-col-link">All Comparisons →</a></li></ul>
-            </div>
-            <div>
-              <div className="pp-footer-col-title">Legal</div>
-              <ul className="pp-footer-links-col"><li><a href={`${LANDING}/privacy`} className="pp-footer-col-link">Privacy</a></li><li><a href={`${LANDING}/terms`} className="pp-footer-col-link">Terms</a></li></ul>
-            </div>
-          </div>
-          <div className="pp-footer-bottom">
-            <div className="pp-footer-copy">&copy; 2026 UniPost. All rights reserved.</div>
-            <div className="pp-footer-social">
-              <a href="https://x.com/unipostdev" className="pp-footer-social-link" target="_blank" rel="noopener noreferrer">𝕏</a>
-            </div>
-          </div>
-        </div>
-      </footer>
     </>
   );
 }

@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { DM_Sans, Fira_Code } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { ThemeProvider } from "@/components/theme-provider";
+import { SiteFooterGate } from "@/components/marketing/site-footer";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -135,7 +136,10 @@ export default function RootLayout({
           <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         </head>
         <body className="min-h-full flex flex-col bg-[var(--app-bg)] text-[var(--text)]">
-          <ThemeProvider>{children}</ThemeProvider>
+          <ThemeProvider>
+            {children}
+            <SiteFooterGate />
+          </ThemeProvider>
         </body>
       </html>
     </ClerkProvider>

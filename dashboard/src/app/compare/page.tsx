@@ -154,47 +154,6 @@ export default function ComparePage() {
         </div>
       </div>
 
-      {/* FOOTER */}
-      <footer className="cmp-footer">
-        <div className="cmp-footer-inner">
-          <div className="cmp-footer-top">
-            <div>
-              <div className="cmp-footer-logo"><UniPostLogo markSize={26} wordmarkColor="var(--text)" wordmarkClassName="cmp-footer-name" /></div>
-              <p className="cmp-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p>
-            </div>
-            <div>
-              <div className="cmp-footer-col-title">Product</div>
-              <ul className="cmp-footer-links">
-                <li><Link href="/" className="cmp-footer-link">Overview</Link></li>
-                <li><Link href="/pricing" className="cmp-footer-link">Pricing</Link></li>
-                <li><Link href="/docs" className="cmp-footer-link">Docs</Link></li>
-              </ul>
-            </div>
-            <div>
-              <div className="cmp-footer-col-title">Compare</div>
-              <ul className="cmp-footer-links">
-                {COMPETITORS_LIST.map((c) => (
-                  <li key={c.slug}><Link href={`/alternatives/${c.slug}`} className="cmp-footer-link">vs {c.name}</Link></li>
-                ))}
-                <li><Link href="/compare" className="cmp-footer-link">All Comparisons →</Link></li>
-              </ul>
-            </div>
-            <div>
-              <div className="cmp-footer-col-title">Legal</div>
-              <ul className="cmp-footer-links">
-                <li><Link href="/privacy" className="cmp-footer-link">Privacy</Link></li>
-                <li><Link href="/terms" className="cmp-footer-link">Terms</Link></li>
-              </ul>
-            </div>
-          </div>
-          <div className="cmp-footer-bottom">
-            <div className="cmp-footer-copy">&copy; 2026 UniPost. All rights reserved.</div>
-            <div className="cmp-footer-social">
-              <a href="https://x.com/unipostdev" className="cmp-footer-social-link" target="_blank" rel="noopener noreferrer">𝕏</a>
-            </div>
-          </div>
-        </div>
-      </footer>
     </>
   );
 }

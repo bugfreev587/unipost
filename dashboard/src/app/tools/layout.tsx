@@ -102,16 +102,6 @@ export default function ToolsLayout({ children }: { children: React.ReactNode })
       </nav>
 
       {children}
-
-      <footer className="tl-footer">
-        <div className="tl-footer-inner">
-          <span>&copy; {new Date().getFullYear()} UniPost</span>
-          <div style={{ display: "flex", gap: 16 }}>
-            <Link href="/tools">All Tools</Link>
-            <a href="https://github.com/unipost-dev" target="_blank" rel="noopener noreferrer">GitHub</a>
-          </div>
-        </div>
-      </footer>
     </>
   );
 }

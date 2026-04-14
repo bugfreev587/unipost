@@ -346,24 +346,6 @@ export default function LandingPage() {
         </div>
       </div>
 
-      {/* FOOTER */}
-      <footer className="lp-footer">
-        <div className="lp-footer-inner">
-          <div className="lp-footer-top">
-            <div><div className="lp-footer-logo"><UniPostLogo markSize={26} wordmarkColor="var(--text)" wordmarkClassName="lp-footer-name" /></div><p className="lp-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p></div>
-            <div><div className="lp-footer-col-title">Product</div><ul className="lp-footer-links"><li><Link href="/" className="lp-footer-link">Overview</Link></li><li><Link href="/pricing" className="lp-footer-link">Pricing</Link></li><li><Link href="/docs" className="lp-footer-link">Docs</Link></li></ul></div>
-            <div><div className="lp-footer-col-title">Platforms</div><ul className="lp-footer-links">{PLATFORMS.map((p) => (<li key={p.slug}><Link href={`/${p.slug}-api`} className="lp-footer-link">{p.name}</Link></li>))}</ul></div>
-            <div><div className="lp-footer-col-title">Compare</div><ul className="lp-footer-links"><li><Link href="/alternatives/ayrshare" className="lp-footer-link">vs Ayrshare</Link></li><li><Link href="/alternatives/zernio" className="lp-footer-link">vs Zernio</Link></li><li><Link href="/alternatives/postforme" className="lp-footer-link">vs PostForMe</Link></li><li><Link href="/compare" className="lp-footer-link">All Comparisons →</Link></li></ul></div>
-            <div><div className="lp-footer-col-title">Legal</div><ul className="lp-footer-links"><li><Link href="/privacy" className="lp-footer-link">Privacy</Link></li><li><Link href="/terms" className="lp-footer-link">Terms</Link></li></ul></div>
-          </div>
-          <div className="lp-footer-bottom">
-            <div className="lp-footer-copy">&copy; 2026 UniPost. All rights reserved.</div>
-            <div className="lp-footer-social">
-              <a href="https://x.com/unipostdev" className="lp-footer-social-link" target="_blank" rel="noopener noreferrer">𝕏</a>
-            </div>
-          </div>
-        </div>
-      </footer>
     </>
   );
 }

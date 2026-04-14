@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { MarketingNav, MarketingCTA } from "@/components/marketing/nav";
 import { UNIPOST } from "@/data/competitors/unipost";
-import { ALL_COMPETITORS, getCompetitorBySlug } from "@/data/competitors";
+import { getCompetitorBySlug } from "@/data/competitors";
 import type { Competitor } from "@/data/competitors";
 
 // ── Icons ──
@@ -147,8 +147,6 @@ const MCP_CONFIG = `// Claude Desktop config
     }
   }
 }`;
-
-const COMPETITORS_LIST = ALL_COMPETITORS;
 
 export default function AlternativePage() {
   const params = useParams();
@@ -390,47 +388,6 @@ export default function AlternativePage() {
         </div>
       </div>
 
-      {/* FOOTER */}
-      <footer className="alt-footer">
-        <div className="alt-footer-inner">
-          <div className="alt-footer-top">
-            <div>
-              <div className="alt-footer-logo"><UniPostLogo markSize={26} wordmarkColor="var(--text)" wordmarkClassName="alt-footer-name" /></div>
-              <p className="alt-footer-tagline">Unified social media API for developers. Post to 7 platforms with one API call.</p>
-            </div>
-            <div>
-              <div className="alt-footer-col-title">Product</div>
-              <ul className="alt-footer-links">
-                <li><Link href="/" className="alt-footer-link">Overview</Link></li>
-                <li><Link href="/pricing" className="alt-footer-link">Pricing</Link></li>
-                <li><Link href="/docs" className="alt-footer-link">Docs</Link></li>
-              </ul>
-            </div>
-            <div>
-              <div className="alt-footer-col-title">Compare</div>
-              <ul className="alt-footer-links">
-                {COMPETITORS_LIST.map((c) => (
-                  <li key={c.slug}><Link href={`/alternatives/${c.slug}`} className="alt-footer-link">vs {c.name}</Link></li>
-                ))}
-                <li><Link href="/compare" className="alt-footer-link">All Comparisons →</Link></li>
-              </ul>
-            </div>
-            <div>
-              <div className="alt-footer-col-title">Legal</div>
-              <ul className="alt-footer-links">
-                <li><Link href="/privacy" className="alt-footer-link">Privacy</Link></li>
-                <li><Link href="/terms" className="alt-footer-link">Terms</Link></li>
-              </ul>
-            </div>
-          </div>
-          <div className="alt-footer-bottom">
-            <div className="alt-footer-copy">&copy; 2026 UniPost. All rights reserved.</div>
-            <div className="alt-footer-social">
-              <a href="https://x.com/unipostdev" className="alt-footer-social-link" target="_blank" rel="noopener noreferrer">𝕏</a>
-            </div>
-          </div>
-        </div>
-      </footer>
     </>
   );
 }

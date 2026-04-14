@@ -262,19 +262,6 @@ export default function PricingPage() {
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="pr-footer">
-        <div className="pr-footer-inner">
-          <div className="pr-foot-logo"><UniPostLogo markSize={24} wordmarkColor="var(--text)" wordmarkClassName="pr-foot-name" /></div>
-          <div className="pr-foot-links">
-            <Link href="/docs" className="pr-foot-link">Docs</Link>
-            <Link href="/pricing" className="pr-foot-link">Pricing</Link>
-            <Link href="/privacy" className="pr-foot-link">Privacy</Link>
-            <Link href="/terms" className="pr-foot-link">Terms</Link>
-          </div>
-          <div className="pr-foot-copy">&copy; 2026 UniPost. All rights reserved.</div>
-        </div>
-      </footer>
     </>
   );
 }
