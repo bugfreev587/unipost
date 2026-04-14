@@ -74,6 +74,26 @@ func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, workspaceID 
 	return items, nil
 }
 
+const findLinkedPostIDForInboxParent = `-- name: FindLinkedPostIDForInboxParent :one
+SELECT spr.post_id
+FROM social_post_results spr
+WHERE spr.social_account_id = $1
+  AND spr.external_id = $2
+LIMIT 1
+`
+
+type FindLinkedPostIDForInboxParentParams struct {
+	SocialAccountID string      `json:"social_account_id"`
+	ExternalID      pgtype.Text `json:"external_id"`
+}
+
+func (q *Queries) FindLinkedPostIDForInboxParent(ctx context.Context, arg FindLinkedPostIDForInboxParentParams) (string, error) {
+	row := q.db.QueryRow(ctx, findLinkedPostIDForInboxParent, arg.SocialAccountID, arg.ExternalID)
+	var post_id string
+	err := row.Scan(&post_id)
+	return post_id, err
+}
+
 const findSocialAccountByPlatformAndExternalID = `-- name: FindSocialAccountByPlatformAndExternalID :one
 SELECT sa.id, sa.external_account_id, p.workspace_id
 FROM social_accounts sa
@@ -106,7 +126,7 @@ func (q *Queries) FindSocialAccountByPlatformAndExternalID(ctx context.Context, 
 }
 
 const getInboxItem = `-- name: GetInboxItem :one
-SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata FROM inbox_items
+SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -134,6 +154,49 @@ func (q *Queries) GetInboxItem(ctx context.Context, arg GetInboxItemParams) (Inb
 		&i.ReceivedAt,
 		&i.CreatedAt,
 		&i.Metadata,
+		&i.ThreadKey,
+		&i.ThreadStatus,
+		&i.AssignedTo,
+		&i.LinkedPostID,
+	)
+	return i, err
+}
+
+const getInboxItemByExternalID = `-- name: GetInboxItemByExternalID :one
+SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
+WHERE social_account_id = $1
+  AND external_id = $2
+LIMIT 1
+`
+
+type GetInboxItemByExternalIDParams struct {
+	SocialAccountID string `json:"social_account_id"`
+	ExternalID      string `json:"external_id"`
+}
+
+func (q *Queries) GetInboxItemByExternalID(ctx context.Context, arg GetInboxItemByExternalIDParams) (InboxItem, error) {
+	row := q.db.QueryRow(ctx, getInboxItemByExternalID, arg.SocialAccountID, arg.ExternalID)
+	var i InboxItem
+	err := row.Scan(
+		&i.ID,
+		&i.SocialAccountID,
+		&i.WorkspaceID,
+		&i.Source,
+		&i.ExternalID,
+		&i.ParentExternalID,
+		&i.AuthorName,
+		&i.AuthorID,
+		&i.AuthorAvatarUrl,
+		&i.Body,
+		&i.IsRead,
+		&i.IsOwn,
+		&i.ReceivedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.ThreadKey,
+		&i.ThreadStatus,
+		&i.AssignedTo,
+		&i.LinkedPostID,
 	)
 	return i, err
 }
@@ -188,7 +251,7 @@ func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccou
 }
 
 const listInboxItemsByParent = `-- name: ListInboxItemsByParent :many
-SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata FROM inbox_items
+SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
 WHERE social_account_id = $1
   AND parent_external_id = $2
 ORDER BY received_at ASC
@@ -224,6 +287,10 @@ func (q *Queries) ListInboxItemsByParent(ctx context.Context, arg ListInboxItems
 			&i.ReceivedAt,
 			&i.CreatedAt,
 			&i.Metadata,
+			&i.ThreadKey,
+			&i.ThreadStatus,
+			&i.AssignedTo,
+			&i.LinkedPostID,
 		); err != nil {
 			return nil, err
 		}
@@ -236,7 +303,7 @@ func (q *Queries) ListInboxItemsByParent(ctx context.Context, arg ListInboxItems
 }
 
 const listInboxItemsByWorkspace = `-- name: ListInboxItemsByWorkspace :many
-SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata FROM inbox_items
+SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
 WHERE workspace_id = $1
   AND ($3::TEXT IS NULL OR source = $3::TEXT)
   AND ($4::BOOLEAN IS NULL OR is_read = $4::BOOLEAN)
@@ -281,6 +348,10 @@ func (q *Queries) ListInboxItemsByWorkspace(ctx context.Context, arg ListInboxIt
 			&i.ReceivedAt,
 			&i.CreatedAt,
 			&i.Metadata,
+			&i.ThreadKey,
+			&i.ThreadStatus,
+			&i.AssignedTo,
+			&i.LinkedPostID,
 		); err != nil {
 			return nil, err
 		}
@@ -322,15 +393,50 @@ func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadPa
 	return err
 }
 
+const updateInboxThreadState = `-- name: UpdateInboxThreadState :execrows
+UPDATE inbox_items
+SET thread_status = $5,
+    assigned_to = NULLIF($6, '')
+WHERE workspace_id = $1
+  AND social_account_id = $2
+  AND source = $3
+  AND thread_key = $4
+`
+
+type UpdateInboxThreadStateParams struct {
+	WorkspaceID     string      `json:"workspace_id"`
+	SocialAccountID string      `json:"social_account_id"`
+	Source          string      `json:"source"`
+	ThreadKey       string      `json:"thread_key"`
+	ThreadStatus    string      `json:"thread_status"`
+	Column6         interface{} `json:"column_6"`
+}
+
+func (q *Queries) UpdateInboxThreadState(ctx context.Context, arg UpdateInboxThreadStateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateInboxThreadState,
+		arg.WorkspaceID,
+		arg.SocialAccountID,
+		arg.Source,
+		arg.ThreadKey,
+		arg.ThreadStatus,
+		arg.Column6,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertInboxItem = `-- name: UpsertInboxItem :one
 INSERT INTO inbox_items (
   social_account_id, workspace_id, source, external_id,
   parent_external_id, author_name, author_id, author_avatar_url,
-  body, is_own, received_at, metadata
+  body, is_own, received_at, metadata, thread_key, thread_status,
+  assigned_to, linked_post_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 ON CONFLICT (social_account_id, external_id) DO NOTHING
-RETURNING id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata
+RETURNING id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id
 `
 
 type UpsertInboxItemParams struct {
@@ -346,6 +452,10 @@ type UpsertInboxItemParams struct {
 	IsOwn            bool               `json:"is_own"`
 	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
 	Metadata         []byte             `json:"metadata"`
+	ThreadKey        string             `json:"thread_key"`
+	ThreadStatus     string             `json:"thread_status"`
+	AssignedTo       pgtype.Text        `json:"assigned_to"`
+	LinkedPostID     pgtype.Text        `json:"linked_post_id"`
 }
 
 func (q *Queries) UpsertInboxItem(ctx context.Context, arg UpsertInboxItemParams) (InboxItem, error) {
@@ -362,6 +472,10 @@ func (q *Queries) UpsertInboxItem(ctx context.Context, arg UpsertInboxItemParams
 		arg.IsOwn,
 		arg.ReceivedAt,
 		arg.Metadata,
+		arg.ThreadKey,
+		arg.ThreadStatus,
+		arg.AssignedTo,
+		arg.LinkedPostID,
 	)
 	var i InboxItem
 	err := row.Scan(
@@ -380,6 +494,10 @@ func (q *Queries) UpsertInboxItem(ctx context.Context, arg UpsertInboxItemParams
 		&i.ReceivedAt,
 		&i.CreatedAt,
 		&i.Metadata,
+		&i.ThreadKey,
+		&i.ThreadStatus,
+		&i.AssignedTo,
+		&i.LinkedPostID,
 	)
 	return i, err
 }

@@ -94,9 +94,13 @@ type metaWebhookEntry struct {
 	} `json:"changes"`
 	// Instagram messaging uses "messaging" instead of "changes".
 	Messaging []struct {
-		Sender    struct{ ID string `json:"id"` } `json:"sender"`
-		Recipient struct{ ID string `json:"id"` } `json:"recipient"`
-		Timestamp int64                            `json:"timestamp"`
+		Sender struct {
+			ID string `json:"id"`
+		} `json:"sender"`
+		Recipient struct {
+			ID string `json:"id"`
+		} `json:"recipient"`
+		Timestamp int64 `json:"timestamp"`
 		Message   *struct {
 			Mid  string `json:"mid"`
 			Text string `json:"text"`
@@ -196,6 +200,10 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 			IsOwn:            isOwn,
 			ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
 			Metadata:         []byte("{}"),
+			ThreadKey:        inboxThreadKey("ig_dm", msg.Message.Mid, "", msg.Sender.ID),
+			ThreadStatus:     "open",
+			AssignedTo:       pgtype.Text{},
+			LinkedPostID:     pgtype.Text{},
 		})
 		if err != nil {
 			slog.Warn("meta webhook: upsert DM failed", "err", err)
@@ -205,11 +213,11 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 
 // igCommentValue is the shape of the "value" field for comment webhooks.
 type igCommentValue struct {
-	ID        string `json:"id"`
-	Text      string `json:"text"`
-	MediaID   string `json:"media_id"`
-	ParentID  string `json:"parent_id"`
-	From      struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	MediaID  string `json:"media_id"`
+	ParentID string `json:"parent_id"`
+	From     struct {
 		ID       string `json:"id"`
 		Username string `json:"username"`
 	} `json:"from"`
@@ -246,6 +254,10 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 		IsOwn:            isOwn,
 		ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
 		Metadata:         []byte("{}"),
+		ThreadKey:        inboxThreadKey("ig_comment", val.ID, parentID, val.From.ID),
+		ThreadStatus:     "open",
+		AssignedTo:       pgtype.Text{},
+		LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, account.ID, parentID),
 	})
 	if err != nil {
 		slog.Warn("meta webhook: upsert comment failed", "err", err)

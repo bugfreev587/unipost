@@ -25,6 +25,46 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
+func inboxThreadKey(source, externalID, parentExternalID, authorID string) string {
+	if source == "ig_dm" {
+		if parentExternalID != "" {
+			return parentExternalID
+		}
+		if authorID != "" {
+			return authorID
+		}
+		return externalID
+	}
+	if parentExternalID != "" {
+		return parentExternalID
+	}
+	return externalID
+}
+
+func resolveInboxLinkedPostID(ctx context.Context, queries *db.Queries, socialAccountID, parentExternalID string) pgtype.Text {
+	if parentExternalID == "" {
+		return pgtype.Text{}
+	}
+
+	postID, err := queries.FindLinkedPostIDForInboxParent(ctx, db.FindLinkedPostIDForInboxParentParams{
+		SocialAccountID: socialAccountID,
+		ExternalID:      pgtype.Text{String: parentExternalID, Valid: true},
+	})
+	if err == nil && postID != "" {
+		return pgtype.Text{String: postID, Valid: true}
+	}
+
+	parentItem, err := queries.GetInboxItemByExternalID(ctx, db.GetInboxItemByExternalIDParams{
+		SocialAccountID: socialAccountID,
+		ExternalID:      parentExternalID,
+	})
+	if err == nil && parentItem.LinkedPostID.Valid {
+		return parentItem.LinkedPostID
+	}
+
+	return pgtype.Text{}
+}
+
 type InboxSyncWorker struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
@@ -101,6 +141,10 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 							IsOwn:            false,
 							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 							Metadata:         []byte("{}"),
+							ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+							ThreadStatus:     "open",
+							AssignedTo:       pgtype.Text{},
+							LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
 							totalNew++
@@ -126,6 +170,10 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						IsOwn:            isOwn,
 						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 						Metadata:         []byte("{}"),
+						ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+						ThreadStatus:     "open",
+						AssignedTo:       pgtype.Text{},
+						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
 						totalNew++
@@ -159,6 +207,10 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 							IsOwn:            isOwn,
 							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 							Metadata:         []byte("{}"),
+							ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+							ThreadStatus:     "open",
+							AssignedTo:       pgtype.Text{},
+							LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
 							totalNew++

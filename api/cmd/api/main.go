@@ -468,6 +468,7 @@ func main() {
 		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/read", inboxHandler.MarkRead)
 		r.Post("/v1/workspaces/{workspaceID}/inbox/mark-all-read", inboxHandler.MarkAllRead)
 		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/reply", inboxHandler.Reply)
+		r.Post("/v1/workspaces/{workspaceID}/inbox/{id}/thread-state", inboxHandler.UpdateThreadState)
 		r.Post("/v1/workspaces/{workspaceID}/inbox/sync", inboxHandler.Sync)
 	})
 

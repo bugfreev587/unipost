@@ -63,6 +63,10 @@ type InboxItem struct {
 	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	Metadata         []byte             `json:"metadata"`
+	ThreadKey        string             `json:"thread_key"`
+	ThreadStatus     string             `json:"thread_status"`
+	AssignedTo       pgtype.Text        `json:"assigned_to"`
+	LinkedPostID     pgtype.Text        `json:"linked_post_id"`
 }
 
 type LandingVisit struct {

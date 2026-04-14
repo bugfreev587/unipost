@@ -977,7 +977,11 @@ export interface InboxItem {
   workspace_id: string;
   source: "ig_comment" | "ig_dm" | "threads_reply";
   external_id: string;
+  thread_key: string;
+  thread_status: "open" | "assigned" | "resolved";
   parent_external_id?: string;
+  assigned_to?: string;
+  linked_post_id?: string;
   author_name?: string;
   author_id?: string;
   author_avatar_url?: string;
@@ -1038,6 +1042,18 @@ export async function replyToInboxItem(
   return request(`/v1/workspaces/${workspaceId}/inbox/${id}/reply`, token, {
     method: "POST",
     body: JSON.stringify({ text }),
+  });
+}
+
+export async function updateInboxThreadState(
+  token: string,
+  workspaceId: string,
+  id: string,
+  data: { thread_status: "open" | "assigned" | "resolved"; assigned_to?: string }
+): Promise<ApiResponse<InboxItem>> {
+  return request(`/v1/workspaces/${workspaceId}/inbox/${id}/thread-state`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
   });
 }
 

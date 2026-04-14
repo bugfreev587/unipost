@@ -36,7 +36,11 @@ type inboxItemResponse struct {
 	WorkspaceID      string  `json:"workspace_id"`
 	Source           string  `json:"source"`
 	ExternalID       string  `json:"external_id"`
+	ThreadKey        string  `json:"thread_key"`
+	ThreadStatus     string  `json:"thread_status"`
 	ParentExternalID *string `json:"parent_external_id,omitempty"`
+	AssignedTo       *string `json:"assigned_to,omitempty"`
+	LinkedPostID     *string `json:"linked_post_id,omitempty"`
 	AuthorName       *string `json:"author_name,omitempty"`
 	AuthorID         *string `json:"author_id,omitempty"`
 	AuthorAvatarURL  *string `json:"author_avatar_url,omitempty"`
@@ -46,9 +50,9 @@ type inboxItemResponse struct {
 	ReceivedAt       string  `json:"received_at"`
 	CreatedAt        string  `json:"created_at"`
 	// Joined fields from social_accounts for display.
-	AccountName      string  `json:"account_name,omitempty"`
-	AccountPlatform  string  `json:"account_platform,omitempty"`
-	AccountAvatarURL string  `json:"account_avatar_url,omitempty"`
+	AccountName      string `json:"account_name,omitempty"`
+	AccountPlatform  string `json:"account_platform,omitempty"`
+	AccountAvatarURL string `json:"account_avatar_url,omitempty"`
 }
 
 func toInboxResponse(item db.InboxItem) inboxItemResponse {
@@ -58,6 +62,8 @@ func toInboxResponse(item db.InboxItem) inboxItemResponse {
 		WorkspaceID:     item.WorkspaceID,
 		Source:          item.Source,
 		ExternalID:      item.ExternalID,
+		ThreadKey:       item.ThreadKey,
+		ThreadStatus:    item.ThreadStatus,
 		IsRead:          item.IsRead,
 		IsOwn:           item.IsOwn,
 		ReceivedAt:      item.ReceivedAt.Time.Format(time.RFC3339),
@@ -68,6 +74,12 @@ func toInboxResponse(item db.InboxItem) inboxItemResponse {
 	}
 	if item.AuthorName.Valid {
 		r.AuthorName = &item.AuthorName.String
+	}
+	if item.AssignedTo.Valid {
+		r.AssignedTo = &item.AssignedTo.String
+	}
+	if item.LinkedPostID.Valid {
+		r.LinkedPostID = &item.LinkedPostID.String
 	}
 	if item.AuthorID.Valid {
 		r.AuthorID = &item.AuthorID.String
@@ -265,9 +277,72 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		IsOwn:            true,
 		ReceivedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		Metadata:         []byte("{}"),
+		ThreadKey:        item.ThreadKey,
+		ThreadStatus:     item.ThreadStatus,
+		AssignedTo:       item.AssignedTo,
+		LinkedPostID:     item.LinkedPostID,
 	})
 
 	writeSuccess(w, toInboxResponse(replyItem))
+}
+
+// UpdateThreadState persists a thread-level status for a conversation.
+// POST /v1/workspaces/{workspaceID}/inbox/{id}/thread-state
+// Body: { "thread_status": "open" | "assigned" | "resolved", "assigned_to": "..." }
+func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request) {
+	workspaceID := chi.URLParam(r, "workspaceID")
+	id := chi.URLParam(r, "id")
+
+	var body struct {
+		ThreadStatus string `json:"thread_status"`
+		AssignedTo   string `json:"assigned_to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	switch body.ThreadStatus {
+	case "open", "assigned", "resolved":
+	default:
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "thread_status must be open, assigned, or resolved")
+		return
+	}
+
+	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID: id, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+		return
+	}
+
+	threadKey := item.ThreadKey
+	if threadKey == "" {
+		threadKey = inboxThreadKey(item.Source, item.ExternalID, item.ParentExternalID.String, item.AuthorID.String)
+	}
+
+	_, err = h.queries.UpdateInboxThreadState(r.Context(), db.UpdateInboxThreadStateParams{
+		WorkspaceID:     workspaceID,
+		SocialAccountID: item.SocialAccountID,
+		Source:          item.Source,
+		ThreadKey:       threadKey,
+		ThreadStatus:    body.ThreadStatus,
+		Column6:         body.AssignedTo,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update thread state")
+		return
+	}
+
+	updated, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID: id, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reload inbox item")
+		return
+	}
+
+	writeSuccess(w, toInboxResponse(updated))
 }
 
 // Sync manually fetches comments/replies from all connected IG/Threads accounts.
@@ -290,11 +365,11 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		Error     string `json:"error"`
 	}
 	type syncAccountDetail struct {
-		AccountID    string `json:"account_id"`
-		Platform     string `json:"platform"`
-		AccountName  string `json:"account_name"`
-		MediaFound   int    `json:"media_found"`
-		CommentsFound int   `json:"comments_found"`
+		AccountID     string `json:"account_id"`
+		Platform      string `json:"platform"`
+		AccountName   string `json:"account_name"`
+		MediaFound    int    `json:"media_found"`
+		CommentsFound int    `json:"comments_found"`
 	}
 
 	totalNew := 0
@@ -356,6 +431,10 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							IsOwn:            isOwn,
 							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 							Metadata:         []byte("{}"),
+							ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+							ThreadStatus:     "open",
+							AssignedTo:       pgtype.Text{},
+							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
 							totalNew++
@@ -383,6 +462,10 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						IsOwn:            isOwn,
 						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 						Metadata:         []byte("{}"),
+						ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+						ThreadStatus:     "open",
+						AssignedTo:       pgtype.Text{},
+						LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
 						totalNew++
@@ -426,6 +509,10 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							IsOwn:            isOwn,
 							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
 							Metadata:         []byte("{}"),
+							ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+							ThreadStatus:     "open",
+							AssignedTo:       pgtype.Text{},
+							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
 							totalNew++

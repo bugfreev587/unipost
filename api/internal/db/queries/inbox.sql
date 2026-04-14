@@ -2,9 +2,10 @@
 INSERT INTO inbox_items (
   social_account_id, workspace_id, source, external_id,
   parent_external_id, author_name, author_id, author_avatar_url,
-  body, is_own, received_at, metadata
+  body, is_own, received_at, metadata, thread_key, thread_status,
+  assigned_to, linked_post_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 ON CONFLICT (social_account_id, external_id) DO NOTHING
 RETURNING *;
 
@@ -20,6 +21,12 @@ LIMIT $2;
 SELECT * FROM inbox_items
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetInboxItemByExternalID :one
+SELECT * FROM inbox_items
+WHERE social_account_id = $1
+  AND external_id = $2
+LIMIT 1;
+
 -- name: MarkInboxItemRead :exec
 UPDATE inbox_items
 SET is_read = true
@@ -29,6 +36,15 @@ WHERE id = $1 AND workspace_id = $2;
 UPDATE inbox_items
 SET is_read = true
 WHERE workspace_id = $1 AND is_read = false;
+
+-- name: UpdateInboxThreadState :execrows
+UPDATE inbox_items
+SET thread_status = $5,
+    assigned_to = NULLIF($6, '')
+WHERE workspace_id = $1
+  AND social_account_id = $2
+  AND source = $3
+  AND thread_key = $4;
 
 -- name: CountUnreadByWorkspace :one
 SELECT COUNT(*)::INTEGER AS count
@@ -40,6 +56,13 @@ SELECT * FROM inbox_items
 WHERE social_account_id = $1
   AND parent_external_id = $2
 ORDER BY received_at ASC;
+
+-- name: FindLinkedPostIDForInboxParent :one
+SELECT spr.post_id
+FROM social_post_results spr
+WHERE spr.social_account_id = $1
+  AND spr.external_id = $2
+LIMIT 1;
 
 -- name: FindSocialAccountByPlatformAndExternalID :one
 -- Webhook routing: find an active social account by platform + external_account_id,
