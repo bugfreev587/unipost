@@ -257,6 +257,44 @@ func (a *ThreadsAdapter) postContainer(ctx context.Context, userID string, param
 	return container.ID, nil
 }
 
+// FetchMediaDetails returns details about a specific Threads post.
+func (a *ThreadsAdapter) FetchMediaDetails(ctx context.Context, accessToken string, mediaID string) (*MediaDetails, error) {
+	u := fmt.Sprintf("https://graph.threads.net/v1.0/%s?fields=id,text,media_url,timestamp,media_type,permalink&access_token=%s",
+		mediaID, accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("threads fetch media details: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("threads fetch media details %d: %s", resp.StatusCode, string(body))
+	}
+	var raw struct {
+		ID        string `json:"id"`
+		Text      string `json:"text"`
+		MediaURL  string `json:"media_url"`
+		Timestamp string `json:"timestamp"`
+		MediaType string `json:"media_type"`
+		Permalink string `json:"permalink"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	return &MediaDetails{
+		ID:        raw.ID,
+		Caption:   raw.Text,
+		MediaURL:  raw.MediaURL,
+		Timestamp: raw.Timestamp,
+		MediaType: raw.MediaType,
+		Permalink: raw.Permalink,
+	}, nil
+}
+
 // FetchRecentMedia returns the IDs of the account's recent Threads posts
 // directly from the API. Covers posts published natively, not just
 // those published through UniPost.

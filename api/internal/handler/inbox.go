@@ -223,23 +223,22 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adapter := platform.NewInstagramAdapter()
-
 	// Try parent_external_id first (media ID), then fall back to
-	// looking up the comment's own media via the IG API.
+	// looking up the comment's own media via the platform API.
 	mediaID := ""
 	if item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
 		mediaID = item.ParentExternalID.String
 	} else if item.Source == "ig_comment" {
 		// The comment has no parent_external_id — look up which
 		// media it belongs to via the comment's own ID.
+		igAdapter := platform.NewInstagramAdapter()
 		type commentInfo struct {
 			Media struct {
 				ID string `json:"id"`
 			} `json:"media"`
 		}
 		var info commentInfo
-		if infoBytes, fetchErr := adapter.FetchRaw(r.Context(), accessToken,
+		if infoBytes, fetchErr := igAdapter.FetchRaw(r.Context(), accessToken,
 			"https://graph.instagram.com/v21.0/"+item.ExternalID+"?fields=media{id}"); fetchErr == nil {
 			if jsonErr := json.Unmarshal(infoBytes, &info); jsonErr == nil && info.Media.ID != "" {
 				mediaID = info.Media.ID
@@ -252,7 +251,12 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	details, err := adapter.FetchMediaDetails(r.Context(), accessToken, mediaID)
+	var details *platform.MediaDetails
+	if item.Source == "threads_reply" {
+		details, err = platform.NewThreadsAdapter().FetchMediaDetails(r.Context(), accessToken, mediaID)
+	} else {
+		details, err = platform.NewInstagramAdapter().FetchMediaDetails(r.Context(), accessToken, mediaID)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "PLATFORM_ERROR", "Failed to fetch media: "+err.Error())
 		return

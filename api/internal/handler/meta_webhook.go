@@ -7,7 +7,7 @@
 // Meta sends the same webhook format for both Instagram and Threads
 // because both products live under a single Meta App. The "object"
 // field in the payload distinguishes Instagram ("instagram") from
-// Threads ("not yet documented but expected").
+// Threads ("threads").
 //
 // Verification handshake (GET):
 //   Meta sends hub.mode=subscribe, hub.challenge=<string>, and
@@ -156,6 +156,8 @@ func (h *MetaWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		switch envelope.Object {
 		case "instagram":
 			h.handleInstagramEntry(r, entry)
+		case "threads":
+			h.handleThreadsEntry(r, entry)
 		default:
 			slog.Info("meta webhook: unhandled object type", "object", envelope.Object)
 		}
@@ -346,6 +348,87 @@ func (h *MetaWebhookHandler) findAnyActiveAccount(r *http.Request, plat string) 
 		WorkspaceID:       acc.WorkspaceID,
 		ExternalAccountID: acc.ExternalAccountID,
 	}, nil
+}
+
+// handleThreadsEntry processes a single Threads webhook entry.
+// Entry.ID is the Threads user ID. Changes contain reply events.
+func (h *MetaWebhookHandler) handleThreadsEntry(r *http.Request, entry metaWebhookEntry) {
+	account, err := h.findAccountByExternalID(r, "threads", entry.ID)
+	if err != nil {
+		account, err = h.findAnyActiveAccount(r, "threads")
+		if err != nil {
+			slog.Warn("meta webhook: no active Threads account found",
+				"webhook_threads_id", entry.ID, "err", err)
+			return
+		}
+		slog.Info("meta webhook: matched Threads account via fallback",
+			"webhook_threads_id", entry.ID, "account_id", account.ID)
+	}
+
+	for _, change := range entry.Changes {
+		switch change.Field {
+		case "replies":
+			h.handleThreadsReply(r, account, change.Value)
+		default:
+			slog.Info("meta webhook: unhandled threads change field",
+				"field", change.Field, "threads_user_id", entry.ID)
+		}
+	}
+}
+
+// threadsReplyValue is the shape of the "value" field for Threads reply webhooks.
+type threadsReplyValue struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	MediaID  string `json:"media_id"`
+	ParentID string `json:"parent_id"`
+	From     struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+	} `json:"from"`
+	Timestamp int64 `json:"timestamp"`
+}
+
+func (h *MetaWebhookHandler) handleThreadsReply(r *http.Request, account *webhookAccount, raw json.RawMessage) {
+	var val threadsReplyValue
+	if err := json.Unmarshal(raw, &val); err != nil {
+		slog.Warn("meta webhook: decode threads reply value failed", "err", err)
+		return
+	}
+
+	parentID := val.MediaID
+	if val.ParentID != "" {
+		parentID = val.ParentID
+	}
+
+	isOwn := val.From.ID == account.ExternalAccountID
+	ts := time.Unix(val.Timestamp, 0)
+	if val.Timestamp == 0 {
+		ts = time.Now()
+	}
+
+	replyItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+		SocialAccountID:  account.ID,
+		WorkspaceID:      account.WorkspaceID,
+		Source:           "threads_reply",
+		ExternalID:       val.ID,
+		ParentExternalID: pgtype.Text{String: parentID, Valid: parentID != ""},
+		AuthorName:       pgtype.Text{String: val.From.Username, Valid: val.From.Username != ""},
+		AuthorID:         pgtype.Text{String: val.From.ID, Valid: val.From.ID != ""},
+		Body:             pgtype.Text{String: val.Text, Valid: val.Text != ""},
+		IsOwn:            isOwn,
+		ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
+		Metadata:         []byte("{}"),
+		ThreadKey:        inboxThreadKey("threads_reply", val.ID, parentID, val.From.ID),
+		ThreadStatus:     "open",
+		AssignedTo:       pgtype.Text{},
+		LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, account.ID, parentID),
+	})
+	if err != nil {
+		slog.Warn("meta webhook: upsert threads reply failed", "err", err)
+	} else {
+		ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(replyItem))
+	}
 }
 
 // verifyMetaWebhookSignature checks the X-Hub-Signature-256 header
