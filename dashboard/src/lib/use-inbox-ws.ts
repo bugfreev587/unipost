@@ -18,13 +18,16 @@ function getWsUrl(workspaceId: string, token: string): string {
  */
 export function useInboxWebSocket(
   workspaceId: string | null,
-  onNewItem: (item: InboxItem) => void
+  onNewItem: (item: InboxItem) => void,
+  onSyncComplete?: () => void
 ): { connected: boolean } {
   const { getToken } = useAuth();
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const onNewItemRef = useRef(onNewItem);
   onNewItemRef.current = onNewItem;
+  const onSyncCompleteRef = useRef(onSyncComplete);
+  onSyncCompleteRef.current = onSyncComplete;
   const mountedRef = useRef(true);
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
@@ -64,6 +67,8 @@ export function useInboxWebSocket(
             const msg = JSON.parse(e.data);
             if (msg.type === "inbox.new_item" && msg.item) {
               onNewItemRef.current(msg.item as InboxItem);
+            } else if (msg.type === "inbox.sync_complete") {
+              onSyncCompleteRef.current?.();
             }
           } catch {
             // ignore malformed messages

@@ -414,13 +414,20 @@ export default function InboxPage() {
   }, [load]);
 
   // Real-time: WebSocket pushes new items instantly.
-  const { connected: wsConnected } = useInboxWebSocket(workspaceId, (newItem) => {
-    setItems((prev) => {
-      if (prev.some((i) => i.id === newItem.id)) return prev;
-      return [...prev, newItem];
-    });
-    if (!newItem.is_own) setUnreadCount((c) => c + 1);
-  });
+  const { connected: wsConnected } = useInboxWebSocket(
+    workspaceId,
+    (newItem) => {
+      setItems((prev) => {
+        if (prev.some((i) => i.id === newItem.id)) return prev;
+        return [...prev, newItem];
+      });
+      if (!newItem.is_own) setUnreadCount((c) => c + 1);
+    },
+    () => {
+      // Background worker or manual sync found new items — reload all data
+      load();
+    }
+  );
 
   // Fallback: poll every 30s only when WebSocket is not connected.
   useEffect(() => {

@@ -15,19 +15,22 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
 
 type InboxHandler struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	pool      *pgxpool.Pool // for ws.Notify
 }
 
-func NewInboxHandler(queries *db.Queries, encryptor *crypto.AESEncryptor) *InboxHandler {
-	return &InboxHandler{queries: queries, encryptor: encryptor}
+func NewInboxHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxHandler {
+	return &InboxHandler{queries: queries, encryptor: encryptor, pool: pool}
 }
 
 // inboxItemResponse is the JSON shape returned to the frontend.
@@ -636,6 +639,15 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("inbox sync complete", "new_items", totalNew, "accounts", len(accounts), "errors", len(errors))
+
+	// Notify all connected WebSocket clients to refresh if new items arrived.
+	if totalNew > 0 {
+		ws.Notify(r.Context(), h.pool, workspaceID, map[string]any{
+			"type":      "inbox.sync_complete",
+			"new_items": totalNew,
+		})
+	}
+
 	writeSuccess(w, map[string]any{
 		"new_items":        totalNew,
 		"accounts_checked": len(accounts),

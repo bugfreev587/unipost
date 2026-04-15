@@ -19,10 +19,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
 
 func inboxThreadKey(source, externalID, parentExternalID, authorID string) string {
@@ -68,10 +70,11 @@ func resolveInboxLinkedPostID(ctx context.Context, queries *db.Queries, socialAc
 type InboxSyncWorker struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	pool      *pgxpool.Pool
 }
 
-func NewInboxSyncWorker(queries *db.Queries, encryptor *crypto.AESEncryptor) *InboxSyncWorker {
-	return &InboxSyncWorker{queries: queries, encryptor: encryptor}
+func NewInboxSyncWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxSyncWorker {
+	return &InboxSyncWorker{queries: queries, encryptor: encryptor, pool: pool}
 }
 
 func (w *InboxSyncWorker) Start(ctx context.Context) {
@@ -245,5 +248,16 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 
 	if totalNew > 0 {
 		slog.Info("inbox sync worker: new items", "count", totalNew)
+		// Notify all workspaces that had new items.
+		notified := map[string]bool{}
+		for _, acc := range accounts {
+			if !notified[acc.WorkspaceID] {
+				ws.Notify(ctx, w.pool, acc.WorkspaceID, map[string]any{
+					"type":      "inbox.sync_complete",
+					"new_items": totalNew,
+				})
+				notified[acc.WorkspaceID] = true
+			}
+		}
 	}
 }

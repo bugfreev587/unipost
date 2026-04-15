@@ -244,7 +244,7 @@ func main() {
 	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
 	go analyticsRefreshWorker.Start(workerCtx)
 
-	inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor)
+	inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor, pool)
 	go inboxSyncWorker.Start(workerCtx)
 
 	// WebSocket hub for real-time inbox delivery.
@@ -473,7 +473,7 @@ func main() {
 
 		// Inbox (dashboard, workspace-scoped) — unified view of
 		// Instagram comments/DMs and Threads replies.
-		inboxHandler := handler.NewInboxHandler(queries, encryptor)
+		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool)
 		r.Route("/v1/workspaces/{workspaceID}/inbox", func(r chi.Router) {
 			r.Get("/", inboxHandler.List)
 			r.Get("/unread-count", inboxHandler.UnreadCount)
