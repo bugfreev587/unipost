@@ -35,11 +35,13 @@ import {
 
 // Feature flag: NEXT_PUBLIC_FEATURE_INBOX controls Inbox visibility.
 // "true" = everyone, "user_id1,user_id2" = only those users, unset = hidden.
-function isFeatureEnabled(envVar: string | undefined, userId: string | undefined): boolean {
+function isFeatureEnabled(envVar: string | undefined, userId: string | undefined, userEmail: string | undefined): boolean {
   if (!envVar) return false;
   if (envVar === "true") return true;
-  if (!userId) return false;
-  return envVar.split(",").map((s) => s.trim()).includes(userId);
+  const allowed = envVar.split(",").map((s) => s.trim().toLowerCase());
+  if (userId && allowed.includes(userId)) return true;
+  if (userEmail && allowed.includes(userEmail.toLowerCase())) return true;
+  return false;
 }
 
 // Each nav item can be tagged with the usage modes that require it.
@@ -69,11 +71,11 @@ const FEATURE_FLAGS: Record<string, string | undefined> = {
 };
 
 // Filter nav items based on workspace usage modes and feature flags.
-function filterNavItems(modes: string[], userId?: string) {
+function filterNavItems(modes: string[], userId?: string, userEmail?: string) {
   return ALL_NAV_ITEMS.filter((item) => {
     // Feature flag gate
     if ("featureFlag" in item && item.featureFlag) {
-      if (!isFeatureEnabled(FEATURE_FLAGS[item.featureFlag], userId)) return false;
+      if (!isFeatureEnabled(FEATURE_FLAGS[item.featureFlag], userId, userEmail)) return false;
     }
     // Usage mode gate
     if (modes.length > 0 && "modes" in item && item.modes) {
@@ -117,7 +119,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const profileId = urlProfileId ?? profiles[0]?.id;
   const currentProfile = profiles.find((p) => p.id === profileId);
 
-  const navItems = filterNavItems(workspace?.usage_modes ?? [], user?.id);
+  const navItems = filterNavItems(workspace?.usage_modes ?? [], user?.id, user?.primaryEmailAddress?.emailAddress);
 
   // Auto-expand the submenu that matches the current URL on navigation,
   // but only when the pathname actually changes — not on every render.
