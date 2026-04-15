@@ -628,7 +628,7 @@ export default function InboxPage() {
       selectedGroup && selectedGroup.source !== "ig_dm"
         ? buildCommentTree(selectedGroup.items, selectedGroup.threadKey)
         : [],
-    [selectedGroup]
+    [selectedGroup, items]
   );
 
   function renderConversationItem(item: InboxItem, depth = 0) {
