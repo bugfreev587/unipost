@@ -218,13 +218,17 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 		}
 		threadKey := senderID // fallback
 		parentExternalID := pgtype.Text{}
+		authorName := pgtype.Text{}
 		existing, lookupErr := h.queries.FindDMThreadKeyBySender(r.Context(), db.FindDMThreadKeyBySenderParams{
 			SocialAccountID: account.ID,
-			AuthorID:        pgtype.Text{String: senderID, Valid: true},
+			AuthorID:        pgtype.Text{String: msg.Sender.ID, Valid: true},
 		})
-		if lookupErr == nil && existing.ThreadKey != "" {
-			threadKey = existing.ThreadKey
+		if lookupErr == nil {
+			if existing.ThreadKey != "" {
+				threadKey = existing.ThreadKey
+			}
 			parentExternalID = existing.ParentExternalID
+			authorName = existing.AuthorName
 		}
 
 		dmItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
@@ -233,7 +237,7 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 			Source:           "ig_dm",
 			ExternalID:       msg.Message.Mid,
 			ParentExternalID: parentExternalID,
-			AuthorName:       pgtype.Text{},
+			AuthorName:       authorName,
 			AuthorID:         pgtype.Text{String: msg.Sender.ID, Valid: true},
 			Body:             pgtype.Text{String: msg.Message.Text, Valid: msg.Message.Text != ""},
 			IsOwn:            isOwn,

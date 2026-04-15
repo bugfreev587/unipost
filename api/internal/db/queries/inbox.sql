@@ -68,7 +68,7 @@ LIMIT 1;
 -- Find the thread_key and parent_external_id for an existing DM
 -- conversation with a given sender, so webhook-delivered messages
 -- can join the same thread as sync-fetched ones.
-SELECT thread_key, parent_external_id
+SELECT thread_key, parent_external_id, author_name
 FROM inbox_items
 WHERE social_account_id = $1
   AND source = 'ig_dm'

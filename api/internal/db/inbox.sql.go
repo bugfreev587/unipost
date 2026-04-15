@@ -51,7 +51,7 @@ func (q *Queries) FindAnyActiveAccountByPlatform(ctx context.Context, platform s
 }
 
 const findDMThreadKeyBySender = `-- name: FindDMThreadKeyBySender :one
-SELECT thread_key, parent_external_id
+SELECT thread_key, parent_external_id, author_name
 FROM inbox_items
 WHERE social_account_id = $1
   AND source = 'ig_dm'
@@ -69,6 +69,7 @@ type FindDMThreadKeyBySenderParams struct {
 type FindDMThreadKeyBySenderRow struct {
 	ThreadKey        string      `json:"thread_key"`
 	ParentExternalID pgtype.Text `json:"parent_external_id"`
+	AuthorName       pgtype.Text `json:"author_name"`
 }
 
 // Find the thread_key and parent_external_id for an existing DM
@@ -77,7 +78,7 @@ type FindDMThreadKeyBySenderRow struct {
 func (q *Queries) FindDMThreadKeyBySender(ctx context.Context, arg FindDMThreadKeyBySenderParams) (FindDMThreadKeyBySenderRow, error) {
 	row := q.db.QueryRow(ctx, findDMThreadKeyBySender, arg.SocialAccountID, arg.AuthorID)
 	var i FindDMThreadKeyBySenderRow
-	err := row.Scan(&i.ThreadKey, &i.ParentExternalID)
+	err := row.Scan(&i.ThreadKey, &i.ParentExternalID, &i.AuthorName)
 	return i, err
 }
 
