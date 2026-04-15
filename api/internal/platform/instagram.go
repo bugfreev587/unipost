@@ -161,9 +161,27 @@ func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text st
 	}
 	json.NewDecoder(pubResp.Body).Decode(&published)
 
+	// Fetch the permalink — IG URLs use shortcodes, not numeric IDs.
+	permalink := ""
+	if published.ID != "" {
+		permReq, _ := http.NewRequestWithContext(ctx, "GET",
+			fmt.Sprintf("https://graph.instagram.com/v21.0/%s?fields=permalink&access_token=%s", published.ID, accessToken), nil)
+		if permResp, permErr := a.client.Do(permReq); permErr == nil {
+			defer permResp.Body.Close()
+			var permData struct {
+				Permalink string `json:"permalink"`
+			}
+			json.NewDecoder(permResp.Body).Decode(&permData)
+			permalink = permData.Permalink
+		}
+	}
+	if permalink == "" {
+		permalink = fmt.Sprintf("https://www.instagram.com/p/%s/", published.ID)
+	}
+
 	return &PostResult{
 		ExternalID: published.ID,
-		URL:        fmt.Sprintf("https://www.instagram.com/p/%s/", published.ID),
+		URL:        permalink,
 	}, nil
 }
 
