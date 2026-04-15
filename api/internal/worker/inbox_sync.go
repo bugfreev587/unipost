@@ -157,7 +157,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 			dmEntries, dmErr := adapter.FetchConversations(ctx, accessToken)
 			if dmErr == nil {
 				for _, e := range dmEntries {
-					isOwn := e.AuthorID == acc.ExternalAccountID
+					isOwn := e.AuthorID == acc.ExternalAccountID || (e.AuthorName != "" && e.AuthorName == acc.AccountName.String)
 					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
 						SocialAccountID:  acc.ID,
 						WorkspaceID:      acc.WorkspaceID,

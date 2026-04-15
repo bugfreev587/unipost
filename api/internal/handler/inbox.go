@@ -508,7 +508,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 					slog.Info("inbox sync: fetched ig comments",
 						"media_id", mediaID, "count", len(entries))
 					for _, e := range entries {
-						isOwn := e.AuthorID == acc.ExternalAccountID
+						isOwn := e.AuthorID == acc.ExternalAccountID || (e.AuthorName != "" && e.AuthorName == acc.AccountName.String)
 						_, uErr := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 							SocialAccountID:  acc.ID,
 							WorkspaceID:      workspaceID,
@@ -539,7 +539,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 				slog.Warn("inbox sync: fetch ig DMs failed", "account_id", acc.ID, "err", err)
 			} else {
 				for _, e := range dmEntries {
-					isOwn := e.AuthorID == acc.ExternalAccountID
+					isOwn := e.AuthorID == acc.ExternalAccountID || (e.AuthorName != "" && e.AuthorName == acc.AccountName.String)
 					_, uErr := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 						SocialAccountID:  acc.ID,
 						WorkspaceID:      workspaceID,
