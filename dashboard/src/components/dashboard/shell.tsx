@@ -97,16 +97,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   const navItems = filterNavItems(workspace?.usage_modes ?? []);
 
+  // Auto-expand the submenu that matches the current URL on navigation,
+  // but only when the pathname actually changes — not on every render.
+  // This prevents the effect from overriding manual submenu toggling.
   useEffect(() => {
     const activeSubmenuParent = navItems.find((item) => item.submenu && pathname.includes(item.href));
-    if (!activeSubmenuParent || activeSubmenuParent.href === expandedMenu) return;
-
-    const timer = window.setTimeout(() => {
+    if (activeSubmenuParent) {
       setExpandedMenu(activeSubmenuParent.href);
-    }, 0);
-
-    return () => window.clearTimeout(timer);
-  }, [expandedMenu, navItems, pathname]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   useEffect(() => {
     let cancelled = false;
