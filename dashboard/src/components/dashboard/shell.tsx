@@ -86,6 +86,7 @@ function filterNavItems(modes: string[], userId?: string, userEmail?: string) {
     if (!item.submenu) return item;
     const filteredSub = item.submenu.filter((sub) => {
       if (!("modes" in sub) || !sub.modes) return true;
+      if (modes.length === 0) return true; // "All features" = show everything
       return (sub.modes as string[]).some((m: string) => modes.includes(m));
     });
     return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
