@@ -83,7 +83,12 @@ func (h *Hub) BroadcastInboxItem(workspaceID string, item any) {
 
 // ServeConn runs the read/write pumps for a connection. Blocks until
 // the connection closes. Called as a goroutine from the HTTP handler.
-func (h *Hub) ServeConn(ctx context.Context, workspaceID string, ws *websocket.Conn) {
+func (h *Hub) ServeConn(parentCtx context.Context, workspaceID string, ws *websocket.Conn) {
+	// Detach from the HTTP request context so the connection stays
+	// alive after the handler returns. Use a cancel for cleanup.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	c := &Conn{ws: ws, send: make(chan []byte, 64)}
 	h.Register(workspaceID, c)
 	defer h.Unregister(workspaceID, c)
@@ -91,17 +96,17 @@ func (h *Hub) ServeConn(ctx context.Context, workspaceID string, ws *websocket.C
 	// Write pump: drain send channel to the WebSocket.
 	go func() {
 		for msg := range c.send {
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			err := ws.Write(ctx, websocket.MessageText, msg)
-			cancel()
+			writeCtx, writeCancel := context.WithTimeout(ctx, 5*time.Second)
+			err := ws.Write(writeCtx, websocket.MessageText, msg)
+			writeCancel()
 			if err != nil {
+				cancel()
 				return
 			}
 		}
 	}()
 
-	// Read pump: keep alive, detect disconnect. We don't expect
-	// client messages, but must read to process pings/pongs.
+	// Read pump: keep alive, detect disconnect.
 	for {
 		_, _, err := ws.Read(ctx)
 		if err != nil {

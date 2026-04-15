@@ -50,7 +50,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"app.unipost.dev", "localhost:3000", "unipost.dev"},
+		OriginPatterns: []string{"*.unipost.dev", "localhost:*", "*"},
 	})
 	if err != nil {
 		slog.Warn("ws: accept failed", "err", err)
