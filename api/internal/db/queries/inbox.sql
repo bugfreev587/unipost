@@ -10,11 +10,14 @@ ON CONFLICT (social_account_id, external_id) DO NOTHING
 RETURNING *;
 
 -- name: ListInboxItemsByWorkspace :many
-SELECT * FROM inbox_items
-WHERE workspace_id = $1
-  AND (sqlc.narg('source')::TEXT IS NULL OR source = sqlc.narg('source')::TEXT)
-  AND (sqlc.narg('is_read')::BOOLEAN IS NULL OR is_read = sqlc.narg('is_read')::BOOLEAN)
-ORDER BY received_at DESC
+SELECT i.* FROM inbox_items i
+JOIN social_accounts sa ON sa.id = i.social_account_id
+WHERE i.workspace_id = $1
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
+  AND (sqlc.narg('source')::TEXT IS NULL OR i.source = sqlc.narg('source')::TEXT)
+  AND (sqlc.narg('is_read')::BOOLEAN IS NULL OR i.is_read = sqlc.narg('is_read')::BOOLEAN)
+ORDER BY i.received_at DESC
 LIMIT $2;
 
 -- name: GetInboxItem :one
@@ -48,8 +51,12 @@ WHERE workspace_id = $1
 
 -- name: CountUnreadByWorkspace :one
 SELECT COUNT(*)::INTEGER AS count
-FROM inbox_items
-WHERE workspace_id = $1 AND is_read = false;
+FROM inbox_items i
+JOIN social_accounts sa ON sa.id = i.social_account_id
+WHERE i.workspace_id = $1
+  AND i.is_read = false
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL;
 
 -- name: ListInboxItemsByParent :many
 SELECT * FROM inbox_items
@@ -63,6 +70,16 @@ FROM social_post_results spr
 WHERE spr.social_account_id = $1
   AND spr.external_id = $2
 LIMIT 1;
+
+-- name: CleanupStaleInboxItems :execrows
+-- Cron cleanup: delete inbox items for accounts that have been
+-- disconnected for more than 7 days.
+DELETE FROM inbox_items
+WHERE social_account_id IN (
+  SELECT id FROM social_accounts
+  WHERE disconnected_at IS NOT NULL
+    AND disconnected_at < NOW() - INTERVAL '7 days'
+);
 
 -- name: FindDMThreadKeyBySender :one
 -- Find the thread_key and parent_external_id for an existing DM

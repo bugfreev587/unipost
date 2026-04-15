@@ -96,6 +96,11 @@ func (w *InboxSyncWorker) Start(ctx context.Context) {
 }
 
 func (w *InboxSyncWorker) poll(ctx context.Context) {
+	// Cleanup: remove inbox items for accounts disconnected > 7 days.
+	if cleaned, cleanErr := w.queries.CleanupStaleInboxItems(ctx); cleanErr == nil && cleaned > 0 {
+		slog.Info("inbox sync worker: cleaned up stale items", "deleted", cleaned)
+	}
+
 	// Find all workspaces that have IG/Threads accounts by scanning
 	// all active accounts across all workspaces.
 	accounts, err := w.queries.ListAllInboxAccounts(ctx)

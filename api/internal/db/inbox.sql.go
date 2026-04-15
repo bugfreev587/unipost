@@ -11,10 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cleanupStaleInboxItems = `-- name: CleanupStaleInboxItems :execrows
+DELETE FROM inbox_items
+WHERE social_account_id IN (
+  SELECT id FROM social_accounts
+  WHERE disconnected_at IS NOT NULL
+    AND disconnected_at < NOW() - INTERVAL '7 days'
+)
+`
+
+// Cron cleanup: delete inbox items for accounts that have been
+// disconnected for more than 7 days.
+func (q *Queries) CleanupStaleInboxItems(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, cleanupStaleInboxItems)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countUnreadByWorkspace = `-- name: CountUnreadByWorkspace :one
 SELECT COUNT(*)::INTEGER AS count
-FROM inbox_items
-WHERE workspace_id = $1 AND is_read = false
+FROM inbox_items i
+JOIN social_accounts sa ON sa.id = i.social_account_id
+WHERE i.workspace_id = $1
+  AND i.is_read = false
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
 `
 
 func (q *Queries) CountUnreadByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
@@ -361,11 +384,14 @@ func (q *Queries) ListInboxItemsByParent(ctx context.Context, arg ListInboxItems
 }
 
 const listInboxItemsByWorkspace = `-- name: ListInboxItemsByWorkspace :many
-SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
-WHERE workspace_id = $1
-  AND ($3::TEXT IS NULL OR source = $3::TEXT)
-  AND ($4::BOOLEAN IS NULL OR is_read = $4::BOOLEAN)
-ORDER BY received_at DESC
+SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id FROM inbox_items i
+JOIN social_accounts sa ON sa.id = i.social_account_id
+WHERE i.workspace_id = $1
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
+  AND ($3::TEXT IS NULL OR i.source = $3::TEXT)
+  AND ($4::BOOLEAN IS NULL OR i.is_read = $4::BOOLEAN)
+ORDER BY i.received_at DESC
 LIMIT $2
 `
 
