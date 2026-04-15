@@ -29,6 +29,8 @@ import {
   Cable,
   Layers,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 
 // Each nav item can be tagged with the usage modes that require it.
@@ -89,6 +91,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return null;
   });
   const [isAdmin, setIsAdmin] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
   const urlProfileId = profileMatch?.[1];
@@ -180,15 +183,33 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* ── SIDEBAR ── */}
       <aside
         style={{
-          width: 220, minWidth: 220,
+          width: sidebarCollapsed ? 0 : 220,
+          minWidth: sidebarCollapsed ? 0 : 220,
           background: "var(--sidebar)",
-          borderRight: "1px solid var(--dborder)",
+          borderRight: sidebarCollapsed ? "none" : "1px solid var(--dborder)",
           display: "flex", flexDirection: "column",
           overflow: "hidden",
+          transition: "width 0.2s, min-width 0.2s",
         }}
       >
         {/* ── Top: User profile ── */}
-        <div style={{ padding: "14px 10px", borderBottom: "1px solid var(--dborder)" }}>
+        <div style={{ padding: "14px 10px", borderBottom: "1px solid var(--dborder)", position: "relative" }}>
+          <button
+            onClick={() => setSidebarCollapsed(true)}
+            title="Collapse sidebar"
+            style={{
+              position: "absolute", top: 16, right: 10,
+              width: 24, height: 24, borderRadius: 6,
+              border: "none", background: "transparent",
+              color: "var(--dmuted)", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              zIndex: 1,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--sidebar-accent)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--dmuted)"; e.currentTarget.style.background = "transparent"; }}
+          >
+            <PanelLeftClose style={{ width: 14, height: 14 }} />
+          </button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -387,7 +408,26 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* ── MAIN ── */}
-      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+        {sidebarCollapsed && (
+          <button
+            onClick={() => setSidebarCollapsed(false)}
+            title="Expand sidebar"
+            style={{
+              position: "absolute", top: 14, left: 14, zIndex: 10,
+              width: 32, height: 32, borderRadius: 8,
+              border: "1px solid var(--dborder)",
+              background: "var(--sidebar)",
+              color: "var(--dmuted)", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 2px 8px rgba(0,0,0,.15)",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--dmuted)"; }}
+          >
+            <PanelLeftOpen style={{ width: 16, height: 16 }} />
+          </button>
+        )}
         <div style={{ flex: 1, overflowY: "auto", padding: "40px 48px" }}>
           {children}
         </div>

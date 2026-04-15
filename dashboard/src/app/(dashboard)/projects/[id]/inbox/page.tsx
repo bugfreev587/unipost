@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useParams } from "next/navigation";
 import {
@@ -383,6 +383,9 @@ export default function InboxPage() {
   const [replyingGroupId, setReplyingGroupId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [syncData, setSyncData] = useState<SyncResponse | null>(null);
+  const [leftPaneWidth, setLeftPaneWidth] = useState(360);
+  const isDragging = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [mediaContext, setMediaContext] = useState<Record<string, IGMediaContext>>({});
 
   const load = useCallback(async () => {
@@ -631,6 +634,33 @@ export default function InboxPage() {
         : [],
     [selectedGroup, items]
   );
+
+  function handleDragStart(e: React.MouseEvent) {
+    e.preventDefault();
+    isDragging.current = true;
+    const startX = e.clientX;
+    const startWidth = leftPaneWidth;
+
+    function onMouseMove(ev: MouseEvent) {
+      if (!isDragging.current) return;
+      const containerLeft = containerRef.current?.getBoundingClientRect().left || 0;
+      const newWidth = Math.min(Math.max(startWidth + (ev.clientX - startX), 240), 600);
+      setLeftPaneWidth(newWidth);
+    }
+
+    function onMouseUp() {
+      isDragging.current = false;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
 
   function renderConversationItem(item: InboxItem, depth = 0) {
     if (!selectedGroup) return null;
@@ -960,8 +990,8 @@ export default function InboxPage() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "360px minmax(0, 1fr)", gap: 0, border: "1px solid var(--dborder)", borderRadius: 14, overflow: "hidden", minHeight: 620 }}>
-        <aside style={{ borderRight: "1px solid var(--dborder)", background: "var(--sidebar)" }}>
+      <div ref={containerRef} style={{ display: "flex", border: "1px solid var(--dborder)", borderRadius: 14, overflow: "hidden", minHeight: 620 }}>
+        <div style={{ width: leftPaneWidth, minWidth: 240, maxWidth: 600, flexShrink: 0, background: "var(--sidebar)", overflowY: "auto" }}>
           {loading ? (
             <div style={{ padding: 24, color: "var(--dmuted)" }}>Loading inbox...</div>
           ) : activeGroups.length === 0 ? (
@@ -1040,9 +1070,23 @@ export default function InboxPage() {
               );
             })
           )}
-        </aside>
+        </div>
 
-        <section style={{ display: "flex", flexDirection: "column", minWidth: 0, background: "var(--surface)" }}>
+        {/* Drag handle */}
+        <div
+          onMouseDown={handleDragStart}
+          style={{
+            width: 4,
+            cursor: "col-resize",
+            background: "var(--dborder)",
+            flexShrink: 0,
+            transition: "background 0.15s",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--daccent)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--dborder)"; }}
+        />
+
+        <section style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1, background: "var(--surface)" }}>
           {!selectedGroup ? (
             <div style={{ padding: 28 }}>
               <SyncStateCard
