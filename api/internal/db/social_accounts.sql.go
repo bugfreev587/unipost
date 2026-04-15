@@ -110,7 +110,6 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = $1
   AND sa.external_account_id = $2
   AND p.workspace_id = $3
-  AND sa.status = 'active'
 LIMIT 1
 `
 
@@ -120,9 +119,9 @@ type FindSocialAccountByExternalIDParams struct {
 	WorkspaceID       string `json:"workspace_id"`
 }
 
-// Dedup check: find an existing active account with the same platform +
-// external_account_id anywhere in the workspace. Used during connect to
-// prevent the same platform account from being connected multiple times.
+// Dedup check: find an existing account (active OR disconnected) with the
+// same platform + external_account_id anywhere in the workspace. Used during
+// connect to reactivate disconnected accounts instead of creating duplicates.
 func (q *Queries) FindSocialAccountByExternalID(ctx context.Context, arg FindSocialAccountByExternalIDParams) (SocialAccount, error) {
 	row := q.db.QueryRow(ctx, findSocialAccountByExternalID, arg.Platform, arg.ExternalAccountID, arg.WorkspaceID)
 	var i SocialAccount
@@ -668,6 +667,60 @@ WHERE id = $1
 func (q *Queries) MarkSocialAccountReconnectRequired(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, markSocialAccountReconnectRequired, id)
 	return err
+}
+
+const reactivateSocialAccount = `-- name: ReactivateSocialAccount :one
+UPDATE social_accounts
+SET access_token      = $2,
+    refresh_token     = $3,
+    token_expires_at  = $4,
+    status            = 'active',
+    disconnected_at   = NULL,
+    last_refreshed_at = NOW()
+WHERE id = $1
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+`
+
+type ReactivateSocialAccountParams struct {
+	ID             string             `json:"id"`
+	AccessToken    string             `json:"access_token"`
+	RefreshToken   pgtype.Text        `json:"refresh_token"`
+	TokenExpiresAt pgtype.Timestamptz `json:"token_expires_at"`
+}
+
+// Reactivate a disconnected account with fresh tokens. Preserves
+// the original row ID so all FK references (post results, analytics,
+// inbox items) remain intact.
+func (q *Queries) ReactivateSocialAccount(ctx context.Context, arg ReactivateSocialAccountParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, reactivateSocialAccount,
+		arg.ID,
+		arg.AccessToken,
+		arg.RefreshToken,
+		arg.TokenExpiresAt,
+	)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+	)
+	return i, err
 }
 
 const updateManagedBlueskyAccount = `-- name: UpdateManagedBlueskyAccount :one

@@ -179,12 +179,15 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID:       profile.WorkspaceID,
 			})
 			if dupErr == nil && existing.ID != "" {
-				// Account already exists — update its tokens so the user
-				// gets fresh scopes without needing to disconnect first.
-				slog.Info("oauth callback: updating existing account tokens",
+				// Account exists (active or disconnected) — reactivate with
+				// fresh tokens. This preserves the original row ID so all
+				// FK references (post results, analytics, inbox) stay intact.
+				wasDisconnected := existing.DisconnectedAt.Valid
+				slog.Info("oauth callback: reactivating existing account",
 					"platform", platformName,
 					"external_id", result.ExternalAccountID,
-					"account_id", existing.ID)
+					"account_id", existing.ID,
+					"was_disconnected", wasDisconnected)
 				encAccess, aErr := h.encryptor.Encrypt(result.AccessToken)
 				encRefresh, rErr := h.encryptor.Encrypt(result.RefreshToken)
 				if aErr != nil || rErr != nil {
@@ -192,7 +195,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to encrypt tokens")
 					return
 				}
-				_ = h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+				_, _ = h.queries.ReactivateSocialAccount(r.Context(), db.ReactivateSocialAccountParams{
 					ID:             existing.ID,
 					AccessToken:    encAccess,
 					RefreshToken:   pgtype.Text{String: encRefresh, Valid: encRefresh != ""},

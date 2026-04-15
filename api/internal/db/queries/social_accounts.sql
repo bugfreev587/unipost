@@ -102,6 +102,20 @@ SET access_token       = $2,
 WHERE id = $1 AND connection_type = 'managed'
 RETURNING *;
 
+-- name: ReactivateSocialAccount :one
+-- Reactivate a disconnected account with fresh tokens. Preserves
+-- the original row ID so all FK references (post results, analytics,
+-- inbox items) remain intact.
+UPDATE social_accounts
+SET access_token      = $2,
+    refresh_token     = $3,
+    token_expires_at  = $4,
+    status            = 'active',
+    disconnected_at   = NULL,
+    last_refreshed_at = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: MarkSocialAccountReconnectRequired :exec
 UPDATE social_accounts
 SET status = 'reconnect_required'
@@ -154,13 +168,12 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = $1 AND p.workspace_id = $2;
 
 -- name: FindSocialAccountByExternalID :one
--- Dedup check: find an existing active account with the same platform +
--- external_account_id anywhere in the workspace. Used during connect to
--- prevent the same platform account from being connected multiple times.
+-- Dedup check: find an existing account (active OR disconnected) with the
+-- same platform + external_account_id anywhere in the workspace. Used during
+-- connect to reactivate disconnected accounts instead of creating duplicates.
 SELECT sa.* FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = $1
   AND sa.external_account_id = $2
   AND p.workspace_id = $3
-  AND sa.status = 'active'
 LIMIT 1;
