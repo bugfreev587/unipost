@@ -159,9 +159,28 @@ func (a *ThreadsAdapter) Post(ctx context.Context, accessToken string, text stri
 	}
 	json.NewDecoder(pubResp.Body).Decode(&published)
 
+	// Fetch the permalink from the API — Threads URLs use shortcodes,
+	// not numeric IDs, so we can't construct them ourselves.
+	permalink := ""
+	if published.ID != "" {
+		permReq, _ := http.NewRequestWithContext(ctx, "GET",
+			fmt.Sprintf("https://graph.threads.net/v1.0/%s?fields=permalink&access_token=%s", published.ID, accessToken), nil)
+		if permResp, permErr := a.client.Do(permReq); permErr == nil {
+			defer permResp.Body.Close()
+			var permData struct {
+				Permalink string `json:"permalink"`
+			}
+			json.NewDecoder(permResp.Body).Decode(&permData)
+			permalink = permData.Permalink
+		}
+	}
+	if permalink == "" {
+		permalink = fmt.Sprintf("https://www.threads.net/@%s", userID)
+	}
+
 	return &PostResult{
 		ExternalID: published.ID,
-		URL:        fmt.Sprintf("https://www.threads.net/@%s/post/%s", userID, published.ID),
+		URL:        permalink,
 	}, nil
 }
 
