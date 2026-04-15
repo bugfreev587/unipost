@@ -450,6 +450,39 @@ func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadPa
 	return err
 }
 
+const reconcileDMThreadKeys = `-- name: ReconcileDMThreadKeys :execrows
+UPDATE inbox_items
+SET thread_key = $3,
+    parent_external_id = $4
+WHERE social_account_id = $1
+  AND source = 'ig_dm'
+  AND thread_key = $2
+  AND thread_key != $3
+`
+
+type ReconcileDMThreadKeysParams struct {
+	SocialAccountID  string      `json:"social_account_id"`
+	ThreadKey        string      `json:"thread_key"`
+	ThreadKey_2      string      `json:"thread_key_2"`
+	ParentExternalID pgtype.Text `json:"parent_external_id"`
+}
+
+// When sync discovers the canonical conversation ID for a DM thread,
+// update any existing items (e.g. from webhooks) that used a fallback
+// thread_key (sender ID) so all messages share the same thread_key.
+func (q *Queries) ReconcileDMThreadKeys(ctx context.Context, arg ReconcileDMThreadKeysParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reconcileDMThreadKeys,
+		arg.SocialAccountID,
+		arg.ThreadKey,
+		arg.ThreadKey_2,
+		arg.ParentExternalID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateInboxThreadState = `-- name: UpdateInboxThreadState :execrows
 UPDATE inbox_items
 SET thread_status = $5,

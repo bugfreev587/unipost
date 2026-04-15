@@ -77,6 +77,18 @@ WHERE social_account_id = $1
 ORDER BY received_at DESC
 LIMIT 1;
 
+-- name: ReconcileDMThreadKeys :execrows
+-- When sync discovers the canonical conversation ID for a DM thread,
+-- update any existing items (e.g. from webhooks) that used a fallback
+-- thread_key (sender ID) so all messages share the same thread_key.
+UPDATE inbox_items
+SET thread_key = $3,
+    parent_external_id = $4
+WHERE social_account_id = $1
+  AND source = 'ig_dm'
+  AND thread_key = $2
+  AND thread_key != $3;
+
 -- name: FindAnyActiveAccountByPlatform :one
 -- Webhook fallback: find any active account for a platform.
 -- Used when Meta sends a different ID format than what we store.

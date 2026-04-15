@@ -538,8 +538,14 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				slog.Warn("inbox sync: fetch ig DMs failed", "account_id", acc.ID, "err", err)
 			} else {
+				// Track (senderID → convID) so we can reconcile webhook-created
+				// threads that used senderID as fallback thread_key.
+				senderConvMap := map[string]string{}
 				for _, e := range dmEntries {
 					isOwn := e.AuthorID == acc.ExternalAccountID || (e.AuthorName != "" && e.AuthorName == acc.AccountName.String)
+					if !isOwn && e.ParentExternalID != "" {
+						senderConvMap[e.AuthorID] = e.ParentExternalID
+					}
 					_, uErr := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 						SocialAccountID:  acc.ID,
 						WorkspaceID:      workspaceID,
@@ -559,6 +565,19 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 					})
 					if uErr == nil {
 						totalNew++
+					}
+				}
+				// Reconcile: if webhook created items with thread_key = senderID,
+				// update them to use the canonical conversation ID.
+				for senderID, convID := range senderConvMap {
+					if n, err := h.queries.ReconcileDMThreadKeys(r.Context(), db.ReconcileDMThreadKeysParams{
+						SocialAccountID: acc.ID,
+						ThreadKey:       senderID,
+						ThreadKey_2:     convID,
+						ParentExternalID: pgtype.Text{String: convID, Valid: true},
+					}); err == nil && n > 0 {
+						slog.Info("inbox sync: reconciled DM thread keys",
+							"sender_id", senderID, "conv_id", convID, "updated", n)
 					}
 				}
 			}
