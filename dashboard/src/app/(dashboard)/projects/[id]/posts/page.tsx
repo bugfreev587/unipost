@@ -56,7 +56,7 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-actions{position:relative}
 .posts-actions-btn{background:none;border:1px solid transparent;border-radius:4px;padding:4px;cursor:pointer;color:var(--dmuted2);transition:all .1s;display:flex;align-items:center}
 .posts-actions-btn:hover{background:var(--surface2);border-color:var(--dborder);color:var(--dtext)}
-.posts-menu{position:absolute;right:0;top:100%;margin-top:4px;background:var(--surface-raised);border:1px solid var(--dborder);border-radius:8px;padding:4px;min-width:180px;z-index:20;box-shadow:0 12px 28px color-mix(in srgb,var(--shadow-color) 120%,transparent)}
+.posts-menu{position:absolute;right:0;bottom:100%;margin-bottom:4px;background:var(--surface-raised);border:1px solid var(--dborder);border-radius:8px;padding:4px;min-width:180px;z-index:20;box-shadow:0 12px 28px color-mix(in srgb,var(--shadow-color) 120%,transparent)}
 .posts-menu-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:5px;font-size:13px;color:var(--dmuted);cursor:pointer;transition:all .1s;border:none;background:none;width:100%;text-align:left;font-family:inherit}
 .posts-menu-item:hover{background:var(--surface2);color:var(--dtext)}
 .posts-menu-item svg{width:13px;height:13px;flex-shrink:0}
