@@ -595,11 +595,12 @@ export default function InboxPage() {
     return null;
   }, [selectedGroup, socialPosts]);
 
-  // Fetch IG media context when post isn't linked (comment/threads views).
+  // Fetch media context from platform API when post image isn't available locally.
   useEffect(() => {
     if (!selectedGroup || !workspaceId) return;
     if (selectedGroup.source === "ig_dm") return;
-    if (selectedPost) return; // already have post data
+    // Skip if selectedPost already has media_urls (image available locally).
+    if (selectedPost && selectedPost.media_urls && selectedPost.media_urls.length > 0) return;
     const parentID = selectedGroup.parentExternalID || selectedGroup.threadKey;
     if (!parentID || mediaContext[parentID]) return;
     const firstItem = selectedGroup.items[0];
@@ -1140,6 +1141,24 @@ export default function InboxPage() {
                         >
                           <img
                             src={selectedPost.media_urls[0]}
+                            alt="Post media"
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          />
+                        </div>
+                      ) : currentMediaContext?.media_url ? (
+                        <div
+                          style={{
+                            width: 220,
+                            maxWidth: "100%",
+                            aspectRatio: "1 / 1",
+                            borderRadius: 12,
+                            overflow: "hidden",
+                            border: "1px solid var(--dborder)",
+                            background: "rgba(255,255,255,.03)",
+                          }}
+                        >
+                          <img
+                            src={currentMediaContext.media_url}
                             alt="Post media"
                             style={{ width: "100%", height: "100%", objectFit: "cover" }}
                           />
