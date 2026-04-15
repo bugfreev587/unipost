@@ -33,8 +33,18 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 
+// Feature flag: NEXT_PUBLIC_FEATURE_INBOX controls Inbox visibility.
+// "true" = everyone, "user_id1,user_id2" = only those users, unset = hidden.
+function isFeatureEnabled(envVar: string | undefined, userId: string | undefined): boolean {
+  if (!envVar) return false;
+  if (envVar === "true") return true;
+  if (!userId) return false;
+  return envVar.split(",").map((s) => s.trim()).includes(userId);
+}
+
 // Each nav item can be tagged with the usage modes that require it.
 // Items with no `modes` array are always shown.
+// Items with `featureFlag` are gated by the env var check.
 const ALL_NAV_ITEMS = [
   { href: "/profile", label: "Profiles", icon: Layers },
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
@@ -46,7 +56,7 @@ const ALL_NAV_ITEMS = [
     { href: "/posts", label: "Overview" },
     { href: "/posts/queue", label: "Queue" },
   ]},
-  { href: "/inbox", label: "Inbox", icon: MessageSquare },
+  { href: "/inbox", label: "Inbox", icon: MessageSquare, featureFlag: "INBOX" },
   { href: "/api-keys", label: "API Keys", icon: Key, modes: ["whitelabel", "api"] },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
@@ -54,13 +64,22 @@ const ALL_NAV_ITEMS = [
   ]},
 ];
 
-// Filter nav items based on workspace usage modes.
-// Empty modes array = show everything.
-function filterNavItems(modes: string[]) {
-  if (modes.length === 0) return ALL_NAV_ITEMS;
+const FEATURE_FLAGS: Record<string, string | undefined> = {
+  INBOX: process.env.NEXT_PUBLIC_FEATURE_INBOX,
+};
+
+// Filter nav items based on workspace usage modes and feature flags.
+function filterNavItems(modes: string[], userId?: string) {
   return ALL_NAV_ITEMS.filter((item) => {
-    if (!("modes" in item) || !item.modes) return true;
-    return item.modes.some((m: string) => modes.includes(m));
+    // Feature flag gate
+    if ("featureFlag" in item && item.featureFlag) {
+      if (!isFeatureEnabled(FEATURE_FLAGS[item.featureFlag], userId)) return false;
+    }
+    // Usage mode gate
+    if (modes.length > 0 && "modes" in item && item.modes) {
+      return item.modes.some((m: string) => modes.includes(m));
+    }
+    return true;
   }).map((item) => {
     if (!item.submenu) return item;
     const filteredSub = item.submenu.filter((sub) => {
@@ -98,7 +117,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const profileId = urlProfileId ?? profiles[0]?.id;
   const currentProfile = profiles.find((p) => p.id === profileId);
 
-  const navItems = filterNavItems(workspace?.usage_modes ?? []);
+  const navItems = filterNavItems(workspace?.usage_modes ?? [], user?.id);
 
   // Auto-expand the submenu that matches the current URL on navigation,
   // but only when the pathname actually changes — not on every render.
