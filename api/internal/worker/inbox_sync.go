@@ -156,8 +156,12 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 			// Also fetch DMs.
 			dmEntries, dmErr := adapter.FetchConversations(ctx, accessToken)
 			if dmErr == nil {
+				senderConvMap := map[string]string{}
 				for _, e := range dmEntries {
 					isOwn := e.AuthorID == acc.ExternalAccountID
+					if !isOwn && e.ParentExternalID != "" {
+						senderConvMap[e.AuthorID] = e.ParentExternalID
+					}
 					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
 						SocialAccountID:  acc.ID,
 						WorkspaceID:      acc.WorkspaceID,
@@ -177,6 +181,19 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 					})
 					if uErr == nil {
 						totalNew++
+					}
+				}
+				// Reconcile: if webhook created items with thread_key = senderID,
+				// update them to use the canonical conversation ID.
+				for senderID, convID := range senderConvMap {
+					if n, err := w.queries.ReconcileDMThreadKeys(ctx, db.ReconcileDMThreadKeysParams{
+						SocialAccountID:  acc.ID,
+						ThreadKey:        senderID,
+						ThreadKey_2:      convID,
+						ParentExternalID: pgtype.Text{String: convID, Valid: true},
+					}); err == nil && n > 0 {
+						slog.Info("inbox sync worker: reconciled DM thread keys",
+							"sender_id", senderID, "conv_id", convID, "updated", n)
 					}
 				}
 			}
