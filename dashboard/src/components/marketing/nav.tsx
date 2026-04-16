@@ -3,11 +3,13 @@
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
-// New signups land on the dashboard root — the WelcomeModal (rendered
-// from the dashboard shell) pops on first visit when onboarding_shown_at
-// is null. The old /welcome page was removed when we replaced it with
-// the inline modal.
-const SIGN_UP_REDIRECT_URL = APP_URL;
+// New signups land on /welcome, where they enter their first name and
+// optional organization name. That endpoint renames the workspace
+// seeded by the Clerk user.created webhook ("{FirstName}'s Workspace"
+// by default, or the org name if provided) before redirecting to the
+// dashboard. The in-dashboard WelcomeModal (intent collection) runs
+// after this, on the dashboard's first load.
+const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
 
 const userButtonAppearance = {
   elements: {
