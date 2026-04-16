@@ -326,6 +326,12 @@ export interface SocialPostResult {
   account_name?: string;
   status: string;
   external_id?: string;
+  // URL is the platform's canonical post URL (e.g. Threads permalink
+  // fetched from the Graph API). When present, the dashboard uses it
+  // directly for "View post" links instead of constructing one from
+  // external_id. Required for platforms like Threads where the public
+  // URL uses shortcodes that aren't derivable from the numeric post ID.
+  url?: string;
   error_message?: string;
   published_at?: string;
 }

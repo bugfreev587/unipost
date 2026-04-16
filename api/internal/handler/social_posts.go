@@ -57,6 +57,12 @@ type postResultResponse struct {
 	Caption         string         `json:"caption,omitempty"`
 	Status          string         `json:"status"`
 	ExternalID      *string        `json:"external_id,omitempty"`
+	// URL is the platform's canonical post URL, returned by the
+	// adapter at publish time (e.g. Threads permalink from the Graph
+	// API). When present, the dashboard uses this directly instead of
+	// constructing one from external_id — important for platforms like
+	// Threads where the public URL uses shortcodes, not numeric IDs.
+	URL             *string        `json:"url,omitempty"`
 	ErrorMessage    *string        `json:"error_message,omitempty"`
 	PublishedAt     *string        `json:"published_at,omitempty"`
 	PublishStatus   map[string]any `json:"publish_status,omitempty"`
@@ -438,7 +444,7 @@ func (h *SocialPostHandler) executePublishLoop(
 	persistErrors := make([]string, 0) // track insert failures so we can surface them on the parent post
 
 	for i, oc := range outcomes {
-		var extID, errMsg pgtype.Text
+		var extID, errMsg, postURL pgtype.Text
 		var pubAt pgtype.Timestamptz
 		status := "published"
 
@@ -449,6 +455,9 @@ func (h *SocialPostHandler) executePublishLoop(
 		} else if oc.result != nil {
 			extID = pgtype.Text{String: oc.result.ExternalID, Valid: true}
 			pubAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			if oc.result.URL != "" {
+				postURL = pgtype.Text{String: oc.result.URL, Valid: true}
+			}
 			anyPublished = true
 			publishedCount++
 		}
@@ -461,6 +470,7 @@ func (h *SocialPostHandler) executePublishLoop(
 			ExternalID:      extID,
 			ErrorMessage:    errMsg,
 			PublishedAt:     pubAt,
+			Url:             postURL,
 		})
 		if dbErr != nil {
 			// Most common cause: FK violation from a deleted social account.
@@ -488,6 +498,9 @@ func (h *SocialPostHandler) executePublishLoop(
 		}
 		if dbResult.ExternalID.Valid {
 			rr.ExternalID = &dbResult.ExternalID.String
+		}
+		if dbResult.Url.Valid {
+			rr.URL = &dbResult.Url.String
 		}
 		if dbResult.ErrorMessage.Valid {
 			rr.ErrorMessage = &dbResult.ErrorMessage.String
@@ -1086,6 +1099,9 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 		if res.ExternalID.Valid {
 			rr.ExternalID = &res.ExternalID.String
 		}
+		if res.Url.Valid {
+			rr.URL = &res.Url.String
+		}
 		if res.ErrorMessage.Valid {
 			rr.ErrorMessage = &res.ErrorMessage.String
 		}
@@ -1129,6 +1145,9 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		if res.ExternalID.Valid {
 			rr.ExternalID = &res.ExternalID.String
+		}
+		if res.Url.Valid {
+			rr.URL = &res.Url.String
 		}
 		if res.ErrorMessage.Valid {
 			rr.ErrorMessage = &res.ErrorMessage.String
@@ -1282,6 +1301,9 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 			if res.ExternalID.Valid {
 				rr.ExternalID = &res.ExternalID.String
+			}
+			if res.Url.Valid {
+				rr.URL = &res.Url.String
 			}
 			if res.ErrorMessage.Valid {
 				rr.ErrorMessage = &res.ErrorMessage.String

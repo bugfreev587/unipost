@@ -1184,7 +1184,12 @@ function ResultCard({
   workspaceId: string;
 }) {
   const platform = res.platform || "";
-  const url = res.external_id ? postUrlFor(platform, res.external_id) : null;
+  // Prefer the adapter-provided URL when present (e.g. Threads permalink).
+  const url = res.url
+    ? res.url
+    : res.external_id
+      ? postUrlFor(platform, res.external_id)
+      : null;
   const isFailed = res.status === "failed";
   const accountName = res.account_name?.trim();
 

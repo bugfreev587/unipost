@@ -159,15 +159,25 @@ func (a *ThreadsAdapter) Post(ctx context.Context, accessToken string, text stri
 	}
 	json.NewDecoder(pubResp.Body).Decode(&published)
 
-	// Build profile URL using the username. The permalink field from
-	// the Threads API is unreliable for freshly published posts, and
-	// numeric IDs don't work in URLs (Threads uses shortcodes).
-	profile, _ := a.getProfile(ctx, accessToken, userID)
-	username := userID
-	if profile != nil && profile.username != "" {
-		username = profile.username
+	// Prefer the permalink from the Graph API — Threads URLs use
+	// shortcodes that aren't derivable from the numeric post ID.
+	// Fresh posts take a few seconds before the permalink is
+	// populated, so fetchPermalink retries. If we still can't get
+	// it, fall back to the profile URL so the user at least lands
+	// on their Threads account rather than a broken /post/{id}.
+	permalink, permErr := a.fetchPermalink(ctx, accessToken, published.ID)
+	if permErr != nil || permalink == "" {
+		if permErr != nil {
+			slog.Warn("threads post: permalink fetch failed, falling back to profile URL",
+				"post_id", published.ID, "err", permErr)
+		}
+		profile, _ := a.getProfile(ctx, accessToken, userID)
+		username := userID
+		if profile != nil && profile.username != "" {
+			username = profile.username
+		}
+		permalink = fmt.Sprintf("https://www.threads.net/@%s", username)
 	}
-	permalink := fmt.Sprintf("https://www.threads.net/@%s", username)
 
 	return &PostResult{
 		ExternalID: published.ID,
@@ -558,18 +568,66 @@ func (a *ThreadsAdapter) getProfile(ctx context.Context, accessToken string, use
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("threads get profile non-200",
+			"status", resp.StatusCode, "user_id", userID, "body", string(body))
+		return nil, fmt.Errorf("threads get profile returned %d: %s", resp.StatusCode, string(body))
+	}
+
 	var profile struct {
 		ID                string `json:"id"`
 		Username          string `json:"username"`
 		ProfilePictureURL string `json:"threads_profile_picture_url"`
 	}
-	json.NewDecoder(resp.Body).Decode(&profile)
-
+	if err := json.Unmarshal(body, &profile); err != nil {
+		return nil, fmt.Errorf("threads get profile decode: %w", err)
+	}
+	if profile.Username == "" {
+		// A 200 with an empty username means scope/permission mismatch
+		// — better to surface as an error than to quietly hand back an
+		// empty string that breaks URL construction downstream.
+		return nil, fmt.Errorf("threads get profile: empty username in response body: %s", string(body))
+	}
 	return &threadsProfile{
 		id:            profile.ID,
 		username:      profile.Username,
 		profilePicURL: profile.ProfilePictureURL,
 	}, nil
+}
+
+// fetchPermalink asks the Threads Graph API for a post's canonical
+// URL. Fresh posts can take a few seconds before the permalink is
+// populated, so we retry up to 3x with a 2s delay.
+func (a *ThreadsAdapter) fetchPermalink(ctx context.Context, accessToken string, postID string) (string, error) {
+	var lastBody string
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		req, _ := http.NewRequestWithContext(ctx, "GET",
+			fmt.Sprintf("https://graph.threads.net/v1.0/%s?fields=permalink&access_token=%s", postID, accessToken), nil)
+		resp, err := a.client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		lastBody = string(body)
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
+		var result struct {
+			Permalink string `json:"permalink"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			continue
+		}
+		if result.Permalink != "" {
+			return result.Permalink, nil
+		}
+	}
+	return "", fmt.Errorf("threads fetch permalink: no permalink after retries: %s", lastBody)
 }
 
 func (a *ThreadsAdapter) getUserID(ctx context.Context, accessToken string) (string, error) {
