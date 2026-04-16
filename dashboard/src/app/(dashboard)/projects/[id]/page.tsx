@@ -17,7 +17,7 @@ import {
   type ApiKey,
 } from "@/lib/api";
 import { Key, Users, Send, BarChart3, CreditCard, Settings, ChevronRight } from "lucide-react";
-import { ActivationCard } from "@/components/onboarding/activation-card";
+import { ActivationModal } from "@/components/onboarding/activation-modal";
 
 const NAV_CARDS = [
   { href: "/api-keys", label: "API Keys", desc: "Manage access tokens", icon: Key },
@@ -140,9 +140,10 @@ export default function ProfileOverviewPage() {
         </div>
       </div>
 
-      {/* Activation guide — empty state for new users. Hides itself once
-          all three steps are complete or the user dismisses it. */}
-      <ActivationCard profileId={id} />
+      {/* Activation modal — pops over the dashboard for new users.
+          Only appears on this root page; closable in the moment but
+          re-opens on next visit until the first two steps are done. */}
+      <ActivationModal profileId={id} />
 
       {/* Quick nav */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

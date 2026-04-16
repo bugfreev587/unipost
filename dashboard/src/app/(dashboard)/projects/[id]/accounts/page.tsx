@@ -26,6 +26,13 @@ const PLATFORMS = [
   { id: "twitter", name: "X / Twitter", type: "oauth" as const },
 ];
 
+// Platforms that work with text-only or simple image posts. These are the
+// most reliable choices for a first-time Connect during activation — video
+// platforms (TikTok, YouTube) are slower and more failure-prone, so we
+// filter them out by default when the user arrives via the activation
+// modal (?first=1). A "Show all platforms" link escape-hatches.
+const FIRST_TIME_PLATFORM_IDS = new Set(["bluesky", "linkedin", "instagram", "threads", "twitter"]);
+
 export default function AccountsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -34,9 +41,12 @@ export default function AccountsPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileFilter, setProfileFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
-  // Auto-open the connect flow when arriving from activation card
-  // (?action=new). See ActivationCard.tsx STEP_META.connect_account.
+  // Auto-open the connect flow when arriving from activation modal
+  // (?action=new). See activation-modal.tsx STEP_META.connect_account.
   const [connectOpen, setConnectOpen] = useState(searchParams.get("action") === "new");
+  // First-time activation mode: filter out video-heavy platforms to keep
+  // the first connect fast and low-friction. Toggleable via "Show all".
+  const [firstTimeMode, setFirstTimeMode] = useState(searchParams.get("first") === "1");
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
@@ -185,7 +195,9 @@ export default function AccountsPage() {
 
             {!selectedPlatform ? (
               <div style={{ padding: "8px 0" }}>
-                {PLATFORMS.map((p) => {
+                {PLATFORMS
+                  .filter((p) => !firstTimeMode || FIRST_TIME_PLATFORM_IDS.has(p.id))
+                  .map((p) => {
                   const connectedCount = accounts.filter((a) => a.platform === p.id).length;
                   return (
                     <div
@@ -210,6 +222,24 @@ export default function AccountsPage() {
                     </div>
                   );
                 })}
+                {firstTimeMode && (
+                  <button
+                    type="button"
+                    onClick={() => setFirstTimeMode(false)}
+                    className="dt-body-sm"
+                    style={{
+                      display: "block", width: "100%",
+                      marginTop: 8, padding: "8px 10px", borderRadius: 6,
+                      border: "none", background: "transparent",
+                      color: "var(--dmuted)", cursor: "pointer",
+                      fontFamily: "inherit", textAlign: "center",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--dmuted)"; }}
+                  >
+                    Show all platforms (including video)
+                  </button>
+                )}
               </div>
             ) : selectedPlatform === "bluesky" ? (
               <div style={{ padding: "8px 0" }}>
