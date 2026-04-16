@@ -862,6 +862,14 @@ export async function markOnboardingShown(
   return request("/v1/me/onboarding-shown", token, { method: "POST" });
 }
 
+// Deletes the authenticated user via the backend (uses Clerk secret key
+// server-side, bypassing the "reauthentication required" check that
+// Clerk enforces on client-side user.delete() calls). The user.deleted
+// webhook cascades DB cleanup. Returns 204 on success; throws on error.
+export async function deleteMe(token: string): Promise<void> {
+  await request<void>("/v1/me", token, { method: "DELETE" });
+}
+
 // Dashboard empty-state activation guide.
 export type ActivationStepId = "connect_account" | "send_post" | "create_api_key";
 

@@ -2,8 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"os"
 
+	"github.com/clerk/clerk-sdk-go/v2"
+	clerkuser "github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -307,4 +311,32 @@ func (h *MeHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeSuccess(w, map[string]bool{"completed": true})
+}
+
+// Delete handles DELETE /v1/me.
+//
+// Deletes the authenticated user from Clerk using the server-side SDK
+// (CLERK_SECRET_KEY), which bypasses the "reauthentication required"
+// check that Clerk enforces on client-side user.delete() calls.
+//
+// Clerk fires a user.deleted webhook after deletion, which our
+// webhooks handler converts into a DeleteUser DB call. That cascades
+// through workspaces/profiles/social_accounts/api_keys/posts via
+// ON DELETE CASCADE foreign keys (migration 025).
+func (h *MeHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+
+	clerk.SetKey(os.Getenv("CLERK_SECRET_KEY"))
+	if _, err := clerkuser.Delete(r.Context(), userID); err != nil {
+		slog.Error("delete account: clerk delete failed", "user_id", userID, "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete account: "+err.Error())
+		return
+	}
+
+	slog.Info("delete account: clerk user deleted", "user_id", userID)
+	w.WriteHeader(http.StatusNoContent)
 }
