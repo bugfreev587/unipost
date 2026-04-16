@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -125,26 +126,49 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 		// Fetch from platform
 		acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID)
 		if accErr != nil {
+			slog.Warn("analytics refresh: load social account failed",
+				"post_id", post.ID, "result_id", res.ID, "err", accErr)
 			continue
 		}
 
 		adapter, adErr := platform.Get(acc.Platform)
 		if adErr != nil {
+			slog.Warn("analytics refresh: adapter not found",
+				"platform", acc.Platform, "result_id", res.ID, "err", adErr)
 			continue
 		}
 
 		analyticsAdapter, ok := adapter.(platform.AnalyticsAdapter)
 		if !ok {
+			slog.Info("analytics refresh: platform does not implement AnalyticsAdapter",
+				"platform", acc.Platform, "result_id", res.ID)
 			continue
 		}
 
 		accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
 		if decErr != nil {
+			slog.Warn("analytics refresh: decrypt token failed",
+				"platform", acc.Platform, "result_id", res.ID, "err", decErr)
 			continue
 		}
 
 		metrics, metErr := analyticsAdapter.GetAnalytics(r.Context(), accessToken, res.ExternalID.String)
 		if metErr != nil {
+			slog.Warn("analytics refresh: platform fetch failed",
+				"platform", acc.Platform,
+				"result_id", res.ID,
+				"external_id", res.ExternalID.String,
+				"err", metErr)
+			// Record the failure so consecutive_failures is tracked and the UI
+			// can eventually surface the error (the background worker also
+			// uses this path).
+			if touchErr := h.queries.TouchPostAnalyticsFetchedAt(r.Context(), db.TouchPostAnalyticsFetchedAtParams{
+				SocialPostResultID: res.ID,
+				LastFailureReason:  pgtype.Text{String: metErr.Error(), Valid: true},
+			}); touchErr != nil {
+				slog.Warn("analytics refresh: touch fetched_at failed",
+					"result_id", res.ID, "err", touchErr)
+			}
 			continue
 		}
 
