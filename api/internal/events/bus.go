@@ -29,12 +29,23 @@ type EventBus interface {
 
 // Standard event names. Keep these in sync with the events documented
 // in the public API reference.
+//
+// Two classes of consumers share this bus:
+//   - Developer webhooks (migration 008): firehose, user's POST endpoint.
+//   - User notifications (migration 040): curated, user-facing channels
+//     like email/Slack. Only a subset of events are surfaced here; the
+//     rest stay developer-only.
 const (
 	EventPostPublished       = "post.published"
 	EventPostPartial         = "post.partial"
 	EventPostFailed          = "post.failed"
 	EventAccountConnected    = "account.connected"
 	EventAccountDisconnected = "account.disconnected"
+	// Billing events — emitted by the usage tracker and Stripe webhook
+	// handler. Not visible to the developer webhook subscriber list
+	// today; will be added once we document them in the public schema.
+	EventBillingUsage80pct    = "billing.usage_80pct"
+	EventBillingPaymentFailed = "billing.payment_failed"
 )
 
 // NoopBus is a safe default for tests and for cmd setups that haven't
