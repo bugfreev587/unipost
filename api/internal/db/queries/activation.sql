@@ -16,7 +16,7 @@ SELECT
     FROM social_posts sp
     JOIN workspaces w ON w.id = sp.workspace_id
     WHERE w.user_id = $1
-      AND sp.status = 'published') AS posts_sent_count,
+      AND sp.status IN ('published', 'scheduled', 'publishing')) AS posts_sent_count,
   (SELECT COUNT(*)::INTEGER
     FROM api_keys ak
     JOIN workspaces w ON w.id = ak.workspace_id
