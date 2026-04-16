@@ -1145,3 +1145,86 @@ export async function syncInbox(
     method: "POST",
   });
 }
+
+// ── Notifications ────────────────────────────────────────────────────
+
+export interface NotificationEvent {
+  event_type: string;
+  label: string;
+  description: string;
+  severity: "critical" | "high" | "medium" | "low";
+  default_on: boolean;
+}
+
+export interface NotificationChannel {
+  id: string;
+  kind: "email" | "slack_webhook" | "sms" | "in_app";
+  label?: string;
+  config: { address?: string; url?: string; e164?: string };
+  verified: boolean;
+  created_at: string;
+}
+
+export interface NotificationSubscription {
+  id: string;
+  event_type: string;
+  channel_id: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export async function listNotificationEvents(
+  token: string
+): Promise<ApiResponse<NotificationEvent[]>> {
+  return request(`/v1/me/notifications/events`, token);
+}
+
+export async function listNotificationChannels(
+  token: string
+): Promise<ApiResponse<NotificationChannel[]>> {
+  return request(`/v1/me/notifications/channels`, token);
+}
+
+export async function createNotificationChannel(
+  token: string,
+  data: { kind: "email"; address: string; label?: string }
+): Promise<ApiResponse<NotificationChannel>> {
+  return request(`/v1/me/notifications/channels`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteNotificationChannel(
+  token: string,
+  id: string
+): Promise<void> {
+  await request(`/v1/me/notifications/channels/${id}`, token, {
+    method: "DELETE",
+  });
+}
+
+export async function listNotificationSubscriptions(
+  token: string
+): Promise<ApiResponse<NotificationSubscription[]>> {
+  return request(`/v1/me/notifications/subscriptions`, token);
+}
+
+export async function upsertNotificationSubscription(
+  token: string,
+  data: { event_type: string; channel_id: string; enabled: boolean }
+): Promise<ApiResponse<NotificationSubscription>> {
+  return request(`/v1/me/notifications/subscriptions`, token, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteNotificationSubscription(
+  token: string,
+  id: string
+): Promise<void> {
+  await request(`/v1/me/notifications/subscriptions/${id}`, token, {
+    method: "DELETE",
+  });
+}
