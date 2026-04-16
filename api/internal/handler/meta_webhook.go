@@ -259,12 +259,16 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 }
 
 // igCommentValue is the shape of the "value" field for comment webhooks.
+// Note: media ID is nested under "media.id", not flat "media_id".
 type igCommentValue struct {
 	ID       string `json:"id"`
 	Text     string `json:"text"`
-	MediaID  string `json:"media_id"`
-	ParentID string `json:"parent_id"`
-	From     struct {
+	MediaID  string `json:"media_id"`  // legacy flat field (may be empty)
+	ParentID string `json:"parent_id"` // parent comment ID for replies
+	Media    struct {
+		ID string `json:"id"`
+	} `json:"media"` // nested media object from Instagram API with Instagram Login
+	From struct {
 		ID       string `json:"id"`
 		Username string `json:"username"`
 	} `json:"from"`
@@ -285,7 +289,12 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 		"from_id", val.From.ID, "from_username", val.From.Username,
 		"text", val.Text)
 
-	parentID := val.MediaID
+	// Resolve media ID: nested media.id (Instagram Login) or flat media_id (legacy).
+	mediaID := val.Media.ID
+	if mediaID == "" {
+		mediaID = val.MediaID
+	}
+	parentID := mediaID
 	if val.ParentID != "" {
 		parentID = val.ParentID
 	}
