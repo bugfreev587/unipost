@@ -9,7 +9,7 @@ import {
   deleteProfile,
   type Profile,
 } from "@/lib/api";
-import { Plus, Pencil, Trash2, Calendar } from "lucide-react";
+import { Plus, Pencil, Trash2, Calendar, ArrowRight } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ProfilePage() {
@@ -175,7 +175,7 @@ export default function ProfilePage() {
             return (
               <div
                 key={profile.id}
-                onClick={() => router.push(`/projects/${profile.id}/profile`)}
+                onClick={() => router.push(`/projects/${profile.id}`)}
                 style={{
                   border: `1px solid ${isCurrent ? "var(--daccent)" : "var(--dborder)"}`,
                   borderRadius: 8,
@@ -216,6 +216,17 @@ export default function ProfilePage() {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/projects/${profile.id}`);
+                    }}
+                    className="dbtn dbtn-ghost"
+                    style={{ padding: 6 }}
+                    title="View details"
+                  >
+                    <ArrowRight style={{ width: 13, height: 13 }} />
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
