@@ -246,29 +246,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         }}
       >
         {/* ── Top: User profile ── */}
-        <div style={{ padding: "14px 10px", borderBottom: "1px solid var(--dborder)", position: "relative" }}>
-          <button
-            onClick={() => setSidebarCollapsed(true)}
-            title="Collapse sidebar"
-            style={{
-              position: "absolute", top: 16, right: 10,
-              width: 24, height: 24, borderRadius: 6,
-              border: "none", background: "transparent",
-              color: "var(--dmuted)", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              zIndex: 1,
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--sidebar-accent)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--dmuted)"; e.currentTarget.style.background = "transparent"; }}
-          >
-            <PanelLeftClose style={{ width: 14, height: 14 }} />
-          </button>
+        <div style={{ padding: "14px 10px", borderBottom: "1px solid var(--dborder)", display: "flex", alignItems: "center", gap: 8 }}>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
                 <button
                   style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: 10,
+                    flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10,
                     padding: "6px 8px", borderRadius: 8, border: "none",
                     background: "transparent", cursor: "pointer",
                     transition: "background 0.1s", textAlign: "left",
@@ -320,6 +304,21 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <button
+            onClick={() => setSidebarCollapsed(true)}
+            title="Collapse sidebar"
+            style={{
+              flexShrink: 0,
+              width: 32, height: 32, borderRadius: 8,
+              border: "none", background: "transparent",
+              color: "var(--dmuted)", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--sidebar-accent)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--dmuted)"; e.currentTarget.style.background = "transparent"; }}
+          >
+            <PanelLeftClose style={{ width: 18, height: 18 }} />
+          </button>
         </div>
 
         {/* ── Middle: Nav items ── */}
