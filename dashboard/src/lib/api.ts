@@ -830,10 +830,36 @@ export interface MeResponse {
   email: string;
   name?: string;
   is_admin: boolean;
+  // Intent-collection redesign: the dashboard uses these to decide
+  // whether to pop the Welcome modal on first load.
+  onboarding_intent?: OnboardingIntent;
+  onboarding_shown_at?: string;
 }
+
+export type OnboardingIntent = "exploring" | "own_accounts" | "building_api" | "skipped";
 
 export async function getMe(token: string): Promise<ApiResponse<MeResponse>> {
   return request("/v1/me", token);
+}
+
+// Intent-collection redesign. Called when the user submits or skips
+// the Welcome modal. Never gates any feature — purely for personalization.
+export async function setOnboardingIntent(
+  token: string,
+  intent: OnboardingIntent
+): Promise<ApiResponse<{ intent: OnboardingIntent }>> {
+  return request("/v1/me/intent", token, {
+    method: "PATCH",
+    body: JSON.stringify({ intent }),
+  });
+}
+
+// Marks onboarding_shown_at on first Welcome modal render so we
+// never show it again to the same user, even if they skip.
+export async function markOnboardingShown(
+  token: string
+): Promise<ApiResponse<{ ok: boolean }>> {
+  return request("/v1/me/onboarding-shown", token, { method: "POST" });
 }
 
 // Bootstrap — dashboard root resolver. Returns the user's default and

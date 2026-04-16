@@ -26,11 +26,6 @@ export default function ApiKeysRedirectPage() {
         const res = await getBootstrap(token);
         if (cancelled) return;
 
-        if (!res.data.onboarding_completed) {
-          router.replace("/welcome");
-          return;
-        }
-
         const target = res.data.last_profile_id ?? res.data.default_profile_id;
         if (target) {
           router.replace(`/projects/${target}/api-keys`);

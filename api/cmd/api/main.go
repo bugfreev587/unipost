@@ -397,7 +397,9 @@ func main() {
 		// fresh signups and backfilling default_profile_id for legacy
 		// users with existing profiles but no stamped default.
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
-		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding)
+		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding) // legacy, kept for backward compat
+		r.Patch("/v1/me/intent", meHandler.SetIntent)
+		r.Post("/v1/me/onboarding-shown", meHandler.MarkShown)
 
 		// Workspace management (dashboard)
 		r.Get("/v1/workspaces", workspaceHandler.DashboardList)

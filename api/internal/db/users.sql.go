@@ -36,7 +36,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed FROM users WHERE id = $1
+SELECT id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
@@ -51,6 +51,58 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 		&i.DefaultProfileID,
 		&i.LastProfileID,
 		&i.OnboardingCompleted,
+		&i.OnboardingIntent,
+		&i.OnboardingShownAt,
+		&i.OnboardingCompletedAt,
+	)
+	return i, err
+}
+
+const markOnboardingShown = `-- name: MarkOnboardingShown :exec
+UPDATE users
+SET onboarding_shown_at = COALESCE(onboarding_shown_at, NOW())
+WHERE id = $1
+`
+
+// Stamps the first-seen timestamp when the Welcome modal is rendered.
+// Safe to call repeatedly — only sets if currently NULL.
+func (q *Queries) MarkOnboardingShown(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markOnboardingShown, id)
+	return err
+}
+
+const setOnboardingIntent = `-- name: SetOnboardingIntent :one
+UPDATE users
+SET onboarding_intent = $2,
+    onboarding_completed_at = NOW(),
+    onboarding_shown_at = COALESCE(onboarding_shown_at, NOW()),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at
+`
+
+type SetOnboardingIntentParams struct {
+	ID               string      `json:"id"`
+	OnboardingIntent pgtype.Text `json:"onboarding_intent"`
+}
+
+// Records the user's intent (or "skipped") and stamps the completion time.
+// Always updates (no COALESCE) so users can change their intent via Settings.
+func (q *Queries) SetOnboardingIntent(ctx context.Context, arg SetOnboardingIntentParams) (User, error) {
+	row := q.db.QueryRow(ctx, setOnboardingIntent, arg.ID, arg.OnboardingIntent)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DefaultProfileID,
+		&i.LastProfileID,
+		&i.OnboardingCompleted,
+		&i.OnboardingIntent,
+		&i.OnboardingShownAt,
+		&i.OnboardingCompletedAt,
 	)
 	return i, err
 }
@@ -89,7 +141,7 @@ INSERT INTO users (id, email, name)
 VALUES ($1, $2, $3)
 ON CONFLICT (id)
 DO UPDATE SET email = $2, name = $3, updated_at = NOW()
-RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed
+RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at
 `
 
 type UpsertUserParams struct {
@@ -110,6 +162,9 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.DefaultProfileID,
 		&i.LastProfileID,
 		&i.OnboardingCompleted,
+		&i.OnboardingIntent,
+		&i.OnboardingShownAt,
+		&i.OnboardingCompletedAt,
 	)
 	return i, err
 }

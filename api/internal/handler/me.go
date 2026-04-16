@@ -25,6 +25,12 @@ type meResponse struct {
 	Email   string `json:"email"`
 	Name    string `json:"name,omitempty"`
 	IsAdmin bool   `json:"is_admin"`
+	// Intent-collection fields. The frontend uses OnboardingShownAt to
+	// decide whether to pop the Welcome modal on first dashboard load.
+	// OnboardingIntent is one of: "exploring", "own_accounts",
+	// "building_api", "skipped", or nil (never answered).
+	OnboardingIntent   *string `json:"onboarding_intent,omitempty"`
+	OnboardingShownAt  *string `json:"onboarding_shown_at,omitempty"`
 }
 
 func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -44,12 +50,76 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSuccess(w, meResponse{
+	resp := meResponse{
 		UserID:  user.ID,
 		Email:   user.Email,
 		Name:    user.Name.String,
 		IsAdmin: h.adminChecker.IsAdmin(r.Context(), userID),
+	}
+	if user.OnboardingIntent.Valid {
+		v := user.OnboardingIntent.String
+		resp.OnboardingIntent = &v
+	}
+	if user.OnboardingShownAt.Valid {
+		v := user.OnboardingShownAt.Time.Format("2006-01-02T15:04:05Z07:00")
+		resp.OnboardingShownAt = &v
+	}
+	writeSuccess(w, resp)
+}
+
+// SetIntent handles PATCH /v1/me/intent.
+// Records the user's intent selection (or "skipped") from the Welcome modal.
+// Never gates any feature — this is purely for personalization/analytics.
+func (h *MeHandler) SetIntent(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+
+	var body struct {
+		Intent string `json:"intent"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	valid := map[string]bool{
+		"exploring":    true,
+		"own_accounts": true,
+		"building_api": true,
+		"skipped":      true,
+	}
+	if !valid[body.Intent] {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid intent: "+body.Intent)
+		return
+	}
+
+	_, err := h.queries.SetOnboardingIntent(r.Context(), db.SetOnboardingIntentParams{
+		ID:               userID,
+		OnboardingIntent: pgtype.Text{String: body.Intent, Valid: true},
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save intent")
+		return
+	}
+	writeSuccess(w, map[string]string{"intent": body.Intent})
+}
+
+// MarkShown handles POST /v1/me/onboarding-shown.
+// Stamps onboarding_shown_at on first Welcome modal render so we never
+// show it again to the same user, even if they skip.
+func (h *MeHandler) MarkShown(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	if err := h.queries.MarkOnboardingShown(r.Context(), userID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark shown")
+		return
+	}
+	writeSuccess(w, map[string]bool{"ok": true})
 }
 
 // bootstrapResponse drives the dashboard root resolver.
@@ -156,9 +226,14 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Intent-collection redesign: onboarding is no longer a gate. Always
+	// return OnboardingCompleted=true so the dashboard root resolver stops
+	// redirecting users to the removed /welcome page. The new Welcome modal
+	// on the dashboard handles intent collection non-blockingly.
 	resp := bootstrapResponse{
-		OnboardingCompleted: user.OnboardingCompleted,
+		OnboardingCompleted: true,
 	}
+	_ = user.OnboardingCompleted // legacy column, no longer drives routing
 	if defaultID.Valid {
 		v := defaultID.String
 		resp.DefaultProfileID = &v

@@ -67,7 +67,7 @@ export default function RootLayout({
   return (
     <ClerkProvider
       signInForceRedirectUrl="/"
-      signUpForceRedirectUrl="/welcome"
+      signUpForceRedirectUrl="/"
       afterSignOutUrl={process.env.NEXT_PUBLIC_LANDING_URL || "https://unipost.dev"}
       appearance={{
         variables: {

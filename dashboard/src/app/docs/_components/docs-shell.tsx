@@ -54,7 +54,7 @@ function renderDocsTableCell(cell: string) {
 }
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
-const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
+const SIGN_UP_REDIRECT_URL = `${APP_URL}/`;
 
 const userButtonAppearance = {
   elements: {

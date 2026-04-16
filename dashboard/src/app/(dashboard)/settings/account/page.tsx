@@ -1,10 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { useClerk, useUser } from "@clerk/nextjs";
+import { useEffect, useState } from "react";
+import { useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { ExternalLink } from "lucide-react";
+import { getMe, setOnboardingIntent, type OnboardingIntent } from "@/lib/api";
+import { WelcomeModal } from "@/components/onboarding/welcome-modal";
+import { track } from "@/lib/analytics";
+
+const INTENT_LABELS: Record<Exclude<OnboardingIntent, "skipped">, string> = {
+  exploring: "Just exploring",
+  own_accounts: "Publishing to my own accounts",
+  building_api: "Building with UniPost API",
+};
 
 // Phrase the user must type verbatim to enable the delete button.
 // Mirrors Stripe / GitHub's dangerous-action confirmations.
@@ -30,10 +39,36 @@ export default function AccountSettingsPage() {
   const { signOut, openUserProfile } = useClerk();
   const { workspace, loading: workspaceLoading } = useCurrentWorkspace();
 
+  const { getToken } = useAuth();
   const [showDelete, setShowDelete] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [intent, setIntent] = useState<OnboardingIntent | null>(null);
+  const [intentModalOpen, setIntentModalOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token || cancelled) return;
+        const res = await getMe(token);
+        if (!cancelled) setIntent(res.data.onboarding_intent ?? null);
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [getToken]);
+
+  async function handleIntentChange(newIntent: Exclude<OnboardingIntent, "skipped">) {
+    setIntentModalOpen(false);
+    setIntent(newIntent);
+    track("onboarding_intent_changed", { intent: newIntent });
+    try {
+      const token = await getToken();
+      if (token) await setOnboardingIntent(token, newIntent);
+    } catch { /* non-blocking */ }
+  }
 
   if (!isLoaded || workspaceLoading) {
     return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
@@ -103,6 +138,30 @@ export default function AccountSettingsPage() {
           <div className="settings-row">
             <span className="dt-label-plain">User ID</span>
             <span className="mono">{user.id}</span>
+          </div>
+          <div className="settings-row">
+            <span className="dt-label-plain">Primary use case</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="dt-body-sm" style={{ color: "var(--dtext)" }}>
+                {intent && intent !== "skipped" ? INTENT_LABELS[intent] : "Not set"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIntentModalOpen(true)}
+                className="dt-body-sm"
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 6,
+                  border: "1px solid var(--dborder)",
+                  background: "transparent",
+                  color: "var(--dtext)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Change
+              </button>
+            </span>
           </div>
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--dborder)" }}>
             <button
@@ -238,6 +297,14 @@ export default function AccountSettingsPage() {
             )}
           </div>
         }
+      />
+
+      {/* Intent edit modal — reuses the Welcome modal component. */}
+      <WelcomeModal
+        open={intentModalOpen}
+        initialIntent={intent || undefined}
+        onSelect={handleIntentChange}
+        onSkip={() => setIntentModalOpen(false)}
       />
     </>
   );
