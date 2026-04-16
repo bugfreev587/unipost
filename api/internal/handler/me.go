@@ -294,16 +294,23 @@ func (h *MeHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update workspace: name (if org provided) + usage_modes
+	// Update workspace: name (org name if provided, else "{FirstName}'s
+	// Workspace") + usage_modes. The user.created webhook seeds a default
+	// workspace at signup, but its name is based on whatever Clerk had at
+	// that moment — often empty for email-only signups, giving "Default
+	// Workspace". The welcome page is the first place we get a real name,
+	// so rename here unconditionally.
 	workspaces, err := h.queries.ListWorkspacesByUser(r.Context(), userID)
 	if err == nil && len(workspaces) > 0 {
 		ws := workspaces[0]
-		if body.OrgName != "" {
-			h.queries.UpdateWorkspace(r.Context(), db.UpdateWorkspaceParams{
-				ID:   ws.ID,
-				Name: body.OrgName,
-			})
+		wsName := body.OrgName
+		if wsName == "" {
+			wsName = body.FirstName + "'s Workspace"
 		}
+		h.queries.UpdateWorkspace(r.Context(), db.UpdateWorkspaceParams{
+			ID:   ws.ID,
+			Name: wsName,
+		})
 		h.queries.UpdateWorkspaceUsageModes(r.Context(), db.UpdateWorkspaceUsageModesParams{
 			ID:         ws.ID,
 			UsageModes: body.UsageModes,
