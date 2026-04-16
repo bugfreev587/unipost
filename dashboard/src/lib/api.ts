@@ -898,6 +898,64 @@ export async function dismissActivation(
   return request("/v1/me/activation/dismiss", token, { method: "POST" });
 }
 
+// ── Tutorials framework ──────────────────────────────────────────────
+//
+// Multi-tutorial system. Replaces the single-tutorial activation guide.
+// Each tutorial has independent completion/dismissal. Per-step state is
+// still computed from real counts (counts field), same as activation.
+
+export type TutorialId = "quickstart" | "post_with_api";
+
+export interface TutorialState {
+  id: TutorialId;
+  completed_at?: string;
+  dismissed_at?: string;
+}
+
+export interface TutorialsCounts {
+  connected_accounts: number;
+  posts_sent: number;
+  api_keys: number;
+}
+
+export interface TutorialsResponse {
+  tutorials: TutorialState[];
+  counts: TutorialsCounts;
+}
+
+export async function getTutorials(
+  token: string
+): Promise<ApiResponse<TutorialsResponse>> {
+  return request("/v1/me/tutorials", token);
+}
+
+export async function completeTutorial(
+  token: string,
+  tutorialId: TutorialId
+): Promise<ApiResponse<TutorialState>> {
+  return request(`/v1/me/tutorials/${tutorialId}/complete`, token, {
+    method: "POST",
+  });
+}
+
+export async function dismissTutorial(
+  token: string,
+  tutorialId: TutorialId
+): Promise<ApiResponse<TutorialState>> {
+  return request(`/v1/me/tutorials/${tutorialId}/dismiss`, token, {
+    method: "POST",
+  });
+}
+
+export async function reopenTutorial(
+  token: string,
+  tutorialId: TutorialId
+): Promise<void> {
+  await request<void>(`/v1/me/tutorials/${tutorialId}/reopen`, token, {
+    method: "POST",
+  });
+}
+
 // Bootstrap — dashboard root resolver. Returns the user's default and
 // last-visited profile ids; lazily creates a "Default" profile for
 // fresh signups so the dashboard never has to render an empty state

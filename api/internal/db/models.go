@@ -249,6 +249,15 @@ type User struct {
 	ActivationGuideDismissedAt pgtype.Timestamptz `json:"activation_guide_dismissed_at"`
 }
 
+type UserTutorial struct {
+	UserID      string             `json:"user_id"`
+	TutorialID  string             `json:"tutorial_id"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+	DismissedAt pgtype.Timestamptz `json:"dismissed_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Webhook struct {
 	ID          string             `json:"id"`
 	Url         string             `json:"url"`

@@ -402,10 +402,18 @@ func main() {
 		r.Post("/v1/me/onboarding-shown", meHandler.MarkShown)
 		r.Delete("/v1/me", meHandler.Delete)
 
-		// Activation guide (dashboard empty state).
+		// Activation guide (dashboard empty state) — legacy, kept for
+		// rollout compatibility. Superseded by /v1/me/tutorials.
 		activationHandler := handler.NewActivationHandler(queries)
 		r.Get("/v1/me/activation", activationHandler.Get)
 		r.Post("/v1/me/activation/dismiss", activationHandler.Dismiss)
+
+		// Tutorials framework.
+		tutorialsHandler := handler.NewTutorialsHandler(queries)
+		r.Get("/v1/me/tutorials", tutorialsHandler.List)
+		r.Post("/v1/me/tutorials/{id}/complete", tutorialsHandler.Complete)
+		r.Post("/v1/me/tutorials/{id}/dismiss", tutorialsHandler.Dismiss)
+		r.Post("/v1/me/tutorials/{id}/reopen", tutorialsHandler.Reopen)
 
 		// Workspace management (dashboard)
 		r.Get("/v1/workspaces", workspaceHandler.DashboardList)
