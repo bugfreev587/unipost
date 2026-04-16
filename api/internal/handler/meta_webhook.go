@@ -189,7 +189,12 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 	}
 
 	// Process changes (comments).
+	slog.Info("meta webhook: processing entry",
+		"ig_user_id", entry.ID,
+		"changes_count", len(entry.Changes),
+		"messaging_count", len(entry.Messaging))
 	for _, change := range entry.Changes {
+		slog.Info("meta webhook: change", "field", change.Field)
 		switch change.Field {
 		case "comments":
 			h.handleIGComment(r, account, change.Value)
