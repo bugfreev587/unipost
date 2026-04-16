@@ -400,6 +400,7 @@ func main() {
 		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding) // legacy, kept for backward compat
 		r.Patch("/v1/me/intent", meHandler.SetIntent)
 		r.Post("/v1/me/onboarding-shown", meHandler.MarkShown)
+		r.Delete("/v1/me", meHandler.Delete)
 
 		// Activation guide (dashboard empty state).
 		activationHandler := handler.NewActivationHandler(queries)

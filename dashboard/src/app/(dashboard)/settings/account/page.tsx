@@ -5,7 +5,7 @@ import { useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { ExternalLink } from "lucide-react";
-import { getMe, setOnboardingIntent, type OnboardingIntent } from "@/lib/api";
+import { deleteMe, getMe, setOnboardingIntent, type OnboardingIntent } from "@/lib/api";
 import { WelcomeModal } from "@/components/onboarding/welcome-modal";
 import { track } from "@/lib/analytics";
 
@@ -93,15 +93,21 @@ export default function AccountSettingsPage() {
     setDeleting(true);
     setDeleteError("");
     try {
-      // Clerk's user.delete() removes the user server-side and fires
-      // a user.deleted webhook. api/internal/handler/webhooks.go
-      // handles that webhook and runs DeleteUser, which cascades
+      // Delete via our backend, which uses Clerk's server-side SDK
+      // (CLERK_SECRET_KEY) to bypass the client-side "reauthentication
+      // required" check. Clerk fires a user.deleted webhook that our
+      // api/internal/handler/webhooks.go handles, cascading DB cleanup
       // through workspaces/profiles/social_accounts/api_keys/posts
       // via ON DELETE CASCADE foreign keys (migration 025).
-      await user.delete();
-      // The user is now signed out on the Clerk side. Bounce them to
-      // the marketing landing page. signOut() is belt-and-suspenders
-      // in case Clerk's session teardown races the navigation.
+      const token = await getToken();
+      if (!token) {
+        setDeleteError("Session expired. Please sign in again.");
+        setDeleting(false);
+        return;
+      }
+      await deleteMe(token);
+      // Clerk has deleted the user on their side. Clean up our local
+      // session and bounce to the marketing landing page.
       try {
         await signOut();
       } catch {
