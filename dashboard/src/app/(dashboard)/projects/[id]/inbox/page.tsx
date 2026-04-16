@@ -436,10 +436,15 @@ export default function InboxPage() {
     return () => clearInterval(interval);
   }, [workspaceId, wsConnected, load]);
 
-  // Enrich comment/thread group titles with post captions.
+  // Enrich comment/thread group titles with post captions from mediaContext or socialPosts.
   function enrichGroupTitle(group: ConversationGroup): ConversationGroup {
     if (group.source === "ig_dm" || group.title) return group;
     const rootExternalID = group.parentExternalID || group.threadKey;
+    // Try mediaContext first (fetched from IG API directly)
+    if (rootExternalID && mediaContext[rootExternalID]?.caption) {
+      return { ...group, title: mediaContext[rootExternalID].caption };
+    }
+    // Try socialPosts
     if (rootExternalID) {
       const post = socialPosts.find((p) =>
         (p.results || []).some((r) => r.external_id === rootExternalID)
@@ -448,13 +453,12 @@ export default function InboxPage() {
         return { ...group, title: post.caption };
       }
     }
-    // Fallback: use account name + comment count
     return { ...group, title: group.accountName ? `@${group.accountName}` : "Post" };
   }
 
-  const commentsGroups = useMemo(() => groupItems(items, "ig_comment").map(enrichGroupTitle), [items, socialPosts]);
+  const commentsGroups = useMemo(() => groupItems(items, "ig_comment").map(enrichGroupTitle), [items, socialPosts, mediaContext]);
   const dmGroups = useMemo(() => groupItems(items, "ig_dm"), [items]);
-  const threadsGroups = useMemo(() => groupItems(items, "threads_reply").map(enrichGroupTitle), [items, socialPosts]);
+  const threadsGroups = useMemo(() => groupItems(items, "threads_reply").map(enrichGroupTitle), [items, socialPosts, mediaContext]);
 
   const activeGroups = useMemo(() => {
     const base =
@@ -620,6 +624,34 @@ export default function InboxPage() {
 
     return null;
   }, [selectedGroup, socialPosts]);
+
+  // Pre-fetch media context for all comment/thread groups to show post captions as titles.
+  useEffect(() => {
+    if (!workspaceId) return;
+    const allGroups = [...commentsGroups, ...threadsGroups];
+    const toFetch = allGroups.filter((g) => {
+      const key = g.parentExternalID || g.threadKey;
+      return key && !mediaContext[key] && g.items[0];
+    });
+    if (toFetch.length === 0) return;
+
+    (async () => {
+      const token = await getToken();
+      if (!token) return;
+      // Fetch in parallel, max 5 at a time to avoid rate limits
+      for (const group of toFetch.slice(0, 5)) {
+        const key = group.parentExternalID || group.threadKey;
+        if (!key || mediaContext[key]) continue;
+        try {
+          const res = await getInboxMediaContext(token, workspaceId, group.items[0].id);
+          if (res.data) {
+            setMediaContext((prev) => ({ ...prev, [key!]: res.data }));
+          }
+        } catch { /* silent */ }
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commentsGroups.length, threadsGroups.length, workspaceId]);
 
   // Fetch media context from platform API when post image isn't available locally.
   useEffect(() => {
