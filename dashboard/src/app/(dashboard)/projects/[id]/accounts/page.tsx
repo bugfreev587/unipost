@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,7 +9,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, type SocialAccount, type Profile,
+  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation, type SocialAccount, type Profile,
 } from "@/lib/api";
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
@@ -55,8 +55,35 @@ export default function AccountsPage() {
   const [connectError, setConnectError] = useState("");
   const [connectProfileId, setConnectProfileId] = useState(profileId);
 
+  const router = useRouter();
   const callbackStatus = searchParams.get("status");
   const callbackAccount = searchParams.get("account_name");
+
+  // Activation flow: if this success is the user's FIRST-ever connection
+  // (activation modal was the origin), bounce them back to the dashboard
+  // so the Welcome modal re-pops with step 1 checked and step 2 ready.
+  // The check queries the activation API — if completed or dismissed we
+  // skip the redirect and let the user stay on the accounts page.
+  useEffect(() => {
+    if (callbackStatus !== "success") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token || cancelled) return;
+        const res = await getActivation(token);
+        if (cancelled) return;
+        // Only redirect when the activation guide is still active
+        // (not completed and not dismissed). This covers the first-time
+        // connect case and avoids yanking power users off the accounts
+        // page after reconnecting a second/third account.
+        if (!res.data.completed && !res.data.dismissed) {
+          router.replace(`/projects/${profileId}`);
+        }
+      } catch { /* silent — stay on accounts page */ }
+    })();
+    return () => { cancelled = true; };
+  }, [callbackStatus, getToken, profileId, router]);
 
   const loadAccounts = useCallback(async () => {
     try {
