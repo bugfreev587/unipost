@@ -3,7 +3,11 @@
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
-const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
+// New signups land on the dashboard root — the WelcomeModal (rendered
+// from the dashboard shell) pops on first visit when onboarding_shown_at
+// is null. The old /welcome page was removed when we replaced it with
+// the inline modal.
+const SIGN_UP_REDIRECT_URL = APP_URL;
 
 const userButtonAppearance = {
   elements: {
