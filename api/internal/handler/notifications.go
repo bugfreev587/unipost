@@ -1,0 +1,315 @@
+package handler
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/db"
+)
+
+// NotificationHandler exposes the user-facing settings API for the
+// notification system (migration 040). All routes are account-scoped
+// by the authenticated user — no workspace context needed.
+type NotificationHandler struct {
+	queries *db.Queries
+}
+
+func NewNotificationHandler(queries *db.Queries) *NotificationHandler {
+	return &NotificationHandler{queries: queries}
+}
+
+// Static catalog of events the settings UI knows how to show. Kept in
+// sync with worker/notification.go renderEmail — if an event doesn't
+// have a template here, don't advertise it in the UI.
+//
+// New entries need a default_channel kind ("email" for now) and a
+// default_on flag that drives the auto-provisioning path.
+type eventDescriptor struct {
+	Type        string `json:"event_type"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"` // "critical" | "high" | "medium" | "low"
+	DefaultOn   bool   `json:"default_on"`
+}
+
+// SupportedNotificationEvents is the source of truth for "which events
+// can a user subscribe to". Also consumed by the default-provisioning
+// path in Bootstrap to seed subscriptions on user creation.
+var SupportedNotificationEvents = []eventDescriptor{
+	{Type: "post.failed", Label: "Post failed to publish", Description: "Get notified when a post can't be delivered to a platform.", Severity: "high", DefaultOn: true},
+	{Type: "account.disconnected", Label: "Account disconnected", Description: "A connected social account lost its token and can't post until reconnected.", Severity: "high", DefaultOn: true},
+	{Type: "billing.usage_80pct", Label: "Usage at 80% of plan limit", Description: "Heads-up before you hit the monthly post cap.", Severity: "medium", DefaultOn: true},
+	{Type: "billing.payment_failed", Label: "Payment failed", Description: "Your Stripe subscription charge didn't go through.", Severity: "critical", DefaultOn: true},
+}
+
+// ── Channels ─────────────────────────────────────────────────────────
+
+type channelResponse struct {
+	ID         string                 `json:"id"`
+	Kind       string                 `json:"kind"`
+	Label      string                 `json:"label,omitempty"`
+	Config     map[string]any         `json:"config"`
+	Verified   bool                   `json:"verified"`
+	CreatedAt  string                 `json:"created_at"`
+}
+
+func toChannelResponse(c db.NotificationChannel) channelResponse {
+	var cfg map[string]any
+	_ = json.Unmarshal(c.Config, &cfg)
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	return channelResponse{
+		ID:        c.ID,
+		Kind:      c.Kind,
+		Label:     c.Label.String,
+		Config:    cfg,
+		Verified:  c.VerifiedAt.Valid,
+		CreatedAt: c.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
+// ListChannels — GET /v1/me/notifications/channels
+func (h *NotificationHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	rows, err := h.queries.ListNotificationChannelsByUser(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load channels")
+		return
+	}
+	out := make([]channelResponse, 0, len(rows))
+	for _, c := range rows {
+		out = append(out, toChannelResponse(c))
+	}
+	writeSuccess(w, out)
+}
+
+// CreateChannel — POST /v1/me/notifications/channels
+//
+// MVP accepts only {kind: "email", address: "..."}. If the address
+// matches the Clerk-verified email on the user record we auto-verify
+// the channel (they've already proven control at signup). Otherwise
+// we create it unverified; the settings UI shows the "unverified"
+// chip and a Send verification button (OTP flow is a follow-up).
+func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	var body struct {
+		Kind    string `json:"kind"`
+		Address string `json:"address"`
+		Label   string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	body.Kind = strings.ToLower(strings.TrimSpace(body.Kind))
+	body.Address = strings.TrimSpace(body.Address)
+
+	if body.Kind != "email" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Only 'email' channels are supported in this release")
+		return
+	}
+	if body.Address == "" || !strings.Contains(body.Address, "@") {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "A valid email address is required")
+		return
+	}
+
+	cfgBytes, _ := json.Marshal(map[string]string{"address": body.Address})
+
+	// Auto-verify if the address matches the Clerk-verified signup email.
+	var verified pgtype.Timestamptz
+	if user, err := h.queries.GetUser(r.Context(), userID); err == nil {
+		if strings.EqualFold(user.Email, body.Address) {
+			verified = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+		}
+	}
+
+	created, err := h.queries.CreateNotificationChannel(r.Context(), db.CreateNotificationChannelParams{
+		UserID:      userID,
+		WorkspaceID: pgtype.Text{}, // account-level
+		Kind:        body.Kind,
+		Config:      cfgBytes,
+		Label:       pgtype.Text{String: body.Label, Valid: body.Label != ""},
+		VerifiedAt:  verified,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create channel")
+		return
+	}
+	writeSuccess(w, toChannelResponse(created))
+}
+
+// DeleteChannel — DELETE /v1/me/notifications/channels/{id}
+func (h *NotificationHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Channel id required")
+		return
+	}
+	if err := h.queries.SoftDeleteNotificationChannel(r.Context(), db.SoftDeleteNotificationChannelParams{
+		ID:     id,
+		UserID: userID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete channel")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── Subscriptions ────────────────────────────────────────────────────
+
+type subscriptionResponse struct {
+	ID        string `json:"id"`
+	EventType string `json:"event_type"`
+	ChannelID string `json:"channel_id"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListSubscriptions — GET /v1/me/notifications/subscriptions
+func (h *NotificationHandler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	rows, err := h.queries.ListNotificationSubscriptionsByUser(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load subscriptions")
+		return
+	}
+	out := make([]subscriptionResponse, 0, len(rows))
+	for _, s := range rows {
+		out = append(out, subscriptionResponse{
+			ID:        s.ID,
+			EventType: s.EventType,
+			ChannelID: s.ChannelID,
+			Enabled:   s.Enabled,
+			CreatedAt: s.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+	writeSuccess(w, out)
+}
+
+// UpsertSubscription — PUT /v1/me/notifications/subscriptions
+//
+// Body: {event_type, channel_id, enabled}. Creates the row if missing
+// or updates enabled/filter if present (ON CONFLICT in the query).
+// Used by the settings matrix UI — each checkbox flip hits this endpoint.
+func (h *NotificationHandler) UpsertSubscription(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	var body struct {
+		EventType string `json:"event_type"`
+		ChannelID string `json:"channel_id"`
+		Enabled   bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	if !isSupportedEvent(body.EventType) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Unsupported event type: "+body.EventType)
+		return
+	}
+	if body.ChannelID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "channel_id required")
+		return
+	}
+
+	// Validate the channel belongs to the user — defense-in-depth even
+	// though the FK prevents cross-user inserts (a malicious client
+	// would get a 500 on FK violation without this).
+	if _, err := h.queries.GetNotificationChannel(r.Context(), db.GetNotificationChannelParams{
+		ID: body.ChannelID, UserID: userID,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Channel not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify channel")
+		return
+	}
+
+	sub, err := h.queries.CreateNotificationSubscription(r.Context(), db.CreateNotificationSubscriptionParams{
+		UserID:      userID,
+		WorkspaceID: pgtype.Text{}, // account-level
+		EventType:   body.EventType,
+		ChannelID:   body.ChannelID,
+		Enabled:     body.Enabled,
+		Filter:      nil,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save subscription")
+		return
+	}
+	writeSuccess(w, subscriptionResponse{
+		ID:        sub.ID,
+		EventType: sub.EventType,
+		ChannelID: sub.ChannelID,
+		Enabled:   sub.Enabled,
+		CreatedAt: sub.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+	})
+}
+
+// DeleteSubscription — DELETE /v1/me/notifications/subscriptions/{id}
+func (h *NotificationHandler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Subscription id required")
+		return
+	}
+	if err := h.queries.DeleteNotificationSubscription(r.Context(), db.DeleteNotificationSubscriptionParams{
+		ID: id, UserID: userID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete subscription")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── Events catalog ───────────────────────────────────────────────────
+
+// ListEvents — GET /v1/me/notifications/events
+// Returns the static catalog so the settings UI can label each row.
+func (h *NotificationHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
+	writeSuccess(w, SupportedNotificationEvents)
+}
+
+func isSupportedEvent(t string) bool {
+	for _, e := range SupportedNotificationEvents {
+		if e.Type == t {
+			return true
+		}
+	}
+	return false
+}

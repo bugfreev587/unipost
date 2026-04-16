@@ -230,6 +230,13 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Lazy-provision default notification channel + subscriptions on the
+	// first Bootstrap call. Idempotent — skipped if the user already has
+	// at least one channel. Uses the Clerk-verified signup email so the
+	// channel is auto-verified. See migration 040 and
+	// SupportedNotificationEvents in notifications.go for the defaults.
+	ensureDefaultNotifications(r.Context(), h.queries, user)
+
 	// Intent-collection redesign: onboarding is no longer a gate. Always
 	// return OnboardingCompleted=true so the dashboard root resolver stops
 	// redirecting users to the removed /welcome page. The new Welcome modal

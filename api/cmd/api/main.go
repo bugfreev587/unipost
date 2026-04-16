@@ -433,6 +433,17 @@ func main() {
 		r.Get("/v1/me/activation", activationHandler.Get)
 		r.Post("/v1/me/activation/dismiss", activationHandler.Dismiss)
 
+		// Notification settings (migration 040). Account-scoped; no
+		// workspace context needed. See /settings/notifications page.
+		notificationHandler := handler.NewNotificationHandler(queries)
+		r.Get("/v1/me/notifications/events", notificationHandler.ListEvents)
+		r.Get("/v1/me/notifications/channels", notificationHandler.ListChannels)
+		r.Post("/v1/me/notifications/channels", notificationHandler.CreateChannel)
+		r.Delete("/v1/me/notifications/channels/{id}", notificationHandler.DeleteChannel)
+		r.Get("/v1/me/notifications/subscriptions", notificationHandler.ListSubscriptions)
+		r.Put("/v1/me/notifications/subscriptions", notificationHandler.UpsertSubscription)
+		r.Delete("/v1/me/notifications/subscriptions/{id}", notificationHandler.DeleteSubscription)
+
 		// Workspace management (dashboard)
 		r.Get("/v1/workspaces", workspaceHandler.DashboardList)
 		r.Get("/v1/workspaces/{workspaceID}", workspaceHandler.DashboardGet)
