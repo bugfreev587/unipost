@@ -47,6 +47,44 @@ func (q *Queries) CountUnreadByWorkspace(ctx context.Context, workspaceID string
 	return count, err
 }
 
+const findAllActiveAccountsByPlatform = `-- name: FindAllActiveAccountsByPlatform :many
+SELECT sa.id, sa.external_account_id, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC
+`
+
+type FindAllActiveAccountsByPlatformRow struct {
+	ID                string `json:"id"`
+	ExternalAccountID string `json:"external_account_id"`
+	WorkspaceID       string `json:"workspace_id"`
+}
+
+// Returns ALL active accounts for a platform across all workspaces.
+// Used by webhooks to fan out comments/replies to every workspace.
+func (q *Queries) FindAllActiveAccountsByPlatform(ctx context.Context, platform string) ([]FindAllActiveAccountsByPlatformRow, error) {
+	rows, err := q.db.Query(ctx, findAllActiveAccountsByPlatform, platform)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindAllActiveAccountsByPlatformRow{}
+	for rows.Next() {
+		var i FindAllActiveAccountsByPlatformRow
+		if err := rows.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const findAnyActiveAccountByPlatform = `-- name: FindAnyActiveAccountByPlatform :one
 SELECT sa.id, sa.external_account_id, p.workspace_id
 FROM social_accounts sa

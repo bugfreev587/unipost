@@ -118,6 +118,17 @@ WHERE sa.platform = $1
 ORDER BY sa.connected_at DESC
 LIMIT 1;
 
+-- name: FindAllActiveAccountsByPlatform :many
+-- Returns ALL active accounts for a platform across all workspaces.
+-- Used by webhooks to fan out comments/replies to every workspace.
+SELECT sa.id, sa.external_account_id, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC;
+
 -- name: FindSocialAccountByPlatformAndExternalID :one
 -- Webhook routing: find an active social account by platform + external_account_id,
 -- joining to profiles for workspace_id. Returns the first match.

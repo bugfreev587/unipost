@@ -170,23 +170,19 @@ func (h *MetaWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 // Entry.ID is the Instagram user ID. Changes contain comment events;
 // Messaging contains DM events.
 func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWebhookEntry) {
-	// Look up the social account by external_account_id = entry.ID.
-	// Meta webhooks send the IGBA ID (e.g. 17841403079253527) while
-	// Instagram Login stores a different user ID (e.g. 24296723443358322).
-	// Try the direct lookup first, then fall back to finding ANY active
-	// IG account (most apps have only one).
-	account, err := h.findAccountByExternalID(r, "instagram", entry.ID)
-	if err != nil {
-		// Fallback: find any active Instagram account in any workspace.
-		account, err = h.findAnyActiveAccount(r, "instagram")
-		if err != nil {
-			slog.Warn("meta webhook: no active IG account found",
-				"webhook_ig_id", entry.ID, "err", err)
-			return
-		}
-		slog.Info("meta webhook: matched IG account via fallback",
-			"webhook_ig_id", entry.ID, "account_id", account.ID)
+	// Look up ALL active IG accounts to fan out the event to every workspace.
+	// Meta webhooks send the IGBA ID which doesn't match our stored IG Login ID,
+	// so we find all active IG accounts and insert for each.
+	accounts, err := h.findAllActiveAccounts(r, "instagram")
+	if err != nil || len(accounts) == 0 {
+		slog.Warn("meta webhook: no active IG accounts found",
+			"webhook_ig_id", entry.ID, "err", err)
+		return
 	}
+	slog.Info("meta webhook: fanning out to IG accounts",
+		"webhook_ig_id", entry.ID, "account_count", len(accounts))
+
+	for _, account := range accounts {
 
 	// Process changes (comments).
 	slog.Info("meta webhook: processing entry",
@@ -259,6 +255,7 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 			ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
 		}
 	}
+	} // end for accounts
 }
 
 // igCommentValue is the shape of the "value" field for comment webhooks.
@@ -438,6 +435,23 @@ func (h *MetaWebhookHandler) handleThreadsReply(r *http.Request, account *webhoo
 	} else {
 		ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(replyItem))
 	}
+}
+
+// findAllActiveAccounts returns all active accounts for a platform.
+func (h *MetaWebhookHandler) findAllActiveAccounts(r *http.Request, plat string) ([]*webhookAccount, error) {
+	rows, err := h.queries.FindAllActiveAccountsByPlatform(r.Context(), plat)
+	if err != nil {
+		return nil, err
+	}
+	var accounts []*webhookAccount
+	for _, row := range rows {
+		accounts = append(accounts, &webhookAccount{
+			ID:                row.ID,
+			WorkspaceID:       row.WorkspaceID,
+			ExternalAccountID: row.ExternalAccountID,
+		})
+	}
+	return accounts, nil
 }
 
 // verifyMetaWebhookSignature checks the X-Hub-Signature-256 header
