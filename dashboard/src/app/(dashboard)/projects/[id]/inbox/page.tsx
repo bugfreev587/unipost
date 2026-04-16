@@ -218,11 +218,11 @@ function groupItems(items: InboxItem[], source: ConversationGroup["source"]): Co
     const title =
       source === "ig_dm"
         ? `@${firstInbound.author_name || firstInbound.author_id || "unknown"}`
-        : firstInbound.body || "(no text)";
+        : ""; // enriched later with post caption
     const subtitle =
       source === "ig_dm"
         ? (latest.body || "(no text)")
-        : `${sourceLabel(source)}s on @${latest.account_name || "account"}`;
+        : (latestInbound.body || latest.body || "(no text)");
 
     return {
       id: key,
@@ -436,9 +436,25 @@ export default function InboxPage() {
     return () => clearInterval(interval);
   }, [workspaceId, wsConnected, load]);
 
-  const commentsGroups = useMemo(() => groupItems(items, "ig_comment"), [items]);
+  // Enrich comment/thread group titles with post captions.
+  function enrichGroupTitle(group: ConversationGroup): ConversationGroup {
+    if (group.source === "ig_dm" || group.title) return group;
+    const rootExternalID = group.parentExternalID || group.threadKey;
+    if (rootExternalID) {
+      const post = socialPosts.find((p) =>
+        (p.results || []).some((r) => r.external_id === rootExternalID)
+      );
+      if (post?.caption) {
+        return { ...group, title: post.caption };
+      }
+    }
+    // Fallback: use account name + comment count
+    return { ...group, title: group.accountName ? `@${group.accountName}` : "Post" };
+  }
+
+  const commentsGroups = useMemo(() => groupItems(items, "ig_comment").map(enrichGroupTitle), [items, socialPosts]);
   const dmGroups = useMemo(() => groupItems(items, "ig_dm"), [items]);
-  const threadsGroups = useMemo(() => groupItems(items, "threads_reply"), [items]);
+  const threadsGroups = useMemo(() => groupItems(items, "threads_reply").map(enrichGroupTitle), [items, socialPosts]);
 
   const activeGroups = useMemo(() => {
     const base =
@@ -848,7 +864,7 @@ export default function InboxPage() {
           <div>
             <h1 className="dt-heading" style={{ margin: 0 }}>Inbox</h1>
             <p className="dt-body-sm" style={{ margin: "4px 0 0", color: "var(--dmuted)" }}>
-              {accounts.filter((a) => a.platform === "instagram" || a.platform === "threads").length} Meta accounts · {unreadCount} unread
+              {accounts.filter((a) => a.platform === "instagram" || a.platform === "threads").length} Meta accounts · {counts.comments + counts.dms + counts.threads} unread
             </p>
           </div>
         </div>
@@ -1040,7 +1056,7 @@ export default function InboxPage() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <span className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {group.source === "ig_dm" ? group.title : group.accountName ? `@${group.accountName}` : group.title}
+                          {group.source === "ig_dm" ? group.title : group.title || `@${group.accountName || "post"}`}
                         </span>
                         <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
                           {sourceLabel(group.source)}
@@ -1062,7 +1078,7 @@ export default function InboxPage() {
                         ) : null}
                       </div>
                       <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginBottom: 8, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                        {group.source === "ig_dm" ? group.subtitle : group.title}
+                        {group.subtitle}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                         <StatusPill status={status} humanAgent={group.source === "ig_dm"} />
