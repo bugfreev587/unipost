@@ -272,11 +272,18 @@ type igCommentValue struct {
 }
 
 func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAccount, raw json.RawMessage) {
+	slog.Info("meta webhook: raw comment value", "payload", string(raw))
+
 	var val igCommentValue
 	if err := json.Unmarshal(raw, &val); err != nil {
 		slog.Warn("meta webhook: decode comment value failed", "err", err)
 		return
 	}
+
+	slog.Info("meta webhook: parsed comment",
+		"id", val.ID, "media_id", val.MediaID, "parent_id", val.ParentID,
+		"from_id", val.From.ID, "from_username", val.From.Username,
+		"text", val.Text)
 
 	parentID := val.MediaID
 	if val.ParentID != "" {
