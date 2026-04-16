@@ -77,6 +77,25 @@ WHERE social_account_id = $1
 ORDER BY received_at DESC
 LIMIT 1;
 
+-- name: GetInboxMediaCache :one
+SELECT media_url, caption, timestamp, media_type, permalink, fetched_at
+FROM inbox_media_cache
+WHERE social_account_id = $1
+  AND external_id = $2;
+
+-- name: UpsertInboxMediaCache :exec
+INSERT INTO inbox_media_cache (
+  social_account_id, external_id, media_url, caption, timestamp, media_type, permalink, fetched_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+ON CONFLICT (social_account_id, external_id) DO UPDATE SET
+  media_url = EXCLUDED.media_url,
+  caption = EXCLUDED.caption,
+  timestamp = EXCLUDED.timestamp,
+  media_type = EXCLUDED.media_type,
+  permalink = EXCLUDED.permalink,
+  fetched_at = NOW();
+
 -- name: ReconcileDMThreadKeys :execrows
 -- When sync discovers the canonical conversation ID for a DM thread,
 -- update any existing items (e.g. from webhooks) that used a fallback

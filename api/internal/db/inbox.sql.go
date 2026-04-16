@@ -258,6 +258,41 @@ func (q *Queries) GetInboxItemByExternalID(ctx context.Context, arg GetInboxItem
 	return i, err
 }
 
+const getInboxMediaCache = `-- name: GetInboxMediaCache :one
+SELECT media_url, caption, timestamp, media_type, permalink, fetched_at
+FROM inbox_media_cache
+WHERE social_account_id = $1
+  AND external_id = $2
+`
+
+type GetInboxMediaCacheParams struct {
+	SocialAccountID string `json:"social_account_id"`
+	ExternalID      string `json:"external_id"`
+}
+
+type GetInboxMediaCacheRow struct {
+	MediaUrl  string             `json:"media_url"`
+	Caption   string             `json:"caption"`
+	Timestamp string             `json:"timestamp"`
+	MediaType string             `json:"media_type"`
+	Permalink string             `json:"permalink"`
+	FetchedAt pgtype.Timestamptz `json:"fetched_at"`
+}
+
+func (q *Queries) GetInboxMediaCache(ctx context.Context, arg GetInboxMediaCacheParams) (GetInboxMediaCacheRow, error) {
+	row := q.db.QueryRow(ctx, getInboxMediaCache, arg.SocialAccountID, arg.ExternalID)
+	var i GetInboxMediaCacheRow
+	err := row.Scan(
+		&i.MediaUrl,
+		&i.Caption,
+		&i.Timestamp,
+		&i.MediaType,
+		&i.Permalink,
+		&i.FetchedAt,
+	)
+	return i, err
+}
+
 const listAllInboxAccounts = `-- name: ListAllInboxAccounts :many
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
        sa.account_name, p.workspace_id
@@ -590,4 +625,41 @@ func (q *Queries) UpsertInboxItem(ctx context.Context, arg UpsertInboxItemParams
 		&i.LinkedPostID,
 	)
 	return i, err
+}
+
+const upsertInboxMediaCache = `-- name: UpsertInboxMediaCache :exec
+INSERT INTO inbox_media_cache (
+  social_account_id, external_id, media_url, caption, timestamp, media_type, permalink, fetched_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+ON CONFLICT (social_account_id, external_id) DO UPDATE SET
+  media_url = EXCLUDED.media_url,
+  caption = EXCLUDED.caption,
+  timestamp = EXCLUDED.timestamp,
+  media_type = EXCLUDED.media_type,
+  permalink = EXCLUDED.permalink,
+  fetched_at = NOW()
+`
+
+type UpsertInboxMediaCacheParams struct {
+	SocialAccountID string `json:"social_account_id"`
+	ExternalID      string `json:"external_id"`
+	MediaUrl        string `json:"media_url"`
+	Caption         string `json:"caption"`
+	Timestamp       string `json:"timestamp"`
+	MediaType       string `json:"media_type"`
+	Permalink       string `json:"permalink"`
+}
+
+func (q *Queries) UpsertInboxMediaCache(ctx context.Context, arg UpsertInboxMediaCacheParams) error {
+	_, err := q.db.Exec(ctx, upsertInboxMediaCache,
+		arg.SocialAccountID,
+		arg.ExternalID,
+		arg.MediaUrl,
+		arg.Caption,
+		arg.Timestamp,
+		arg.MediaType,
+		arg.Permalink,
+	)
+	return err
 }
