@@ -2,11 +2,12 @@
 
 import { Fragment, useCallback, useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost,
+  getActivation,
   type SocialAccount, type SocialPost,
 } from "@/lib/api";
 import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
@@ -110,6 +111,7 @@ export default function PostsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
+  const router = useRouter();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,8 +121,8 @@ export default function PostsPage() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
-  // Auto-open the create drawer when arriving from activation card
-  // (?action=new&template=welcome). See ActivationCard.tsx STEP_META.send_post.
+  // Auto-open the create drawer when arriving from activation modal
+  // (?action=new&template=welcome). See activation-modal.tsx STEP_META.send_post.
   const searchParams = useSearchParams();
   const [showCreateModal, setShowCreateModal] = useState(searchParams.get("action") === "new");
   const initialCaption = searchParams.get("template") === "welcome" ? "Hello from UniPost 👋" : "";
@@ -521,7 +523,22 @@ export default function PostsPage() {
         accounts={accounts}
         workspaceId={workspaceId}
         getToken={getToken}
-        onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}
+        onCreated={async () => {
+          loadData();
+          if (tab !== "all") setTab("all");
+          // During activation (arrived via ?action=new&template=welcome),
+          // bounce back to /projects/[id] so the Welcome modal re-pops
+          // with step 2 ✓ and step 3 (optional) visible.
+          if (initialCaption === "") return;
+          try {
+            const token = await getToken();
+            if (!token) return;
+            const res = await getActivation(token);
+            if (!res.data.completed && !res.data.dismissed) {
+              router.push(`/projects/${profileId}`);
+            }
+          } catch { /* silent */ }
+        }}
         initialCaption={initialCaption}
         preselectAllAccounts={initialCaption !== ""}
       />
