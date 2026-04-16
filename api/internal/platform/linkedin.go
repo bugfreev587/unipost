@@ -440,24 +440,33 @@ func (a *LinkedInAdapter) RefreshToken(ctx context.Context, refreshToken string)
 	return tokenResp.AccessToken, newRefresh, time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second), nil
 }
 
+// linkedinAPIVersion is the LinkedIn-Version header LinkedIn requires for
+// versioned REST endpoints. Format is YYYYMM. LinkedIn supports a rolling
+// window of versions; bump when a new stable version is needed.
+const linkedinAPIVersion = "202406"
+
 // GetAnalytics fetches post metrics from LinkedIn.
 //
-// Uses the /v2/socialActions/{urn} endpoint, which returns likes +
-// comments counts for standard OAuth apps (w_member_social scope is
-// sufficient — same endpoint PostComment uses).
+// Uses the versioned REST endpoint /rest/socialActions/{urn}, which
+// returns likes + comments counts for standard OAuth apps. The
+// unversioned /v2/socialActions GET was deprecated and now returns
+// 403 ACCESS_DENIED with "NO_VERSION" — LinkedIn requires the
+// LinkedIn-Version header for GETs on this endpoint (POSTs still
+// work on /v2, which is why PostComment doesn't hit this).
 //
 // We previously called /v2/socialMetadata/{urn}, but that's part of
-// LinkedIn's Marketing Developer Platform and returns 403 ACCESS_DENIED
-// for non-LMDP apps. socialActions doesn't expose impressions, reach,
+// LinkedIn's Marketing Developer Platform and returns 403 for
+// non-LMDP apps. socialActions doesn't expose impressions, reach,
 // or clicks — those require LMDP partnership.
 func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		"https://api.linkedin.com/v2/socialActions/"+url.QueryEscape(externalID), nil)
+		"https://api.linkedin.com/rest/socialActions/"+url.QueryEscape(externalID), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("X-Restli-Protocol-Version", "2.0.0")
+	req.Header.Set("LinkedIn-Version", linkedinAPIVersion)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
