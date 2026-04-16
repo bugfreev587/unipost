@@ -11,22 +11,22 @@ const MODE_OPTIONS = [
     id: "personal",
     title: "Post to my own accounts",
     description:
-      "Connect your social accounts and publish to all of them in one click. Shows Accounts under Connections.",
-    features: ["Connections > Accounts"],
+      "Connect your social accounts and publish to all of them in one click. Shows Quickstart under Connections.",
+    features: ["Connections > Quickstart"],
   },
   {
     id: "whitelabel",
     title: "Post with my own app credentials",
     description:
-      "Use your own OAuth apps for each platform. Your brand shows up during authorization. Shows Credentials under Connections and API Keys.",
-    features: ["Connections > Accounts", "Connections > Credentials", "API Keys"],
+      "Use your own OAuth apps for each platform. Your brand shows up during authorization. Shows White-label under Connections and API Keys.",
+    features: ["Connections > Quickstart", "Connections > White-label", "API Keys"],
   },
   {
     id: "api",
     title: "Build an app on UniPost API",
     description:
-      "Your customers connect their accounts through a hosted OAuth flow, and you post on their behalf. Shows Connect Flow and API Keys.",
-    features: ["Connections > Connect Flow", "API Keys"],
+      "Your customers connect their accounts through a hosted OAuth flow, and you post on their behalf. Shows Developer App Users and API Keys.",
+    features: ["Connections > Developer App Users", "API Keys"],
   },
   {
     id: ALL_FEATURES_ID,
