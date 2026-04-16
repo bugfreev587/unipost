@@ -51,9 +51,9 @@ function isFeatureEnabled(envVar: string | undefined, userId: string | undefined
 const ALL_NAV_ITEMS = [
   { href: "/profile", label: "Profiles", icon: Layers },
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
-    { href: "/accounts", label: "Accounts", modes: ["personal", "whitelabel"] },
-    { href: "/users", label: "Connect Flow", modes: ["api"] },
-    { href: "/accounts/native", label: "Credentials", modes: ["whitelabel"] },
+    { href: "/accounts", label: "Quickstart", modes: ["personal", "whitelabel"] },
+    { href: "/accounts/native", label: "White-label", modes: ["whitelabel"] },
+    { href: "/users", label: "Developer App Users", modes: ["api"] },
   ]},
   { href: "/posts", label: "Posts", icon: Send, submenu: [
     { href: "/posts", label: "Overview" },
