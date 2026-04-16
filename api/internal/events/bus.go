@@ -54,3 +54,24 @@ const (
 type NoopBus struct{}
 
 func (NoopBus) Publish(ctx context.Context, workspaceID, event string, data any) {}
+
+// MultiBus fans one Publish call out to every registered bus in order.
+// Used to compose the developer-webhook bus with the user-notification
+// dispatcher: one handler.eventBus.Publish() feeds both systems.
+//
+// Each bus.Publish is called synchronously but each implementation is
+// already fire-and-forget (panics recovered, errors logged) so a slow
+// or broken sub-bus can't block the publish path.
+type MultiBus struct {
+	buses []EventBus
+}
+
+func NewMultiBus(buses ...EventBus) *MultiBus {
+	return &MultiBus{buses: buses}
+}
+
+func (m *MultiBus) Publish(ctx context.Context, workspaceID, event string, data any) {
+	for _, b := range m.buses {
+		b.Publish(ctx, workspaceID, event, data)
+	}
+}

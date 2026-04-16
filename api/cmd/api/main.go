@@ -25,7 +25,9 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
+	"github.com/xiaoboyu/unipost-api/internal/mail"
 	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
@@ -233,12 +235,36 @@ func main() {
 	webhookWorker := worker.NewWebhookDeliveryWorker(queries)
 	go webhookWorker.Start(workerCtx)
 
+	// User-facing notifications (migration 040). Dispatcher receives
+	// events alongside the webhook bus via events.MultiBus below; the
+	// delivery worker drains the queue in the background and sends via
+	// the configured mailer. Unset RESEND_API_KEY → NoopMailer so local
+	// dev can't accidentally email real users.
+	var mailer mail.Mailer = mail.NoopMailer{}
+	if key := os.Getenv("RESEND_API_KEY"); key != "" {
+		from := os.Getenv("RESEND_FROM")
+		if from == "" {
+			from = "UniPost <notifications@unipost.dev>"
+		}
+		mailer = mail.NewResendMailer(key, from)
+	} else {
+		slog.Info("notifications: RESEND_API_KEY unset, using NoopMailer")
+	}
+	notificationDispatcher := worker.NewNotificationDispatcher(queries)
+	notificationWorker := worker.NewNotificationDeliveryWorker(queries, mailer, os.Getenv("APP_BASE_URL"))
+	go notificationWorker.Start(workerCtx)
+
+	// One Publish() call feeds both the developer webhook system and
+	// the user notification system. Handler code depends on
+	// events.EventBus so nothing else has to change.
+	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher)
+
 	// Sprint 3 PR7: managed token refresh worker. Started here so
-	// the bus dependency (webhookWorker) is already wired.
-	managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, webhookWorker)
+	// the bus dependency (eventBus) is already wired.
+	managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus)
 	go managedTokenWorker.Start(workerCtx)
 
-	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor, webhookWorker)
+	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor, eventBus)
 	go schedulerWorker.Start(workerCtx)
 
 	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
@@ -272,13 +298,13 @@ func main() {
 	profileHandler := handler.NewProfileHandler(queries)
 	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
-	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, webhookWorker)
-	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, webhookWorker, storageClient)
+	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
-	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr)
+	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
 	// dynamic GROUP BY clause sqlc can't model.
@@ -297,7 +323,7 @@ func main() {
 	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
-	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, webhookWorker)
+	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus)
 	// Sprint 4 PR5: Managed Users view (one row per end user across
 	// all their connected social accounts).
 	managedUsersHandler := handler.NewManagedUsersHandler(queries)

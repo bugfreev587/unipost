@@ -56,18 +56,22 @@ WHERE id = $1 AND user_id = $2;
 
 -- Resolve every subscription that should receive an event, returning
 -- the delivery row we'd need to insert. Used by NotificationDispatcher
--- during event.Publish(). workspace_id is matched against the sub's
--- workspace_id; NULL on the sub means "all workspaces of this user".
+-- during event.Publish(). A subscription matches when:
+--   - its workspace_id matches the firing workspace, OR
+--   - workspace_id is NULL (account-level) AND its user_id owns that
+--     workspace. The ownership join is critical — without it Alice's
+--     account-level sub would fire on Bob's workspace events.
 --
 -- name: ResolveNotificationTargets :many
 SELECT s.id AS subscription_id, s.channel_id, s.event_type, c.kind AS channel_kind
 FROM notification_subscriptions s
 JOIN notification_channels c ON c.id = s.channel_id
+JOIN workspaces w ON w.id = $2
 WHERE s.event_type = $1
   AND s.enabled = TRUE
   AND c.deleted_at IS NULL
   AND c.verified_at IS NOT NULL
-  AND (s.workspace_id = $2 OR s.workspace_id IS NULL);
+  AND (s.workspace_id = w.id OR (s.workspace_id IS NULL AND s.user_id = w.user_id));
 
 -- Idempotent insert — if (event_id, channel_id) already exists from a
 -- retried publish we silently skip. The UNIQUE constraint on the table

@@ -11,15 +11,20 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
 )
 
 type StripeWebhookHandler struct {
 	queries *db.Queries
 	stripe  *billing.Manager
+	bus     events.EventBus
 }
 
-func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager) *StripeWebhookHandler {
-	return &StripeWebhookHandler{queries: queries, stripe: stripeMgr}
+func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager, bus events.EventBus) *StripeWebhookHandler {
+	if bus == nil {
+		bus = events.NoopBus{}
+	}
+	return &StripeWebhookHandler{queries: queries, stripe: stripeMgr, bus: bus}
 }
 
 // HandleStripe handles POST /webhooks/stripe
@@ -141,6 +146,15 @@ func (h *StripeWebhookHandler) handlePaymentFailed(r *http.Request, event stripe
 			Status:               "past_due",
 		})
 		slog.Warn("stripe webhook: payment failed", "subscription_id", subID)
+
+		// Notify the workspace owner — critical event, per schema in
+		// events/bus.go + worker/notification.go renderer.
+		if sub, err := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: subID, Valid: true}); err == nil {
+			h.bus.Publish(r.Context(), sub.WorkspaceID, events.EventBillingPaymentFailed, map[string]any{
+				"subscription_id": subID,
+				"plan_id":         sub.PlanID,
+			})
+		}
 	}
 }
 
