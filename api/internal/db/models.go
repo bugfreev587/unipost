@@ -234,17 +234,19 @@ type Usage struct {
 }
 
 type User struct {
-	ID                    string             `json:"id"`
-	Email                 string             `json:"email"`
-	Name                  pgtype.Text        `json:"name"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DefaultProfileID      pgtype.Text        `json:"default_profile_id"`
-	LastProfileID         pgtype.Text        `json:"last_profile_id"`
-	OnboardingCompleted   bool               `json:"onboarding_completed"`
-	OnboardingIntent      pgtype.Text        `json:"onboarding_intent"`
-	OnboardingShownAt     pgtype.Timestamptz `json:"onboarding_shown_at"`
-	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	ID                         string             `json:"id"`
+	Email                      string             `json:"email"`
+	Name                       pgtype.Text        `json:"name"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	DefaultProfileID           pgtype.Text        `json:"default_profile_id"`
+	LastProfileID              pgtype.Text        `json:"last_profile_id"`
+	OnboardingCompleted        bool               `json:"onboarding_completed"`
+	OnboardingIntent           pgtype.Text        `json:"onboarding_intent"`
+	OnboardingShownAt          pgtype.Timestamptz `json:"onboarding_shown_at"`
+	OnboardingCompletedAt      pgtype.Timestamptz `json:"onboarding_completed_at"`
+	ActivationCompletedAt      pgtype.Timestamptz `json:"activation_completed_at"`
+	ActivationGuideDismissedAt pgtype.Timestamptz `json:"activation_guide_dismissed_at"`
 }
 
 type Webhook struct {

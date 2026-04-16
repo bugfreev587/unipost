@@ -17,6 +17,7 @@ import {
   type ApiKey,
 } from "@/lib/api";
 import { Key, Users, Send, BarChart3, CreditCard, Settings, ChevronRight } from "lucide-react";
+import { ActivationCard } from "@/components/onboarding/activation-card";
 
 const NAV_CARDS = [
   { href: "/api-keys", label: "API Keys", desc: "Manage access tokens", icon: Key },
@@ -138,6 +139,10 @@ export default function ProfileOverviewPage() {
           <div className="dt-micro" style={{ marginTop: 4 }}>{posts.length} total posts</div>
         </div>
       </div>
+
+      {/* Activation guide — empty state for new users. Hides itself once
+          all three steps are complete or the user dismisses it. */}
+      <ActivationCard profileId={id} />
 
       {/* Quick nav */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

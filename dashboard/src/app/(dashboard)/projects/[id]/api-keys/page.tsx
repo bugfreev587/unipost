@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
+import { useSearchParams } from "next/navigation";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   Dialog,
@@ -19,9 +20,12 @@ import { ConfirmModal } from "@/components/confirm-modal";
 export default function ApiKeysPage() {
   const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
+  const searchParams = useSearchParams();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
-  const [createOpen, setCreateOpen] = useState(false);
+  // Auto-open the create dialog when arriving from activation card
+  // (?action=new). See ActivationCard.tsx STEP_META.create_api_key.
+  const [createOpen, setCreateOpen] = useState(searchParams.get("action") === "new");
   const [keyName, setKeyName] = useState("");
   const [keyEnv, setKeyEnv] = useState<"production" | "test">("production");
   const [creating, setCreating] = useState(false);

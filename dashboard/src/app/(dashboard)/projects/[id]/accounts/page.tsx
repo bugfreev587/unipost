@@ -34,7 +34,9 @@ export default function AccountsPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileFilter, setProfileFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
-  const [connectOpen, setConnectOpen] = useState(false);
+  // Auto-open the connect flow when arriving from activation card
+  // (?action=new). See ActivationCard.tsx STEP_META.connect_account.
+  const [connectOpen, setConnectOpen] = useState(searchParams.get("action") === "new");
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [handle, setHandle] = useState("");

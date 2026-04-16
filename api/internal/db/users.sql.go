@@ -36,7 +36,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at FROM users WHERE id = $1
+SELECT id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at, activation_completed_at, activation_guide_dismissed_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
@@ -54,6 +54,8 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 		&i.OnboardingIntent,
 		&i.OnboardingShownAt,
 		&i.OnboardingCompletedAt,
+		&i.ActivationCompletedAt,
+		&i.ActivationGuideDismissedAt,
 	)
 	return i, err
 }
@@ -78,7 +80,7 @@ SET onboarding_intent = $2,
     onboarding_shown_at = COALESCE(onboarding_shown_at, NOW()),
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at
+RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at, activation_completed_at, activation_guide_dismissed_at
 `
 
 type SetOnboardingIntentParams struct {
@@ -103,6 +105,8 @@ func (q *Queries) SetOnboardingIntent(ctx context.Context, arg SetOnboardingInte
 		&i.OnboardingIntent,
 		&i.OnboardingShownAt,
 		&i.OnboardingCompletedAt,
+		&i.ActivationCompletedAt,
+		&i.ActivationGuideDismissedAt,
 	)
 	return i, err
 }
@@ -141,7 +145,7 @@ INSERT INTO users (id, email, name)
 VALUES ($1, $2, $3)
 ON CONFLICT (id)
 DO UPDATE SET email = $2, name = $3, updated_at = NOW()
-RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at
+RETURNING id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at, activation_completed_at, activation_guide_dismissed_at
 `
 
 type UpsertUserParams struct {
@@ -165,6 +169,8 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.OnboardingIntent,
 		&i.OnboardingShownAt,
 		&i.OnboardingCompletedAt,
+		&i.ActivationCompletedAt,
+		&i.ActivationGuideDismissedAt,
 	)
 	return i, err
 }

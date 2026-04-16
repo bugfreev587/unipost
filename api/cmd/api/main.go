@@ -401,6 +401,11 @@ func main() {
 		r.Patch("/v1/me/intent", meHandler.SetIntent)
 		r.Post("/v1/me/onboarding-shown", meHandler.MarkShown)
 
+		// Activation guide (dashboard empty state).
+		activationHandler := handler.NewActivationHandler(queries)
+		r.Get("/v1/me/activation", activationHandler.Get)
+		r.Post("/v1/me/activation/dismiss", activationHandler.Dismiss)
+
 		// Workspace management (dashboard)
 		r.Get("/v1/workspaces", workspaceHandler.DashboardList)
 		r.Get("/v1/workspaces/{workspaceID}", workspaceHandler.DashboardGet)

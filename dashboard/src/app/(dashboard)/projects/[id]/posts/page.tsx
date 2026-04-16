@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
@@ -119,7 +119,11 @@ export default function PostsPage() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  // Auto-open the create drawer when arriving from activation card
+  // (?action=new&template=welcome). See ActivationCard.tsx STEP_META.send_post.
+  const searchParams = useSearchParams();
+  const [showCreateModal, setShowCreateModal] = useState(searchParams.get("action") === "new");
+  const initialCaption = searchParams.get("template") === "welcome" ? "Hello from UniPost 👋" : "";
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -518,6 +522,8 @@ export default function PostsPage() {
         workspaceId={workspaceId}
         getToken={getToken}
         onCreated={() => { loadData(); if (tab !== "all") setTab("all"); }}
+        initialCaption={initialCaption}
+        preselectAllAccounts={initialCaption !== ""}
       />
 
       {confirmAction ? (

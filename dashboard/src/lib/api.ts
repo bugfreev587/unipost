@@ -862,6 +862,34 @@ export async function markOnboardingShown(
   return request("/v1/me/onboarding-shown", token, { method: "POST" });
 }
 
+// Dashboard empty-state activation guide.
+export type ActivationStepId = "connect_account" | "send_post" | "create_api_key";
+
+export interface ActivationStep {
+  id: ActivationStepId;
+  completed: boolean;
+  count: number;
+}
+
+export interface ActivationResponse {
+  completed: boolean;
+  dismissed: boolean;
+  steps: ActivationStep[];
+  progress: { completed: number; total: number };
+}
+
+export async function getActivation(
+  token: string
+): Promise<ApiResponse<ActivationResponse>> {
+  return request("/v1/me/activation", token);
+}
+
+export async function dismissActivation(
+  token: string
+): Promise<ApiResponse<{ dismissed_at: string }>> {
+  return request("/v1/me/activation/dismiss", token, { method: "POST" });
+}
+
 // Bootstrap — dashboard root resolver. Returns the user's default and
 // last-visited profile ids; lazily creates a "Default" profile for
 // fresh signups so the dashboard never has to render an empty state

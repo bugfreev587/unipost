@@ -141,6 +141,10 @@ interface CreatePostDrawerProps {
   profileName?: string;
   getToken: () => Promise<string | null>;
   onCreated: () => void;
+  // Activation guide: prefill caption + preselect all connected accounts
+  // so a first-time user just clicks Publish.
+  initialCaption?: string;
+  preselectAllAccounts?: boolean;
 }
 
 export function CreatePostDrawer({
@@ -151,6 +155,8 @@ export function CreatePostDrawer({
   profileName,
   getToken,
   onCreated,
+  initialCaption,
+  preselectAllAccounts,
 }: CreatePostDrawerProps) {
   // Profile management
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -203,6 +209,26 @@ export function CreatePostDrawer({
       setQueuesLoaded(true);
     }
   }, [form.publishMode, queuesLoaded]);
+
+  // Apply activation-guide prefill: caption + preselect all connected
+  // accounts when the drawer opens from ?action=new&template=welcome.
+  // Runs only on open transition so subsequent edits aren't overwritten.
+  const appliedPrefillRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      appliedPrefillRef.current = false;
+      return;
+    }
+    if (appliedPrefillRef.current) return;
+    if (initialCaption) {
+      form.setMainContent(initialCaption);
+    }
+    if (preselectAllAccounts && profileAccounts.length > 0) {
+      profileAccounts.forEach((a) => form.toggleAccount(a.id));
+    }
+    appliedPrefillRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialCaption, preselectAllAccounts, profileAccounts.length]);
 
   // Reset form when drawer closes
   useEffect(() => {

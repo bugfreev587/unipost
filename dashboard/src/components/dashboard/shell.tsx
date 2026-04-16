@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
-import { OnboardingTourProvider, TourTriggerButton } from "@/components/dashboard/onboarding-tour";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 // useClerk kept for signOut
@@ -233,7 +232,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const avatarUrl = user?.imageUrl;
 
   return (
-    <OnboardingTourProvider>
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
       {/* ── SIDEBAR ── */}
       <aside
@@ -337,9 +335,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 const hasSubmenu = !!item.submenu;
                 const submenuOpen = hasSubmenu && expandedMenu === item.href;
 
-                const tourId = item.label.toLowerCase().replace(/\s+/g, "-");
                 return (
-                  <div key={item.href} data-tour={tourId}>
+                  <div key={item.href}>
                     {hasSubmenu ? (
                       <button
                         onClick={() => setExpandedMenu((current) => current === item.href ? null : item.href)}
@@ -418,16 +415,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        {/* ── Take a tour ── */}
-        <div style={{ padding: "4px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <TourTriggerButton />
+        {/* ── Theme toggle ── */}
+        <div style={{ padding: "4px 10px", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
           <ThemeToggle />
         </div>
 
         {/* ── Bottom: Workspace ── */}
         {workspace && (
           <div
-            data-tour="workspace"
             style={{
               padding: "10px 10px",
               borderTop: "1px solid var(--dborder)",
@@ -495,6 +490,5 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         onSkip={handleIntentSkip}
       />
     </div>
-    </OnboardingTourProvider>
   );
 }
