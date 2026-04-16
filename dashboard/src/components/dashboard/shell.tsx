@@ -25,7 +25,6 @@ import {
   Settings,
   Shield,
   LogOut,
-  User,
   Mail,
   Cable,
   Layers,
@@ -282,22 +281,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </div>
               <DropdownMenuSeparator />
               {/*
+                Account lives under /settings/account (sidebar Settings entry)
+                and Theme toggles from the bottom of the sidebar — kept out
+                of this menu to avoid duplicating controls.
                 Base UI's Menu.Item exposes onClick (NOT onSelect — that's
                 Radix). Earlier handlers used onSelect and were silently
                 ignored, which is why these items did nothing on click.
               */}
-              <DropdownMenuItem onClick={() => router.push("/settings/account")} style={{ padding: "10px 14px" }}>
-                <User style={{ width: 14, height: 14 }} /><span>Account</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => router.push("/contact")} style={{ padding: "10px 14px" }}>
                 <Mail style={{ width: 14, height: 14 }} /><span>Contact us</span>
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <span style={{ fontSize: 12, fontWeight: 500, color: "var(--dmuted)" }}>Theme</span>
-                <ThemeToggle />
-              </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => signOut({ redirectUrl: "https://unipost.dev" })} style={{ padding: "10px 14px" }}>
                 <LogOut style={{ width: 14, height: 14 }} /><span>Log out</span>

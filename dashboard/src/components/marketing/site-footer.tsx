@@ -19,12 +19,15 @@ const FOOTER_CSS = `
 @media (max-width:720px){.site-footer-inner{padding:44px 20px 52px}.site-footer-grid{grid-template-columns:1fr}.site-footer-brand-copy{max-width:none}}
 `;
 
+// Routes where the marketing footer must not render — every page in the
+// (dashboard) route group belongs here, plus onboarding/admin flows.
 const HIDDEN_PREFIXES = [
   "/projects",
   "/settings",
   "/workspace",
   "/account",
   "/api-keys",
+  "/contact",
   "/admin",
   "/setup",
   "/welcome",
