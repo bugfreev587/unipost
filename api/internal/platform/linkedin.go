@@ -441,13 +441,18 @@ func (a *LinkedInAdapter) RefreshToken(ctx context.Context, refreshToken string)
 }
 
 // GetAnalytics fetches post metrics from LinkedIn.
+//
+// Uses the /v2/socialActions/{urn} endpoint, which returns likes +
+// comments counts for standard OAuth apps (w_member_social scope is
+// sufficient — same endpoint PostComment uses).
+//
+// We previously called /v2/socialMetadata/{urn}, but that's part of
+// LinkedIn's Marketing Developer Platform and returns 403 ACCESS_DENIED
+// for non-LMDP apps. socialActions doesn't expose impressions, reach,
+// or clicks — those require LMDP partnership.
 func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
-	// Use the socialMetadata endpoint for UGC posts. The URN must have its
-	// colons percent-encoded (`urn%3Ali%3Ashare%3Axxx`); LinkedIn rejects
-	// raw colons with "Syntax exception in path variables". url.PathEscape
-	// leaves colons alone per RFC 3986, so we use QueryEscape instead.
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		"https://api.linkedin.com/v2/socialMetadata/"+url.QueryEscape(externalID), nil)
+		"https://api.linkedin.com/v2/socialActions/"+url.QueryEscape(externalID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -456,47 +461,55 @@ func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, 
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("linkedin social metadata request failed: %w", err)
+		return nil, fmt.Errorf("linkedin social actions request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		slog.Warn("linkedin social metadata non-200",
+		slog.Warn("linkedin social actions non-200",
 			"status", resp.StatusCode,
 			"external_id", externalID,
 			"body", string(body))
-		return nil, fmt.Errorf("linkedin social metadata returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("linkedin social actions returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {
-		TotalShareStatistics struct {
-			ShareCount       int64 `json:"shareCount"`
-			LikeCount        int64 `json:"likeCount"`
-			CommentCount     int64 `json:"commentCount"`
-			ImpressionCount  int64 `json:"impressionCount"`
-			UniqueImpression int64 `json:"uniqueImpressionsCount"`
-			ClickCount       int64 `json:"clickCount"`
-		} `json:"totalShareStatistics"`
+		LikesSummary struct {
+			TotalLikes           int64 `json:"totalLikes"`
+			AggregatedTotalLikes int64 `json:"aggregatedTotalLikes"`
+		} `json:"likesSummary"`
+		CommentsSummary struct {
+			TotalFirstLevelComments int64 `json:"totalFirstLevelComments"`
+			AggregatedTotalComments int64 `json:"aggregatedTotalComments"`
+		} `json:"commentsSummary"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		slog.Warn("linkedin social metadata decode failed",
+		slog.Warn("linkedin social actions decode failed",
 			"external_id", externalID,
 			"body", string(body),
 			"err", err)
-		return nil, fmt.Errorf("linkedin social metadata decode: %w", err)
+		return nil, fmt.Errorf("linkedin social actions decode: %w", err)
 	}
 
-	s := result.TotalShareStatistics
+	// Prefer the aggregated total (includes nested) when available, fall
+	// back to the flat count. Comments API uses aggregatedTotalComments
+	// which counts replies to replies too.
+	likes := result.LikesSummary.AggregatedTotalLikes
+	if likes == 0 {
+		likes = result.LikesSummary.TotalLikes
+	}
+	comments := result.CommentsSummary.AggregatedTotalComments
+	if comments == 0 {
+		comments = result.CommentsSummary.TotalFirstLevelComments
+	}
+
 	// EngagementRate is computed by the analytics handler.
+	// Impressions / Reach / Shares / Clicks require LMDP access and are
+	// left at 0 for standard apps.
 	return &PostMetrics{
-		Impressions: s.ImpressionCount,
-		Reach:       s.UniqueImpression,
-		Likes:       s.LikeCount,
-		Comments:    s.CommentCount,
-		Shares:      s.ShareCount,
-		Clicks:      s.ClickCount,
-		Views:       s.ImpressionCount, // legacy alias
+		Likes:    likes,
+		Comments: comments,
 	}, nil
 }
 
