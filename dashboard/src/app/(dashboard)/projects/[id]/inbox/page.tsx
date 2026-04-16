@@ -627,7 +627,26 @@ export default function InboxPage() {
 
   // Pre-fetch media context for all comment/thread groups to show post captions as titles.
   // Tracks attempted keys to prevent infinite retry on failed fetches.
+  // Shared across both media-context effects so a key failure in one
+  // effect doesn't re-fire in the other on the same render.
   const attemptedMediaKeys = useRef<Set<string>>(new Set());
+  // Nonce incremented on `online` to force the fetch effects to re-run
+  // after attemptedMediaKeys is cleared — otherwise React wouldn't see
+  // any dep change and the retries would never fire.
+  const [onlineNonce, setOnlineNonce] = useState(0);
+
+  // When the browser goes back online, clear the attempted-keys cache
+  // so failed fetches retry exactly once. Prevents a transient outage
+  // from permanently disabling media-context for the session.
+  useEffect(() => {
+    function onOnline() {
+      attemptedMediaKeys.current.clear();
+      setOnlineNonce((n) => n + 1);
+    }
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
   useEffect(() => {
     if (!workspaceId) return;
     const allGroups = [...commentsGroups, ...threadsGroups];
@@ -649,11 +668,14 @@ export default function InboxPage() {
           if (res.data) {
             setMediaContext((prev) => ({ ...prev, [key!]: res.data }));
           }
-        } catch { /* silent — already marked attempted */ }
+        } catch (err) {
+          // Log once per key (the Set guards future renders for this key).
+          console.warn(`[inbox] media-context fetch failed for ${key}:`, err);
+        }
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commentsGroups.length, threadsGroups.length, workspaceId]);
+  }, [commentsGroups.length, threadsGroups.length, workspaceId, onlineNonce]);
 
   // Fetch media context from platform API when post image isn't available locally.
   useEffect(() => {
@@ -663,9 +685,14 @@ export default function InboxPage() {
     if (selectedPost && selectedPost.media_urls && selectedPost.media_urls.length > 0) return;
     const parentID = selectedGroup.parentExternalID || selectedGroup.threadKey;
     if (!parentID || mediaContext[parentID]) return;
+    // Same attempted-keys guard as the pre-fetch effect above. Without this,
+    // any re-render while the fetch is failing (WS reconnect churn, Clerk
+    // token refresh) re-fires this effect into a console-flooding loop.
+    if (attemptedMediaKeys.current.has(parentID)) return;
     const firstItem = selectedGroup.items[0];
     if (!firstItem) return;
 
+    attemptedMediaKeys.current.add(parentID); // mark attempted BEFORE fetch
     (async () => {
       try {
         const token = await getToken();
@@ -674,9 +701,13 @@ export default function InboxPage() {
         if (res.data) {
           setMediaContext((prev) => ({ ...prev, [parentID]: res.data }));
         }
-      } catch { /* silent */ }
+      } catch (err) {
+        console.warn(`[inbox] media-context fetch failed for ${parentID}:`, err);
+      }
     })();
-  }, [selectedGroup, selectedPost, workspaceId, getToken, mediaContext]);
+  // onlineNonce in deps so we retry after the browser reconnects.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGroup, selectedPost, workspaceId, onlineNonce]);
 
   const currentMediaContext = selectedGroup
     ? mediaContext[selectedGroup.parentExternalID || selectedGroup.threadKey || ""] || null

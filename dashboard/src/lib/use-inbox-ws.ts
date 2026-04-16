@@ -36,11 +36,41 @@ export function useInboxWebSocket(
     if (!workspaceId) return;
 
     mountedRef.current = true;
-    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
+
+    function clearReconnectTimer() {
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    function scheduleReconnect() {
+      if (!mountedRef.current) return;
+      // Don't pile up retries when the browser is offline — the `online`
+      // listener below will trigger one reconnect when the network returns.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        return;
+      }
+      // Don't stack multiple pending reconnects (e.g. 50s refresh racing
+      // with a backoff timer after a blip).
+      if (reconnectTimer !== null) return;
+      const delay = Math.min(2000 * 2 ** attempt, 30000);
+      attempt++;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    }
 
     async function connect() {
       if (!mountedRef.current || !workspaceId) return;
+
+      // If we're offline, skip the attempt entirely — waiting for `online`.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        return;
+      }
 
       // Close any existing connection
       if (wsRef.current) {
@@ -78,26 +108,37 @@ export function useInboxWebSocket(
         ws.onclose = () => {
           setConnected(false);
           wsRef.current = null;
-          if (!mountedRef.current) return;
-          // Reconnect with backoff: 2s, 4s, 8s, max 30s
-          const delay = Math.min(2000 * 2 ** attempt, 30000);
-          attempt++;
-          reconnectTimer = setTimeout(connect, delay);
+          scheduleReconnect();
         };
 
         ws.onerror = () => {
           // onclose fires after onerror — reconnect happens there
         };
       } catch {
-        if (!mountedRef.current) return;
-        const delay = Math.min(2000 * 2 ** attempt, 30000);
-        attempt++;
-        reconnectTimer = setTimeout(connect, delay);
+        scheduleReconnect();
       }
     }
 
-    // Reconnect every 50 seconds to refresh the Clerk JWT (expires ~60s)
+    // When the browser comes back online, drop any pending backoff timer
+    // and try a fresh reconnect immediately.
+    function onOnline() {
+      clearReconnectTimer();
+      attempt = 0;
+      connect();
+    }
+    function onOffline() {
+      // Cancel in-flight retries; the next `online` will restart.
+      clearReconnectTimer();
+      setConnected(false);
+    }
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+
+    // Reconnect every 50 seconds to refresh the Clerk JWT (expires ~60s).
+    // Skip if we're already in the middle of a reconnect or offline.
     const refreshInterval = setInterval(() => {
+      if (reconnectTimer !== null) return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         attempt = 0; // reset backoff since this is a planned reconnect
         wsRef.current.onclose = null;
@@ -111,8 +152,10 @@ export function useInboxWebSocket(
 
     return () => {
       mountedRef.current = false;
-      clearTimeout(reconnectTimer);
+      clearReconnectTimer();
       clearInterval(refreshInterval);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
       if (wsRef.current) {
         wsRef.current.onclose = null;
         wsRef.current.close();
