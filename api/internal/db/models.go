@@ -69,6 +69,17 @@ type InboxItem struct {
 	LinkedPostID     pgtype.Text        `json:"linked_post_id"`
 }
 
+type InboxMediaCache struct {
+	SocialAccountID string             `json:"social_account_id"`
+	ExternalID      string             `json:"external_id"`
+	MediaUrl        string             `json:"media_url"`
+	Caption         string             `json:"caption"`
+	Timestamp       string             `json:"timestamp"`
+	MediaType       string             `json:"media_type"`
+	Permalink       string             `json:"permalink"`
+	FetchedAt       pgtype.Timestamptz `json:"fetched_at"`
+}
+
 type LandingVisit struct {
 	ID         int64              `json:"id"`
 	Path       string             `json:"path"`

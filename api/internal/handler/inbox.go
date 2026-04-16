@@ -7,6 +7,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,16 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
+
+// mediaContextCacheTTL is how long a fetched media context is considered fresh.
+// Posts don't change frequently, so 1 hour is a safe window and eliminates the
+// per-refresh upstream call that was causing Railway proxy timeouts.
+const mediaContextCacheTTL = 1 * time.Hour
+
+// mediaContextFetchTimeout bounds how long we'll wait for graph.instagram.com /
+// graph.threads.net before returning an error. Must be less than Railway's
+// proxy timeout so our error response (with CORS headers) wins.
+const mediaContextFetchTimeout = 15 * time.Second
 
 type InboxHandler struct {
 	queries   *db.Queries
@@ -215,6 +226,33 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
+
+	// Resolve the media (post) ID. For comments/replies we already have it
+	// in parent_external_id; for orphaned IG comments we need the Graph API.
+	mediaID := ""
+	if item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
+		mediaID = item.ParentExternalID.String
+	}
+
+	// Fast path: return a cached media context if it's fresh. This avoids
+	// the upstream Graph API call on every dashboard refresh.
+	if mediaID != "" {
+		if cached, cErr := h.queries.GetInboxMediaCache(r.Context(), db.GetInboxMediaCacheParams{
+			SocialAccountID: item.SocialAccountID,
+			ExternalID:      mediaID,
+		}); cErr == nil && time.Since(cached.FetchedAt.Time) < mediaContextCacheTTL {
+			writeSuccess(w, &platform.MediaDetails{
+				ID:        mediaID,
+				Caption:   cached.Caption,
+				MediaURL:  cached.MediaUrl,
+				Timestamp: cached.Timestamp,
+				MediaType: cached.MediaType,
+				Permalink: cached.Permalink,
+			})
+			return
+		}
+	}
+
 	account, err := h.queries.GetSocialAccount(r.Context(), item.SocialAccountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Account not found")
@@ -226,12 +264,12 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try parent_external_id first (media ID), then fall back to
-	// looking up the comment's own media via the platform API.
-	mediaID := ""
-	if item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
-		mediaID = item.ParentExternalID.String
-	} else if item.Source == "ig_comment" {
+	// Bound upstream calls so we return a proper error (with CORS headers)
+	// before Railway's proxy times out and returns a plain 502.
+	fetchCtx, cancel := context.WithTimeout(r.Context(), mediaContextFetchTimeout)
+	defer cancel()
+
+	if mediaID == "" && item.Source == "ig_comment" {
 		// The comment has no parent_external_id — look up which
 		// media it belongs to via the comment's own ID.
 		igAdapter := platform.NewInstagramAdapter()
@@ -241,7 +279,7 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 			} `json:"media"`
 		}
 		var info commentInfo
-		if infoBytes, fetchErr := igAdapter.FetchRaw(r.Context(), accessToken,
+		if infoBytes, fetchErr := igAdapter.FetchRaw(fetchCtx, accessToken,
 			"https://graph.instagram.com/v21.0/"+item.ExternalID+"?fields=media{id}"); fetchErr == nil {
 			if jsonErr := json.Unmarshal(infoBytes, &info); jsonErr == nil && info.Media.ID != "" {
 				mediaID = info.Media.ID
@@ -256,13 +294,45 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 
 	var details *platform.MediaDetails
 	if item.Source == "threads_reply" {
-		details, err = platform.NewThreadsAdapter().FetchMediaDetails(r.Context(), accessToken, mediaID)
+		details, err = platform.NewThreadsAdapter().FetchMediaDetails(fetchCtx, accessToken, mediaID)
 	} else {
-		details, err = platform.NewInstagramAdapter().FetchMediaDetails(r.Context(), accessToken, mediaID)
+		details, err = platform.NewInstagramAdapter().FetchMediaDetails(fetchCtx, accessToken, mediaID)
 	}
 	if err != nil {
+		// Fall back to a stale cache entry if we have one — better to show
+		// a slightly outdated image than break the inbox UI.
+		if cached, cErr := h.queries.GetInboxMediaCache(r.Context(), db.GetInboxMediaCacheParams{
+			SocialAccountID: item.SocialAccountID,
+			ExternalID:      mediaID,
+		}); cErr == nil {
+			slog.Warn("inbox media context: upstream failed, serving stale cache",
+				"media_id", mediaID, "err", err)
+			writeSuccess(w, &platform.MediaDetails{
+				ID:        mediaID,
+				Caption:   cached.Caption,
+				MediaURL:  cached.MediaUrl,
+				Timestamp: cached.Timestamp,
+				MediaType: cached.MediaType,
+				Permalink: cached.Permalink,
+			})
+			return
+		}
 		writeError(w, http.StatusBadGateway, "PLATFORM_ERROR", "Failed to fetch media: "+err.Error())
 		return
+	}
+
+	// Store in cache. Use a fresh context so a canceled request doesn't
+	// skip the write after we already have the data.
+	if cacheErr := h.queries.UpsertInboxMediaCache(context.Background(), db.UpsertInboxMediaCacheParams{
+		SocialAccountID: item.SocialAccountID,
+		ExternalID:      mediaID,
+		MediaUrl:        details.MediaURL,
+		Caption:         details.Caption,
+		Timestamp:       details.Timestamp,
+		MediaType:       details.MediaType,
+		Permalink:       details.Permalink,
+	}); cacheErr != nil {
+		slog.Warn("inbox media context: cache write failed", "media_id", mediaID, "err", cacheErr)
 	}
 	writeSuccess(w, details)
 }
