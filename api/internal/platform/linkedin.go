@@ -442,9 +442,12 @@ func (a *LinkedInAdapter) RefreshToken(ctx context.Context, refreshToken string)
 
 // GetAnalytics fetches post metrics from LinkedIn.
 func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
-	// Use the socialMetadata endpoint for UGC posts
+	// Use the socialMetadata endpoint for UGC posts. The URN must have its
+	// colons percent-encoded (`urn%3Ali%3Ashare%3Axxx`); LinkedIn rejects
+	// raw colons with "Syntax exception in path variables". url.PathEscape
+	// leaves colons alone per RFC 3986, so we use QueryEscape instead.
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		"https://api.linkedin.com/v2/socialMetadata/"+url.PathEscape(externalID), nil)
+		"https://api.linkedin.com/v2/socialMetadata/"+url.QueryEscape(externalID), nil)
 	if err != nil {
 		return nil, err
 	}
