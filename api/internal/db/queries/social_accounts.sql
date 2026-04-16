@@ -177,3 +177,16 @@ WHERE sa.platform = $1
   AND sa.external_account_id = $2
   AND p.workspace_id = $3
 LIMIT 1;
+
+-- name: GetDistinctProfileIDsForAccounts :many
+-- Look up the distinct profile_ids across a set of social_account IDs.
+-- Used at post-create/claim time to populate social_posts.profile_ids
+-- so per-profile views can filter posts via `profile_id = ANY(profile_ids)`.
+-- Scoped to a workspace so callers can't pull profile ids from accounts
+-- they don't own — defense-in-depth on top of the handler-side ownership
+-- check that already gates the parsed account_ids.
+SELECT DISTINCT sa.profile_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = ANY($1::text[])
+  AND p.workspace_id = $2;

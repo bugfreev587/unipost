@@ -234,6 +234,8 @@ type SocialPost struct {
 	WorkspaceID    string             `json:"workspace_id"`
 	ArchivedAt     pgtype.Timestamptz `json:"archived_at"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	Source         string             `json:"source"`
+	ProfileIds     []string           `json:"profile_ids"`
 }
 
 type SocialPostResult struct {

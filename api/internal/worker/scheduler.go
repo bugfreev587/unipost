@@ -121,6 +121,24 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 		seen[pp.AccountID] = struct{}{}
 		uniqueIDs = append(uniqueIDs, pp.AccountID)
 	}
+
+	// Lazy-populate profile_ids for posts created before migration 043.
+	// At create time we stamp profile_ids from the target accounts; rows
+	// that pre-date that migration (status='scheduled' at migration time)
+	// sit with an empty array. Populate them now so per-profile filters
+	// see the post once it publishes.
+	if len(post.ProfileIds) == 0 && len(uniqueIDs) > 0 {
+		if ids, err := w.queries.GetDistinctProfileIDsForAccounts(ctx, db.GetDistinctProfileIDsForAccountsParams{
+			Column1:     uniqueIDs,
+			WorkspaceID: post.WorkspaceID,
+		}); err == nil && len(ids) > 0 {
+			_ = w.queries.SetSocialPostProfileIDs(ctx, db.SetSocialPostProfileIDsParams{
+				ID:         post.ID,
+				ProfileIds: ids,
+			})
+		}
+	}
+
 	tracker := quota.NewPerAccountTracker(ctx, w.queries, perAccountLimit, uniqueIDs)
 
 	// One outcome per input post, indexed by position so the result

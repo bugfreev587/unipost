@@ -7,8 +7,8 @@ import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost,
-  getActivation,
-  type SocialAccount, type SocialPost,
+  getActivation, listProfiles,
+  type SocialAccount, type SocialPost, type Profile,
 } from "@/lib/api";
 import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
@@ -29,6 +29,24 @@ const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
 function statusBadge(status: string) {
   const b = STATUS_BADGE[status] || { cls: "dbadge-gray", label: status };
   return <span className={`dbadge ${b.cls}`}><span className="dbadge-dot" />{b.label}</span>;
+}
+
+function sourceBadge(source: SocialPost["source"] | undefined) {
+  const s = source || "ui";
+  const cls = s === "api" ? "dbadge-blue" : "dbadge-gray";
+  return <span className={`dbadge ${cls}`}>{s.toUpperCase()}</span>;
+}
+
+function profileLabel(post: SocialPost, profiles: Profile[]) {
+  const ids = post.profile_ids ?? [];
+  if (ids.length === 0) return <span style={{ color: "var(--dmuted2)", fontSize: 13 }}>—</span>;
+  const names = ids.map((pid) => profiles.find((p) => p.id === pid)?.name || pid.slice(0, 8));
+  const text = names.join(", ");
+  return (
+    <span title={text} style={{ fontSize: 13, color: "var(--dmuted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", maxWidth: 130 }}>
+      {text}
+    </span>
+  );
 }
 
 // Extra CSS for this page
@@ -114,6 +132,7 @@ export default function PostsPage() {
   const router = useRouter();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [posts, setPosts] = useState<SocialPost[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<FilterTab>("all");
   const [search, setSearch] = useState("");
@@ -137,12 +156,14 @@ export default function PostsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [a, p] = await Promise.all([
+      const [a, p, pr] = await Promise.all([
         listSocialAccounts(token, profileId),
         listSocialPosts(token, workspaceId),
+        listProfiles(token).catch(() => ({ data: [] as Profile[] })),
       ]);
       setAccounts(a.data);
       setPosts(p.data);
+      setProfiles(pr.data);
     } catch (err) {
       console.error("Failed to load:", err);
     } finally {
@@ -411,6 +432,8 @@ export default function PostsPage() {
                 </th>
                 <th>Caption</th>
                 <th style={{ width: 100 }}>Platforms</th>
+                <th style={{ width: 70 }}>Source</th>
+                <th style={{ width: 140 }}>Profile</th>
                 <th style={{ width: 110 }}>Status</th>
                 <th style={{ width: 100 }}>Time</th>
                 <th style={{ width: 48 }}></th>
@@ -445,6 +468,8 @@ export default function PostsPage() {
                         </span>
                       </td>
                       <td>{platformIcons(post)}</td>
+                      <td>{sourceBadge(post.source)}</td>
+                      <td>{profileLabel(post, profiles)}</td>
                       <td>{statusBadge(post.status)}</td>
                       <td><span className="posts-time">{getTime(post)}</span></td>
                       <td>
@@ -491,7 +516,7 @@ export default function PostsPage() {
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={6} className="posts-expand-cell">
+                        <td colSpan={8} className="posts-expand-cell">
                           <div className="posts-expand-layout">
                             <div className="posts-meta-grid">
                               <MetaCard label="Caption" value={post.caption || "(no caption)"} />
