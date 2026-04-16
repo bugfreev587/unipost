@@ -246,8 +246,12 @@ export function Backdrop({ children, onBackdropClick }: { children: React.ReactN
       style={{
         position: "fixed", inset: 0, zIndex: 900,
         display: "flex", alignItems: "center", justifyContent: "center",
-        background: "rgba(0, 0, 0, 0.55)",
-        backdropFilter: "blur(4px)",
+        // Heavy overlay + blur so page content behind doesn't read
+        // through the modal. The tutorials page has a lot of visible
+        // text that bled through at 0.55 + blur(4).
+        background: "rgba(0, 0, 0, 0.72)",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
         animation: "tutorial-fade 0.15s ease-out",
         padding: 16,
       }}
@@ -263,7 +267,10 @@ export const cardStyle: React.CSSProperties = {
   maxWidth: "calc(100vw - 32px)",
   padding: 22,
   borderRadius: 14,
-  background: "var(--dbackground)",
+  // Use --surface-raised (defined in globals.css for both themes).
+  // The previous --dbackground was undefined, so the card rendered
+  // transparent and the tutorials page showed through.
+  background: "var(--surface-raised)",
   border: "1px solid var(--dborder)",
   boxShadow: "0 24px 64px rgba(0,0,0,.4)",
 };

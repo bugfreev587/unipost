@@ -95,7 +95,7 @@ export function WelcomeModal({
         style={{
           width: 480,
           maxWidth: "calc(100vw - 32px)",
-          background: "var(--dbackground)",
+          background: "var(--surface-raised)",
           border: "1px solid var(--dborder)",
           borderRadius: 14,
           padding: 28,
