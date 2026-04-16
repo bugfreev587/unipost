@@ -90,7 +90,15 @@ type socialPostResponse struct {
 	ScheduledAt *time.Time           `json:"scheduled_at,omitempty"`
 	PublishedAt *time.Time           `json:"published_at,omitempty"`
 	ArchivedAt  *time.Time           `json:"archived_at,omitempty"`
-	Results     []postResultResponse `json:"results,omitempty"`
+	// Source identifies who triggered this post: "ui" (dashboard) vs
+	// "api" (external API key). Stamped at row creation from the auth
+	// context and never changes thereafter.
+	Source string `json:"source"`
+	// ProfileIDs is the set of distinct profile_ids derived from the
+	// target social_accounts — a single post can target accounts across
+	// multiple profiles. Drives per-profile filtering in the dashboard.
+	ProfileIDs []string             `json:"profile_ids"`
+	Results    []postResultResponse `json:"results,omitempty"`
 }
 
 // Create handles POST /v1/social-posts.
@@ -239,6 +247,8 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		Metadata:       metaJSON,
 		ScheduledAt:    pgtype.Timestamptz{Time: *parsed.ScheduledAt, Valid: true},
 		IdempotencyKey: idempotencyKeyParam(parsed.IdempotencyKey),
+		Source:         resolveSource(r.Context()),
+		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create scheduled post")
@@ -258,6 +268,8 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		Status:      "scheduled",
 		CreatedAt:   post.CreatedAt.Time,
 		ScheduledAt: &scheduledAt,
+		Source:      post.Source,
+		ProfileIDs:  post.ProfileIds,
 	})
 }
 
@@ -326,6 +338,8 @@ func (h *SocialPostHandler) executeImmediatePost(
 		Metadata:       metaJSON,
 		ScheduledAt:    pgtype.Timestamptz{},
 		IdempotencyKey: idempotencyKeyParam(parsed.IdempotencyKey),
+		Source:         resolveSource(r.Context()),
+		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueIDs),
 	})
 	if err != nil {
 		return socialPostResponse{}, fmt.Errorf("failed to create post: %w", err)
@@ -350,6 +364,7 @@ func (h *SocialPostHandler) publishExistingPost(
 	accountMap map[string]platform.ValidateAccount,
 ) {
 	uniqueIDs := uniqueAccountIDs(parsed.Posts)
+	post.ProfileIds = h.ensureProfileIDsForPost(r.Context(), post, uniqueIDs)
 	dbAccounts := make(map[string]db.SocialAccount, len(uniqueIDs))
 	for _, id := range uniqueIDs {
 		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
@@ -568,12 +583,14 @@ func (h *SocialPostHandler) executePublishLoop(
 		caption = &post.Caption.String
 	}
 	resp := socialPostResponse{
-		ID:        post.ID,
-		Caption:   caption,
-		MediaURLs: post.MediaUrls,
-		Status:    postStatus,
-		CreatedAt: post.CreatedAt.Time,
-		Results:   responseResults,
+		ID:         post.ID,
+		Caption:    caption,
+		MediaURLs:  post.MediaUrls,
+		Status:     postStatus,
+		CreatedAt:  post.CreatedAt.Time,
+		Source:     post.Source,
+		ProfileIDs: post.ProfileIds,
+		Results:    responseResults,
 	}
 
 	// Fan out webhook events. Best-effort — Publish recovers panics
@@ -939,6 +956,56 @@ type publishOneOutcome struct {
 	firstCommentWarning string
 }
 
+// resolveSource classifies the publish trigger as either "ui" (Clerk
+// session) or "api" (API key). We branch on GetUserID: the Clerk
+// middleware stamps user_id; the API key middleware doesn't (it only
+// stamps workspace_id). Stamped once at create time and never changes.
+func resolveSource(ctx context.Context) string {
+	if auth.GetUserID(ctx) != "" {
+		return "ui"
+	}
+	return "api"
+}
+
+// resolveProfileIDs looks up the distinct profile_ids across the
+// request's target accounts. Used at create time to populate
+// social_posts.profile_ids so per-profile dashboards can filter posts
+// via `profile_id = ANY(profile_ids)`. Empty slice is valid — the row
+// still inserts; filters just won't match it.
+func (h *SocialPostHandler) resolveProfileIDs(ctx context.Context, workspaceID string, accountIDs []string) []string {
+	if len(accountIDs) == 0 {
+		return []string{}
+	}
+	ids, err := h.queries.GetDistinctProfileIDsForAccounts(ctx, db.GetDistinctProfileIDsForAccountsParams{
+		Column1:     accountIDs,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil || ids == nil {
+		return []string{}
+	}
+	return ids
+}
+
+// ensureProfileIDsForPost lazy-populates profile_ids on rows created
+// before migration 043 landed. Called from the publish/claim paths
+// (draft publish, scheduler worker) so pre-migration drafts and
+// scheduled posts still get correct per-profile attribution when they
+// eventually publish. No-op when the row already has profile_ids.
+func (h *SocialPostHandler) ensureProfileIDsForPost(ctx context.Context, post db.SocialPost, accountIDs []string) []string {
+	if len(post.ProfileIds) > 0 {
+		return post.ProfileIds
+	}
+	ids := h.resolveProfileIDs(ctx, post.WorkspaceID, accountIDs)
+	if len(ids) == 0 {
+		return ids
+	}
+	_ = h.queries.SetSocialPostProfileIDs(ctx, db.SetSocialPostProfileIDsParams{
+		ID:         post.ID,
+		ProfileIds: ids,
+	})
+	return ids
+}
+
 // uniqueAccountIDs returns the distinct account IDs across a slice of
 // PlatformPostInput. Used by createImmediatePost so we only fetch each
 // account once even when the same account appears multiple times
@@ -1065,10 +1132,12 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 	}
 
 	resp := socialPostResponse{
-		ID:        post.ID,
-		MediaURLs: post.MediaUrls,
-		Status:    post.Status,
-		CreatedAt: post.CreatedAt.Time,
+		ID:         post.ID,
+		MediaURLs:  post.MediaUrls,
+		Status:     post.Status,
+		CreatedAt:  post.CreatedAt.Time,
+		Source:     post.Source,
+		ProfileIDs: post.ProfileIds,
 	}
 	if post.Caption.Valid {
 		c := post.Caption.String
@@ -1199,6 +1268,8 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Status:      post.Status,
 		CreatedAt:   post.CreatedAt.Time,
 		PublishedAt: publishedAt,
+		Source:      post.Source,
+		ProfileIDs:  post.ProfileIds,
 		Results:     responseResults,
 	})
 }
@@ -1324,6 +1395,8 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			ScheduledAt: scheduledAt,
 			PublishedAt: publishedAt,
 			ArchivedAt:  archivedAt,
+			Source:      p.Source,
+			ProfileIDs:  p.ProfileIds,
 			Results:     responseResults,
 		})
 	}

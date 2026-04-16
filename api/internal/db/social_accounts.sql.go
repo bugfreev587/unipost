@@ -149,6 +149,45 @@ func (q *Queries) FindSocialAccountByExternalID(ctx context.Context, arg FindSoc
 	return i, err
 }
 
+const getDistinctProfileIDsForAccounts = `-- name: GetDistinctProfileIDsForAccounts :many
+SELECT DISTINCT sa.profile_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = ANY($1::text[])
+  AND p.workspace_id = $2
+`
+
+type GetDistinctProfileIDsForAccountsParams struct {
+	Column1     []string `json:"column_1"`
+	WorkspaceID string   `json:"workspace_id"`
+}
+
+// Look up the distinct profile_ids across a set of social_account IDs.
+// Used at post-create/claim time to populate social_posts.profile_ids
+// so per-profile views can filter posts via `profile_id = ANY(profile_ids)`.
+// Scoped to a workspace so callers can't pull profile ids from accounts
+// they don't own — defense-in-depth on top of the handler-side ownership
+// check that already gates the parsed account_ids.
+func (q *Queries) GetDistinctProfileIDsForAccounts(ctx context.Context, arg GetDistinctProfileIDsForAccountsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, getDistinctProfileIDsForAccounts, arg.Column1, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var profile_id string
+		if err := rows.Scan(&profile_id); err != nil {
+			return nil, err
+		}
+		items = append(items, profile_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getExpiringTokens = `-- name: GetExpiringTokens :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
 WHERE disconnected_at IS NULL

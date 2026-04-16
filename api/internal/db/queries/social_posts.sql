@@ -1,7 +1,15 @@
 -- name: CreateSocialPost :one
-INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key, source, profile_ids)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
+
+-- name: SetSocialPostProfileIDs :exec
+-- Lazy-populate profile_ids on posts that were created before the
+-- source/profile_ids migration landed. Called from the publish/claim
+-- paths when the parent row has an empty profile_ids.
+UPDATE social_posts
+SET profile_ids = $2
+WHERE id = $1;
 
 -- name: GetSocialPostByIdempotencyKey :one
 SELECT * FROM social_posts

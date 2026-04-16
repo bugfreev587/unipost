@@ -77,6 +77,20 @@ export default function ProfileOverviewPage() {
   const usagePct = billing ? Math.min(billing.percentage, 100) : 0;
   const barClass = usagePct >= 100 ? "bar-red" : usagePct >= 80 ? "bar-amber" : "bar-green";
 
+  // Count posts belonging to THIS profile this month. Filters the
+  // already-loaded posts[] by profile_ids — a post lands under this
+  // profile whenever one of its target accounts belongs here. The
+  // workspace-level quota (billing.usage) still drives the quota bar
+  // below since plans are priced per workspace.
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const profilePostsThisMonth = posts.filter((p) => {
+    if (!p.profile_ids?.includes(id)) return false;
+    return new Date(p.created_at) >= monthStart;
+  }).length;
+  const profilePostsTotal = posts.filter((p) => p.profile_ids?.includes(id)).length;
+
   return (
     <TutorialHostProvider profileId={id}>
       {/* Header */}
@@ -105,7 +119,7 @@ export default function ProfileOverviewPage() {
             Posts This Month
           </div>
           <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
-            {billing?.usage ?? 0}
+            {profilePostsThisMonth}
           </div>
           {billing && (
             <>
@@ -115,7 +129,7 @@ export default function ProfileOverviewPage() {
                 </div>
               </div>
               <div style={{ fontSize: 12, color: usagePct >= 80 ? "var(--warning)" : "var(--dmuted)" }}>
-                {billing.usage} / {billing.limit} &middot; {Math.round(billing.percentage)}%
+                Workspace: {billing.usage} / {billing.limit} &middot; {Math.round(billing.percentage)}%
               </div>
             </>
           )}
@@ -136,7 +150,7 @@ export default function ProfileOverviewPage() {
           <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
             {keys.length}
           </div>
-          <div className="dt-micro" style={{ marginTop: 4 }}>{posts.length} total posts</div>
+          <div className="dt-micro" style={{ marginTop: 4 }}>{profilePostsTotal} total posts</div>
         </div>
       </div>
 

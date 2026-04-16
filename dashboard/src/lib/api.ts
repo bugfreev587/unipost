@@ -345,6 +345,14 @@ export interface SocialPost {
   created_at: string;
   published_at?: string;
   archived_at?: string;
+  // "ui" = dashboard publish, "api" = external API key publish.
+  // Stamped at row creation and immutable thereafter.
+  source: "ui" | "api";
+  // Distinct profile_ids the post landed under, derived from its
+  // target social_accounts. A single post can target accounts across
+  // multiple profiles. Empty when the post was created before
+  // migration 043 and hasn't published yet.
+  profile_ids: string[];
   results?: SocialPostResult[];
 }
 
