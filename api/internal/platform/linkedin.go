@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -452,12 +453,17 @@ func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, 
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("linkedin social metadata request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return &PostMetrics{}, nil
+		slog.Warn("linkedin social metadata non-200",
+			"status", resp.StatusCode,
+			"external_id", externalID,
+			"body", string(body))
+		return nil, fmt.Errorf("linkedin social metadata returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {
@@ -470,7 +476,13 @@ func (a *LinkedInAdapter) GetAnalytics(ctx context.Context, accessToken string, 
 			ClickCount       int64 `json:"clickCount"`
 		} `json:"totalShareStatistics"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		slog.Warn("linkedin social metadata decode failed",
+			"external_id", externalID,
+			"body", string(body),
+			"err", err)
+		return nil, fmt.Errorf("linkedin social metadata decode: %w", err)
+	}
 
 	s := result.TotalShareStatistics
 	// EngagementRate is computed by the analytics handler.
