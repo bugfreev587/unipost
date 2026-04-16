@@ -207,6 +207,7 @@ type SocialPostResult struct {
 	ErrorMessage    pgtype.Text        `json:"error_message"`
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
 	Caption         string             `json:"caption"`
+	Url             pgtype.Text        `json:"url"`
 }
 
 type Subscription struct {

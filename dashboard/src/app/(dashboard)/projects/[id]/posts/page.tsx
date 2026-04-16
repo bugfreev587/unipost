@@ -616,7 +616,15 @@ function PostResultCard({
   result: NonNullable<SocialPost["results"]>[number];
   workspaceId: string;
 }) {
-  const url = result.external_id && result.platform ? postUrlFor(result.platform, result.external_id) : null;
+  // Prefer the platform-provided URL (set by the adapter, e.g. Threads
+  // permalink from the Graph API). Fall back to postUrlFor only if the
+  // adapter didn't return one — important for Threads, whose public
+  // URL uses shortcodes that aren't derivable from the numeric post ID.
+  const url = result.url
+    ? result.url
+    : result.external_id && result.platform
+      ? postUrlFor(result.platform, result.external_id)
+      : null;
   const hint = result.status === "failed" ? categorizeError(result.error_message || "") : null;
 
   return (
