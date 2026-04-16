@@ -428,13 +428,14 @@ func main() {
 		r.Post("/v1/me/onboarding-shown", meHandler.MarkShown)
 		r.Delete("/v1/me", meHandler.Delete)
 
-		// Activation guide (dashboard empty state).
+		// Activation guide (dashboard empty state) — legacy, kept for
+		// rollout compatibility. Superseded by /v1/me/tutorials.
 		activationHandler := handler.NewActivationHandler(queries)
 		r.Get("/v1/me/activation", activationHandler.Get)
 		r.Post("/v1/me/activation/dismiss", activationHandler.Dismiss)
 
-		// Notification settings (migration 040). Account-scoped; no
-		// workspace context needed. See /settings/notifications page.
+		// Notification settings. Account-scoped; no workspace context
+		// needed. See /settings/notifications page.
 		notificationHandler := handler.NewNotificationHandler(queries)
 		r.Get("/v1/me/notifications/events", notificationHandler.ListEvents)
 		r.Get("/v1/me/notifications/channels", notificationHandler.ListChannels)
@@ -443,6 +444,13 @@ func main() {
 		r.Get("/v1/me/notifications/subscriptions", notificationHandler.ListSubscriptions)
 		r.Put("/v1/me/notifications/subscriptions", notificationHandler.UpsertSubscription)
 		r.Delete("/v1/me/notifications/subscriptions/{id}", notificationHandler.DeleteSubscription)
+
+		// Tutorials framework.
+		tutorialsHandler := handler.NewTutorialsHandler(queries)
+		r.Get("/v1/me/tutorials", tutorialsHandler.List)
+		r.Post("/v1/me/tutorials/{id}/complete", tutorialsHandler.Complete)
+		r.Post("/v1/me/tutorials/{id}/dismiss", tutorialsHandler.Dismiss)
+		r.Post("/v1/me/tutorials/{id}/reopen", tutorialsHandler.Reopen)
 
 		// Workspace management (dashboard)
 		r.Get("/v1/workspaces", workspaceHandler.DashboardList)

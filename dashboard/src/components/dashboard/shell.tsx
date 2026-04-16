@@ -31,6 +31,7 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  GraduationCap,
 } from "lucide-react";
 
 // Feature flag: NEXT_PUBLIC_FEATURE_INBOX controls Inbox visibility.
@@ -407,8 +408,30 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        {/* ── Theme toggle ── */}
+        {/* ── Bottom actions: tutorials + theme ── */}
         <div style={{ padding: "4px 10px", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
+          <Link
+            href="/tutorials"
+            title="Tutorials"
+            aria-label="Tutorials"
+            data-active={pathname.startsWith("/tutorials")}
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 30, height: 30, borderRadius: 8,
+              border: "1px solid var(--dborder)",
+              background: pathname.startsWith("/tutorials") ? "var(--sidebar-accent)" : "transparent",
+              color: pathname.startsWith("/tutorials") ? "var(--daccent)" : "var(--dmuted)",
+              transition: "background 0.1s, color 0.1s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--sidebar-accent)"; }}
+            onMouseLeave={(e) => {
+              const active = pathname.startsWith("/tutorials");
+              e.currentTarget.style.color = active ? "var(--daccent)" : "var(--dmuted)";
+              e.currentTarget.style.background = active ? "var(--sidebar-accent)" : "transparent";
+            }}
+          >
+            <GraduationCap style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+          </Link>
           <ThemeToggle />
         </div>
 

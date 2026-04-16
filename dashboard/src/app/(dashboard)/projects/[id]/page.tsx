@@ -17,7 +17,7 @@ import {
   type ApiKey,
 } from "@/lib/api";
 import { Key, Users, Send, BarChart3, CreditCard, Settings, ChevronRight } from "lucide-react";
-import { ActivationModal } from "@/components/onboarding/activation-modal";
+import { TutorialHostProvider } from "@/components/tutorials/tutorial-host";
 
 const NAV_CARDS = [
   { href: "/api-keys", label: "API Keys", desc: "Manage access tokens", icon: Key },
@@ -78,7 +78,7 @@ export default function ProfileOverviewPage() {
   const barClass = usagePct >= 100 ? "bar-red" : usagePct >= 80 ? "bar-amber" : "bar-green";
 
   return (
-    <>
+    <TutorialHostProvider profileId={id}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
@@ -140,10 +140,9 @@ export default function ProfileOverviewPage() {
         </div>
       </div>
 
-      {/* Activation modal — pops over the dashboard for new users.
-          Only appears on this root page; closable in the moment but
-          re-opens on next visit until the first two steps are done. */}
-      <ActivationModal profileId={id} />
+      {/* Tutorials — mandatory quickstart auto-pops here for new users;
+          dismissing is temporary (re-opens on next profile visit) until
+          completed. Optional tutorials open from /tutorials. */}
 
       {/* Quick nav */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -178,6 +177,6 @@ export default function ProfileOverviewPage() {
           );
         })}
       </div>
-    </>
+    </TutorialHostProvider>
   );
 }
