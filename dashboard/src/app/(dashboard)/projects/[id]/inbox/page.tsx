@@ -626,28 +626,30 @@ export default function InboxPage() {
   }, [selectedGroup, socialPosts]);
 
   // Pre-fetch media context for all comment/thread groups to show post captions as titles.
+  // Tracks attempted keys to prevent infinite retry on failed fetches.
+  const attemptedMediaKeys = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!workspaceId) return;
     const allGroups = [...commentsGroups, ...threadsGroups];
     const toFetch = allGroups.filter((g) => {
       const key = g.parentExternalID || g.threadKey;
-      return key && !mediaContext[key] && g.items[0];
+      return key && !mediaContext[key] && !attemptedMediaKeys.current.has(key) && g.items[0];
     });
     if (toFetch.length === 0) return;
 
     (async () => {
       const token = await getToken();
       if (!token) return;
-      // Fetch in parallel, max 5 at a time to avoid rate limits
       for (const group of toFetch.slice(0, 5)) {
         const key = group.parentExternalID || group.threadKey;
-        if (!key || mediaContext[key]) continue;
+        if (!key || mediaContext[key] || attemptedMediaKeys.current.has(key)) continue;
+        attemptedMediaKeys.current.add(key); // mark attempted BEFORE fetch
         try {
           const res = await getInboxMediaContext(token, workspaceId, group.items[0].id);
           if (res.data) {
             setMediaContext((prev) => ({ ...prev, [key!]: res.data }));
           }
-        } catch { /* silent */ }
+        } catch { /* silent — already marked attempted */ }
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
