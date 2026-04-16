@@ -19,6 +19,7 @@
 
 import type { TutorialId, TutorialsCounts } from "@/lib/api";
 import type { ReactNode } from "react";
+import { PostWithApiBody } from "./post-with-api/body";
 
 export type TutorialStepSignal =
   | { kind: "count"; name: keyof TutorialsCounts; threshold?: number }
@@ -83,8 +84,9 @@ export function stepCompleted(signal: TutorialStepSignal, counts: TutorialsCount
 // /tutorials page; the shell uses it to resolve a tutorial by id.
 //
 // Quickstart is defined inline because its step list is trivial. The
-// post_with_api definition pulls in a custom body from its own module
-// to keep the code-block UI colocated.
+// post_with_api definition's renderBody is attached below via dynamic
+// import binding to avoid a circular import (the body imports the
+// TutorialBodyProps type from this file).
 export const TUTORIAL_REGISTRY: TutorialDefinition[] = [
   {
     id: "quickstart",
@@ -140,9 +142,7 @@ export const TUTORIAL_REGISTRY: TutorialDefinition[] = [
         signal: { kind: "manual" },
       },
     ],
-    // renderBody is attached at registration time below to avoid a
-    // circular import (post-with-api/body.tsx imports TutorialBodyProps
-    // from this file).
+    renderBody: PostWithApiBody,
   },
 ];
 
