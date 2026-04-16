@@ -52,6 +52,14 @@ LIMIT $7;
 UPDATE social_posts SET status = $2, published_at = $3
 WHERE id = $1;
 
+-- name: UpdateSocialPostErrorMetadata :exec
+-- Merges an error_summary field into the post's metadata JSONB.
+-- Used when the publish loop fails before any result row could be persisted
+-- (e.g., FK violation from a deleted social account).
+UPDATE social_posts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('error_summary', $2::TEXT)
+WHERE id = $1;
+
 -- name: SoftDeleteSocialPost :one
 UPDATE social_posts
 SET deleted_at = NOW(),

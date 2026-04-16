@@ -435,6 +435,7 @@ func (h *SocialPostHandler) executePublishLoop(
 	allPublished := true
 	anyPublished := false
 	publishedCount := 0
+	persistErrors := make([]string, 0) // track insert failures so we can surface them on the parent post
 
 	for i, oc := range outcomes {
 		var extID, errMsg pgtype.Text
@@ -462,7 +463,19 @@ func (h *SocialPostHandler) executePublishLoop(
 			PublishedAt:     pubAt,
 		})
 		if dbErr != nil {
-			slog.Error("failed to save post result", "error", dbErr)
+			// Most common cause: FK violation from a deleted social account.
+			// Capture the reason so the user sees why the post failed even
+			// though no result row exists.
+			reason := oc.err
+			if reason == nil {
+				reason = dbErr
+			}
+			persistErrors = append(persistErrors,
+				fmt.Sprintf("account %s: %s (result not saved: %v)",
+					parsed.Posts[i].AccountID, reason.Error(), dbErr))
+			slog.Error("failed to save post result",
+				"error", dbErr, "account_id", parsed.Posts[i].AccountID, "dispatch_error", reason.Error())
+			allPublished = false
 			continue
 		}
 
@@ -507,6 +520,31 @@ func (h *SocialPostHandler) executePublishLoop(
 		Status:      postStatus,
 		PublishedAt: publishedAt,
 	})
+
+	// When the post fails, persist a human-readable error summary on
+	// the parent post's metadata so users can understand why.
+	if postStatus == "failed" {
+		errSummary := make([]string, 0, len(outcomes))
+		for i, oc := range outcomes {
+			if oc.err != nil {
+				errSummary = append(errSummary, fmt.Sprintf("[%s] %s", parsed.Posts[i].AccountID, oc.err.Error()))
+			}
+		}
+		errSummary = append(errSummary, persistErrors...)
+		summaryText := strings.Join(errSummary, "; ")
+		if summaryText == "" {
+			summaryText = "Post failed with no platform results. This usually means the target account was deleted, disconnected, or never existed."
+		}
+		_ = h.queries.UpdateSocialPostErrorMetadata(r.Context(), db.UpdateSocialPostErrorMetadataParams{
+			ID:      post.ID,
+			Column2: summaryText,
+		})
+		slog.Warn("social post failed",
+			"post_id", post.ID,
+			"workspace_id", workspaceID,
+			"errors", summaryText,
+			"result_count", len(responseResults))
+	}
 
 	if publishedCount > 0 {
 		h.quota.Increment(r.Context(), workspaceID, publishedCount)

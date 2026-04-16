@@ -646,6 +646,25 @@ func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContent
 	return i, err
 }
 
+const updateSocialPostErrorMetadata = `-- name: UpdateSocialPostErrorMetadata :exec
+UPDATE social_posts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('error_summary', $2::TEXT)
+WHERE id = $1
+`
+
+type UpdateSocialPostErrorMetadataParams struct {
+	ID      string `json:"id"`
+	Column2 string `json:"column_2"`
+}
+
+// Merges an error_summary field into the post's metadata JSONB.
+// Used when the publish loop fails before any result row could be persisted
+// (e.g., FK violation from a deleted social account).
+func (q *Queries) UpdateSocialPostErrorMetadata(ctx context.Context, arg UpdateSocialPostErrorMetadataParams) error {
+	_, err := q.db.Exec(ctx, updateSocialPostErrorMetadata, arg.ID, arg.Column2)
+	return err
+}
+
 const updateSocialPostStatus = `-- name: UpdateSocialPostStatus :exec
 UPDATE social_posts SET status = $2, published_at = $3
 WHERE id = $1
