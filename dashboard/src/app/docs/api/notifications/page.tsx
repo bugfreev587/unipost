@@ -34,7 +34,7 @@ export default function NotificationsPage() {
       <DocsTable
         columns={["Channel", "Use now?", "What you need", "Notes"]}
         rows={[
-          ["Email", "Yes", "Enter an email address in UniPost.", "Only the signup email is auto-verified today."],
+          ["Email", "Yes", "Nothing to create. UniPost uses your signup email automatically.", "You only need to turn events on or off."],
           ["Slack webhook", "Yes", "Create an Incoming Webhook URL in Slack, then paste it into UniPost.", "URL must start with https://hooks.slack.com/."],
           ["Discord webhook", "Yes", "Create a webhook URL in Discord, then paste it into UniPost.", "URL must start with https://discord.com/api/webhooks/."],
           ["SMS", "No", "Not available yet.", "Modeled in backend only."],
@@ -44,15 +44,16 @@ export default function NotificationsPage() {
 
       <h2 id="email-setup">Email setup</h2>
       <p>
-        Fastest path:
+        Email is the default channel. UniPost automatically creates it from your signup email.
       </p>
       <ol className="docs-list">
         <li>Open <code>Settings &gt; Notifications</code>.</li>
-        <li>Click <strong>Add channel &gt; Email</strong>.</li>
-        <li>Enter your email address and save.</li>
+        <li>Look for the built-in <strong>Email</strong> channel that shows your signup email address.</li>
+        <li>Use <strong>Test</strong> if you want to confirm delivery.</li>
+        <li>Turn events on or off in the <strong>Subscriptions</strong> table.</li>
       </ol>
       <div className="docs-callout">
-        <strong>Current limitation:</strong> only the signup email is auto-verified. Other email addresses can be added, but they stay <code>Unverified</code> and will not appear in the subscriptions table yet.
+        <strong>Current rule:</strong> UniPost only sends email notifications to your signup email. You do not need to add it manually.
       </div>
 
       <h2 id="slack-setup">Slack setup</h2>
