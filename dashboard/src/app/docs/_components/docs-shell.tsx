@@ -125,6 +125,7 @@ export const DOCS_NAV: NavSection[] = [
         items: [
           { label: "Analytics", href: "/docs/api/analytics" },
           { label: "Notifications", href: "/docs/api/notifications" },
+          { label: "Slack Webhook URL", href: "/docs/api/slack-webhook" },
           { label: "Discord Webhook URL", href: "/docs/api/discord-webhook" },
           { label: "Webhooks", href: "/docs/api/webhooks" },
           { label: "Billing", href: "/docs/api/billing" },

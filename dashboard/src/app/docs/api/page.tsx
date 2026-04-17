@@ -74,6 +74,11 @@ export default function ApiReferenceLandingPage() {
           <p><Link href="/docs/api/notifications">Open Notifications</Link></p>
         </div>
         <div className="docs-card">
+          <div className="docs-card-title">Slack webhook guide</div>
+          <p>Follow the exact Slack UI flow to create an incoming webhook URL and paste it into UniPost.</p>
+          <p><Link href="/docs/api/slack-webhook">Open Slack Webhook Guide</Link></p>
+        </div>
+        <div className="docs-card">
           <div className="docs-card-title">Discord webhook guide</div>
           <p>Follow the exact Discord UI flow to create a webhook URL and paste it into UniPost.</p>
           <p><Link href="/docs/api/discord-webhook">Open Discord Webhook Guide</Link></p>
