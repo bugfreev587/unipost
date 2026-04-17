@@ -32,6 +32,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   GraduationCap,
+  BookOpen,
 } from "lucide-react";
 
 // Feature flag: NEXT_PUBLIC_FEATURE_INBOX controls Inbox visibility.
@@ -410,6 +411,28 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* ── Bottom actions: tutorials + theme ── */}
         <div style={{ padding: "4px 10px", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
+          <a
+            href="https://unipost.dev/docs"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Docs"
+            aria-label="Docs"
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 30, height: 30, borderRadius: 8,
+              border: "1px solid var(--dborder)",
+              background: "transparent",
+              color: "var(--dmuted)",
+              transition: "background 0.1s, color 0.1s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--sidebar-accent)"; }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "var(--dmuted)";
+              e.currentTarget.style.background = "transparent";
+            }}
+          >
+            <BookOpen style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+          </a>
           <Link
             href="/tutorials"
             title="Tutorials"
