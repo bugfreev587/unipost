@@ -436,11 +436,12 @@ func main() {
 
 		// Notification settings. Account-scoped; no workspace context
 		// needed. See /settings/notifications page.
-		notificationHandler := handler.NewNotificationHandler(queries)
+		notificationHandler := handler.NewNotificationHandler(queries, mailer, os.Getenv("APP_BASE_URL"))
 		r.Get("/v1/me/notifications/events", notificationHandler.ListEvents)
 		r.Get("/v1/me/notifications/channels", notificationHandler.ListChannels)
 		r.Post("/v1/me/notifications/channels", notificationHandler.CreateChannel)
 		r.Delete("/v1/me/notifications/channels/{id}", notificationHandler.DeleteChannel)
+		r.Post("/v1/me/notifications/channels/{id}/test", notificationHandler.TestChannel)
 		r.Get("/v1/me/notifications/subscriptions", notificationHandler.ListSubscriptions)
 		r.Put("/v1/me/notifications/subscriptions", notificationHandler.UpsertSubscription)
 		r.Delete("/v1/me/notifications/subscriptions/{id}", notificationHandler.DeleteSubscription)

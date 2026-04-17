@@ -1302,6 +1302,15 @@ export async function deleteNotificationChannel(
   });
 }
 
+export async function testNotificationChannel(
+  token: string,
+  id: string
+): Promise<ApiResponse<{ id: string; kind: string; message: string }>> {
+  return request(`/v1/me/notifications/channels/${id}/test`, token, {
+    method: "POST",
+  });
+}
+
 export async function listNotificationSubscriptions(
   token: string
 ): Promise<ApiResponse<NotificationSubscription[]>> {

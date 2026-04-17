@@ -1,8 +1,13 @@
 package handler
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -13,17 +18,29 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
 
 // NotificationHandler exposes the user-facing settings API for the
 // notification system (migration 040). All routes are account-scoped
 // by the authenticated user — no workspace context needed.
 type NotificationHandler struct {
-	queries *db.Queries
+	queries    *db.Queries
+	mailer     mail.Mailer
+	httpClient *http.Client
+	appBaseURL string
 }
 
-func NewNotificationHandler(queries *db.Queries) *NotificationHandler {
-	return &NotificationHandler{queries: queries}
+func NewNotificationHandler(queries *db.Queries, mailer mail.Mailer, appBaseURL string) *NotificationHandler {
+	if appBaseURL == "" {
+		appBaseURL = "https://app.unipost.dev"
+	}
+	return &NotificationHandler{
+		queries:    queries,
+		mailer:     mailer,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		appBaseURL: strings.TrimRight(appBaseURL, "/"),
+	}
 }
 
 // Static catalog of events the settings UI knows how to show. Kept in
@@ -200,6 +217,46 @@ func (h *NotificationHandler) DeleteChannel(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// TestChannel — POST /v1/me/notifications/channels/{id}/test
+// Sends a one-off test message through the actual provider path.
+func (h *NotificationHandler) TestChannel(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Channel id required")
+		return
+	}
+
+	channel, err := h.queries.GetNotificationChannel(r.Context(), db.GetNotificationChannelParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Channel not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load channel")
+		return
+	}
+
+	if err := h.sendTestChannel(r.Context(), channel); err != nil {
+		slog.Warn("notifications: test send failed", "channel_id", channel.ID, "kind", channel.Kind, "error", err)
+		writeError(w, http.StatusBadGateway, "DELIVERY_FAILED", err.Error())
+		return
+	}
+
+	writeSuccess(w, map[string]any{
+		"id":      channel.ID,
+		"kind":    channel.Kind,
+		"message": testChannelSuccessMessage(channel.Kind),
+	})
+}
+
 // ── Subscriptions ────────────────────────────────────────────────────
 
 type subscriptionResponse struct {
@@ -335,4 +392,80 @@ func isSupportedEvent(t string) bool {
 		}
 	}
 	return false
+}
+
+func (h *NotificationHandler) sendTestChannel(ctx context.Context, c db.NotificationChannel) error {
+	switch c.Kind {
+	case "email":
+		var cfg struct {
+			Address string `json:"address"`
+		}
+		if err := json.Unmarshal(c.Config, &cfg); err != nil || cfg.Address == "" {
+			return fmt.Errorf("invalid email channel config")
+		}
+		return h.mailer.Send(ctx, mail.Message{
+			To:      cfg.Address,
+			Subject: "[UniPost] Notification channel test",
+			HTML: fmt.Sprintf(`<p>This is a test notification from UniPost.</p>
+<p>Your email channel is connected and can receive alerts.</p>
+<p><a href="%s/settings/notifications">Manage notification settings →</a></p>`, h.appBaseURL),
+			Text: fmt.Sprintf("This is a test notification from UniPost.\n\nYour email channel is connected and can receive alerts.\n\nManage settings: %s/settings/notifications\n", h.appBaseURL),
+		})
+	case "slack_webhook":
+		var cfg struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal(c.Config, &cfg); err != nil || cfg.URL == "" {
+			return fmt.Errorf("invalid slack_webhook channel config")
+		}
+		body, _ := json.Marshal(map[string]string{
+			"text": fmt.Sprintf("UniPost test notification\nThis Slack channel is connected and ready to receive alerts.\n%s/settings/notifications", h.appBaseURL),
+		})
+		return h.postTestWebhook(ctx, cfg.URL, body)
+	case "discord_webhook":
+		var cfg struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal(c.Config, &cfg); err != nil || cfg.URL == "" {
+			return fmt.Errorf("invalid discord_webhook channel config")
+		}
+		body, _ := json.Marshal(map[string]any{
+			"content":  fmt.Sprintf("UniPost test notification\nThis Discord channel is connected and ready to receive alerts.\n%s/settings/notifications", h.appBaseURL),
+			"username": "UniPost",
+		})
+		return h.postTestWebhook(ctx, cfg.URL, body)
+	default:
+		return fmt.Errorf("unsupported channel kind: %s", c.Kind)
+	}
+}
+
+func (h *NotificationHandler) postTestWebhook(ctx context.Context, url string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("webhook: new request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("webhook: http: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("webhook: %d", resp.StatusCode)
+}
+
+func testChannelSuccessMessage(kind string) string {
+	switch kind {
+	case "email":
+		return "Test email sent."
+	case "slack_webhook":
+		return "Test Slack message sent."
+	case "discord_webhook":
+		return "Test Discord message sent."
+	default:
+		return "Test notification sent."
+	}
 }

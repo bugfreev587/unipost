@@ -9,6 +9,7 @@ import {
   listNotificationSubscriptions,
   createNotificationChannel,
   deleteNotificationChannel,
+  testNotificationChannel,
   upsertNotificationSubscription,
   type NotificationEvent,
   type NotificationChannel,
@@ -59,6 +60,8 @@ export default function NotificationsSettingsPage() {
   const [addLabel, setAddLabel] = useState("");
   const [adding, setAdding] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [testBusy, setTestBusy] = useState<Record<string, boolean>>({});
+  const [testState, setTestState] = useState<Record<string, { kind: "success" | "error"; message: string }>>({});
 
   const load = useCallback(async () => {
     const token = await getToken();
@@ -136,6 +139,31 @@ export default function NotificationsSettingsPage() {
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleTestChannel(channelId: string) {
+    setTestBusy((p) => ({ ...p, [channelId]: true }));
+    setTestState((p) => {
+      const next = { ...p };
+      delete next[channelId];
+      return next;
+    });
+    const token = await getToken();
+    if (!token) return;
+    try {
+      const res = await testNotificationChannel(token, channelId);
+      setTestState((p) => ({
+        ...p,
+        [channelId]: { kind: "success", message: res.data.message || "Test sent." },
+      }));
+    } catch (e) {
+      setTestState((p) => ({
+        ...p,
+        [channelId]: { kind: "error", message: e instanceof Error ? e.message : String(e) },
+      }));
+    } finally {
+      setTestBusy((p) => ({ ...p, [channelId]: false }));
     }
   }
 
@@ -318,7 +346,32 @@ export default function NotificationsSettingsPage() {
                       <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>· {c.label}</span>
                     )}
                   </div>
+                  {testState[c.id] && (
+                    <div
+                      style={{
+                        marginTop: 6,
+                        fontSize: 11,
+                        color: testState[c.id].kind === "success" ? "var(--daccent)" : "var(--danger)",
+                      }}
+                    >
+                      {testState[c.id].message}
+                    </div>
+                  )}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => handleTestChannel(c.id)}
+                  disabled={!!testBusy[c.id]}
+                  style={{
+                    ...btnGhost,
+                    padding: "7px 10px",
+                    fontSize: 12,
+                    color: testBusy[c.id] ? "var(--dmuted2)" : "var(--dtext)",
+                    opacity: testBusy[c.id] ? 0.7 : 1,
+                  }}
+                >
+                  {testBusy[c.id] ? "Testing..." : "Test"}
+                </button>
                 <button
                   type="button"
                   onClick={() => handleDeleteChannel(c.id)}
