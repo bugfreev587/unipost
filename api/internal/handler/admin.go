@@ -341,6 +341,20 @@ type adminUserDetailResponse struct {
 	Workspaces         []adminUserWorkspace `json:"workspaces"`
 }
 
+type adminUserPostFailure struct {
+	PostID       string     `json:"post_id"`
+	WorkspaceID  string     `json:"workspace_id"`
+	WorkspaceName string    `json:"workspace_name"`
+	CreatedAt    time.Time  `json:"created_at"`
+	PostStatus   string     `json:"post_status"`
+	Source       string     `json:"source"`
+	Platform     *string    `json:"platform,omitempty"`
+	AccountName  *string    `json:"account_name,omitempty"`
+	Caption      *string    `json:"caption,omitempty"`
+	ErrorMessage *string    `json:"error_message,omitempty"`
+	ErrorSummary *string    `json:"error_summary,omitempty"`
+}
+
 func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "id")
 
@@ -422,4 +436,127 @@ ORDER BY w.created_at DESC
 	}
 
 	writeSuccess(w, d)
+}
+
+func (h *AdminHandler) ListUserPostFailures(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	q := r.URL.Query()
+
+	days, _ := strconv.Atoi(q.Get("days"))
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+
+	rows, err := h.pool.Query(r.Context(), `
+WITH failed_results AS (
+  SELECT
+    sp.id AS post_id,
+    sp.workspace_id,
+    w.name AS workspace_name,
+    sp.created_at,
+    sp.status AS post_status,
+    sp.source,
+    sa.platform,
+    sa.account_name,
+    NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
+    NULLIF(spr.error_message, '') AS error_message,
+    NULL::TEXT AS error_summary
+  FROM social_posts sp
+  JOIN workspaces w ON w.id = sp.workspace_id
+  JOIN social_post_results spr ON spr.post_id = sp.id
+  LEFT JOIN social_accounts sa ON sa.id = spr.social_account_id
+  WHERE w.user_id = $1
+    AND sp.deleted_at IS NULL
+    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND spr.status = 'failed'
+),
+parent_failures AS (
+  SELECT
+    sp.id AS post_id,
+    sp.workspace_id,
+    w.name AS workspace_name,
+    sp.created_at,
+    sp.status AS post_status,
+    sp.source,
+    NULL::TEXT AS platform,
+    NULL::TEXT AS account_name,
+    NULLIF(sp.caption, '') AS caption,
+    NULL::TEXT AS error_message,
+    NULLIF(sp.metadata->>'error_summary', '') AS error_summary
+  FROM social_posts sp
+  JOIN workspaces w ON w.id = sp.workspace_id
+  WHERE w.user_id = $1
+    AND sp.deleted_at IS NULL
+    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND sp.status = 'failed'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM social_post_results spr
+      WHERE spr.post_id = sp.id
+    )
+    AND COALESCE(sp.metadata->>'error_summary', '') <> ''
+)
+SELECT
+  post_id,
+  workspace_id,
+  workspace_name,
+  created_at,
+  post_status,
+  source,
+  platform,
+  account_name,
+  caption,
+  error_message,
+  error_summary
+FROM (
+  SELECT * FROM failed_results
+  UNION ALL
+  SELECT * FROM parent_failures
+) failures
+ORDER BY created_at DESC
+LIMIT $3
+`, userID, days, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load post failures: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := make([]adminUserPostFailure, 0)
+	for rows.Next() {
+		var item adminUserPostFailure
+		var platform, accountName, caption, errorMessage, errorSummary *string
+		if err := rows.Scan(
+			&item.PostID,
+			&item.WorkspaceID,
+			&item.WorkspaceName,
+			&item.CreatedAt,
+			&item.PostStatus,
+			&item.Source,
+			&platform,
+			&accountName,
+			&caption,
+			&errorMessage,
+			&errorSummary,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan post failure: "+err.Error())
+			return
+		}
+		item.Platform = platform
+		item.AccountName = accountName
+		item.Caption = caption
+		item.ErrorMessage = errorMessage
+		item.ErrorSummary = errorSummary
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read post failures: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, out)
 }

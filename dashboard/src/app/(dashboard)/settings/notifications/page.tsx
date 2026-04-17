@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, useUser } from "@clerk/nextjs";
-import { Mail, Plus, Trash2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Mail, Hash, Plus, Trash2, AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
 import {
   listNotificationEvents,
   listNotificationChannels,
@@ -15,8 +15,6 @@ import {
   type NotificationSubscription,
 } from "@/lib/api";
 
-// Severity → badge color. Mirrors backend severity field so adding a
-// new level in Go shows up here with the right visual weight.
 const SEVERITY_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
   critical: { bg: "rgba(239,68,68,.12)", fg: "var(--danger)", label: "Critical" },
   high: { bg: "rgba(245,158,11,.14)", fg: "var(--warning)", label: "Important" },
@@ -24,10 +22,29 @@ const SEVERITY_STYLES: Record<string, { bg: string; fg: string; label: string }>
   low: { bg: "rgba(156,163,175,.14)", fg: "var(--dmuted)", label: "Low" },
 };
 
-// The matrix lets the user toggle each event × channel pair. For the
-// MVP we only render one column (the first email channel) — the UI
-// is designed to grow to a real matrix when Slack/SMS land, but the
-// data model is already many-to-many so nothing here has to change.
+type AddChannelKind = "email" | "slack_webhook" | "discord_webhook" | null;
+
+const CHANNEL_ICONS: Record<string, React.ReactNode> = {
+  email: <Mail style={{ width: 15, height: 15, color: "var(--dmuted2)" }} />,
+  slack_webhook: <SlackIcon />,
+  discord_webhook: <DiscordIcon />,
+};
+
+const CHANNEL_LABELS: Record<string, string> = {
+  email: "Email",
+  slack_webhook: "Slack",
+  discord_webhook: "Discord",
+};
+
+function channelDisplayName(c: NotificationChannel): string {
+  return c.config.address || c.config.url || c.label || CHANNEL_LABELS[c.kind] || c.kind;
+}
+
+function channelColumnLabel(c: NotificationChannel): string {
+  if (c.kind === "email") return c.config.address || "Email";
+  return c.label || CHANNEL_LABELS[c.kind] || c.kind;
+}
+
 export default function NotificationsSettingsPage() {
   const { getToken } = useAuth();
   const { user } = useUser();
@@ -36,10 +53,12 @@ export default function NotificationsSettingsPage() {
   const [subs, setSubs] = useState<NotificationSubscription[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState<Record<string, boolean>>({}); // keyed by `${eventType}:${channelId}`
-  const [showAddEmail, setShowAddEmail] = useState(false);
-  const [newEmail, setNewEmail] = useState("");
-  const [addingEmail, setAddingEmail] = useState(false);
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [addKind, setAddKind] = useState<AddChannelKind>(null);
+  const [addInput, setAddInput] = useState("");
+  const [addLabel, setAddLabel] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
 
   const load = useCallback(async () => {
     const token = await getToken();
@@ -61,9 +80,7 @@ export default function NotificationsSettingsPage() {
     }
   }, [getToken]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   async function handleToggle(eventType: string, channelId: string, currentEnabled: boolean) {
     const key = `${eventType}:${channelId}`;
@@ -84,21 +101,29 @@ export default function NotificationsSettingsPage() {
     }
   }
 
-  async function handleAddEmail(e: React.FormEvent) {
+  async function handleAddChannel(e: React.FormEvent) {
     e.preventDefault();
-    if (!newEmail.trim()) return;
-    setAddingEmail(true);
+    if (!addKind || !addInput.trim()) return;
+    setAdding(true);
     const token = await getToken();
     if (!token) return;
     try {
-      await createNotificationChannel(token, { kind: "email", address: newEmail.trim() });
-      setNewEmail("");
-      setShowAddEmail(false);
+      const data: Record<string, string> = { kind: addKind };
+      if (addKind === "email") {
+        data.address = addInput.trim();
+      } else {
+        data.url = addInput.trim();
+      }
+      if (addLabel.trim()) data.label = addLabel.trim();
+      await createNotificationChannel(token, data as Parameters<typeof createNotificationChannel>[1]);
+      setAddInput("");
+      setAddLabel("");
+      setAddKind(null);
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setAddingEmail(false);
+      setAdding(false);
     }
   }
 
@@ -114,7 +139,6 @@ export default function NotificationsSettingsPage() {
     }
   }
 
-  // Subscription lookup by (event_type, channel_id).
   function findSub(eventType: string, channelId: string): NotificationSubscription | null {
     return subs.find((s) => s.event_type === eventType && s.channel_id === channelId) ?? null;
   }
@@ -123,8 +147,14 @@ export default function NotificationsSettingsPage() {
     return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
   }
 
-  const emailChannels = channels.filter((c) => c.kind === "email");
+  const verifiedChannels = channels.filter((c) => c.verified);
   const signupEmail = user?.primaryEmailAddress?.emailAddress;
+
+  const addPlaceholder: Record<string, string> = {
+    email: "you@example.com",
+    slack_webhook: "https://hooks.slack.com/services/...",
+    discord_webhook: "https://discord.com/api/webhooks/...",
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
@@ -137,6 +167,7 @@ export default function NotificationsSettingsPage() {
         }}>
           <AlertCircle style={{ width: 14, height: 14 }} />
           {err}
+          <button type="button" onClick={() => setErr(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 16 }}>×</button>
         </div>
       )}
 
@@ -151,51 +182,105 @@ export default function NotificationsSettingsPage() {
               Where UniPost sends you notifications.
             </div>
           </div>
-          {!showAddEmail && (
-            <button
-              type="button"
-              onClick={() => setShowAddEmail(true)}
-              style={btnSecondary}
-            >
-              <Plus style={{ width: 13, height: 13 }} /> Add email
-            </button>
+          {!addKind && (
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => setShowAddMenu(!showAddMenu)}
+                style={btnSecondary}
+              >
+                <Plus style={{ width: 13, height: 13 }} /> Add channel <ChevronDown style={{ width: 12, height: 12 }} />
+              </button>
+              {showAddMenu && (
+                <>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 50 }} onClick={() => setShowAddMenu(false)} />
+                  <div style={{
+                    position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 51,
+                    minWidth: 180, padding: 4, borderRadius: 8,
+                    background: "var(--surface-raised)", border: "1px solid var(--dborder)",
+                    boxShadow: "0 12px 28px rgba(0,0,0,.3)",
+                  }}>
+                    {([
+                      { kind: "email" as const, label: "Email", icon: <Mail style={{ width: 14, height: 14 }} /> },
+                      { kind: "slack_webhook" as const, label: "Slack Webhook", icon: <SlackIcon /> },
+                      { kind: "discord_webhook" as const, label: "Discord Webhook", icon: <DiscordIcon /> },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.kind}
+                        type="button"
+                        onClick={() => { setAddKind(opt.kind); setShowAddMenu(false); }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10, width: "100%",
+                          padding: "9px 12px", borderRadius: 6, border: "none",
+                          background: "transparent", color: "var(--dtext)",
+                          fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+                          textAlign: "left",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface2)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                      >
+                        {opt.icon} {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
 
-        {showAddEmail && (
+        {addKind && (
           <form
-            onSubmit={handleAddEmail}
-            style={{ display: "flex", gap: 8, marginBottom: 12, padding: 12, border: "1px solid var(--dborder)", borderRadius: 8, background: "var(--surface)" }}
+            onSubmit={handleAddChannel}
+            style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, padding: 14, border: "1px solid var(--dborder)", borderRadius: 8, background: "var(--surface)" }}
           >
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--dtext)", display: "flex", alignItems: "center", gap: 8 }}>
+              {CHANNEL_ICONS[addKind]} Add {CHANNEL_LABELS[addKind]}
+            </div>
             <input
-              type="email"
+              type={addKind === "email" ? "email" : "url"}
               required
-              placeholder="you@example.com"
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
+              placeholder={addPlaceholder[addKind]}
+              value={addInput}
+              onChange={(e) => setAddInput(e.target.value)}
               autoFocus
               style={{
-                flex: 1, padding: "8px 12px", borderRadius: 6,
+                padding: "8px 12px", borderRadius: 6,
                 border: "1px solid var(--dborder)", background: "var(--surface2)",
-                color: "var(--dtext)", fontSize: 13, fontFamily: "inherit",
+                color: "var(--dtext)", fontSize: 13, fontFamily: "var(--font-geist-mono), monospace",
               }}
             />
-            <button type="submit" disabled={addingEmail} style={btnPrimary}>
-              {addingEmail ? "Adding..." : "Add"}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setShowAddEmail(false); setNewEmail(""); }}
-              style={btnGhost}
-            >
-              Cancel
-            </button>
+            {addKind !== "email" && (
+              <input
+                type="text"
+                placeholder="Label (optional, e.g. #ops-alerts)"
+                value={addLabel}
+                onChange={(e) => setAddLabel(e.target.value)}
+                style={{
+                  padding: "8px 12px", borderRadius: 6,
+                  border: "1px solid var(--dborder)", background: "var(--surface2)",
+                  color: "var(--dtext)", fontSize: 13, fontFamily: "inherit",
+                }}
+              />
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="submit" disabled={adding} style={btnPrimary}>
+                {adding ? "Adding..." : "Add"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAddKind(null); setAddInput(""); setAddLabel(""); }}
+                style={btnGhost}
+              >
+                Cancel
+              </button>
+            </div>
           </form>
         )}
 
         {channels.length === 0 ? (
           <div style={emptyBox}>
-            No channels yet — add an email above to start receiving notifications.
+            No channels yet — add one above to start receiving notifications.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -208,25 +293,29 @@ export default function NotificationsSettingsPage() {
                   border: "1px solid var(--dborder)", background: "var(--surface)",
                 }}
               >
-                <Mail style={{ width: 16, height: 16, color: "var(--dmuted2)" }} />
+                {CHANNEL_ICONS[c.kind] || <Hash style={{ width: 15, height: 15, color: "var(--dmuted2)" }} />}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: "var(--dtext)", fontWeight: 500 }}>
-                    {c.config.address || "(unknown address)"}
+                  <div style={{ fontSize: 13, color: "var(--dtext)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {channelDisplayName(c)}
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>
+                      {CHANNEL_LABELS[c.kind] || c.kind}
+                    </span>
                     {c.verified ? (
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--daccent)" }}>
                         <CheckCircle2 style={{ width: 11, height: 11 }} /> Verified
                       </span>
                     ) : (
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--warning)" }}>
-                        <AlertCircle style={{ width: 11, height: 11 }} /> Unverified — notifications won&apos;t send
+                        <AlertCircle style={{ width: 11, height: 11 }} /> Unverified
                       </span>
                     )}
                     {signupEmail && c.config.address === signupEmail && (
-                      <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>
-                        · Signup email
-                      </span>
+                      <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>· Signup email</span>
+                    )}
+                    {c.label && c.kind !== "email" && (
+                      <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>· {c.label}</span>
                     )}
                   </div>
                 </div>
@@ -255,17 +344,16 @@ export default function NotificationsSettingsPage() {
           </div>
         </div>
 
-        {emailChannels.length === 0 ? (
+        {verifiedChannels.length === 0 ? (
           <div style={emptyBox}>
-            Add a channel above before subscribing to events.
+            Add and verify a channel above before subscribing to events.
           </div>
         ) : (
           <div style={{ border: "1px solid var(--dborder)", borderRadius: 10, overflow: "hidden" }}>
-            {/* Header row */}
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: `1fr repeat(${emailChannels.length}, minmax(140px, auto))`,
+                gridTemplateColumns: `1fr repeat(${verifiedChannels.length}, minmax(100px, auto))`,
                 alignItems: "center",
                 padding: "10px 14px",
                 background: "var(--surface2)",
@@ -275,20 +363,22 @@ export default function NotificationsSettingsPage() {
               }}
             >
               <div>Event</div>
-              {emailChannels.map((c) => (
-                <div key={c.id} style={{ textAlign: "center" }}>
-                  {c.config.address || c.label || "Email"}
+              {verifiedChannels.map((c) => (
+                <div key={c.id} style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                  {CHANNEL_ICONS[c.kind]}
+                  <span style={{ fontSize: 10, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {channelColumnLabel(c)}
+                  </span>
                 </div>
               ))}
             </div>
 
-            {/* Event rows */}
             {events.map((ev, idx) => (
               <div
                 key={ev.event_type}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: `1fr repeat(${emailChannels.length}, minmax(140px, auto))`,
+                  gridTemplateColumns: `1fr repeat(${verifiedChannels.length}, minmax(100px, auto))`,
                   alignItems: "center",
                   padding: "14px",
                   borderBottom: idx === events.length - 1 ? "none" : "1px solid var(--dborder)",
@@ -312,7 +402,7 @@ export default function NotificationsSettingsPage() {
                     {ev.description}
                   </div>
                 </div>
-                {emailChannels.map((c) => {
+                {verifiedChannels.map((c) => {
                   const sub = findSub(ev.event_type, c.id);
                   const enabled = !!sub?.enabled;
                   const key = `${ev.event_type}:${c.id}`;
@@ -323,12 +413,12 @@ export default function NotificationsSettingsPage() {
                         <input
                           type="checkbox"
                           checked={enabled}
-                          disabled={isBusy || !c.verified}
+                          disabled={isBusy}
                           onChange={() => handleToggle(ev.event_type, c.id, enabled)}
                           style={{
                             width: 18, height: 18,
                             accentColor: "var(--daccent)",
-                            cursor: c.verified ? "pointer" : "not-allowed",
+                            cursor: "pointer",
                             opacity: isBusy ? 0.5 : 1,
                           }}
                         />
@@ -345,7 +435,26 @@ export default function NotificationsSettingsPage() {
   );
 }
 
-// ── Styles (inline to match the rest of settings) ───────────────────
+// ── Inline SVG icons for Slack and Discord (no external deps) ────────
+
+function SlackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--dmuted2)" }}>
+      <rect x="13" y="2" width="3" height="8" rx="1.5" /><rect x="8" y="14" width="3" height="8" rx="1.5" />
+      <rect x="2" y="8" width="8" height="3" rx="1.5" /><rect x="14" y="13" width="8" height="3" rx="1.5" />
+    </svg>
+  );
+}
+
+function DiscordIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={15} height={15} fill="currentColor" style={{ color: "var(--dmuted2)" }}>
+      <path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.02.03.05.03.07.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z" />
+    </svg>
+  );
+}
+
+// ── Styles ───────────────────────────────────────────────────────────
 
 const btnPrimary: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 6,

@@ -7,12 +7,14 @@ import {
   getAdminLandingSources,
   getAdminStats,
   getAdminUser,
+  getAdminUserPostFailures,
   getMe,
   listAdminUsers,
   type AdminLandingSourceRow,
   type AdminLandingSourcesResponse,
   type AdminStats,
   type AdminUserDetail,
+  type AdminUserPostFailure,
   type AdminUserListParams,
   type AdminUserRow,
 } from "@/lib/api";
@@ -61,6 +63,7 @@ export default function AdminPage() {
 
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [detail, setDetail] = useState<AdminUserDetail | null>(null);
+  const [postFailures, setPostFailures] = useState<AdminUserPostFailure[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
   // Admin gate is resolved server-side via /v1/me against ADMIN_USERS.
@@ -128,12 +131,17 @@ export default function AdminPage() {
   async function openUser(id: string) {
     setSelectedUserId(id);
     setDetail(null);
+    setPostFailures([]);
     setDetailLoading(true);
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await getAdminUser(token, id);
-      setDetail(res.data);
+      const [userRes, failuresRes] = await Promise.all([
+        getAdminUser(token, id),
+        getAdminUserPostFailures(token, id, { days: 30, limit: 25 }),
+      ]);
+      setDetail(userRes.data);
+      setPostFailures(failuresRes.data);
     } catch (e) {
       console.error(e);
     } finally {
@@ -144,6 +152,7 @@ export default function AdminPage() {
   function closeDetail() {
     setSelectedUserId(null);
     setDetail(null);
+    setPostFailures([]);
   }
 
   // Conversion %
@@ -558,6 +567,65 @@ export default function AdminPage() {
                         ))}
                       </div>
                     )}
+
+                    <div className="ad-panel-section">
+                      <div className="ad-panel-section-title">Failed posts (30d)</div>
+                      {postFailures.length === 0 ? (
+                        <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
+                          No failure details found for this user in the last 30 days.
+                        </div>
+                      ) : (
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {postFailures.map((failure, idx) => {
+                            const message = failure.error_message || failure.error_summary || "No error message recorded.";
+                            return (
+                              <div
+                                key={`${failure.post_id}-${failure.platform || "parent"}-${idx}`}
+                                style={{
+                                  border: "1px solid var(--dborder)",
+                                  borderRadius: 8,
+                                  padding: 10,
+                                  background: "var(--surface)",
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                    <span className="ad-badge ad-b-gray">{failure.platform || failure.post_status}</span>
+                                    {failure.account_name && (
+                                      <span style={{ fontSize: 11, color: "var(--dmuted)" }}>@{failure.account_name}</span>
+                                    )}
+                                    <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>{failure.workspace_name}</span>
+                                  </div>
+                                  <span style={{ fontSize: 11, color: "var(--dmuted)" }}>{fmtRelative(failure.created_at)}</span>
+                                </div>
+                                {failure.caption && (
+                                  <div style={{ fontSize: 12, color: "var(--dtext)", marginBottom: 6 }}>
+                                    {failure.caption}
+                                  </div>
+                                )}
+                                <div
+                                  style={{
+                                    fontSize: 11.5,
+                                    color: "var(--danger)",
+                                    background: "var(--danger-soft)",
+                                    border: "1px solid color-mix(in srgb, var(--danger) 18%, transparent)",
+                                    borderRadius: 6,
+                                    padding: "8px 9px",
+                                    whiteSpace: "pre-wrap",
+                                    wordBreak: "break-word",
+                                  }}
+                                >
+                                  {message}
+                                </div>
+                                <div className="ad-mono" style={{ marginTop: 6 }}>
+                                  post {failure.post_id.slice(0, 16)} · source {failure.source}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </>
                 ) : null}
               </div>

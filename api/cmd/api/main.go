@@ -552,6 +552,7 @@ func main() {
 		r.Get("/v1/admin/landing-sources", landingAttributionHandler.GetAdminSources)
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
+		r.Get("/v1/admin/users/{id}/post-failures", adminHandler.ListUserPostFailures)
 	})
 
 	// Public API routes (API key auth)

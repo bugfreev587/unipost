@@ -1,10 +1,13 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -94,11 +97,9 @@ func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event 
 // WebhookDeliveryWorker's retry schedule so operators can reason about
 // both systems the same way.
 type NotificationDeliveryWorker struct {
-	queries *db.Queries
-	mailer  mail.Mailer
-	// appBaseURL is the user-facing dashboard URL (e.g.
-	// https://app.unipost.dev) used to build deep links in email
-	// bodies. Falls back to a generic marker in local dev.
+	queries    *db.Queries
+	mailer     mail.Mailer
+	httpClient *http.Client
 	appBaseURL string
 }
 
@@ -109,6 +110,7 @@ func NewNotificationDeliveryWorker(queries *db.Queries, mailer mail.Mailer, appB
 	return &NotificationDeliveryWorker{
 		queries:    queries,
 		mailer:     mailer,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 		appBaseURL: strings.TrimRight(appBaseURL, "/"),
 	}
 }
@@ -186,9 +188,11 @@ func (w *NotificationDeliveryWorker) dispatchByKind(ctx context.Context, d db.Ge
 	switch d.ChannelKind {
 	case "email":
 		return w.sendEmail(ctx, d)
-	case "slack_webhook", "sms", "in_app":
-		// Modeled in the schema; not wired in MVP. Treat as no-op so
-		// the row moves to sent and doesn't pile up on every tick.
+	case "slack_webhook":
+		return w.sendSlackWebhook(ctx, d)
+	case "discord_webhook":
+		return w.sendDiscordWebhook(ctx, d)
+	case "sms", "in_app":
 		slog.Info("notifications: skipping unwired channel kind", "kind", d.ChannelKind, "delivery_id", d.ID)
 		return nil
 	default:
@@ -209,6 +213,91 @@ func (w *NotificationDeliveryWorker) sendEmail(ctx context.Context, d db.GetPend
 	msg := renderEmail(d.EventType, d.Payload, w.appBaseURL)
 	msg.To = cfg.Address
 	return w.mailer.Send(ctx, msg)
+}
+
+// ── Slack webhook ────────────────────────────────────────────────────
+
+func (w *NotificationDeliveryWorker) sendSlackWebhook(ctx context.Context, d db.GetPendingNotificationDeliveriesRow) error {
+	var cfg struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(d.ChannelConfig, &cfg); err != nil || cfg.URL == "" {
+		return fmt.Errorf("invalid slack_webhook channel config: %w", err)
+	}
+	msg := renderWebhookMessage(d.EventType, d.Payload, w.appBaseURL)
+	body, _ := json.Marshal(map[string]string{"text": msg})
+	return w.postWebhook(ctx, cfg.URL, body)
+}
+
+// ── Discord webhook ──────────────────────────────────────────────────
+
+func (w *NotificationDeliveryWorker) sendDiscordWebhook(ctx context.Context, d db.GetPendingNotificationDeliveriesRow) error {
+	var cfg struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(d.ChannelConfig, &cfg); err != nil || cfg.URL == "" {
+		return fmt.Errorf("invalid discord_webhook channel config: %w", err)
+	}
+	msg := renderWebhookMessage(d.EventType, d.Payload, w.appBaseURL)
+	body, _ := json.Marshal(map[string]any{
+		"content":  msg,
+		"username": "UniPost",
+	})
+	return w.postWebhook(ctx, cfg.URL, body)
+}
+
+func (w *NotificationDeliveryWorker) postWebhook(ctx context.Context, url string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("webhook: new request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("webhook: http: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("webhook: %d", resp.StatusCode)
+}
+
+// renderWebhookMessage produces a plain-text notification for Slack and
+// Discord. Both platforms support markdown-style formatting in their
+// text payloads.
+func renderWebhookMessage(eventType string, payloadJSON []byte, appBaseURL string) string {
+	var payload map[string]any
+	_ = json.Unmarshal(payloadJSON, &payload)
+	getStr := func(k string) string {
+		if v, ok := payload[k].(string); ok {
+			return v
+		}
+		return ""
+	}
+
+	switch eventType {
+	case "post.failed":
+		caption := truncate(getStr("caption"), 80)
+		if caption == "" {
+			caption = "(no caption)"
+		}
+		return fmt.Sprintf("🚨 **Post failed to publish**\nCaption: %s\n<%s|Open dashboard>", caption, appBaseURL)
+	case "account.disconnected":
+		name := getStr("account_name")
+		plat := getStr("platform")
+		if name == "" {
+			name = "A social account"
+		}
+		return fmt.Sprintf("⚠️ **%s** (%s) was disconnected. Posts will fail until reconnected.\n<%s|Reconnect>", name, plat, appBaseURL)
+	case "billing.usage_80pct":
+		return fmt.Sprintf("📊 You've used 80%% of your monthly post quota.\n<%s/settings/billing|Review plan & usage>", appBaseURL)
+	case "billing.payment_failed":
+		return fmt.Sprintf("💳 Your subscription payment failed. Update your card to avoid interruption.\n<%s/settings/billing|Update payment method>", appBaseURL)
+	}
+
+	return fmt.Sprintf("UniPost: %s\n<%s|Open dashboard>", eventType, appBaseURL)
 }
 
 // renderEmail turns an event into a Message. One small template per

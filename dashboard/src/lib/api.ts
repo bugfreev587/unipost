@@ -827,6 +827,20 @@ export interface AdminUserDetail {
   workspaces: AdminUserWorkspace[];
 }
 
+export interface AdminUserPostFailure {
+  post_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  created_at: string;
+  post_status: string;
+  source: string;
+  platform?: string;
+  account_name?: string;
+  caption?: string;
+  error_message?: string;
+  error_summary?: string;
+}
+
 export interface AdminUserListParams {
   search?: string;
   plan?: "all" | "free" | "paid";
@@ -1030,6 +1044,18 @@ export async function getAdminUser(
   return request(`/v1/admin/users/${id}`, token);
 }
 
+export async function getAdminUserPostFailures(
+  token: string,
+  id: string,
+  params?: { days?: number; limit?: number }
+): Promise<ApiResponse<AdminUserPostFailure[]>> {
+  const qs = new URLSearchParams();
+  if (params?.days != null) qs.set("days", String(params.days));
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const s = qs.toString();
+  return request(`/v1/admin/users/${id}/post-failures${s ? `?${s}` : ""}`, token);
+}
+
 export async function recordLandingVisit(data: {
   path: string;
   source?: string;
@@ -1230,7 +1256,7 @@ export interface NotificationEvent {
 
 export interface NotificationChannel {
   id: string;
-  kind: "email" | "slack_webhook" | "sms" | "in_app";
+  kind: "email" | "slack_webhook" | "discord_webhook" | "sms" | "in_app";
   label?: string;
   config: { address?: string; url?: string; e164?: string };
   verified: boolean;
@@ -1259,7 +1285,7 @@ export async function listNotificationChannels(
 
 export async function createNotificationChannel(
   token: string,
-  data: { kind: "email"; address: string; label?: string }
+  data: { kind: string; address?: string; url?: string; label?: string }
 ): Promise<ApiResponse<NotificationChannel>> {
   return request(`/v1/me/notifications/channels`, token, {
     method: "POST",

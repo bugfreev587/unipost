@@ -98,11 +98,14 @@ func (h *NotificationHandler) ListChannels(w http.ResponseWriter, r *http.Reques
 
 // CreateChannel — POST /v1/me/notifications/channels
 //
-// MVP accepts only {kind: "email", address: "..."}. If the address
-// matches the Clerk-verified email on the user record we auto-verify
-// the channel (they've already proven control at signup). Otherwise
-// we create it unverified; the settings UI shows the "unverified"
-// chip and a Send verification button (OTP flow is a follow-up).
+// CreateChannel — POST /v1/me/notifications/channels
+//
+// Accepts three channel kinds:
+//   - email:           {kind, address, label?}. Auto-verified if address
+//                      matches Clerk signup email; otherwise unverified.
+//   - slack_webhook:   {kind, url, label?}. Auto-verified (URL ownership
+//                      is implicit — only workspace admin has it).
+//   - discord_webhook: {kind, url, label?}. Same as Slack.
 func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
@@ -111,7 +114,8 @@ func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Reque
 	}
 	var body struct {
 		Kind    string `json:"kind"`
-		Address string `json:"address"`
+		Address string `json:"address"` // email
+		URL     string `json:"url"`     // slack_webhook, discord_webhook
 		Label   string `json:"label"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -120,29 +124,48 @@ func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Reque
 	}
 	body.Kind = strings.ToLower(strings.TrimSpace(body.Kind))
 	body.Address = strings.TrimSpace(body.Address)
+	body.URL = strings.TrimSpace(body.URL)
 
-	if body.Kind != "email" {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Only 'email' channels are supported in this release")
-		return
-	}
-	if body.Address == "" || !strings.Contains(body.Address, "@") {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "A valid email address is required")
-		return
-	}
-
-	cfgBytes, _ := json.Marshal(map[string]string{"address": body.Address})
-
-	// Auto-verify if the address matches the Clerk-verified signup email.
+	var cfgBytes []byte
 	var verified pgtype.Timestamptz
-	if user, err := h.queries.GetUser(r.Context(), userID); err == nil {
-		if strings.EqualFold(user.Email, body.Address) {
-			verified = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+
+	switch body.Kind {
+	case "email":
+		if body.Address == "" || !strings.Contains(body.Address, "@") {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "A valid email address is required")
+			return
 		}
+		cfgBytes, _ = json.Marshal(map[string]string{"address": body.Address})
+		if user, err := h.queries.GetUser(r.Context(), userID); err == nil {
+			if strings.EqualFold(user.Email, body.Address) {
+				verified = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+			}
+		}
+
+	case "slack_webhook":
+		if body.URL == "" || !strings.HasPrefix(body.URL, "https://hooks.slack.com/") {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "A valid Slack webhook URL is required (https://hooks.slack.com/...)")
+			return
+		}
+		cfgBytes, _ = json.Marshal(map[string]string{"url": body.URL})
+		verified = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+
+	case "discord_webhook":
+		if body.URL == "" || !strings.HasPrefix(body.URL, "https://discord.com/api/webhooks/") {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "A valid Discord webhook URL is required (https://discord.com/api/webhooks/...)")
+			return
+		}
+		cfgBytes, _ = json.Marshal(map[string]string{"url": body.URL})
+		verified = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Supported kinds: email, slack_webhook, discord_webhook")
+		return
 	}
 
 	created, err := h.queries.CreateNotificationChannel(r.Context(), db.CreateNotificationChannelParams{
 		UserID:      userID,
-		WorkspaceID: pgtype.Text{}, // account-level
+		WorkspaceID: pgtype.Text{},
 		Kind:        body.Kind,
 		Config:      cfgBytes,
 		Label:       pgtype.Text{String: body.Label, Valid: body.Label != ""},
