@@ -671,7 +671,7 @@ textarea:focus-visible, input:focus-visible {
 .theme-picker-menu {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 10px);
+  top: calc(100% + 10px);
   z-index: 80;
   display: grid;
   gap: 4px;

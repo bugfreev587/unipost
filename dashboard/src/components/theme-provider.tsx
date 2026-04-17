@@ -69,6 +69,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     applyTheme(resolvedTheme);
   }, [applyTheme, resolvedTheme]);
 
+  useEffect(() => {
+    function handleStorage(event: StorageEvent) {
+      if (event.key !== STORAGE_KEY) return;
+      const nextTheme = (event.newValue as ThemePreference | null) ?? "system";
+      setThemeState(nextTheme);
+    }
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
   const setTheme = useCallback((nextTheme: ThemePreference) => {
     setThemeState(nextTheme);
     window.localStorage.setItem(STORAGE_KEY, nextTheme);

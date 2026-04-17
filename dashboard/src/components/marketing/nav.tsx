@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 // New signups land on /welcome, where they enter their first name and
@@ -69,6 +70,7 @@ export function MarketingNav() {
         <a href={APP_URL} style={authPrimaryButtonStyle}>
           Go to Dashboard
         </a>
+        <ThemeToggle />
         <UserButton appearance={userButtonAppearance} />
       </div>
     );
@@ -81,6 +83,7 @@ export function MarketingNav() {
           Sign in
         </button>
       </SignInButton>
+      <ThemeToggle />
       <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
         <button style={authPrimaryButtonStyle}>
           Get Started Free
@@ -148,6 +151,7 @@ export function PricingNav() {
         <a href={APP_URL} className="pr-btn pr-btn-primary">
           Go to Dashboard
         </a>
+        <ThemeToggle />
         <UserButton appearance={userButtonAppearance} />
       </div>
     );
@@ -160,6 +164,7 @@ export function PricingNav() {
           Sign in
         </button>
       </SignInButton>
+      <ThemeToggle />
       <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
         <button className="pr-btn pr-btn-primary" style={{ cursor: "pointer" }}>
           Get Started Free
