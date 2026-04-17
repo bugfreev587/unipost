@@ -173,14 +173,12 @@ function sourceIcon(source: InboxItem["source"]) {
 }
 
 function byNewestActivity(a: ConversationGroup, b: ConversationGroup) {
-  const priority = (status: ThreadStatus, unread: number) => {
-    if (unread > 0) return 0;
-    if (status === "open") return 1;
-    if (status === "assigned") return 2;
-    return 3;
-  };
-  const pa = priority(a.threadStatus, a.unreadCount);
-  const pb = priority(b.threadStatus, b.unreadCount);
+  // Only resolved threads sink to the bottom. Reading a message
+  // (marking it read) must NOT reorder the list — only an explicit
+  // "Resolve" click should move the group down.
+  const priority = (status: ThreadStatus) => status === "resolved" ? 1 : 0;
+  const pa = priority(a.threadStatus);
+  const pb = priority(b.threadStatus);
   if (pa !== pb) return pa - pb;
   return new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime();
 }
