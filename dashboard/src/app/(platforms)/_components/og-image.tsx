@@ -1,6 +1,5 @@
 import { ImageResponse } from "next/og";
 
-export const runtime = "edge";
 export const alt = "UniPost Platform API";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
@@ -58,7 +57,7 @@ export function createOgImage(platformName: string, brandColor: string, icon: st
               marginBottom: "20px",
             }}
           >
-            {icon} {platformName} API
+            {`${icon} ${platformName} API`}
           </div>
           <div
             style={{

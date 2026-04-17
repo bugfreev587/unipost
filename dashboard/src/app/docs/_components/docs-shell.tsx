@@ -124,6 +124,7 @@ export const DOCS_NAV: NavSection[] = [
         title: "Insights",
         items: [
           { label: "Analytics", href: "/docs/api/analytics" },
+          { label: "Notifications", href: "/docs/api/notifications" },
           { label: "Webhooks", href: "/docs/api/webhooks" },
           { label: "Billing", href: "/docs/api/billing" },
         ],
