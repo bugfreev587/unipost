@@ -188,6 +188,22 @@ type PostAnalytic struct {
 	LastFailureReason   pgtype.Text        `json:"last_failure_reason"`
 }
 
+type PostFailure struct {
+	ID                 string             `json:"id"`
+	PostID             string             `json:"post_id"`
+	SocialPostResultID pgtype.Text        `json:"social_post_result_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	SocialAccountID    pgtype.Text        `json:"social_account_id"`
+	Platform           string             `json:"platform"`
+	FailureStage       string             `json:"failure_stage"`
+	ErrorCode          string             `json:"error_code"`
+	PlatformErrorCode  pgtype.Text        `json:"platform_error_code"`
+	Message            string             `json:"message"`
+	RawError           pgtype.Text        `json:"raw_error"`
+	IsRetriable        bool               `json:"is_retriable"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
 type Profile struct {
 	ID                   string             `json:"id"`
 	Name                 string             `json:"name"`

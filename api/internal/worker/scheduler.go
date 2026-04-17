@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
@@ -188,6 +190,24 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 			ErrorMessage:    errMsg,
 			PublishedAt:     pubAt,
 		})
+		if status == "failed" && errMsg.Valid {
+			classification := postfailures.Classify(errMsg.String)
+			if _, pfErr := w.queries.CreatePostFailure(ctx, db.CreatePostFailureParams{
+				PostID:             post.ID,
+				SocialPostResultID: pgtype.Text{},
+				WorkspaceID:        post.WorkspaceID,
+				SocialAccountID:    pgtype.Text{String: posts[i].AccountID, Valid: posts[i].AccountID != ""},
+				Platform:           firstNonEmpty(oc.platform, "unknown"),
+				FailureStage:       "scheduler_dispatch",
+				ErrorCode:          classification.ErrorCode,
+				PlatformErrorCode:  textParam(classification.PlatformErrorCode),
+				Message:            errMsg.String,
+				RawError:           textParam(errMsg.String),
+				IsRetriable:        classification.IsRetriable,
+			}); pfErr != nil {
+				slog.Warn("scheduler: failed to persist structured post failure", "post_id", post.ID, "error", pfErr)
+			}
+		}
 	}
 
 	postStatus := "failed"
@@ -337,3 +357,15 @@ func truncateForLog(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
+func textParam(v string) pgtype.Text {
+	return pgtype.Text{String: v, Valid: v != ""}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
