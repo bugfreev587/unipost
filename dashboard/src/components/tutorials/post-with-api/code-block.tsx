@@ -26,18 +26,20 @@ export function CodeBlock({
   apiKey,
   accountId,
   caption,
+  mediaUrl,
 }: {
   apiBase: string;
   apiKey: string;
   accountId: string;
   caption: string;
+  mediaUrl?: string;
 }) {
   const [lang, setLang] = useState<Language>("curl");
   const [copied, setCopied] = useState(false);
 
   const snippet = useMemo(
-    () => buildSnippet(lang, { apiBase, apiKey, accountId, caption }),
-    [lang, apiBase, apiKey, accountId, caption],
+    () => buildSnippet(lang, { apiBase, apiKey, accountId, caption, mediaUrl }),
+    [lang, apiBase, apiKey, accountId, caption, mediaUrl],
   );
 
   async function handleCopy() {
@@ -127,8 +129,25 @@ export function CodeBlock({
 
 function buildSnippet(
   lang: Language,
-  { apiBase, apiKey, accountId, caption }: { apiBase: string; apiKey: string; accountId: string; caption: string },
+  {
+    apiBase,
+    apiKey,
+    accountId,
+    caption,
+    mediaUrl,
+  }: {
+    apiBase: string;
+    apiKey: string;
+    accountId: string;
+    caption: string;
+    mediaUrl?: string;
+  },
 ): string {
+  const mediaUrlsCurl = mediaUrl ? `,\n    "media_urls": ["${mediaUrl}"]` : "";
+  const mediaUrlsNode = mediaUrl ? `,\n  mediaUrls: ["${mediaUrl}"]` : "";
+  const mediaUrlsPython = mediaUrl ? `,\n    media_urls=["${mediaUrl}"]` : "";
+  const mediaUrlsGo = mediaUrl ? `,\n\t\tMediaURLs: []string{"${mediaUrl}"}` : "";
+
   switch (lang) {
     case "curl":
       return `curl -X POST "${apiBase}/v1/social-posts" \\
@@ -136,7 +155,7 @@ function buildSnippet(
   -H "Content-Type: application/json" \\
   -d '{
     "caption": "${escapeShell(caption)}",
-    "account_ids": ["${accountId}"]
+    "account_ids": ["${accountId}"]${mediaUrlsCurl}
   }'`;
 
     case "node":
@@ -146,7 +165,7 @@ const client = new UniPost({ apiKey: "${apiKey}" });
 
 const post = await client.posts.create({
   caption: ${JSON.stringify(caption)},
-  accountIds: ["${accountId}"],
+  accountIds: ["${accountId}"]${mediaUrlsNode}
 });
 
 console.log("Published:", post.id);`;
@@ -158,7 +177,7 @@ client = UniPost(api_key="${apiKey}")
 
 post = client.posts.create(
     caption=${JSON.stringify(caption)},
-    account_ids=["${accountId}"],
+    account_ids=["${accountId}"]${mediaUrlsPython}
 )
 
 print("Published:", post.id)`;
@@ -177,7 +196,7 @@ func main() {
 \tclient := unipost.NewClient("${apiKey}")
 \tpost, err := client.Posts.Create(context.Background(), &unipost.PostCreateParams{
 \t\tCaption:    ${JSON.stringify(caption)},
-\t\tAccountIDs: []string{"${accountId}"},
+\t\tAccountIDs: []string{"${accountId}"}${mediaUrlsGo},
 \t})
 \tif err != nil {
 \t\tpanic(err)

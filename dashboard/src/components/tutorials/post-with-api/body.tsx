@@ -29,6 +29,9 @@ import { CodeBlock } from "./code-block";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 const DEFAULT_CAPTION = "Hello from UniPost API!";
+const DEFAULT_MEDIA_URL =
+  "https://commons.wikimedia.org/wiki/Special:Redirect/file/Small%20mountain%20lake%20%28Unsplash%29.jpg";
+const IMAGE_TUTORIAL_PLATFORMS = new Set(["instagram", "threads", "linkedin", "twitter", "bluesky"]);
 
 export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyProps) {
   const { getToken } = useAuth();
@@ -84,6 +87,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
   const apiKeysAlreadyExist = ctx.counts.api_keys >= 1;
   const step1Completed = keyState.kind === "ready";
   const step2Completed = sendState.kind === "sent";
+  const shouldAttachTutorialImage = !!account && IMAGE_TUTORIAL_PLATFORMS.has(account.platform);
 
   async function handleCreateKey() {
     if (!workspace) {
@@ -127,6 +131,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
         body: JSON.stringify({
           caption: DEFAULT_CAPTION,
           account_ids: [account.id],
+          ...(shouldAttachTutorialImage ? { media_urls: [DEFAULT_MEDIA_URL] } : {}),
         }),
       });
       if (!res.ok) {
@@ -272,7 +277,9 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
         ) : (
           <div style={{ width: "100%", minWidth: 0 }}>
             <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginBottom: 10 }}>
-              Run this to post <strong style={{ color: "var(--dtext)" }}>&quot;{DEFAULT_CAPTION}&quot;</strong>
+              Run this to {shouldAttachTutorialImage ? "publish a photo post" : "post"}
+              {" "}
+              <strong style={{ color: "var(--dtext)" }}>&quot;{DEFAULT_CAPTION}&quot;</strong>
               {" "}to <strong style={{ color: "var(--dtext)" }}>@{account.account_name || account.platform}</strong> —
               or click Send below to try it now.
             </div>
@@ -281,6 +288,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
               apiKey={keyState.kind === "ready" ? keyState.key : "your_api_key"}
               accountId={account.id}
               caption={DEFAULT_CAPTION}
+              mediaUrl={shouldAttachTutorialImage ? DEFAULT_MEDIA_URL : undefined}
             />
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
               <button
