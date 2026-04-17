@@ -70,12 +70,26 @@ var SupportedNotificationEvents = []eventDescriptor{
 // ── Channels ─────────────────────────────────────────────────────────
 
 type channelResponse struct {
-	ID         string                 `json:"id"`
-	Kind       string                 `json:"kind"`
-	Label      string                 `json:"label,omitempty"`
-	Config     map[string]any         `json:"config"`
-	Verified   bool                   `json:"verified"`
-	CreatedAt  string                 `json:"created_at"`
+	ID        string         `json:"id"`
+	Kind      string         `json:"kind"`
+	Label     string         `json:"label,omitempty"`
+	Config    map[string]any `json:"config"`
+	Verified  bool           `json:"verified"`
+	CreatedAt string         `json:"created_at"`
+}
+
+func matchingAccountLevelSubscriptions(rows []db.ListNotificationSubscriptionsByUserRow, eventType, channelID string) []db.ListNotificationSubscriptionsByUserRow {
+	out := make([]db.ListNotificationSubscriptionsByUserRow, 0, 1)
+	for _, row := range rows {
+		if row.WorkspaceID.Valid {
+			continue
+		}
+		if row.EventType != eventType || row.ChannelID != channelID {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 func toChannelResponse(c db.NotificationChannel) channelResponse {
@@ -119,9 +133,9 @@ func (h *NotificationHandler) ListChannels(w http.ResponseWriter, r *http.Reques
 //
 // Accepts three channel kinds:
 //   - email:           {kind, address, label?}. Auto-verified if address
-//                      matches Clerk signup email; otherwise unverified.
+//     matches Clerk signup email; otherwise unverified.
 //   - slack_webhook:   {kind, url, label?}. Auto-verified (URL ownership
-//                      is implicit — only workspace admin has it).
+//     is implicit — only workspace admin has it).
 //   - discord_webhook: {kind, url, label?}. Same as Slack.
 func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
@@ -332,6 +346,34 @@ func (h *NotificationHandler) UpsertSubscription(w http.ResponseWriter, r *http.
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify channel")
+		return
+	}
+
+	existing, err := h.queries.ListNotificationSubscriptionsByUser(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load existing subscriptions")
+		return
+	}
+	matches := matchingAccountLevelSubscriptions(existing, body.EventType, body.ChannelID)
+	if len(matches) > 0 {
+		for _, match := range matches {
+			if err := h.queries.SetNotificationSubscriptionEnabled(r.Context(), db.SetNotificationSubscriptionEnabledParams{
+				ID:      match.ID,
+				UserID:  userID,
+				Enabled: body.Enabled,
+			}); err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save subscription")
+				return
+			}
+		}
+		match := matches[0]
+		writeSuccess(w, subscriptionResponse{
+			ID:        match.ID,
+			EventType: match.EventType,
+			ChannelID: match.ChannelID,
+			Enabled:   body.Enabled,
+			CreatedAt: match.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		})
 		return
 	}
 
