@@ -14,7 +14,7 @@
 //      onRequestComplete, which marks the tutorial complete on the
 //      server and shows the celebration screen.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Check, Lock, Loader2, ExternalLink } from "lucide-react";
 import {
@@ -146,7 +146,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
   }
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
+    <div style={{ display: "grid", gap: 16, width: "100%", minWidth: 0 }}>
       {/* Step 1: Create API key */}
       <StepCard
         number={1}
@@ -155,12 +155,15 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
         active={!step1Completed}
       >
         {keyState.kind === "ready" ? (
-          <div>
+          <div style={{ width: "100%", minWidth: 0 }}>
             <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginBottom: 8 }}>
               Use this key to authenticate your request. We&apos;ll only show it once —
               store it somewhere safe.
             </div>
             <div style={{
+              width: "100%",
+              minWidth: 0,
+              boxSizing: "border-box",
               padding: "10px 12px", borderRadius: 8,
               background: "rgba(16,185,129,.06)",
               border: "1px solid rgba(16,185,129,.20)",
@@ -172,12 +175,12 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
             </div>
           </div>
         ) : apiKeysAlreadyExist ? (
-          <div>
+          <div style={{ width: "100%", minWidth: 0 }}>
             <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginBottom: 10 }}>
               You already have at least one API key. Paste it below to continue,
               or create a new <strong>Tutorial key</strong>.
             </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10, width: "100%", minWidth: 0 }}>
               <input
                 type="text"
                 placeholder="unp_prod_..."
@@ -225,7 +228,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
             </button>
           </div>
         ) : (
-          <div>
+          <div style={{ width: "100%", minWidth: 0 }}>
             <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginBottom: 10 }}>
               Used to authenticate requests from your app.
             </div>
@@ -267,7 +270,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
         ) : !account ? (
           <div className="dt-body-sm" style={{ color: "var(--dmuted)" }}>Loading your connected account…</div>
         ) : (
-          <>
+          <div style={{ width: "100%", minWidth: 0 }}>
             <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginBottom: 10 }}>
               Run this to post <strong style={{ color: "var(--dtext)" }}>&quot;{DEFAULT_CAPTION}&quot;</strong>
               {" "}to <strong style={{ color: "var(--dtext)" }}>@{account.account_name || account.platform}</strong> —
@@ -325,7 +328,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
                 {sendState.message}
               </div>
             )}
-          </>
+          </div>
         )}
       </StepCard>
 
@@ -371,6 +374,9 @@ function StepCard({
 }) {
   return (
     <div style={{
+      width: "100%",
+      minWidth: 0,
+      boxSizing: "border-box",
       padding: 14,
       borderRadius: 10,
       border: active

@@ -50,6 +50,9 @@ export function CodeBlock({
 
   return (
     <div style={{
+      width: "100%",
+      minWidth: 0,
+      boxSizing: "border-box",
       border: "1px solid var(--dborder)",
       borderRadius: 10,
       overflow: "hidden",
@@ -58,10 +61,12 @@ export function CodeBlock({
       {/* Tabs */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
+        width: "100%",
+        minWidth: 0,
         borderBottom: "1px solid var(--dborder)",
         padding: "0 8px",
       }}>
-        <div style={{ display: "flex" }}>
+        <div style={{ display: "flex", minWidth: 0 }}>
           {LANGUAGES.map((l) => {
             const active = l.id === lang;
             return (
@@ -106,6 +111,9 @@ export function CodeBlock({
       </div>
       {/* Snippet */}
       <pre style={{
+        width: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
         margin: 0, padding: 14,
         fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
         fontSize: 12, lineHeight: 1.55,
