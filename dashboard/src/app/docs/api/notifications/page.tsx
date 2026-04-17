@@ -87,18 +87,15 @@ export default function NotificationsPage() {
 
       <h2 id="discord-setup">Discord setup</h2>
       <p>
-        Official Discord guide: <a href="https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks" target="_blank" rel="noreferrer">Intro to Webhooks</a>.
+        If Discord's official guide feels too vague, use our shorter guide here: <Link href="/docs/api/discord-webhook">How to get a Discord webhook URL</Link>.
       </p>
       <p>
-        In Discord, do this:
+        Short version:
       </p>
       <ol className="docs-list">
-        <li>Open your Discord server.</li>
-        <li>Go to <strong>Server Settings &gt; Integrations</strong>.</li>
-        <li>Click <strong>Create Webhook</strong>.</li>
-        <li>Choose the text channel where UniPost alerts should post.</li>
-        <li>Name the webhook.</li>
-        <li>Click <strong>Copy Webhook URL</strong>.</li>
+        <li>Open the Discord channel where you want alerts, then click the channel gear icon.</li>
+        <li>Open <strong>Integrations &gt; Webhooks</strong>, then click <strong>New Webhook</strong>.</li>
+        <li>Open that webhook and click <strong>Copy Webhook URL</strong>.</li>
       </ol>
       <p>
         Then in UniPost:
