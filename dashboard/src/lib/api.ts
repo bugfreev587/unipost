@@ -129,7 +129,7 @@ export async function getWorkspace(
 export async function updateWorkspace(
   token: string,
   workspaceId: string,
-  data: { name: string; usage_modes?: string[] }
+  data: { name: string }
 ): Promise<ApiResponse<Workspace>> {
   return request(`/v1/workspaces/${workspaceId}`, token, {
     method: "PATCH",
@@ -998,7 +998,7 @@ export interface BootstrapResponse {
 
 export async function completeOnboarding(
   token: string,
-  data: { first_name: string; org_name?: string; usage_modes: string[] }
+  data: { first_name: string; org_name?: string }
 ): Promise<ApiResponse<{ completed: boolean }>> {
   return request("/v1/me/onboarding", token, {
     method: "PATCH",

@@ -161,8 +161,7 @@ func (h *WorkspaceHandler) DashboardUpdate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Name       string   `json:"name"`
-		UsageModes []string `json:"usage_modes,omitempty"`
+		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -178,11 +177,6 @@ func (h *WorkspaceHandler) DashboardUpdate(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update workspace")
 		return
-	}
-	if body.UsageModes != nil {
-		ws, _ = h.queries.UpdateWorkspaceUsageModes(r.Context(), db.UpdateWorkspaceUsageModesParams{
-			ID: workspaceID, UsageModes: body.UsageModes,
-		})
 	}
 	writeSuccess(w, toWorkspaceResponse(ws))
 }

@@ -47,8 +47,6 @@ export default function WelcomePage() {
       await completeOnboarding(token, {
         first_name: trimmedFirst,
         org_name: orgName.trim() || undefined,
-        // usage_modes collected later via the in-dashboard WelcomeModal.
-        usage_modes: [],
       });
       router.push("/");
     } catch (err) {
