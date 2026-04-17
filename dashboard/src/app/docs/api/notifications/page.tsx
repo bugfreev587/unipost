@@ -57,19 +57,16 @@ export default function NotificationsPage() {
 
       <h2 id="slack-setup">Slack setup</h2>
       <p>
-        Official Slack guide: <a href="https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/" target="_blank" rel="noreferrer">Sending messages using incoming webhooks</a>.
+        If you want the exact Slack UI flow, use this page: <Link href="/docs/api/slack-webhook">How to get a Slack webhook URL</Link>.
       </p>
       <p>
-        In Slack, do this:
+        Short version:
       </p>
       <ol className="docs-list">
-        <li>Open <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer">api.slack.com/apps</a> and click <strong>Create New App</strong>.</li>
-        <li>Choose <strong>From scratch</strong>, enter an app name, pick your Slack workspace, and create the app.</li>
-        <li>In the app sidebar, open <strong>Incoming Webhooks</strong>.</li>
-        <li>Turn on <strong>Activate Incoming Webhooks</strong>.</li>
-        <li>Click <strong>Add New Webhook to Workspace</strong>.</li>
-        <li>Pick the Slack channel where UniPost alerts should post, then click <strong>Allow</strong> or <strong>Authorize</strong>.</li>
-        <li>Copy the generated URL. It should look like <code>https://hooks.slack.com/services/...</code>.</li>
+        <li>Open <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer">api.slack.com/apps</a> and create a new app.</li>
+        <li>Open <strong>Incoming Webhooks</strong> in the app sidebar and turn it on.</li>
+        <li>Click <strong>Add New Webhook</strong>, choose the channel, then click <strong>Allow</strong>.</li>
+        <li>Copy the generated webhook URL.</li>
       </ol>
       <p>
         Then in UniPost:
