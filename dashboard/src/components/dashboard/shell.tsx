@@ -46,22 +46,20 @@ function isFeatureEnabled(envVar: string | undefined, userId: string | undefined
   return false;
 }
 
-// Each nav item can be tagged with the usage modes that require it.
-// Items with no `modes` array are always shown.
 // Items with `featureFlag` are gated by the env var check.
 const ALL_NAV_ITEMS = [
   { href: "/profile", label: "Profiles", icon: Layers },
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
-    { href: "/accounts", label: "Quickstart", modes: ["personal", "whitelabel"] },
-    { href: "/accounts/native", label: "White-label", modes: ["whitelabel"] },
-    { href: "/users", label: "Developer App Users", modes: ["api"] },
+    { href: "/accounts", label: "Quickstart" },
+    { href: "/accounts/native", label: "White-label" },
+    { href: "/users", label: "Developer App Users" },
   ]},
   { href: "/posts", label: "Posts", icon: Send, submenu: [
     { href: "/posts", label: "Overview" },
     { href: "/posts/queue", label: "Queue" },
   ]},
   { href: "/inbox", label: "Inbox", icon: MessageSquare, featureFlag: "INBOX" },
-  { href: "/api-keys", label: "API Keys", icon: Key, modes: ["whitelabel", "api"] },
+  { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
     { href: "/analytics/api", label: "API" },
@@ -72,25 +70,17 @@ const FEATURE_FLAGS: Record<string, string | undefined> = {
   INBOX: process.env.NEXT_PUBLIC_FEATURE_INBOX,
 };
 
-// Filter nav items based on workspace usage modes and feature flags.
-function filterNavItems(modes: string[], userId?: string, userEmail?: string) {
+// Filter nav items based only on feature flags.
+function filterNavItems(userId?: string, userEmail?: string) {
   return ALL_NAV_ITEMS.filter((item) => {
     // Feature flag gate
     if ("featureFlag" in item && item.featureFlag) {
       if (!isFeatureEnabled(FEATURE_FLAGS[item.featureFlag], userId, userEmail)) return false;
     }
-    // Usage mode gate
-    if (modes.length > 0 && "modes" in item && item.modes) {
-      return item.modes.some((m: string) => modes.includes(m));
-    }
     return true;
   }).map((item) => {
     if (!item.submenu) return item;
-    const filteredSub = item.submenu.filter((sub) => {
-      if (!("modes" in sub) || !sub.modes) return true;
-      if (modes.length === 0) return true; // "All features" = show everything
-      return (sub.modes as string[]).some((m: string) => modes.includes(m));
-    });
+    const filteredSub = item.submenu;
     return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
   }).filter((item) => item.submenu === undefined || item.submenu.length > 0);
 }
@@ -123,7 +113,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const profileId = urlProfileId ?? profiles[0]?.id;
   const currentProfile = profiles.find((p) => p.id === profileId);
 
-  const navItems = filterNavItems(workspace?.usage_modes ?? [], user?.id, user?.primaryEmailAddress?.emailAddress);
+  const navItems = filterNavItems(user?.id, user?.primaryEmailAddress?.emailAddress);
 
   // Auto-expand the submenu that matches the current URL on navigation,
   // but only when the pathname actually changes — not on every render.

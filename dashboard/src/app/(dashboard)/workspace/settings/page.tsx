@@ -41,16 +41,6 @@ export default function WorkspaceSettingsPage() {
     } catch (err) { console.error("Failed to save:", err); } finally { setSaving(false); }
   }
 
-  async function handleUsageModesChange(modes: string[]) {
-    if (!workspace) return;
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const res = await updateWorkspace(token, workspace.id, { name: workspace.name, usage_modes: modes });
-      setWorkspace(res.data);
-    } catch (err) { console.error("Failed to update:", err); }
-  }
-
   if (!workspace) return <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>;
 
   return (
@@ -85,45 +75,6 @@ export default function WorkspaceSettingsPage() {
               {new Date(workspace.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
             </span>
           </div>
-        </div>
-      </div>
-
-      {/* Dashboard Features */}
-      <div className="settings-section">
-        <div className="settings-section-header">Dashboard Features</div>
-        <div className="settings-section-body">
-          <p style={{ fontSize: 13, color: "var(--dmuted)", marginBottom: 16, lineHeight: 1.6 }}>
-            Controls which tools are visible in the sidebar. You can enable or disable features anytime.
-          </p>
-          {[
-            { id: "personal", label: "Post to my own accounts", desc: "Connect accounts via Quickstart and publish directly." },
-            { id: "whitelabel", label: "Post with my own app credentials", desc: "Use your own OAuth apps for branded authorization." },
-            { id: "api", label: "Build an app on UniPost API", desc: "Integrate UniPost into your product via API + Connect Flow." },
-          ].map((feature) => {
-            const checked = workspace.usage_modes.includes(feature.id);
-            return (
-              <label key={feature.id} style={{
-                display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 0",
-                cursor: "pointer", borderBottom: "1px solid var(--dborder)",
-              }}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => {
-                    const next = checked
-                      ? workspace.usage_modes.filter((m) => m !== feature.id)
-                      : [...workspace.usage_modes, feature.id];
-                    handleUsageModesChange(next);
-                  }}
-                  style={{ marginTop: 2, accentColor: "var(--primary)" }}
-                />
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: "var(--dtext)", marginBottom: 2 }}>{feature.label}</div>
-                  <div style={{ fontSize: 13, color: "var(--dmuted)" }}>{feature.desc}</div>
-                </div>
-              </label>
-            );
-          })}
         </div>
       </div>
 

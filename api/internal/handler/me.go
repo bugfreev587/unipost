@@ -270,9 +270,8 @@ func (h *MeHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		FirstName  string   `json:"first_name"`
-		OrgName    string   `json:"org_name"`
-		UsageModes []string `json:"usage_modes"`
+		FirstName string `json:"first_name"`
+		OrgName   string `json:"org_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -281,15 +280,6 @@ func (h *MeHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	if body.FirstName == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "first_name is required")
 		return
-	}
-
-	// Validate usage_modes values
-	valid := map[string]bool{"personal": true, "whitelabel": true, "api": true}
-	for _, m := range body.UsageModes {
-		if !valid[m] {
-			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid usage_mode: "+m)
-			return
-		}
 	}
 
 	// Update user name and mark onboarding completed
@@ -301,8 +291,8 @@ func (h *MeHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update workspace: name (org name if provided, else "{FirstName}'s
-	// Workspace") + usage_modes. The user.created webhook seeds a default
+	// Update workspace name (org name if provided, else "{FirstName}'s
+	// Workspace"). The user.created webhook seeds a default
 	// workspace at signup, but its name is based on whatever Clerk had at
 	// that moment — often empty for email-only signups, giving "Default
 	// Workspace". The welcome page is the first place we get a real name,
@@ -317,10 +307,6 @@ func (h *MeHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		h.queries.UpdateWorkspace(r.Context(), db.UpdateWorkspaceParams{
 			ID:   ws.ID,
 			Name: wsName,
-		})
-		h.queries.UpdateWorkspaceUsageModes(r.Context(), db.UpdateWorkspaceUsageModesParams{
-			ID:         ws.ID,
-			UsageModes: body.UsageModes,
 		})
 	}
 
