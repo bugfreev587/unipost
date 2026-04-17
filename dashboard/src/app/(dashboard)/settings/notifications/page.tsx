@@ -15,6 +15,7 @@ import {
   type NotificationChannel,
   type NotificationSubscription,
 } from "@/lib/api";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 const SEVERITY_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
   critical: { bg: "rgba(239,68,68,.12)", fg: "var(--danger)", label: "Critical" },
@@ -62,6 +63,8 @@ export default function NotificationsSettingsPage() {
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [testBusy, setTestBusy] = useState<Record<string, boolean>>({});
   const [testState, setTestState] = useState<Record<string, { kind: "success" | "error"; message: string }>>({});
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     const token = await getToken();
@@ -130,15 +133,22 @@ export default function NotificationsSettingsPage() {
     }
   }
 
-  async function handleDeleteChannel(id: string) {
-    if (!confirm("Delete this channel? Related subscriptions will also be removed.")) return;
+  async function confirmDeleteChannel() {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
     const token = await getToken();
-    if (!token) return;
+    if (!token) {
+      setDeleting(false);
+      return;
+    }
     try {
-      await deleteNotificationChannel(token, id);
+      await deleteNotificationChannel(token, pendingDeleteId);
+      setPendingDeleteId(null);
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -374,7 +384,7 @@ export default function NotificationsSettingsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDeleteChannel(c.id)}
+                  onClick={() => setPendingDeleteId(c.id)}
                   title="Delete channel"
                   style={iconBtn}
                 >
@@ -484,6 +494,17 @@ export default function NotificationsSettingsPage() {
           </div>
         )}
       </section>
+
+      <ConfirmModal
+        open={pendingDeleteId !== null}
+        title="Delete this channel?"
+        variant="danger"
+        confirmLabel={deleting ? "Deleting..." : "Delete channel"}
+        confirmDisabled={deleting}
+        onCancel={() => { if (!deleting) setPendingDeleteId(null); }}
+        onConfirm={confirmDeleteChannel}
+        message="Related subscriptions will also be removed. This cannot be undone."
+      />
     </div>
   );
 }
