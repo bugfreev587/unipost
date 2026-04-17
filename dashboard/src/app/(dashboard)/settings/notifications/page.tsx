@@ -23,7 +23,7 @@ const SEVERITY_STYLES: Record<string, { bg: string; fg: string; label: string }>
   low: { bg: "rgba(156,163,175,.14)", fg: "var(--dmuted)", label: "Low" },
 };
 
-type AddChannelKind = "email" | "slack_webhook" | "discord_webhook" | null;
+type AddChannelKind = "slack_webhook" | "discord_webhook" | null;
 
 const CHANNEL_ICONS: Record<string, React.ReactNode> = {
   email: <Mail style={{ width: 15, height: 15, color: "var(--dmuted2)" }} />,
@@ -112,11 +112,7 @@ export default function NotificationsSettingsPage() {
     if (!token) return;
     try {
       const data: Record<string, string> = { kind: addKind };
-      if (addKind === "email") {
-        data.address = addInput.trim();
-      } else {
-        data.url = addInput.trim();
-      }
+      data.url = addInput.trim();
       if (addLabel.trim()) data.label = addLabel.trim();
       await createNotificationChannel(token, data as Parameters<typeof createNotificationChannel>[1]);
       setAddInput("");
@@ -178,8 +174,7 @@ export default function NotificationsSettingsPage() {
   const verifiedChannels = channels.filter((c) => c.verified);
   const signupEmail = user?.primaryEmailAddress?.emailAddress;
 
-  const addPlaceholder: Record<string, string> = {
-    email: "you@example.com",
+  const addPlaceholder: Record<Exclude<AddChannelKind, null>, string> = {
     slack_webhook: "https://hooks.slack.com/services/...",
     discord_webhook: "https://discord.com/api/webhooks/...",
   };
@@ -207,7 +202,7 @@ export default function NotificationsSettingsPage() {
               Channels
             </div>
             <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
-              Where UniPost sends you notifications.
+              Your signup email is already connected. Add Slack or Discord for shared alerts.
             </div>
           </div>
           {!addKind && (
@@ -229,7 +224,6 @@ export default function NotificationsSettingsPage() {
                     boxShadow: "0 12px 28px rgba(0,0,0,.3)",
                   }}>
                     {([
-                      { kind: "email" as const, label: "Email", icon: <Mail style={{ width: 14, height: 14 }} /> },
                       { kind: "slack_webhook" as const, label: "Slack Webhook", icon: <SlackIcon /> },
                       { kind: "discord_webhook" as const, label: "Discord Webhook", icon: <DiscordIcon /> },
                     ]).map((opt) => (
@@ -266,7 +260,7 @@ export default function NotificationsSettingsPage() {
               {CHANNEL_ICONS[addKind]} Add {CHANNEL_LABELS[addKind]}
             </div>
             <input
-              type={addKind === "email" ? "email" : "url"}
+              type="url"
               required
               placeholder={addPlaceholder[addKind]}
               value={addInput}
@@ -278,19 +272,17 @@ export default function NotificationsSettingsPage() {
                 color: "var(--dtext)", fontSize: 13, fontFamily: "var(--font-geist-mono), monospace",
               }}
             />
-            {addKind !== "email" && (
-              <input
-                type="text"
-                placeholder="Label (optional, e.g. #ops-alerts)"
-                value={addLabel}
-                onChange={(e) => setAddLabel(e.target.value)}
-                style={{
-                  padding: "8px 12px", borderRadius: 6,
-                  border: "1px solid var(--dborder)", background: "var(--surface2)",
-                  color: "var(--dtext)", fontSize: 13, fontFamily: "inherit",
-                }}
-              />
-            )}
+            <input
+              type="text"
+              placeholder="Label (optional, e.g. #ops-alerts)"
+              value={addLabel}
+              onChange={(e) => setAddLabel(e.target.value)}
+              style={{
+                padding: "8px 12px", borderRadius: 6,
+                border: "1px solid var(--dborder)", background: "var(--surface2)",
+                color: "var(--dtext)", fontSize: 13, fontFamily: "inherit",
+              }}
+            />
             <div style={{ display: "flex", gap: 8 }}>
               <button type="submit" disabled={adding} style={btnPrimary}>
                 {adding ? "Adding..." : "Add"}
@@ -340,7 +332,7 @@ export default function NotificationsSettingsPage() {
                       </span>
                     )}
                     {signupEmail && c.config.address === signupEmail && (
-                      <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>· Signup email</span>
+                      <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>· Built-in signup email</span>
                     )}
                     {c.label && c.kind !== "email" && (
                       <span style={{ fontSize: 11, color: "var(--dmuted2)" }}>· {c.label}</span>
@@ -372,14 +364,16 @@ export default function NotificationsSettingsPage() {
                 >
                   {testBusy[c.id] ? "Testing..." : "Test"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteChannel(c.id)}
-                  title="Delete channel"
-                  style={iconBtn}
-                >
-                  <Trash2 style={{ width: 14, height: 14 }} />
-                </button>
+                {c.kind !== "email" && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteChannel(c.id)}
+                    title="Delete channel"
+                    style={iconBtn}
+                  >
+                    <Trash2 style={{ width: 14, height: 14 }} />
+                  </button>
+                )}
               </div>
             ))}
           </div>

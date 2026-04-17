@@ -117,12 +117,13 @@ func (h *NotificationHandler) ListChannels(w http.ResponseWriter, r *http.Reques
 //
 // CreateChannel — POST /v1/me/notifications/channels
 //
-// Accepts three channel kinds:
-//   - email:           {kind, address, label?}. Auto-verified if address
-//                      matches Clerk signup email; otherwise unverified.
+// Accepts two user-created channel kinds:
 //   - slack_webhook:   {kind, url, label?}. Auto-verified (URL ownership
 //                      is implicit — only workspace admin has it).
 //   - discord_webhook: {kind, url, label?}. Same as Slack.
+//
+// The email channel is managed automatically from the user's signup
+// email during bootstrap and cannot be created manually from Settings.
 func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
@@ -148,16 +149,8 @@ func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Reque
 
 	switch body.Kind {
 	case "email":
-		if body.Address == "" || !strings.Contains(body.Address, "@") {
-			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "A valid email address is required")
-			return
-		}
-		cfgBytes, _ = json.Marshal(map[string]string{"address": body.Address})
-		if user, err := h.queries.GetUser(r.Context(), userID); err == nil {
-			if strings.EqualFold(user.Email, body.Address) {
-				verified = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
-			}
-		}
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Email notifications use your signup email automatically and cannot be added manually")
+		return
 
 	case "slack_webhook":
 		if body.URL == "" || !strings.HasPrefix(body.URL, "https://hooks.slack.com/") {
@@ -176,7 +169,7 @@ func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Reque
 		verified = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 
 	default:
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Supported kinds: email, slack_webhook, discord_webhook")
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Supported kinds: slack_webhook, discord_webhook")
 		return
 	}
 
@@ -205,6 +198,22 @@ func (h *NotificationHandler) DeleteChannel(w http.ResponseWriter, r *http.Reque
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Channel id required")
+		return
+	}
+	channel, err := h.queries.GetNotificationChannel(r.Context(), db.GetNotificationChannelParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Channel not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load channel")
+		return
+	}
+	if channel.Kind == "email" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Your signup email channel is built in and cannot be deleted")
 		return
 	}
 	if err := h.queries.SoftDeleteNotificationChannel(r.Context(), db.SoftDeleteNotificationChannelParams{
