@@ -263,13 +263,11 @@ export function Backdrop({ children, onBackdropClick }: { children: React.ReactN
 }
 
 export const cardStyle: React.CSSProperties = {
-  width: 560,
+  width: 640,
   maxWidth: "calc(100vw - 32px)",
   padding: 22,
   borderRadius: 14,
-  // Use --surface-raised (defined in globals.css for both themes).
-  // The previous --dbackground was undefined, so the card rendered
-  // transparent and the tutorials page showed through.
+  overflow: "hidden",
   background: "var(--surface-raised)",
   border: "1px solid var(--dborder)",
   boxShadow: "0 24px 64px rgba(0,0,0,.4)",

@@ -406,7 +406,7 @@ function StepCard({
           {title}
         </div>
       </div>
-      {!locked && <div style={{ paddingLeft: 32 }}>{children}</div>}
+      {!locked && <div style={{ paddingLeft: 32, minWidth: 0, overflow: "hidden" }}>{children}</div>}
     </div>
   );
 }
