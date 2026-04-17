@@ -181,7 +181,7 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 			anyPublished = true
 		}
 
-		w.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
+		dbResult, dbErr := w.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
 			PostID:          post.ID,
 			SocialAccountID: posts[i].AccountID,
 			Caption:         posts[i].Caption,
@@ -190,21 +190,38 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 			ErrorMessage:    errMsg,
 			PublishedAt:     pubAt,
 		})
+		if dbErr != nil {
+			reason := errMsg.String
+			if reason == "" {
+				reason = dbErr.Error()
+			}
+			if _, pfErr := w.queries.CreatePostFailure(ctx, postfailures.BuildParams(
+				post.ID,
+				"",
+				post.WorkspaceID,
+				posts[i].AccountID,
+				oc.platform,
+				"scheduler_result_persist",
+				reason,
+				dbErr.Error(),
+			)); pfErr != nil {
+				slog.Warn("scheduler: failed to persist structured post failure", "post_id", post.ID, "error", pfErr)
+			}
+			slog.Warn("scheduler: failed to save post result", "post_id", post.ID, "account_id", posts[i].AccountID, "error", dbErr)
+			allPublished = false
+			continue
+		}
 		if status == "failed" && errMsg.Valid {
-			classification := postfailures.Classify(errMsg.String)
-			if _, pfErr := w.queries.CreatePostFailure(ctx, db.CreatePostFailureParams{
-				PostID:             post.ID,
-				SocialPostResultID: pgtype.Text{},
-				WorkspaceID:        post.WorkspaceID,
-				SocialAccountID:    pgtype.Text{String: posts[i].AccountID, Valid: posts[i].AccountID != ""},
-				Platform:           firstNonEmpty(oc.platform, "unknown"),
-				FailureStage:       "scheduler_dispatch",
-				ErrorCode:          classification.ErrorCode,
-				PlatformErrorCode:  textParam(classification.PlatformErrorCode),
-				Message:            errMsg.String,
-				RawError:           textParam(errMsg.String),
-				IsRetriable:        classification.IsRetriable,
-			}); pfErr != nil {
+			if _, pfErr := w.queries.CreatePostFailure(ctx, postfailures.BuildParams(
+				post.ID,
+				dbResult.ID,
+				post.WorkspaceID,
+				dbResult.SocialAccountID,
+				oc.platform,
+				"scheduler_dispatch",
+				errMsg.String,
+				errMsg.String,
+			)); pfErr != nil {
 				slog.Warn("scheduler: failed to persist structured post failure", "post_id", post.ID, "error", pfErr)
 			}
 		}

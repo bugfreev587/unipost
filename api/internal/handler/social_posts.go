@@ -502,37 +502,30 @@ func (h *SocialPostHandler) executePublishLoop(
 			slog.Error("failed to save post result",
 				"error", dbErr, "account_id", parsed.Posts[i].AccountID, "dispatch_error", reason.Error())
 			allPublished = false
-			h.recordPostFailure(r.Context(), db.CreatePostFailureParams{
-				PostID:             post.ID,
-				SocialPostResultID: pgtype.Text{},
-				WorkspaceID:        workspaceID,
-				SocialAccountID:    pgtype.Text{String: parsed.Posts[i].AccountID, Valid: parsed.Posts[i].AccountID != ""},
-				Platform:           firstNonEmpty(oc.platform, accountMap[parsed.Posts[i].AccountID].Platform, "unknown"),
-				FailureStage:       "result_persist",
-				ErrorCode:          postfailures.Classify(reason.Error()).ErrorCode,
-				PlatformErrorCode:  textParam(postfailures.Classify(reason.Error()).PlatformErrorCode),
-				Message:            reason.Error(),
-				RawError:           textParam(dbErr.Error()),
-				IsRetriable:        postfailures.Classify(reason.Error()).IsRetriable,
-			})
+			h.recordPostFailure(r.Context(), postfailures.BuildParams(
+				post.ID,
+				"",
+				workspaceID,
+				parsed.Posts[i].AccountID,
+				postfailures.FirstNonEmpty(oc.platform, accountMap[parsed.Posts[i].AccountID].Platform),
+				"result_persist",
+				reason.Error(),
+				dbErr.Error(),
+			))
 			continue
 		}
 
 		if status == "failed" && dbResult.ErrorMessage.Valid {
-			classification := postfailures.Classify(dbResult.ErrorMessage.String)
-			h.recordPostFailure(r.Context(), db.CreatePostFailureParams{
-				PostID:             post.ID,
-				SocialPostResultID: pgtype.Text{String: dbResult.ID, Valid: true},
-				WorkspaceID:        workspaceID,
-				SocialAccountID:    pgtype.Text{String: dbResult.SocialAccountID, Valid: true},
-				Platform:           firstNonEmpty(oc.platform, accountMap[parsed.Posts[i].AccountID].Platform, "unknown"),
-				FailureStage:       "dispatch",
-				ErrorCode:          classification.ErrorCode,
-				PlatformErrorCode:  textParam(classification.PlatformErrorCode),
-				Message:            dbResult.ErrorMessage.String,
-				RawError:           textParam(dbResult.ErrorMessage.String),
-				IsRetriable:        classification.IsRetriable,
-			})
+			h.recordPostFailure(r.Context(), postfailures.BuildParams(
+				post.ID,
+				dbResult.ID,
+				workspaceID,
+				dbResult.SocialAccountID,
+				postfailures.FirstNonEmpty(oc.platform, accountMap[parsed.Posts[i].AccountID].Platform),
+				"dispatch",
+				dbResult.ErrorMessage.String,
+				dbResult.ErrorMessage.String,
+			))
 		}
 
 		rr := postResultResponse{
@@ -641,19 +634,6 @@ func (h *SocialPostHandler) recordPostFailure(ctx context.Context, arg db.Create
 			"stage", arg.FailureStage,
 			"error", err)
 	}
-}
-
-func textParam(v string) pgtype.Text {
-	return pgtype.Text{String: v, Valid: v != ""}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // eventForStatus maps a post status to its outbound webhook event
