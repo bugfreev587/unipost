@@ -19,6 +19,7 @@ export default function ApiReferenceLandingPage() {
           ["Connect sessions", "Hosted onboarding for end-user-owned accounts", "Connect Sessions"],
           ["Posts", "Create, validate, schedule, draft, and preview content", "Create Post"],
           ["Analytics", "Inspect performance and workspace-level summaries", "Analytics"],
+          ["Notifications", "Manage human-facing alerts in Settings > Notifications", "Notifications"],
           ["Webhooks", "Subscribe to publish and account events", "Webhooks"],
         ]}
       />
@@ -44,6 +45,9 @@ export default function ApiReferenceLandingPage() {
       <h2 id="analytics">Analytics</h2>
       <p>Analytics includes both per-post performance and workspace rollups, so you can power dashboards, summaries, and agent workflows from one layer.</p>
 
+      <h2 id="notifications">Notifications</h2>
+      <p>Notifications are the user-facing alerting system inside UniPost. Use them when a human should be informed in email, Slack, or Discord from the dashboard settings page instead of wiring a developer webhook receiver.</p>
+
       <h2 id="account-health">Account health</h2>
       <p>Account health gives you a fast signal when a connected account is healthy, degraded, or disconnected.</p>
 
@@ -63,6 +67,11 @@ export default function ApiReferenceLandingPage() {
           <div className="docs-card-title">Accounts reference</div>
           <p>Use the social accounts reference when you need account IDs, filtering, or managed account lookups.</p>
           <p><Link href="/docs/api/accounts/list">Open Social Accounts</Link></p>
+        </div>
+        <div className="docs-card">
+          <div className="docs-card-title">Notifications guide</div>
+          <p>See supported channel types, current events, and how subscriptions work in Settings.</p>
+          <p><Link href="/docs/api/notifications">Open Notifications</Link></p>
         </div>
         <div className="docs-card">
           <div className="docs-card-title">Events reference</div>
