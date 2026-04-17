@@ -168,9 +168,9 @@ export default function QuickstartPage() {
     <DocsPage
       eyebrow="Get Started"
       title="Quickstart"
-      lead="The shortest useful path through UniPost is: create an API key, connect an account, fetch its account ID, publish with `platform_posts[]`, and validate before you automate. This page is written to get a real integration working, not just to show what the API looks like."
+      lead="This is the shortest useful path through UniPost: create an API key, connect an account, fetch its account ID, publish with `platform_posts[]`, and validate before you automate. Follow this page when you want a real integration working fast."
     >
-      <h2 id="what-you-build">What you are building</h2>
+      <h2 id="outcome">What you will finish with</h2>
       <p>UniPost is most useful when you think of it as one publishing layer with three responsibilities: connect accounts, publish content with platform-aware payloads, and read back operational or analytics signals.</p>
       <DocsTable
         columns={["Step", "Why it matters"]}
@@ -183,11 +183,18 @@ export default function QuickstartPage() {
         ]}
       />
 
+      <h2 id="before-you-start">Before you start</h2>
+      <ul className="docs-step-list">
+        <li>You need a UniPost workspace and an API key from the dashboard.</li>
+        <li>This guide assumes you are connecting a team-owned account directly. If customers connect their own accounts, use Connect sessions instead.</li>
+        <li>The examples below use Bluesky because it is the shortest direct connect path, but the publish shape applies across platforms.</li>
+      </ul>
+
       <h2 id="step-1">1. Create an API key</h2>
       <p>Create a workspace in UniPost, then generate an API key from the dashboard. Production keys start with <code>up_live_</code>. Test keys start with <code>up_test_</code>.</p>
 
       <h2 id="step-2">2. Connect an account</h2>
-      <p>For your own team-owned accounts, connect directly. For customer-owned accounts, use Connect sessions later. The example below uses Bluesky because it is the shortest direct API flow.</p>
+      <p>For your own team-owned accounts, connect directly. For customer-owned accounts, switch to Connect sessions instead. The example below uses Bluesky because it gives you the fastest working path.</p>
       <DocsCodeTabs snippets={CONNECT_SNIPPETS} />
 
       <h2 id="step-3">3. List accounts and capture the ID</h2>

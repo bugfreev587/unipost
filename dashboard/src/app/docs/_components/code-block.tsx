@@ -149,14 +149,14 @@ const TYPE_WORDS = new Set([
 ]);
 
 const TOKEN_COLORS: Record<TokenKind, string> = {
-  plain: "#d8dad4",
-  comment: "#6f7670",
-  string: "#7dd3fc",
-  keyword: "#c084fc",
-  number: "#f59e0b",
-  function: "#f97316",
-  type: "#34d399",
-  constant: "#f472b6",
+  plain: "var(--docs-code-plain)",
+  comment: "var(--docs-code-comment)",
+  string: "var(--docs-code-string)",
+  keyword: "var(--docs-code-keyword)",
+  number: "var(--docs-code-number)",
+  function: "var(--docs-code-function)",
+  type: "var(--docs-code-type)",
+  constant: "var(--docs-code-constant)",
 };
 
 function normalizeLanguage(value?: string, code?: string): CodeLanguage {
@@ -331,18 +331,18 @@ export function CodeTabs({ snippets }: { snippets: CodeSnippet[] }) {
 
 export function codeBlockStyles() {
   return `
-.docs-code-block,.docs-code-tabs{margin:18px 0;border:1px solid #212325;border-radius:18px;background:#0d0f10;overflow:hidden}
+.docs-code-block,.docs-code-tabs{margin:20px 0;border:1px solid var(--docs-border);border-radius:18px;background:var(--docs-bg-elevated);overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.02)}
 .docs-code-block.compact{margin:0}
-.docs-code-toolbar,.docs-code-tabs-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06);background:#111314}
+.docs-code-toolbar,.docs-code-tabs-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--docs-border);background:var(--docs-bg-muted)}
 .docs-code-meta{display:flex;align-items:center;gap:8px;min-width:0}
-.docs-code-lang{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#7f857d;font-family:var(--docs-mono, var(--mono), monospace)}
-.docs-copy-button{padding:6px 10px;border-radius:9px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:#aeb3ab;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
-.docs-copy-button:hover{color:#f7f7f5;background:rgba(255,255,255,.06)}
-.docs-code-surface{margin:0;padding:18px 20px;background:#0d0f10;overflow:auto}
+.docs-code-lang{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-text-faint);font-family:var(--docs-mono, var(--mono), monospace)}
+.docs-copy-button{padding:6px 10px;border-radius:9px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);color:var(--docs-text-muted);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
+.docs-copy-button:hover{color:var(--docs-text);background:var(--docs-bg-muted)}
+.docs-code-surface{margin:0;padding:18px 20px;background:color-mix(in srgb, var(--docs-bg-muted) 66%, var(--docs-bg-elevated));overflow:auto}
 .docs-code-surface.tabs{border-radius:0}
-.docs-code-content{display:block;white-space:pre;font-family:var(--docs-mono, var(--mono), monospace);font-size:13px;line-height:1.75;color:#d8dad4}
+.docs-code-content{display:block;white-space:pre;font-family:var(--docs-mono, var(--mono), monospace);font-size:13px;line-height:1.75;color:var(--docs-text-soft)}
 .docs-code-tab-list{display:flex;gap:6px;flex-wrap:wrap}
-.docs-code-tab{padding:7px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);color:#9ca29a;font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
-.docs-code-tab.active{color:#f7f7f5;border-color:rgba(34,197,94,.24);background:rgba(34,197,94,.08)}
+.docs-code-tab{padding:7px 12px;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);color:var(--docs-text-muted);font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
+.docs-code-tab.active{color:var(--docs-text);border-color:color-mix(in srgb, var(--docs-accent) 28%, var(--docs-border));background:var(--docs-accent-soft)}
 `;
 }

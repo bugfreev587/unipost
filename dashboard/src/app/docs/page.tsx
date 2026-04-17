@@ -5,34 +5,91 @@ export default function DocsHomePage() {
   return (
     <DocsPage
       eyebrow="Documentation"
-      title="Docs that get you from API key to production fast."
-      lead="UniPost helps you onboard user accounts, validate content before publish, ship cross-platform posts, and track results. This new docs structure is organized around the way developers actually build: start fast, go platform by platform, then drop into the API reference."
+      title="Start with the task you need to ship."
+      lead="UniPost docs are organized around integration jobs, not product marketing. Pick the workflow you are trying to complete, follow the shortest path, and then drop into the API reference when you need exact request details."
     >
-      <h2 id="start-here">Start Here</h2>
-      <div className="docs-grid">
-        <div className="docs-card">
-          <div className="docs-card-title">Quickstart</div>
-          <p>Connect an account, publish your first post, and learn the recommended request shape in under ten minutes.</p>
-          <p><Link href="/docs/quickstart">Open Quickstart</Link></p>
-        </div>
-        <div className="docs-card">
-          <div className="docs-card-title">Platform Guides</div>
-          <p>See what each platform supports, what content rules apply, and how to publish text, image, video, or threaded posts.</p>
-          <p><Link href="/docs/platforms">Browse Platforms</Link></p>
-        </div>
-        <div className="docs-card">
-          <div className="docs-card-title">API Reference</div>
-          <p>Read endpoint-specific request and response details for accounts, connect sessions, posts, analytics, webhooks, and more.</p>
-          <p><Link href="/docs/api">Open API Reference</Link></p>
-        </div>
-        <div className="docs-card">
-          <div className="docs-card-title">MCP</div>
-          <p>Use UniPost from AI agents with a hosted MCP server, then layer preview, validate, and analytics into your workflows.</p>
-          <p><Link href="/docs/mcp">Read MCP Guide</Link></p>
-        </div>
-      </div>
+      <section id="start-here" className="docs-home-section">
+        <div className="docs-kicker">Start by task</div>
+        <div className="docs-task-list">
+          <Link href="/docs/quickstart" className="docs-task-item">
+            <div className="docs-task-copy">
+              <div className="docs-task-title">Publish your first post</div>
+              <div className="docs-task-body">Create an API key, connect an account, fetch its account ID, publish with `platform_posts[]`, and validate before you automate anything.</div>
+            </div>
+            <div className="docs-task-links">
+              <span className="docs-task-link">Quickstart</span>
+            </div>
+          </Link>
 
-      <h2 id="why-unipost">Why UniPost</h2>
+          <Link href="/docs/api/connect/sessions" className="docs-task-item">
+            <div className="docs-task-copy">
+              <div className="docs-task-title">Let customers connect their own accounts</div>
+              <div className="docs-task-body">Use hosted Connect sessions when you are onboarding end-user or customer-owned social accounts instead of team-owned workspace accounts.</div>
+            </div>
+            <div className="docs-task-links">
+              <span className="docs-task-link">Connect Sessions</span>
+            </div>
+          </Link>
+
+          <Link href="/docs/api/posts/validate" className="docs-task-item">
+            <div className="docs-task-copy">
+              <div className="docs-task-title">Validate content before publish</div>
+              <div className="docs-task-body">Run the same request body through preflight validation to catch caption limits, media conflicts, and per-platform issues before anything is posted.</div>
+            </div>
+            <div className="docs-task-links">
+              <span className="docs-task-link">Validate API</span>
+            </div>
+          </Link>
+
+          <Link href="/docs/api/webhooks" className="docs-task-item">
+            <div className="docs-task-copy">
+              <div className="docs-task-title">Receive delivery and account events</div>
+              <div className="docs-task-body">Subscribe to webhook events when you need asynchronous status updates for publishes, account state changes, and downstream automation.</div>
+            </div>
+            <div className="docs-task-links">
+              <span className="docs-task-link">Webhooks</span>
+            </div>
+          </Link>
+
+          <Link href="/docs/mcp" className="docs-task-item">
+            <div className="docs-task-copy">
+              <div className="docs-task-title">Use UniPost from agents or MCP clients</div>
+              <div className="docs-task-body">Connect the hosted MCP server when the integration surface is an AI agent, a tool-using assistant, or an internal automation environment.</div>
+            </div>
+            <div className="docs-task-links">
+              <span className="docs-task-link">MCP Guide</span>
+            </div>
+          </Link>
+        </div>
+      </section>
+
+      <section id="common-workflows" className="docs-home-section">
+        <div className="docs-kicker">Common workflows</div>
+        <div className="docs-mini-grid">
+          <div className="docs-mini-card">
+            <div className="docs-mini-title">Team-owned accounts</div>
+            <p>Use direct account connection flows when your own workspace is managing publishing.</p>
+            <p><Link href="/docs/quickstart">Open Quickstart</Link></p>
+          </div>
+          <div className="docs-mini-card">
+            <div className="docs-mini-title">Customer-owned accounts</div>
+            <p>Use Connect sessions when your SaaS needs each customer or user to authorize their own accounts.</p>
+            <p><Link href="/docs/api/connect/sessions">Read Connect Sessions</Link></p>
+          </div>
+          <div className="docs-mini-card">
+            <div className="docs-mini-title">Per-platform publishing rules</div>
+            <p>Check platform guides when the question is about caption limits, media support, or thread behavior on one network.</p>
+            <p><Link href="/docs/platforms">Browse Platforms</Link></p>
+          </div>
+          <div className="docs-mini-card">
+            <div className="docs-mini-title">Operational feedback loops</div>
+            <p>Use analytics, notifications, and webhooks when you need monitoring, retries, or downstream decisioning.</p>
+            <p><Link href="/docs/api">Open API Reference</Link></p>
+          </div>
+        </div>
+      </section>
+
+      <h2 id="why-unipost">What UniPost Covers</h2>
       <DocsTable
         columns={["Layer", "What UniPost does", "Why it matters"]}
         rows={[
@@ -43,11 +100,12 @@ export default function DocsHomePage() {
         ]}
       />
 
-      <h2 id="how-to-use">How To Use These Docs</h2>
+      <h2 id="reference-map">Reference Map</h2>
       <ul className="docs-list">
-        <li>Start in <Link href="/docs/quickstart">Quickstart</Link> if you are integrating UniPost for the first time.</li>
-        <li>Open <Link href="/docs/platforms">Platforms</Link> when you need exact content rules and examples for a specific network.</li>
-        <li>Use <Link href="/docs/api">API Reference</Link> when you already know what you want to do and need endpoint details.</li>
+        <li>Start in <Link href="/docs/quickstart">Quickstart</Link> if you want the shortest path from API key to first successful publish.</li>
+        <li>Open <Link href="/docs/platforms">Platforms</Link> when you need per-network constraints, media rules, or content examples.</li>
+        <li>Use <Link href="/docs/api">API Reference</Link> when you already know the capability you want and need exact request and response details.</li>
+        <li>Read <Link href="/docs/sdk">SDK</Link> and <Link href="/docs/mcp">MCP</Link> when UniPost is being consumed by agents, scripts, or internal developer tooling.</li>
       </ul>
     </DocsPage>
   );
