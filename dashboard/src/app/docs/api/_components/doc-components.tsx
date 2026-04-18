@@ -34,16 +34,16 @@ export function EndpointHeader({ method, path, description, badges }: {
   method: string; path: string; description: string; badges?: string[];
 }) {
   return (
-    <div style={{ background: "var(--docs-bg-muted)", border: "1px solid var(--docs-border)", borderRadius: 12, padding: "24px 28px", marginBottom: 32 }}>
+    <div style={{ background: "var(--docs-tech-bg)", border: "1px solid var(--docs-tech-border)", borderRadius: 12, padding: "24px 28px", marginBottom: 32 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
         <MethodBadge method={method} />
-        <code style={{ fontSize: 16, fontWeight: 600, color: "var(--docs-text)", fontFamily: "var(--docs-mono)" }}>{path}</code>
+        <code style={{ fontSize: 16, fontWeight: 600, color: "var(--docs-tech-text)", fontFamily: "var(--docs-mono)" }}>{path}</code>
       </div>
-      <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.6, margin: 0 }}>{description}</p>
+      <p style={{ fontSize: 14.5, color: "var(--docs-tech-text-soft)", lineHeight: 1.6, margin: 0 }}>{description}</p>
       {badges && badges.length > 0 && (
         <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
           {badges.map(b => (
-            <span key={b} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 5, background: "color-mix(in srgb, var(--docs-bg-elevated) 70%, var(--docs-bg-muted))", color: "var(--docs-text-muted)", border: "1px solid var(--docs-border)", fontFamily: "var(--docs-mono)", fontWeight: 600 }}>{b}</span>
+            <span key={b} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 5, background: "var(--docs-tech-chip)", color: "var(--docs-tech-muted)", border: "1px solid rgba(255,255,255,.08)", fontFamily: "var(--docs-mono)", fontWeight: 600 }}>{b}</span>
           ))}
         </div>
       )}

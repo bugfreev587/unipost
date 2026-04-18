@@ -121,8 +121,8 @@ export function ListAccountsContent() {
       </DocSection>
 
       <DocSection id="authentication" title="Authentication">
-        <div style={{ background: "var(--docs-bg-muted)", border: "1px solid var(--docs-border)", borderRadius: 10, padding: "18px 22px" }}>
-          <code style={{ fontSize: 14, fontFamily: "var(--docs-mono)", color: "var(--docs-text)" }}>Authorization: Bearer up_live_xxxx</code>
+        <div style={{ background: "var(--docs-tech-bg)", border: "1px solid var(--docs-tech-border)", borderRadius: 10, padding: "18px 22px" }}>
+          <code style={{ fontSize: 14, fontFamily: "var(--docs-mono)", color: "var(--docs-tech-text)" }}>Authorization: Bearer up_live_xxxx</code>
         </div>
       </DocSection>
 

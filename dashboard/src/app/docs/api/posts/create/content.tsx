@@ -252,9 +252,9 @@ export function CreatePostContent() {
 
       {/* Authentication */}
       <DocSection id="authentication" title="Authentication">
-        <div style={{ background: "var(--docs-bg-muted)", border: "1px solid var(--docs-border)", borderRadius: 10, padding: "18px 22px" }}>
+        <div style={{ background: "var(--docs-tech-bg)", border: "1px solid var(--docs-tech-border)", borderRadius: 10, padding: "18px 22px" }}>
           <p style={{ fontSize: 13.5, color: "var(--docs-text-soft)", marginBottom: 10 }}>All requests require a Bearer token in the Authorization header.</p>
-          <code style={{ fontSize: 14, fontFamily: "var(--docs-mono)", color: "var(--docs-text)" }}>Authorization: Bearer up_live_xxxx</code>
+          <code style={{ fontSize: 14, fontFamily: "var(--docs-mono)", color: "var(--docs-tech-text)" }}>Authorization: Bearer up_live_xxxx</code>
           <p style={{ fontSize: 12.5, color: "var(--docs-text-faint)", marginTop: 10 }}>
             Get your API key at <a href="https://app.unipost.dev" style={{ color: "var(--docs-link)", textDecoration: "none" }}>app.unipost.dev</a>
           </p>
