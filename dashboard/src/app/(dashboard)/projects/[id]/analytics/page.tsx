@@ -1477,7 +1477,7 @@ function categorizeError(error: string): ErrorHint | null {
   if (e.includes("instagram requires at least one")) {
     return {
       label: "What to do",
-      body: "Instagram doesn't support text-only posts — attach at least one image or video URL in media_urls.",
+      body: "Instagram doesn't support text-only posts — attach at least one image or video with media_urls, or upload a local file first and publish with media_ids.",
     };
   }
   if (e.includes("does not support post deletion")) {
