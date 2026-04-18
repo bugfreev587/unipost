@@ -32,11 +32,12 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
       gap: 12,
-      padding: 16,
+      padding: 18,
       background: "var(--surface1)",
       border: "1px solid var(--dborder)",
-      borderRadius: 10,
+      borderRadius: 12,
       marginBottom: 24,
+      boxShadow: "0 1px 2px color-mix(in srgb, var(--shadow-color) 58%, transparent)",
     }}>
       <StatCard label="Total Accounts" value={byo.length} />
       <StatCard
@@ -45,14 +46,14 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
           <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 14 }}>
               <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#10b981" }} />
-              <span style={{ color: "#ccc", fontWeight: 600 }}>{active.length}</span>
-              <span style={{ color: "#888", fontSize: 12 }}>active</span>
+              <span style={{ color: "var(--dtext)", fontWeight: 700 }}>{active.length}</span>
+              <span style={{ color: "var(--dmuted)", fontSize: 12, fontWeight: 500 }}>active</span>
             </span>
             {needsReconnect.length > 0 && (
               <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 14 }}>
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f59e0b" }} />
                 <span style={{ color: "#f59e0b", fontWeight: 600 }}>{needsReconnect.length}</span>
-                <span style={{ color: "#888", fontSize: 12 }}>reconnect</span>
+                <span style={{ color: "var(--dmuted)", fontSize: 12, fontWeight: 500 }}>reconnect</span>
               </span>
             )}
           </div>
@@ -65,7 +66,7 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
             {[...byPlatform.entries()].sort((a, b) => b[1] - a[1]).map(([platform, count]) => (
               <span key={platform} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
                 <PlatformIcon platform={platform} size={14} />
-                <span style={{ color: "#ccc", fontWeight: 600 }}>{count}</span>
+                <span style={{ color: "var(--dtext)", fontWeight: 700 }}>{count}</span>
               </span>
             ))}
           </div>
@@ -78,8 +79,8 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
             <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
               {profiles.map((p) => (
                 <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                  <span style={{ color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100 }}>{p.name}</span>
-                  <span style={{ color: "#ccc", fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace" }}>{byProfile.get(p.id) || 0}</span>
+                  <span style={{ color: "var(--dmuted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100 }}>{p.name}</span>
+                  <span style={{ color: "var(--dtext)", fontWeight: 700, fontFamily: "var(--font-geist-mono), monospace" }}>{byProfile.get(p.id) || 0}</span>
                 </div>
               ))}
             </div>
@@ -105,11 +106,12 @@ export function ManagedUsersStats({ users, totalAccounts }: ManagedUsersStatsPro
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
       gap: 12,
-      padding: 16,
+      padding: 18,
       background: "var(--surface1)",
       border: "1px solid var(--dborder)",
-      borderRadius: 10,
+      borderRadius: 12,
       marginBottom: 24,
+      boxShadow: "0 1px 2px color-mix(in srgb, var(--shadow-color) 58%, transparent)",
     }}>
       <StatCard label="Managed Users" value={users.length} />
       <StatCard label="Total Accounts" value={total} />
@@ -130,11 +132,12 @@ export function WhiteLabelStats({ configuredCount, totalPlatforms }: WhiteLabelS
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
       gap: 12,
-      padding: 16,
+      padding: 18,
       background: "var(--surface1)",
       border: "1px solid var(--dborder)",
-      borderRadius: 10,
+      borderRadius: 12,
       marginBottom: 24,
+      boxShadow: "0 1px 2px color-mix(in srgb, var(--shadow-color) 58%, transparent)",
     }}>
       <StatCard
         label="Platform Credentials"
@@ -154,11 +157,11 @@ export function WhiteLabelStats({ configuredCount, totalPlatforms }: WhiteLabelS
 function StatCard({ label, value, custom }: { label: string; value?: number; custom?: React.ReactNode }) {
   return (
     <div style={{ padding: "10px 14px" }}>
-      <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "#888", marginBottom: 4 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "color-mix(in srgb, var(--dmuted) 82%, var(--dtext))", marginBottom: 6 }}>
         {label}
       </div>
       {custom ?? (
-        <div style={{ fontSize: 22, fontWeight: 700, color: "var(--dtext)", marginTop: 4 }}>
+        <div style={{ fontSize: 30, lineHeight: "34px", fontWeight: 700, color: "var(--dtext)", letterSpacing: "-0.02em", marginTop: 2 }}>
           {value ?? 0}
         </div>
       )}

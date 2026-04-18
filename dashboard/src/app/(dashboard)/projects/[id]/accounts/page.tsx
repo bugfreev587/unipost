@@ -201,12 +201,12 @@ export default function AccountsPage() {
       )}
 
       {callbackStatus === "success" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "var(--success-soft)", border: "1px solid color-mix(in srgb, var(--success) 24%, transparent)", fontSize: 13, color: "var(--daccent)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderRadius: 8, background: "color-mix(in srgb, var(--success-soft) 82%, white)", border: "1px solid color-mix(in srgb, var(--success) 26%, transparent)", fontSize: 13, fontWeight: 500, color: "color-mix(in srgb, var(--success) 86%, var(--dtext))", marginBottom: 20 }}>
           <CheckCircle2 style={{ width: 14, height: 14 }} /> Connected {callbackAccount || "account"} successfully.
         </div>
       )}
       {callbackStatus === "error" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", fontSize: 13, color: "var(--danger)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderRadius: 8, background: "color-mix(in srgb, var(--danger-soft) 82%, white)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", fontSize: 13, fontWeight: 500, color: "color-mix(in srgb, var(--danger) 86%, var(--dtext))", marginBottom: 20 }}>
           <XCircle style={{ width: 14, height: 14 }} /> Failed to connect. Please try again.
         </div>
       )}
@@ -366,11 +366,11 @@ export default function AccountsPage() {
                       <span style={{ fontWeight: 500 }}>{a.account_name || a.id}</span>
                     </div>
                   </td>
-                  <td style={{ color: "var(--dmuted)", fontSize: 13 }}>
+                  <td style={{ color: "var(--dmuted)", fontSize: 13, fontWeight: 500 }}>
                     {profiles.find((p) => p.id === a.profile_id)?.name || "—"}
                   </td>
-                  <td style={{ color: "var(--dmuted)", textTransform: "capitalize" }}>{a.platform}</td>
-                  <td style={{ color: "var(--dmuted)" }}>
+                  <td style={{ color: "var(--dmuted)", textTransform: "capitalize", fontWeight: 500 }}>{a.platform}</td>
+                  <td style={{ color: "var(--dmuted)", fontWeight: 500 }}>
                     {new Date(a.connected_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                   </td>
                   <td>
