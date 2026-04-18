@@ -239,46 +239,46 @@ export function CreatePostContent() {
 
       {/* Overview */}
       <DocSection id="overview" title="Overview">
-        <p style={{ fontSize: 14.5, color: "#aaa", lineHeight: 1.7, marginBottom: 12 }}>
+        <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 12 }}>
           The social posts endpoint is the core of UniPost. It accepts a caption and a list of account IDs, and publishes the content to every connected platform in a single API call.
         </p>
-        <p style={{ fontSize: 14.5, color: "#aaa", lineHeight: 1.7, marginBottom: 12 }}>
-          For multi-platform fan-out where each platform should get different copy, use <code style={{ color: "#10b981", fontFamily: "var(--mono)", fontSize: 13 }}>platform_posts[]</code> instead of <code style={{ color: "#10b981", fontFamily: "var(--mono)", fontSize: 13 }}>caption + account_ids</code>. Each entry becomes one platform post with its own caption, media, and options.
+        <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 12 }}>
+          For multi-platform fan-out where each platform should get different copy, use <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform_posts[]</code> instead of <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>caption + account_ids</code>. Each entry becomes one platform post with its own caption, media, and options.
         </p>
-        <p style={{ fontSize: 14.5, color: "#aaa", lineHeight: 1.7 }}>
-          Posts that fail on some platforms but succeed on others return <code style={{ color: "#10b981", fontFamily: "var(--mono)", fontSize: 13 }}>status: &quot;partial&quot;</code> with per-platform results — the successful publishes are never rolled back.
+        <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7 }}>
+          Posts that fail on some platforms but succeed on others return <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>status: &quot;partial&quot;</code> with per-platform results — the successful publishes are never rolled back.
         </p>
       </DocSection>
 
       {/* Authentication */}
       <DocSection id="authentication" title="Authentication">
-        <div style={{ background: "#0a0a0a", border: "1px solid #1a1a1a", borderRadius: 10, padding: "18px 22px" }}>
-          <p style={{ fontSize: 13.5, color: "#aaa", marginBottom: 10 }}>All requests require a Bearer token in the Authorization header.</p>
-          <code style={{ fontSize: 14, fontFamily: "var(--mono)", color: "#f0f0f0" }}>Authorization: Bearer up_live_xxxx</code>
-          <p style={{ fontSize: 12.5, color: "#555", marginTop: 10 }}>
-            Get your API key at <a href="https://app.unipost.dev" style={{ color: "#0ea5e9", textDecoration: "none" }}>app.unipost.dev</a>
+        <div style={{ background: "var(--docs-bg-muted)", border: "1px solid var(--docs-border)", borderRadius: 10, padding: "18px 22px" }}>
+          <p style={{ fontSize: 13.5, color: "var(--docs-text-soft)", marginBottom: 10 }}>All requests require a Bearer token in the Authorization header.</p>
+          <code style={{ fontSize: 14, fontFamily: "var(--docs-mono)", color: "var(--docs-text)" }}>Authorization: Bearer up_live_xxxx</code>
+          <p style={{ fontSize: 12.5, color: "var(--docs-text-faint)", marginTop: 10 }}>
+            Get your API key at <a href="https://app.unipost.dev" style={{ color: "var(--docs-link)", textDecoration: "none" }}>app.unipost.dev</a>
           </p>
         </div>
       </DocSection>
 
       {/* Request */}
       <DocSection id="request" title="Request">
-        <div style={{ fontSize: 13, fontFamily: "var(--mono)", color: "#888", marginBottom: 16 }}>
-          Base URL: <span style={{ color: "#f0f0f0" }}>https://api.unipost.dev</span>
+        <div style={{ fontSize: 13, fontFamily: "var(--docs-mono)", color: "var(--docs-text-muted)", marginBottom: 16 }}>
+          Base URL: <span style={{ color: "var(--docs-text)" }}>https://api.unipost.dev</span>
         </div>
         <ParamTable params={HEADER_PARAMS} title="Headers" />
         <ParamTable params={BODY_PARAMS} title="Body Parameters" />
         <ParamTable params={PLATFORM_POST_PARAMS} title="platform_posts[] object" />
         <InfoBox>
-          <strong style={{ color: "#0ea5e9" }}>Two request shapes</strong> — pass exactly one: <code>caption + account_ids</code> (same caption everywhere) or <code>platform_posts[]</code> (different caption per platform). Mixing both is rejected with VALIDATION_ERROR.
+          <strong style={{ color: "var(--docs-link)" }}>Two request shapes</strong> — pass exactly one: <code>caption + account_ids</code> (same caption everywhere) or <code>platform_posts[]</code> (different caption per platform). Mixing both is rejected with VALIDATION_ERROR.
         </InfoBox>
       </DocSection>
 
       {/* Examples */}
       <DocSection id="examples" title="Examples">
-        <p style={{ fontSize: 13, fontWeight: 600, color: "#888", marginBottom: 10, fontFamily: "var(--mono)" }}>Basic — same caption to multiple platforms</p>
+        <p style={{ fontSize: 13, fontWeight: 600, color: "var(--docs-text-muted)", marginBottom: 10, fontFamily: "var(--docs-mono)" }}>Basic — same caption to multiple platforms</p>
         <CodeTabs snippets={SNIPPETS_BASIC} />
-        <p style={{ fontSize: 13, fontWeight: 600, color: "#888", marginBottom: 10, marginTop: 24, fontFamily: "var(--mono)" }}>Advanced — per-platform captions + scheduling + idempotency</p>
+        <p style={{ fontSize: 13, fontWeight: 600, color: "var(--docs-text-muted)", marginBottom: 10, marginTop: 24, fontFamily: "var(--docs-mono)" }}>Advanced — per-platform captions + scheduling + idempotency</p>
         <CodeTabs snippets={SNIPPETS_ADVANCED} />
       </DocSection>
 
@@ -286,8 +286,8 @@ export function CreatePostContent() {
       <DocSection id="response" title="Response">
         <ResponseBlock title="200 — Success" code={RESPONSE_SUCCESS} />
         <div style={{ marginBottom: 16 }}>
-          <p style={{ fontSize: 13.5, color: "#aaa", lineHeight: 1.6 }}>
-            <strong style={{ color: "#f0f0f0" }}>Status values:</strong>{" "}
+          <p style={{ fontSize: 13.5, color: "var(--docs-text-soft)", lineHeight: 1.6 }}>
+            <strong style={{ color: "var(--docs-text)" }}>Status values:</strong>{" "}
             <code>published</code> (all platforms succeeded),{" "}
             <code>scheduled</code> (queued for future),{" "}
             <code>partial</code> (some succeeded, some failed),{" "}
@@ -301,39 +301,39 @@ export function CreatePostContent() {
       {/* Errors */}
       <DocSection id="errors" title="Error Codes">
         <ErrorTable errors={ERRORS} />
-        <p style={{ fontSize: 13, color: "#666", marginTop: 12, lineHeight: 1.6 }}>
+        <p style={{ fontSize: 13, color: "var(--docs-text-faint)", marginTop: 12, lineHeight: 1.6 }}>
           Platform-specific errors (e.g. Twitter rate limit, Instagram media rejection) are returned in <code>results[].error_message</code> per-platform, not as top-level errors.
         </p>
       </DocSection>
 
       {/* Limits */}
       <DocSection id="limits" title="Limits & Constraints">
-        <div style={{ border: "1px solid #1a1a1a", borderRadius: 10, overflow: "hidden", marginBottom: 20 }}>
+        <div style={{ border: "1px solid var(--docs-border)", borderRadius: 10, overflow: "hidden", marginBottom: 20, background: "var(--docs-bg-elevated)" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
             <tbody>
               {LIMITS.map((l, i) => (
-                <tr key={l.name} style={{ borderBottom: i < LIMITS.length - 1 ? "1px solid #111" : undefined }}>
-                  <td style={{ padding: "10px 14px", color: "#ccc", fontWeight: 500 }}>{l.name}</td>
-                  <td style={{ padding: "10px 14px", color: "#10b981", fontFamily: "var(--mono)", fontSize: 13 }}>{l.description}</td>
+                <tr key={l.name} style={{ borderBottom: i < LIMITS.length - 1 ? "1px solid var(--docs-border)" : undefined }}>
+                  <td style={{ padding: "10px 14px", color: "var(--docs-text)", fontWeight: 500 }}>{l.name}</td>
+                  <td style={{ padding: "10px 14px", color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>{l.description}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <p style={{ fontSize: 13, fontWeight: 600, color: "#888", marginBottom: 10, fontFamily: "var(--mono)" }}>Platform caption limits</p>
-        <div style={{ border: "1px solid #1a1a1a", borderRadius: 10, overflow: "hidden" }}>
+        <p style={{ fontSize: 13, fontWeight: 600, color: "var(--docs-text-muted)", marginBottom: 10, fontFamily: "var(--docs-mono)" }}>Platform caption limits</p>
+        <div style={{ border: "1px solid var(--docs-border)", borderRadius: 10, overflow: "hidden", background: "var(--docs-bg-elevated)" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
             <thead>
-              <tr style={{ background: "#0a0a0a" }}>
-                <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>Platform</th>
-                <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>Max Characters</th>
+              <tr style={{ background: "var(--docs-bg-muted)" }}>
+                <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Platform</th>
+                <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Max Characters</th>
               </tr>
             </thead>
             <tbody>
               {PLATFORM_LIMITS.map((p, i) => (
-                <tr key={p.platform} style={{ borderBottom: i < PLATFORM_LIMITS.length - 1 ? "1px solid #111" : undefined }}>
-                  <td style={{ padding: "10px 14px", color: "#ccc" }}>{p.platform}</td>
-                  <td style={{ padding: "10px 14px", color: "#10b981", fontFamily: "var(--mono)", fontSize: 13 }}>{p.max}</td>
+                <tr key={p.platform} style={{ borderBottom: i < PLATFORM_LIMITS.length - 1 ? "1px solid var(--docs-border)" : undefined }}>
+                  <td style={{ padding: "10px 14px", color: "var(--docs-text)" }}>{p.platform}</td>
+                  <td style={{ padding: "10px 14px", color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>{p.max}</td>
                 </tr>
               ))}
             </tbody>
@@ -375,8 +375,8 @@ export function CreatePostContent() {
       </DocSection>
 
       {/* Back to full docs */}
-      <div style={{ marginTop: 48, paddingTop: 24, borderTop: "1px solid #1a1a1a", fontSize: 13, color: "#555" }}>
-        <a href="/docs" style={{ color: "#0ea5e9", textDecoration: "none" }}>&larr; View full docs</a>
+      <div style={{ marginTop: 48, paddingTop: 24, borderTop: "1px solid var(--docs-border)", fontSize: 13, color: "var(--docs-text-faint)" }}>
+        <a href="/docs" style={{ color: "var(--docs-link)", textDecoration: "none" }}>&larr; View full docs</a>
         <span style={{ margin: "0 12px" }}>|</span>
         <span>Last updated: April 2026 &middot; API v1</span>
       </div>

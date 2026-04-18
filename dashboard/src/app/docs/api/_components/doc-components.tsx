@@ -23,7 +23,7 @@ function renderBooleanGlyph(value: boolean) {
 export function MethodBadge({ method }: { method: string }) {
   const c = METHOD_COLORS[method] || METHOD_COLORS.GET;
   return (
-    <span style={{ display: "inline-flex", padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, fontFamily: "var(--mono)", background: c.bg, color: c.text, letterSpacing: ".04em" }}>
+    <span style={{ display: "inline-flex", padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, fontFamily: "var(--docs-mono)", background: c.bg, color: c.text, letterSpacing: ".04em" }}>
       {method}
     </span>
   );
@@ -34,16 +34,16 @@ export function EndpointHeader({ method, path, description, badges }: {
   method: string; path: string; description: string; badges?: string[];
 }) {
   return (
-    <div style={{ background: "#0a0a0a", border: "1px solid #1a1a1a", borderRadius: 12, padding: "24px 28px", marginBottom: 32 }}>
+    <div style={{ background: "var(--docs-bg-muted)", border: "1px solid var(--docs-border)", borderRadius: 12, padding: "24px 28px", marginBottom: 32 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
         <MethodBadge method={method} />
-        <code style={{ fontSize: 16, fontWeight: 600, color: "#f0f0f0", fontFamily: "var(--mono)" }}>{path}</code>
+        <code style={{ fontSize: 16, fontWeight: 600, color: "var(--docs-text)", fontFamily: "var(--docs-mono)" }}>{path}</code>
       </div>
-      <p style={{ fontSize: 14.5, color: "#999", lineHeight: 1.6, margin: 0 }}>{description}</p>
+      <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.6, margin: 0 }}>{description}</p>
       {badges && badges.length > 0 && (
         <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
           {badges.map(b => (
-            <span key={b} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 5, background: "#ffffff08", color: "#888", border: "1px solid #222", fontFamily: "var(--mono)", fontWeight: 600 }}>{b}</span>
+            <span key={b} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 5, background: "color-mix(in srgb, var(--docs-bg-elevated) 70%, var(--docs-bg-muted))", color: "var(--docs-text-muted)", border: "1px solid var(--docs-border)", fontFamily: "var(--docs-mono)", fontWeight: 600 }}>{b}</span>
           ))}
         </div>
       )}
@@ -54,14 +54,14 @@ export function EndpointHeader({ method, path, description, badges }: {
 // ── Breadcrumbs ──
 export function Breadcrumbs({ items }: { items: { label: string; href?: string }[] }) {
   return (
-    <nav style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "#555", marginBottom: 24, fontFamily: "var(--mono)" }}>
+    <nav style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--docs-text-faint)", marginBottom: 24, fontFamily: "var(--docs-mono)" }}>
       {items.map((item, i) => (
         <span key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {i > 0 && <span style={{ color: "#333" }}>/</span>}
+          {i > 0 && <span style={{ color: "var(--docs-text-faint)" }}>/</span>}
           {item.href ? (
-            <Link href={item.href} style={{ color: "#888", textDecoration: "none" }}>{item.label}</Link>
+            <Link href={item.href} style={{ color: "var(--docs-text-muted)", textDecoration: "none" }}>{item.label}</Link>
           ) : (
-            <span style={{ color: "#ccc" }}>{item.label}</span>
+            <span style={{ color: "var(--docs-text-soft)" }}>{item.label}</span>
           )}
         </span>
       ))}
@@ -73,7 +73,7 @@ export function Breadcrumbs({ items }: { items: { label: string; href?: string }
 export function DocSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
     <section id={id} style={{ marginBottom: 48 }}>
-      <h3 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-.3px", color: "#f0f0f0", marginBottom: 16, scrollMarginTop: 80 }}>{title}</h3>
+      <h3 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-.3px", color: "var(--docs-text)", marginBottom: 16, scrollMarginTop: 80 }}>{title}</h3>
       {children}
     </section>
   );
@@ -90,24 +90,24 @@ export interface ParamRow {
 export function ParamTable({ params, title }: { params: ParamRow[]; title?: string }) {
   return (
     <div style={{ marginBottom: 24 }}>
-      {title && <div style={{ fontSize: 13, fontWeight: 700, color: "#888", marginBottom: 10, fontFamily: "var(--mono)" }}>{title}</div>}
-      <div style={{ border: "1px solid #1a1a1a", borderRadius: 10, overflow: "hidden" }}>
+      {title && <div style={{ fontSize: 13, fontWeight: 700, color: "var(--docs-text-muted)", marginBottom: 10, fontFamily: "var(--docs-mono)" }}>{title}</div>}
+      <div style={{ border: "1px solid var(--docs-border)", borderRadius: 10, overflow: "hidden", background: "var(--docs-bg-elevated)" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
           <thead>
-            <tr style={{ background: "#0a0a0a" }}>
-              <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>Parameter</th>
-              <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>Type</th>
-              <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>Required</th>
-              <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>Description</th>
+            <tr style={{ background: "var(--docs-bg-muted)" }}>
+              <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Parameter</th>
+              <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Type</th>
+              <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Required</th>
+              <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Description</th>
             </tr>
           </thead>
           <tbody>
             {params.map((p, i) => (
-              <tr key={p.name} style={{ borderBottom: i < params.length - 1 ? "1px solid #111" : undefined }}>
-                <td style={{ padding: "10px 14px", fontFamily: "var(--mono)", color: "#f0f0f0", fontWeight: 500 }}>{p.name}</td>
-                <td style={{ padding: "10px 14px", fontFamily: "var(--mono)", color: "#10b981", fontSize: 12 }}>{p.type}</td>
+              <tr key={p.name} style={{ borderBottom: i < params.length - 1 ? "1px solid var(--docs-border)" : undefined }}>
+                <td style={{ padding: "10px 14px", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 500 }}>{p.name}</td>
+                <td style={{ padding: "10px 14px", fontFamily: "var(--docs-mono)", color: "var(--docs-accent)", fontSize: 12 }}>{p.type}</td>
                 <td style={{ padding: "10px 14px" }}>{renderBooleanGlyph(p.required)}</td>
-                <td style={{ padding: "10px 14px", color: "#999", lineHeight: 1.5 }}>{p.description}</td>
+                <td style={{ padding: "10px 14px", color: "var(--docs-text-soft)", lineHeight: 1.5 }}>{p.description}</td>
               </tr>
             ))}
           </tbody>
@@ -140,7 +140,7 @@ export function ResponseBlock({ title, code }: { title: string; code: string }) 
 // ── Info box ──
 export function InfoBox({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ background: "#0ea5e908", border: "1px solid #0ea5e920", borderRadius: 8, padding: "14px 18px", margin: "16px 0", fontSize: 13.5, lineHeight: 1.6, color: "#aaa" }}>
+    <div style={{ background: "color-mix(in srgb, var(--docs-link) 7%, var(--docs-bg-elevated))", border: "1px solid color-mix(in srgb, var(--docs-link) 18%, var(--docs-border))", borderRadius: 8, padding: "14px 18px", margin: "16px 0", fontSize: 13.5, lineHeight: 1.6, color: "var(--docs-text-soft)" }}>
       {children}
     </div>
   );
@@ -152,8 +152,8 @@ export function RelatedEndpoints({ items }: { items: { method: string; path: str
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
       {items.map(item => (
         <Link key={item.href} href={item.href} style={{
-          display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: "#0a0a0a", border: "1px solid #1a1a1a",
-          borderRadius: 10, textDecoration: "none", color: "#ccc", fontSize: 13, transition: "all .15s",
+          display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: "var(--docs-bg-elevated)", border: "1px solid var(--docs-border)",
+          borderRadius: 10, textDecoration: "none", color: "var(--docs-text-soft)", fontSize: 13, transition: "all .15s",
         }}>
           <MethodBadge method={item.method} />
           <span>{item.label}</span>
@@ -168,21 +168,21 @@ export interface ErrorCodeRow { code: string; http: number; description: string 
 
 export function ErrorTable({ errors }: { errors: ErrorCodeRow[] }) {
   return (
-    <div style={{ border: "1px solid #1a1a1a", borderRadius: 10, overflow: "hidden" }}>
+    <div style={{ border: "1px solid var(--docs-border)", borderRadius: 10, overflow: "hidden", background: "var(--docs-bg-elevated)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
         <thead>
-          <tr style={{ background: "#0a0a0a" }}>
-            <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>Code</th>
-            <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>HTTP</th>
-            <th style={{ textAlign: "left", padding: "10px 14px", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid #1a1a1a" }}>Description</th>
+          <tr style={{ background: "var(--docs-bg-muted)" }}>
+            <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Code</th>
+            <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>HTTP</th>
+            <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Description</th>
           </tr>
         </thead>
         <tbody>
           {errors.map((e, i) => (
-            <tr key={e.code} style={{ borderBottom: i < errors.length - 1 ? "1px solid #111" : undefined }}>
-              <td style={{ padding: "10px 14px", fontFamily: "var(--mono)", color: "#ef4444", fontSize: 12, fontWeight: 500 }}>{e.code}</td>
-              <td style={{ padding: "10px 14px", fontFamily: "var(--mono)", color: "#f59e0b", fontSize: 12 }}>{e.http}</td>
-              <td style={{ padding: "10px 14px", color: "#999", lineHeight: 1.5 }}>{e.description}</td>
+            <tr key={e.code} style={{ borderBottom: i < errors.length - 1 ? "1px solid var(--docs-border)" : undefined }}>
+              <td style={{ padding: "10px 14px", fontFamily: "var(--docs-mono)", color: "#ef4444", fontSize: 12, fontWeight: 500 }}>{e.code}</td>
+              <td style={{ padding: "10px 14px", fontFamily: "var(--docs-mono)", color: "#f59e0b", fontSize: 12 }}>{e.http}</td>
+              <td style={{ padding: "10px 14px", color: "var(--docs-text-soft)", lineHeight: 1.5 }}>{e.description}</td>
             </tr>
           ))}
         </tbody>
@@ -196,11 +196,11 @@ export function ChangelogEntry({ version, date, items }: { version: string; date
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "var(--mono)", color: "#10b981" }}>{version}</span>
-        <span style={{ fontSize: 12, color: "#555" }}>({date})</span>
+        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "var(--docs-mono)", color: "var(--docs-accent)" }}>{version}</span>
+        <span style={{ fontSize: 12, color: "var(--docs-text-faint)" }}>({date})</span>
       </div>
       <ul style={{ margin: 0, paddingLeft: 16 }}>
-        {items.map((item, i) => <li key={i} style={{ fontSize: 13, color: "#999", lineHeight: 1.6, marginBottom: 2 }}>{item}</li>)}
+        {items.map((item, i) => <li key={i} style={{ fontSize: 13, color: "var(--docs-text-soft)", lineHeight: 1.6, marginBottom: 2 }}>{item}</li>)}
       </ul>
     </div>
   );

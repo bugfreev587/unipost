@@ -112,24 +112,24 @@ export function ListAccountsContent() {
       />
 
       <DocSection id="overview" title="Overview">
-        <p style={{ fontSize: 14.5, color: "#aaa", lineHeight: 1.7, marginBottom: 12 }}>
-          After connecting social accounts (either via the dashboard or the Connect flow), this endpoint returns them with their platform, status, and the <code style={{ color: "#10b981", fontFamily: "var(--mono)", fontSize: 13 }}>id</code> you need for publishing.
+        <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 12 }}>
+          After connecting social accounts (either via the dashboard or the Connect flow), this endpoint returns them with their platform, status, and the <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>id</code> you need for publishing.
         </p>
-        <p style={{ fontSize: 14.5, color: "#aaa", lineHeight: 1.7 }}>
-          Filter by <code style={{ color: "#10b981", fontFamily: "var(--mono)", fontSize: 13 }}>platform</code> to list only Instagram accounts, or by <code style={{ color: "#10b981", fontFamily: "var(--mono)", fontSize: 13 }}>external_user_id</code> to find accounts onboarded by a specific end user via Connect.
+        <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7 }}>
+          Filter by <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform</code> to list only Instagram accounts, or by <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>external_user_id</code> to find accounts onboarded by a specific end user via Connect.
         </p>
       </DocSection>
 
       <DocSection id="authentication" title="Authentication">
-        <div style={{ background: "#0a0a0a", border: "1px solid #1a1a1a", borderRadius: 10, padding: "18px 22px" }}>
-          <code style={{ fontSize: 14, fontFamily: "var(--mono)", color: "#f0f0f0" }}>Authorization: Bearer up_live_xxxx</code>
+        <div style={{ background: "var(--docs-bg-muted)", border: "1px solid var(--docs-border)", borderRadius: 10, padding: "18px 22px" }}>
+          <code style={{ fontSize: 14, fontFamily: "var(--docs-mono)", color: "var(--docs-text)" }}>Authorization: Bearer up_live_xxxx</code>
         </div>
       </DocSection>
 
       <DocSection id="request" title="Request">
-        <div style={{ fontSize: 13, fontFamily: "var(--mono)", color: "#888", marginBottom: 16 }}>
-          <span style={{ color: "#10b981", fontWeight: 700 }}>GET</span>{" "}
-          <span style={{ color: "#f0f0f0" }}>https://api.unipost.dev/v1/social-accounts</span>
+        <div style={{ fontSize: 13, fontFamily: "var(--docs-mono)", color: "var(--docs-text-muted)", marginBottom: 16 }}>
+          <span style={{ color: "var(--docs-accent)", fontWeight: 700 }}>GET</span>{" "}
+          <span style={{ color: "var(--docs-text)" }}>https://api.unipost.dev/v1/social-accounts</span>
         </div>
         <ParamTable params={QUERY_PARAMS} title="Query Parameters" />
       </DocSection>
@@ -142,7 +142,7 @@ export function ListAccountsContent() {
         <ResponseBlock title="200 — Success" code={RESPONSE} />
         <ParamTable params={RESPONSE_FIELDS} title="Response fields" />
         <InfoBox>
-          <strong style={{ color: "#0ea5e9" }}>connection_type explained</strong><br />
+          <strong style={{ color: "var(--docs-link)" }}>connection_type explained</strong><br />
           <code>byo</code> = White-label (your own platform credentials, OAuth shows your app name).<br />
           <code>managed</code> = Connected via UniPost Connect flow (end-user OAuth through UniPost&apos;s hosted page).
         </InfoBox>
@@ -161,8 +161,8 @@ export function ListAccountsContent() {
         ]} />
       </DocSection>
 
-      <div style={{ marginTop: 48, paddingTop: 24, borderTop: "1px solid #1a1a1a", fontSize: 13, color: "#555" }}>
-        <a href="/docs" style={{ color: "#0ea5e9", textDecoration: "none" }}>&larr; View full docs</a>
+      <div style={{ marginTop: 48, paddingTop: 24, borderTop: "1px solid var(--docs-border)", fontSize: 13, color: "var(--docs-text-faint)" }}>
+        <a href="/docs" style={{ color: "var(--docs-link)", textDecoration: "none" }}>&larr; View full docs</a>
         <span style={{ margin: "0 12px" }}>|</span>
         <span>Last updated: April 2026 &middot; API v1</span>
       </div>
