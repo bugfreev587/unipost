@@ -201,7 +201,7 @@ function ContactPageContent() {
               <div style={{ fontSize: 14, fontWeight: 700, color: "var(--dtext)" }}>Slack community</div>
             </div>
             <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.6, marginBottom: 12 }}>
-              Best for lightweight discussion, feature ideas, and seeing what other users are building with UniPost.
+              Join the UniPost Slack workspace for help, feedback, and product updates. After joining, use #help-and-feedback for discussion and follow #announcements for fixes, releases, and known issues.
             </div>
             {SUPPORT_SLACK_URL ? (
               <a
@@ -221,7 +221,7 @@ function ContactPageContent() {
                   fontWeight: 600,
                 }}
               >
-                Join Slack
+                Join Slack Community
               </a>
             ) : (
               <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
