@@ -10,7 +10,8 @@ const LANGS = [
 ] as const;
 
 const CODE_SNIPPETS: Record<(typeof LANGS)[number]["id"], string> = {
-  js: `const response = await fetch(
+  js: `// First reserve a local upload with POST /v1/media, then PUT the file to upload_url.
+const response = await fetch(
   'https://api.unipost.dev/v1/social-posts',
   {
     method: 'POST',
@@ -22,11 +23,13 @@ const CODE_SNIPPETS: Record<(typeof LANGS)[number]["id"], string> = {
       platform_posts: [
         {
           account_id: 'sa_x_123',
-          caption: 'shipped validate + preview today',
+          caption: 'Shipped validate + preview today',
+          media_ids: ['med_uploaded_image_1'],
         },
         {
-          account_id: 'sa_linkedin_456',
-          caption: 'Today we shipped draft validation, branded connect, and preview links.',
+          account_id: 'sa_youtube_456',
+          caption: 'Quarterly product update is live',
+          media_ids: ['med_uploaded_video_1'],
         },
       ],
       idempotency_key: 'launch-2026-04-13-001',
@@ -38,6 +41,8 @@ const { data } = await response.json();
 console.log(data.id); // post_abc123`,
   python: `import requests
 
+# First reserve a local upload with POST /v1/media, then PUT the file to upload_url.
+
 response = requests.post(
     'https://api.unipost.dev/v1/social-posts',
     headers={
@@ -48,11 +53,13 @@ response = requests.post(
         'platform_posts': [
             {
                 'account_id': 'sa_x_123',
-                'caption': 'shipped validate + preview today',
+                'caption': 'Shipped validate + preview today',
+                'media_ids': ['med_uploaded_image_1'],
             },
             {
-                'account_id': 'sa_linkedin_456',
-                'caption': 'Today we shipped draft validation, branded connect, and preview links.',
+                'account_id': 'sa_youtube_456',
+                'caption': 'Quarterly product update is live',
+                'media_ids': ['med_uploaded_video_1'],
             },
         ],
         'idempotency_key': 'launch-2026-04-13-001',
@@ -61,17 +68,20 @@ response = requests.post(
 
 data = response.json()['data']
 print(data['id'])  # post_abc123`,
-  go: `req, _ := http.NewRequest("POST",
+  go: `// First reserve a local upload with POST /v1/media, then PUT the file to upload_url.
+req, _ := http.NewRequest("POST",
     "https://api.unipost.dev/v1/social-posts",
     strings.NewReader(\`{
       "platform_posts": [
         {
           "account_id": "sa_x_123",
-          "caption": "shipped validate + preview today"
+          "caption": "Shipped validate + preview today",
+          "media_ids": ["med_uploaded_image_1"]
         },
         {
-          "account_id": "sa_linkedin_456",
-          "caption": "Today we shipped draft validation, branded connect, and preview links."
+          "account_id": "sa_youtube_456",
+          "caption": "Quarterly product update is live",
+          "media_ids": ["med_uploaded_video_1"]
         }
       ],
       "idempotency_key": "launch-2026-04-13-001"
@@ -83,18 +93,21 @@ req.Header.Set("Content-Type",  "application/json")
 
 resp, _ := http.DefaultClient.Do(req)
 // resp.StatusCode == 200 ✓`,
-  curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+  curl: `# First reserve a local upload with POST /v1/media, then PUT the file to upload_url.
+curl -X POST https://api.unipost.dev/v1/social-posts \\
   -H "Authorization: Bearer up_live_xxxx" \\
   -H "Content-Type: application/json" \\
   -d '{
     "platform_posts": [
       {
         "account_id": "sa_x_123",
-        "caption": "shipped validate + preview today"
+        "caption": "Shipped validate + preview today",
+        "media_ids": ["med_uploaded_image_1"]
       },
       {
-        "account_id": "sa_linkedin_456",
-        "caption": "Today we shipped draft validation, branded connect, and preview links."
+        "account_id": "sa_youtube_456",
+        "caption": "Quarterly product update is live",
+        "media_ids": ["med_uploaded_video_1"]
       }
     ],
     "idempotency_key": "launch-2026-04-13-001"

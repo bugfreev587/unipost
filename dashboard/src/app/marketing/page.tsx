@@ -34,7 +34,7 @@ const PLATFORMS = [
 const FEATURES = [
   { number: "01", title: "Connect end users, not just your own accounts", desc: "UniPost is built for products that onboard customer social accounts. Create branded Connect flows, map accounts to your own external_user_id, and keep the OAuth surface out of your app.", code: `POST /v1/connect/sessions\n{\n  "platform": "linkedin",\n  "external_user_id": "user_123",\n  "return_url": "https://app.example.com/settings"\n}` },
   { number: "02", title: "Validate, preview, then publish", desc: "Catch bad payloads before publish time, generate read-only preview links for review, and ship with more confidence when you are posting across multiple platforms and users.", code: `POST /v1/social-posts/validate\nPOST /v1/drafts\nGET  /v1/public/drafts/{id}?token=...` },
-  { number: "03", title: "AI and automation ready by default", desc: "Per-platform captions, idempotency keys, MCP support, and bulk publish are already in the product. UniPost fits AI agents and workflow systems without forcing them into a single-caption model.", code: `{\n  "platform_posts": [\n    { "account_id": "sa_x", "caption": "short version" },\n    { "account_id": "sa_li", "caption": "longer LinkedIn version" }\n  ],\n  "idempotency_key": "launch-001"\n}` },
+  { number: "03", title: "AI and automation ready by default", desc: "Per-platform captions, managed uploads, idempotency keys, MCP support, and bulk publish are already in the product. UniPost fits AI agents and workflow systems without forcing them into a single-caption model.", code: `POST /v1/media\nPUT  {upload_url}\n{\n  "platform_posts": [\n    { "account_id": "sa_x", "media_ids": ["med_image_1"] },\n    { "account_id": "sa_yt", "media_ids": ["med_video_1"] }\n  ]\n}` },
 ];
 const CAPABILITIES = [
   {
@@ -77,7 +77,7 @@ const PROOF_STEPS = [
   {
     step: "03",
     title: "Publish and monitor",
-    body: "Send platform_posts, receive webhooks, and monitor analytics, usage, and account health in one place.",
+    body: "Publish with hosted media URLs or uploaded media_ids, receive webhooks, and monitor analytics, usage, and account health in one place.",
   },
 ];
 const MODES = [
@@ -86,6 +86,7 @@ const MODES = [
 ];
 const FAQS = [
   { q: "Why UniPost over direct platform APIs?", a: "We handle OAuth, token refresh, media processing, and platform-specific quirks — reducing integration time from weeks to hours." },
+  { q: "How do I publish a local image or video file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first call POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
   { q: "What counts as a post?", a: "One successful publish to a single social account. Posting to 3 platforms counts as 3 posts. Failed posts are never counted." },
   { q: "What's the difference between Quickstart and White-label?", a: "Quickstart uses UniPost's credentials so you start immediately. White-label lets you brand the hosted Connect experience so your end users see your product during onboarding." },
   { q: "Do I need to handle OAuth flows?", a: "No. UniPost handles the entire OAuth flow. Your users connect once through our hosted flow, and you get a simple account_id to use in API calls." },
@@ -148,7 +149,7 @@ export default function LandingPage() {
           <div className="lp-hero-badge"><span className="lp-hero-badge-dot" />Now supporting 7 platforms</div>
           <h1 className="lp-hero-title">Onboard accounts.<br />Publish everywhere.<br /><em>Stay in control.</em></h1>
           <LandingHeroRotation />
-          <p className="lp-hero-sub">UniPost is the social infrastructure layer for SaaS products and AI agents: branded Connect flows, per-platform publishing, draft preview, validation, webhooks, and analytics across every major network.</p>
+          <p className="lp-hero-sub">UniPost is the social infrastructure layer for SaaS products and AI agents: branded Connect flows, hosted media or local file uploads, per-platform publishing, draft preview, validation, webhooks, and analytics across every major network.</p>
           <div className="lp-hero-actions">
             <MarketingCTA className="lp-btn lp-btn-hero-primary lp-btn-hero-lg" />
             <Link href="/docs" className="lp-btn lp-btn-hero-outline lp-btn-hero-lg">View Docs →</Link>
@@ -157,6 +158,7 @@ export default function LandingPage() {
             <div className="lp-hero-meta-item"><CheckIcon /><span>Free plan · 100 posts/month</span></div>
             <div className="lp-hero-meta-item"><CheckIcon /><span>Hosted Connect + white-label</span></div>
             <div className="lp-hero-meta-item"><CheckIcon /><span>Validate, preview, and publish</span></div>
+            <div className="lp-hero-meta-item"><CheckIcon /><span>`POST /v1/media` for local files</span></div>
           </div>
         </div>
 
@@ -218,6 +220,17 @@ export default function LandingPage() {
                     <div className="lp-integ-card-title">AgentPost-ready</div>
                     <div className="lp-integ-card-desc">The same API shape powers preview, AI-generated drafts, and per-platform publishing flows.</div>
                     <Link href="/tools/agentpost" className="lp-integ-card-link">See AgentPost ↗</Link>
+                  </div>
+                </div>
+                <div className="lp-integ-card-divider" />
+                <div className="lp-integ-card">
+                  <div className="lp-integ-card-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M5 20h14"/></svg>
+                  </div>
+                  <div>
+                    <div className="lp-integ-card-title">Managed media uploads</div>
+                    <div className="lp-integ-card-desc">Use public asset URLs directly, or reserve uploads with `POST /v1/media` and publish with `media_ids` for local files.</div>
+                    <Link href="/docs/api/media" className="lp-integ-card-link">Media API ↗</Link>
                   </div>
                 </div>
               </div>
