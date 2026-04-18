@@ -494,7 +494,7 @@ export function CreatePostDrawer({
 
     setIsValidating(true);
     try {
-      const res = await validateSocialPost(token, payload);
+      const res = await validateSocialPost(token, workspaceId, payload);
       const result = res.data;
       setValidationResult(result);
       setValidationChecked(true);
