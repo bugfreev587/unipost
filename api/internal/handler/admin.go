@@ -341,18 +341,426 @@ type adminUserDetailResponse struct {
 	Workspaces         []adminUserWorkspace `json:"workspaces"`
 }
 
-type adminUserPostFailure struct {
-	PostID       string     `json:"post_id"`
-	WorkspaceID  string     `json:"workspace_id"`
+type adminPostFailure struct {
+	PostID        string    `json:"post_id"`
+	UserID        string    `json:"user_id"`
+	UserEmail     string    `json:"user_email"`
+	WorkspaceID   string    `json:"workspace_id"`
 	WorkspaceName string    `json:"workspace_name"`
-	CreatedAt    time.Time  `json:"created_at"`
-	PostStatus   string     `json:"post_status"`
-	Source       string     `json:"source"`
-	Platform     *string    `json:"platform,omitempty"`
-	AccountName  *string    `json:"account_name,omitempty"`
-	Caption      *string    `json:"caption,omitempty"`
-	ErrorMessage *string    `json:"error_message,omitempty"`
-	ErrorSummary *string    `json:"error_summary,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	PostStatus    string    `json:"post_status"`
+	Source        string    `json:"source"`
+	Platform      *string   `json:"platform,omitempty"`
+	AccountName   *string   `json:"account_name,omitempty"`
+	Caption       *string   `json:"caption,omitempty"`
+	ErrorMessage  *string   `json:"error_message,omitempty"`
+	ErrorSummary  *string   `json:"error_summary,omitempty"`
+}
+
+type adminPostFailureQuery struct {
+	UserID   string
+	Search   string
+	Platform string
+	Source   string
+	Days     int
+	Limit    int
+	Excluded []string
+}
+
+type adminPostRow struct {
+	PostID               string     `json:"post_id"`
+	UserID               string     `json:"user_id"`
+	UserEmail            string     `json:"user_email"`
+	WorkspaceID          string     `json:"workspace_id"`
+	WorkspaceName        string     `json:"workspace_name"`
+	Status               string     `json:"status"`
+	Source               string     `json:"source"`
+	Caption              *string    `json:"caption,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	ScheduledAt          *time.Time `json:"scheduled_at,omitempty"`
+	PublishedAt          *time.Time `json:"published_at,omitempty"`
+	Platforms            []string   `json:"platforms"`
+	ResultCount          int64      `json:"result_count"`
+	PublishedResultCount int64      `json:"published_result_count"`
+	FailedResultCount    int64      `json:"failed_result_count"`
+}
+
+type adminPostsQuery struct {
+	Search   string
+	Status   string
+	Platform string
+	Source   string
+	Days     int
+	Limit    int
+	Excluded []string
+}
+
+type adminBillingRow struct {
+	WorkspaceID          string     `json:"workspace_id"`
+	WorkspaceName        string     `json:"workspace_name"`
+	UserID               string     `json:"user_id"`
+	UserEmail            string     `json:"user_email"`
+	PlanID               string     `json:"plan_id"`
+	PlanName             string     `json:"plan_name"`
+	PriceCents           int64      `json:"price_cents"`
+	Status               string     `json:"status"`
+	StripeCustomerID     *string    `json:"stripe_customer_id,omitempty"`
+	StripeSubscriptionID *string    `json:"stripe_subscription_id,omitempty"`
+	CurrentPeriodEnd     *time.Time `json:"current_period_end,omitempty"`
+	CancelAtPeriodEnd    bool       `json:"cancel_at_period_end"`
+	TrialUsed            bool       `json:"trial_used"`
+	PostsUsed            int64      `json:"posts_used"`
+	PostLimit            int64      `json:"post_limit"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+type adminBillingQuery struct {
+	Search   string
+	Status   string
+	PlanID   string
+	Days     int
+	Limit    int
+	Excluded []string
+}
+
+func (h *AdminHandler) queryPostFailures(ctx context.Context, opts adminPostFailureQuery) ([]adminPostFailure, error) {
+	days := opts.Days
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+	limit := opts.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+
+	rows, err := h.pool.Query(ctx, `
+WITH failed_results AS (
+  SELECT
+    sp.id AS post_id,
+    u.id AS user_id,
+    u.email AS user_email,
+    sp.workspace_id,
+    w.name AS workspace_name,
+    sp.created_at,
+    sp.status AS post_status,
+    sp.source,
+    sa.platform,
+    sa.account_name,
+    NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
+    NULLIF(spr.error_message, '') AS error_message,
+    NULL::TEXT AS error_summary
+  FROM social_posts sp
+  JOIN workspaces w ON w.id = sp.workspace_id
+  JOIN users u ON u.id = w.user_id
+  JOIN social_post_results spr ON spr.post_id = sp.id
+  LEFT JOIN social_accounts sa ON sa.id = spr.social_account_id
+  WHERE ($1::TEXT = '' OR u.id = $1)
+    AND u.id != ALL($7)
+    AND sp.deleted_at IS NULL
+    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND spr.status = 'failed'
+    AND ($3::TEXT = '' OR sp.source = $3)
+    AND ($4::TEXT = '' OR sa.platform = $4)
+),
+parent_failures AS (
+  SELECT
+    sp.id AS post_id,
+    u.id AS user_id,
+    u.email AS user_email,
+    sp.workspace_id,
+    w.name AS workspace_name,
+    sp.created_at,
+    sp.status AS post_status,
+    sp.source,
+    NULL::TEXT AS platform,
+    NULL::TEXT AS account_name,
+    NULLIF(sp.caption, '') AS caption,
+    NULL::TEXT AS error_message,
+    NULLIF(sp.metadata->>'error_summary', '') AS error_summary
+  FROM social_posts sp
+  JOIN workspaces w ON w.id = sp.workspace_id
+  JOIN users u ON u.id = w.user_id
+  WHERE ($1::TEXT = '' OR u.id = $1)
+    AND u.id != ALL($7)
+    AND sp.deleted_at IS NULL
+    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND sp.status = 'failed'
+    AND ($3::TEXT = '' OR sp.source = $3)
+    AND ($4::TEXT = '')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM social_post_results spr
+      WHERE spr.post_id = sp.id
+    )
+    AND COALESCE(sp.metadata->>'error_summary', '') <> ''
+)
+SELECT
+  post_id,
+  user_id,
+  user_email,
+  workspace_id,
+  workspace_name,
+  created_at,
+  post_status,
+  source,
+  platform,
+  account_name,
+  caption,
+  error_message,
+  error_summary
+FROM (
+  SELECT * FROM failed_results
+  UNION ALL
+  SELECT * FROM parent_failures
+) failures
+WHERE (
+  $5::TEXT = ''
+  OR user_email ILIKE '%' || $5 || '%'
+  OR workspace_name ILIKE '%' || $5 || '%'
+  OR COALESCE(account_name, '') ILIKE '%' || $5 || '%'
+  OR COALESCE(caption, '') ILIKE '%' || $5 || '%'
+  OR COALESCE(error_message, error_summary, '') ILIKE '%' || $5 || '%'
+)
+ORDER BY created_at DESC
+LIMIT $6
+`, opts.UserID, days, opts.Source, opts.Platform, opts.Search, limit, opts.Excluded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]adminPostFailure, 0)
+	for rows.Next() {
+		var item adminPostFailure
+		var platform, accountName, caption, errorMessage, errorSummary *string
+		if err := rows.Scan(
+			&item.PostID,
+			&item.UserID,
+			&item.UserEmail,
+			&item.WorkspaceID,
+			&item.WorkspaceName,
+			&item.CreatedAt,
+			&item.PostStatus,
+			&item.Source,
+			&platform,
+			&accountName,
+			&caption,
+			&errorMessage,
+			&errorSummary,
+		); err != nil {
+			return nil, err
+		}
+		item.Platform = platform
+		item.AccountName = accountName
+		item.Caption = caption
+		item.ErrorMessage = errorMessage
+		item.ErrorSummary = errorSummary
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+func (h *AdminHandler) queryPosts(ctx context.Context, opts adminPostsQuery) ([]adminPostRow, error) {
+	days := opts.Days
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+	limit := opts.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+
+	rows, err := h.pool.Query(ctx, `
+WITH post_rollup AS (
+  SELECT
+    sp.id AS post_id,
+    u.id AS user_id,
+    u.email AS user_email,
+    sp.workspace_id,
+    w.name AS workspace_name,
+    sp.status,
+    sp.source,
+    NULLIF(sp.caption, '') AS caption,
+    sp.created_at,
+    sp.scheduled_at,
+    sp.published_at,
+    COALESCE(array_remove(array_agg(DISTINCT sa.platform), NULL), '{}') AS platforms,
+    COUNT(spr.id)::BIGINT AS result_count,
+    COUNT(*) FILTER (WHERE spr.status = 'published')::BIGINT AS published_result_count,
+    COUNT(*) FILTER (WHERE spr.status = 'failed')::BIGINT AS failed_result_count
+  FROM social_posts sp
+  JOIN workspaces w ON w.id = sp.workspace_id
+  JOIN users u ON u.id = w.user_id
+  LEFT JOIN social_post_results spr ON spr.post_id = sp.id
+  LEFT JOIN social_accounts sa ON sa.id = spr.social_account_id
+  WHERE u.id != ALL($1)
+    AND sp.deleted_at IS NULL
+    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND ($3::TEXT = '' OR sp.status = $3)
+    AND ($4::TEXT = '' OR sp.source = $4)
+  GROUP BY
+    sp.id, u.id, u.email, sp.workspace_id, w.name, sp.status, sp.source,
+    sp.caption, sp.created_at, sp.scheduled_at, sp.published_at
+)
+SELECT
+  post_id,
+  user_id,
+  user_email,
+  workspace_id,
+  workspace_name,
+  status,
+  source,
+  caption,
+  created_at,
+  scheduled_at,
+  published_at,
+  platforms,
+  result_count,
+  published_result_count,
+  failed_result_count
+FROM post_rollup
+WHERE ($5::TEXT = '' OR $5 = ANY(platforms))
+  AND (
+    $6::TEXT = ''
+    OR user_email ILIKE '%' || $6 || '%'
+    OR workspace_name ILIKE '%' || $6 || '%'
+    OR COALESCE(caption, '') ILIKE '%' || $6 || '%'
+    OR post_id ILIKE '%' || $6 || '%'
+  )
+ORDER BY created_at DESC
+LIMIT $7
+`, opts.Excluded, days, opts.Status, opts.Source, opts.Platform, opts.Search, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]adminPostRow, 0)
+	for rows.Next() {
+		var item adminPostRow
+		var caption *string
+		var scheduledAt, publishedAt *time.Time
+		if err := rows.Scan(
+			&item.PostID,
+			&item.UserID,
+			&item.UserEmail,
+			&item.WorkspaceID,
+			&item.WorkspaceName,
+			&item.Status,
+			&item.Source,
+			&caption,
+			&item.CreatedAt,
+			&scheduledAt,
+			&publishedAt,
+			&item.Platforms,
+			&item.ResultCount,
+			&item.PublishedResultCount,
+			&item.FailedResultCount,
+		); err != nil {
+			return nil, err
+		}
+		item.Caption = caption
+		item.ScheduledAt = scheduledAt
+		item.PublishedAt = publishedAt
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery) ([]adminBillingRow, error) {
+	days := opts.Days
+	if days <= 0 || days > 365 {
+		days = 90
+	}
+	limit := opts.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+
+	rows, err := h.pool.Query(ctx, `
+SELECT
+  w.id AS workspace_id,
+  w.name AS workspace_name,
+  u.id AS user_id,
+  u.email AS user_email,
+  s.plan_id,
+  pl.name AS plan_name,
+  pl.price_cents::BIGINT,
+  s.status,
+  NULLIF(s.stripe_customer_id, '') AS stripe_customer_id,
+  NULLIF(s.stripe_subscription_id, '') AS stripe_subscription_id,
+  s.current_period_end,
+  COALESCE(s.cancel_at_period_end, false) AS cancel_at_period_end,
+  s.trial_used,
+  COALESCE(usg.post_count, 0)::BIGINT AS posts_used,
+  COALESCE(pl.post_limit, 0)::BIGINT AS post_limit,
+  s.updated_at
+FROM subscriptions s
+JOIN workspaces w ON w.id = s.workspace_id
+JOIN users u ON u.id = w.user_id
+JOIN plans pl ON pl.id = s.plan_id
+LEFT JOIN usage usg ON usg.workspace_id = w.id AND usg.period = to_char(NOW(), 'YYYY-MM')
+WHERE u.id != ALL($1)
+  AND s.updated_at >= NOW() - ($2::INT * INTERVAL '1 day')
+  AND ($3::TEXT = '' OR s.status = $3)
+  AND ($4::TEXT = '' OR s.plan_id = $4)
+  AND (
+    $5::TEXT = ''
+    OR u.email ILIKE '%' || $5 || '%'
+    OR w.name ILIKE '%' || $5 || '%'
+    OR s.plan_id ILIKE '%' || $5 || '%'
+  )
+ORDER BY pl.price_cents DESC, s.updated_at DESC
+LIMIT $6
+`, opts.Excluded, days, opts.Status, opts.PlanID, opts.Search, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]adminBillingRow, 0)
+	for rows.Next() {
+		var item adminBillingRow
+		var stripeCustomerID, stripeSubscriptionID *string
+		var currentPeriodEnd *time.Time
+		if err := rows.Scan(
+			&item.WorkspaceID,
+			&item.WorkspaceName,
+			&item.UserID,
+			&item.UserEmail,
+			&item.PlanID,
+			&item.PlanName,
+			&item.PriceCents,
+			&item.Status,
+			&stripeCustomerID,
+			&stripeSubscriptionID,
+			&currentPeriodEnd,
+			&item.CancelAtPeriodEnd,
+			&item.TrialUsed,
+			&item.PostsUsed,
+			&item.PostLimit,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.StripeCustomerID = stripeCustomerID
+		item.StripeSubscriptionID = stripeSubscriptionID
+		item.CurrentPeriodEnd = currentPeriodEnd
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
 
 func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
@@ -443,118 +851,97 @@ func (h *AdminHandler) ListUserPostFailures(w http.ResponseWriter, r *http.Reque
 	q := r.URL.Query()
 
 	days, _ := strconv.Atoi(q.Get("days"))
-	if days <= 0 || days > 365 {
-		days = 30
-	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-
-	rows, err := h.pool.Query(r.Context(), `
-WITH failed_results AS (
-  SELECT
-    sp.id AS post_id,
-    sp.workspace_id,
-    w.name AS workspace_name,
-    sp.created_at,
-    sp.status AS post_status,
-    sp.source,
-    sa.platform,
-    sa.account_name,
-    NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
-    NULLIF(spr.error_message, '') AS error_message,
-    NULL::TEXT AS error_summary
-  FROM social_posts sp
-  JOIN workspaces w ON w.id = sp.workspace_id
-  JOIN social_post_results spr ON spr.post_id = sp.id
-  LEFT JOIN social_accounts sa ON sa.id = spr.social_account_id
-  WHERE w.user_id = $1
-    AND sp.deleted_at IS NULL
-    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
-    AND spr.status = 'failed'
-),
-parent_failures AS (
-  SELECT
-    sp.id AS post_id,
-    sp.workspace_id,
-    w.name AS workspace_name,
-    sp.created_at,
-    sp.status AS post_status,
-    sp.source,
-    NULL::TEXT AS platform,
-    NULL::TEXT AS account_name,
-    NULLIF(sp.caption, '') AS caption,
-    NULL::TEXT AS error_message,
-    NULLIF(sp.metadata->>'error_summary', '') AS error_summary
-  FROM social_posts sp
-  JOIN workspaces w ON w.id = sp.workspace_id
-  WHERE w.user_id = $1
-    AND sp.deleted_at IS NULL
-    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
-    AND sp.status = 'failed'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM social_post_results spr
-      WHERE spr.post_id = sp.id
-    )
-    AND COALESCE(sp.metadata->>'error_summary', '') <> ''
-)
-SELECT
-  post_id,
-  workspace_id,
-  workspace_name,
-  created_at,
-  post_status,
-  source,
-  platform,
-  account_name,
-  caption,
-  error_message,
-  error_summary
-FROM (
-  SELECT * FROM failed_results
-  UNION ALL
-  SELECT * FROM parent_failures
-) failures
-ORDER BY created_at DESC
-LIMIT $3
-`, userID, days, limit)
+	out, err := h.queryPostFailures(r.Context(), adminPostFailureQuery{
+		UserID: userID,
+		Days:   days,
+		Limit:  limit,
+		Excluded: []string{},
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load post failures: "+err.Error())
 		return
 	}
-	defer rows.Close()
 
-	out := make([]adminUserPostFailure, 0)
-	for rows.Next() {
-		var item adminUserPostFailure
-		var platform, accountName, caption, errorMessage, errorSummary *string
-		if err := rows.Scan(
-			&item.PostID,
-			&item.WorkspaceID,
-			&item.WorkspaceName,
-			&item.CreatedAt,
-			&item.PostStatus,
-			&item.Source,
-			&platform,
-			&accountName,
-			&caption,
-			&errorMessage,
-			&errorSummary,
-		); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan post failure: "+err.Error())
-			return
-		}
-		item.Platform = platform
-		item.AccountName = accountName
-		item.Caption = caption
-		item.ErrorMessage = errorMessage
-		item.ErrorSummary = errorSummary
-		out = append(out, item)
+	writeSuccess(w, out)
+}
+
+func (h *AdminHandler) ListPostFailures(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	days, _ := strconv.Atoi(q.Get("days"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	excluded, err := h.excludedUserIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve excluded users: "+err.Error())
+		return
 	}
-	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read post failures: "+err.Error())
+
+	out, err := h.queryPostFailures(r.Context(), adminPostFailureQuery{
+		Search:   q.Get("search"),
+		Platform: q.Get("platform"),
+		Source:   q.Get("source"),
+		Days:     days,
+		Limit:    limit,
+		Excluded: excluded,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load post failures: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, out)
+}
+
+func (h *AdminHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	days, _ := strconv.Atoi(q.Get("days"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+
+	excluded, err := h.excludedUserIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve excluded users: "+err.Error())
+		return
+	}
+
+	out, err := h.queryPosts(r.Context(), adminPostsQuery{
+		Search:   q.Get("search"),
+		Status:   q.Get("status"),
+		Platform: q.Get("platform"),
+		Source:   q.Get("source"),
+		Days:     days,
+		Limit:    limit,
+		Excluded: excluded,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load posts: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, out)
+}
+
+func (h *AdminHandler) ListBilling(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	days, _ := strconv.Atoi(q.Get("days"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+
+	excluded, err := h.excludedUserIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve excluded users: "+err.Error())
+		return
+	}
+
+	out, err := h.queryBilling(r.Context(), adminBillingQuery{
+		Search:   q.Get("search"),
+		Status:   q.Get("status"),
+		PlanID:   q.Get("plan"),
+		Days:     days,
+		Limit:    limit,
+		Excluded: excluded,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load billing rows: "+err.Error())
 		return
 	}
 

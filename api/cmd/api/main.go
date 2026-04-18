@@ -551,6 +551,9 @@ func main() {
 
 		r.Get("/v1/admin/stats", adminHandler.GetStats)
 		r.Get("/v1/admin/landing-sources", landingAttributionHandler.GetAdminSources)
+		r.Get("/v1/admin/posts", adminHandler.ListPosts)
+		r.Get("/v1/admin/billing", adminHandler.ListBilling)
+		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
 		r.Get("/v1/admin/users/{id}/post-failures", adminHandler.ListUserPostFailures)

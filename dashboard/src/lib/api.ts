@@ -857,6 +857,8 @@ export interface AdminUserDetail {
 
 export interface AdminUserPostFailure {
   post_id: string;
+  user_id: string;
+  user_email: string;
   workspace_id: string;
   workspace_name: string;
   created_at: string;
@@ -875,6 +877,68 @@ export interface AdminUserListParams {
   sort?: "newest" | "mrr" | "usage" | "last_active";
   limit?: number;
   offset?: number;
+}
+
+export interface AdminPostFailureListParams {
+  search?: string;
+  platform?: string;
+  source?: string;
+  days?: number;
+  limit?: number;
+}
+
+export interface AdminPostRow {
+  post_id: string;
+  user_id: string;
+  user_email: string;
+  workspace_id: string;
+  workspace_name: string;
+  status: string;
+  source: string;
+  caption?: string;
+  created_at: string;
+  scheduled_at?: string;
+  published_at?: string;
+  platforms: string[];
+  result_count: number;
+  published_result_count: number;
+  failed_result_count: number;
+}
+
+export interface AdminPostListParams {
+  search?: string;
+  status?: string;
+  platform?: string;
+  source?: string;
+  days?: number;
+  limit?: number;
+}
+
+export interface AdminBillingRow {
+  workspace_id: string;
+  workspace_name: string;
+  user_id: string;
+  user_email: string;
+  plan_id: string;
+  plan_name: string;
+  price_cents: number;
+  status: string;
+  stripe_customer_id?: string;
+  stripe_subscription_id?: string;
+  current_period_end?: string;
+  cancel_at_period_end: boolean;
+  trial_used: boolean;
+  posts_used: number;
+  post_limit: number;
+  updated_at: string;
+}
+
+export interface AdminBillingListParams {
+  search?: string;
+  status?: string;
+  plan?: string;
+  days?: number;
+  limit?: number;
 }
 
 // Whoami — returns the authenticated user's identity plus an
@@ -1082,6 +1146,49 @@ export async function getAdminUserPostFailures(
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();
   return request(`/v1/admin/users/${id}/post-failures${s ? `?${s}` : ""}`, token);
+}
+
+export async function listAdminPostFailures(
+  token: string,
+  params?: AdminPostFailureListParams
+): Promise<ApiResponse<AdminUserPostFailure[]>> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.platform) qs.set("platform", params.platform);
+  if (params?.source) qs.set("source", params.source);
+  if (params?.days != null) qs.set("days", String(params.days));
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const s = qs.toString();
+  return request(`/v1/admin/post-failures${s ? `?${s}` : ""}`, token);
+}
+
+export async function listAdminPosts(
+  token: string,
+  params?: AdminPostListParams
+): Promise<ApiResponse<AdminPostRow[]>> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.platform) qs.set("platform", params.platform);
+  if (params?.source) qs.set("source", params.source);
+  if (params?.days != null) qs.set("days", String(params.days));
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const s = qs.toString();
+  return request(`/v1/admin/posts${s ? `?${s}` : ""}`, token);
+}
+
+export async function listAdminBilling(
+  token: string,
+  params?: AdminBillingListParams
+): Promise<ApiResponse<AdminBillingRow[]>> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.plan) qs.set("plan", params.plan);
+  if (params?.days != null) qs.set("days", String(params.days));
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const s = qs.toString();
+  return request(`/v1/admin/billing${s ? `?${s}` : ""}`, token);
 }
 
 export async function recordLandingVisit(data: {
