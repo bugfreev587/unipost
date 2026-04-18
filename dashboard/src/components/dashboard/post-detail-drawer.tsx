@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import Link from "next/link";
 import { X, ExternalLink, Copy } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import type { SocialPost } from "@/lib/api";
+import { buildContactPageHref } from "@/lib/support";
 
 const CSS = `.pdd-overlay{position:fixed;inset:0;background:var(--overlay);z-index:50;animation:pdd-fade-in .15s ease}
 @keyframes pdd-fade-in{from{opacity:0}to{opacity:1}}
@@ -24,6 +26,8 @@ const CSS = `.pdd-overlay{position:fixed;inset:0;background:var(--overlay);z-ind
 .pdd-result-link{font-size:11px;color:var(--daccent);text-decoration:none;display:inline-flex;align-items:center;gap:3px;margin-top:2px}
 .pdd-result-link:hover{text-decoration:underline}
 .pdd-result-error{font-size:12px;color:var(--danger);margin-top:3px;line-height:1.4}
+.pdd-result-support{display:inline-flex;align-items:center;margin-top:6px;font-size:11px;font-weight:600;color:var(--dtext);text-decoration:none}
+.pdd-result-support:hover{text-decoration:underline}
 .pdd-meta-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px}
 .pdd-meta-label{color:var(--dmuted)}
 .pdd-meta-value{color:var(--dtext);font-weight:500}
@@ -109,6 +113,19 @@ export function PostDetailDrawer({ post, onClose, onDuplicate }: Props) {
                         </a>
                       )}
                       {r.error_message && <div className="pdd-result-error">{r.error_message}</div>}
+                      {r.error_message && (
+                        <Link
+                          href={buildContactPageHref({
+                            topic: "post-publish-failure",
+                            source: "post-detail-drawer",
+                            post: post.id,
+                            error: r.error_message,
+                          })}
+                          className="pdd-result-support"
+                        >
+                          Contact support
+                        </Link>
+                      )}
                     </div>
                   </div>
                 );

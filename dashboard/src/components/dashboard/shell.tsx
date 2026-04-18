@@ -17,6 +17,7 @@ import {
 import { listProfiles, getWorkspace, getBilling, getMe, markOnboardingShown, setOnboardingIntent, type Profile, type Workspace, type BillingInfo, type OnboardingIntent } from "@/lib/api";
 import { WelcomeModal } from "@/components/onboarding/welcome-modal";
 import { track } from "@/lib/analytics";
+import { buildContactPageHref } from "@/lib/support";
 import {
   Key,
   Send,
@@ -221,6 +222,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const displayName = user?.firstName || user?.username || "User";
   const planName = billing?.plan_name || "Free";
   const avatarUrl = user?.imageUrl;
+  const supportHref = buildContactPageHref({
+    topic: "dashboard-help",
+    source: "sidebar",
+  });
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
@@ -398,6 +403,47 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </Link>
           )}
         </nav>
+
+        <div style={{ padding: "0 10px 10px" }}>
+          <Link
+            href={supportHref}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 10,
+              padding: "12px 12px",
+              borderRadius: 12,
+              border: "1px solid rgba(59,130,246,0.24)",
+              background: "linear-gradient(180deg, rgba(59,130,246,0.14), rgba(59,130,246,0.08))",
+              color: "var(--dtext)",
+              textDecoration: "none",
+            }}
+          >
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 10,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "rgba(59,130,246,0.18)",
+                color: "#93c5fd",
+                flexShrink: 0,
+              }}
+            >
+              <Mail style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)" }}>
+                Contact support
+              </div>
+              <div className="dt-micro" style={{ color: "var(--dmuted)", lineHeight: 1.5, marginTop: 2 }}>
+                Get help with failed actions, billing, or account issues.
+              </div>
+            </div>
+          </Link>
+        </div>
 
         {/* ── Bottom actions: tutorials + theme ── */}
         <div style={{ padding: "4px 10px", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>

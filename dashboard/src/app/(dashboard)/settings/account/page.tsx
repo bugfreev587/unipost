@@ -8,6 +8,7 @@ import { ExternalLink } from "lucide-react";
 import { deleteMe, getMe, setOnboardingIntent, type OnboardingIntent } from "@/lib/api";
 import { WelcomeModal } from "@/components/onboarding/welcome-modal";
 import { track } from "@/lib/analytics";
+import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
 const INTENT_LABELS: Record<Exclude<OnboardingIntent, "skipped">, string> = {
   exploring: "Just exploring",
@@ -298,7 +299,33 @@ export default function AccountSettingsPage() {
                   color: "var(--danger)",
                 }}
               >
-                {deleteError}
+                <div style={{ marginBottom: 8 }}>{deleteError}</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <a
+                    href={buildSupportMailto({
+                      subject: "Delete account failed in dashboard",
+                      intro: "I tried to delete my account and the action failed.",
+                      details: [
+                        `User ID: ${user.id}`,
+                        orgName ? `Organization: ${orgName}` : undefined,
+                        `Error: ${deleteError}`,
+                      ],
+                    })}
+                    style={{ color: "var(--danger)", fontWeight: 600, textDecoration: "underline" }}
+                  >
+                    Contact support
+                  </a>
+                  <a
+                    href={buildContactPageHref({
+                      topic: "delete-account-failure",
+                      source: "account-settings",
+                      error: deleteError,
+                    })}
+                    style={{ color: "var(--danger)", fontWeight: 600, textDecoration: "underline" }}
+                  >
+                    Open help center
+                  </a>
+                </div>
               </div>
             )}
           </div>

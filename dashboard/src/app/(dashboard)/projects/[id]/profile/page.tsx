@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { Plus, Pencil, Trash2, Calendar, ArrowRight } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
 export default function ProfilePage() {
   const { id: currentProfileId } = useParams<{ id: string }>();
@@ -22,15 +23,19 @@ export default function ProfilePage() {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
+  const [profileError, setProfileError] = useState<{ message: string; topic: string } | null>(null);
 
   const loadProfiles = useCallback(async () => {
     try {
+      setProfileError(null);
       const token = await getToken();
       if (!token) return;
       const res = await listProfiles(token);
       setProfiles(res.data);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load profiles";
       console.error("Failed to load profiles:", err);
+      setProfileError({ message, topic: "profiles-load-failure" });
     } finally {
       setLoading(false);
     }
@@ -44,6 +49,7 @@ export default function ProfilePage() {
     if (!newName.trim()) return;
     setCreating(true);
     try {
+      setProfileError(null);
       const token = await getToken();
       if (!token) return;
       await createProfile(token, { name: newName.trim() });
@@ -51,7 +57,9 @@ export default function ProfilePage() {
       setShowCreate(false);
       loadProfiles();
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create profile";
       console.error("Failed to create profile:", err);
+      setProfileError({ message, topic: "profile-create-failure" });
     } finally {
       setCreating(false);
     }
@@ -60,6 +68,7 @@ export default function ProfilePage() {
   async function handleDelete() {
     if (!deleteTarget) return;
     try {
+      setProfileError(null);
       const token = await getToken();
       if (!token) return;
       await deleteProfile(token, deleteTarget.id);
@@ -78,7 +87,9 @@ export default function ProfilePage() {
         loadProfiles();
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete profile";
       console.error("Failed to delete profile:", err);
+      setProfileError({ message, topic: "profile-delete-failure" });
     }
   }
 
@@ -86,6 +97,58 @@ export default function ProfilePage() {
 
   return (
     <div style={{ padding: 32, maxWidth: 800 }}>
+      {profileError && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
+            padding: "12px 14px",
+            borderRadius: 8,
+            background: "var(--danger-soft)",
+            border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)",
+            fontSize: 13,
+            color: "var(--danger)",
+            marginBottom: 20,
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Profile action failed</div>
+            <div>{profileError.message}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <a
+              href={buildSupportMailto({
+                subject: "Profile action failed in dashboard",
+                intro: "I ran into a profile-related failure in the dashboard.",
+                details: [
+                  `Current profile ID: ${currentProfileId || "unknown"}`,
+                  `Topic: ${profileError.topic}`,
+                  `Error: ${profileError.message}`,
+                ],
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Contact support
+            </a>
+            <a
+              href={buildContactPageHref({
+                topic: profileError.topic,
+                source: "profiles-page",
+                profile: currentProfileId,
+                error: profileError.message,
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Open help center
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
         <div>

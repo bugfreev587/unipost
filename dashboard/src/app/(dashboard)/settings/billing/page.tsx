@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
 import { getBilling, createCheckout, createPortal, type BillingInfo, type Plan } from "@/lib/api";
+import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { CheckCircle2, ExternalLink } from "lucide-react";
 
 const PLANS: Plan[] = [
@@ -40,17 +41,21 @@ function BillingSettingsContent() {
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
+  const [billingError, setBillingError] = useState<{ message: string; topic: string } | null>(null);
   const callbackStatus = searchParams.get("status");
 
   const loadBilling = useCallback(async () => {
     if (!workspaceId) return;
     try {
+      setBillingError(null);
       const token = await getToken();
       if (!token) return;
       const res = await getBilling(token, workspaceId);
       setBilling(res.data);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load billing";
       console.error("Failed to load billing:", err);
+      setBillingError({ message, topic: "billing-load-failure" });
     } finally {
       setLoading(false);
     }
@@ -76,12 +81,15 @@ function BillingSettingsContent() {
     if (!workspaceId) return;
     setUpgrading(planId);
     try {
+      setBillingError(null);
       const token = await getToken();
       if (!token) return;
       const res = await createCheckout(token, workspaceId, planId);
       window.location.href = res.data.checkout_url;
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to start billing checkout";
       console.error("Failed:", err);
+      setBillingError({ message, topic: "billing-upgrade-failure" });
       setUpgrading(null);
     }
   }
@@ -89,12 +97,15 @@ function BillingSettingsContent() {
   async function handleManage() {
     if (!workspaceId) return;
     try {
+      setBillingError(null);
       const token = await getToken();
       if (!token) return;
       const res = await createPortal(token, workspaceId);
       window.location.href = res.data.portal_url;
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to open billing portal";
       console.error("Failed:", err);
+      setBillingError({ message, topic: "billing-portal-failure" });
     }
   }
 
@@ -125,6 +136,58 @@ function BillingSettingsContent() {
           }}
         >
           <CheckCircle2 style={{ width: 14, height: 14 }} /> Subscription updated.
+        </div>
+      )}
+
+      {billingError && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
+            padding: "12px 14px",
+            borderRadius: 8,
+            background: "#ef444410",
+            border: "1px solid #ef444425",
+            fontSize: 13,
+            color: "var(--danger)",
+            marginBottom: 20,
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Billing action failed</div>
+            <div>{billingError.message}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <a
+              href={buildSupportMailto({
+                subject: "Billing action failed in dashboard",
+                intro: "I ran into a billing-related failure in the dashboard.",
+                details: [
+                  `Workspace ID: ${workspaceId}`,
+                  `Topic: ${billingError.topic}`,
+                  `Error: ${billingError.message}`,
+                ],
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Contact support
+            </a>
+            <a
+              href={buildContactPageHref({
+                topic: billingError.topic,
+                source: "billing-settings",
+                workspace: workspaceId,
+                error: billingError.message,
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Open help center
+            </a>
+          </div>
         </div>
       )}
 

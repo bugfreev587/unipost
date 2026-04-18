@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { listWorkspaces, updateWorkspace, type Workspace } from "@/lib/api";
+import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
 export default function WorkspaceSettingsTab() {
   const { getToken } = useAuth();
@@ -11,10 +12,12 @@ export default function WorkspaceSettingsTab() {
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<{ message: string; topic: string } | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
+        setWorkspaceError(null);
         const token = await getToken();
         if (!token) return;
         const res = await listWorkspaces(token);
@@ -24,7 +27,9 @@ export default function WorkspaceSettingsTab() {
           setName(res.data[0].name);
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to load workspaces";
         console.error("Failed to load workspaces:", err);
+        setWorkspaceError({ message, topic: "workspace-load-failure" });
       }
     }
     load();
@@ -36,6 +41,7 @@ export default function WorkspaceSettingsTab() {
     setSaving(true);
     setSaved(false);
     try {
+      setWorkspaceError(null);
       const token = await getToken();
       if (!token) return;
       const res = await updateWorkspace(token, workspace.id, { name: name.trim() });
@@ -44,18 +50,118 @@ export default function WorkspaceSettingsTab() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save workspace";
       console.error("Failed to save:", err);
+      setWorkspaceError({ message, topic: "workspace-save-failure" });
     } finally {
       setSaving(false);
     }
   }
 
-  if (!workspace) return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+  if (!workspace) {
+    if (workspaceError) {
+      return (
+        <div
+          style={{
+            padding: "12px 14px",
+            borderRadius: 8,
+            background: "#ef444410",
+            border: "1px solid #ef444425",
+            fontSize: 13,
+            color: "var(--danger)",
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Workspace action failed</div>
+          <div style={{ marginBottom: 10 }}>{workspaceError.message}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <a
+              href={buildSupportMailto({
+                subject: "Workspace action failed in dashboard",
+                intro: "I ran into a workspace-related failure in the dashboard.",
+                details: [
+                  `Topic: ${workspaceError.topic}`,
+                  `Error: ${workspaceError.message}`,
+                ],
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Contact support
+            </a>
+            <a
+              href={buildContactPageHref({
+                topic: workspaceError.topic,
+                source: "workspace-settings",
+                error: workspaceError.message,
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Open help center
+            </a>
+          </div>
+        </div>
+      );
+    }
+    return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+  }
 
   const onlyWorkspace = workspaces.length <= 1;
 
   return (
     <>
+      {workspaceError && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
+            padding: "12px 14px",
+            borderRadius: 8,
+            background: "#ef444410",
+            border: "1px solid #ef444425",
+            fontSize: 13,
+            color: "var(--danger)",
+            marginBottom: 20,
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Workspace action failed</div>
+            <div>{workspaceError.message}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <a
+              href={buildSupportMailto({
+                subject: "Workspace action failed in dashboard",
+                intro: "I ran into a workspace-related failure in the dashboard.",
+                details: [
+                  workspace ? `Workspace ID: ${workspace.id}` : undefined,
+                  `Topic: ${workspaceError.topic}`,
+                  `Error: ${workspaceError.message}`,
+                ],
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Contact support
+            </a>
+            <a
+              href={buildContactPageHref({
+                topic: workspaceError.topic,
+                source: "workspace-settings",
+                workspace: workspace?.id,
+                error: workspaceError.message,
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Open help center
+            </a>
+          </div>
+        </div>
+      )}
+
       <div className="settings-section">
         <div className="settings-section-header">Current Workspace</div>
         <div className="settings-section-body">

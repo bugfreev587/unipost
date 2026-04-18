@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useCallback, useState, useRef, useMemo, memo } from "react";
+import Link from "next/link";
 import { AlertTriangle, Loader2, Plus } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { ConnectedAccountsGrid, PostToGrid } from "./account-card-grid";
@@ -26,6 +27,7 @@ import {
   type SocialPostValidationResult,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
 
@@ -286,6 +288,7 @@ export function CreatePostDrawer({
   const [validationResult, setValidationResult] = useState<SocialPostValidationResult | null>(null);
   const [validationChecked, setValidationChecked] = useState(false);
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
+  const [submitError, setSubmitError] = useState<{ message: string; mailto: string; contactHref: string } | null>(null);
   const pendingCloseRef = useRef(false);
   const mainContentRef = useRef<HTMLTextAreaElement | null>(null);
   const mediaSectionRef = useRef<HTMLDivElement | null>(null);
@@ -365,6 +368,7 @@ export function CreatePostDrawer({
       setValidationChecked(false);
       setIsValidating(false);
       setWarningsAcknowledged(false);
+      setSubmitError(null);
       pendingCloseRef.current = false;
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -374,6 +378,7 @@ export function CreatePostDrawer({
     setValidationResult(null);
     setValidationChecked(false);
     setWarningsAcknowledged(false);
+    setSubmitError(null);
   }, [
     open,
     form.mainContent,
@@ -510,6 +515,7 @@ export function CreatePostDrawer({
   async function handleSubmit() {
     if (!form.canSubmit) return;
     try {
+      setSubmitError(null);
       const payload = form.buildPayload();
       const validation = await runValidation(payload);
       if (!validation.ok) {
@@ -535,8 +541,31 @@ export function CreatePostDrawer({
       onCreated();
       onOpenChange(false);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create post";
       console.error("Create post failed:", err);
       console.error("[CreatePost] payload was:", JSON.stringify(form.buildPayload(), null, 2));
+      setSubmitError({
+        message,
+        mailto: buildSupportMailto({
+          subject: "Publish failed in dashboard",
+          intro: "A publish action failed in the dashboard create post drawer.",
+          details: [
+            `Workspace ID: ${workspaceId}`,
+            profileName ? `Profile: ${profileName}` : undefined,
+            `Publish mode: ${form.publishMode}`,
+            `Selected accounts: ${form.selectedAccountIds.size}`,
+            `Page: ${typeof window !== "undefined" ? window.location.pathname : "/posts"}`,
+            `Error: ${message}`,
+          ],
+        }),
+        contactHref: buildContactPageHref({
+          topic: "publish-failure",
+          source: "create-post-drawer",
+          workspace: workspaceId,
+          profile: profileName,
+          error: message,
+        }),
+      });
     } finally {
       form.setSubmitting(false);
     }
@@ -545,6 +574,7 @@ export function CreatePostDrawer({
   async function handleSaveDraft() {
     form.setSubmitting(true);
     try {
+      setSubmitError(null);
       const token = await getToken();
       if (!token) return;
       const payload = form.buildPayload();
@@ -553,7 +583,30 @@ export function CreatePostDrawer({
       onCreated();
       onOpenChange(false);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save draft";
       console.error("Save draft failed:", err);
+      setSubmitError({
+        message,
+        mailto: buildSupportMailto({
+          subject: "Save draft failed in dashboard",
+          intro: "A draft save action failed in the dashboard create post drawer.",
+          details: [
+            `Workspace ID: ${workspaceId}`,
+            profileName ? `Profile: ${profileName}` : undefined,
+            `Publish mode: ${form.publishMode}`,
+            `Selected accounts: ${form.selectedAccountIds.size}`,
+            `Page: ${typeof window !== "undefined" ? window.location.pathname : "/posts"}`,
+            `Error: ${message}`,
+          ],
+        }),
+        contactHref: buildContactPageHref({
+          topic: "save-draft-failure",
+          source: "create-post-drawer",
+          workspace: workspaceId,
+          profile: profileName,
+          error: message,
+        }),
+      });
     } finally {
       form.setSubmitting(false);
     }
@@ -794,6 +847,34 @@ export function CreatePostDrawer({
               accounts={form.selectedAccounts}
               onSelectIssue={focusIssue}
             />
+
+            {submitError && (
+              <section className="mb-5 rounded-xl border border-[#7f1d1d] bg-[#261013] px-4 py-3.5">
+                <div className="flex items-center gap-2 text-[#fecaca] mb-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  <div className="text-[12px] font-mono uppercase tracking-[0.12em]">
+                    Action failed
+                  </div>
+                </div>
+                <p className="text-[13px] text-[#fee2e2] leading-relaxed mb-3">
+                  {submitError.message}
+                </p>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={submitError.mailto}
+                    className="inline-flex items-center rounded-lg border border-[#b91c1c] px-3 py-2 text-[12px] font-medium text-[#fee2e2] hover:bg-[#3b161b] transition-colors"
+                  >
+                    Contact support
+                  </a>
+                  <Link
+                    href={submitError.contactHref}
+                    className="inline-flex items-center rounded-lg border border-[#7f1d1d]/60 px-3 py-2 text-[12px] font-medium text-[#fca5a5] hover:border-[#b91c1c] transition-colors"
+                  >
+                    Open help center
+                  </Link>
+                </div>
+              </section>
+            )}
 
             {/* 4. Publish */}
             <div ref={publishPanelRef}>

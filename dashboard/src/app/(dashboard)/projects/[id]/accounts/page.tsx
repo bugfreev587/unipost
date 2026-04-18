@@ -15,6 +15,7 @@ import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { QuickstartStats } from "@/components/dashboard/connection-stats";
+import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
 const PLATFORMS = [
   { id: "bluesky", name: "Bluesky", type: "credentials" as const },
@@ -54,6 +55,7 @@ export default function AccountsPage() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [connectProfileId, setConnectProfileId] = useState(profileId);
+  const [accountsError, setAccountsError] = useState<{ message: string; topic: string } | null>(null);
 
   const router = useRouter();
   const callbackStatus = searchParams.get("status");
@@ -87,6 +89,7 @@ export default function AccountsPage() {
 
   const loadAccounts = useCallback(async () => {
     try {
+      setAccountsError(null);
       const token = await getToken();
       if (!token) return;
       const profRes = await listProfiles(token);
@@ -97,7 +100,9 @@ export default function AccountsPage() {
       );
       setAccounts(allAccounts.flatMap((r) => r.data));
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load accounts";
       console.error("Failed to load accounts:", err);
+      setAccountsError({ message, topic: "accounts-load-failure" });
     } finally {
       setLoading(false);
     }
@@ -107,19 +112,21 @@ export default function AccountsPage() {
 
   async function handleBlueskyConnect() {
     if (!handle.trim() || !appPassword.trim()) return;
-    setConnecting(true); setConnectError("");
+    setConnecting(true); setConnectError(""); setAccountsError(null);
     try {
       const token = await getToken();
       if (!token) return;
       await connectSocialAccount(token, connectProfileId, { platform: "bluesky", credentials: { handle: handle.trim(), app_password: appPassword.trim() } });
       setConnectOpen(false); setSelectedPlatform(null); setHandle(""); setAppPassword(""); loadAccounts();
     } catch (err) {
-      setConnectError(err instanceof Error ? err.message : "Failed to connect");
+      const message = err instanceof Error ? err.message : "Failed to connect";
+      setConnectError(message);
+      setAccountsError({ message, topic: "account-connect-failure" });
     } finally { setConnecting(false); }
   }
 
   async function handleOAuthConnect(platform: string) {
-    setConnecting(true); setConnectError("");
+    setConnecting(true); setConnectError(""); setAccountsError(null);
     try {
       const token = await getToken();
       if (!token) return;
@@ -127,7 +134,9 @@ export default function AccountsPage() {
       const res = await getOAuthConnectURL(token, connectProfileId, platform, redirectUrl);
       window.location.href = res.data.auth_url;
     } catch (err) {
-      setConnectError(err instanceof Error ? err.message : "Failed to start OAuth");
+      const message = err instanceof Error ? err.message : "Failed to start OAuth";
+      setConnectError(message);
+      setAccountsError({ message, topic: "account-oauth-failure" });
       setConnecting(false);
     }
   }
@@ -137,17 +146,60 @@ export default function AccountsPage() {
     const account = accounts.find((a) => a.id === accountId);
     const ownerProfileId = account?.profile_id || profileId;
     try {
+      setAccountsError(null);
       const token = await getToken();
       if (!token) return;
       await disconnectSocialAccount(token, ownerProfileId, accountId);
       loadAccounts();
-    } catch (err) { console.error("Failed to disconnect:", err); }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to disconnect account";
+      console.error("Failed to disconnect:", err);
+      setAccountsError({ message, topic: "account-disconnect-failure" });
+    }
     finally { setDisconnectTarget(null); }
   }
 
 
   return (
     <>
+      {accountsError && (
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "10px 14px", borderRadius: 6, background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", fontSize: 13, color: "var(--danger)", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Account action failed</div>
+            <div>{accountsError.message}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <a
+              href={buildSupportMailto({
+                subject: "Connection action failed in dashboard",
+                intro: "I ran into a connection-related failure in the dashboard.",
+                details: [
+                  `Profile ID: ${profileId}`,
+                  `Topic: ${accountsError.topic}`,
+                  `Error: ${accountsError.message}`,
+                ],
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Contact support
+            </a>
+            <a
+              href={buildContactPageHref({
+                topic: accountsError.topic,
+                source: "accounts-page",
+                profile: profileId,
+                error: accountsError.message,
+              })}
+              className="dbtn dbtn-ghost"
+              style={{ fontSize: 12 }}
+            >
+              Open help center
+            </a>
+          </div>
+        </div>
+      )}
+
       {callbackStatus === "success" && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 6, background: "var(--success-soft)", border: "1px solid color-mix(in srgb, var(--success) 24%, transparent)", fontSize: 13, color: "var(--daccent)", marginBottom: 20 }}>
           <CheckCircle2 style={{ width: 14, height: 14 }} /> Connected {callbackAccount || "account"} successfully.

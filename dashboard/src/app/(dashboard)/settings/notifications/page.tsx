@@ -16,6 +16,7 @@ import {
   type NotificationSubscription,
 } from "@/lib/api";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
 const SEVERITY_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
   critical: { bg: "rgba(239,68,68,.12)", fg: "var(--danger)", label: "Critical" },
@@ -196,10 +197,37 @@ export default function NotificationsSettingsPage() {
           padding: "10px 14px", borderRadius: 8,
           background: "var(--danger-soft)", color: "var(--danger)",
           border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)",
-          fontSize: 13, display: "flex", alignItems: "center", gap: 8,
+          fontSize: 13, display: "flex", alignItems: "flex-start", gap: 8,
         }}>
           <AlertCircle style={{ width: 14, height: 14 }} />
-          {err}
+          <div style={{ flex: 1 }}>
+            <div style={{ marginBottom: 6 }}>{err}</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <a
+                href={buildSupportMailto({
+                  subject: "Notification settings failed in dashboard",
+                  intro: "I ran into a notification-related failure in the dashboard.",
+                  details: [
+                    `Page: notifications settings`,
+                    `Error: ${err}`,
+                  ],
+                })}
+                style={{ color: "var(--danger)", fontWeight: 600, textDecoration: "underline" }}
+              >
+                Contact support
+              </a>
+              <a
+                href={buildContactPageHref({
+                  topic: "notifications-settings-failure",
+                  source: "notifications-settings",
+                  error: err,
+                })}
+                style={{ color: "var(--danger)", fontWeight: 600, textDecoration: "underline" }}
+              >
+                Open help center
+              </a>
+            </div>
+          </div>
           <button type="button" onClick={() => setErr(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 16 }}>×</button>
         </div>
       )}

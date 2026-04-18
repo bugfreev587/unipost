@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { useInboxWebSocket } from "@/lib/use-inbox-ws";
+import { buildContactPageHref } from "@/lib/support";
 import { PlatformIcon } from "@/components/platform-icons";
 import {
   AlertTriangle,
@@ -327,11 +328,15 @@ function SyncStateCard({
   title,
   body,
   tone = "neutral",
+  actionHref,
+  actionLabel = "Contact support",
 }: {
   icon: React.ReactNode;
   title: string;
   body: string;
   tone?: "neutral" | "warn" | "error";
+  actionHref?: string;
+  actionLabel?: string;
 }) {
   const styles =
     tone === "error"
@@ -358,6 +363,21 @@ function SyncStateCard({
           {title}
         </div>
         <div className="dt-body-sm" style={{ color: "var(--dmuted)" }}>{body}</div>
+        {actionHref ? (
+          <a
+            href={actionHref}
+            style={{
+              display: "inline-flex",
+              marginTop: 10,
+              color: "var(--dtext)",
+              textDecoration: "none",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            {actionLabel}
+          </a>
+        ) : null}
       </div>
     </div>
   );
@@ -980,6 +1000,11 @@ export default function InboxPage() {
             title="Reconnect required"
             body={`${reconnectAccounts.length} Instagram / Threads account${reconnectAccounts.length > 1 ? "s need" : " needs"} reconnect before inbox sync can fully load comments or replies.`}
             tone="warn"
+            actionHref={buildContactPageHref({
+              topic: "inbox-reconnect-required",
+              source: "inbox-sync-card",
+              workspace: workspaceId || undefined,
+            })}
           />
         ) : null}
         {missingPermissionErrors.length > 0 ? (
@@ -988,6 +1013,11 @@ export default function InboxPage() {
             title="Missing permission or outdated scope"
             body="At least one Meta account could not load comments or replies because its token does not have the required scopes. Reconnect the account with the latest Instagram / Threads permissions."
             tone="error"
+            actionHref={buildContactPageHref({
+              topic: "inbox-permission-error",
+              source: "inbox-sync-card",
+              workspace: workspaceId || undefined,
+            })}
           />
         ) : null}
         {syncFailures.length > 0 ? (
@@ -996,6 +1026,11 @@ export default function InboxPage() {
             title="Sync completed with errors"
             body={`UniPost checked ${syncData?.accounts_checked || 0} account(s), but ${syncFailures.length} sync step(s) failed. Review API logs for the exact Meta response.`}
             tone="neutral"
+            actionHref={buildContactPageHref({
+              topic: "inbox-sync-failure",
+              source: "inbox-sync-card",
+              workspace: workspaceId || undefined,
+            })}
           />
         ) : null}
       </div>
