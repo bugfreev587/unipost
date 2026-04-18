@@ -144,7 +144,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
       }
 
       setIsValidating(true);
-      const validation = await validateSocialPost(token, payload);
+      const validation = await validateSocialPost(token, workspaceId, payload);
       setValidationResult(validation.data);
       setIsValidating(false);
       if (validation.data.errors.length > 0) return;

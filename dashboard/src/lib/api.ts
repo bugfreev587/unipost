@@ -478,9 +478,10 @@ export async function createSocialPost(
 
 export async function validateSocialPost(
   token: string,
+  workspaceId: string,
   data: CreateSocialPostPayload
 ): Promise<ApiResponse<SocialPostValidationResult>> {
-  return request("/v1/social-posts/validate", token, {
+  return request(`/v1/workspaces/${workspaceId}/social-posts/validate`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });

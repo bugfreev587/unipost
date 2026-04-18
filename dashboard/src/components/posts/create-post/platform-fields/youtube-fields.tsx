@@ -1,10 +1,13 @@
 "use client";
 
+import { cn } from "@/lib/utils";
+import type { SocialPostValidationIssue } from "@/lib/api";
 import type { PlatformOverride } from "../use-create-post-form";
 
 interface YouTubeFieldsProps {
   fields: NonNullable<PlatformOverride["youtube"]>;
   onChange: (fields: Partial<NonNullable<PlatformOverride["youtube"]>>) => void;
+  issues?: SocialPostValidationIssue[];
 }
 
 export const YOUTUBE_CATEGORY_OPTIONS = [
@@ -19,12 +22,23 @@ export const YOUTUBE_CATEGORY_OPTIONS = [
 ] as const;
 const VISIBILITY_OPTIONS = ["public", "unlisted", "private"] as const;
 
-export function YouTubeFields({ fields, onChange }: YouTubeFieldsProps) {
+export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsProps) {
+  const titleIssues = issues.filter(
+    (issue) => issue.field === "platform_options.title" || issue.field === "title"
+  );
+  const hasTitleError = titleIssues.some((issue) => issue.severity === "error");
+  const titleMessage = titleIssues[0]?.message;
+
   return (
     <>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+          <label
+            className={cn(
+              "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
+              hasTitleError ? "text-[#fca5a5]" : "text-[#55555c]"
+            )}
+          >
             Video title <span className="text-[#f59e0b]">*</span>
           </label>
           <input
@@ -32,8 +46,16 @@ export function YouTubeFields({ fields, onChange }: YouTubeFieldsProps) {
             placeholder="Required for YouTube uploads…"
             value={fields.title}
             onChange={(e) => onChange({ title: e.target.value })}
-            className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]"
+            className={cn(
+              "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]",
+              hasTitleError ? "border-[#ef4444]" : "border-[#22222a]"
+            )}
           />
+          {titleMessage && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-[#fca5a5]">
+              {titleMessage}
+            </p>
+          )}
         </div>
         <div>
           <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">

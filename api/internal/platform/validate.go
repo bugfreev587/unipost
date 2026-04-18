@@ -507,9 +507,9 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Severity:          SeverityError,
 		})
 	}
-	if cap.Text.MaxLength > 0 && captionLen > cap.Text.MaxLength {
-		res.Errors = append(res.Errors, Issue{
-			PlatformPostIndex: i,
+		if cap.Text.MaxLength > 0 && captionLen > cap.Text.MaxLength {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
 			AccountID:         post.AccountID,
 			Platform:          plat,
 			Field:             "caption",
@@ -518,8 +518,8 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Actual:            captionLen,
 			Limit:             cap.Text.MaxLength,
 			Severity:          SeverityError,
-		})
-	}
+			})
+		}
 
 	if plat == "youtube" {
 		title := strings.TrimSpace(optString(post.PlatformOptions, "title"))

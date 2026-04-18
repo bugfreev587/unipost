@@ -163,6 +163,7 @@ const ISSUE_COPY: Record<string, string> = {
 };
 
 function issueSummary(issue: SocialPostValidationIssue): string {
+  if (issue.code === "missing_required") return issue.message;
   return ISSUE_COPY[issue.code] || issue.message;
 }
 
@@ -481,11 +482,37 @@ export function CreatePostDrawer({
 
     setIsValidating(true);
     try {
-      const res = await validateSocialPost(token, payload as any);
+      const res = await validateSocialPost(token, workspaceId, payload as any);
       const result = res.data;
       setValidationResult(result);
       setValidationChecked(true);
+      setSubmitError(null);
       return { ok: result.errors.length === 0, result, token };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Validation failed";
+      setSubmitError({
+        message,
+        mailto: buildSupportMailto({
+          subject: "Validation failed in dashboard",
+          intro: "A validation request failed in the dashboard create post drawer.",
+          details: [
+            `Workspace ID: ${workspaceId}`,
+            profileName ? `Profile: ${profileName}` : undefined,
+            `Publish mode: ${form.publishMode}`,
+            `Selected accounts: ${form.selectedAccountIds.size}`,
+            `Page: ${typeof window !== "undefined" ? window.location.pathname : "/posts"}`,
+            `Error: ${message}`,
+          ],
+        }),
+        contactHref: buildContactPageHref({
+          topic: "validation-failure",
+          source: "create-post-drawer",
+          workspace: workspaceId,
+          profile: profileName,
+          error: message,
+        }),
+      });
+      return { ok: false as const, tokenMissing: false as const };
     } finally {
       setIsValidating(false);
     }
@@ -847,7 +874,6 @@ export function CreatePostDrawer({
               accounts={form.selectedAccounts}
               onSelectIssue={focusIssue}
             />
-
             {submitError && (
               <section className="mb-5 rounded-xl border border-[#7f1d1d] bg-[#261013] px-4 py-3.5">
                 <div className="flex items-center gap-2 text-[#fecaca] mb-2">

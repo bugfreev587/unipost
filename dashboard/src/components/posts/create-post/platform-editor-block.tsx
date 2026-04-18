@@ -49,6 +49,9 @@ export function PlatformEditorBlock({
   const warningIssues = issues.filter((issue) => issue.severity === "warning");
   const hasErrors = errorIssues.length > 0;
   const hasWarnings = !hasErrors && warningIssues.length > 0;
+  const captionIssues = issues.filter((issue) => issue.field === "caption");
+  const hasCaptionError = captionIssues.some((issue) => issue.severity === "error");
+  const captionMessage = captionIssues[0]?.message;
 
   const youtubeFields = override.youtube || { title: "", category: "22", visibility: "public" as const };
   const tiktokFields = override.tiktok || { privacy: "public" as const, interactions: "allow_all" as const };
@@ -168,26 +171,31 @@ export function PlatformEditorBlock({
                 {charCount.count} / {limit}
               </span>
             </div>
-            <textarea
+	            <textarea
               rows={3}
               placeholder="Leave blank to use main content"
               value={override.caption || ""}
               onChange={(e) => onCaptionChange(e.target.value)}
-              className={cn(
-                "w-full rounded-md px-3 py-2 text-sm resize-none leading-relaxed",
-                "bg-[#0a0a0b] border text-[#f4f4f5] outline-none",
-                "transition-[border-color] duration-[140ms]",
-                "focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
-                "placeholder:text-[#55555c]",
-                hasErrors
-                  ? "border-[#ef4444]"
-                  : hasWarnings
-                    ? "border-[#f59e0b]"
-                    : charCount.status === "over"
-                  ? "border-[#ef4444]"
-                  : "border-[#22222a]"
-              )}
-            />
+	              className={cn(
+	                "w-full rounded-md px-3 py-2 text-sm resize-none leading-relaxed",
+	                "bg-[#0a0a0b] border text-[#f4f4f5] outline-none",
+	                "transition-[border-color] duration-[140ms]",
+	                "focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
+	                "placeholder:text-[#55555c]",
+	                hasCaptionError
+	                  ? "border-[#ef4444]"
+	                  : hasWarnings
+	                    ? "border-[#f59e0b]"
+	                    : charCount.status === "over"
+	                  ? "border-[#ef4444]"
+	                  : "border-[#22222a]"
+	              )}
+	            />
+	            {captionMessage && (
+	              <p className="mt-1.5 text-[11px] leading-relaxed text-[#fca5a5]">
+	                {captionMessage}
+	              </p>
+	            )}
           </div>
 
           {/* Platform-specific fields */}
@@ -195,6 +203,7 @@ export function PlatformEditorBlock({
             <YouTubeFields
               fields={youtubeFields}
               onChange={(f) => onPlatformFieldChange("youtube", f)}
+              issues={issues}
             />
           )}
           {account.platform === "tiktok" && (

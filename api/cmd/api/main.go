@@ -493,12 +493,16 @@ func main() {
 			mediaHandler.Get(w, r.WithContext(ctx))
 		})
 
-		// Social posts (dashboard, workspace-scoped)
-		r.Get("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.List)
-		r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", socialPostHandler.Archive)
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", socialPostHandler.Restore)
-		r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", socialPostHandler.Delete)
+			// Social posts (dashboard, workspace-scoped)
+			r.Get("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.List)
+			r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)
+			r.Post("/v1/workspaces/{workspaceID}/social-posts/validate", func(w http.ResponseWriter, r *http.Request) {
+				ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
+				socialPostHandler.Validate(w, r.WithContext(ctx))
+			})
+			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", socialPostHandler.Archive)
+			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", socialPostHandler.Restore)
+			r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", socialPostHandler.Delete)
 
 		// OAuth connect (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)

@@ -168,6 +168,9 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 		title = text
 	}
 	description := text
+	if description == "" {
+		description = title
+	}
 	if shorts {
 		if !strings.Contains(strings.ToLower(title), "#shorts") {
 			title = strings.TrimSpace(title + " #Shorts")
