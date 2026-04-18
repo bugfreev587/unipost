@@ -370,13 +370,13 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     requirements: [
       ["media_urls or media_ids", "Required", "Exactly 1 video", "Prefer `media_ids` when starting from a local file. Create the media ID with `POST /v1/media`, upload the file to the returned `upload_url`, then publish."],
-      ["caption", "Optional", "5,000 chars", "Used as description and as the title fallback when `platform_options.youtube.title` is blank."],
+      ["caption", "Optional", "5,000 chars", "Used as YouTube description text."],
+      ["platform_options.youtube.title", "Required", "max 100 chars", "Required video title. This does not fall back to `caption`."],
       ["platform_options.youtube.made_for_kids", "Required", "boolean", "Explicit audience selection required before publish."],
       ["platform_options.youtube.privacy_status", "Optional", "private / public / unlisted", "Dashboard defaults to `public`, but YouTube may still force private for unverified API projects."],
       ["platform_options.youtube.shorts", "Optional", "boolean", "Routes the upload toward Shorts behavior"],
     ],
     options: [
-      ["platform_options.youtube.title", "string", "Optional if `caption` is present. Maximum 100 characters."],
       ["platform_options.youtube.category_id", "string", "YouTube category ID"],
       ["platform_options.youtube.tags", "string[]", "Tag list for snippet metadata"],
       ["platform_options.youtube.default_language", "string", "BCP-47 style language tag such as `en` or `en-US`."],

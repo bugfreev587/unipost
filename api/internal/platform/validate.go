@@ -556,16 +556,13 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 	if plat == "youtube" {
 		title := strings.TrimSpace(optString(post.PlatformOptions, "title"))
 		if title == "" {
-			title = strings.TrimSpace(post.Caption)
-		}
-		if title == "" {
 			res.Errors = append(res.Errors, Issue{
 				PlatformPostIndex: i,
 				AccountID:         post.AccountID,
 				Platform:          plat,
 				Field:             "platform_options.title",
 				Code:              CodeYouTubeTitleRequired,
-				Message:           "youtube requires a non-empty video title — add a YouTube title or main caption before publishing",
+				Message:           "youtube requires a non-empty video title before publishing",
 				Severity:          SeverityError,
 			})
 		}

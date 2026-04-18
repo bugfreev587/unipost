@@ -81,7 +81,7 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
           </label>
           <input
             type="text"
-            placeholder="Optional if caption is provided…"
+            placeholder="Required for YouTube uploads…"
             value={fields.title}
             onChange={(e) => onChange({ title: e.target.value })}
             className={cn(
@@ -155,7 +155,7 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
         </div>
         <FieldError issue={visibilityIssue} />
         <p className="text-[11px] text-[#55555c] mt-2">
-          UniPost uses this as YouTube `snippet.title`. If left blank, the caption is used instead. Videos under 3 minutes are automatically published as Shorts.
+          UniPost sends caption text as YouTube `snippet.description`. `title` is required separately. Videos under 3 minutes are automatically published as Shorts.
         </p>
       </div>
 

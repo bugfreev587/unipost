@@ -243,13 +243,7 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	// at the source video level.
 	shorts := optBool(opts, "shorts")
 	title := youtubeOptString(opts, "title")
-	if title == "" {
-		title = text
-	}
 	description := text
-	if description == "" {
-		description = title
-	}
 	defaultLanguage := youtubeOptString(opts, "default_language")
 	playlistID := youtubeOptString(opts, "playlist_id")
 	publishAt, err := youtubeOptTime(opts, "publish_at")

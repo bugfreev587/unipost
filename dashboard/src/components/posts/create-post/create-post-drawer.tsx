@@ -146,7 +146,7 @@ const ISSUE_COPY: Record<string, string> = {
   exceeds_max_length: "Shorten the caption for this destination.",
   below_min_length: "Add more content before publishing.",
   missing_required: "Fill in the required field before publishing.",
-  youtube_title_required: "Add a YouTube video title or main caption before publishing.",
+  youtube_title_required: "Add a YouTube video title before publishing.",
   youtube_made_for_kids_required: "Choose whether the video is made for kids before publishing.",
   invalid_privacy_status: "Pick a valid YouTube visibility.",
   invalid_license: "Pick a valid YouTube license.",

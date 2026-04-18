@@ -224,10 +224,25 @@ func TestValidate_YouTubeRequiresMadeForKids(t *testing.T) {
 			AccountID:       "acc_youtube",
 			Caption:         "Demo upload",
 			MediaURLs:       []string{"https://x/video.mp4"},
-			PlatformOptions: map[string]any{"privacy_status": "public"},
+			PlatformOptions: map[string]any{"privacy_status": "public", "title": "Demo upload"},
 		},
 	}))
 	hasError(t, res, 0, CodeYouTubeMadeForKidsRequired)
+}
+
+func TestValidate_YouTubeRequiresExplicitTitle(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID: "acc_youtube",
+			Caption:   "Description only",
+			MediaURLs: []string{"https://x/video.mp4"},
+			PlatformOptions: map[string]any{
+				"made_for_kids":  true,
+				"privacy_status": "public",
+			},
+		},
+	}))
+	hasError(t, res, 0, CodeYouTubeTitleRequired)
 }
 
 func TestValidate_YouTubePublishAtRequiresPrivate(t *testing.T) {
