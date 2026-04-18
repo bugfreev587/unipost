@@ -50,7 +50,7 @@ export function PlatformEditorBlock({
   const hasErrors = errorIssues.length > 0;
   const hasWarnings = !hasErrors && warningIssues.length > 0;
 
-  const youtubeFields = override.youtube || { title: "", category: "People & Blogs", visibility: "public" as const };
+  const youtubeFields = override.youtube || { title: "", category: "22", visibility: "public" as const };
   const tiktokFields = override.tiktok || { privacy: "public" as const, interactions: "allow_all" as const };
   const instagramFields = override.instagram || { mediaType: "feed" as const };
   const linkedinFields = override.linkedin || { visibility: "anyone" as const };

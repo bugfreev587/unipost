@@ -103,6 +103,39 @@ func (a *YouTubeAdapter) Connect(ctx context.Context, credentials map[string]str
 // Mirrors the YouTube Data API videos.insert status.privacyStatus enum.
 var YouTubePrivacyValues = []string{"private", "public", "unlisted"}
 
+var youTubeCategoryAliases = map[string]string{
+	"people & blogs":        "22",
+	"science & technology":  "28",
+	"education":             "27",
+	"entertainment":         "24",
+	"gaming":                "20",
+	"music":                 "10",
+	"news & politics":       "25",
+	"sports":                "17",
+}
+
+func youtubeOptString(opts map[string]any, primary string, aliases ...string) string {
+	if v := strings.TrimSpace(optString(opts, primary)); v != "" {
+		return v
+	}
+	for _, alias := range aliases {
+		if v := strings.TrimSpace(optString(opts, alias)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func normalizeYouTubeCategory(value string) string {
+	if value == "" {
+		return ""
+	}
+	if alias, ok := youTubeCategoryAliases[strings.ToLower(strings.TrimSpace(value))]; ok {
+		return alias
+	}
+	return strings.TrimSpace(value)
+}
+
 // Post uploads a video to YouTube. Requires video URL in imageURLs[0].
 //
 // Supported opts:
@@ -116,7 +149,7 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	}
 	videoURL := media[0].URL
 
-	privacyStatus := optString(opts, "privacy_status")
+	privacyStatus := youtubeOptString(opts, "privacy_status", "visibility")
 	if err := validateEnum("youtube", "privacy_status", privacyStatus, YouTubePrivacyValues); err != nil {
 		return nil, err
 	}
@@ -130,7 +163,11 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	// 9:16 aspect ratio + < 60 s duration, both of which are caller-controlled
 	// at the source video level.
 	shorts := optBool(opts, "shorts")
-	title, description := text, text
+	title := youtubeOptString(opts, "title")
+	if title == "" {
+		title = text
+	}
+	description := text
 	if shorts {
 		if !strings.Contains(strings.ToLower(title), "#shorts") {
 			title = strings.TrimSpace(title + " #Shorts")
@@ -141,7 +178,7 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	}
 
 	// Optional category id (e.g. "22" for People & Blogs) and tag list.
-	categoryID := optString(opts, "category_id")
+	categoryID := normalizeYouTubeCategory(youtubeOptString(opts, "category_id", "category"))
 	var tags []string
 	if rawTags, ok := opts["tags"].([]any); ok {
 		for _, t := range rawTags {

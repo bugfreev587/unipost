@@ -144,6 +144,7 @@ const ISSUE_COPY: Record<string, string> = {
   exceeds_max_length: "Shorten the caption for this destination.",
   below_min_length: "Add more content before publishing.",
   missing_required: "Fill in the required field before publishing.",
+  youtube_title_required: "Add a YouTube video title or main caption before publishing.",
   mixed_media_unsupported: "Use either images or video, not both, for this platform.",
   scheduled_too_soon: "Choose a time at least 30 seconds in the future.",
   scheduled_too_far: "Choose a scheduled time within the supported window.",

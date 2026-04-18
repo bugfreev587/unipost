@@ -307,11 +307,16 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     [mediaItems]
   );
 
+  const hasPlatformOnlyContent = useCallback((accountId: string) => {
+    const override = overrides[accountId];
+    return !!override?.youtube?.title?.trim();
+  }, [overrides]);
+
   const hasUnsavedContent = useMemo(() => {
     if (mainContent.trim()) return true;
     if (mediaItems.length > 0) return true;
-    return Object.values(overrides).some((o) => o.caption?.trim());
-  }, [mainContent, mediaItems, overrides]);
+    return Object.entries(overrides).some(([accountId, o]) => o.caption?.trim() || hasPlatformOnlyContent(accountId));
+  }, [mainContent, mediaItems, overrides, hasPlatformOnlyContent]);
 
   const hasOverLimit = useMemo(() => {
     for (const acc of selectedAccounts) {
@@ -329,13 +334,13 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (selectedAccountIds.size === 0) return false;
     if (hasOverLimit) return false;
     if (!allMediaUploaded) return false; // wait for uploads to finish
-    const hasContent = mainContent.trim() || Object.values(overrides).some((o) => o.caption?.trim());
+    const hasContent = mainContent.trim() || Object.entries(overrides).some(([accountId, o]) => o.caption?.trim() || hasPlatformOnlyContent(accountId));
     if (!hasContent && mediaItems.length === 0) return false;
     if (publishMode === "schedule" && !scheduledAt) return false;
     if (publishMode === "schedule" && scheduledAt && new Date(scheduledAt) <= new Date()) return false;
     if (publishMode === "queue" && !queueId) return false;
     return true;
-  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId]);
+  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId, hasPlatformOnlyContent]);
 
   // Not wrapped in useCallback — always reads latest state to avoid
   // stale closure issues with mediaItems/uploadedMediaIds.
@@ -359,7 +364,11 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
           caption: o?.caption?.trim() || mainContent.trim(),
         };
         if (mediaIds) entry.media_ids = mediaIds;
-        if (o?.youtube) entry.platform_options = { ...o.youtube };
+        if (o?.youtube) entry.platform_options = {
+          title: o.youtube.title.trim(),
+          category_id: o.youtube.category,
+          privacy_status: o.youtube.visibility,
+        };
         if (o?.tiktok) entry.platform_options = { ...o.tiktok };
         if (o?.instagram) entry.platform_options = { ...o.instagram };
         if (o?.linkedin) entry.platform_options = { ...o.linkedin };

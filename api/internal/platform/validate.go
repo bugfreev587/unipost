@@ -197,6 +197,7 @@ const (
 	// Sprint 4 PR3: first_comment field codes.
 	CodeFirstCommentUnsupported = "first_comment_unsupported"
 	CodeFirstCommentTooLong     = "first_comment_too_long"
+	CodeYouTubeTitleRequired    = "youtube_title_required"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -518,6 +519,24 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Limit:             cap.Text.MaxLength,
 			Severity:          SeverityError,
 		})
+	}
+
+	if plat == "youtube" {
+		title := strings.TrimSpace(optString(post.PlatformOptions, "title"))
+		if title == "" {
+			title = strings.TrimSpace(post.Caption)
+		}
+		if title == "" {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.title",
+				Code:              CodeYouTubeTitleRequired,
+				Message:           "youtube requires a non-empty video title — add a YouTube title or main caption before publishing",
+				Severity:          SeverityError,
+			})
+		}
 	}
 
 	// Sprint 4 PR3: first_comment field validation. Reject on platforms
