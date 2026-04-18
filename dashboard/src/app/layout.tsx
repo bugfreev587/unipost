@@ -52,9 +52,11 @@ const themeInitScript = `
 (() => {
   try {
     const storageKey = "unipost-theme";
-    const storedTheme = localStorage.getItem(storageKey) || "system";
+    const storedTheme = localStorage.getItem(storageKey);
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const resolvedTheme = storedTheme === "system" ? (prefersDark ? "dark" : "light") : storedTheme;
+    const resolvedTheme = storedTheme === "light" || storedTheme === "dark"
+      ? storedTheme
+      : (prefersDark ? "dark" : "light");
     const root = document.documentElement;
     root.classList.toggle("dark", resolvedTheme === "dark");
     root.classList.toggle("light", resolvedTheme === "light");
