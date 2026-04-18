@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SocialPostValidationIssue } from "@/lib/api";
@@ -50,9 +50,8 @@ function ToggleButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded py-1.5 text-xs font-medium transition-all duration-[160ms] ${
-        active ? "bg-[#f4f4f5] text-[#0a0a0b]" : "text-[#8a8a93] hover:text-[#f4f4f5]"
-      }`}
+      className="rounded py-1.5 text-xs font-medium transition-all duration-[160ms]"
+      style={active ? { background: "var(--surface3)", color: "var(--dtext)" } : { color: "var(--dmuted)" }}
     >
       {children}
     </button>
@@ -99,51 +98,41 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
     (issue) => issue.severity === "error" && optionalFieldNames.has(issue.field)
   );
   const [showOptionalFields, setShowOptionalFields] = useState(hasOptionalErrors);
-
-  useEffect(() => {
-    if (hasOptionalErrors) {
-      setShowOptionalFields(true);
-    }
-  }, [hasOptionalErrors]);
-
+  const optionalFieldsExpanded = showOptionalFields || hasOptionalErrors;
   return (
     <div className="space-y-4">
       <div>
         <label
-          className={cn(
-            "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
-            titleIssue ? "text-[#fca5a5]" : "text-[#55555c]"
-          )}
+          className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider"
+          style={{ color: titleIssue ? "color-mix(in srgb, var(--danger) 45%, white)" : "var(--dmuted2)" }}
         >
-          Video title <span className="text-[#f59e0b]">*</span>
+          Video title <span style={{ color: "var(--warning)" }}>*</span>
         </label>
         <input
           type="text"
           placeholder="Required for YouTube uploads…"
           value={fields.title}
           onChange={(e) => onChange({ title: e.target.value })}
-          className={cn(
-            "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]",
-            titleIssue ? "border-[#ef4444]" : "border-[#22222a]"
-          )}
+          className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+          style={{
+            background: "var(--surface1)",
+            borderColor: titleIssue ? "var(--danger)" : "var(--dborder)",
+            color: "var(--dtext)",
+          }}
         />
         <FieldError issue={titleIssue} />
       </div>
 
       <div>
         <label
-          className={cn(
-            "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
-            madeForKidsIssue ? "text-[#fca5a5]" : "text-[#55555c]"
-          )}
+          className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider"
+          style={{ color: madeForKidsIssue ? "color-mix(in srgb, var(--danger) 45%, white)" : "var(--dmuted2)" }}
         >
-          Audience <span className="text-[#f59e0b]">*</span>
+          Audience <span style={{ color: "var(--warning)" }}>*</span>
         </label>
         <div
-          className={cn(
-            "grid grid-cols-2 gap-1 p-1 bg-[#0a0a0b] rounded-md border",
-            madeForKidsIssue ? "border-[#ef4444]" : "border-[#22222a]"
-          )}
+          className="grid grid-cols-2 gap-1 rounded-md border p-1"
+          style={{ background: "var(--surface1)", borderColor: madeForKidsIssue ? "var(--danger)" : "var(--dborder)" }}
         >
           <ToggleButton active={fields.madeForKids === "yes"} onClick={() => onChange({ madeForKids: "yes" })}>
             Yes, it&apos;s for kids
@@ -155,44 +144,42 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
         <FieldError issue={madeForKidsIssue} />
       </div>
 
-      <div className="rounded-xl border border-[#22222a] bg-[#111114]/70 overflow-hidden">
+      <div className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface-raised) 76%, var(--surface2))" }}>
         <button
           type="button"
           onClick={() => setShowOptionalFields((current) => !current)}
-          className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[#17171a]"
+          className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors"
+          style={{ background: "transparent" }}
         >
           <div>
-            <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-[#8a8a93]">
+            <div className="text-[11px] font-mono uppercase tracking-[0.12em]" style={{ color: "var(--dmuted)" }}>
               Optional fields
             </div>
-            <div className="mt-1 text-[12px] text-[#55555c]">
+            <div className="mt-1 text-[12px]" style={{ color: "var(--dmuted2)" }}>
               Category, visibility, scheduling, playlists, tags, and advanced YouTube settings.
             </div>
           </div>
           <ChevronDown
             className={cn(
-              "h-4 w-4 text-[#8a8a93] transition-transform duration-200",
-              showOptionalFields ? "rotate-180" : "rotate-0"
+              "h-4 w-4 transition-transform duration-200",
+              optionalFieldsExpanded ? "rotate-180" : "rotate-0"
             )}
+            style={{ color: "var(--dmuted)" }}
           />
         </button>
 
-        {showOptionalFields && (
-          <div className="border-t border-[#22222a] px-3 py-3 space-y-4">
+        {optionalFieldsExpanded && (
+          <div className="space-y-4 border-t px-3 py-3" style={{ borderTopColor: "var(--dborder)" }}>
             <div>
               <label
-                className={cn(
-                  "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
-                  visibilityIssue ? "text-[#fca5a5]" : "text-[#55555c]"
-                )}
+                className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider"
+                style={{ color: visibilityIssue ? "color-mix(in srgb, var(--danger) 45%, white)" : "var(--dmuted2)" }}
               >
                 Visibility
               </label>
               <div
-                className={cn(
-                  "grid grid-cols-3 gap-1 p-1 bg-[#0a0a0b] rounded-md border",
-                  visibilityIssue ? "border-[#ef4444]" : "border-[#22222a]"
-                )}
+                className="grid grid-cols-3 gap-1 rounded-md border p-1"
+                style={{ background: "var(--surface1)", borderColor: visibilityIssue ? "var(--danger)" : "var(--dborder)" }}
               >
                 {VISIBILITY_OPTIONS.map((v) => (
                   <ToggleButton key={v} active={fields.visibility === v} onClick={() => onChange({ visibility: v })}>

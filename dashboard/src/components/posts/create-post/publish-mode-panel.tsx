@@ -78,19 +78,19 @@ function MiniCalendar({ selected, onSelect, onClose }: {
   }
 
   return (
-    <div ref={ref} className="absolute top-full left-0 right-0 mt-1 z-50 rounded-lg border border-[#22222a] bg-[#111113] p-3 shadow-xl">
+    <div ref={ref} className="absolute top-full left-0 right-0 z-50 mt-1 rounded-lg border p-3 shadow-xl" style={{ borderColor: "var(--dborder)", background: "var(--surface-raised)" }}>
       <div className="flex items-center justify-between mb-2">
-        <button type="button" onClick={prev} className="w-6 h-6 flex items-center justify-center rounded hover:bg-[#22222a] text-[#8a8a93] hover:text-[#f4f4f5] transition-colors">
+        <button type="button" onClick={prev} className="flex h-6 w-6 items-center justify-center rounded transition-colors" style={{ color: "var(--dmuted)" }}>
           <ChevronLeft className="w-3.5 h-3.5" />
         </button>
-        <span className="text-xs font-medium text-[#f4f4f5]">{MONTH_NAMES[viewMonth]} {viewYear}</span>
-        <button type="button" onClick={next} className="w-6 h-6 flex items-center justify-center rounded hover:bg-[#22222a] text-[#8a8a93] hover:text-[#f4f4f5] transition-colors">
+        <span className="text-xs font-medium" style={{ color: "var(--dtext)" }}>{MONTH_NAMES[viewMonth]} {viewYear}</span>
+        <button type="button" onClick={next} className="flex h-6 w-6 items-center justify-center rounded transition-colors" style={{ color: "var(--dmuted)" }}>
           <ChevronRight className="w-3.5 h-3.5" />
         </button>
       </div>
       <div className="grid grid-cols-7 gap-0.5 text-center">
         {DAY_LABELS.map((l) => (
-          <div key={l} className="text-[10px] text-[#55555c] py-1 font-medium">{l}</div>
+          <div key={l} className="py-1 text-[10px] font-medium" style={{ color: "var(--dmuted2)" }}>{l}</div>
         ))}
         {days.map((day, i) => (
           <div key={i} className="aspect-square flex items-center justify-center">
@@ -99,15 +99,16 @@ function MiniCalendar({ selected, onSelect, onClose }: {
                 type="button"
                 disabled={isPast(day)}
                 onClick={() => { onSelect(new Date(viewYear, viewMonth, day)); onClose(); }}
-                className={`w-7 h-7 rounded-md text-[11px] font-medium transition-all duration-100 ${
+                className="h-7 w-7 rounded-md text-[11px] font-medium transition-all duration-100"
+                style={
                   isSelected(day)
-                    ? "bg-[#10b981] text-[#0a0a0b]"
+                    ? { background: "var(--primary)", color: "var(--primary-foreground)" }
                     : isToday(day)
-                    ? "bg-[#22222a] text-[#f4f4f5]"
+                    ? { background: "var(--surface3)", color: "var(--dtext)" }
                     : isPast(day)
-                    ? "text-[#33333a] cursor-not-allowed"
-                    : "text-[#8a8a93] hover:bg-[#22222a] hover:text-[#f4f4f5]"
-                }`}
+                    ? { color: "var(--dmuted2)", opacity: 0.5, cursor: "not-allowed" }
+                    : { color: "var(--dmuted)" }
+                }
               >
                 {day}
               </button>
@@ -149,22 +150,19 @@ export function PublishModePanel({
 
   return (
     <div>
-      <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-3">
+      <label className="mb-3 block text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
         Publish
       </label>
 
       {/* Segmented control */}
-      <div className="grid grid-cols-4 gap-1 p-1 bg-[#17171a] rounded-lg border border-[#22222a]">
+      <div className="grid grid-cols-4 gap-1 rounded-lg border p-1" style={{ background: "var(--surface2)", borderColor: "var(--dborder)" }}>
         {MODES.map((m) => (
           <button
             key={m.value}
             type="button"
             onClick={() => onModeChange(m.value)}
-            className={`rounded-md py-1.5 text-xs font-medium transition-all duration-[160ms] ${
-              mode === m.value
-                ? "bg-[#f4f4f5] text-[#0a0a0b]"
-                : "text-[#8a8a93] hover:text-[#f4f4f5]"
-            }`}
+            className="rounded-md py-1.5 text-xs font-medium transition-all duration-[160ms]"
+            style={mode === m.value ? { background: "var(--surface-raised)", color: "var(--dtext)" } : { color: "var(--dmuted)" }}
           >
             {m.label}
           </button>
@@ -174,9 +172,9 @@ export function PublishModePanel({
       {/* Mode-specific panels */}
       <div className="mt-4">
         {mode === "now" && (
-          <div className="flex gap-2.5 p-3 rounded-lg bg-[#17171a]/60 border border-[#22222a]">
-            <div className="w-1 rounded-full bg-[#10b981] flex-shrink-0" />
-            <div className="text-[12.5px] leading-relaxed text-[#8a8a93]">
+          <div className="flex gap-2.5 rounded-lg border p-3" style={{ background: "color-mix(in srgb, var(--surface2) 70%, transparent)", borderColor: "var(--dborder)" }}>
+            <div className="w-1 flex-shrink-0 rounded-full" style={{ background: "var(--primary)" }} />
+            <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
               Publishes immediately to every account selected above.
             </div>
           </div>
@@ -185,7 +183,7 @@ export function PublishModePanel({
         {mode === "schedule" && (
           <div className="space-y-3">
             <div>
-              <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                 Date &amp; time
               </label>
               <div className="relative">
@@ -194,12 +192,14 @@ export function PublishModePanel({
                   value={scheduledAt}
                   onChange={(e) => onScheduledAtChange(e.target.value)}
                   min={new Date().toISOString().slice(0, 16)}
-                  className="w-full rounded-md px-3 py-2 text-sm font-mono bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] pr-10"
+                  className="w-full rounded-md border px-3 py-2 pr-10 text-sm font-mono outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                  style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
                 />
                 <button
                   type="button"
                   onClick={() => setCalendarOpen(!calendarOpen)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded hover:bg-[#22222a] text-[#8a8a93] hover:text-[#f4f4f5] transition-colors"
+                  className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded transition-colors"
+                  style={{ color: "var(--dmuted)" }}
                 >
                   <Calendar className="w-4 h-4" />
                 </button>
@@ -213,10 +213,10 @@ export function PublishModePanel({
               </div>
             </div>
             <div>
-              <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                 Timezone
               </label>
-              <select className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]">
+              <select className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]" style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}>
                 <option>America/Los_Angeles (PDT)</option>
                 <option>America/New_York (EDT)</option>
                 <option>UTC</option>
@@ -228,13 +228,14 @@ export function PublishModePanel({
         {mode === "queue" && (
           <div className="space-y-3">
             <div>
-              <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                 Add to queue
               </label>
               <select
                 value={queueId}
                 onChange={(e) => onQueueIdChange(e.target.value)}
-                className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
+                className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
               >
                 <option value="">Select a queue...</option>
                 {queues.map((q) => (
@@ -243,11 +244,11 @@ export function PublishModePanel({
               </select>
             </div>
             {nextSlot && (
-              <div className="flex gap-2.5 p-3 rounded-lg bg-[#17171a]/60 border border-[#22222a]">
-                <div className="w-1 rounded-full bg-teal-500 flex-shrink-0" />
-                <div className="text-[12.5px] leading-relaxed text-[#8a8a93]">
+              <div className="flex gap-2.5 rounded-lg border p-3" style={{ background: "color-mix(in srgb, var(--surface2) 70%, transparent)", borderColor: "var(--dborder)" }}>
+                <div className="w-1 flex-shrink-0 rounded-full" style={{ background: "var(--primary)" }} />
+                <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
                   Will publish at the next open slot —{" "}
-                  <span className="text-[#f4f4f5] font-mono text-[11.5px]">{nextSlot}</span>
+                  <span className="font-mono text-[11.5px]" style={{ color: "var(--dtext)" }}>{nextSlot}</span>
                 </div>
               </div>
             )}
@@ -255,9 +256,9 @@ export function PublishModePanel({
         )}
 
         {mode === "draft" && (
-          <div className="flex gap-2.5 p-3 rounded-lg bg-[#17171a]/60 border border-[#22222a]">
-            <div className="w-1 rounded-full bg-[#55555c] flex-shrink-0" />
-            <div className="text-[12.5px] leading-relaxed text-[#8a8a93]">
+          <div className="flex gap-2.5 rounded-lg border p-3" style={{ background: "color-mix(in srgb, var(--surface2) 70%, transparent)", borderColor: "var(--dborder)" }}>
+            <div className="w-1 flex-shrink-0 rounded-full" style={{ background: "var(--dmuted2)" }} />
+            <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
               Saves without publishing. You can edit and send it later.
             </div>
           </div>

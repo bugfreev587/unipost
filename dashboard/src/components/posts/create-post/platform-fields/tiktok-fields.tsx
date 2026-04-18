@@ -11,13 +11,14 @@ export function TikTokFields({ fields, onChange }: TikTokFieldsProps) {
   return (
     <div className="grid grid-cols-2 gap-3">
       <div>
-        <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+        <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
           Privacy
         </label>
         <select
           value={fields.privacy}
           onChange={(e) => onChange({ privacy: e.target.value as "public" | "friends" | "private" })}
-          className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
+          className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+          style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
         >
           <option value="public">Public</option>
           <option value="friends">Friends</option>
@@ -25,13 +26,14 @@ export function TikTokFields({ fields, onChange }: TikTokFieldsProps) {
         </select>
       </div>
       <div>
-        <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+        <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
           Interactions
         </label>
         <select
           value={fields.interactions}
           onChange={(e) => onChange({ interactions: e.target.value as "allow_all" | "comments_only" | "disable_all" })}
-          className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
+          className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+          style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
         >
           <option value="allow_all">Allow comments, duet, stitch</option>
           <option value="comments_only">Comments only</option>

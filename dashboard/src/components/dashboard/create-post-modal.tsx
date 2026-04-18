@@ -41,14 +41,14 @@ const CSS = `.cpm-overlay{position:fixed;inset:0;background:var(--overlay);z-ind
 .cpm-account-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cpm-publish{margin-top:auto}
 .cpm-validation{margin-bottom:14px;padding:10px 12px;border-radius:8px;border:1px solid}
-.cpm-validation.errors{background:#261013;border-color:#7f1d1d}
-.cpm-validation.warnings{background:#2d1d0f;border-color:#92400e}
+.cpm-validation.errors{background:color-mix(in srgb,var(--danger) 12%,var(--surface-raised));border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
+.cpm-validation.warnings{background:color-mix(in srgb,var(--warning) 12%,var(--surface-raised));border-color:color-mix(in srgb,var(--warning) 45%,transparent)}
 .cpm-validation-title{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
-.cpm-validation.errors .cpm-validation-title{color:#fca5a5}
-.cpm-validation.warnings .cpm-validation-title{color:#fcd34d}
+.cpm-validation.errors .cpm-validation-title{color:color-mix(in srgb,var(--danger) 45%,white)}
+.cpm-validation.warnings .cpm-validation-title{color:color-mix(in srgb,var(--warning) 48%,white)}
 .cpm-validation-item{font-size:12px;line-height:1.5}
-.cpm-validation.errors .cpm-validation-item{color:#fee2e2}
-.cpm-validation.warnings .cpm-validation-item{color:#fef3c7}
+.cpm-validation.errors .cpm-validation-item{color:color-mix(in srgb,var(--danger) 26%,white)}
+.cpm-validation.warnings .cpm-validation-item{color:color-mix(in srgb,var(--warning) 28%,white)}
 .cpm-publish-tabs{display:flex;gap:2px;margin-bottom:12px;background:var(--surface1);border-radius:6px;padding:2px}
 .cpm-publish-tab{flex:1;padding:6px;text-align:center;font-size:11.5px;font-weight:600;border-radius:5px;cursor:pointer;color:var(--dmuted);transition:all .1s;border:none;background:none;font-family:inherit}
 .cpm-publish-tab.active{background:var(--surface2);color:var(--dtext)}
@@ -68,14 +68,6 @@ interface Props {
   onCreated: () => void;
   editDraft?: SocialPost | null;
 }
-
-type CreatePostPayload = {
-  caption?: string;
-  account_ids?: string[];
-  platform_posts?: Array<{ account_id: string; caption: string }>;
-  scheduled_at?: string;
-  status?: "draft";
-};
 
 export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCreated, editDraft }: Props) {
   const [caption, setCaption] = useState(editDraft?.caption || "");

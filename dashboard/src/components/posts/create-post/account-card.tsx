@@ -15,6 +15,7 @@ interface AccountCardProps {
 export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "#888";
   const label = PLATFORM_LABELS[account.platform] || account.platform;
+  const selectedBackground = "linear-gradient(180deg, color-mix(in srgb, var(--primary) 14%, var(--surface-raised)) 0%, color-mix(in srgb, var(--primary) 4%, var(--surface-raised)) 100%)";
 
   return (
     <button
@@ -22,26 +23,27 @@ export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
       onClick={() => onToggle(account.id)}
       className={cn(
         "relative rounded-lg p-3 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
-        "bg-[#17171a] border",
+        "border",
         selected
-          ? "border-[#10b981] shadow-[0_0_0_1px_#10b981,0_0_24px_-4px_rgba(16,185,129,0.15)]"
-          : "border-[#22222a] hover:border-[#2e2e38] hover:bg-[#1c1c20]"
+          ? "shadow-[0_0_0_1px_color-mix(in_srgb,var(--primary)_70%,transparent),0_0_24px_-4px_color-mix(in_srgb,var(--primary)_18%,transparent)]"
+          : "hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--border-strong)_90%,transparent)]"
       )}
       style={
         selected
-          ? { background: "linear-gradient(180deg, rgba(16,185,129,0.15) 0%, rgba(16,185,129,0.03) 100%)" }
-          : undefined
+          ? { background: selectedBackground, borderColor: "var(--primary)" }
+          : { background: "var(--surface-raised)", borderColor: "var(--border-soft)" }
       }
     >
       {/* Check mark */}
       <div
         className={cn(
-          "absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[#10b981] flex items-center justify-center",
+          "absolute top-1.5 right-1.5 flex h-4 w-4 items-center justify-center rounded-full",
           "transition-all duration-[160ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
           selected ? "opacity-100 scale-100" : "opacity-0 scale-[0.6]"
         )}
+        style={{ background: "var(--primary)" }}
       >
-        <Check className="w-[9px] h-[9px] text-[#0a0a0b]" strokeWidth={3} />
+        <Check className="h-[9px] w-[9px]" style={{ color: "var(--primary-foreground)" }} strokeWidth={3} />
       </div>
 
       {/* Platform icon + label */}
@@ -52,13 +54,13 @@ export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
         >
           <PlatformIcon platform={account.platform} size={11} />
         </div>
-        <span className="text-[10px] uppercase tracking-wider text-[#55555c] font-mono">
+        <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
           {label}
         </span>
       </div>
 
       {/* Handle */}
-      <div className="text-[12px] truncate text-[#f4f4f5]">
+      <div className="truncate text-[12px]" style={{ color: "var(--dtext)" }}>
         {account.account_name || account.external_user_email || account.platform}
       </div>
     </button>

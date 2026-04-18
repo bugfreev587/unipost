@@ -62,25 +62,26 @@ export function PlatformEditorBlock({
   return (
     <div
       className={cn(
-        "rounded-xl border bg-[#17171a]/50 overflow-hidden animate-[slideIn_260ms_cubic-bezier(0.16,1,0.3,1)_backwards]",
+        "overflow-hidden rounded-xl border animate-[slideIn_260ms_cubic-bezier(0.16,1,0.3,1)_backwards]",
         hasErrors
-          ? "border-[#ef4444]/70 shadow-[0_0_0_1px_rgba(239,68,68,0.28)]"
+          ? "shadow-[0_0_0_1px_color-mix(in_srgb,var(--danger)_28%,transparent)]"
           : hasWarnings
-            ? "border-[#f59e0b]/60 shadow-[0_0_0_1px_rgba(245,158,11,0.24)]"
-            : "border-[#22222a]"
+            ? "shadow-[0_0_0_1px_color-mix(in_srgb,var(--warning)_24%,transparent)]"
+            : ""
       )}
-      style={{ animationDelay: `${index * 40}ms` }}
+      style={{
+        animationDelay: `${index * 40}ms`,
+        background: "color-mix(in srgb, var(--surface-raised) 78%, var(--surface2))",
+        borderColor: hasErrors ? "color-mix(in srgb, var(--danger) 70%, transparent)" : hasWarnings ? "color-mix(in srgb, var(--warning) 60%, transparent)" : "var(--dborder)",
+      }}
     >
       {/* Header */}
       <div
-        className={cn(
-          "flex items-center justify-between px-4 py-3 border-b bg-[#17171a]/60",
-          hasErrors
-            ? "border-b-[#ef4444]/40"
-            : hasWarnings
-              ? "border-b-[#f59e0b]/35"
-              : "border-b-[#22222a]"
-        )}
+        className="flex items-center justify-between border-b px-4 py-3"
+        style={{
+          background: "color-mix(in srgb, var(--surface2) 62%, var(--surface-raised))",
+          borderBottomColor: hasErrors ? "color-mix(in srgb, var(--danger) 40%, transparent)" : hasWarnings ? "color-mix(in srgb, var(--warning) 35%, transparent)" : "var(--dborder)",
+        }}
       >
         <div className="flex items-center gap-2.5">
           <div
@@ -90,18 +91,18 @@ export function PlatformEditorBlock({
             <PlatformIcon platform={account.platform} size={11} />
           </div>
           <div>
-            <div className="text-[13px] font-medium text-[#f4f4f5]">{label}</div>
+            <div className="text-[13px] font-medium" style={{ color: "var(--dtext)" }}>{label}</div>
             <div className="flex items-center gap-2 flex-wrap">
-              <div className="text-[11px] text-[#55555c] font-mono">
+              <div className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
                 {account.account_name || account.external_user_email || account.platform}
               </div>
               {hasErrors && (
-                <span className="text-[10px] font-mono uppercase tracking-[0.12em] text-[#fca5a5]">
+                <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "color-mix(in srgb, var(--danger) 45%, white)" }}>
                   {errorIssues.length} issue{errorIssues.length === 1 ? "" : "s"}
                 </span>
               )}
               {hasWarnings && (
-                <span className="text-[10px] font-mono uppercase tracking-[0.12em] text-[#fcd34d]">
+                <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "color-mix(in srgb, var(--warning) 70%, white)" }}>
                   {warningIssues.length} warning{warningIssues.length === 1 ? "" : "s"}
                 </span>
               )}
@@ -110,7 +111,8 @@ export function PlatformEditorBlock({
         </div>
         <button
           type="button"
-          className="text-[11px] text-[#55555c] hover:text-[#f4f4f5] font-mono transition-colors"
+          className="font-mono text-[11px] transition-colors"
+          style={{ color: "var(--dmuted2)" }}
           onClick={onToggleCollapse}
         >
           toggle
@@ -122,18 +124,15 @@ export function PlatformEditorBlock({
         <div className="p-4 space-y-3">
           {issues.length > 0 && (
             <div
-              className={cn(
-                "rounded-lg border px-3 py-2.5",
-                hasErrors
-                  ? "border-[#ef4444]/35 bg-[#2a1114]"
-                  : "border-[#f59e0b]/35 bg-[#2d2110]"
-              )}
+              className="rounded-lg border px-3 py-2.5"
+              style={{
+                borderColor: hasErrors ? "color-mix(in srgb, var(--danger) 35%, transparent)" : "color-mix(in srgb, var(--warning) 35%, transparent)",
+                background: hasErrors ? "color-mix(in srgb, var(--danger) 10%, var(--surface-raised))" : "color-mix(in srgb, var(--warning) 10%, var(--surface-raised))",
+              }}
             >
               <div
-                className={cn(
-                  "text-[11px] font-mono uppercase tracking-[0.12em] mb-1.5",
-                  hasErrors ? "text-[#fca5a5]" : "text-[#fcd34d]"
-                )}
+                className="mb-1.5 font-mono text-[11px] uppercase tracking-[0.12em]"
+                style={{ color: hasErrors ? "color-mix(in srgb, var(--danger) 45%, white)" : "color-mix(in srgb, var(--warning) 70%, white)" }}
               >
                 {hasErrors ? "Needs attention" : "Review before publish"}
               </div>
@@ -141,10 +140,8 @@ export function PlatformEditorBlock({
                 {issues.slice(0, 3).map((issue, issueIndex) => (
                   <div
                     key={`${issue.code}-${issue.field}-${issueIndex}`}
-                    className={cn(
-                      "text-[12px] leading-relaxed",
-                      issue.severity === "error" ? "text-[#fecaca]" : "text-[#fde68a]"
-                    )}
+                    className="text-[12px] leading-relaxed"
+                    style={{ color: issue.severity === "error" ? "color-mix(in srgb, var(--danger) 26%, white)" : "color-mix(in srgb, var(--warning) 28%, white)" }}
                   >
                     {issue.message}
                   </div>
@@ -156,47 +153,33 @@ export function PlatformEditorBlock({
           {/* Caption */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium">
+              <label className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                 Custom caption
               </label>
               <span
-                className={cn(
-                  "text-[11px] font-mono",
-                  charCount.status === "over"
-                    ? "text-[#ef4444]"
-                    : charCount.status === "warning"
-                      ? "text-[#f59e0b]"
-                      : "text-[#55555c]"
-                )}
+                className="font-mono text-[11px]"
+                style={{ color: charCount.status === "over" ? "var(--danger)" : charCount.status === "warning" ? "var(--warning)" : "var(--dmuted2)" }}
               >
                 {charCount.count} / {limit}
               </span>
             </div>
-	            <textarea
+            <textarea
               rows={3}
               placeholder="Leave blank to use main content"
               value={override.caption || ""}
               onChange={(e) => onCaptionChange(e.target.value)}
-	              className={cn(
-	                "w-full rounded-md px-3 py-2 text-sm resize-none leading-relaxed",
-	                "bg-[#0a0a0b] border text-[#f4f4f5] outline-none",
-	                "transition-[border-color] duration-[140ms]",
-	                "focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
-	                "placeholder:text-[#55555c]",
-	                hasCaptionError
-	                  ? "border-[#ef4444]"
-	                  : hasWarnings
-	                    ? "border-[#f59e0b]"
-	                    : charCount.status === "over"
-	                  ? "border-[#ef4444]"
-	                  : "border-[#22222a]"
-	              )}
-	            />
-	            {captionMessage && (
-	              <p className="mt-1.5 text-[11px] leading-relaxed text-[#fca5a5]">
-	                {captionMessage}
-	              </p>
-	            )}
+              className="w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
+              style={{
+                background: "var(--surface1)",
+                color: "var(--dtext)",
+                borderColor: hasCaptionError || charCount.status === "over" ? "var(--danger)" : hasWarnings ? "var(--warning)" : "var(--dborder)",
+              }}
+            />
+            {captionMessage && (
+              <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "color-mix(in srgb, var(--danger) 45%, white)" }}>
+                {captionMessage}
+              </p>
+            )}
           </div>
 
           {/* Platform-specific fields */}

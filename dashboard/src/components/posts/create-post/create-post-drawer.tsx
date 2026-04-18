@@ -11,7 +11,6 @@ import { PublishModePanel } from "./publish-mode-panel";
 import {
   useCreatePostForm,
   PRIMARY_BUTTON_LABELS,
-  type PublishMode,
   type MediaItem,
 } from "./use-create-post-form";
 import { ChevronDown } from "lucide-react";
@@ -23,6 +22,7 @@ import {
   listProfiles,
   listSocialAccounts,
   validateSocialPost,
+  type CreateSocialPostPayload,
   type SocialPostValidationIssue,
   type SocialPostValidationResult,
 } from "@/lib/api";
@@ -46,10 +46,12 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
   return (
     <div
       className={cn(
-        "relative w-[88px] h-[88px] rounded-lg overflow-hidden bg-[#0a0a0b] flex-shrink-0 group/thumb",
-        "border",
-        failed ? "border-[#ef4444]" : ready ? "border-[#2e2e38]" : "border-[#10b981]/60"
+        "relative h-[88px] w-[88px] flex-shrink-0 overflow-hidden rounded-lg border group/thumb"
       )}
+      style={{
+        background: "var(--surface1)",
+        borderColor: failed ? "var(--danger)" : ready ? "var(--dborder2)" : "color-mix(in srgb, var(--primary) 60%, transparent)",
+      }}
       title={
         failed
           ? `Upload failed: ${item.error}`
@@ -72,8 +74,8 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
 
       {/* Upload-in-progress overlay */}
       {uploading && (
-        <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center text-[10px] font-mono text-[#10b981]">
-          <div className="w-8 h-8 rounded-full border-2 border-[#10b981]/30 border-t-[#10b981] animate-spin mb-1" />
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/45 font-mono text-[10px]" style={{ color: "var(--primary)" }}>
+          <div className="mb-1 h-8 w-8 animate-spin rounded-full border-2" style={{ borderColor: "color-mix(in srgb, var(--primary) 28%, transparent)", borderTopColor: "var(--primary)" }} />
           {item.progress}%
         </div>
       )}
@@ -83,9 +85,10 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onRetry?.(); }}
-          className="absolute inset-0 bg-black/65 flex flex-col items-center justify-center text-[10px] text-[#ef4444] hover:text-[#fca5a5] transition-colors"
+          className="absolute inset-0 flex flex-col items-center justify-center bg-black/55 text-[10px] transition-colors"
+          style={{ color: "var(--danger)" }}
         >
-          <div className="w-6 h-6 rounded-full border-2 border-[#ef4444] flex items-center justify-center mb-1 text-sm font-bold">!</div>
+          <div className="mb-1 flex h-6 w-6 items-center justify-center rounded-full border-2 text-sm font-bold" style={{ borderColor: "var(--danger)" }}>!</div>
           Retry
         </button>
       )}
@@ -97,7 +100,7 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
       >
         &times;
       </button>
-      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[9px] text-[#ccc] px-1.5 py-0.5 truncate font-mono">
+      <div className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1.5 py-0.5 font-mono text-[9px]" style={{ color: "rgb(229 231 235)" }}>
         {item.file.name}
       </div>
     </div>
@@ -112,7 +115,7 @@ function MediaThumbnails({ items, onRemove, onAdd, onRetry }: {
 }) {
   return (
     <section className="mt-6">
-      <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-2.5">
+      <label className="mb-2.5 block text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
         Media
       </label>
       <div className="flex gap-2.5 flex-wrap">
@@ -124,9 +127,9 @@ function MediaThumbnails({ items, onRemove, onAdd, onRetry }: {
             onRetry={() => onRetry(i)}
           />
         ))}
-        <label className="group flex flex-col items-center justify-center w-[88px] h-[88px] rounded-lg border border-dashed border-[#2e2e38] hover:border-[#8a8a93] bg-[#0a0a0b]/40 cursor-pointer transition-colors flex-shrink-0">
-          <Plus className="w-4 h-4 text-[#8a8a93] group-hover:text-[#f4f4f5] transition-colors" />
-          <div className="text-[9px] text-[#55555c] group-hover:text-[#8a8a93] mt-1 text-center leading-tight transition-colors">
+        <label className="group flex h-[88px] w-[88px] flex-shrink-0 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed transition-colors" style={{ borderColor: "var(--dborder2)", background: "color-mix(in srgb, var(--surface1) 60%, transparent)" }}>
+          <Plus className="h-4 w-4 transition-colors" style={{ color: "var(--dmuted)" }} />
+          <div className="mt-1 text-center leading-tight text-[9px] transition-colors" style={{ color: "var(--dmuted2)" }}>
             Add media
           </div>
           <input
@@ -202,8 +205,8 @@ function ValidationPanel({
   return (
     <section className="mb-5 space-y-3">
       {errors.length > 0 && (
-        <div className="rounded-xl border border-[#7f1d1d] bg-[#261013] px-4 py-3.5">
-          <div className="flex items-center gap-2 text-[#fecaca] mb-2">
+        <div className="rounded-xl border px-4 py-3.5" style={{ borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)", background: "color-mix(in srgb, var(--danger) 12%, var(--surface-raised))" }}>
+          <div className="mb-2 flex items-center gap-2" style={{ color: "color-mix(in srgb, var(--danger) 26%, white)" }}>
             <AlertTriangle className="w-4 h-4" />
             <div className="text-[12px] font-mono uppercase tracking-[0.12em]">
               {errors.length} blocking issue{errors.length === 1 ? "" : "s"}
@@ -215,12 +218,13 @@ function ValidationPanel({
                 key={`${issue.code}-${issue.field}-${issue.account_id || "global"}-${index}`}
                 type="button"
                 onClick={() => onSelectIssue(issue)}
-                className="w-full text-left rounded-lg border border-[#7f1d1d]/60 bg-[#331418] px-3 py-2.5 hover:border-[#b91c1c] transition-colors"
+                className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors"
+                style={{ borderColor: "color-mix(in srgb, var(--danger) 35%, transparent)", background: "color-mix(in srgb, var(--danger) 16%, var(--surface-raised))" }}
               >
-                <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-[#fca5a5] mb-1">
+                <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.12em]" style={{ color: "color-mix(in srgb, var(--danger) 45%, white)" }}>
                   {issueTargetLabel(issue, accounts)}
                 </div>
-                <div className="text-[13px] text-[#fee2e2] leading-relaxed">{issueSummary(issue)}</div>
+                <div className="text-[13px] leading-relaxed" style={{ color: "color-mix(in srgb, var(--danger) 26%, white)" }}>{issueSummary(issue)}</div>
               </button>
             ))}
           </div>
@@ -228,8 +232,8 @@ function ValidationPanel({
       )}
 
       {warnings.length > 0 && (
-        <div className="rounded-xl border border-[#92400e] bg-[#2d1d0f] px-4 py-3.5">
-          <div className="flex items-center gap-2 text-[#fde68a] mb-2">
+        <div className="rounded-xl border px-4 py-3.5" style={{ borderColor: "color-mix(in srgb, var(--warning) 45%, transparent)", background: "color-mix(in srgb, var(--warning) 12%, var(--surface-raised))" }}>
+          <div className="mb-2 flex items-center gap-2" style={{ color: "color-mix(in srgb, var(--warning) 32%, white)" }}>
             <AlertTriangle className="w-4 h-4" />
             <div className="text-[12px] font-mono uppercase tracking-[0.12em]">
               {warnings.length} warning{warnings.length === 1 ? "" : "s"}
@@ -241,12 +245,13 @@ function ValidationPanel({
                 key={`${issue.code}-${issue.field}-${issue.account_id || "global"}-${index}`}
                 type="button"
                 onClick={() => onSelectIssue(issue)}
-                className="w-full text-left rounded-lg border border-[#92400e]/55 bg-[#382411] px-3 py-2.5 hover:border-[#d97706] transition-colors"
+                className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors"
+                style={{ borderColor: "color-mix(in srgb, var(--warning) 35%, transparent)", background: "color-mix(in srgb, var(--warning) 16%, var(--surface-raised))" }}
               >
-                <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-[#fcd34d] mb-1">
+                <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.12em]" style={{ color: "color-mix(in srgb, var(--warning) 48%, white)" }}>
                   {issueTargetLabel(issue, accounts)}
                 </div>
-                <div className="text-[13px] text-[#fef3c7] leading-relaxed">{issueSummary(issue)}</div>
+                <div className="text-[13px] leading-relaxed" style={{ color: "color-mix(in srgb, var(--warning) 28%, white)" }}>{issueSummary(issue)}</div>
               </button>
             ))}
           </div>
@@ -290,7 +295,7 @@ export function CreatePostDrawer({
 
   const form = useCreatePostForm(profileAccounts);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
-  const [queues, setQueues] = useState<Array<{ id: string; name: string }>>([]);
+  const [queues] = useState<Array<{ id: string; name: string }>>([]);
   const [queuesLoaded, setQueuesLoaded] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<SocialPostValidationResult | null>(null);
@@ -483,13 +488,13 @@ export function CreatePostDrawer({
     }
   }
 
-  async function runValidation(payload: ReturnType<typeof form.buildPayload>) {
+  async function runValidation(payload: CreateSocialPostPayload) {
     const token = await getToken();
     if (!token) return { ok: false as const, tokenMissing: true as const };
 
     setIsValidating(true);
     try {
-      const res = await validateSocialPost(token, workspaceId, payload as any);
+      const res = await validateSocialPost(token, payload);
       const result = res.data;
       setValidationResult(result);
       setValidationChecked(true);
@@ -571,7 +576,7 @@ export function CreatePostDrawer({
       form.setSubmitting(true);
       const token = validation.token;
       if (!token) return;
-      await createSocialPost(token, workspaceId, payload as any);
+      await createSocialPost(token, workspaceId, payload);
       onCreated();
       onOpenChange(false);
     } catch (err) {
@@ -612,8 +617,8 @@ export function CreatePostDrawer({
       const token = await getToken();
       if (!token) return;
       const payload = form.buildPayload();
-      (payload as any).publish_mode = "draft";
-      await createSocialPost(token, workspaceId, payload as any);
+      payload.status = "draft";
+      await createSocialPost(token, workspaceId, payload);
       onCreated();
       onOpenChange(false);
     } catch (err) {
@@ -696,22 +701,24 @@ export function CreatePostDrawer({
     <Sheet open={open} onOpenChange={handleOpenChange} modal>
       <SheetContent
         showCloseButton={false}
-        className="w-[75vw] bg-[#111113] border-l border-[#22222a]"
+        className="w-[75vw] border-l"
+        style={{ background: "var(--surface-raised)", borderLeftColor: "var(--dborder)" }}
       >
         {/* Header */}
-        <header className="flex items-start justify-between px-8 pt-7 pb-5 border-b border-[#22222a] flex-shrink-0">
+        <header className="flex flex-shrink-0 items-start justify-between border-b px-8 pb-5 pt-7" style={{ borderBottomColor: "var(--dborder)" }}>
           <div>
-            <h2 className="font-serif text-3xl tracking-tight leading-none mb-1.5 text-[#f4f4f5]">
+            <h2 className="mb-1.5 font-serif text-3xl leading-none tracking-tight" style={{ color: "var(--dtext)" }}>
               Create post
             </h2>
-            <p className="text-[#8a8a93] text-sm">
+            <p className="text-sm" style={{ color: "var(--dmuted)" }}>
               Compose once, publish to any platform you&apos;ve connected.
             </p>
           </div>
           <button
             type="button"
             onClick={attemptClose}
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-[#8a8a93] hover:text-[#f4f4f5] hover:bg-[#17171a] transition-colors"
+            className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+            style={{ color: "var(--dmuted)" }}
           >
             <svg width="16" height="16" viewBox="0 0 15 15" fill="none">
               <path d="M11.25 3.75l-7.5 7.5M3.75 3.75l7.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -722,14 +729,14 @@ export function CreatePostDrawer({
         {/* Body: two columns */}
         <div className="flex-1 flex min-h-0">
           {/* LEFT: Content + per-platform editors (3:2 ratio) */}
-          <div className="flex-[3] overflow-y-auto px-8 py-7 border-r border-[#22222a] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2e2e38] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-[#3a3a46]">
+          <div className="flex-[3] overflow-y-auto border-r px-8 py-7" style={{ borderRightColor: "var(--dborder)" }}>
             {/* Main content */}
             <section>
               <div className="flex items-center justify-between mb-2.5">
-                <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium">
+                <label className="text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                   Content
                 </label>
-                <span className="text-[11px] text-[#55555c] font-mono">optional</span>
+                <span className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>optional</span>
               </div>
               <textarea
                 ref={mainContentRef}
@@ -738,13 +745,14 @@ export function CreatePostDrawer({
                 value={form.mainContent}
                 onChange={(e) => form.setMainContent(e.target.value)}
                 autoFocus
-                className="w-full rounded-lg px-4 py-3 text-sm resize-none leading-relaxed bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]"
+                className="w-full resize-none rounded-lg border px-4 py-3 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
               />
               <div className="flex items-center justify-between mt-2">
-                <p className="text-[11px] text-[#55555c]">
+                <p className="text-[11px]" style={{ color: "var(--dmuted2)" }}>
                   Used as the default for every selected platform unless overridden below.
                 </p>
-                <span className="text-[11px] font-mono text-[#55555c]">
+                <span className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
                   {form.mainContent.length} chars
                 </span>
               </div>
@@ -768,10 +776,10 @@ export function CreatePostDrawer({
             {/* Per-platform overrides */}
             <section className="mt-8">
               <div className="flex items-center justify-between mb-3">
-                <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium">
+                <label className="text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                   Per-platform customization
                 </label>
-                <span className="text-[11px] text-[#55555c] font-mono">
+                <span className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
                   {form.selectedAccountIds.size} selected
                 </span>
               </div>
@@ -819,32 +827,33 @@ export function CreatePostDrawer({
           </div>
 
           {/* RIGHT: Profile + Connected Accounts + Post To + Publish */}
-          <aside className="flex-[2] overflow-y-auto px-6 py-7 bg-[#0a0a0b]/40 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2e2e38] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-[#3a3a46]">
+          <aside className="flex-[2] overflow-y-auto px-6 py-7" style={{ background: "color-mix(in srgb, var(--surface2) 45%, transparent)" }}>
 
             {/* 1. Profile selector */}
             {profiles.length > 0 && (
               <div className="mb-5">
-                <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-2">
+                <label className="mb-2 block text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                   Profile
                 </label>
                 <div className="relative">
                   <select
                     value={selectedProfileId}
                     onChange={(e) => setSelectedProfileId(e.target.value)}
-                    className="w-full rounded-lg px-3 py-2.5 pr-8 text-sm bg-[#17171a] border border-[#22222a] text-[#f4f4f5] outline-none appearance-none cursor-pointer transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
+                    className="w-full appearance-none rounded-lg border px-3 py-2.5 pr-8 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                    style={{ background: "var(--surface2)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
                   >
                     {profiles.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                   </select>
-                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#55555c] pointer-events-none" />
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: "var(--dmuted2)" }} />
                 </div>
               </div>
             )}
 
             {/* 2. Connected Accounts */}
             <div className="mb-5">
-              <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium block mb-2">
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                 Connected accounts
               </label>
               <ConnectedAccountsGrid
@@ -857,10 +866,10 @@ export function CreatePostDrawer({
             {/* 3. Post To */}
             <div className="mb-5">
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs uppercase tracking-wider text-[#55555c] font-medium">
+                <label className="text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
                   Post to
                 </label>
-                <span className="text-[11px] text-[#55555c] font-mono">
+                <span className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
                   {form.selectedAccountIds.size} selected
                 </span>
               </div>
@@ -873,7 +882,7 @@ export function CreatePostDrawer({
             </div>
 
             {/* Divider */}
-            <div className="my-5 border-t border-[#22222a]" />
+            <div className="my-5 border-t" style={{ borderTopColor: "var(--dborder)" }} />
 
             <ValidationPanel
               errors={validationResult?.errors || []}
@@ -925,25 +934,26 @@ export function CreatePostDrawer({
         </div>
 
         {/* Footer */}
-        <footer className="flex items-center justify-between px-8 py-4 border-t border-[#22222a] bg-[#111113] flex-shrink-0">
-          <div className="text-[11px] text-[#55555c] font-mono flex items-center gap-2">
-            <kbd className="px-1.5 py-0.5 rounded border border-[#22222a] bg-[#17171a]">Esc</kbd>
+        <footer className="flex flex-shrink-0 items-center justify-between border-t px-8 py-4" style={{ borderTopColor: "var(--dborder)", background: "var(--surface-raised)" }}>
+          <div className="flex items-center gap-2 font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
+            <kbd className="rounded border px-1.5 py-0.5" style={{ borderColor: "var(--dborder)", background: "var(--surface2)" }}>Esc</kbd>
             <span>to close</span>
             <span className="mx-1">&middot;</span>
-            <kbd className="px-1.5 py-0.5 rounded border border-[#22222a] bg-[#17171a]">&#8984;</kbd>
-            <kbd className="px-1.5 py-0.5 rounded border border-[#22222a] bg-[#17171a]">&#8629;</kbd>
+            <kbd className="rounded border px-1.5 py-0.5" style={{ borderColor: "var(--dborder)", background: "var(--surface2)" }}>&#8984;</kbd>
+            <kbd className="rounded border px-1.5 py-0.5" style={{ borderColor: "var(--dborder)", background: "var(--surface2)" }}>&#8629;</kbd>
             <span>to publish</span>
           </div>
           <div className="flex items-center gap-2.5">
             {disabledReason && (
-              <span className="text-[11px] text-[#8a8a93] max-w-[260px] text-right leading-snug">
+              <span className="max-w-[260px] text-right text-[11px] leading-snug" style={{ color: "var(--dmuted)" }}>
                 {disabledReason}
               </span>
             )}
             <button
               type="button"
               onClick={attemptClose}
-              className="px-4 py-2 text-sm text-[#8a8a93] hover:text-[#f4f4f5] rounded-lg transition-colors"
+              className="rounded-lg px-4 py-2 text-sm transition-colors"
+              style={{ color: "var(--dmuted)" }}
             >
               Cancel
             </button>
@@ -952,7 +962,8 @@ export function CreatePostDrawer({
                 type="button"
                 onClick={handleSaveDraft}
                 disabled={form.submitting}
-                className="px-4 py-2 text-sm text-[#f4f4f5] bg-[#17171a] hover:bg-[#1c1c20] border border-[#22222a] rounded-lg transition-colors disabled:opacity-50"
+                className="rounded-lg border px-4 py-2 text-sm transition-colors disabled:opacity-50"
+                style={{ color: "var(--dtext)", background: "var(--surface2)", borderColor: "var(--dborder)" }}
               >
                 Save draft
               </button>
@@ -964,10 +975,10 @@ export function CreatePostDrawer({
               title={disabledReason ?? undefined}
               className={cn(
                 "px-5 py-2 text-sm font-medium rounded-lg transition-colors",
-                "bg-[#10b981] hover:bg-emerald-400 text-black",
                 "shadow-[0_0_0_1px_rgba(16,185,129,0.4),0_8px_24px_-8px_rgba(16,185,129,0.4)]",
                 "disabled:opacity-50 disabled:cursor-not-allowed"
               )}
+              style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
             >
               {isValidating ? (
                 <span className="inline-flex items-center gap-2">
@@ -986,25 +997,27 @@ export function CreatePostDrawer({
               className="fixed inset-0 z-[60] bg-black/50"
               onClick={() => setShowDiscardConfirm(false)}
             />
-            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[61] bg-[#17171a] border border-[#22222a] rounded-xl p-6 w-[400px] shadow-2xl">
-              <h3 className="text-base font-medium text-[#f4f4f5] mb-2">
+            <div className="fixed left-1/2 top-1/2 z-[61] w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-xl border p-6 shadow-2xl" style={{ background: "var(--surface-raised)", borderColor: "var(--dborder)" }}>
+              <h3 className="mb-2 text-base font-medium" style={{ color: "var(--dtext)" }}>
                 Discard unsaved changes?
               </h3>
-              <p className="text-sm text-[#8a8a93] mb-6">
+              <p className="mb-6 text-sm" style={{ color: "var(--dmuted)" }}>
                 You have unsaved content that will be lost if you close this drawer.
               </p>
               <div className="flex justify-end gap-2.5">
                 <button
                   type="button"
                   onClick={() => setShowDiscardConfirm(false)}
-                  className="px-4 py-2 text-sm text-[#8a8a93] hover:text-[#f4f4f5] rounded-lg transition-colors"
+                  className="rounded-lg px-4 py-2 text-sm transition-colors"
+                  style={{ color: "var(--dmuted)" }}
                 >
                   Keep editing
                 </button>
                 <button
                   type="button"
                   onClick={confirmDiscard}
-                  className="px-4 py-2 text-sm font-medium text-white bg-[#ef4444] hover:bg-red-400 rounded-lg transition-colors"
+                  className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors"
+                  style={{ background: "var(--danger)" }}
                 >
                   Discard
                 </button>
