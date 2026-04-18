@@ -177,7 +177,7 @@ html.light{
   --docs-tech-text-soft: #d6d9e5;
   --docs-tech-muted: #9aa0b5;
   --docs-tech-chip: rgba(255,255,255,.06);
-  --docs-code-plain: #1e293b;
+  --docs-code-plain: #d7dfec;
   --docs-code-comment: #8f96ad;
   --docs-code-string: #8fd4ff;
   --docs-code-keyword: #c9b0ff;
