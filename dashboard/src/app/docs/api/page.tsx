@@ -40,7 +40,7 @@ export default function ApiReferenceLandingPage() {
       <p>Preview links are designed for review and collaboration flows. They let a human inspect the platform-specific output before the final publish step.</p>
 
       <h2 id="media">Media</h2>
-      <p>Use the media library when you want UniPost to manage upload references and resolve media IDs server-side instead of depending on public URLs.</p>
+      <p>Use the media library when you are starting from a local image or video file. The flow is: call <code>POST /v1/media</code>, upload the bytes to the returned <code>upload_url</code>, then publish with <code>media_ids</code>. If your asset already has a public URL, you can skip that step and publish with <code>media_urls</code>.</p>
 
       <h2 id="analytics">Analytics</h2>
       <p>Analytics includes both per-post performance and workspace rollups, so you can power dashboards, summaries, and agent workflows from one layer.</p>
@@ -62,6 +62,11 @@ export default function ApiReferenceLandingPage() {
           <div className="docs-card-title">Detailed endpoint pages</div>
           <p>Existing detailed endpoint pages already live under the new shell. Start with the core publish path.</p>
           <p><Link href="/docs/api/posts/create">Open Create Post</Link></p>
+        </div>
+        <div className="docs-card">
+          <div className="docs-card-title">Media upload workflow</div>
+          <p>Reserve an upload, PUT the file to UniPost storage, then reuse the returned media_id during publish.</p>
+          <p><Link href="/docs/api/media">Open Media API</Link></p>
         </div>
         <div className="docs-card">
           <div className="docs-card-title">Accounts reference</div>

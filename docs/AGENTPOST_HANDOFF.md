@@ -211,7 +211,7 @@ This decision drives the gap analysis: a **Drafts API** (§6 P1 #6) is *not* nee
 |---|---|---|
 | A1 | The post creation endpoint accepts a single `caption` field that is sent as-is to every platform in `account_ids`. | |
 | A2 | There is no `platform_posts` / per-account-caption structure in the request body. | |
-| A3 | Media is supplied only as `media_urls` (publicly fetchable URLs). There is no multipart upload endpoint for binary media. | |
+| A3 | Media can be supplied as `media_urls` (publicly fetchable URLs) or as `media_ids` created via `POST /v1/media` + presigned upload. There is no raw multipart file body on `create_post`; local files go through the media library first. | |
 | A4 | The 6 supported platforms today are: Instagram, TikTok, YouTube, Threads, LinkedIn, Bluesky. X (Twitter), Facebook, Pinterest, Reddit are **not** supported. | |
 | A5 | There is one `UniPost account` per developer. All connected social accounts belong to that single owner. There is no notion of "App" or "end user" — i.e. no Stripe-Connect-style multi-tenant model. | |
 | A6 | API keys are user-scoped, generated in a dashboard, and passed as `Authorization: Bearer <key>` (or similar). There is no OAuth-for-third-party-apps flow. | |
@@ -371,7 +371,7 @@ POST /media (multipart/form-data; up to ~50 MB)
 → {media_id, url, expires_at}
 ```
 
-`media_id` (or `url`) can then be passed in a `media_urls` array of `create_post`. Removes the requirement that AgentPost users host their own image storage.
+`media_id` can then be passed in a `media_ids` array of `create_post` (or callers can keep using `media_urls` for already-hosted assets). Removes the requirement that AgentPost users host their own image storage.
 
 Optional: a multipart resumable variant for video uploads (TUS protocol) — only if real users complain.
 

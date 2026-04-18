@@ -64,7 +64,7 @@ export const instagram: PlatformConfig = {
   brandColor: "#E1306C",
   heroTitle: "Instagram API\nfor Developers",
   heroSub:
-    "Post photos, videos, and Reels to Instagram programmatically. UniPost handles Meta OAuth, long-lived token refresh, and business account verification automatically.",
+    "Post photos, videos, and Reels to Instagram programmatically. Use public asset URLs directly, or upload local files into UniPost's media library first and publish with media_ids. UniPost handles Meta OAuth, long-lived token refresh, and business account verification automatically.",
   contentTypes: ["Photos", "Videos", "Reels"],
   waitlist: true,
 
@@ -133,7 +133,7 @@ print(data['id'])  # post_abc123`,
     {
       num: "01",
       title: "Media Upload — Any URL",
-      desc: "Pass any publicly accessible image or video URL. UniPost downloads the file and uploads it to Meta's media servers automatically. No need to host files on a verified domain.",
+      desc: "Pass any publicly accessible image or video URL and UniPost uploads it to Meta's media servers automatically. For local files on disk, upload to the UniPost media library first, then publish with media_ids.",
       placeholderIcon: "🖼️",
       placeholderLabel: "API response showing successful Instagram image post",
     },
@@ -185,6 +185,7 @@ print(data['id'])  # post_abc123`,
   faq: [
     { q: "Do I need to apply for Meta developer access?", a: "In Quickstart mode, no. UniPost's approved Meta app handles everything. In White-label mode, you'll need your own Meta app with instagram_content_publish scope." },
     { q: "Does UniPost support Instagram personal accounts?", a: "No. Instagram's API only supports Business and Creator accounts. You can convert a personal account to a Business account in the Instagram app for free." },
+    { q: "How do I publish a local image or video file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "How long does setup take?", a: "In Quickstart mode: about 5 minutes. Connect your Instagram Business account via OAuth and you're ready to post via API." },
     { q: "What happens when my token expires?", a: "UniPost's background worker automatically refreshes Meta tokens before they expire (every 60 days). You don't need to do anything." },
     { q: "Can I post Instagram Stories?", a: "Not yet. Currently supports feed posts, videos, and Reels. Story support is on the roadmap." },
@@ -208,11 +209,11 @@ export const linkedin: PlatformConfig = {
   brandColor: "#0A66C2",
   heroTitle: "LinkedIn API\nfor Developers",
   heroSub:
-    "Publish text posts, images, and articles to LinkedIn programmatically. Perfect for SaaS products, content tools, and B2B marketing automation.",
-  contentTypes: ["Text Posts", "Images", "Articles"],
+    "Publish text posts, images, and videos to LinkedIn programmatically. Use public asset URLs directly, or upload local files into UniPost's media library first and publish with media_ids.",
+  contentTypes: ["Text Posts", "Images", "Videos"],
 
   capabilities: [
-    { icon: "📝", title: "Text & Image Posts", desc: "Post text with images to personal profiles and company pages via a single API call." },
+    { icon: "📝", title: "Text, Image & Video Posts", desc: "Post text, images, and single videos to personal profiles and company pages via a single API call." },
     { icon: "🏢", title: "Organization Pages", desc: "Post to personal profiles and company pages. Just include the right account_id." },
     { icon: "🔄", title: "Token Auto-refresh", desc: "LinkedIn tokens are refreshed automatically. Connect once, post forever." },
   ],
@@ -268,7 +269,7 @@ response = requests.post(
     {
       num: "02",
       title: "Image Attachments",
-      desc: "Attach single images to your LinkedIn posts. Pass any public URL — UniPost handles the upload to LinkedIn's media servers automatically.",
+      desc: "Attach images or videos to LinkedIn posts. Pass a public URL directly, or upload a local file into UniPost's media library first and publish with media_ids.",
       placeholderIcon: "🖼️",
       placeholderLabel: "LinkedIn image post API response",
     },
@@ -313,7 +314,8 @@ response = requests.post(
 
   faq: [
     { q: "Can I post to LinkedIn Company Pages?", a: "Yes, if your account has admin access to the page. Connect the page via OAuth and use its account_id in API calls." },
-    { q: "Does LinkedIn support video posts?", a: "Not yet in the current version. Text and image posts are fully supported. Video support is coming in a future update." },
+    { q: "Does LinkedIn support video posts?", a: "Yes. UniPost supports LinkedIn text, image, and single-video posts through the same POST /v1/social-posts endpoint." },
+    { q: "How do I publish a local image or video file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "Do I need LinkedIn developer access?", a: "In Quickstart mode, no — UniPost's credentials handle everything. In White-label mode, you'll need your own LinkedIn app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your LinkedIn account via OAuth and start posting immediately." },
     { q: "What happens when my token expires?", a: "UniPost automatically refreshes LinkedIn tokens in the background. You never need to re-authenticate." },
@@ -321,8 +323,8 @@ response = requests.post(
   ],
 
   seo: {
-    title: "LinkedIn API for Developers — Post Text & Images | UniPost",
-    description: "Publish text posts and images to LinkedIn programmatically. Perfect for B2B marketing automation. UniPost handles OAuth and token refresh. Free plan available.",
+    title: "LinkedIn API for Developers — Post Text, Images & Video | UniPost",
+    description: "Publish text posts, images, and videos to LinkedIn programmatically. Perfect for B2B marketing automation. UniPost handles OAuth and token refresh. Free plan available.",
     keywords: ["linkedin api for developers", "post to linkedin api", "linkedin content api", "linkedin api python", "linkedin api nodejs"],
   },
 };
@@ -337,12 +339,12 @@ export const twitter: PlatformConfig = {
   brandColor: "#1D9BF0",
   heroTitle: "Twitter API\nfor Developers",
   heroSub:
-    "Post tweets, threads, and images to X/Twitter programmatically. UniPost handles OAuth 2.0 PKCE, token refresh, and rate limits automatically.",
-  contentTypes: ["Tweets", "Threads", "Images"],
+    "Post tweets, threads, images, videos, and GIFs to X/Twitter programmatically. Use public asset URLs directly, or upload local files into UniPost's media library first and publish with media_ids.",
+  contentTypes: ["Tweets", "Threads", "Images", "Videos"],
 
   capabilities: [
     { icon: "💬", title: "Tweets & Threads", desc: "Post single tweets or multi-tweet threads using the thread_position field." },
-    { icon: "🖼️", title: "Image & Video", desc: "Attach images and videos to tweets. UniPost handles media upload to Twitter automatically." },
+    { icon: "🖼️", title: "Image, Video & GIF", desc: "Attach images, videos, and GIFs to tweets. UniPost handles the Twitter media upload flow automatically." },
     { icon: "⚡", title: "Rate Limit Handling", desc: "UniPost manages Twitter's rate limits. Your requests are queued and retried automatically." },
   ],
 
@@ -397,7 +399,7 @@ response = requests.post(
     {
       num: "02",
       title: "Media Support",
-      desc: "Attach images and videos to tweets. Pass any public URL — UniPost downloads, processes, and uploads to Twitter's media endpoint for you.",
+      desc: "Attach images, videos, and GIFs to tweets. Pass a public URL directly, or upload a local file into UniPost's media library first and publish with media_ids.",
       placeholderIcon: "🖼️",
       placeholderLabel: "Tweet with image attachment published via API",
     },
@@ -441,6 +443,7 @@ response = requests.post(
   faq: [
     { q: "What Twitter API access does UniPost use?", a: "Twitter API access is included in your UniPost subscription. No separate Twitter developer plan required." },
     { q: "Can I post Twitter threads with UniPost?", a: "Yes. Use thread_position 1, 2, 3... to create threaded tweets. Each tweet is linked automatically." },
+    { q: "How do I publish a local image, video, or GIF file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "Do I need my own Twitter developer account?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Twitter app credentials." },
     { q: "How does UniPost handle rate limits?", a: "UniPost queues requests and retries automatically when rate limits are hit. You don't need to build any retry logic." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Twitter tokens automatically in the background. No action needed on your end." },
@@ -449,7 +452,7 @@ response = requests.post(
 
   seo: {
     title: "Twitter API for Developers — Post Tweets & Threads | UniPost",
-    description: "Post tweets, threads, and images to X/Twitter programmatically. UniPost handles OAuth 2.0 PKCE, token refresh, and rate limits. Free plan available.",
+    description: "Post tweets, threads, images, videos, and GIFs to X/Twitter programmatically. UniPost handles OAuth 2.0 PKCE, token refresh, and rate limits. Free plan available.",
     keywords: ["twitter api for developers", "post to twitter api", "tweet api", "twitter api python", "twitter api nodejs", "x api"],
   },
 };
@@ -464,11 +467,11 @@ export const tiktok: PlatformConfig = {
   brandColor: "#00F2EA",
   heroTitle: "TikTok API\nfor Developers",
   heroSub:
-    "Upload and publish videos to TikTok programmatically. UniPost handles video file upload, direct posting, and creator account OAuth.",
-  contentTypes: ["Videos"],
+    "Upload and publish videos or photo carousels to TikTok programmatically. Use public asset URLs directly, or upload local files into UniPost's media library first and publish with media_ids. UniPost handles creator account OAuth and direct posting.",
+  contentTypes: ["Videos", "Photo Carousels"],
 
   capabilities: [
-    { icon: "📹", title: "Video Upload", desc: "File-based upload — no need for publicly accessible video URLs or domain verification." },
+    { icon: "📹", title: "Video Upload", desc: "Supports both hosted video URLs and local files uploaded through UniPost's media library." },
     { icon: "📤", title: "Direct Post", desc: "Videos are published directly to the user's TikTok profile. No inbox or review step." },
     { icon: "🔐", title: "Creator Accounts", desc: "Supports authenticated TikTok creator accounts via OAuth." },
   ],
@@ -517,7 +520,7 @@ response = requests.post(
     {
       num: "01",
       title: "File-based Upload",
-      desc: "TikTok uses FILE_UPLOAD — no domain verification required. Pass a video URL and UniPost downloads, processes, and uploads the file directly to TikTok's servers.",
+      desc: "TikTok can publish from a hosted asset URL or from a local file you first upload into UniPost's media library. UniPost handles the file-upload path and TikTok publish flow for you.",
       placeholderIcon: "📹",
       placeholderLabel: "TikTok video upload API response",
     },
@@ -568,6 +571,7 @@ response = requests.post(
   faq: [
     { q: "Does UniPost support TikTok personal accounts?", a: "TikTok API requires creator accounts. Personal accounts are not supported by TikTok's API." },
     { q: "What video formats are supported?", a: "MP4 is recommended. Maximum file size is 500MB." },
+    { q: "How do I publish a local video or image file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "Do I need TikTok developer access?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own TikTok app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect a TikTok creator account via OAuth and start uploading." },
     { q: "What happens when my token expires?", a: "UniPost refreshes TikTok tokens automatically in the background." },
@@ -576,7 +580,7 @@ response = requests.post(
 
   seo: {
     title: "TikTok API for Developers — Upload & Publish Videos | UniPost",
-    description: "Upload and publish videos to TikTok programmatically. UniPost handles OAuth, video upload, and direct posting. Free plan available.",
+    description: "Upload and publish TikTok videos or photo carousels programmatically. UniPost handles OAuth, media upload, and direct posting. Free plan available.",
     keywords: ["tiktok api for developers", "post to tiktok api", "tiktok video upload api", "tiktok api python", "tiktok api nodejs"],
   },
 };
@@ -591,11 +595,11 @@ export const youtube: PlatformConfig = {
   brandColor: "#FF0000",
   heroTitle: "YouTube API\nfor Developers",
   heroSub:
-    "Upload and publish videos to YouTube programmatically. Set titles, descriptions, tags, and privacy settings through a single API call.",
+    "Upload and publish videos to YouTube programmatically. Use a hosted video URL directly, or upload a local file into UniPost's media library first and publish with media_ids. Set titles, descriptions, tags, and privacy settings through a single API call.",
   contentTypes: ["Videos", "Shorts"],
 
   capabilities: [
-    { icon: "📹", title: "Video Upload", desc: "Upload HD videos with full metadata — title, description, tags, and category." },
+    { icon: "📹", title: "Video Upload", desc: "Publish hosted videos directly or reuse local uploads from UniPost's media library, with full metadata support." },
     { icon: "🏷️", title: "Metadata Control", desc: "Set title, description, tags, thumbnail, and category in a single API call." },
     { icon: "🔒", title: "Privacy Settings", desc: "Control visibility: public, private, or unlisted. Schedule for future publishing." },
   ],
@@ -694,6 +698,7 @@ response = requests.post(
   faq: [
     { q: "Can I upload videos longer than 15 minutes?", a: "Yes, if your YouTube account is verified for long-form content. UniPost does not impose additional length limits." },
     { q: "Does UniPost support YouTube Shorts?", a: "Yes. Shorts are vertical videos under 60 seconds uploaded via the same API endpoint." },
+    { q: "How do I publish a local video file?", a: "If the video already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "Do I need Google developer access?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Google OAuth app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your YouTube channel via OAuth and start uploading." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Google tokens automatically in the background." },
@@ -717,13 +722,13 @@ export const bluesky: PlatformConfig = {
   brandColor: "#0085FF",
   heroTitle: "Bluesky API\nfor Developers",
   heroSub:
-    "Post text and images to Bluesky via the AT Protocol. Connect with App Passwords — no OAuth approval process, no developer account needed.",
-  contentTypes: ["Text", "Images", "Threads"],
+    "Post text, images, videos, and threads to Bluesky via the AT Protocol. Use public asset URLs directly, or upload local files into UniPost's media library first and publish with media_ids. Connect with App Passwords — no OAuth approval process needed.",
+  contentTypes: ["Text", "Images", "Videos", "Threads"],
 
   capabilities: [
     { icon: "⚡", title: "Instant Setup", desc: "Connect with an App Password — 5 minutes, no approval process, no developer account needed." },
     { icon: "🧵", title: "Thread Support", desc: "Publish multi-post threads using the thread_position field. Build narratives across posts." },
-    { icon: "🖼️", title: "Image Posts", desc: "Attach images to Bluesky posts. UniPost handles blob upload to the AT Protocol automatically." },
+    { icon: "🖼️", title: "Image & Video Posts", desc: "Attach images or a single video to Bluesky posts. UniPost handles the AT Protocol media upload flow automatically." },
   ],
 
   codeExample: {
@@ -783,7 +788,7 @@ response = requests.post(
   whyNot: {
     without: [
       "Learn the AT Protocol record format",
-      "Implement blob upload for images",
+      "Implement blob upload for images and videos",
       "Build facet detection for links and mentions",
       "Handle reply references for threads",
       "Manage session tokens and refresh",
@@ -791,7 +796,7 @@ response = requests.post(
     ],
     with: [
       "Connect in 5 minutes with App Password",
-      "Text, images, and threads via one API",
+      "Text, images, videos, and threads via one API",
       "Facets and links handled automatically",
       "Thread replies linked automatically",
       "Session management in background",
@@ -824,14 +829,14 @@ response = requests.post(
     { q: "Do I need a Bluesky developer account?", a: "No. Just an App Password from bsky.app/settings/app-passwords. No developer account or approval needed." },
     { q: "Does UniPost support Bluesky threads?", a: "Yes. Use the thread_position field to publish multi-post threads. Replies are linked automatically." },
     { q: "How long does setup take?", a: "About 2 minutes. Generate an App Password at bsky.app, paste it into the UniPost Dashboard, and start posting." },
-    { q: "Can I attach images to Bluesky posts?", a: "Yes. Pass image URLs and UniPost handles blob upload to the AT Protocol automatically." },
+    { q: "Can I attach images or videos to Bluesky posts?", a: "Yes. Send a public asset URL in media_urls, or upload a local file with POST /v1/media and then publish with media_ids. UniPost handles the AT Protocol media upload flow." },
     { q: "Does Bluesky have rate limits?", a: "AT Protocol has generous limits. UniPost manages them automatically so you don't need to worry." },
     { q: "Is Bluesky included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including Bluesky." },
   ],
 
   seo: {
     title: "Bluesky API for Developers — Post via AT Protocol | UniPost",
-    description: "Post text, images, and threads to Bluesky via the AT Protocol. No developer account needed. Connect with App Passwords in 2 minutes. Free plan available.",
+    description: "Post text, images, videos, and threads to Bluesky via the AT Protocol. No developer account needed. Connect with App Passwords in 2 minutes. Free plan available.",
     keywords: ["bluesky api for developers", "post to bluesky api", "at protocol api", "bluesky api python", "bluesky api nodejs"],
   },
 };
@@ -847,11 +852,11 @@ export const threads: PlatformConfig = {
   heroTitle: "Threads API\nfor Developers",
   // TODO(threads-unified-oauth): update when unified Instagram+Threads connect ships
   heroSub:
-    "Publish text posts and images to Threads programmatically. Connect Threads separately via its own OAuth flow. Uses the same Meta developer app as Instagram.",
-  contentTypes: ["Text", "Images"],
+    "Publish text posts, images, videos, and carousels to Threads programmatically. Use public asset URLs directly, or upload local files into UniPost's media library first and publish with media_ids. Connect Threads separately via its own OAuth flow.",
+  contentTypes: ["Text", "Images", "Videos", "Carousels"],
 
   capabilities: [
-    { icon: "📝", title: "Text & Image Posts", desc: "Post text and images to Threads. Supports up to 500 characters per post." },
+    { icon: "📝", title: "Text, Image & Video Posts", desc: "Post text, images, videos, and carousel content to Threads. Supports up to 500 characters per post." },
     { icon: "🔗", title: "Meta OAuth", desc: "Connect via Threads' own OAuth flow. Uses the same Meta developer app as Instagram." },
     { icon: "🔄", title: "Unified API", desc: "Same API endpoint and format as every other platform. No Threads-specific code needed." },
   ],
@@ -905,7 +910,7 @@ response = requests.post(
     {
       num: "02",
       title: "500-Character Posts",
-      desc: "Threads supports up to 500 characters per post. Post text updates, announcements, and quick thoughts through the same API you use for every other platform.",
+      desc: "Threads supports up to 500 characters per post alongside images, videos, and carousel media. Use hosted URLs directly, or upload local files into UniPost's media library first.",
       placeholderIcon: "📝",
       placeholderLabel: "Threads post published via UniPost API",
     },
@@ -949,6 +954,7 @@ response = requests.post(
   faq: [
     { q: "Do I need a separate developer app for Threads?", a: "No. Threads uses the same Meta developer app as Instagram. One app covers both platforms." },
     { q: "Can I cross-post to Threads and Instagram?", a: "Yes. Include both account IDs in a single API call to post the same content to both platforms simultaneously." },
+    { q: "How do I publish a local image or video file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your Threads account via OAuth and start posting." },
     { q: "What's the character limit for Threads?", a: "500 characters per post. UniPost validates content length before posting." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Meta tokens automatically in the background." },
@@ -956,8 +962,8 @@ response = requests.post(
   ],
 
   seo: {
-    title: "Threads API for Developers — Post Text & Images | UniPost",
-    description: "Publish text posts and images to Threads programmatically. Uses the same Meta developer app as Instagram. Free plan available.",
+    title: "Threads API for Developers — Post Text, Images & Video | UniPost",
+    description: "Publish text posts, images, videos, and carousels to Threads programmatically. Uses the same Meta developer app as Instagram. Free plan available.",
     keywords: ["threads api for developers", "post to threads api", "threads content api", "threads api python", "meta threads api"],
   },
 };

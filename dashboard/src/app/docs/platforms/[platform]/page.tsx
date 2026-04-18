@@ -28,7 +28,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     requirements: [
       ["caption", "Optional", "300 graphemes", "Validate catches overages before publish"],
-      ["media_urls", "Optional", "1-4 images OR 1 video", "Do not mix image and video"],
+      ["media_urls or media_ids", "Optional", "1-4 images OR 1 video", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. Do not mix image and video."],
       ["thread_position", "Optional", "1-indexed", "Preferred way to create multi-post flows"],
       ["first_comment", "Rejected", "n/a", "Use thread_position instead"],
     ],
@@ -81,7 +81,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     requirements: [
       ["caption", "Optional", "280 chars", "Required unless media-only flow is valid"],
-      ["media_urls", "Optional", "1-4 images OR 1 video OR 1 GIF", "Do not mix media types"],
+      ["media_urls or media_ids", "Optional", "1-4 images OR 1 video OR 1 GIF", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. Do not mix media types."],
       ["thread_position", "Optional", "1-indexed", "Use on each thread entry"],
       ["first_comment", "Optional", "text", "Supported as a self-reply"],
     ],
@@ -144,7 +144,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     requirements: [
       ["caption", "Optional", "3,000 chars", "Best for longer release notes and announcements"],
-      ["media_urls", "Optional", "1-9 images OR 1 video", "Do not mix images and video"],
+      ["media_urls or media_ids", "Optional", "1-9 images OR 1 video", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. Do not mix images and video."],
       ["platform_options.linkedin", "Optional", "visibility", "Use for audience controls"],
       ["first_comment", "Optional", "text", "Posted after the main post lands"],
     ],
@@ -199,7 +199,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
       ["First comment", "Yes", "Supported"],
     ],
     requirements: [
-      ["media_urls", "Required", "1 image, 1 video, or 2-10 carousel items", "Media is required"],
+      ["media_urls or media_ids", "Required", "1 image, 1 video, or 2-10 carousel items", "Media is required. Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`."],
       ["caption", "Optional", "2,200 chars", "Commonly sent with media"],
       ["first_comment", "Optional", "text", "Supported after publish"],
       ["mixed media", "Allowed only in carousel", "2-10 items", "Single posts should not mix image and video"],
@@ -254,7 +254,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     requirements: [
       ["caption", "Optional", "500 chars", "Short-form conversational copy"],
-      ["media_urls", "Optional", "single asset or 2-20 carousel", "Mixed media allowed only in carousel flow"],
+      ["media_urls or media_ids", "Optional", "single asset or 2-20 carousel", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. Mixed media allowed only in carousel flow."],
       ["thread_position", "Optional", "1-indexed", "Preferred over first_comment"],
       ["first_comment", "Rejected", "n/a", "Validate will catch this before publish"],
     ],
@@ -307,7 +307,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
       ["Analytics", "Partial", "Depends on connected account access"],
     ],
     requirements: [
-      ["media_urls", "Required", "1 video OR up to 35 images", "Primary publish surface"],
+      ["media_urls or media_ids", "Required", "1 video OR up to 35 images", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. This is the primary publish surface."],
       ["caption", "Optional", "2,200 chars", "Pair with media"],
       ["platform_options.tiktok.privacy_level", "Optional", "privacy enum", "Controls audience visibility"],
       ["platform_options.tiktok.upload_mode", "Optional", "pull_from_url / file_upload", "Use file_upload if CDN domain is not registered"],
@@ -368,7 +368,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
       ["Analytics", "Yes", "Supported"],
     ],
     requirements: [
-      ["media_urls or media_ids", "Required", "Exactly 1 video", "Prefer `media_ids` when starting from a local file"],
+      ["media_urls or media_ids", "Required", "Exactly 1 video", "Prefer `media_ids` when starting from a local file. Create the media ID with `POST /v1/media`, upload the file to the returned `upload_url`, then publish."],
       ["caption", "Optional", "5,000 chars", "Used as title/description body context"],
       ["platform_options.youtube.privacy_status", "Optional", "private / public / unlisted", "Default is often private"],
       ["platform_options.youtube.shorts", "Optional", "boolean", "Routes the upload toward Shorts behavior"],
@@ -407,6 +407,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     }
   }
 }`,
+        note: "`med_uploaded_video_1` is a placeholder for the media ID returned by `POST /v1/media` after you reserve the upload and PUT the video bytes to UniPost storage. See the Media API reference for the upload step before calling `POST /v1/social-posts`.",
       },
       {
         title: "Shorts",
@@ -439,6 +440,7 @@ export default async function PlatformDetailPage({
   const { platform } = await params;
   const data = PLATFORMS[platform];
   if (!data) notFound();
+  const supportsManagedUploads = data.requirements.some((row) => row[0].includes("media_urls") || row[0].includes("media_ids"));
 
   return (
     <DocsPage eyebrow="Platform Guide" title={data.title} lead={data.lead}>
@@ -450,6 +452,18 @@ export default async function PlatformDetailPage({
 
       <h2 id="requirements">Requirements</h2>
       <DocsTable columns={["Field", "Required", "Limits", "Notes"]} rows={data.requirements} />
+
+      {supportsManagedUploads ? (
+        <>
+          <h2 id="local-files">Hosted URLs vs Local Files</h2>
+          <p>
+            Every media-capable platform page here supports the same two input shapes. If your asset is already reachable on the public internet, send it in <code>media_urls</code>. If you are starting from a local image or video file, first call <a href="/docs/api/media">POST /v1/media</a>, upload the bytes to the returned <code>upload_url</code>, and then publish with <code>media_ids</code>.
+          </p>
+          <p>
+            A placeholder like <code>med_uploaded_video_1</code> or <code>med_uploaded_image_1</code> means “the media ID returned by the Media API after the upload was reserved.” The full upload flow is documented in <a href="/docs/api/media">Media API</a> and <a href="/docs/api/posts/create">Create Post</a>.
+          </p>
+        </>
+      ) : null}
 
       {data.options ? (
         <>

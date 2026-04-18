@@ -48,6 +48,11 @@ const CAPABILITIES = [
     points: ["Preflight validation", "Read-only preview links", "Per-platform counters"],
   },
   {
+    title: "Managed media uploads",
+    desc: "Publish with public asset URLs when you already have hosted media, or reserve uploads through UniPost's media library and reuse media_ids for local files and larger videos.",
+    points: ["POST /v1/media", "Presigned upload_url", "Publish with media_ids"],
+  },
+  {
     title: "Branded white-label onboarding",
     desc: "Paid plans can inject customer branding into the hosted Connect surface so your product owns the onboarding experience instead of handing trust to a generic tool.",
     points: ["Logo + display name", "Primary brand color", "Your app in the flow"],

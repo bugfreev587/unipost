@@ -12,7 +12,7 @@ const BODY_PARAMS: ParamRow[] = [
   { name: "account_ids", type: "string[]", required: false, description: "Social account IDs to fan out to. Use this OR platform_posts, not both." },
   { name: "platform_posts", type: "object[]", required: false, description: "Per-platform posts with individual captions, media, and options. Preferred for multi-platform fan-out." },
   { name: "media_urls", type: "string[]", required: false, description: "Public URLs of images/videos to attach. Ignored when platform_posts is set." },
-  { name: "media_ids", type: "string[]", required: false, description: <>IDs from <ApiInlineLink endpoint="POST /v1/media" /> (preferred over <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>media_urls</code>). Resolved server-side to presigned download URLs.</> },
+  { name: "media_ids", type: "string[]", required: false, description: <>IDs returned by <ApiInlineLink endpoint="POST /v1/media" /> after you upload a local file to UniPost storage. Preferred over <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>media_urls</code> for local files and large videos. Resolved server-side to presigned download URLs.</> },
   { name: "scheduled_at", type: "string", required: false, description: "ISO 8601 timestamp. If set, post is queued and published by the scheduler at that time. Must be at least 60 seconds in the future." },
   { name: "idempotency_key", type: "string", required: false, description: "Unique string (max 64 chars). Same key + same workspace within 24h returns the original response unchanged." },
   { name: "status", type: "string", required: false, description: <>Set to <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code> to persist without publishing. Use <ApiInlineLink endpoint="POST /v1/social-posts/:id/publish" /> to ship later.</> },
@@ -22,7 +22,7 @@ const PLATFORM_POST_PARAMS: ParamRow[] = [
   { name: "account_id", type: "string", required: true, description: "Target social account ID." },
   { name: "caption", type: "string", required: false, description: "Platform-specific caption. Overrides the top-level caption." },
   { name: "media_urls", type: "string[]", required: false, description: "Platform-specific media URLs." },
-  { name: "media_ids", type: "string[]", required: false, description: "Platform-specific media IDs from the media library." },
+  { name: "media_ids", type: "string[]", required: false, description: "Platform-specific media IDs from the media library. Create these with POST /v1/media, then upload the bytes to the returned upload_url before publish." },
   { name: "thread_position", type: "integer", required: false, description: "1-indexed position in a multi-post thread. All entries with the same account_id and non-zero thread_position form one thread. Twitter + Bluesky supported." },
   { name: "first_comment", type: "string", required: false, description: "Text posted as the first reply/comment after the main post lands. Supported on Twitter, LinkedIn, Instagram. Bluesky/Threads reject this — use thread_position instead." },
   { name: "platform_options", type: "object", required: false, description: "Platform-specific key-value options (e.g. Twitter poll, LinkedIn visibility)." },
@@ -146,6 +146,43 @@ const response = await fetch(
         "caption": "We just shipped v1.4 with webhook subscriptions and a bulk publish endpoint."
       }
     ]
+  }'` },
+];
+
+const SNIPPETS_MEDIA_WORKFLOW = [
+  { lang: "curl", label: "1. Reserve Upload", code: `curl -X POST https://api.unipost.dev/v1/media \\
+  -H "Authorization: Bearer up_live_xxxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "filename": "quarterly-update.mp4",
+    "content_type": "video/mp4",
+    "size_bytes": 18451234
+  }'` },
+  { lang: "json", label: "2. Reserve Response", code: `{
+  "data": {
+    "id": "med_uploaded_video_1",
+    "status": "pending",
+    "content_type": "video/mp4",
+    "size_bytes": 18451234,
+    "upload_url": "https://r2.example.com/...",
+    "expires_at": "2026-04-17T20:15:00Z"
+  }
+}` },
+  { lang: "bash", label: "3. PUT File To upload_url", code: `curl -X PUT "https://r2.example.com/..." \\
+  -H "Content-Type: video/mp4" \\
+  --data-binary @./quarterly-update.mp4` },
+  { lang: "curl", label: "4. Publish With media_ids", code: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+  -H "Authorization: Bearer up_live_xxxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "caption": "Quarterly product update",
+    "account_ids": ["sa_youtube_1"],
+    "media_ids": ["med_uploaded_video_1"],
+    "platform_options": {
+      "youtube": {
+        "privacy_status": "public"
+      }
+    }
   }'` },
 ];
 
@@ -273,6 +310,22 @@ export function CreatePostContent() {
         <InfoBox>
           <strong style={{ color: "var(--docs-link)" }}>Two request shapes</strong> — pass exactly one: <code>caption + account_ids</code> (same caption everywhere) or <code>platform_posts[]</code> (different caption per platform). Mixing both is rejected with VALIDATION_ERROR.
         </InfoBox>
+        <InfoBox>
+          <strong style={{ color: "var(--docs-link)" }}>Local files vs hosted URLs</strong> — if your image or video already lives at a public URL, send <code>media_urls</code>. If you are starting from a local file on disk, first call <a href="/docs/api/media" style={{ color: "var(--docs-link)", textDecoration: "none" }}>POST /v1/media</a>, upload the bytes to the returned <code>upload_url</code>, then publish with <code>media_ids</code>.
+        </InfoBox>
+      </DocSection>
+
+      <DocSection id="media-workflow" title="Media Upload Workflow">
+        <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 12 }}>
+          The create-post endpoint does not accept raw multipart file bodies. When you want to publish a local image or video, use the media library first and then reference the returned media ID during publish.
+        </p>
+        <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 12 }}>
+          The end-to-end sequence is: reserve an upload with <a href="/docs/api/media" style={{ color: "var(--docs-link)", textDecoration: "none" }}>POST /v1/media</a>, upload the file bytes directly to the returned <code>upload_url</code>, optionally confirm the media row with <a href="/docs/api/media" style={{ color: "var(--docs-link)", textDecoration: "none" }}>GET /v1/media/{'{id}'}</a>, and finally call <code>POST /v1/social-posts</code> with <code>media_ids</code>.
+        </p>
+        <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 16 }}>
+          This is the recommended path for large videos, especially YouTube uploads. A placeholder like <code>med_uploaded_video_1</code> in the examples below means “the media ID returned by the media API after your upload was reserved.”
+        </p>
+        <CodeTabs snippets={SNIPPETS_MEDIA_WORKFLOW} />
       </DocSection>
 
       {/* Examples */}
@@ -345,6 +398,8 @@ export function CreatePostContent() {
       {/* Related */}
       <DocSection id="related" title="Related Endpoints">
         <RelatedEndpoints items={[
+          { method: "POST", path: "/v1/media", label: "Reserve media upload", href: "/docs/api/media" },
+          { method: "GET", path: "/v1/media/:id", label: "Get media status", href: "/docs/api/media" },
           { method: "GET", path: "/v1/social-posts", label: "List posts", href: "/docs/api" },
           { method: "GET", path: "/v1/social-posts/:id", label: "Get post details", href: "/docs/api" },
           { method: "GET", path: "/v1/social-posts/:id/analytics", label: "Post analytics", href: "/docs/api/analytics" },

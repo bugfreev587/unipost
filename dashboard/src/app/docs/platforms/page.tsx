@@ -39,6 +39,7 @@ export default function PlatformsPage() {
       <h2 id="cross-platform-rules">Cross-platform rules to remember</h2>
       <ul className="docs-list">
         <li><code>platform_posts[]</code> is the recommended request shape when different platforms need different copy or media.</li>
+        <li><code>media_urls</code> is for assets that already have a public URL. For local files on disk, first call <code>POST /v1/media</code>, upload to the returned <code>upload_url</code>, then publish with <code>media_ids</code>.</li>
         <li>Most networks reject mixed image and video in a single post. Instagram and Threads only allow mixing inside carousel-style containers.</li>
         <li><code>thread_position</code> is the preferred way to model multi-post conversational flows. Do not assume every platform supports it.</li>
         <li><code>first_comment</code> is a platform-specific feature, not a universal one.</li>
@@ -48,12 +49,12 @@ export default function PlatformsPage() {
       <div className="docs-grid">
         {[
           ["Twitter/X", "twitter", "Best for text, threads, and first-comment style replies."],
-          ["LinkedIn", "linkedin", "Best for longer-form captions and professional announcements."],
+          ["LinkedIn", "linkedin", "Best for longer-form captions, professional announcements, and single-video posts."],
           ["Instagram", "instagram", "Media-first publishing with image, video, and carousel flows."],
-          ["Threads", "threads", "Short conversational posts with strong thread support."],
-          ["TikTok", "tiktok", "Video-led publishing with platform-specific privacy and upload controls."],
-          ["YouTube", "youtube", "Single-video publishing with privacy, Shorts, category, and tag options."],
-          ["Bluesky", "bluesky", "Short-form posts with strong support for threads and direct account setup."],
+          ["Threads", "threads", "Short conversational posts with strong thread support plus image, video, and carousel flows."],
+          ["TikTok", "tiktok", "Video-led publishing with photo carousels, privacy controls, and upload-mode options."],
+          ["YouTube", "youtube", "Single-video publishing with privacy, Shorts, category, tags, and media-library support for local files."],
+          ["Bluesky", "bluesky", "Short-form posts with strong support for threads, images, videos, and direct account setup."],
         ].map(([label, slug, summary]) => (
           <div className="docs-card" key={slug}>
             <div className="docs-card-title">{label}</div>
