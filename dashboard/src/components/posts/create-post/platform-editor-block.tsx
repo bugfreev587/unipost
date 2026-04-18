@@ -5,6 +5,7 @@ import {
   PLATFORM_LABELS,
   PLATFORM_BRAND_COLORS,
   PLATFORM_CHAR_LIMITS,
+  DEFAULT_YOUTUBE_FIELDS,
   type PlatformOverride,
   type CharCountInfo,
 } from "./use-create-post-form";
@@ -53,7 +54,7 @@ export function PlatformEditorBlock({
   const hasCaptionError = captionIssues.some((issue) => issue.severity === "error");
   const captionMessage = captionIssues[0]?.message;
 
-  const youtubeFields = override.youtube || { title: "", category: "22", visibility: "public" as const };
+  const youtubeFields = override.youtube || DEFAULT_YOUTUBE_FIELDS;
   const tiktokFields = override.tiktok || { privacy: "public" as const, interactions: "allow_all" as const };
   const instagramFields = override.instagram || { mediaType: "feed" as const };
   const linkedinFields = override.linkedin || { visibility: "anyone" as const };

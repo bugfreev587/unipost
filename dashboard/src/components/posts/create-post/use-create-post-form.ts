@@ -15,6 +15,18 @@ export interface PlatformOverride {
     title: string;
     category: string;
     visibility: "public" | "unlisted" | "private";
+    madeForKids: "" | "yes" | "no";
+    notifySubscribers: boolean;
+    embeddable: boolean;
+    license: "youtube" | "creativeCommon";
+    publicStatsViewable: boolean;
+    containsSyntheticMedia: boolean;
+    defaultLanguage: string;
+    recordingDate: string;
+    publishAt: string;
+    playlistId: string;
+    tags: string;
+    shorts: boolean;
   };
   // TikTok-specific
   tiktok?: {
@@ -86,6 +98,24 @@ export const PLATFORM_BRAND_COLORS: Record<string, string> = {
   instagram: "#e1306c",
   tiktok: "#ff0050",
   youtube: "#ff0000",
+};
+
+export const DEFAULT_YOUTUBE_FIELDS: NonNullable<PlatformOverride["youtube"]> = {
+  title: "",
+  category: "22",
+  visibility: "public",
+  madeForKids: "",
+  notifySubscribers: true,
+  embeddable: true,
+  license: "youtube",
+  publicStatsViewable: true,
+  containsSyntheticMedia: false,
+  defaultLanguage: "",
+  recordingDate: "",
+  publishAt: "",
+  playlistId: "",
+  tags: "",
+  shorts: false,
 };
 
 export const PRIMARY_BUTTON_LABELS: Record<PublishMode, string> = {
@@ -359,16 +389,50 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (hasOverrides || mediaIds) {
       payload.platform_posts = accountIds.map((id) => {
         const o = overrides[id];
+        const account = uniqueSelectedAccounts.find((candidate) => candidate.id === id);
         const entry: NonNullable<CreateSocialPostPayload["platform_posts"]>[number] = {
           account_id: id,
           caption: o?.caption?.trim() || mainContent.trim(),
         };
         if (mediaIds) entry.media_ids = mediaIds;
-        if (o?.youtube) entry.platform_options = {
-          title: o.youtube.title.trim(),
-          category_id: o.youtube.category,
-          privacy_status: o.youtube.visibility,
-        };
+        if (account?.platform === "youtube") {
+          const youtube = { ...DEFAULT_YOUTUBE_FIELDS, ...o?.youtube };
+          entry.platform_options = {
+            category_id: youtube.category,
+            privacy_status: youtube.visibility,
+            notify_subscribers: youtube.notifySubscribers,
+            embeddable: youtube.embeddable,
+            license: youtube.license,
+            public_stats_viewable: youtube.publicStatsViewable,
+            contains_synthetic_media: youtube.containsSyntheticMedia,
+            shorts: youtube.shorts,
+          };
+          if (youtube.madeForKids) {
+            entry.platform_options.made_for_kids = youtube.madeForKids === "yes";
+          }
+          if (youtube.title.trim()) {
+            entry.platform_options.title = youtube.title.trim();
+          }
+          if (youtube.defaultLanguage.trim()) {
+            entry.platform_options.default_language = youtube.defaultLanguage.trim();
+          }
+          if (youtube.recordingDate.trim()) {
+            entry.platform_options.recording_date = youtube.recordingDate.trim();
+          }
+          if (youtube.publishAt.trim()) {
+            entry.platform_options.publish_at = new Date(youtube.publishAt).toISOString();
+          }
+          if (youtube.playlistId.trim()) {
+            entry.platform_options.playlist_id = youtube.playlistId.trim();
+          }
+          const tags = youtube.tags
+            .split(",")
+            .map((tag) => tag.trim())
+            .filter(Boolean);
+          if (tags.length > 0) {
+            entry.platform_options.tags = tags;
+          }
+        }
         if (o?.tiktok) entry.platform_options = { ...o.tiktok };
         if (o?.instagram) entry.platform_options = { ...o.instagram };
         if (o?.linkedin) entry.platform_options = { ...o.linkedin };

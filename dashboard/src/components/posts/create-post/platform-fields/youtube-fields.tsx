@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { SocialPostValidationIssue } from "@/lib/api";
 import type { PlatformOverride } from "../use-create-post-form";
@@ -21,41 +22,74 @@ export const YOUTUBE_CATEGORY_OPTIONS = [
   { id: "17", label: "Sports" },
 ] as const;
 const VISIBILITY_OPTIONS = ["public", "unlisted", "private"] as const;
+const LICENSE_OPTIONS = [
+  { id: "youtube", label: "Standard YouTube License" },
+  { id: "creativeCommon", label: "Creative Commons" },
+] as const;
+
+function firstIssue(issues: SocialPostValidationIssue[], ...fields: string[]) {
+  return issues.find((issue) => fields.includes(issue.field) && issue.severity === "error");
+}
+
+function FieldError({ issue }: { issue?: SocialPostValidationIssue }) {
+  if (!issue) return null;
+  return <p className="mt-1.5 text-[11px] leading-relaxed text-[#fca5a5]">{issue.message}</p>;
+}
+
+function ToggleButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded py-1.5 text-xs font-medium transition-all duration-[160ms] ${
+        active ? "bg-[#f4f4f5] text-[#0a0a0b]" : "text-[#8a8a93] hover:text-[#f4f4f5]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsProps) {
-  const titleIssues = issues.filter(
-    (issue) => issue.field === "platform_options.title" || issue.field === "title"
-  );
-  const hasTitleError = titleIssues.some((issue) => issue.severity === "error");
-  const titleMessage = titleIssues[0]?.message;
+  const titleIssue = firstIssue(issues, "platform_options.title", "title");
+  const madeForKidsIssue = firstIssue(issues, "platform_options.made_for_kids", "made_for_kids");
+  const visibilityIssue = firstIssue(issues, "platform_options.privacy_status", "privacy_status");
+  const licenseIssue = firstIssue(issues, "platform_options.license", "license");
+  const publishAtIssue = firstIssue(issues, "platform_options.publish_at", "publish_at");
+  const defaultLanguageIssue = firstIssue(issues, "platform_options.default_language", "default_language");
+  const recordingDateIssue = firstIssue(issues, "platform_options.recording_date", "recording_date");
 
   return (
-    <>
+    <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label
             className={cn(
               "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
-              hasTitleError ? "text-[#fca5a5]" : "text-[#55555c]"
+              titleIssue ? "text-[#fca5a5]" : "text-[#55555c]"
             )}
           >
-            Video title <span className="text-[#f59e0b]">*</span>
+            Video title
           </label>
           <input
             type="text"
-            placeholder="Required for YouTube uploads…"
+            placeholder="Optional if caption is provided…"
             value={fields.title}
             onChange={(e) => onChange({ title: e.target.value })}
             className={cn(
               "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]",
-              hasTitleError ? "border-[#ef4444]" : "border-[#22222a]"
+              titleIssue ? "border-[#ef4444]" : "border-[#22222a]"
             )}
           />
-          {titleMessage && (
-            <p className="mt-1.5 text-[11px] leading-relaxed text-[#fca5a5]">
-              {titleMessage}
-            </p>
-          )}
+          <FieldError issue={titleIssue} />
         </div>
         <div>
           <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
@@ -74,29 +108,223 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
       </div>
 
       <div>
-        <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+        <label
+          className={cn(
+            "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
+            madeForKidsIssue ? "text-[#fca5a5]" : "text-[#55555c]"
+          )}
+        >
+          Audience
+        </label>
+        <div
+          className={cn(
+            "grid grid-cols-2 gap-1 p-1 bg-[#0a0a0b] rounded-md border",
+            madeForKidsIssue ? "border-[#ef4444]" : "border-[#22222a]"
+          )}
+        >
+          <ToggleButton active={fields.madeForKids === "yes"} onClick={() => onChange({ madeForKids: "yes" })}>
+            Yes, it&apos;s for kids
+          </ToggleButton>
+          <ToggleButton active={fields.madeForKids === "no"} onClick={() => onChange({ madeForKids: "no" })}>
+            No, it&apos;s not for kids
+          </ToggleButton>
+        </div>
+        <FieldError issue={madeForKidsIssue} />
+      </div>
+
+      <div>
+        <label
+          className={cn(
+            "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
+            visibilityIssue ? "text-[#fca5a5]" : "text-[#55555c]"
+          )}
+        >
           Visibility
         </label>
-        <div className="grid grid-cols-3 gap-1 p-1 bg-[#0a0a0b] rounded-md border border-[#22222a]">
+        <div
+          className={cn(
+            "grid grid-cols-3 gap-1 p-1 bg-[#0a0a0b] rounded-md border",
+            visibilityIssue ? "border-[#ef4444]" : "border-[#22222a]"
+          )}
+        >
           {VISIBILITY_OPTIONS.map((v) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => onChange({ visibility: v })}
-              className={`rounded py-1.5 text-xs font-medium transition-all duration-[160ms] ${
-                fields.visibility === v
-                  ? "bg-[#f4f4f5] text-[#0a0a0b]"
-                  : "text-[#8a8a93] hover:text-[#f4f4f5]"
-              }`}
-            >
+            <ToggleButton key={v} active={fields.visibility === v} onClick={() => onChange({ visibility: v })}>
               {v.charAt(0).toUpperCase() + v.slice(1)}
-            </button>
+            </ToggleButton>
           ))}
         </div>
+        <FieldError issue={visibilityIssue} />
         <p className="text-[11px] text-[#55555c] mt-2">
-          UniPost uses this as YouTube `snippet.title`. Videos under 3 minutes are automatically published as Shorts.
+          UniPost uses this as YouTube `snippet.title`. If left blank, the caption is used instead. Videos under 3 minutes are automatically published as Shorts.
         </p>
       </div>
-    </>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label
+            className={cn(
+              "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
+              licenseIssue ? "text-[#fca5a5]" : "text-[#55555c]"
+            )}
+          >
+            License
+          </label>
+          <select
+            value={fields.license}
+            onChange={(e) => onChange({ license: e.target.value as NonNullable<PlatformOverride["youtube"]>["license"] })}
+            className={cn(
+              "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
+              licenseIssue ? "border-[#ef4444]" : "border-[#22222a]"
+            )}
+          >
+            {LICENSE_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <FieldError issue={licenseIssue} />
+        </div>
+        <div>
+          <label
+            className={cn(
+              "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
+              defaultLanguageIssue ? "text-[#fca5a5]" : "text-[#55555c]"
+            )}
+          >
+            Default language
+          </label>
+          <input
+            type="text"
+            placeholder="en, en-US, zh-CN…"
+            value={fields.defaultLanguage}
+            onChange={(e) => onChange({ defaultLanguage: e.target.value })}
+            className={cn(
+              "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]",
+              defaultLanguageIssue ? "border-[#ef4444]" : "border-[#22222a]"
+            )}
+          />
+          <FieldError issue={defaultLanguageIssue} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label
+            className={cn(
+              "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
+              publishAtIssue ? "text-[#fca5a5]" : "text-[#55555c]"
+            )}
+          >
+            Publish at
+          </label>
+          <input
+            type="datetime-local"
+            value={fields.publishAt}
+            onChange={(e) => onChange({ publishAt: e.target.value })}
+            className={cn(
+              "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
+              publishAtIssue ? "border-[#ef4444]" : "border-[#22222a]"
+            )}
+          />
+          <FieldError issue={publishAtIssue} />
+        </div>
+        <div>
+          <label
+            className={cn(
+              "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
+              recordingDateIssue ? "text-[#fca5a5]" : "text-[#55555c]"
+            )}
+          >
+            Recording date
+          </label>
+          <input
+            type="date"
+            value={fields.recordingDate}
+            onChange={(e) => onChange({ recordingDate: e.target.value })}
+            className={cn(
+              "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
+              recordingDateIssue ? "border-[#ef4444]" : "border-[#22222a]"
+            )}
+          />
+          <FieldError issue={recordingDateIssue} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+            Playlist ID
+          </label>
+          <input
+            type="text"
+            placeholder="PLxxxxxxxx"
+            value={fields.playlistId}
+            onChange={(e) => onChange({ playlistId: e.target.value })}
+            className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]"
+          />
+        </div>
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+            Tags
+          </label>
+          <input
+            type="text"
+            placeholder="product, quarterly, update"
+            value={fields.tags}
+            onChange={(e) => onChange({ tags: e.target.value })}
+            className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+          <input
+            type="checkbox"
+            checked={fields.notifySubscribers}
+            onChange={(e) => onChange({ notifySubscribers: e.target.checked })}
+            className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+          />
+          Notify subscribers
+        </label>
+        <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+          <input
+            type="checkbox"
+            checked={fields.embeddable}
+            onChange={(e) => onChange({ embeddable: e.target.checked })}
+            className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+          />
+          Allow embedding
+        </label>
+        <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+          <input
+            type="checkbox"
+            checked={fields.publicStatsViewable}
+            onChange={(e) => onChange({ publicStatsViewable: e.target.checked })}
+            className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+          />
+          Show public stats
+        </label>
+        <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+          <input
+            type="checkbox"
+            checked={fields.containsSyntheticMedia}
+            onChange={(e) => onChange({ containsSyntheticMedia: e.target.checked })}
+            className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+          />
+          Contains synthetic media
+        </label>
+        <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+          <input
+            type="checkbox"
+            checked={fields.shorts}
+            onChange={(e) => onChange({ shorts: e.target.checked })}
+            className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+          />
+          Add Shorts hint
+        </label>
+      </div>
+    </div>
   );
 }

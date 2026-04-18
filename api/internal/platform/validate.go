@@ -28,6 +28,8 @@
 package platform
 
 import (
+	"errors"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -37,9 +39,9 @@ import (
 // by account_id, so the same account_id can appear twice (e.g. a
 // 2-tweet thread on Twitter).
 type PlatformPostInput struct {
-	AccountID       string
-	Caption         string
-	MediaURLs       []string
+	AccountID string
+	Caption   string
+	MediaURLs []string
 	// MediaIDs (Sprint 2) references rows in the media library —
 	// uploaded via POST /v1/media before publish. The handler resolves
 	// each ID to a presigned download URL at dispatch time and adds
@@ -176,7 +178,7 @@ const (
 	CodeUnsupportedInReplyTo   = "unsupported_in_reply_to"
 	CodeUnknownPlatform        = "unknown_platform"
 	CodeAccountNotFound        = "account_not_found"
-	CodeAccountNotInWorkspace    = "account_not_in_workspace"
+	CodeAccountNotInWorkspace  = "account_not_in_workspace"
 	CodeMaxImagesExceeded      = "max_images_exceeded"
 	CodeMaxVideosExceeded      = "max_videos_exceeded"
 	CodeMixedMediaUnsupported  = "mixed_media_unsupported"
@@ -185,19 +187,26 @@ const (
 	CodeUnknown                = "unknown"
 
 	// Sprint 2 thread codes.
-	CodeThreadsUnsupported     = "threads_unsupported"
+	CodeThreadsUnsupported           = "threads_unsupported"
 	CodeThreadPositionsNotContiguous = "thread_positions_not_contiguous"
-	CodeThreadMixedWithSingle  = "thread_mixed_with_single"
+	CodeThreadMixedWithSingle        = "thread_mixed_with_single"
 
 	// Sprint 2 media library codes.
-	CodeMediaIDNotFound        = "media_id_not_found"
-	CodeMediaIDNotInWorkspace    = "media_id_not_in_workspace"
-	CodeMediaNotUploaded       = "media_not_uploaded"
+	CodeMediaIDNotFound       = "media_id_not_found"
+	CodeMediaIDNotInWorkspace = "media_id_not_in_workspace"
+	CodeMediaNotUploaded      = "media_not_uploaded"
 
 	// Sprint 4 PR3: first_comment field codes.
-	CodeFirstCommentUnsupported = "first_comment_unsupported"
-	CodeFirstCommentTooLong     = "first_comment_too_long"
-	CodeYouTubeTitleRequired    = "youtube_title_required"
+	CodeFirstCommentUnsupported         = "first_comment_unsupported"
+	CodeFirstCommentTooLong             = "first_comment_too_long"
+	CodeYouTubeTitleRequired            = "youtube_title_required"
+	CodeYouTubeMadeForKidsRequired      = "youtube_made_for_kids_required"
+	CodeInvalidPrivacyStatus            = "invalid_privacy_status"
+	CodeInvalidLicense                  = "invalid_license"
+	CodeInvalidPublishAt                = "invalid_publish_at"
+	CodeInvalidRecordingDate            = "invalid_recording_date"
+	CodeInvalidDefaultLanguage          = "invalid_default_language"
+	CodeYouTubePublishAtRequiresPrivate = "youtube_publish_at_requires_private"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -213,6 +222,29 @@ const defaultMaxScheduleAhead = 90 * 24 * time.Hour
 // Anything closer than this is treated as "publish now" and will
 // trip the scheduled_too_soon error to surface intent more clearly.
 const minScheduleAhead = 30 * time.Second
+
+var youtubeLanguagePattern = regexp.MustCompile(`^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})*$`)
+
+func hasOpt(opts map[string]any, key string) bool {
+	if opts == nil {
+		return false
+	}
+	_, ok := opts[key]
+	return ok
+}
+
+func parseYouTubeTimestamp(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	formats := []string{time.RFC3339, "2006-01-02"}
+	for _, format := range formats {
+		if _, err := time.Parse(format, value); err == nil {
+			return nil
+		}
+	}
+	return errors.New("invalid timestamp")
+}
 
 // ValidatePlatformPosts runs every pure check we know about and
 // returns the full list of issues. Issues are returned in input order
@@ -316,9 +348,9 @@ func validateThreads(opts ValidateOptions, res *ValidationResult) {
 	// Group entries by account_id, separating threaded from single
 	// posts in the same pass.
 	type group struct {
-		threaded  []int // indices into opts.Posts
-		singles   []int
-		platform  string
+		threaded []int // indices into opts.Posts
+		singles  []int
+		platform string
 	}
 	groups := make(map[string]*group)
 	for i, p := range opts.Posts {
@@ -507,9 +539,9 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Severity:          SeverityError,
 		})
 	}
-		if cap.Text.MaxLength > 0 && captionLen > cap.Text.MaxLength {
-			res.Errors = append(res.Errors, Issue{
-				PlatformPostIndex: i,
+	if cap.Text.MaxLength > 0 && captionLen > cap.Text.MaxLength {
+		res.Errors = append(res.Errors, Issue{
+			PlatformPostIndex: i,
 			AccountID:         post.AccountID,
 			Platform:          plat,
 			Field:             "caption",
@@ -518,8 +550,8 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Actual:            captionLen,
 			Limit:             cap.Text.MaxLength,
 			Severity:          SeverityError,
-			})
-		}
+		})
+	}
 
 	if plat == "youtube" {
 		title := strings.TrimSpace(optString(post.PlatformOptions, "title"))
@@ -536,6 +568,117 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 				Message:           "youtube requires a non-empty video title — add a YouTube title or main caption before publishing",
 				Severity:          SeverityError,
 			})
+		}
+		if titleLen := len([]rune(strings.TrimSpace(optString(post.PlatformOptions, "title")))); titleLen > 100 {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.title",
+				Code:              CodeExceedsMaxLength,
+				Message:           "youtube video title exceeds the 100 character limit",
+				Actual:            titleLen,
+				Limit:             100,
+				Severity:          SeverityError,
+			})
+		}
+		if !hasOpt(post.PlatformOptions, "made_for_kids") {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.made_for_kids",
+				Code:              CodeYouTubeMadeForKidsRequired,
+				Message:           "youtube requires an explicit made_for_kids selection before publishing",
+				Severity:          SeverityError,
+			})
+		}
+		privacyStatus := strings.TrimSpace(optString(post.PlatformOptions, "privacy_status"))
+		if err := validateEnum("youtube", "privacy_status", privacyStatus, YouTubePrivacyValues); err != nil {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.privacy_status",
+				Code:              CodeInvalidPrivacyStatus,
+				Message:           "youtube privacy_status must be private, public, or unlisted",
+				Actual:            privacyStatus,
+				Limit:             YouTubePrivacyValues,
+				Severity:          SeverityError,
+			})
+		}
+		license := strings.TrimSpace(optString(post.PlatformOptions, "license"))
+		if err := validateEnum("youtube", "license", license, YouTubeLicenseValues); err != nil {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.license",
+				Code:              CodeInvalidLicense,
+				Message:           "youtube license must be youtube or creativeCommon",
+				Actual:            license,
+				Limit:             YouTubeLicenseValues,
+				Severity:          SeverityError,
+			})
+		}
+		defaultLanguage := strings.TrimSpace(optString(post.PlatformOptions, "default_language"))
+		if defaultLanguage != "" && !youtubeLanguagePattern.MatchString(defaultLanguage) {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.default_language",
+				Code:              CodeInvalidDefaultLanguage,
+				Message:           "youtube default_language must look like en, en-US, or zh-CN",
+				Actual:            defaultLanguage,
+				Severity:          SeverityError,
+			})
+		}
+		publishAt := strings.TrimSpace(optString(post.PlatformOptions, "publish_at"))
+		if publishAt != "" {
+			if err := parseYouTubeTimestamp(publishAt); err != nil {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "platform_options.publish_at",
+					Code:              CodeInvalidPublishAt,
+					Message:           "youtube publish_at must be an RFC3339 datetime",
+					Actual:            publishAt,
+					Severity:          SeverityError,
+				})
+			}
+			if privacyStatus == "" {
+				privacyStatus = "private"
+			}
+			if privacyStatus != "private" {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "platform_options.publish_at",
+					Code:              CodeYouTubePublishAtRequiresPrivate,
+					Message:           "youtube publish_at requires privacy_status to be private",
+					Actual:            privacyStatus,
+					Limit:             "private",
+					Severity:          SeverityError,
+				})
+			}
+		}
+		recordingDate := strings.TrimSpace(optString(post.PlatformOptions, "recording_date"))
+		if recordingDate != "" {
+			if err := parseYouTubeTimestamp(recordingDate); err != nil {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "platform_options.recording_date",
+					Code:              CodeInvalidRecordingDate,
+					Message:           "youtube recording_date must be YYYY-MM-DD or RFC3339 datetime",
+					Actual:            recordingDate,
+					Severity:          SeverityError,
+				})
+			}
 		}
 	}
 

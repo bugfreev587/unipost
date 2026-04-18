@@ -218,6 +218,62 @@ func TestValidate_CaptionMissingRequired(t *testing.T) {
 	hasError(t, res, 0, CodeMissingRequired)
 }
 
+func TestValidate_YouTubeRequiresMadeForKids(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_youtube",
+			Caption:         "Demo upload",
+			MediaURLs:       []string{"https://x/video.mp4"},
+			PlatformOptions: map[string]any{"privacy_status": "public"},
+		},
+	}))
+	hasError(t, res, 0, CodeYouTubeMadeForKidsRequired)
+}
+
+func TestValidate_YouTubePublishAtRequiresPrivate(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID: "acc_youtube",
+			Caption:   "Demo upload",
+			MediaURLs: []string{"https://x/video.mp4"},
+			PlatformOptions: map[string]any{
+				"made_for_kids":  true,
+				"privacy_status": "public",
+				"publish_at":     "2026-05-01T09:00:00Z",
+			},
+		},
+	}))
+	hasError(t, res, 0, CodeYouTubePublishAtRequiresPrivate)
+}
+
+func TestValidate_YouTubeAcceptsFullMetadata(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID: "acc_youtube",
+			Caption:   "Demo upload",
+			MediaURLs: []string{"https://x/video.mp4"},
+			PlatformOptions: map[string]any{
+				"title":                    "My Demo",
+				"made_for_kids":            false,
+				"privacy_status":           "private",
+				"license":                  "youtube",
+				"default_language":         "en-US",
+				"publish_at":               "2026-05-01T09:00:00Z",
+				"recording_date":           "2026-04-18",
+				"notify_subscribers":       true,
+				"embeddable":               true,
+				"public_stats_viewable":    true,
+				"contains_synthetic_media": false,
+				"playlist_id":              "PL123",
+				"tags":                     []any{"demo", "launch"},
+			},
+		},
+	}))
+	if !res.Valid {
+		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
+}
+
 // ─── media count + mixing ─────────────────────────────────────────────
 
 func TestValidate_RequiresMedia(t *testing.T) {

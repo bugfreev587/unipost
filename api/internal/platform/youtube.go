@@ -30,7 +30,7 @@ func (a *YouTubeAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig 
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/youtube",
-		Scopes:       []string{"https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"},
+		Scopes:       []string{"https://www.googleapis.com/auth/youtube", "https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"},
 	}
 }
 
@@ -39,7 +39,7 @@ func (a *YouTubeAdapter) GetAuthURL(config OAuthConfig, state string) string {
 		"client_id":     {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
 		"response_type": {"code"},
-		"scope":         {"https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"},
+		"scope":         {"https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"},
 		"state":         {state},
 		"access_type":   {"offline"},
 		"prompt":        {"consent"},
@@ -103,15 +103,17 @@ func (a *YouTubeAdapter) Connect(ctx context.Context, credentials map[string]str
 // Mirrors the YouTube Data API videos.insert status.privacyStatus enum.
 var YouTubePrivacyValues = []string{"private", "public", "unlisted"}
 
+var YouTubeLicenseValues = []string{"youtube", "creativeCommon"}
+
 var youTubeCategoryAliases = map[string]string{
-	"people & blogs":        "22",
-	"science & technology":  "28",
-	"education":             "27",
-	"entertainment":         "24",
-	"gaming":                "20",
-	"music":                 "10",
-	"news & politics":       "25",
-	"sports":                "17",
+	"people & blogs":       "22",
+	"science & technology": "28",
+	"education":            "27",
+	"entertainment":        "24",
+	"gaming":               "20",
+	"music":                "10",
+	"news & politics":      "25",
+	"sports":               "17",
 }
 
 func youtubeOptString(opts map[string]any, primary string, aliases ...string) string {
@@ -136,6 +138,76 @@ func normalizeYouTubeCategory(value string) string {
 	return strings.TrimSpace(value)
 }
 
+func youtubeOptBool(opts map[string]any, key string, fallback bool) bool {
+	if opts == nil {
+		return fallback
+	}
+	if _, ok := opts[key]; !ok {
+		return fallback
+	}
+	return optBool(opts, key)
+}
+
+func youtubeOptTime(opts map[string]any, key string) (time.Time, error) {
+	value := strings.TrimSpace(optString(opts, key))
+	if value == "" {
+		return time.Time{}, nil
+	}
+	formats := []string{time.RFC3339, "2006-01-02"}
+	for _, format := range formats {
+		if parsed, err := time.Parse(format, value); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("youtube: invalid %s %q, expected RFC3339 datetime or YYYY-MM-DD date", key, value)
+}
+
+func youtubeOptStringList(opts map[string]any, key string) []string {
+	if opts == nil {
+		return nil
+	}
+	rawTags, ok := opts[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(rawTags))
+	for _, t := range rawTags {
+		if s, ok := t.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	return out
+}
+
+func (a *YouTubeAdapter) addVideoToPlaylist(ctx context.Context, accessToken, playlistID, videoID string) error {
+	body, _ := json.Marshal(map[string]any{
+		"snippet": map[string]any{
+			"playlistId": playlistID,
+			"resourceId": map[string]any{
+				"kind":    "youtube#video",
+				"videoId": videoID,
+			},
+		},
+	})
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to add video to playlist: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		payload, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("youtube playlist insert failed (%d): %s", resp.StatusCode, string(payload))
+	}
+	return nil
+}
+
 // Post uploads a video to YouTube. Requires video URL in imageURLs[0].
 //
 // Supported opts:
@@ -156,6 +228,13 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	if privacyStatus == "" {
 		privacyStatus = "private"
 	}
+	license := youtubeOptString(opts, "license")
+	if err := validateEnum("youtube", "license", license, YouTubeLicenseValues); err != nil {
+		return nil, err
+	}
+	if license == "" {
+		license = "youtube"
+	}
 
 	// Shorts hint: when true, append #Shorts to the title (and description if
 	// missing). YouTube uses the hashtag as the primary signal that a vertical
@@ -171,6 +250,16 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	if description == "" {
 		description = title
 	}
+	defaultLanguage := youtubeOptString(opts, "default_language")
+	playlistID := youtubeOptString(opts, "playlist_id")
+	publishAt, err := youtubeOptTime(opts, "publish_at")
+	if err != nil {
+		return nil, err
+	}
+	recordingDate, err := youtubeOptTime(opts, "recording_date")
+	if err != nil {
+		return nil, err
+	}
 	if shorts {
 		if !strings.Contains(strings.ToLower(title), "#shorts") {
 			title = strings.TrimSpace(title + " #Shorts")
@@ -182,14 +271,12 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 
 	// Optional category id (e.g. "22" for People & Blogs) and tag list.
 	categoryID := normalizeYouTubeCategory(youtubeOptString(opts, "category_id", "category"))
-	var tags []string
-	if rawTags, ok := opts["tags"].([]any); ok {
-		for _, t := range rawTags {
-			if s, ok := t.(string); ok && s != "" {
-				tags = append(tags, s)
-			}
-		}
-	}
+	tags := youtubeOptStringList(opts, "tags")
+	notifySubscribers := youtubeOptBool(opts, "notify_subscribers", true)
+	embeddable := youtubeOptBool(opts, "embeddable", true)
+	publicStatsViewable := youtubeOptBool(opts, "public_stats_viewable", true)
+	madeForKids := youtubeOptBool(opts, "made_for_kids", false)
+	containsSyntheticMedia := youtubeOptBool(opts, "contains_synthetic_media", false)
 
 	// Download video
 	videoResp, err := a.client.Get(videoURL)
@@ -214,16 +301,36 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	if len(tags) > 0 {
 		snippet["tags"] = tags
 	}
+	if defaultLanguage != "" {
+		snippet["defaultLanguage"] = defaultLanguage
+	}
 
-	metadata, _ := json.Marshal(map[string]any{
+	status := map[string]any{
+		"privacyStatus":           privacyStatus,
+		"license":                 license,
+		"embeddable":              embeddable,
+		"publicStatsViewable":     publicStatsViewable,
+		"selfDeclaredMadeForKids": madeForKids,
+		"containsSyntheticMedia":  containsSyntheticMedia,
+	}
+	if !publishAt.IsZero() {
+		status["publishAt"] = publishAt.UTC().Format(time.RFC3339)
+	}
+
+	payload := map[string]any{
 		"snippet": snippet,
-		"status": map[string]any{
-			"privacyStatus": privacyStatus,
-		},
-	})
+		"status":  status,
+	}
+	if !recordingDate.IsZero() {
+		payload["recordingDetails"] = map[string]any{
+			"recordingDate": recordingDate.UTC().Format(time.RFC3339),
+		}
+	}
+
+	metadata, _ := json.Marshal(payload)
 
 	initReq, err := http.NewRequestWithContext(ctx, "POST",
-		"https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+		fmt.Sprintf("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status,recordingDetails&notifySubscribers=%t", notifySubscribers),
 		bytes.NewReader(metadata))
 	if err != nil {
 		return nil, err
@@ -271,6 +378,11 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 		ID string `json:"id"`
 	}
 	json.NewDecoder(uploadResp.Body).Decode(&result)
+	if playlistID != "" {
+		if err := a.addVideoToPlaylist(ctx, accessToken, playlistID, result.ID); err != nil {
+			return nil, err
+		}
+	}
 
 	return &PostResult{
 		ExternalID: result.ID,

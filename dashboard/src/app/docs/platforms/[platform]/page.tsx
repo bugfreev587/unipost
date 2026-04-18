@@ -358,24 +358,36 @@ const PLATFORMS: Record<string, PlatformDoc> = {
   youtube: {
     title: "YouTube",
     lead: "YouTube usually needs more metadata than short-form networks. UniPost exposes those controls in `platform_options.youtube` while keeping the publish flow consistent with the rest of the platform set.",
-    overview: "YouTube is a single-video publish surface. Use it for long-form videos or Shorts. The most important platform-specific controls are privacy status, Shorts mode, category, and tags. For local video files, the most reliable UniPost workflow is to upload into the media library first and then publish with `media_ids`.",
+    overview: "YouTube is a single-video publish surface. Use it for long-form videos or Shorts. UniPost now supports the writable metadata from YouTube `videos.insert` that most teams need in production, including audience (`made_for_kids`), scheduling (`publish_at`), licensing, disclosure flags, and playlist insertion after upload. For local video files, the most reliable UniPost workflow is to upload into the media library first and then publish with `media_ids`.",
     capabilities: [
       ["Video posts", "Yes", "Exactly 1 video"],
       ["Shorts", "Yes", "Use `platform_options.youtube.shorts`"],
-      ["Scheduling", "Yes", "Use `scheduled_at`"],
+      ["Scheduling", "Yes", "Use UniPost `scheduled_at` or YouTube `platform_options.youtube.publish_at`"],
+      ["Playlist insertion", "Yes", "Use `platform_options.youtube.playlist_id`"],
       ["Text-only posts", "No", "Video-first platform"],
       ["Image posts", "No", "Not a native publish target"],
       ["Analytics", "Yes", "Supported"],
     ],
     requirements: [
       ["media_urls or media_ids", "Required", "Exactly 1 video", "Prefer `media_ids` when starting from a local file. Create the media ID with `POST /v1/media`, upload the file to the returned `upload_url`, then publish."],
-      ["caption", "Optional", "5,000 chars", "Used as title/description body context"],
-      ["platform_options.youtube.privacy_status", "Optional", "private / public / unlisted", "Default is often private"],
+      ["caption", "Optional", "5,000 chars", "Used as description and as the title fallback when `platform_options.youtube.title` is blank."],
+      ["platform_options.youtube.made_for_kids", "Required", "boolean", "Explicit audience selection required before publish."],
+      ["platform_options.youtube.privacy_status", "Optional", "private / public / unlisted", "Dashboard defaults to `public`, but YouTube may still force private for unverified API projects."],
       ["platform_options.youtube.shorts", "Optional", "boolean", "Routes the upload toward Shorts behavior"],
     ],
     options: [
+      ["platform_options.youtube.title", "string", "Optional if `caption` is present. Maximum 100 characters."],
       ["platform_options.youtube.category_id", "string", "YouTube category ID"],
       ["platform_options.youtube.tags", "string[]", "Tag list for snippet metadata"],
+      ["platform_options.youtube.default_language", "string", "BCP-47 style language tag such as `en` or `en-US`."],
+      ["platform_options.youtube.recording_date", "string", "Recording date as `YYYY-MM-DD` or RFC3339 datetime."],
+      ["platform_options.youtube.publish_at", "string", "RFC3339 datetime. Requires `privacy_status: private`."],
+      ["platform_options.youtube.notify_subscribers", "boolean", "Defaults to `true` when omitted."],
+      ["platform_options.youtube.embeddable", "boolean", "Whether the video can be embedded off YouTube."],
+      ["platform_options.youtube.license", "youtube / creativeCommon", "YouTube license selection."],
+      ["platform_options.youtube.public_stats_viewable", "boolean", "Controls extended public stats visibility."],
+      ["platform_options.youtube.contains_synthetic_media", "boolean", "Disclosure flag for realistic altered/synthetic media."],
+      ["platform_options.youtube.playlist_id", "string", "If set, UniPost calls `playlistItems.insert` after the upload succeeds."],
     ],
     examples: [
       {
@@ -386,9 +398,16 @@ const PLATFORMS: Record<string, PlatformDoc> = {
   "media_urls": ["https://cdn.example.com/update.mp4"],
   "platform_options": {
     "youtube": {
+      "title": "Quarterly product update",
+      "made_for_kids": false,
       "privacy_status": "public",
       "category_id": "22",
-      "tags": ["product", "quarterly", "update"]
+      "tags": ["product", "quarterly", "update"],
+      "default_language": "en-US",
+      "notify_subscribers": true,
+      "embeddable": true,
+      "license": "youtube",
+      "public_stats_viewable": true
     }
         }
 }`,
@@ -401,6 +420,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
   "media_ids": ["med_uploaded_video_1"],
   "platform_options": {
     "youtube": {
+      "made_for_kids": false,
       "privacy_status": "public",
       "category_id": "22",
       "tags": ["product", "quarterly", "update"]
@@ -410,15 +430,19 @@ const PLATFORMS: Record<string, PlatformDoc> = {
         note: "`med_uploaded_video_1` is a placeholder for the media ID returned by `POST /v1/media` after you reserve the upload and PUT the video bytes to UniPost storage. See the Media API reference for the upload step before calling `POST /v1/social-posts`.",
       },
       {
-        title: "Shorts",
+        title: "Scheduled private upload with playlist insertion",
         body: `{
-  "caption": "30s feature demo",
+  "caption": "Weekly briefing",
   "account_ids": ["sa_youtube_1"],
-  "media_urls": ["https://cdn.example.com/demo-vertical.mp4"],
+  "media_urls": ["https://cdn.example.com/weekly-briefing.mp4"],
   "platform_options": {
     "youtube": {
-      "privacy_status": "public",
-      "shorts": true
+      "made_for_kids": false,
+      "privacy_status": "private",
+      "publish_at": "2026-05-01T09:00:00Z",
+      "playlist_id": "PL1234567890",
+      "contains_synthetic_media": false,
+      "recording_date": "2026-04-18"
     }
   }
 }`,
@@ -428,6 +452,9 @@ const PLATFORMS: Record<string, PlatformDoc> = {
       ["media_required", "YouTube requires exactly one video"],
       ["too_many_media", "More than one media asset supplied"],
       ["invalid_privacy_status", "YouTube privacy value is not recognized"],
+      ["youtube_made_for_kids_required", "YouTube requires an explicit made_for_kids value"],
+      ["youtube_publish_at_requires_private", "YouTube `publish_at` only works with private visibility"],
+      ["invalid_license", "YouTube license value is not recognized"],
     ],
   },
 };
