@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ApiInlineLink } from "../api/_components/doc-components";
 import { CodeBlock, CodeTabs, codeBlockStyles, type CodeSnippet } from "./code-block";
 
 type NavLeaf = {
@@ -32,7 +33,11 @@ type HeadingItem = {
   level: "h2" | "h3";
 };
 
-function renderDocsTableCell(cell: string) {
+function renderDocsTableCell(cell: React.ReactNode) {
+  if (typeof cell !== "string") {
+    return cell;
+  }
+
   const normalized = cell.trim().toLowerCase();
 
   if (normalized === "yes") {
@@ -51,7 +56,69 @@ function renderDocsTableCell(cell: string) {
     );
   }
 
-  return cell;
+  return renderDocsRichContent(cell);
+}
+
+function isApiReference(value: string) {
+  const trimmed = value.trim();
+  return /^(GET|POST|PUT|PATCH|DELETE)\s+\/v1\/[A-Za-z0-9_/:?{}.-]+$/i.test(trimmed)
+    || /^\/v1\/[A-Za-z0-9_/:?{}.-]+$/i.test(trimmed);
+}
+
+function renderInlineToken(token: string, key: string) {
+  if (token.startsWith("`") && token.endsWith("`")) {
+    const inner = token.slice(1, -1);
+    if (isApiReference(inner)) {
+      return <ApiInlineLink key={key} endpoint={inner} />;
+    }
+    return (
+      <code
+        key={key}
+        style={{
+          background: "var(--docs-inline-code-bg)",
+          border: "1px solid var(--docs-border)",
+          borderRadius: 8,
+          padding: "2px 7px",
+          fontFamily: "var(--docs-mono)",
+          fontSize: "0.92em",
+          color: "var(--docs-text-soft)",
+        }}
+      >
+        {inner}
+      </code>
+    );
+  }
+
+  if (isApiReference(token)) {
+    return <ApiInlineLink key={key} endpoint={token} />;
+  }
+
+  return token;
+}
+
+export function renderDocsRichContent(text: string) {
+  const pattern = /`[^`]+`|(?:GET|POST|PUT|PATCH|DELETE)\s+\/v1\/[A-Za-z0-9_/:?{}.-]+|\/v1\/[A-Za-z0-9_/:?{}.-]+/g;
+  const parts: Array<string | React.ReactNode> = [];
+  let lastIndex = 0;
+  let matchIndex = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      parts.push(text.slice(lastIndex, index));
+    }
+    parts.push(renderInlineToken(match[0], `token-${matchIndex}`) as any);
+    lastIndex = index + match[0].length;
+    matchIndex += 1;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  if (parts.length === 0) return text;
+  if (parts.length === 1 && typeof parts[0] === "string") return parts[0];
+  return <>{parts.map((part, index) => typeof part === "string" ? <span key={`text-${index}`}>{part}</span> : part)}</>;
 }
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
@@ -585,7 +652,7 @@ export function DocsTable({
   rows,
 }: {
   columns: readonly string[];
-  rows: readonly (readonly string[])[];
+  rows: readonly (readonly React.ReactNode[])[];
 }) {
   return (
     <div className="docs-table-wrap">
@@ -613,6 +680,10 @@ export function DocsTable({
 
 export function DocsCode({ code, language }: { code: string; language?: string }) {
   return <CodeBlock code={code} language={language} />;
+}
+
+export function DocsRichText({ text }: { text: string }) {
+  return <>{renderDocsRichContent(text)}</>;
 }
 
 export function DocsCodeTabs({

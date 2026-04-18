@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DocsPage, DocsTable } from "../_components/docs-shell";
+import { DocsPage, DocsRichText, DocsTable } from "../_components/docs-shell";
 
 export default function ApiReferenceLandingPage() {
   return (
@@ -40,7 +40,7 @@ export default function ApiReferenceLandingPage() {
       <p>Preview links are designed for review and collaboration flows. They let a human inspect the platform-specific output before the final publish step.</p>
 
       <h2 id="media">Media</h2>
-      <p>Use the media library when you are starting from a local image or video file. The flow is: call <code>POST /v1/media</code>, upload the bytes to the returned <code>upload_url</code>, then publish with <code>media_ids</code>. If your asset already has a public URL, you can skip that step and publish with <code>media_urls</code>.</p>
+      <p><DocsRichText text="Use the media library when you are starting from a local image or video file. The flow is: call `POST /v1/media`, upload the bytes to the returned `upload_url`, then publish with `media_ids`. If your asset already has a public URL, you can skip that step and publish with `media_urls`." /></p>
 
       <h2 id="analytics">Analytics</h2>
       <p>Analytics includes both per-post performance and workspace rollups, so you can power dashboards, summaries, and agent workflows from one layer.</p>

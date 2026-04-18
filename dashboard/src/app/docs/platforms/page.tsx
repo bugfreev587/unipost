@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DocsPage, DocsTable } from "../_components/docs-shell";
+import { DocsPage, DocsRichText, DocsTable } from "../_components/docs-shell";
 
 const PLATFORM_MATRIX = [
   ["Bluesky", "Yes", "Yes", "Yes", "Yes", "No", "Yes"],
@@ -39,7 +39,7 @@ export default function PlatformsPage() {
       <h2 id="cross-platform-rules">Cross-platform rules to remember</h2>
       <ul className="docs-list">
         <li><code>platform_posts[]</code> is the recommended request shape when different platforms need different copy or media.</li>
-        <li><code>media_urls</code> is for assets that already have a public URL. For local files on disk, first call <code>POST /v1/media</code>, upload to the returned <code>upload_url</code>, then publish with <code>media_ids</code>.</li>
+        <li><DocsRichText text="`media_urls` is for assets that already have a public URL. For local files on disk, first call `POST /v1/media`, upload to the returned `upload_url`, then publish with `media_ids`." /></li>
         <li>Most networks reject mixed image and video in a single post. Instagram and Threads only allow mixing inside carousel-style containers.</li>
         <li><code>thread_position</code> is the preferred way to model multi-post conversational flows. Do not assume every platform supports it.</li>
         <li><code>first_comment</code> is a platform-specific feature, not a universal one.</li>

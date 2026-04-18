@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { DocsCode, DocsPage, DocsTable } from "../../_components/docs-shell";
+import { DocsCode, DocsPage, DocsRichText, DocsTable } from "../../_components/docs-shell";
 import { ApiInlineLink } from "../../api/_components/doc-components";
 
 type PlatformDoc = {
@@ -457,7 +457,7 @@ export default async function PlatformDetailPage({
         <>
           <h2 id="local-files">Hosted URLs vs Local Files</h2>
           <p>
-            Every media-capable platform page here supports the same two input shapes. If your asset is already reachable on the public internet, send it in <code>media_urls</code>. If you are starting from a local image or video file, first call <a href="/docs/api/media">POST /v1/media</a>, upload the bytes to the returned <code>upload_url</code>, and then publish with <code>media_ids</code>.
+            Every media-capable platform page here supports the same two input shapes. If your asset is already reachable on the public internet, send it in <code>media_urls</code>. If you are starting from a local image or video file, first call <ApiInlineLink endpoint="POST /v1/media" />, upload the bytes to the returned <code>upload_url</code>, and then publish with <code>media_ids</code>.
           </p>
           <p>
             A placeholder like <code>med_uploaded_video_1</code> or <code>med_uploaded_image_1</code> means “the media ID returned by the Media API after the upload was reserved.” The full upload flow is documented in <a href="/docs/api/media">Media API</a> and <a href="/docs/api/posts/create">Create Post</a>.
@@ -474,10 +474,10 @@ export default async function PlatformDetailPage({
 
       <h2 id="examples">Example requests</h2>
       <p>The examples below are intentionally small and copyable. They show the request body only, assuming a standard <ApiInlineLink endpoint="POST /v1/social-posts" /> call with Bearer auth.</p>
-      {data.examples.map((example) => (
+          {data.examples.map((example) => (
         <div key={example.title}>
           <h3 id={example.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}>{example.title}</h3>
-          {example.note ? <p>{example.note}</p> : null}
+          {example.note ? <p><DocsRichText text={example.note} /></p> : null}
           <DocsCode code={example.body} language="json" />
         </div>
       ))}

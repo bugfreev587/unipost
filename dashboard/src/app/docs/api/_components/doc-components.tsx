@@ -62,12 +62,19 @@ export function ApiInlineLink({
   const trimmed = endpoint.trim();
   const [method, ...rest] = trimmed.split(" ");
   const path = rest.join(" ");
+  const isPathOnly = trimmed.startsWith("/v1/");
   const content = (
     <>
       <span className="docs-api-inline-glow" />
       <span className="docs-api-inline-label">
-        <span className="docs-api-inline-method">{method}</span>
-        {path ? <span className="docs-api-inline-path">{path}</span> : null}
+        {isPathOnly ? (
+          <span className="docs-api-inline-path docs-api-inline-path-only">{trimmed}</span>
+        ) : (
+          <>
+            <span className="docs-api-inline-method">{method}</span>
+            {path ? <span className="docs-api-inline-path">{path}</span> : null}
+          </>
+        )}
       </span>
     </>
   );

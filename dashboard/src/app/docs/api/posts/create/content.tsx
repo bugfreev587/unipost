@@ -311,7 +311,7 @@ export function CreatePostContent() {
           <strong style={{ color: "var(--docs-link)" }}>Two request shapes</strong> — pass exactly one: <code>caption + account_ids</code> (same caption everywhere) or <code>platform_posts[]</code> (different caption per platform). Mixing both is rejected with VALIDATION_ERROR.
         </InfoBox>
         <InfoBox>
-          <strong style={{ color: "var(--docs-link)" }}>Local files vs hosted URLs</strong> — if your image or video already lives at a public URL, send <code>media_urls</code>. If you are starting from a local file on disk, first call <a href="/docs/api/media" style={{ color: "var(--docs-link)", textDecoration: "none" }}>POST /v1/media</a>, upload the bytes to the returned <code>upload_url</code>, then publish with <code>media_ids</code>.
+          <strong style={{ color: "var(--docs-link)" }}>Local files vs hosted URLs</strong> — if your image or video already lives at a public URL, send <code>media_urls</code>. If you are starting from a local file on disk, first call <ApiInlineLink endpoint="POST /v1/media" />, upload the bytes to the returned <code>upload_url</code>, then publish with <code>media_ids</code>.
         </InfoBox>
       </DocSection>
 
@@ -320,7 +320,7 @@ export function CreatePostContent() {
           The create-post endpoint does not accept raw multipart file bodies. When you want to publish a local image or video, use the media library first and then reference the returned media ID during publish.
         </p>
         <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 12 }}>
-          The end-to-end sequence is: reserve an upload with <a href="/docs/api/media" style={{ color: "var(--docs-link)", textDecoration: "none" }}>POST /v1/media</a>, upload the file bytes directly to the returned <code>upload_url</code>, optionally confirm the media row with <a href="/docs/api/media" style={{ color: "var(--docs-link)", textDecoration: "none" }}>GET /v1/media/{'{id}'}</a>, and finally call <code>POST /v1/social-posts</code> with <code>media_ids</code>.
+          The end-to-end sequence is: reserve an upload with <ApiInlineLink endpoint="POST /v1/media" />, upload the file bytes directly to the returned <code>upload_url</code>, optionally confirm the media row with <ApiInlineLink endpoint="GET /v1/media/{id}" href="/docs/api/media" />, and finally call <ApiInlineLink endpoint="POST /v1/social-posts" /> with <code>media_ids</code>.
         </p>
         <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 16 }}>
           This is the recommended path for large videos, especially YouTube uploads. A placeholder like <code>med_uploaded_video_1</code> in the examples below means “the media ID returned by the media API after your upload was reserved.”
