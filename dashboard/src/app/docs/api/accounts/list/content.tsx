@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ApiInlineLink,
   Breadcrumbs, EndpointHeader, DocSection, ParamTable, CodeTabs, ResponseBlock,
   ErrorTable, RelatedEndpoints, InfoBox,
   type ParamRow, type ErrorCodeRow,
@@ -77,7 +78,7 @@ const RESPONSE = `{
 }`;
 
 const RESPONSE_FIELDS: ParamRow[] = [
-  { name: "id", type: "string", required: false, description: "Social account ID. Use this as account_id in POST /v1/social-posts." },
+  { name: "id", type: "string", required: false, description: <>Social account ID. Use this as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>account_id</code> in <ApiInlineLink endpoint="POST /v1/social-posts" />.</> },
   { name: "platform", type: "string", required: false, description: "Platform name: twitter, linkedin, instagram, threads, tiktok, youtube, bluesky." },
   { name: "account_name", type: "string?", required: false, description: "Human-readable handle or display name from the platform." },
   { name: "status", type: "string", required: false, description: '"active" (ready to post), "reconnect_required" (token expired, needs re-auth).' },

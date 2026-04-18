@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Send, Calendar, FileText, Pencil } from "lucide-react";
+import { AlertTriangle, Loader2, X, Send, Calendar, FileText, Pencil } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus, STATUS_COLORS } from "@/components/tools/platform-limits";
-import type { CreateSocialPostPayload, SocialAccount, SocialPost } from "@/lib/api";
-import { createSocialPost } from "@/lib/api";
+import type { CreateSocialPostPayload, SocialAccount, SocialPost, SocialPostValidationResult } from "@/lib/api";
+import { createSocialPost, validateSocialPost } from "@/lib/api";
 
 const CSS = `.cpm-overlay{position:fixed;inset:0;background:var(--overlay);z-index:50;animation:cpm-fade .15s ease}
 @keyframes cpm-fade{from{opacity:0}to{opacity:1}}
@@ -40,6 +40,15 @@ const CSS = `.cpm-overlay{position:fixed;inset:0;background:var(--overlay);z-ind
 .cpm-account input{accent-color:var(--daccent)}
 .cpm-account-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cpm-publish{margin-top:auto}
+.cpm-validation{margin-bottom:14px;padding:10px 12px;border-radius:8px;border:1px solid}
+.cpm-validation.errors{background:#261013;border-color:#7f1d1d}
+.cpm-validation.warnings{background:#2d1d0f;border-color:#92400e}
+.cpm-validation-title{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.cpm-validation.errors .cpm-validation-title{color:#fca5a5}
+.cpm-validation.warnings .cpm-validation-title{color:#fcd34d}
+.cpm-validation-item{font-size:12px;line-height:1.5}
+.cpm-validation.errors .cpm-validation-item{color:#fee2e2}
+.cpm-validation.warnings .cpm-validation-item{color:#fef3c7}
 .cpm-publish-tabs{display:flex;gap:2px;margin-bottom:12px;background:var(--surface1);border-radius:6px;padding:2px}
 .cpm-publish-tab{flex:1;padding:6px;text-align:center;font-size:11.5px;font-weight:600;border-radius:5px;cursor:pointer;color:var(--dmuted);transition:all .1s;border:none;background:none;font-family:inherit}
 .cpm-publish-tab.active{background:var(--surface2);color:var(--dtext)}
@@ -65,7 +74,7 @@ type CreatePostPayload = {
   account_ids?: string[];
   platform_posts?: Array<{ account_id: string; caption: string }>;
   scheduled_at?: string;
-  draft?: boolean;
+  status?: "draft";
 };
 
 export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCreated, editDraft }: Props) {
@@ -80,6 +89,9 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
   const [mode, setMode] = useState<PublishMode>("now");
   const [scheduledAt, setScheduledAt] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<SocialPostValidationResult | null>(null);
+  const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
 
   const activeAccounts = accounts.filter(a => a.status === "active");
 
@@ -98,10 +110,14 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
     }
   }, [selectedIds]);
 
+  useEffect(() => {
+    setValidationResult(null);
+    setWarningsAcknowledged(false);
+  }, [caption, selectedIds, overrides, mode, scheduledAt]);
+
   async function handleSubmit() {
     const ids = [...selectedIds];
     if (ids.length === 0 || !caption.trim()) return;
-    setSubmitting(true);
     try {
       const token = await getToken();
       if (!token) return;
@@ -127,12 +143,24 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
         payload.status = "draft";
       }
 
+      setIsValidating(true);
+      const validation = await validateSocialPost(token, payload);
+      setValidationResult(validation.data);
+      setIsValidating(false);
+      if (validation.data.errors.length > 0) return;
+      if (validation.data.warnings.length > 0 && !warningsAcknowledged) {
+        setWarningsAcknowledged(true);
+        return;
+      }
+
+      setSubmitting(true);
       await createSocialPost(token, workspaceId, payload);
       onCreated();
       onClose();
     } catch (err) {
       console.error("Create failed:", err);
     } finally {
+      setIsValidating(false);
       setSubmitting(false);
     }
   }
@@ -150,7 +178,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
 
   const submitLabel = mode === "now" ? "Publish now" : mode === "schedule" ? "Schedule post" : "Save draft";
   const submitIcon = mode === "now" ? <Send style={{ width: 13, height: 13 }} /> : mode === "schedule" ? <Calendar style={{ width: 13, height: 13 }} /> : <FileText style={{ width: 13, height: 13 }} />;
-  const canSubmit = caption.trim() && selectedIds.size > 0 && !submitting && (mode !== "schedule" || scheduledAt);
+  const canSubmit = caption.trim() && selectedIds.size > 0 && !submitting && !isValidating && (mode !== "schedule" || scheduledAt);
 
   return (
     <>
@@ -250,6 +278,32 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
 
             <div className="cpm-publish">
               <div className="cpm-label">Publish</div>
+              {validationResult?.errors && validationResult.errors.length > 0 && (
+                <div className="cpm-validation errors">
+                  <div className="cpm-validation-title">
+                    <AlertTriangle style={{ width: 13, height: 13 }} />
+                    {validationResult.errors.length} blocking issue{validationResult.errors.length === 1 ? "" : "s"}
+                  </div>
+                  {validationResult.errors.slice(0, 3).map((issue, index) => (
+                    <div key={`${issue.code}-${issue.field}-${index}`} className="cpm-validation-item">
+                      {issue.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {validationResult?.warnings && validationResult.warnings.length > 0 && (
+                <div className="cpm-validation warnings">
+                  <div className="cpm-validation-title">
+                    <AlertTriangle style={{ width: 13, height: 13 }} />
+                    {validationResult.warnings.length} warning{validationResult.warnings.length === 1 ? "" : "s"}
+                  </div>
+                  {validationResult.warnings.slice(0, 2).map((issue, index) => (
+                    <div key={`${issue.code}-${issue.field}-${index}`} className="cpm-validation-item">
+                      {issue.message}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="cpm-publish-tabs">
                 {(["now", "schedule", "draft"] as PublishMode[]).map(m => (
                   <button key={m} className={`cpm-publish-tab${mode === m ? " active" : ""}`} onClick={() => setMode(m)}>
@@ -293,7 +347,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
               </button>
             )}
             <button className="dbtn dbtn-primary" disabled={!canSubmit} onClick={handleSubmit} style={{ gap: 5 }}>
-              {submitIcon} {submitting ? "Sending..." : submitLabel}
+              {isValidating ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : submitIcon} {isValidating ? "Checking..." : submitting ? "Sending..." : validationResult?.warnings?.length ? "Publish anyway" : submitLabel}
             </button>
           </div>
         </div>

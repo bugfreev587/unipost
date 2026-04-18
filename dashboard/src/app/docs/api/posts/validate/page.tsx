@@ -1,4 +1,5 @@
 import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-shell";
+import { ApiInlineLink } from "../../_components/doc-components";
 
 const VALIDATE_SNIPPETS = [
   {
@@ -42,7 +43,7 @@ export default function ValidatePage() {
     <DocsPage
       eyebrow="API Reference"
       title="Validate"
-      lead="Validate is the recommended preflight endpoint for automation and AI workflows. It accepts the same request shape as `POST /v1/social-posts`, but performs checks without creating posts, charging quota, or touching downstream platforms."
+      lead={<>Validate is the recommended preflight endpoint for automation and AI workflows. It accepts the same request shape as <ApiInlineLink endpoint="POST /v1/social-posts" />, but performs checks without creating posts, charging quota, or touching downstream platforms.</>}
     >
       <h2 id="why">Why use Validate</h2>
       <p>Validate is what makes AI-assisted or automated publishing safe. Instead of letting a model guess whether a caption, media mix, or platform-specific option will work, you can ask UniPost before anything is written or published.</p>

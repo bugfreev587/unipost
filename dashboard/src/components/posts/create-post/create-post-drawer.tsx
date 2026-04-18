@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useCallback, useState, useRef, useMemo, memo } from "react";
-import { Plus } from "lucide-react";
+import { AlertTriangle, Loader2, Plus } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { ConnectedAccountsGrid, PostToGrid } from "./account-card-grid";
 import { PlatformEditorBlock } from "./platform-editor-block";
@@ -15,7 +15,16 @@ import {
 } from "./use-create-post-form";
 import { ChevronDown } from "lucide-react";
 import type { SocialAccount, Profile } from "@/lib/api";
-import { createSocialPost, createMedia, getMedia, listProfiles, listSocialAccounts } from "@/lib/api";
+import {
+  createSocialPost,
+  createMedia,
+  getMedia,
+  listProfiles,
+  listSocialAccounts,
+  validateSocialPost,
+  type SocialPostValidationIssue,
+  type SocialPostValidationResult,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
@@ -131,6 +140,111 @@ function MediaThumbnails({ items, onRemove, onAdd, onRetry }: {
   );
 }
 
+const ISSUE_COPY: Record<string, string> = {
+  exceeds_max_length: "Shorten the caption for this destination.",
+  below_min_length: "Add more content before publishing.",
+  missing_required: "Fill in the required field before publishing.",
+  mixed_media_unsupported: "Use either images or video, not both, for this platform.",
+  scheduled_too_soon: "Choose a time at least 30 seconds in the future.",
+  scheduled_too_far: "Choose a scheduled time within the supported window.",
+  media_not_uploaded: "Wait for uploads to finish or remove the pending media.",
+  media_id_not_found: "Re-upload the media asset before publishing.",
+  media_id_not_in_workspace: "This media belongs to a different workspace.",
+  account_disconnected: "Reconnect this account before publishing.",
+  account_not_found: "Select a valid connected account.",
+  account_not_in_workspace: "This account is not available in the current workspace.",
+  first_comment_unsupported: "Remove the first comment for this platform.",
+  unsupported_in_reply_to: "Remove the reply target for this platform.",
+  thread_positions_not_contiguous: "Use consecutive thread positions without gaps.",
+  thread_mixed_with_single: "Separate thread posts from standalone posts.",
+};
+
+function issueSummary(issue: SocialPostValidationIssue): string {
+  return ISSUE_COPY[issue.code] || issue.message;
+}
+
+function issueTargetLabel(issue: SocialPostValidationIssue, accounts: SocialAccount[]): string {
+  if (issue.account_id) {
+    const account = accounts.find((candidate) => candidate.id === issue.account_id);
+    const platformLabel = account?.platform || issue.platform || "platform";
+    const accountLabel = account?.account_name || account?.external_user_email || platformLabel;
+    return `${platformLabel} · ${accountLabel}`;
+  }
+  if (issue.field === "scheduled_at") return "Publish settings";
+  if (issue.field === "media_ids" || issue.field === "media_urls") return "Media";
+  return "Post setup";
+}
+
+function ValidationPanel({
+  errors,
+  warnings,
+  accounts,
+  onSelectIssue,
+}: {
+  errors: SocialPostValidationIssue[];
+  warnings: SocialPostValidationIssue[];
+  accounts: SocialAccount[];
+  onSelectIssue: (issue: SocialPostValidationIssue) => void;
+}) {
+  if (errors.length === 0 && warnings.length === 0) return null;
+
+  return (
+    <section className="mb-5 space-y-3">
+      {errors.length > 0 && (
+        <div className="rounded-xl border border-[#7f1d1d] bg-[#261013] px-4 py-3.5">
+          <div className="flex items-center gap-2 text-[#fecaca] mb-2">
+            <AlertTriangle className="w-4 h-4" />
+            <div className="text-[12px] font-mono uppercase tracking-[0.12em]">
+              {errors.length} blocking issue{errors.length === 1 ? "" : "s"}
+            </div>
+          </div>
+          <div className="space-y-2.5">
+            {errors.map((issue, index) => (
+              <button
+                key={`${issue.code}-${issue.field}-${issue.account_id || "global"}-${index}`}
+                type="button"
+                onClick={() => onSelectIssue(issue)}
+                className="w-full text-left rounded-lg border border-[#7f1d1d]/60 bg-[#331418] px-3 py-2.5 hover:border-[#b91c1c] transition-colors"
+              >
+                <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-[#fca5a5] mb-1">
+                  {issueTargetLabel(issue, accounts)}
+                </div>
+                <div className="text-[13px] text-[#fee2e2] leading-relaxed">{issueSummary(issue)}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="rounded-xl border border-[#92400e] bg-[#2d1d0f] px-4 py-3.5">
+          <div className="flex items-center gap-2 text-[#fde68a] mb-2">
+            <AlertTriangle className="w-4 h-4" />
+            <div className="text-[12px] font-mono uppercase tracking-[0.12em]">
+              {warnings.length} warning{warnings.length === 1 ? "" : "s"}
+            </div>
+          </div>
+          <div className="space-y-2.5">
+            {warnings.map((issue, index) => (
+              <button
+                key={`${issue.code}-${issue.field}-${issue.account_id || "global"}-${index}`}
+                type="button"
+                onClick={() => onSelectIssue(issue)}
+                className="w-full text-left rounded-lg border border-[#92400e]/55 bg-[#382411] px-3 py-2.5 hover:border-[#d97706] transition-colors"
+              >
+                <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-[#fcd34d] mb-1">
+                  {issueTargetLabel(issue, accounts)}
+                </div>
+                <div className="text-[13px] text-[#fef3c7] leading-relaxed">{issueSummary(issue)}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────
 
 interface CreatePostDrawerProps {
@@ -167,7 +281,15 @@ export function CreatePostDrawer({
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [queues, setQueues] = useState<Array<{ id: string; name: string }>>([]);
   const [queuesLoaded, setQueuesLoaded] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<SocialPostValidationResult | null>(null);
+  const [validationChecked, setValidationChecked] = useState(false);
+  const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
   const pendingCloseRef = useRef(false);
+  const mainContentRef = useRef<HTMLTextAreaElement | null>(null);
+  const mediaSectionRef = useRef<HTMLDivElement | null>(null);
+  const publishPanelRef = useRef<HTMLDivElement | null>(null);
+  const platformBlockRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Load profiles when drawer opens
   useEffect(() => {
@@ -238,9 +360,29 @@ export function CreatePostDrawer({
       setProfileAccounts(accounts);
       setShowDiscardConfirm(false);
       setQueuesLoaded(false);
+      setValidationResult(null);
+      setValidationChecked(false);
+      setIsValidating(false);
+      setWarningsAcknowledged(false);
       pendingCloseRef.current = false;
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return;
+    setValidationResult(null);
+    setValidationChecked(false);
+    setWarningsAcknowledged(false);
+  }, [
+    open,
+    form.mainContent,
+    form.selectedAccountIds,
+    form.overrides,
+    form.mediaItems,
+    form.publishMode,
+    form.scheduledAt,
+    form.queueId,
+  ]);
 
   const attemptClose = useCallback(() => {
     if (form.hasUnsavedContent) {
@@ -327,14 +469,67 @@ export function CreatePostDrawer({
     }
   }
 
+  async function runValidation(payload: ReturnType<typeof form.buildPayload>) {
+    const token = await getToken();
+    if (!token) return { ok: false as const, tokenMissing: true as const };
+
+    setIsValidating(true);
+    try {
+      const res = await validateSocialPost(token, payload as any);
+      const result = res.data;
+      setValidationResult(result);
+      setValidationChecked(true);
+      return { ok: result.errors.length === 0, result, token };
+    } finally {
+      setIsValidating(false);
+    }
+  }
+
+  function focusIssue(issue: SocialPostValidationIssue) {
+    if (issue.account_id) {
+      form.expandBlock(issue.account_id);
+      window.requestAnimationFrame(() => {
+        const node = platformBlockRefs.current[issue.account_id!];
+        node?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      return;
+    }
+    if (issue.field === "media_ids" || issue.field === "media_urls") {
+      mediaSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (issue.field === "scheduled_at") {
+      publishPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    mainContentRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    mainContentRef.current?.focus();
+  }
+
   async function handleSubmit() {
     if (!form.canSubmit) return;
-    form.setSubmitting(true);
     try {
-      const token = await getToken();
-      if (!token) return;
       const payload = form.buildPayload();
-      console.log("[CreatePost] payload:", JSON.stringify(payload, null, 2));
+      const validation = await runValidation(payload);
+      if (!validation.ok) {
+        if (!validation.tokenMissing && validation.result && validation.result.errors.length > 0) {
+          focusIssue(validation.result.errors[0]);
+        }
+        return;
+      }
+      if (
+        validation.result &&
+        validation.result.warnings.length > 0 &&
+        !warningsAcknowledged
+      ) {
+        setWarningsAcknowledged(true);
+        focusIssue(validation.result.warnings[0]);
+        return;
+      }
+
+      form.setSubmitting(true);
+      const token = validation.token;
+      if (!token) return;
       await createSocialPost(token, workspaceId, payload as any);
       onCreated();
       onOpenChange(false);
@@ -449,6 +644,7 @@ export function CreatePostDrawer({
                 <span className="text-[11px] text-[#55555c] font-mono">optional</span>
               </div>
               <textarea
+                ref={mainContentRef}
                 rows={5}
                 placeholder="What's on your mind?"
                 value={form.mainContent}
@@ -467,17 +663,19 @@ export function CreatePostDrawer({
             </section>
 
             {/* Media upload */}
-            <MediaThumbnails
-              items={form.mediaItems}
-              onRemove={(i) => form.removeMediaItem(i)}
-              onAdd={(newFiles) => newFiles.forEach((f) => handleFileUpload(f))}
-              onRetry={(i) => {
-                const failed = form.mediaItems[i];
-                if (!failed) return;
-                form.removeMediaItem(i);
-                handleFileUpload(failed.file);
-              }}
-            />
+            <div ref={mediaSectionRef}>
+              <MediaThumbnails
+                items={form.mediaItems}
+                onRemove={(i) => form.removeMediaItem(i)}
+                onAdd={(newFiles) => newFiles.forEach((f) => handleFileUpload(f))}
+                onRetry={(i) => {
+                  const failed = form.mediaItems[i];
+                  if (!failed) return;
+                  form.removeMediaItem(i);
+                  handleFileUpload(failed.file);
+                }}
+              />
+            </div>
 
             {/* Per-platform overrides */}
             <section className="mt-8">
@@ -498,22 +696,33 @@ export function CreatePostDrawer({
                     const override = form.overrides[account.id] || { caption: "" };
                     const text = override.caption || form.mainContent;
                     const charCount = form.getCharCount(text, account.platform);
+                    const accountIssues = [
+                      ...(validationResult?.errors || []),
+                      ...(validationResult?.warnings || []),
+                    ].filter((issue) => issue.account_id === account.id);
                     return (
-                      <PlatformEditorBlock
+                      <div
                         key={account.id}
-                        account={account}
-                        index={i}
-                        override={override}
-                        collapsed={form.collapsedBlocks.has(account.id)}
-                        charCount={charCount}
-                        onCaptionChange={(caption) =>
-                          form.updateOverrideCaption(account.id, caption)
-                        }
-                        onPlatformFieldChange={(platform, fields) =>
-                          form.updateOverridePlatformField(account.id, platform, fields)
-                        }
-                        onToggleCollapse={() => form.toggleBlockCollapse(account.id)}
-                      />
+                        ref={(node) => {
+                          platformBlockRefs.current[account.id] = node;
+                        }}
+                      >
+                        <PlatformEditorBlock
+                          account={account}
+                          index={i}
+                          override={override}
+                          collapsed={form.collapsedBlocks.has(account.id)}
+                          charCount={charCount}
+                          issues={accountIssues}
+                          onCaptionChange={(caption) =>
+                            form.updateOverrideCaption(account.id, caption)
+                          }
+                          onPlatformFieldChange={(platform, fields) =>
+                            form.updateOverridePlatformField(account.id, platform, fields)
+                          }
+                          onToggleCollapse={() => form.toggleBlockCollapse(account.id)}
+                        />
+                      </div>
                     );
                   })}
                 </div>
@@ -578,16 +787,25 @@ export function CreatePostDrawer({
             {/* Divider */}
             <div className="my-5 border-t border-[#22222a]" />
 
-            {/* 4. Publish */}
-            <PublishModePanel
-              mode={form.publishMode}
-              onModeChange={form.setPublishMode}
-              scheduledAt={form.scheduledAt}
-              onScheduledAtChange={form.setScheduledAt}
-              queueId={form.queueId}
-              onQueueIdChange={form.setQueueId}
-              queues={queues}
+            <ValidationPanel
+              errors={validationResult?.errors || []}
+              warnings={validationResult?.warnings || []}
+              accounts={form.selectedAccounts}
+              onSelectIssue={focusIssue}
             />
+
+            {/* 4. Publish */}
+            <div ref={publishPanelRef}>
+              <PublishModePanel
+                mode={form.publishMode}
+                onModeChange={form.setPublishMode}
+                scheduledAt={form.scheduledAt}
+                onScheduledAtChange={form.setScheduledAt}
+                queueId={form.queueId}
+                onQueueIdChange={form.setQueueId}
+                queues={queues}
+              />
+            </div>
           </aside>
         </div>
 
@@ -627,7 +845,7 @@ export function CreatePostDrawer({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={!form.canSubmit}
+              disabled={!form.canSubmit || isValidating}
               title={disabledReason ?? undefined}
               className={cn(
                 "px-5 py-2 text-sm font-medium rounded-lg transition-colors",
@@ -636,7 +854,12 @@ export function CreatePostDrawer({
                 "disabled:opacity-50 disabled:cursor-not-allowed"
               )}
             >
-              {form.submitting ? "Sending..." : primaryLabel}
+              {isValidating ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Checking...
+                </span>
+              ) : form.submitting ? "Sending..." : validationChecked && (validationResult?.warnings?.length || 0) > 0 && (validationResult?.errors?.length || 0) === 0 ? "Publish anyway" : primaryLabel}
             </button>
           </div>
         </footer>

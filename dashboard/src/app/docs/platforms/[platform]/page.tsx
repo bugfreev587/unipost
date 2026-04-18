@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { DocsCode, DocsPage, DocsTable } from "../../_components/docs-shell";
+import { ApiInlineLink } from "../../api/_components/doc-components";
 
 type PlatformDoc = {
   title: string;
@@ -458,7 +459,7 @@ export default async function PlatformDetailPage({
       ) : null}
 
       <h2 id="examples">Example requests</h2>
-      <p>The examples below are intentionally small and copyable. They show the request body only, assuming a standard <code>POST /v1/social-posts</code> call with Bearer auth.</p>
+      <p>The examples below are intentionally small and copyable. They show the request body only, assuming a standard <ApiInlineLink endpoint="POST /v1/social-posts" /> call with Bearer auth.</p>
       {data.examples.map((example) => (
         <div key={example.title}>
           <h3 id={example.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}>{example.title}</h3>

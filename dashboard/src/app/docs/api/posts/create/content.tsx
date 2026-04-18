@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ApiInlineLink,
   Breadcrumbs, EndpointHeader, DocSection, ParamTable, CodeTabs, ResponseBlock,
   ErrorTable, RelatedEndpoints, InfoBox, ChangelogEntry,
   type ParamRow, type ErrorCodeRow,
@@ -11,10 +12,10 @@ const BODY_PARAMS: ParamRow[] = [
   { name: "account_ids", type: "string[]", required: false, description: "Social account IDs to fan out to. Use this OR platform_posts, not both." },
   { name: "platform_posts", type: "object[]", required: false, description: "Per-platform posts with individual captions, media, and options. Preferred for multi-platform fan-out." },
   { name: "media_urls", type: "string[]", required: false, description: "Public URLs of images/videos to attach. Ignored when platform_posts is set." },
-  { name: "media_ids", type: "string[]", required: false, description: "IDs from POST /v1/media (preferred over media_urls). Resolved server-side to presigned download URLs." },
+  { name: "media_ids", type: "string[]", required: false, description: <>IDs from <ApiInlineLink endpoint="POST /v1/media" /> (preferred over <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>media_urls</code>). Resolved server-side to presigned download URLs.</> },
   { name: "scheduled_at", type: "string", required: false, description: "ISO 8601 timestamp. If set, post is queued and published by the scheduler at that time. Must be at least 60 seconds in the future." },
   { name: "idempotency_key", type: "string", required: false, description: "Unique string (max 64 chars). Same key + same workspace within 24h returns the original response unchanged." },
-  { name: "status", type: "string", required: false, description: 'Set to "draft" to persist without publishing. Use POST /v1/social-posts/:id/publish to ship later.' },
+  { name: "status", type: "string", required: false, description: <>Set to <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code> to persist without publishing. Use <ApiInlineLink endpoint="POST /v1/social-posts/:id/publish" /> to ship later.</> },
 ];
 
 const PLATFORM_POST_PARAMS: ParamRow[] = [

@@ -67,6 +67,24 @@ export interface CreateSocialPostPayload {
   }>;
 }
 
+export interface SocialPostValidationIssue {
+  platform_post_index?: number;
+  account_id?: string;
+  platform?: string;
+  field: string;
+  code: string;
+  message: string;
+  actual?: unknown;
+  limit?: unknown;
+  severity: "error" | "warning";
+}
+
+export interface SocialPostValidationResult {
+  valid: boolean;
+  errors: SocialPostValidationIssue[];
+  warnings: SocialPostValidationIssue[];
+}
+
 // Client
 
 async function request<T>(
@@ -453,6 +471,16 @@ export async function createSocialPost(
   data: CreateSocialPostPayload
 ): Promise<ApiResponse<SocialPost>> {
   return request(`/v1/workspaces/${workspaceId}/social-posts`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function validateSocialPost(
+  token: string,
+  data: CreateSocialPostPayload
+): Promise<ApiResponse<SocialPostValidationResult>> {
+  return request("/v1/social-posts/validate", token, {
     method: "POST",
     body: JSON.stringify(data),
   });

@@ -185,6 +185,15 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     });
   }, []);
 
+  const expandBlock = useCallback((accountId: string) => {
+    setCollapsedBlocks((prev) => {
+      if (!prev.has(accountId)) return prev;
+      const next = new Set(prev);
+      next.delete(accountId);
+      return next;
+    });
+  }, []);
+
   const updateOverrideCaption = useCallback((accountId: string, caption: string) => {
     setOverrides((prev) => ({
       ...prev,
@@ -412,6 +421,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     toggleAccount,
     toggleAll,
     toggleBlockCollapse,
+    expandBlock,
     updateOverrideCaption,
     updateOverridePlatformField,
     addMediaItem,

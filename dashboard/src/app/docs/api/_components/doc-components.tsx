@@ -29,6 +29,58 @@ export function MethodBadge({ method }: { method: string }) {
   );
 }
 
+const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
+  { match: /^POST \/v1\/social-posts\/validate$/i, href: "/docs/api/posts/validate" },
+  { match: /^POST \/v1\/social-posts\/[^/]+\/publish$/i, href: "/docs/api/posts/drafts" },
+  { match: /^POST \/v1\/social-posts(?:\/bulk)?$/i, href: "/docs/api/posts/create" },
+  { match: /^GET \/v1\/social-posts\/[^/]+\/analytics$/i, href: "/docs/api/analytics" },
+  { match: /^GET \/v1\/social-accounts(?:\/[^/]+\/health)?$/i, href: "/docs/api/accounts/list" },
+  { match: /^POST \/v1\/connect\/sessions/i, href: "/docs/api/connect/sessions" },
+  { match: /^POST \/v1\/webhooks\/[^/]+\/rotate$/i, href: "/docs/api/webhooks" },
+  { match: /^GET \/v1\/webhooks\/[^/]+$/i, href: "/docs/api/webhooks" },
+  { match: /^POST \/v1\/media$/i, href: "/docs/api/media" },
+  { match: /^GET \/v1\/users/i, href: "/docs/api/users" },
+];
+
+function normalizeEndpointReference(value: string) {
+  return value.trim().replace(/\{[^}]+\}/g, ":id");
+}
+
+function resolveEndpointDocHref(endpoint: string) {
+  const normalized = normalizeEndpointReference(endpoint);
+  return ENDPOINT_DOC_LINKS.find((item) => item.match.test(normalized))?.href;
+}
+
+export function ApiInlineLink({
+  endpoint,
+  href,
+}: {
+  endpoint: string;
+  href?: string;
+}) {
+  const resolvedHref = href || resolveEndpointDocHref(endpoint);
+  const content = (
+    <>
+      <span className="docs-api-inline-glow" />
+      <span className="docs-api-inline-label">{endpoint}</span>
+    </>
+  );
+
+  if (!resolvedHref) {
+    return (
+      <code className="docs-api-inline docs-api-inline-static">
+        {content}
+      </code>
+    );
+  }
+
+  return (
+    <Link href={resolvedHref} className="docs-api-inline">
+      {content}
+    </Link>
+  );
+}
+
 // ── Endpoint header ──
 export function EndpointHeader({ method, path, description, badges }: {
   method: string; path: string; description: string; badges?: string[];
@@ -84,7 +136,7 @@ export interface ParamRow {
   name: string;
   type: string;
   required: boolean;
-  description: string;
+  description: React.ReactNode;
 }
 
 export function ParamTable({ params, title }: { params: ParamRow[]; title?: string }) {

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ApiInlineLink,
   Breadcrumbs, DocSection, CodeTabs, ResponseBlock, InfoBox, RelatedEndpoints,
 } from "../_components/doc-components";
 
@@ -186,7 +187,7 @@ export function WebhooksContent() {
       {/* Setup */}
       <DocSection id="setup" title="Setup">
         <p style={{ fontSize: 14, color: "var(--docs-text-soft)", lineHeight: 1.6, marginBottom: 16 }}>
-          Create a webhook subscription via the API. The signing secret is returned <strong style={{ color: "var(--docs-text)" }}>once</strong> in the create response — store it securely. Use <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>POST /v1/webhooks/:id/rotate</code> to generate a new secret if needed.
+          Create a webhook subscription via the API. The signing secret is returned <strong style={{ color: "var(--docs-text)" }}>once</strong> in the create response — store it securely. Use <ApiInlineLink endpoint="POST /v1/webhooks/:id/rotate" /> to generate a new secret if needed.
         </p>
         <CodeTabs snippets={SETUP_SNIPPETS} />
       </DocSection>
@@ -252,7 +253,7 @@ export function WebhooksContent() {
           <li style={{ fontSize: 14, color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 4 }}>The connection is refused or times out</li>
         </ul>
         <p style={{ fontSize: 14.5, color: "var(--docs-text-soft)", lineHeight: 1.7, marginTop: 12 }}>
-          After 3 failures on the same event, the delivery is marked as permanently failed. Persistent failures across multiple events may trigger automatic webhook disabling — check the webhook status via <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>GET /v1/webhooks/:id</code>.
+          After 3 failures on the same event, the delivery is marked as permanently failed. Persistent failures across multiple events may trigger automatic webhook disabling — check the webhook status via <ApiInlineLink endpoint="GET /v1/webhooks/:id" />.
         </p>
       </DocSection>
 
