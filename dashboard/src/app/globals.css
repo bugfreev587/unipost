@@ -127,6 +127,7 @@
   --theme-toggle-active-border: rgb(16 185 129 / 0.28);
   --theme-toggle-icon: var(--text-muted);
   --theme-toggle-icon-active: var(--primary);
+  --platform-icon-mono: #111827;
 
   --clerk-bg: #ffffff;
   --clerk-card-bg: #ffffff;
@@ -213,6 +214,7 @@
   --theme-toggle-active-border: rgb(16 185 129 / 0.24);
   --theme-toggle-icon: var(--text-muted);
   --theme-toggle-icon-active: var(--primary);
+  --platform-icon-mono: #f5f5f5;
 
   --clerk-bg: #0f0f0f;
   --clerk-card-bg: #141414;
