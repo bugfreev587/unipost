@@ -59,10 +59,16 @@ export function ApiInlineLink({
   href?: string;
 }) {
   const resolvedHref = href || resolveEndpointDocHref(endpoint);
+  const trimmed = endpoint.trim();
+  const [method, ...rest] = trimmed.split(" ");
+  const path = rest.join(" ");
   const content = (
     <>
       <span className="docs-api-inline-glow" />
-      <span className="docs-api-inline-label">{endpoint}</span>
+      <span className="docs-api-inline-label">
+        <span className="docs-api-inline-method">{method}</span>
+        {path ? <span className="docs-api-inline-path">{path}</span> : null}
+      </span>
     </>
   );
 
