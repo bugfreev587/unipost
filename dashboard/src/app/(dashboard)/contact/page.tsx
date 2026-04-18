@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { Suspense, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Bug, Lightbulb, HelpCircle, Mail, MessageSquareText } from "lucide-react";
 import { buildSupportMailto, SUPPORT_EMAIL, SUPPORT_SLACK_URL } from "@/lib/support";
@@ -30,6 +30,14 @@ const CONTACT_OPTIONS = [
 ];
 
 export default function ContactPage() {
+  return (
+    <Suspense fallback={<div style={{ color: "var(--dmuted)" }}>Loading...</div>}>
+      <ContactPageContent />
+    </Suspense>
+  );
+}
+
+function ContactPageContent() {
   const searchParams = useSearchParams();
   const topic = searchParams.get("topic") || undefined;
   const source = searchParams.get("source") || undefined;
