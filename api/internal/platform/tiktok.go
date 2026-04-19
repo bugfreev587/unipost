@@ -183,6 +183,33 @@ var TikTokPrivacyValues = []string{
 	"SELF_ONLY",
 }
 
+// buildTikTokPostInfo normalizes the common post_info object used across
+// TikTok's video and photo publish-init endpoints. TikTok returns a
+// misleading "Invalid authorization header" 400 for some malformed bodies,
+// so we always send the required toggle fields with permissive defaults.
+func buildTikTokPostInfo(text, privacyLevel string, opts map[string]any) map[string]any {
+	return map[string]any{
+		"title":                text,
+		"description":          text,
+		"privacy_level":        privacyLevel,
+		"disable_comment":      optBool(opts, "disable_comment"),
+		"auto_add_music":       true,
+		"brand_content_toggle": optBool(opts, "brand_content_toggle"),
+		"brand_organic_toggle": optBool(opts, "brand_organic_toggle"),
+	}
+}
+
+func wrapTikTokInitError(prefix string, status int, body []byte, privacyLevel string) error {
+	msg := fmt.Sprintf("%s (%d): %s", prefix, status, string(body))
+	if strings.Contains(string(body), `"code":"invalid_params"`) {
+		msg += " [TikTok often returns this message for malformed request bodies; we now send the required toggle fields automatically.]"
+		if privacyLevel != "SELF_ONLY" {
+			msg += " [If this TikTok app is still in sandbox/unaudited mode, TikTok may reject non-SELF_ONLY privacy levels.]"
+		}
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 // Post publishes a video to TikTok using direct file upload.
 //
 // Supported opts:
@@ -235,9 +262,9 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 		initErr   error
 	)
 	if uploadMode == "pull_from_url" {
-		publishID, initErr = a.initVideoPull(ctx, accessToken, text, privacyLevel, videoURL)
+		publishID, initErr = a.initVideoPull(ctx, accessToken, text, privacyLevel, videoURL, opts)
 	} else {
-		publishID, initErr = a.initAndPushVideoFile(ctx, accessToken, text, privacyLevel, videoURL)
+		publishID, initErr = a.initAndPushVideoFile(ctx, accessToken, text, privacyLevel, videoURL, opts)
 	}
 	if initErr != nil {
 		return nil, initErr
@@ -344,15 +371,7 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 	// validation message. Defaults match the most permissive choice:
 	// comments enabled, music enabled, no brand disclosures.
 	body, _ := json.Marshal(map[string]any{
-		"post_info": map[string]any{
-			"title":                 text,
-			"description":           text,
-			"privacy_level":         privacyLevel,
-			"disable_comment":       optBool(opts, "disable_comment"),
-			"auto_add_music":        true,
-			"brand_content_toggle":  optBool(opts, "brand_content_toggle"),
-			"brand_organic_toggle":  optBool(opts, "brand_organic_toggle"),
-		},
+		"post_info": buildTikTokPostInfo(text, privacyLevel, opts),
 		"source_info": map[string]any{
 			"source":            "PULL_FROM_URL",
 			"photo_cover_index": cover,
@@ -405,12 +424,9 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 // This is the preferred path: it skips a download/re-upload round-trip on our
 // side and means the video bytes never touch the API server. The source URL
 // must be on a domain registered with TikTok's developer portal.
-func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, privacyLevel, videoURL string) (string, error) {
+func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, privacyLevel, videoURL string, opts map[string]any) (string, error) {
 	body, _ := json.Marshal(map[string]any{
-		"post_info": map[string]any{
-			"title":         text,
-			"privacy_level": privacyLevel,
-		},
+		"post_info": buildTikTokPostInfo(text, privacyLevel, opts),
 		"source_info": map[string]any{
 			"source":        "PULL_FROM_URL",
 			"video_url":     videoURL,
@@ -433,7 +449,7 @@ func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, pr
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tiktok pull init (%d): %s", resp.StatusCode, string(respBody))
+		return "", wrapTikTokInitError("tiktok pull init failed", resp.StatusCode, respBody, privacyLevel)
 	}
 
 	var result struct {
@@ -459,7 +475,7 @@ func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, pr
 // bytes locally, INIT with TikTok asking for an upload URL, then PUT the
 // bytes to that URL. Used as a fallback when PULL_FROM_URL isn't viable
 // (source not on a verified domain, intranet URLs, etc.).
-func (a *TikTokAdapter) initAndPushVideoFile(ctx context.Context, accessToken, text, privacyLevel, videoURL string) (string, error) {
+func (a *TikTokAdapter) initAndPushVideoFile(ctx context.Context, accessToken, text, privacyLevel, videoURL string, opts map[string]any) (string, error) {
 	videoResp, err := a.client.Get(videoURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to download video: %w", err)
@@ -475,10 +491,7 @@ func (a *TikTokAdapter) initAndPushVideoFile(ctx context.Context, accessToken, t
 	slog.Info("tiktok post: downloaded video", "size", videoSize)
 
 	initBody, _ := json.Marshal(map[string]any{
-		"post_info": map[string]any{
-			"title":         text,
-			"privacy_level": privacyLevel,
-		},
+		"post_info": buildTikTokPostInfo(text, privacyLevel, opts),
 		"source_info": map[string]any{
 			"source":            "FILE_UPLOAD",
 			"video_size":        videoSize,
@@ -503,7 +516,7 @@ func (a *TikTokAdapter) initAndPushVideoFile(ctx context.Context, accessToken, t
 
 	initRespBody, _ := io.ReadAll(initResp.Body)
 	if initResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tiktok upload init failed (%d): %s", initResp.StatusCode, string(initRespBody))
+		return "", wrapTikTokInitError("tiktok upload init failed", initResp.StatusCode, initRespBody, privacyLevel)
 	}
 
 	var initResult struct {
