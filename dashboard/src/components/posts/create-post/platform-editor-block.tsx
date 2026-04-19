@@ -91,9 +91,9 @@ export function PlatformEditorBlock({
             <PlatformIcon platform={account.platform} size={11} />
           </div>
           <div>
-            <div className="text-[13px] font-medium" style={{ color: "var(--dtext)" }}>{label}</div>
+            <div className="text-[13.5px] leading-[1.25]" style={{ color: "var(--dtext)", fontWeight: 600 }}>{label}</div>
             <div className="flex items-center gap-2 flex-wrap">
-              <div className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
+              <div className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
                 {account.account_name || account.external_user_email || account.platform}
               </div>
               {hasErrors && (
@@ -111,7 +111,7 @@ export function PlatformEditorBlock({
         </div>
         <button
           type="button"
-          className="font-mono text-[11px] transition-colors"
+          className="font-mono text-[10.5px] tracking-[0.02em] transition-colors"
           style={{ color: "var(--dmuted2)" }}
           onClick={onToggleCollapse}
         >
@@ -153,11 +153,11 @@ export function PlatformEditorBlock({
           {/* Caption */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
-                Custom caption
-              </label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                  Custom caption
+                </label>
               <span
-                className="font-mono text-[11px]"
+                className="font-mono text-[10.5px] tracking-[0.02em]"
                 style={{ color: charCount.status === "over" ? "var(--danger)" : charCount.status === "warning" ? "var(--warning)" : "var(--dmuted2)" }}
               >
                 {charCount.count} / {limit}

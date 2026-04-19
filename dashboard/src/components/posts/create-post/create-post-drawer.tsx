@@ -760,10 +760,10 @@ export function CreatePostDrawer({
         {/* Header */}
         <header className="flex flex-shrink-0 items-start justify-between border-b px-8 pb-5 pt-7" style={{ borderBottomColor: "var(--dborder)" }}>
           <div>
-            <h2 className="mb-1.5 font-serif text-3xl leading-none tracking-tight" style={{ color: "var(--dtext)" }}>
+            <h2 className="mb-2 font-serif text-[2.15rem] leading-[1.02] tracking-[-0.035em]" style={{ color: "var(--dtext)", fontWeight: 650 }}>
               Create post
             </h2>
-            <p className="text-sm" style={{ color: "var(--dmuted)" }}>
+            <p className="text-[14.5px] leading-[1.65]" style={{ color: "var(--dmuted)" }}>
               Compose once, publish to any platform you&apos;ve connected.
             </p>
           </div>
@@ -786,10 +786,10 @@ export function CreatePostDrawer({
             {/* Main content */}
             <section>
               <div className="flex items-center justify-between mb-2.5">
-                <label className="text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
                   Content
                 </label>
-                <span className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>optional</span>
+                <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>optional</span>
               </div>
               <textarea
                 ref={mainContentRef}
@@ -802,10 +802,10 @@ export function CreatePostDrawer({
                 style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
               />
               <div className="flex items-center justify-between mt-2">
-                <p className="text-[11px]" style={{ color: "var(--dmuted2)" }}>
+                <p className="text-[12.5px] leading-[1.55]" style={{ color: "var(--dmuted2)" }}>
                   Used as the default for every selected platform unless overridden below.
                 </p>
-                <span className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
+                <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
                   {form.mainContent.length} chars
                 </span>
               </div>
@@ -829,10 +829,10 @@ export function CreatePostDrawer({
             {/* Per-platform overrides */}
             <section className="mt-8">
               <div className="flex items-center justify-between mb-3">
-                <label className="text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
                   Per-platform customization
                 </label>
-                <span className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
+                <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
                   {form.selectedAccountIds.size} selected
                 </span>
               </div>
@@ -885,7 +885,7 @@ export function CreatePostDrawer({
             {/* 1. Profile selector */}
             {profiles.length > 0 && (
               <div className="mb-5">
-                <label className="mb-2 block text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
                   Profile
                 </label>
                 <div className="relative">
@@ -906,9 +906,9 @@ export function CreatePostDrawer({
 
             {/* 2. Connected Accounts */}
             <div className="mb-5">
-              <label className="mb-2 block text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
-                Connected accounts
-              </label>
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                  Connected accounts
+                </label>
               <ConnectedAccountsGrid
                 accounts={form.activeAccounts}
                 selectedIds={form.selectedAccountIds}
@@ -919,10 +919,10 @@ export function CreatePostDrawer({
             {/* 3. Post To */}
             <div className="mb-5">
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
                   Post to
                 </label>
-                <span className="font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
+                <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
                   {form.selectedAccountIds.size} selected
                 </span>
               </div>
@@ -988,7 +988,7 @@ export function CreatePostDrawer({
 
         {/* Footer */}
         <footer className="flex flex-shrink-0 items-center justify-between border-t px-8 py-4" style={{ borderTopColor: "var(--dborder)", background: "var(--surface-raised)" }}>
-          <div className="flex items-center gap-2 font-mono text-[11px]" style={{ color: "var(--dmuted2)" }}>
+          <div className="flex items-center gap-2 font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
             <kbd className="rounded border px-1.5 py-0.5" style={{ borderColor: "var(--dborder)", background: "var(--surface2)" }}>Esc</kbd>
             <span>to close</span>
             <span className="mx-1">&middot;</span>
@@ -998,7 +998,7 @@ export function CreatePostDrawer({
           </div>
           <div className="flex items-center gap-2.5">
             {disabledReason && (
-              <span className="max-w-[260px] text-right text-[11px] leading-snug" style={{ color: "var(--dmuted)" }}>
+              <span className="max-w-[260px] text-right text-[12px] leading-[1.45]" style={{ color: "var(--dmuted)" }}>
                 {disabledReason}
               </span>
             )}

@@ -150,7 +150,7 @@ export function PublishModePanel({
 
   return (
     <div>
-      <label className="mb-3 block text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
+      <label className="mb-3 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
         Publish
       </label>
 
@@ -183,7 +183,7 @@ export function PublishModePanel({
         {mode === "schedule" && (
           <div className="space-y-3">
             <div>
-              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
                 Date &amp; time
               </label>
               <div className="relative">
@@ -213,7 +213,7 @@ export function PublishModePanel({
               </div>
             </div>
             <div>
-              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
                 Timezone
               </label>
               <select className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]" style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}>
@@ -228,7 +228,7 @@ export function PublishModePanel({
         {mode === "queue" && (
           <div className="space-y-3">
             <div>
-              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
                 Add to queue
               </label>
               <select

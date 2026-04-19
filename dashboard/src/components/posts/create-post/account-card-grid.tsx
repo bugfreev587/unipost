@@ -43,12 +43,12 @@ export function ConnectedAccountsGrid({
     <div>
       {onToggleAll && (
         <div className="flex items-center justify-between mb-3">
-          <label className="text-xs uppercase tracking-wider font-medium" style={{ color: "var(--dmuted2)" }}>
+          <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
             Post to
           </label>
           <button
             type="button"
-            className="text-[11px] font-mono transition-colors"
+            className="text-[10.5px] font-mono tracking-[0.02em] transition-colors"
             style={{ color: "var(--dmuted)" }}
             onClick={onToggleAll}
           >
@@ -126,10 +126,10 @@ function AccountCardSmall({
           <PlatformIcon platform={account.platform} size={10} />
         </div>
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-wider font-mono leading-none" style={{ color: "var(--dmuted2)" }}>
+          <div className="text-[10px] uppercase tracking-[0.1em] font-mono leading-none" style={{ color: "var(--dmuted2)" }}>
             {label}
           </div>
-          <div className="mt-0.5 truncate text-[11px]" style={{ color: "var(--dtext)" }}>
+          <div className="mt-0.5 truncate text-[11.5px] leading-[1.3]" style={{ color: "var(--dtext)", fontWeight: 500 }}>
             {account.account_name || account.external_user_email || account.platform}
           </div>
         </div>
