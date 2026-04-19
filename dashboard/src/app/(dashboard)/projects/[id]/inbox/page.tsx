@@ -105,7 +105,8 @@ function Avatar({
           borderRadius: "999px",
           objectFit: "cover",
           flexShrink: 0,
-          background: "rgba(255,255,255,.04)",
+          background: "var(--surface2)",
+          border: "1px solid var(--dborder)",
         }}
       />
     );
@@ -122,8 +123,8 @@ function Avatar({
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
-        background: "rgba(255,255,255,.06)",
-        border: "1px solid rgba(255,255,255,.08)",
+        background: "var(--surface2)",
+        border: "1px solid var(--dborder2)",
         color: "var(--dmuted)",
         fontSize: size <= 28 ? 11 : 12,
       }}
@@ -282,10 +283,10 @@ function buildCommentTree(items: InboxItem[], threadKey: string): CommentNode[] 
 function StatusPill({ status, humanAgent = false }: { status: ThreadStatus; humanAgent?: boolean }) {
   const colors =
     status === "resolved"
-      ? { bg: "rgba(255,255,255,.05)", border: "rgba(255,255,255,.08)", color: "var(--dmuted)" }
+      ? { bg: "var(--surface2)", border: "var(--dborder2)", color: "var(--dmuted)" }
       : status === "assigned"
-        ? { bg: "rgba(59,130,246,.10)", border: "rgba(59,130,246,.24)", color: "#93c5fd" }
-        : { bg: "rgba(16,185,129,.10)", border: "rgba(16,185,129,.24)", color: "var(--daccent)" };
+        ? { bg: "rgb(59 130 246 / 0.10)", border: "rgb(59 130 246 / 0.22)", color: "#2563eb" }
+        : { bg: "rgb(16 185 129 / 0.10)", border: "rgb(16 185 129 / 0.22)", color: "var(--daccent)" };
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -306,16 +307,16 @@ function StatusPill({ status, humanAgent = false }: { status: ThreadStatus; huma
       {humanAgent ? (
         <span
           className="dt-mono"
-          style={{
-            fontSize: 10,
-            textTransform: "uppercase",
-            padding: "3px 8px",
-            borderRadius: 999,
-            background: "rgba(245,158,11,.10)",
-            color: "#fbbf24",
-            border: "1px solid rgba(245,158,11,.22)",
-          }}
-        >
+        style={{
+          fontSize: 10,
+          textTransform: "uppercase",
+          padding: "3px 8px",
+          borderRadius: 999,
+          background: "rgb(245 158 11 / 0.10)",
+          color: "#b45309",
+          border: "1px solid rgb(245 158 11 / 0.22)",
+        }}
+      >
           Human agent
         </span>
       ) : null}
@@ -340,9 +341,9 @@ function SyncStateCard({
 }) {
   const styles =
     tone === "error"
-      ? { bg: "rgba(239,68,68,.08)", border: "rgba(239,68,68,.18)", color: "#fca5a5" }
+      ? { bg: "rgb(239 68 68 / 0.08)", border: "rgb(239 68 68 / 0.18)", color: "#dc2626" }
       : tone === "warn"
-        ? { bg: "rgba(245,158,11,.08)", border: "rgba(245,158,11,.18)", color: "#fcd34d" }
+        ? { bg: "rgb(245 158 11 / 0.08)", border: "rgb(245 158 11 / 0.18)", color: "#b45309" }
         : { bg: "var(--sidebar-accent)", border: "var(--dborder)", color: "var(--dmuted)" };
 
   return (
@@ -829,9 +830,11 @@ export default function InboxPage() {
                       ? { borderRadius: "18px 18px 18px 4px" }
                       : {}),
               background: item.is_own
-                ? "linear-gradient(135deg, #6366f1, #8b5cf6)"
-                : "rgba(255,255,255,.08)",
+                ? "linear-gradient(135deg, #4f46e5, #7c3aed)"
+                : "var(--surface2)",
               color: item.is_own ? "#fff" : "var(--dtext)",
+              border: item.is_own ? "none" : "1px solid var(--dborder)",
+              boxShadow: item.is_own ? "0 10px 24px rgb(79 70 229 / 0.16)" : "none",
               maxWidth: "70%",
               lineHeight: 1.45,
               fontSize: 13,
@@ -856,7 +859,8 @@ export default function InboxPage() {
             display: "inline-block",
             padding: "8px 12px",
             borderRadius: 18,
-            background: "rgba(255,255,255,.07)",
+            background: "var(--surface2)",
+            border: "1px solid var(--dborder)",
             maxWidth: "100%",
           }}>
             <span className="dt-body-sm" style={{ fontWeight: 600, color: item.is_own ? "var(--daccent)" : "var(--dtext)", display: "block", marginBottom: 2, fontSize: 12 }}>
@@ -1069,8 +1073,9 @@ export default function InboxPage() {
                       fontSize: 10,
                       padding: "2px 6px",
                       borderRadius: 999,
-                      background: active ? "rgba(16,185,129,.16)" : "rgba(255,255,255,.06)",
+                      background: active ? "rgb(16 185 129 / 0.14)" : "var(--surface3)",
                       color: active ? "var(--daccent)" : "var(--dmuted2)",
+                      border: active ? "1px solid rgb(16 185 129 / 0.18)" : "1px solid var(--dborder)",
                     }}
                   >
                     {item.count}
@@ -1218,7 +1223,7 @@ export default function InboxPage() {
             </div>
           ) : (
             <>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 20px", borderBottom: "1px solid var(--dborder)", background: "rgba(0,0,0,.15)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 20px", borderBottom: "1px solid var(--dborder)", background: "var(--surface2)" }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                     {sourceIcon(selectedGroup.source)}
@@ -1271,7 +1276,7 @@ export default function InboxPage() {
               </div>
 
               {selectedGroup.source !== "ig_dm" ? (
-                <div style={{ margin: "20px 20px 0", padding: 16, borderRadius: 12, border: "1px solid var(--dborder)", background: "rgba(255,255,255,.02)", position: "relative", overflow: "hidden" }}>
+                <div style={{ margin: "20px 20px 0", padding: 16, borderRadius: 12, border: "1px solid var(--dborder)", background: "var(--surface2)", position: "relative", overflow: "hidden", boxShadow: "0 10px 24px rgb(15 23 42 / 0.04)" }}>
                   <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1, background: "linear-gradient(90deg, transparent, rgba(16,185,129,.45), transparent)" }} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1301,7 +1306,7 @@ export default function InboxPage() {
                             borderRadius: 12,
                             overflow: "hidden",
                             border: "1px solid var(--dborder)",
-                            background: "rgba(255,255,255,.03)",
+                            background: "var(--surface3)",
                           }}
                         >
                           <img
@@ -1319,7 +1324,7 @@ export default function InboxPage() {
                             borderRadius: 12,
                             overflow: "hidden",
                             border: "1px solid var(--dborder)",
-                            background: "rgba(255,255,255,.03)",
+                            background: "var(--surface3)",
                           }}
                         >
                           <img
@@ -1357,7 +1362,7 @@ export default function InboxPage() {
                             borderRadius: 12,
                             overflow: "hidden",
                             border: "1px solid var(--dborder)",
-                            background: "rgba(255,255,255,.03)",
+                            background: "var(--surface3)",
                           }}
                         >
                           <img
@@ -1402,7 +1407,7 @@ export default function InboxPage() {
                             <div style={{
                               marginLeft: 16,
                               paddingLeft: 16,
-                              borderLeft: "2px solid rgba(255,255,255,.08)",
+                              borderLeft: "2px solid var(--dborder2)",
                               marginTop: 2,
                             }}>
                               {node.children.map((child) => renderNode(child, depth + 1))}
@@ -1414,7 +1419,7 @@ export default function InboxPage() {
               </div>
 
               {selectedGroup.source === "ig_dm" ? (
-                <div style={{ borderTop: "1px solid var(--dborder)", padding: "10px 14px", background: "rgba(0,0,0,.08)", display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ borderTop: "1px solid var(--dborder)", padding: "10px 14px", background: "var(--surface2)", display: "flex", alignItems: "center", gap: 8 }}>
                   <input
                     value={replyDrafts["__dm_bottom__"] || ""}
                     onChange={(e) => setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: e.target.value }))}
@@ -1435,7 +1440,7 @@ export default function InboxPage() {
                       padding: "10px 16px",
                       borderRadius: 999,
                       border: "1px solid var(--dborder)",
-                      background: "rgba(255,255,255,.04)",
+                      background: "var(--surface)",
                       color: "var(--dtext)",
                       outline: "none",
                       fontSize: 13,
@@ -1455,8 +1460,9 @@ export default function InboxPage() {
                       height: 36,
                       borderRadius: 999,
                       border: "none",
-                      background: (replyDrafts["__dm_bottom__"] || "").trim() ? "linear-gradient(135deg, #6366f1, #8b5cf6)" : "rgba(255,255,255,.06)",
+                      background: (replyDrafts["__dm_bottom__"] || "").trim() ? "linear-gradient(135deg, #4f46e5, #7c3aed)" : "var(--surface3)",
                       color: (replyDrafts["__dm_bottom__"] || "").trim() ? "#fff" : "var(--dmuted2)",
+                      boxShadow: (replyDrafts["__dm_bottom__"] || "").trim() ? "0 10px 24px rgb(79 70 229 / 0.18)" : "none",
                       cursor: (replyDrafts["__dm_bottom__"] || "").trim() ? "pointer" : "default",
                       display: "flex",
                       alignItems: "center",
