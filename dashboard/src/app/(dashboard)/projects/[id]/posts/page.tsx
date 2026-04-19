@@ -267,7 +267,9 @@ export default function PostsPage() {
     if (search && !(p.caption || "").toLowerCase().includes(search.toLowerCase())) return false;
     // Platform filter
     if (platformFilter !== "all") {
-      const hasPlatform = p.results?.some((r) => r.platform === platformFilter);
+      const resultPlatforms = p.results?.map((r) => r.platform).filter(Boolean) || [];
+      const fallbackPlatforms = p.target_platforms || [];
+      const hasPlatform = [...new Set([...resultPlatforms, ...fallbackPlatforms])].includes(platformFilter);
       if (!hasPlatform) return false;
     }
     return true;
@@ -289,7 +291,8 @@ export default function PostsPage() {
   }
 
   function platformIcons(post: SocialPost) {
-    const platforms = [...new Set(post.results?.map((r) => r.platform).filter(Boolean) || [])];
+    const resultPlatforms = post.results?.map((r) => r.platform).filter(Boolean) || [];
+    const platforms = [...new Set([...resultPlatforms, ...(post.target_platforms || [])])];
     const show = platforms.slice(0, 4);
     const more = platforms.length - show.length;
     return (

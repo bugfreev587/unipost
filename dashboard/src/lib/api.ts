@@ -371,6 +371,9 @@ export interface SocialPost {
   // multiple profiles. Empty when the post was created before
   // migration 043 and hasn't published yet.
   profile_ids: string[];
+  // Derived from stored post metadata so the UI can still show target
+  // platforms even when no result rows have been persisted yet.
+  target_platforms?: string[];
   results?: SocialPostResult[];
 }
 

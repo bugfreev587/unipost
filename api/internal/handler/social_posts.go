@@ -99,7 +99,11 @@ type socialPostResponse struct {
 	// target social_accounts — a single post can target accounts across
 	// multiple profiles. Drives per-profile filtering in the dashboard.
 	ProfileIDs []string             `json:"profile_ids"`
-	Results    []postResultResponse `json:"results,omitempty"`
+	// TargetPlatforms are derived from the post's stored metadata, so the
+	// dashboard can still show intended platforms before or without any
+	// social_post_results rows.
+	TargetPlatforms []string             `json:"target_platforms,omitempty"`
+	Results         []postResultResponse `json:"results,omitempty"`
 }
 
 // Create handles POST /v1/social-posts.
@@ -1420,6 +1424,20 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			responseResults = append(responseResults, rr)
 		}
 
+		var targetPlatforms []string
+		if platformPosts, decErr := platform.DecodePostMetadata(p.Metadata, derefText(p.Caption)); decErr == nil {
+			seenPlatforms := make(map[string]struct{}, len(platformPosts))
+			for _, pp := range platformPosts {
+				if summary, ok := accountMap[pp.AccountID]; ok && summary.Platform != "" {
+					if _, seen := seenPlatforms[summary.Platform]; seen {
+						continue
+					}
+					seenPlatforms[summary.Platform] = struct{}{}
+					targetPlatforms = append(targetPlatforms, summary.Platform)
+				}
+			}
+		}
+
 		result = append(result, socialPostResponse{
 			ID:          p.ID,
 			Caption:     caption,
@@ -1431,7 +1449,8 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			ArchivedAt:  archivedAt,
 			Source:      p.Source,
 			ProfileIDs:  p.ProfileIds,
-			Results:     responseResults,
+			TargetPlatforms: targetPlatforms,
+			Results:         responseResults,
 		})
 	}
 	if result == nil {
@@ -1456,6 +1475,13 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		"data":        result,
 		"next_cursor": nextCursor,
 	})
+}
+
+func derefText(v pgtype.Text) string {
+	if v.Valid {
+		return v.String
+	}
+	return ""
 }
 
 // parseLimitParam parses ?limit=N with a default + ceiling.
