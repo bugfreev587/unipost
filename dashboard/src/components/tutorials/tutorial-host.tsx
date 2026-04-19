@@ -25,6 +25,7 @@ import {
   useState,
 } from "react";
 import { useAuth } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 import {
   getTutorials,
   completeTutorial,
@@ -82,6 +83,7 @@ export function TutorialHostProvider({
   children: React.ReactNode;
 }) {
   const { getToken } = useAuth();
+  const router = useRouter();
   const [state, setState] = useState<TutorialHostState | null>(null);
 
   // Which tutorial is currently open (null = no modal shown).
@@ -249,7 +251,10 @@ export function TutorialHostProvider({
 
   const handleCelebrationDone = useCallback(() => {
     setCelebratingId(null);
-  }, []);
+    if (profileId) {
+      router.push(`/projects/${profileId}/posts`);
+    }
+  }, [profileId, router]);
 
   const activeTutorial = activeTutorialId ? getTutorial(activeTutorialId) : undefined;
   const tutorialCtx: TutorialContext | null = useMemo(() => {
