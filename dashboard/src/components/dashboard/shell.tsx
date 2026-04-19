@@ -14,9 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { listProfiles, getWorkspace, getBilling, getMe, markOnboardingShown, setOnboardingIntent, type Profile, type Workspace, type BillingInfo, type OnboardingIntent } from "@/lib/api";
-import { WelcomeModal } from "@/components/onboarding/welcome-modal";
-import { track } from "@/lib/analytics";
+import { listProfiles, getWorkspace, getBilling, getMe, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
 import { buildContactPageHref } from "@/lib/support";
 import {
   Key,
@@ -107,7 +105,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   });
   const [isAdmin, setIsAdmin] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [welcomeOpen, setWelcomeOpen] = useState(false);
 
   const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
   const urlProfileId = profileMatch?.[1];
@@ -154,39 +151,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         const res = await getMe(token);
         if (cancelled) return;
         setIsAdmin(!!res.data.is_admin);
-
-        // Intent-collection redesign: pop the Welcome modal on first
-        // dashboard load (onboarding_shown_at is null). Never show again
-        // after that, even if the user skipped without selecting.
-        if (!res.data.onboarding_shown_at) {
-          setWelcomeOpen(true);
-          track("onboarding_modal_shown", { user_id: res.data.user_id });
-          // Stamp shown_at on the server so refreshing the page doesn't
-          // re-trigger the modal. Fire-and-forget.
-          markOnboardingShown(token).catch(() => undefined);
-        }
       } catch { /* silent — non-admins simply don't see the link */ }
     })();
     return () => { cancelled = true; };
   }, [getToken]);
-
-  async function handleIntentSelect(intent: Exclude<OnboardingIntent, "skipped">) {
-    setWelcomeOpen(false);
-    track("onboarding_intent_selected", { intent });
-    try {
-      const token = await getToken();
-      if (token) await setOnboardingIntent(token, intent);
-    } catch { /* non-blocking — local UI is already dismissed */ }
-  }
-
-  async function handleIntentSkip() {
-    setWelcomeOpen(false);
-    track("onboarding_skipped");
-    try {
-      const token = await getToken();
-      if (token) await setOnboardingIntent(token, "skipped");
-    } catch { /* non-blocking */ }
-  }
 
   useEffect(() => {
     async function loadBilling() {
@@ -556,13 +524,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
-
-      {/* Welcome modal — non-blocking, shown once on first dashboard load. */}
-      <WelcomeModal
-        open={welcomeOpen}
-        onSelect={handleIntentSelect}
-        onSkip={handleIntentSkip}
-      />
     </div>
   );
 }
