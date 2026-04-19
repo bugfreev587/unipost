@@ -28,10 +28,15 @@ import type { TutorialBodyProps } from "../registry";
 import { CodeBlock } from "./code-block";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const APP_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const DEFAULT_CAPTION = "Hello from UniPost API!";
-const DEFAULT_MEDIA_URL =
-  "https://commons.wikimedia.org/wiki/Special:Redirect/file/Small%20mountain%20lake%20%28Unsplash%29.jpg";
-const IMAGE_TUTORIAL_PLATFORMS = new Set(["instagram", "threads", "linkedin", "twitter", "bluesky"]);
+const TUTORIAL_MEDIA_URLS: Partial<Record<SocialAccount["platform"], string>> = {
+  instagram: `${APP_BASE}/brand/unipost-icon-128.png`,
+  threads: `${APP_BASE}/brand/unipost-icon-128.png`,
+  linkedin: `${APP_BASE}/unipost-logo.png`,
+  twitter: `${APP_BASE}/brand/unipost-icon-light.png`,
+  bluesky: `${APP_BASE}/brand/unipost-icon-dark.png`,
+};
 
 export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyProps) {
   const { getToken } = useAuth();
@@ -88,7 +93,8 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
   const apiKeysAlreadyExist = ctx.counts.api_keys >= 1;
   const step1Completed = keyState.kind === "ready";
   const step2Completed = sendState.kind === "sent";
-  const shouldAttachTutorialImage = !!account && IMAGE_TUTORIAL_PLATFORMS.has(account.platform);
+  const tutorialMediaUrl = account ? TUTORIAL_MEDIA_URLS[account.platform] : undefined;
+  const shouldAttachTutorialImage = !!tutorialMediaUrl;
 
   async function handleCreateKey() {
     if (!workspace) {
@@ -141,7 +147,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
         body: JSON.stringify({
           caption: DEFAULT_CAPTION,
           account_ids: [account.id],
-          ...(shouldAttachTutorialImage ? { media_urls: [DEFAULT_MEDIA_URL] } : {}),
+          ...(tutorialMediaUrl ? { media_urls: [tutorialMediaUrl] } : {}),
         }),
       });
       if (!res.ok) {
@@ -331,7 +337,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
               apiKey={keyState.kind === "ready" ? keyState.key : "your_api_key"}
               accountId={account.id}
               caption={DEFAULT_CAPTION}
-              mediaUrl={shouldAttachTutorialImage ? DEFAULT_MEDIA_URL : undefined}
+              mediaUrl={tutorialMediaUrl}
             />
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
               <button
