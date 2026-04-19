@@ -347,6 +347,57 @@ func TestValidate_MixedAllowedOnInstagramCarousel(t *testing.T) {
 	hasNoError(t, res, CodeMixedMediaUnsupported)
 }
 
+func TestValidate_InstagramRejectsInvalidMediaType(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_instagram",
+			Caption:         "hi",
+			MediaURLs:       []string{"https://x/img.jpg"},
+			PlatformOptions: map[string]any{"mediaType": "timeline"},
+		},
+	}))
+	hasError(t, res, 0, CodeInvalidInstagramMediaType)
+}
+
+func TestValidate_InstagramReelsRequireExactlyOneVideo(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_instagram",
+			Caption:         "hi",
+			MediaURLs:       []string{"https://x/img.jpg"},
+			PlatformOptions: map[string]any{"mediaType": "reels"},
+		},
+	}))
+	hasError(t, res, 0, CodeInstagramReelsRequireVideo)
+}
+
+func TestValidate_InstagramStoryRequiresSingleMedia(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID: "acc_instagram",
+			Caption:   "hi",
+			MediaURLs: []string{
+				"https://x/img.jpg",
+				"https://x/img2.jpg",
+			},
+			PlatformOptions: map[string]any{"mediaType": "story"},
+		},
+	}))
+	hasError(t, res, 0, CodeInstagramStorySingleMediaOnly)
+}
+
+func TestValidate_InstagramStorySingleImageIsValid(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_instagram",
+			Caption:         "hi",
+			MediaURLs:       []string{"https://x/img.jpg"},
+			PlatformOptions: map[string]any{"mediaType": "story"},
+		},
+	}))
+	hasNoError(t, res, CodeInstagramStorySingleMediaOnly)
+}
+
 // ─── threading ────────────────────────────────────────────────────────
 
 func TestValidate_UnsupportedInReplyTo(t *testing.T) {

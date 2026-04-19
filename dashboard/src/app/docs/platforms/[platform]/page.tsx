@@ -189,11 +189,12 @@ const PLATFORMS: Record<string, PlatformDoc> = {
   instagram: {
     title: "Instagram",
     lead: "Instagram is media-first. The main implementation question is not whether you can send a caption, but whether the media combination, count, and publish surface are valid for the connected business or creator account.",
-    overview: "Use Instagram when you are publishing images, reels, or carousel content. Text-only posts are not supported. Mixed media is allowed only in carousel-style flows, not in simple single-asset posts.",
+    overview: "Use Instagram when you are publishing feed posts, reels, stories, or carousels. Text-only posts are not supported. UniPost now validates Instagram `mediaType` before publish so API callers and dashboard users get the same preflight behavior for feed vs reels vs story.",
     capabilities: [
       ["Text-only posts", "No", "Instagram is media-first"],
-      ["Single image", "Yes", "Supported"],
-      ["Single video", "Yes", "Published as Reels/video"],
+      ["Feed posts", "Yes", "Single image, single video, or 2-10 item carousel"],
+      ["Reels", "Yes", "Exactly 1 video"],
+      ["Stories", "Yes", "Exactly 1 image or 1 video"],
       ["Carousel", "Yes", "2-10 items, image and video mix allowed"],
       ["Threads", "No", "Not a Twitter-style thread platform"],
       ["First comment", "Yes", "Supported"],
@@ -201,8 +202,14 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     requirements: [
       ["media_urls or media_ids", "Required", "1 image, 1 video, or 2-10 carousel items", "Media is required. Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`."],
       ["caption", "Optional", "2,200 chars", "Commonly sent with media"],
+      ["platform_options.instagram.mediaType", "Optional", "feed / reels / story", "Defaults to `feed`. Use it to force Reels or Story behavior and trigger Instagram-specific preflight validation."],
       ["first_comment", "Optional", "text", "Supported after publish"],
-      ["mixed media", "Allowed only in carousel", "2-10 items", "Single posts should not mix image and video"],
+      ["reels", "Exactly 1 video", "Required", "Reels do not accept images or carousels"],
+      ["story", "Exactly 1 media item", "Required", "Stories accept one image or one video"],
+      ["mixed media", "Allowed only in carousel", "2-10 items", "Feed carousels may mix images and video; single posts should not mix media"],
+    ],
+    options: [
+      ["platform_options.instagram.mediaType", "feed / reels / story", "Selects which Instagram publish surface UniPost should target."],
     ],
     examples: [
       {
@@ -210,15 +217,37 @@ const PLATFORMS: Record<string, PlatformDoc> = {
         body: `{
   "caption": "Sunset 🌅",
   "account_ids": ["sa_instagram_1"],
-  "media_urls": ["https://cdn.example.com/sunset.jpg"]
+  "media_urls": ["https://cdn.example.com/sunset.jpg"],
+  "platform_options": {
+    "instagram": {
+      "mediaType": "feed"
+    }
+  }
 }`,
       },
       {
-        title: "Reels / single video",
+        title: "Reel",
         body: `{
   "caption": "30-second intro 🎬",
   "account_ids": ["sa_instagram_1"],
-  "media_urls": ["https://cdn.example.com/intro.mp4"]
+  "media_urls": ["https://cdn.example.com/intro.mp4"],
+  "platform_options": {
+    "instagram": {
+      "mediaType": "reels"
+    }
+  }
+}`,
+      },
+      {
+        title: "Story",
+        body: `{
+  "account_ids": ["sa_instagram_1"],
+  "media_urls": ["https://cdn.example.com/story.jpg"],
+  "platform_options": {
+    "instagram": {
+      "mediaType": "story"
+    }
+  }
 }`,
       },
       {
@@ -236,8 +265,11 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     errors: [
       ["media_required", "Instagram requires media"],
-      ["too_many_media", "More than 10 carousel items supplied"],
-      ["mixed_media_unsupported", "Mixed media outside a carousel container"],
+      ["max_images_exceeded / max_videos_exceeded", "More than 10 carousel items or more than 1 video supplied"],
+      ["invalid_instagram_media_type", "Instagram mediaType must be `feed`, `reels`, or `story`"],
+      ["instagram_reels_require_video", "Reels require exactly one video"],
+      ["instagram_story_single_media_only", "Stories require exactly one image or video"],
+      ["mixed_media_unsupported", "Mixed media outside a valid Instagram carousel flow"],
     ],
   },
   threads: {

@@ -207,6 +207,9 @@ const (
 	CodeInvalidRecordingDate            = "invalid_recording_date"
 	CodeInvalidDefaultLanguage          = "invalid_default_language"
 	CodeYouTubePublishAtRequiresPrivate = "youtube_publish_at_requires_private"
+	CodeInvalidInstagramMediaType       = "invalid_instagram_media_type"
+	CodeInstagramReelsRequireVideo      = "instagram_reels_require_video"
+	CodeInstagramStorySingleMediaOnly   = "instagram_story_single_media_only"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -224,6 +227,8 @@ const defaultMaxScheduleAhead = 90 * 24 * time.Hour
 const minScheduleAhead = 30 * time.Second
 
 var youtubeLanguagePattern = regexp.MustCompile(`^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})*$`)
+
+var instagramMediaTypeValues = []string{"feed", "reels", "story"}
 
 func hasOpt(opts map[string]any, key string) bool {
 	if opts == nil {
@@ -679,6 +684,29 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 		}
 	}
 
+	if plat == "instagram" {
+		instagramMediaType := strings.TrimSpace(optString(post.PlatformOptions, "mediaType"))
+		if instagramMediaType == "" {
+			instagramMediaType = strings.TrimSpace(optString(post.PlatformOptions, "media_type"))
+		}
+		if instagramMediaType == "" {
+			instagramMediaType = "feed"
+		}
+		if err := validateEnum("instagram", "mediaType", instagramMediaType, instagramMediaTypeValues); err != nil {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.mediaType",
+				Code:              CodeInvalidInstagramMediaType,
+				Message:           "instagram mediaType must be feed, reels, or story",
+				Actual:            instagramMediaType,
+				Limit:             instagramMediaTypeValues,
+				Severity:          SeverityError,
+			})
+		}
+	}
+
 	// Sprint 4 PR3: first_comment field validation. Reject on platforms
 	// that don't support it (Bluesky/Threads have native threads instead;
 	// they reject with first_comment_unsupported per PRD §W4 D10).
@@ -785,6 +813,44 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Message:           plat + " does not allow mixing images and video in one post",
 			Severity:          SeverityError,
 		})
+	}
+
+	if plat == "instagram" {
+		instagramMediaType := strings.TrimSpace(optString(post.PlatformOptions, "mediaType"))
+		if instagramMediaType == "" {
+			instagramMediaType = strings.TrimSpace(optString(post.PlatformOptions, "media_type"))
+		}
+		if instagramMediaType == "" {
+			instagramMediaType = "feed"
+		}
+		switch instagramMediaType {
+		case "reels":
+			if videoCount != 1 || imageCount > 0 || len(mediaItems) != 1 {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "platform_options.mediaType",
+					Code:              CodeInstagramReelsRequireVideo,
+					Message:           "instagram reels require exactly one video and do not support images or carousels",
+					Severity:          SeverityError,
+				})
+			}
+		case "story":
+			if len(mediaItems) != 1 {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "platform_options.mediaType",
+					Code:              CodeInstagramStorySingleMediaOnly,
+					Message:           "instagram stories require exactly one image or video",
+					Actual:            len(mediaItems),
+					Limit:             1,
+					Severity:          SeverityError,
+				})
+			}
+		}
 	}
 
 	// Step 3.5 (Sprint 2): media_ids ownership + state.

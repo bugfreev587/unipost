@@ -107,7 +107,6 @@ func (a *InstagramAdapter) Connect(ctx context.Context, credentials map[string]s
 
 // Post publishes to Instagram using the two-step container flow.
 func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
-	_ = opts
 	igUserID, err := a.getIGUserID(ctx, accessToken)
 	if err != nil {
 		return nil, err
@@ -119,20 +118,33 @@ func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text st
 		return nil, fmt.Errorf("instagram carousels accept at most 10 items")
 	}
 
+	mediaType := instagramPublishType(opts)
+
 	// Build a creation container per the IG Graph API rules:
 	//   - 1 image    → media_type=IMAGE (default), image_url
-	//   - 1 video    → media_type=REELS, video_url, is_reel=true
+	//   - 1 video    → media_type=REELS or STORIES depending on selection
 	//   - 2+ items   → media_type=CAROUSEL, children=[item1,item2,...] where
 	//                  each child container is created beforehand with
 	//                  is_carousel_item=true.
 	var creationID string
-	switch {
-	case len(media) == 1 && media[0].Kind == MediaKindVideo:
-		creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false)
-	case len(media) == 1:
-		creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false)
+	switch mediaType {
+	case "story":
+		if len(media) != 1 {
+			return nil, fmt.Errorf("instagram stories require exactly one image or video")
+		}
+		creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false, mediaType)
+	case "reels":
+		if len(media) != 1 {
+			return nil, fmt.Errorf("instagram reels require exactly one video")
+		}
+		creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false, mediaType)
 	default:
-		creationID, err = a.createCarouselContainer(ctx, accessToken, igUserID, text, media)
+		switch {
+		case len(media) == 1:
+			creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false, mediaType)
+		default:
+			creationID, err = a.createCarouselContainer(ctx, accessToken, igUserID, text, media)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -183,6 +195,21 @@ func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text st
 		ExternalID: published.ID,
 		URL:        permalink,
 	}, nil
+}
+
+func instagramPublishType(opts map[string]any) string {
+	value := strings.TrimSpace(strings.ToLower(optString(opts, "mediaType")))
+	if value == "" {
+		value = strings.TrimSpace(strings.ToLower(optString(opts, "media_type")))
+	}
+	switch value {
+	case "story", "stories":
+		return "story"
+	case "reel", "reels":
+		return "reels"
+	default:
+		return "feed"
+	}
 }
 
 // PostComment publishes a comment on an existing Instagram post,
@@ -559,11 +586,11 @@ func (a *InstagramAdapter) FetchRecentMedia(ctx context.Context, accessToken str
 // createSingleContainer creates a non-carousel media container. caption is
 // only attached when isCarouselChild is false (children inherit it from the
 // parent CAROUSEL container).
-func (a *InstagramAdapter) createSingleContainer(ctx context.Context, accessToken, igUserID, caption string, item MediaItem, isCarouselChild bool) (string, error) {
+func (a *InstagramAdapter) createSingleContainer(ctx context.Context, accessToken, igUserID, caption string, item MediaItem, isCarouselChild bool, mediaType string) (string, error) {
 	params := url.Values{
 		"access_token": {accessToken},
 	}
-	if !isCarouselChild {
+	if !isCarouselChild && mediaType != "story" {
 		params.Set("caption", caption)
 	} else {
 		params.Set("is_carousel_item", "true")
@@ -576,10 +603,23 @@ func (a *InstagramAdapter) createSingleContainer(ctx context.Context, accessToke
 
 	switch kind {
 	case MediaKindVideo:
-		// Single video → Reels (Meta no longer supports plain VIDEO container).
-		params.Set("media_type", "REELS")
+		switch mediaType {
+		case "story":
+			params.Set("media_type", "STORIES")
+		default:
+			// Meta no longer supports plain VIDEO container for standalone video publishing.
+			params.Set("media_type", "REELS")
+			if mediaType == "feed" {
+				params.Set("share_to_feed", "true")
+			} else if mediaType == "reels" {
+				params.Set("share_to_feed", "false")
+			}
+		}
 		params.Set("video_url", item.URL)
 	default:
+		if mediaType == "story" {
+			params.Set("media_type", "STORIES")
+		}
 		params.Set("image_url", item.URL)
 	}
 
@@ -609,7 +649,7 @@ func (a *InstagramAdapter) createSingleContainer(ctx context.Context, accessToke
 func (a *InstagramAdapter) createCarouselContainer(ctx context.Context, accessToken, igUserID, caption string, items []MediaItem) (string, error) {
 	childIDs := make([]string, 0, len(items))
 	for _, item := range items {
-		id, err := a.createSingleContainer(ctx, accessToken, igUserID, caption, item, true)
+		id, err := a.createSingleContainer(ctx, accessToken, igUserID, caption, item, true, "feed")
 		if err != nil {
 			return "", err
 		}

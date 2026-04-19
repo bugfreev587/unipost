@@ -200,6 +200,7 @@ export function PlatformEditorBlock({
             <InstagramFields
               fields={instagramFields}
               onChange={(f) => onPlatformFieldChange("instagram", f)}
+              issues={issues}
             />
           )}
           {account.platform === "linkedin" && (

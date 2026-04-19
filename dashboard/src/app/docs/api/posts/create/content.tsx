@@ -25,7 +25,7 @@ const PLATFORM_POST_PARAMS: ParamRow[] = [
   { name: "media_ids", type: "string[]", required: false, description: "Platform-specific media IDs from the media library. Create these with POST /v1/media, then upload the bytes to the returned upload_url before publish." },
   { name: "thread_position", type: "integer", required: false, description: "1-indexed position in a multi-post thread. All entries with the same account_id and non-zero thread_position form one thread. Twitter + Bluesky supported." },
   { name: "first_comment", type: "string", required: false, description: "Text posted as the first reply/comment after the main post lands. Supported on Twitter, LinkedIn, Instagram. Bluesky/Threads reject this — use thread_position instead." },
-  { name: "platform_options", type: "object", required: false, description: "Platform-specific key-value options. Example: `platform_options.youtube` supports required `title` and `made_for_kids`, plus `privacy_status`, `category_id`, `tags`, `default_language`, `recording_date`, `publish_at`, `notify_subscribers`, `embeddable`, `license`, `public_stats_viewable`, `contains_synthetic_media`, `playlist_id`, and `shorts`." },
+  { name: "platform_options", type: "object", required: false, description: "Platform-specific key-value options. Example: `platform_options.youtube` supports required `title` and `made_for_kids`, while `platform_options.instagram.mediaType` supports `feed`, `reels`, or `story` and participates in preflight validation." },
 ];
 
 const HEADER_PARAMS: ParamRow[] = [
@@ -321,6 +321,9 @@ export function CreatePostContent() {
         </InfoBox>
         <InfoBox>
           <strong style={{ color: "var(--docs-link)" }}>Local files vs hosted URLs</strong> — if your image or video already lives at a public URL, send <code>media_urls</code>. If you are starting from a local file on disk, first call <ApiInlineLink endpoint="POST /v1/media" />, upload the bytes to the returned <code>upload_url</code>, then publish with <code>media_ids</code>.
+        </InfoBox>
+        <InfoBox>
+          <strong style={{ color: "var(--docs-link)" }}>Instagram publish surface</strong> — use <code>platform_options.instagram.mediaType</code> to choose <code>feed</code>, <code>reels</code>, or <code>story</code>. UniPost preflight now rejects invalid combinations such as a Reel with an image, or a Story with more than one media item.
         </InfoBox>
       </DocSection>
 
