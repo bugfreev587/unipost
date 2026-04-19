@@ -56,16 +56,17 @@ const themeInitScript = `
     const cookieTheme = cookieMatch ? cookieMatch[1] : null;
     const storedTheme = localStorage.getItem(storageKey);
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const resolvedTheme = storedTheme === "light" || storedTheme === "dark"
-      ? storedTheme
-      : (cookieTheme === "light" || cookieTheme === "dark")
-        ? cookieTheme
+    const resolvedTheme = (cookieTheme === "light" || cookieTheme === "dark")
+      ? cookieTheme
+      : (storedTheme === "light" || storedTheme === "dark")
+        ? storedTheme
       : (prefersDark ? "dark" : "light");
     const root = document.documentElement;
     root.classList.toggle("dark", resolvedTheme === "dark");
     root.classList.toggle("light", resolvedTheme === "light");
     root.style.colorScheme = resolvedTheme;
     root.dataset.theme = resolvedTheme;
+    localStorage.setItem(storageKey, resolvedTheme);
     const host = window.location.hostname;
     const domain = host === "unipost.dev" || host.endsWith(".unipost.dev")
       ? "; domain=.unipost.dev"

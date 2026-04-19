@@ -54,13 +54,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (typeof window === "undefined") {
       return "dark";
     }
-    const storedTheme = window.localStorage.getItem(STORAGE_KEY);
-    if (storedTheme === "light" || storedTheme === "dark") {
-      return storedTheme;
-    }
     const cookieTheme = getCookieTheme();
     if (cookieTheme) {
       return cookieTheme;
+    }
+    const storedTheme = window.localStorage.getItem(STORAGE_KEY);
+    if (storedTheme === "light" || storedTheme === "dark") {
+      return storedTheme;
     }
     return getSystemTheme();
   });
@@ -76,6 +76,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     applyTheme(theme);
+    persistTheme(theme);
   }, [applyTheme, theme]);
 
   const setTheme = useCallback((nextTheme: ResolvedTheme) => {
