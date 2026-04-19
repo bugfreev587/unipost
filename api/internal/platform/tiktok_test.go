@@ -3,7 +3,7 @@ package platform
 import "testing"
 
 func TestBuildTikTokPostInfoIncludesRequiredToggles(t *testing.T) {
-	info := buildTikTokPostInfo("hello", "PUBLIC_TO_EVERYONE", nil)
+	info := buildTikTokPostInfo("hello", "PUBLIC_TO_EVERYONE", nil, "video")
 
 	if got := info["privacy_level"]; got != "PUBLIC_TO_EVERYONE" {
 		t.Fatalf("privacy_level = %v, want PUBLIC_TO_EVERYONE", got)
@@ -19,6 +19,23 @@ func TestBuildTikTokPostInfoIncludesRequiredToggles(t *testing.T) {
 	}
 	if got := info["brand_organic_toggle"]; got != false {
 		t.Fatalf("brand_organic_toggle = %v, want false", got)
+	}
+	if got := info["disable_duet"]; got != false {
+		t.Fatalf("disable_duet = %v, want false", got)
+	}
+	if got := info["disable_stitch"]; got != false {
+		t.Fatalf("disable_stitch = %v, want false", got)
+	}
+}
+
+func TestBuildTikTokPostInfoPhotoOmitsDuetStitch(t *testing.T) {
+	info := buildTikTokPostInfo("hello", "PUBLIC_TO_EVERYONE", nil, "photo")
+
+	if _, ok := info["disable_duet"]; ok {
+		t.Fatal("photo post_info must not include disable_duet (TikTok rejects it)")
+	}
+	if _, ok := info["disable_stitch"]; ok {
+		t.Fatal("photo post_info must not include disable_stitch (TikTok rejects it)")
 	}
 }
 
