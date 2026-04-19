@@ -20,8 +20,26 @@ type ThemeContextValue = {
 };
 
 const STORAGE_KEY = "unipost-theme";
+const COOKIE_KEY = "unipost-theme";
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
+
+function getCookieTheme(): ResolvedTheme | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|; )unipost-theme=(light|dark)(?:;|$)/);
+  return match?.[1] === "light" || match?.[1] === "dark" ? match[1] : null;
+}
+
+function persistTheme(theme: ResolvedTheme) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(STORAGE_KEY, theme);
+  const host = window.location.hostname;
+  const domain =
+    host === "unipost.dev" || host.endsWith(".unipost.dev")
+      ? "; domain=.unipost.dev"
+      : "";
+  document.cookie = `${COOKIE_KEY}=${theme}; path=/; max-age=31536000; samesite=lax${domain}`;
+}
 
 function getSystemTheme(): ResolvedTheme {
   if (typeof window === "undefined") {
@@ -39,6 +57,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const storedTheme = window.localStorage.getItem(STORAGE_KEY);
     if (storedTheme === "light" || storedTheme === "dark") {
       return storedTheme;
+    }
+    const cookieTheme = getCookieTheme();
+    if (cookieTheme) {
+      return cookieTheme;
     }
     return getSystemTheme();
   });
@@ -58,7 +80,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setTheme = useCallback((nextTheme: ResolvedTheme) => {
     setThemeState(nextTheme);
-    window.localStorage.setItem(STORAGE_KEY, nextTheme);
+    persistTheme(nextTheme);
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY) return;
+      if (event.newValue === "light" || event.newValue === "dark") {
+        setThemeState(event.newValue);
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const value = useMemo<ThemeContextValue>(() => ({

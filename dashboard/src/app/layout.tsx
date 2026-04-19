@@ -52,16 +52,25 @@ const themeInitScript = `
 (() => {
   try {
     const storageKey = "unipost-theme";
+    const cookieMatch = document.cookie.match(/(?:^|; )unipost-theme=(light|dark)(?:;|$)/);
+    const cookieTheme = cookieMatch ? cookieMatch[1] : null;
     const storedTheme = localStorage.getItem(storageKey);
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const resolvedTheme = storedTheme === "light" || storedTheme === "dark"
       ? storedTheme
+      : (cookieTheme === "light" || cookieTheme === "dark")
+        ? cookieTheme
       : (prefersDark ? "dark" : "light");
     const root = document.documentElement;
     root.classList.toggle("dark", resolvedTheme === "dark");
     root.classList.toggle("light", resolvedTheme === "light");
     root.style.colorScheme = resolvedTheme;
     root.dataset.theme = resolvedTheme;
+    const host = window.location.hostname;
+    const domain = host === "unipost.dev" || host.endsWith(".unipost.dev")
+      ? "; domain=.unipost.dev"
+      : "";
+    document.cookie = "unipost-theme=" + resolvedTheme + "; path=/; max-age=31536000; samesite=lax" + domain;
   } catch (_) {}
 })();
 `;
