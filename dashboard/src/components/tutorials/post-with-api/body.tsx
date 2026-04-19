@@ -31,7 +31,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 const APP_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const DEFAULT_CAPTION = "Hello from UniPost API!";
 const TUTORIAL_MEDIA_URLS: Partial<Record<SocialAccount["platform"], string>> = {
-  instagram: `${APP_BASE}/brand/unipost-icon-128.png`,
+  instagram: "https://media.unipost.dev/media/e7920ed2-3ffc-4493-a467-3c3fa3457e08.jpg",
   threads: `${APP_BASE}/brand/unipost-icon-128.png`,
   linkedin: `${APP_BASE}/unipost-logo.png`,
   twitter: `${APP_BASE}/brand/unipost-icon-light.png`,
