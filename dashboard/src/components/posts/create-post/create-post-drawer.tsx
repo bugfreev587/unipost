@@ -29,6 +29,15 @@ import {
 import { cn } from "@/lib/utils";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
+const MIN_DRAWER_WIDTH = 880;
+const MAX_DRAWER_WIDTH = 1440;
+
+function clampDrawerWidth(width: number) {
+  if (typeof window === "undefined") return width;
+  const viewportMax = Math.max(MIN_DRAWER_WIDTH, window.innerWidth - 160);
+  return Math.min(Math.max(width, MIN_DRAWER_WIDTH), Math.min(MAX_DRAWER_WIDTH, viewportMax));
+}
+
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
 
 const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
@@ -307,6 +316,10 @@ export function CreatePostDrawer({
   const mediaSectionRef = useRef<HTMLDivElement | null>(null);
   const publishPanelRef = useRef<HTMLDivElement | null>(null);
   const platformBlockRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [drawerWidth, setDrawerWidth] = useState(() =>
+    typeof window === "undefined" ? 1080 : clampDrawerWidth(window.innerWidth * 0.75)
+  );
+  const isDraggingWidthRef = useRef(false);
 
   // Load profiles when drawer opens
   useEffect(() => {
@@ -387,6 +400,13 @@ export function CreatePostDrawer({
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setDrawerWidth((current) => clampDrawerWidth(current));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
     if (!open) return;
     setValidationResult(null);
     setValidationChecked(false);
@@ -415,6 +435,29 @@ export function CreatePostDrawer({
     setShowDiscardConfirm(false);
     onOpenChange(false);
   }, [onOpenChange]);
+
+  const handleResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    isDraggingWidthRef.current = true;
+
+    function onMouseMove(moveEvent: MouseEvent) {
+      const nextWidth = clampDrawerWidth(window.innerWidth - moveEvent.clientX);
+      setDrawerWidth(nextWidth);
+    }
+
+    function onMouseUp() {
+      isDraggingWidthRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -701,9 +744,19 @@ export function CreatePostDrawer({
     <Sheet open={open} onOpenChange={handleOpenChange} modal>
       <SheetContent
         showCloseButton={false}
-        className="w-[75vw] border-l"
-        style={{ background: "var(--surface-raised)", borderLeftColor: "var(--dborder)" }}
+        className="border-l"
+        style={{ width: drawerWidth, maxWidth: "calc(100vw - 32px)", background: "var(--surface-raised)", borderLeftColor: "var(--dborder)" }}
       >
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize create post drawer"
+          onMouseDown={handleResizeStart}
+          className="absolute left-0 top-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize"
+          style={{ background: isDraggingWidthRef.current ? "var(--primary)" : "transparent" }}
+          onMouseEnter={(e) => { if (!isDraggingWidthRef.current) e.currentTarget.style.background = "color-mix(in srgb, var(--primary) 45%, transparent)"; }}
+          onMouseLeave={(e) => { if (!isDraggingWidthRef.current) e.currentTarget.style.background = "transparent"; }}
+        />
         {/* Header */}
         <header className="flex flex-shrink-0 items-start justify-between border-b px-8 pb-5 pt-7" style={{ borderBottomColor: "var(--dborder)" }}>
           <div>
