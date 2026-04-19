@@ -6,6 +6,7 @@ import {
   PLATFORM_BRAND_COLORS,
   PLATFORM_CHAR_LIMITS,
   DEFAULT_YOUTUBE_FIELDS,
+  DEFAULT_TIKTOK_FIELDS,
   type PlatformOverride,
   type CharCountInfo,
 } from "./use-create-post-form";
@@ -24,6 +25,16 @@ interface PlatformEditorBlockProps {
   collapsed: boolean;
   charCount: CharCountInfo;
   issues?: SocialPostValidationIssue[];
+  // mediaKind is "video" when any selected media item is a video, "photo"
+  // when all items are images, "none" when there are no media items. TikTok
+  // needs this to hide Duet/Stitch toggles for photo carousels (per the
+  // Content Posting API audit requirements).
+  mediaKind: "video" | "photo" | "none";
+  // getToken is threaded down so the TikTok fields can fetch creator_info
+  // with a fresh Clerk session token without owning its own auth context.
+  getToken: () => Promise<string | null>;
+  // profileId owns the TikTok account — used to build the creator_info URL.
+  profileId: string;
   onCaptionChange: (caption: string) => void;
   onPlatformFieldChange: <K extends "youtube" | "tiktok" | "instagram" | "linkedin">(
     platform: K,
@@ -39,6 +50,9 @@ export function PlatformEditorBlock({
   collapsed,
   charCount,
   issues = [],
+  mediaKind,
+  getToken,
+  profileId,
   onCaptionChange,
   onPlatformFieldChange,
   onToggleCollapse,
@@ -55,7 +69,7 @@ export function PlatformEditorBlock({
   const captionMessage = captionIssues[0]?.message;
 
   const youtubeFields = override.youtube || DEFAULT_YOUTUBE_FIELDS;
-  const tiktokFields = override.tiktok || { privacy: "public" as const, interactions: "allow_all" as const };
+  const tiktokFields = override.tiktok || DEFAULT_TIKTOK_FIELDS;
   const instagramFields = override.instagram || { mediaType: "feed" as const };
   const linkedinFields = override.linkedin || { visibility: "anyone" as const };
 
@@ -192,7 +206,12 @@ export function PlatformEditorBlock({
           )}
           {account.platform === "tiktok" && (
             <TikTokFields
+              account={account}
               fields={tiktokFields}
+              mediaKind={mediaKind}
+              getToken={getToken}
+              profileId={profileId}
+              issues={issues}
               onChange={(f) => onPlatformFieldChange("tiktok", f)}
             />
           )}

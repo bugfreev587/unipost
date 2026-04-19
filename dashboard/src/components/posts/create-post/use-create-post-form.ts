@@ -28,10 +28,20 @@ export interface PlatformOverride {
     tags: string;
     shorts: boolean;
   };
-  // TikTok-specific
+  // TikTok-specific — mirrors the fields TikTok's Content Posting API
+  // audit requires the compose UI to expose. `privacy` is one of
+  // TikTok's PRIVACY_LEVEL enum values (empty string = user hasn't
+  // selected yet; blocks submit). The three disable_* toggles match
+  // TikTok's post_info booleans directly so buildPayload can pass
+  // them through without a translation layer.
   tiktok?: {
-    privacy: "public" | "friends" | "private";
-    interactions: "allow_all" | "comments_only" | "disable_all";
+    privacy: "" | "PUBLIC_TO_EVERYONE" | "MUTUAL_FOLLOW_FRIENDS" | "FOLLOWER_OF_CREATOR" | "SELF_ONLY";
+    disableComment: boolean;
+    disableDuet: boolean;
+    disableStitch: boolean;
+    disclosureEnabled: boolean;
+    yourBrand: boolean;        // → brand_organic_toggle
+    brandedContent: boolean;   // → brand_content_toggle
   };
   // Instagram-specific
   instagram?: {
@@ -100,6 +110,22 @@ export const PLATFORM_BRAND_COLORS: Record<string, string> = {
   youtube: "#ff0000",
 };
 
+// Defaults chosen to satisfy TikTok's audit UX rules:
+//   - privacy: "" forces the user to pick from creator_info options (no default)
+//   - disable_*: true means the interaction is OFF by default (all toggles
+//     start unchecked; TikTok's field is inverted from "allow" wording)
+//   - disclosureEnabled/yourBrand/brandedContent: commercial disclosure is
+//     OFF until the user turns it on
+export const DEFAULT_TIKTOK_FIELDS: NonNullable<PlatformOverride["tiktok"]> = {
+  privacy: "",
+  disableComment: true,
+  disableDuet: true,
+  disableStitch: true,
+  disclosureEnabled: false,
+  yourBrand: false,
+  brandedContent: false,
+};
+
 export const DEFAULT_YOUTUBE_FIELDS: NonNullable<PlatformOverride["youtube"]> = {
   title: "",
   category: "22",
@@ -138,17 +164,6 @@ export interface MediaItem {
 /** Fingerprint a File for dedup — same file re-selected → same key */
 function fileFingerprint(file: File): string {
   return `${file.name}::${file.size}::${file.lastModified}`;
-}
-
-function mapTikTokPrivacyLevel(privacy: NonNullable<PlatformOverride["tiktok"]>["privacy"]): string {
-  switch (privacy) {
-    case "public":
-      return "PUBLIC_TO_EVERYONE";
-    case "friends":
-      return "MUTUAL_FOLLOW_FRIENDS";
-    case "private":
-      return "SELF_ONLY";
-  }
 }
 
 export function useCreatePostForm(accounts: SocialAccount[]) {
@@ -370,6 +385,23 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     return false;
   }, [selectedAccounts, overrides, mainContent, getCharCount]);
 
+  // Compute which selected accounts are TikTok so the canSubmit guard can
+  // enforce the Content Posting API audit rules (privacy picked, disclosure
+  // complete, no branded-private conflict). All selected TikTok accounts
+  // must satisfy the rules for the button to enable.
+  const tiktokBlocker = useMemo(() => {
+    for (const acc of selectedAccounts) {
+      if (acc.platform !== "tiktok") continue;
+      const t = overrides[acc.id]?.tiktok;
+      // No tiktok override object means the user hasn't touched any
+      // of the fields — privacy therefore hasn't been set.
+      if (!t || !t.privacy) return "tiktok_privacy";
+      if (t.disclosureEnabled && !t.yourBrand && !t.brandedContent) return "tiktok_disclosure";
+      if (t.disclosureEnabled && t.brandedContent && t.privacy === "SELF_ONLY") return "tiktok_branded_private";
+    }
+    return null;
+  }, [selectedAccounts, overrides]);
+
   const canSubmit = useMemo(() => {
     if (submitting) return false;
     if (selectedAccountIds.size === 0) return false;
@@ -380,8 +412,9 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (publishMode === "schedule" && !scheduledAt) return false;
     if (publishMode === "schedule" && scheduledAt && new Date(scheduledAt) <= new Date()) return false;
     if (publishMode === "queue" && !queueId) return false;
+    if (tiktokBlocker) return false;
     return true;
-  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId, hasPlatformOnlyContent]);
+  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId, hasPlatformOnlyContent, tiktokBlocker]);
 
   // Not wrapped in useCallback — always reads latest state to avoid
   // stale closure issues with mediaItems/uploadedMediaIds.
@@ -445,8 +478,20 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
           }
         }
         if (o?.tiktok) {
+          // Translate the UI's friendly field names into the exact keys
+          // TikTok's Content Posting API expects, so the Go adapter can
+          // forward them straight through post_info without a second
+          // mapping layer. Toggles only emitted when the disclosure is
+          // ON — otherwise they stay absent (TikTok treats missing as
+          // false, same as "no disclosure").
+          const t = o.tiktok;
           entry.platform_options = {
-            privacy_level: mapTikTokPrivacyLevel(o.tiktok.privacy),
+            privacy_level: t.privacy,
+            disable_comment: t.disableComment,
+            disable_duet: t.disableDuet,
+            disable_stitch: t.disableStitch,
+            brand_organic_toggle: t.disclosureEnabled && t.yourBrand,
+            brand_content_toggle: t.disclosureEnabled && t.brandedContent,
           };
         }
         if (o?.instagram) entry.platform_options = { ...o.instagram };
@@ -523,5 +568,6 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     hasUnsavedContent,
     hasOverLimit,
     canSubmit,
+    tiktokBlocker,
   };
 }

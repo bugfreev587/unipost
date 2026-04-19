@@ -314,6 +314,7 @@ export function CreatePostDrawer({
   const [validationChecked, setValidationChecked] = useState(false);
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
   const [submitError, setSubmitError] = useState<{ message: string; mailto: string; contactHref: string } | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState<{ message: string } | null>(null);
   const pendingCloseRef = useRef(false);
   const mainContentRef = useRef<HTMLTextAreaElement | null>(null);
   const mediaSectionRef = useRef<HTMLDivElement | null>(null);
@@ -398,6 +399,7 @@ export function CreatePostDrawer({
       setIsValidating(false);
       setWarningsAcknowledged(false);
       setSubmitError(null);
+      setSubmitSuccess(null);
       pendingCloseRef.current = false;
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -624,7 +626,24 @@ export function CreatePostDrawer({
       if (!token) return;
       await createSocialPost(token, workspaceId, payload);
       onCreated();
-      onOpenChange(false);
+      // TikTok processes video/photo uploads asynchronously — the
+      // Content Posting API audit requires us to tell the user the post
+      // is in-flight, not silently assume "published". Hold the drawer
+      // open briefly with a success banner when any selected account is
+      // on TikTok; the posts list (which `onCreated` just refreshed)
+      // shows the per-platform status after the drawer closes.
+      const postingToTikTok = form.selectedAccounts.some((a) => a.platform === "tiktok");
+      if (postingToTikTok && form.publishMode === "now") {
+        setSubmitSuccess({
+          message: "Posted! TikTok is processing your video — it should appear on your profile within a few minutes.",
+        });
+        setTimeout(() => {
+          setSubmitSuccess(null);
+          onOpenChange(false);
+        }, 3500);
+      } else {
+        onOpenChange(false);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create post";
       console.error("Create post failed:", err);
@@ -710,6 +729,16 @@ export function CreatePostDrawer({
 
   const primaryLabel = PRIMARY_BUTTON_LABELS[form.publishMode];
 
+  // Classify the current media selection once per change so the TikTok
+  // fields component can hide Duet/Stitch toggles for photo carousels
+  // (per the Content Posting API audit requirements) without each child
+  // re-deriving the same thing.
+  const mediaKind: "video" | "photo" | "none" = useMemo(() => {
+    if (form.mediaItems.length === 0) return "none";
+    const hasVideo = form.mediaItems.some((m) => m.file.type.startsWith("video/"));
+    return hasVideo ? "video" : "photo";
+  }, [form.mediaItems]);
+
   // Why is the primary button disabled? Surface the first blocking reason
   // as a tooltip + inline hint — otherwise the grayed-out button looks
   // like a bug (especially when uploads are silently in flight).
@@ -730,6 +759,14 @@ export function CreatePostDrawer({
     if (form.publishMode === "schedule" && form.scheduledAt && new Date(form.scheduledAt) <= new Date())
       return "Scheduled time must be in the future.";
     if (form.publishMode === "queue" && !form.queueId) return "Pick a queue to add this post to.";
+    // TikTok audit guardrails — block publish until the creator has made
+    // explicit choices that satisfy TikTok's Content Posting API UX rules.
+    if (form.tiktokBlocker === "tiktok_privacy")
+      return "Select a TikTok visibility (TikTok requires an explicit choice).";
+    if (form.tiktokBlocker === "tiktok_disclosure")
+      return "Pick Your Brand or Branded Content to finish disclosing commercial content on TikTok.";
+    if (form.tiktokBlocker === "tiktok_branded_private")
+      return "TikTok doesn't allow Branded Content to be posted as Only me — change the visibility or turn off Branded Content.";
     return null;
   }, [
     form.submitting,
@@ -741,6 +778,7 @@ export function CreatePostDrawer({
     form.publishMode,
     form.scheduledAt,
     form.queueId,
+    form.tiktokBlocker,
   ]);
 
   return (
@@ -866,6 +904,9 @@ export function CreatePostDrawer({
                           collapsed={form.collapsedBlocks.has(account.id)}
                           charCount={charCount}
                           issues={accountIssues}
+                          mediaKind={mediaKind}
+                          getToken={getToken}
+                          profileId={account.profile_id || selectedProfileId}
                           onCaptionChange={(caption) =>
                             form.updateOverrideCaption(account.id, caption)
                           }
@@ -946,6 +987,25 @@ export function CreatePostDrawer({
               accounts={form.selectedAccounts}
               onSelectIssue={focusIssue}
             />
+            {submitSuccess && (
+              <section
+                className="mb-5 rounded-xl border px-4 py-3.5"
+                style={{
+                  background: "color-mix(in srgb, var(--primary) 10%, var(--surface-raised))",
+                  borderColor: "color-mix(in srgb, var(--primary) 45%, transparent)",
+                }}
+              >
+                <div
+                  className="mb-1 font-mono text-[11px] uppercase tracking-[0.12em]"
+                  style={{ color: "color-mix(in srgb, var(--primary) 30%, white)" }}
+                >
+                  Post submitted
+                </div>
+                <p className="text-[13px] leading-relaxed" style={{ color: "var(--dtext)" }}>
+                  {submitSuccess.message}
+                </p>
+              </section>
+            )}
             {submitError && (
               <section className="mb-5 rounded-xl border border-[#7f1d1d] bg-[#261013] px-4 py-3.5">
                 <div className="flex items-center gap-2 text-[#fecaca] mb-2">

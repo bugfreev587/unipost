@@ -477,6 +477,9 @@ func main() {
 		r.Get("/v1/profiles/{profileID}/social-accounts", socialAccountHandler.List)
 		r.Post("/v1/profiles/{profileID}/social-accounts/connect", socialAccountHandler.Connect)
 		r.Delete("/v1/profiles/{profileID}/social-accounts/{accountID}", socialAccountHandler.Disconnect)
+		// TikTok creator_info — required for the Content Posting API audit
+		// UI (see internal/handler/tiktok_creator_info.go).
+		r.Get("/v1/profiles/{profileID}/social-accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 
 		// Managed Users view (dashboard, profile-scoped).
 		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
@@ -586,6 +589,9 @@ func main() {
 		// Account health (Sprint 2 PR7) — derived from the last 10
 		// social_post_results rows. ok / degraded / disconnected.
 		r.Get("/v1/social-accounts/{id}/health", socialAccountHandler.AccountHealth)
+		// TikTok creator_info — required for the Content Posting API audit
+		// UI (see internal/handler/tiktok_creator_info.go).
+		r.Get("/v1/social-accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 
 		// Media library — two-step upload (POST returns presigned URL,
 		// client PUTs to R2 directly), then reference the media_id in

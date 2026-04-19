@@ -323,6 +323,32 @@ export async function disconnectSocialAccount(
   );
 }
 
+// TikTok creator_info — required by TikTok's Content Posting API audit.
+// Populates the compose UI's creator nickname, privacy options, interaction
+// toggle availability, and max video length. See
+// internal/handler/tiktok_creator_info.go on the API side.
+export interface TikTokCreatorInfo {
+  creator_avatar_url: string;
+  creator_username: string;
+  creator_nickname: string;
+  privacy_level_options: string[];
+  comment_disabled: boolean;
+  duet_disabled: boolean;
+  stitch_disabled: boolean;
+  max_video_post_duration_sec: number;
+}
+
+export async function getTikTokCreatorInfo(
+  token: string,
+  profileId: string,
+  accountId: string
+): Promise<ApiResponse<TikTokCreatorInfo>> {
+  return request(
+    `/v1/profiles/${profileId}/social-accounts/${accountId}/tiktok/creator-info`,
+    token
+  );
+}
+
 export async function getOAuthConnectURL(
   token: string,
   profileId: string,

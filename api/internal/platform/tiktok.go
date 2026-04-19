@@ -187,8 +187,14 @@ var TikTokPrivacyValues = []string{
 // TikTok's video and photo publish-init endpoints. TikTok returns a
 // misleading "Invalid authorization header" 400 for some malformed bodies,
 // so we always send the required toggle fields with permissive defaults.
-func buildTikTokPostInfo(text, privacyLevel string, opts map[string]any) map[string]any {
-	return map[string]any{
+//
+// mediaKind is "video" or "photo"; video posts additionally emit
+// disable_duet / disable_stitch (TikTok rejects those fields on photo
+// posts). disable_* fields default to false which keeps existing API
+// callers unchanged, but the dashboard sends them all true by default
+// to satisfy the Content Posting API audit (toggles off by default).
+func buildTikTokPostInfo(text, privacyLevel string, opts map[string]any, mediaKind string) map[string]any {
+	info := map[string]any{
 		"title":                text,
 		"description":          text,
 		"privacy_level":        privacyLevel,
@@ -197,6 +203,11 @@ func buildTikTokPostInfo(text, privacyLevel string, opts map[string]any) map[str
 		"brand_content_toggle": optBool(opts, "brand_content_toggle"),
 		"brand_organic_toggle": optBool(opts, "brand_organic_toggle"),
 	}
+	if mediaKind == "video" {
+		info["disable_duet"] = optBool(opts, "disable_duet")
+		info["disable_stitch"] = optBool(opts, "disable_stitch")
+	}
+	return info
 }
 
 func wrapTikTokInitError(prefix string, status int, body []byte, privacyLevel string) error {
@@ -219,8 +230,18 @@ func shouldRetryTikTokWithSelfOnly(status int, body []byte, privacyLevel string)
 
 // Post publishes a video to TikTok using direct file upload.
 //
-// Supported opts:
-//   - privacy_level: one of TikTokPrivacyValues. Defaults to "PUBLIC_TO_EVERYONE".
+// Supported opts (all coming from the compose UI; see tiktok-fields.tsx):
+//   - privacy_level: one of TikTokPrivacyValues. Defaults to
+//     "PUBLIC_TO_EVERYONE"; sandbox apps that can't actually use that
+//     fall back to SELF_ONLY via shouldRetryTikTokWithSelfOnly.
+//   - disable_comment / disable_duet / disable_stitch: interaction
+//     toggles. UI sends all three OFF (true) by default; we forward
+//     them to TikTok. disable_duet / disable_stitch are only emitted
+//     on video posts (TikTok rejects them for photos).
+//   - brand_content_toggle / brand_organic_toggle: commercial content
+//     disclosure. If brand_content_toggle is true, privacy_level MUST
+//     NOT be SELF_ONLY — TikTok's Content Posting API audit rejects
+//     that combo.
 func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
 	if len(media) == 0 {
 		return nil, fmt.Errorf("tiktok requires at least one media item")
@@ -250,6 +271,13 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 	}
 	if privacyLevel == "" {
 		privacyLevel = "PUBLIC_TO_EVERYONE"
+	}
+
+	// Branded Content (= "paid partnership") cannot be posted privately.
+	// The compose UI already blocks this combo; we re-check here to catch
+	// direct API callers who bypass the dashboard.
+	if optBool(opts, "brand_content_toggle") && privacyLevel == "SELF_ONLY" {
+		return nil, fmt.Errorf("tiktok: branded content cannot be posted with privacy_level=SELF_ONLY")
 	}
 
 	// Default to FILE_UPLOAD: TikTok hands back an upload URL and we PUT the
@@ -345,6 +373,12 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 		privacyLevel = "PUBLIC_TO_EVERYONE"
 	}
 
+	// Same branded-private interlock as the video path; see the comment
+	// above Post() for the audit reason.
+	if optBool(opts, "brand_content_toggle") && privacyLevel == "SELF_ONLY" {
+		return nil, fmt.Errorf("tiktok: branded content cannot be posted with privacy_level=SELF_ONLY")
+	}
+
 	// TikTok photo Direct Post only accepts PULL_FROM_URL, and the source
 	// domain must be verified in the developer portal. Since we can't ask
 	// every UniPost customer to register their CDN with us, we stage each
@@ -378,7 +412,7 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 	// validation message. Defaults match the most permissive choice:
 	// comments enabled, music enabled, no brand disclosures.
 	body, _ := json.Marshal(map[string]any{
-		"post_info": buildTikTokPostInfo(text, privacyLevel, opts),
+		"post_info": buildTikTokPostInfo(text, privacyLevel, opts, "photo"),
 		"source_info": map[string]any{
 			"source":            "PULL_FROM_URL",
 			"photo_cover_index": cover,
@@ -437,10 +471,10 @@ func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, pr
 
 func (a *TikTokAdapter) initVideoPullWithPrivacy(ctx context.Context, accessToken, text, privacyLevel, videoURL string, opts map[string]any, allowRetry bool) (string, error) {
 	body, _ := json.Marshal(map[string]any{
-		"post_info": buildTikTokPostInfo(text, privacyLevel, opts),
+		"post_info": buildTikTokPostInfo(text, privacyLevel, opts, "video"),
 		"source_info": map[string]any{
-			"source":        "PULL_FROM_URL",
-			"video_url":     videoURL,
+			"source":    "PULL_FROM_URL",
+			"video_url": videoURL,
 		},
 	})
 
@@ -510,7 +544,7 @@ func (a *TikTokAdapter) initAndPushVideoFileWithPrivacy(ctx context.Context, acc
 	slog.Info("tiktok post: downloaded video", "size", videoSize)
 
 	initBody, _ := json.Marshal(map[string]any{
-		"post_info": buildTikTokPostInfo(text, privacyLevel, opts),
+		"post_info": buildTikTokPostInfo(text, privacyLevel, opts, "video"),
 		"source_info": map[string]any{
 			"source":            "FILE_UPLOAD",
 			"video_size":        videoSize,
@@ -583,6 +617,70 @@ func (a *TikTokAdapter) initAndPushVideoFileWithPrivacy(ctx context.Context, acc
 	}
 
 	return initResult.Data.PublishID, nil
+}
+
+// TikTokCreatorInfo mirrors the subset of /v2/post/publish/creator_info/query/
+// we need to drive the compose UI. All fields come straight from TikTok's
+// response (we don't synthesize defaults here — callers decide how to render
+// missing data).
+//
+// Required for TikTok's Content Posting API audit: the UI must display the
+// creator's nickname, constrain the privacy dropdown to privacy_level_option,
+// disable interaction toggles the creator has turned off on TikTok, and
+// reject videos longer than max_video_post_duration_sec. See
+// https://developers.tiktok.com/doc/content-posting-api-reference-query-creator-info/
+type TikTokCreatorInfo struct {
+	CreatorAvatarURL            string   `json:"creator_avatar_url"`
+	CreatorUsername             string   `json:"creator_username"`
+	CreatorNickname             string   `json:"creator_nickname"`
+	PrivacyLevelOptions         []string `json:"privacy_level_options"`
+	CommentDisabled             bool     `json:"comment_disabled"`
+	DuetDisabled                bool     `json:"duet_disabled"`
+	StitchDisabled              bool     `json:"stitch_disabled"`
+	MaxVideoPostDurationSec     int      `json:"max_video_post_duration_sec"`
+}
+
+// FetchCreatorInfo calls /v2/post/publish/creator_info/query/ and returns the
+// creator metadata needed by the compose UI. The endpoint requires the
+// video.publish scope, which every TikTok-connected account in UniPost already
+// has (see DefaultOAuthConfig above).
+//
+// TikTok returns HTTP 200 with an "error" envelope even for auth failures,
+// so we treat any non-ok error.code as a fatal error and surface the message.
+func (a *TikTokAdapter) FetchCreatorInfo(ctx context.Context, accessToken string) (*TikTokCreatorInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		"https://open.tiktokapis.com/v2/post/publish/creator_info/query/", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tiktok creator_info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tiktok creator_info (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Data  TikTokCreatorInfo `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("tiktok creator_info decode: %w", err)
+	}
+	if result.Error.Code != "" && result.Error.Code != "ok" {
+		return nil, fmt.Errorf("tiktok creator_info: %s", result.Error.Message)
+	}
+	return &result.Data, nil
 }
 
 // CheckPublishStatus queries TikTok for the publish status of a video.
