@@ -7,7 +7,7 @@ import { useTheme } from "@/components/theme-provider";
 export function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
-  const Icon = isDark ? Sun : Moon;
+  const Icon = isDark ? Moon : Sun;
   const nextTheme = isDark ? "light" : "dark";
   const label = isDark ? "Switch to light theme" : "Switch to dark theme";
 
