@@ -35,6 +35,7 @@ const TUTORIAL_MEDIA_URLS: Partial<Record<SocialAccount["platform"], string>> = 
   instagram: VERIFIED_TUTORIAL_MEDIA_URL,
   threads: VERIFIED_TUTORIAL_MEDIA_URL,
   linkedin: VERIFIED_TUTORIAL_MEDIA_URL,
+  tiktok: "https://media.unipost.dev/media/fa71b6ea-15c5-4234-8e9b-f7f53a6d4dc2.mp4",
   twitter: `${APP_BASE}/brand/unipost-icon-light.png`,
   bluesky: VERIFIED_TUTORIAL_MEDIA_URL,
 };
@@ -327,7 +328,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
         ) : (
           <div style={{ width: "100%", minWidth: 0 }}>
             <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginBottom: 10 }}>
-              Run this to {shouldAttachTutorialImage ? "publish a photo post" : "post"}
+              Run this to {shouldAttachTutorialImage ? "publish a media post" : "post"}
               {" "}
               <strong style={{ color: "var(--dtext)" }}>&quot;{DEFAULT_CAPTION}&quot;</strong>
               {" "}to <strong style={{ color: "var(--dtext)" }}>@{account.account_name || account.platform}</strong> —
