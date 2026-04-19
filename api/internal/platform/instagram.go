@@ -590,10 +590,10 @@ func (a *InstagramAdapter) createSingleContainer(ctx context.Context, accessToke
 	params := url.Values{
 		"access_token": {accessToken},
 	}
-	if !isCarouselChild && mediaType != "story" {
-		params.Set("caption", caption)
-	} else {
+	if isCarouselChild {
 		params.Set("is_carousel_item", "true")
+	} else if mediaType != "story" {
+		params.Set("caption", caption)
 	}
 
 	kind := item.Kind
