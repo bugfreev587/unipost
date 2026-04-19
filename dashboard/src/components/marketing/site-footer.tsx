@@ -23,6 +23,7 @@ const FOOTER_CSS = `
 // (dashboard) route group belongs here, plus onboarding/admin flows.
 const HIDDEN_PREFIXES = [
   "/projects",
+  "/tutorials",
   "/settings",
   "/workspace",
   "/account",
