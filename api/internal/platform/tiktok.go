@@ -210,6 +210,13 @@ func wrapTikTokInitError(prefix string, status int, body []byte, privacyLevel st
 	return fmt.Errorf("%s", msg)
 }
 
+func shouldRetryTikTokWithSelfOnly(status int, body []byte, privacyLevel string) bool {
+	if privacyLevel == "SELF_ONLY" || status != http.StatusBadRequest {
+		return false
+	}
+	return strings.Contains(string(body), `"code":"invalid_params"`)
+}
+
 // Post publishes a video to TikTok using direct file upload.
 //
 // Supported opts:
@@ -425,6 +432,10 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 // side and means the video bytes never touch the API server. The source URL
 // must be on a domain registered with TikTok's developer portal.
 func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, privacyLevel, videoURL string, opts map[string]any) (string, error) {
+	return a.initVideoPullWithPrivacy(ctx, accessToken, text, privacyLevel, videoURL, opts, true)
+}
+
+func (a *TikTokAdapter) initVideoPullWithPrivacy(ctx context.Context, accessToken, text, privacyLevel, videoURL string, opts map[string]any, allowRetry bool) (string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"post_info": buildTikTokPostInfo(text, privacyLevel, opts),
 		"source_info": map[string]any{
@@ -449,6 +460,10 @@ func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, pr
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		if allowRetry && shouldRetryTikTokWithSelfOnly(resp.StatusCode, respBody, privacyLevel) {
+			slog.Warn("tiktok pull init rejected requested privacy; retrying with SELF_ONLY", "requested_privacy", privacyLevel)
+			return a.initVideoPullWithPrivacy(ctx, accessToken, text, "SELF_ONLY", videoURL, opts, false)
+		}
 		return "", wrapTikTokInitError("tiktok pull init failed", resp.StatusCode, respBody, privacyLevel)
 	}
 
@@ -476,6 +491,10 @@ func (a *TikTokAdapter) initVideoPull(ctx context.Context, accessToken, text, pr
 // bytes to that URL. Used as a fallback when PULL_FROM_URL isn't viable
 // (source not on a verified domain, intranet URLs, etc.).
 func (a *TikTokAdapter) initAndPushVideoFile(ctx context.Context, accessToken, text, privacyLevel, videoURL string, opts map[string]any) (string, error) {
+	return a.initAndPushVideoFileWithPrivacy(ctx, accessToken, text, privacyLevel, videoURL, opts, true)
+}
+
+func (a *TikTokAdapter) initAndPushVideoFileWithPrivacy(ctx context.Context, accessToken, text, privacyLevel, videoURL string, opts map[string]any, allowRetry bool) (string, error) {
 	videoResp, err := a.client.Get(videoURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to download video: %w", err)
@@ -516,6 +535,10 @@ func (a *TikTokAdapter) initAndPushVideoFile(ctx context.Context, accessToken, t
 
 	initRespBody, _ := io.ReadAll(initResp.Body)
 	if initResp.StatusCode != http.StatusOK {
+		if allowRetry && shouldRetryTikTokWithSelfOnly(initResp.StatusCode, initRespBody, privacyLevel) {
+			slog.Warn("tiktok upload init rejected requested privacy; retrying with SELF_ONLY", "requested_privacy", privacyLevel)
+			return a.initAndPushVideoFileWithPrivacy(ctx, accessToken, text, "SELF_ONLY", videoURL, opts, false)
+		}
 		return "", wrapTikTokInitError("tiktok upload init failed", initResp.StatusCode, initRespBody, privacyLevel)
 	}
 

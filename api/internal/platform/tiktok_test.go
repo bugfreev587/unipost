@@ -21,3 +21,17 @@ func TestBuildTikTokPostInfoIncludesRequiredToggles(t *testing.T) {
 		t.Fatalf("brand_organic_toggle = %v, want false", got)
 	}
 }
+
+func TestShouldRetryTikTokWithSelfOnly(t *testing.T) {
+	body := []byte(`{"error":{"code":"invalid_params","message":"Invalid authorization header. Please check the format."}}`)
+
+	if !shouldRetryTikTokWithSelfOnly(400, body, "PUBLIC_TO_EVERYONE") {
+		t.Fatal("expected retry for invalid_params with non-SELF_ONLY privacy")
+	}
+	if shouldRetryTikTokWithSelfOnly(400, body, "SELF_ONLY") {
+		t.Fatal("did not expect retry when already using SELF_ONLY")
+	}
+	if shouldRetryTikTokWithSelfOnly(500, body, "PUBLIC_TO_EVERYONE") {
+		t.Fatal("did not expect retry for non-400 responses")
+	}
+}
