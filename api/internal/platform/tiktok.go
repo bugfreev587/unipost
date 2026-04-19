@@ -186,7 +186,7 @@ var TikTokPrivacyValues = []string{
 // Post publishes a video to TikTok using direct file upload.
 //
 // Supported opts:
-//   - privacy_level: one of TikTokPrivacyValues. Defaults to "SELF_ONLY".
+//   - privacy_level: one of TikTokPrivacyValues. Defaults to "PUBLIC_TO_EVERYONE".
 func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
 	if len(media) == 0 {
 		return nil, fmt.Errorf("tiktok requires at least one media item")
@@ -215,7 +215,7 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 		return nil, err
 	}
 	if privacyLevel == "" {
-		privacyLevel = "SELF_ONLY"
+		privacyLevel = "PUBLIC_TO_EVERYONE"
 	}
 
 	// Default to FILE_UPLOAD: TikTok hands back an upload URL and we PUT the
@@ -308,7 +308,7 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 		return nil, err
 	}
 	if privacyLevel == "" {
-		privacyLevel = "SELF_ONLY"
+		privacyLevel = "PUBLIC_TO_EVERYONE"
 	}
 
 	// TikTok photo Direct Post only accepts PULL_FROM_URL, and the source

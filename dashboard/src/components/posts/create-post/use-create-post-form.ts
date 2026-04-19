@@ -140,6 +140,17 @@ function fileFingerprint(file: File): string {
   return `${file.name}::${file.size}::${file.lastModified}`;
 }
 
+function mapTikTokPrivacyLevel(privacy: NonNullable<PlatformOverride["tiktok"]>["privacy"]): string {
+  switch (privacy) {
+    case "public":
+      return "PUBLIC_TO_EVERYONE";
+    case "friends":
+      return "MUTUAL_FOLLOW_FRIENDS";
+    case "private":
+      return "SELF_ONLY";
+  }
+}
+
 export function useCreatePostForm(accounts: SocialAccount[]) {
   const [mainContent, setMainContent] = useState("");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
@@ -433,7 +444,11 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
             entry.platform_options.tags = tags;
           }
         }
-        if (o?.tiktok) entry.platform_options = { ...o.tiktok };
+        if (o?.tiktok) {
+          entry.platform_options = {
+            privacy_level: mapTikTokPrivacyLevel(o.tiktok.privacy),
+          };
+        }
         if (o?.instagram) entry.platform_options = { ...o.instagram };
         if (o?.linkedin) entry.platform_options = { ...o.linkedin };
         return entry;
