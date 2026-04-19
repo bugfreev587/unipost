@@ -16,7 +16,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { Check, Lock, Loader2, ExternalLink } from "lucide-react";
+import { Check, Lock, Loader2, ExternalLink, Copy } from "lucide-react";
 import {
   createApiKey,
   listSocialAccounts,
@@ -47,6 +47,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
     | { kind: "error"; message: string }
   >({ kind: "none" });
   const [pasteInput, setPasteInput] = useState("");
+  const [keyCopied, setKeyCopied] = useState(false);
 
   // Load the user's connected accounts so we can template a real
   // account_id into the snippet. Quickstart is a prerequisite, so we
@@ -118,6 +119,15 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
     setKeyState({ kind: "ready", key: trimmed });
   }
 
+  async function handleCopyKey() {
+    if (keyState.kind !== "ready") return;
+    try {
+      await navigator.clipboard.writeText(keyState.key);
+      setKeyCopied(true);
+      setTimeout(() => setKeyCopied(false), 1500);
+    } catch { /* clipboard unavailable — silent */ }
+  }
+
   async function handleSend() {
     if (keyState.kind !== "ready" || !account) return;
     setSendState({ kind: "sending" });
@@ -172,11 +182,44 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
               padding: "10px 12px", borderRadius: 8,
               background: "rgba(16,185,129,.06)",
               border: "1px solid rgba(16,185,129,.20)",
-              fontFamily: "var(--font-geist-mono), monospace",
-              fontSize: 12, color: "var(--dtext)",
-              wordBreak: "break-all",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
             }}>
-              {keyState.key}
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontFamily: "var(--font-geist-mono), monospace",
+                  fontSize: 12,
+                  color: "var(--dtext)",
+                  wordBreak: "break-all",
+                }}
+              >
+                {keyState.key}
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyKey}
+                className="dt-body-sm"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  flexShrink: 0,
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid rgba(16,185,129,.24)",
+                  background: "rgba(16,185,129,.10)",
+                  color: keyCopied ? "var(--daccent)" : "var(--dmuted)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontSize: 12,
+                }}
+              >
+                {keyCopied ? <Check style={{ width: 12, height: 12 }} /> : <Copy style={{ width: 12, height: 12 }} />}
+                {keyCopied ? "Copied" : "Copy"}
+              </button>
             </div>
           </div>
         ) : apiKeysAlreadyExist ? (
