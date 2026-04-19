@@ -851,7 +851,7 @@ export default function InboxPage() {
     // Facebook-style comment bubble
     const avatarSize = depth > 0 ? 28 : 32;
     return (
-      <div key={item.id} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+      <div key={item.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", maxWidth: "100%" }}>
         <Avatar src={avatarSrc} label={avatarLabel} size={avatarSize} />
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Bubble */}
@@ -1404,13 +1404,48 @@ export default function InboxPage() {
                         <div key={node.item.id} style={{ marginTop: depth === 0 ? 10 : 6 }}>
                           {renderConversationItem(node.item, depth)}
                           {node.children.length > 0 ? (
-                            <div style={{
-                              marginLeft: 16,
-                              paddingLeft: 16,
-                              borderLeft: "2px solid var(--dborder2)",
-                              marginTop: 2,
-                            }}>
-                              {node.children.map((child) => renderNode(child, depth + 1))}
+                            <div
+                              style={{
+                                position: "relative",
+                                marginLeft: 18,
+                                paddingLeft: 18,
+                                marginTop: 4,
+                              }}
+                            >
+                              <div
+                                aria-hidden="true"
+                                style={{
+                                  position: "absolute",
+                                  left: 7,
+                                  top: 0,
+                                  bottom: 16,
+                                  width: 2,
+                                  borderRadius: 999,
+                                  background: "rgba(255,255,255,.12)",
+                                }}
+                              />
+                              {node.children.map((child) => (
+                                <div
+                                  key={child.item.id}
+                                  style={{
+                                    position: "relative",
+                                  }}
+                                >
+                                  <div
+                                    aria-hidden="true"
+                                    style={{
+                                      position: "absolute",
+                                      left: -11,
+                                      top: 16,
+                                      width: 12,
+                                      height: 2,
+                                      borderRadius: 999,
+                                      background: "rgba(255,255,255,.12)",
+                                    }}
+                                  />
+                                  {renderNode(child, depth + 1)}
+                                </div>
+                              ))}
                             </div>
                           ) : null}
                         </div>
