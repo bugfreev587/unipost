@@ -122,6 +122,15 @@ function MediaThumbnails({ items, onRemove, onAdd, onRetry }: {
   onAdd: (files: File[]) => void;
   onRetry: (index: number) => void;
 }) {
+  // The per-thumb "Retry" icon is too small to explain *why* the
+  // upload failed (server errors like "size_bytes exceeds the global
+  // hard cap of 26214400" only showed up as a tooltip before). Roll
+  // all failed items into a single red banner beneath the grid so
+  // users see the actual error without having to hover.
+  const failedItems = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => !!item.error);
+
   return (
     <section className="mt-6">
       <label className="mb-2.5 block text-xs font-medium uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
@@ -150,8 +159,49 @@ function MediaThumbnails({ items, onRemove, onAdd, onRetry }: {
           />
         </label>
       </div>
+      {failedItems.length > 0 && (
+        <div
+          className="mt-2.5 rounded-md border px-3 py-2 text-[12px] leading-relaxed"
+          style={{
+            background: "color-mix(in srgb, var(--danger) 12%, var(--surface-raised))",
+            borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)",
+            color: "color-mix(in srgb, var(--danger) 26%, white)",
+          }}
+        >
+          {failedItems.map(({ item, index }) => (
+            <div key={item.fingerprint} className="flex items-start gap-2">
+              <span className="font-mono text-[11px] opacity-80">{item.file.name}</span>
+              <span>— {humanizeMediaError(item.error!, item.file)}</span>
+              <button
+                type="button"
+                onClick={() => onRetry(index)}
+                className="ml-auto underline"
+                style={{ color: "inherit" }}
+              >
+                Retry
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
+}
+
+// humanizeMediaError rewrites the rawest server messages into something
+// a user can act on. Today the most common offender is the 25MB hard
+// cap — "size_bytes exceeds the global hard cap of 26214400" means
+// nothing to a non-developer. Everything else falls through unchanged
+// so we don't accidentally hide useful detail.
+function humanizeMediaError(raw: string, file: File): string {
+  const hardCapMatch = /exceeds the global hard cap of (\d+)/.exec(raw);
+  if (hardCapMatch) {
+    const capBytes = parseInt(hardCapMatch[1], 10);
+    const capMB = (capBytes / (1024 * 1024)).toFixed(0);
+    const fileMB = (file.size / (1024 * 1024)).toFixed(1);
+    return `File is ${fileMB} MB — max upload size is ${capMB} MB. Compress the file or use a shorter clip.`;
+  }
+  return raw;
 }
 
 const ISSUE_COPY: Record<string, string> = {
