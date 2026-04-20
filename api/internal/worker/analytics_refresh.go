@@ -165,20 +165,33 @@ func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePost
 		refreshToken, decErr := w.encryptor.Decrypt(r.RefreshToken.String)
 		if decErr == nil {
 			newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshToken)
-			if refErr == nil {
-				accessToken = newAccess
-				encAccess, _ := w.encryptor.Encrypt(newAccess)
-				encRefresh, _ := w.encryptor.Encrypt(newRefresh)
-				w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
-					ID:             r.SocialAccountID,
-					AccessToken:    encAccess,
-					RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
-					TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-				})
-			} else {
+			if refErr != nil {
 				slog.Warn("analytics refresh: token refresh failed",
 					"result_id", r.SocialPostResultID, "platform", r.Platform, "error", refErr)
 				return
+			}
+			if newAccess == "" {
+				slog.Warn("analytics refresh: upstream returned empty access token; skipping DB update",
+					"result_id", r.SocialPostResultID, "platform", r.Platform)
+				return
+			}
+			encAccess, encErr := w.encryptor.Encrypt(newAccess)
+			encRefresh, encErr2 := w.encryptor.Encrypt(newRefresh)
+			if encErr != nil || encErr2 != nil {
+				slog.Error("analytics refresh: encrypt failed",
+					"result_id", r.SocialPostResultID, "platform", r.Platform,
+					"access_err", encErr, "refresh_err", encErr2)
+				return
+			}
+			accessToken = newAccess
+			if updateErr := w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
+				ID:             r.SocialAccountID,
+				AccessToken:    encAccess,
+				RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+				TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+			}); updateErr != nil {
+				slog.Error("analytics refresh: update failed",
+					"result_id", r.SocialPostResultID, "platform", r.Platform, "error", updateErr)
 			}
 		}
 	}

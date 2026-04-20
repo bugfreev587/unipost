@@ -49,6 +49,16 @@ export interface ApiError {
   };
 }
 
+// ApiFetchError is the Error subtype thrown by request() when the API
+// returns a non-2xx response. It carries the HTTP status and the
+// server-provided error code so callers can branch on
+// well-known values like "NEEDS_RECONNECT" or "VALIDATION_ERROR"
+// without string-matching the error message.
+export interface ApiFetchError extends Error {
+  status?: number;
+  code?: string;
+}
+
 export interface CreateSocialPostPayload {
   caption?: string;
   account_ids?: string[];
@@ -110,7 +120,13 @@ async function request<T>(
       const details = err.error.issues.map((i) => i.message || i.code).filter(Boolean).join("; ");
       if (details) message += `: ${details}`;
     }
-    throw new Error(message);
+    // Attach the server-returned error code (e.g. NEEDS_RECONNECT,
+    // VALIDATION_ERROR) onto the thrown Error so callers can branch
+    // on it without parsing the message. Typed on ApiFetchError below.
+    const thrown = new Error(message) as ApiFetchError;
+    thrown.status = res.status;
+    if (err.error?.code) thrown.code = err.error.code;
+    throw thrown;
   }
 
   if (res.status === 204) {

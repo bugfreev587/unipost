@@ -332,19 +332,30 @@ func (w *SchedulerWorker) publishOne(
 		return
 	}
 
-	// Inline token refresh if expired.
+	// Inline token refresh if expired. Mirrors the Create path: only
+	// persist when every step succeeds, so a failed upstream refresh
+	// or encryption error never overwrites good tokens with empty
+	// strings.
 	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
 		if refreshTok, decErr := w.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
-			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshTok); refErr == nil {
-				accessToken = newAccess
-				encAccess, _ := w.encryptor.Encrypt(newAccess)
-				encRefresh, _ := w.encryptor.Encrypt(newRefresh)
-				w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
-					ID:             acc.ID,
-					AccessToken:    encAccess,
-					RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
-					TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-				})
+			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshTok); refErr == nil && newAccess != "" {
+				encAccess, encErr := w.encryptor.Encrypt(newAccess)
+				encRefresh, encErr2 := w.encryptor.Encrypt(newRefresh)
+				if encErr == nil && encErr2 == nil {
+					accessToken = newAccess
+					if updateErr := w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
+						ID:             acc.ID,
+						AccessToken:    encAccess,
+						RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+						TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+					}); updateErr != nil {
+						slog.Error("scheduler refresh: update failed", "account_id", acc.ID, "platform", acc.Platform, "error", updateErr)
+					}
+				} else {
+					slog.Error("scheduler refresh: encrypt failed", "account_id", acc.ID, "platform", acc.Platform, "access_err", encErr, "refresh_err", encErr2)
+				}
+			} else if refErr != nil {
+				slog.Error("scheduler refresh: upstream failed", "account_id", acc.ID, "platform", acc.Platform, "error", refErr)
 			}
 		}
 	}

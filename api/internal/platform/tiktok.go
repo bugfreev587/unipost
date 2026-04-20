@@ -734,17 +734,82 @@ func (a *TikTokAdapter) RefreshToken(ctx context.Context, refreshToken string) (
 	}
 	defer resp.Body.Close()
 
+	// Previously we parsed whatever TikTok returned and ignored the
+	// status code. A rate-limited / temporarily-invalid 4xx response
+	// would decode to a zero struct, and callers would silently write
+	// empty tokens + zero expires_at into the DB — the next request
+	// then sent `Authorization: Bearer ` and TikTok closed the
+	// connection, surfacing to the browser as "Failed to fetch". Now:
+	// any non-2xx is a fatal error, and a 200 that somehow lacks an
+	// access_token is treated the same — we refuse to return empty
+	// credentials even when TikTok claims success.
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", time.Time{}, fmt.Errorf("tiktok refresh (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	// TikTok may also nest the response under a top-level "error"
+	// envelope with code != "ok" while still returning 200. Walk both
+	// shapes so we don't treat those as success.
+	var raw map[string]any
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return "", "", time.Time{}, fmt.Errorf("tiktok refresh: decode: %w", err)
+	}
+	if errObj, ok := raw["error"].(map[string]any); ok {
+		if code, _ := errObj["code"].(string); code != "" && code != "ok" {
+			msg, _ := errObj["message"].(string)
+			return "", "", time.Time{}, fmt.Errorf("tiktok refresh: %s: %s", code, msg)
+		}
+	}
+
 	var tokenResp struct {
 		Data struct {
 			AccessToken  string `json:"access_token"`
 			RefreshToken string `json:"refresh_token"`
 			ExpiresIn    int    `json:"expires_in"`
 		} `json:"data"`
+		// Fields also appear at root level in some TikTok sandbox
+		// responses; capture both so we don't silently miss either.
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
 	}
-	json.NewDecoder(resp.Body).Decode(&tokenResp)
+	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+		return "", "", time.Time{}, fmt.Errorf("tiktok refresh: decode: %w", err)
+	}
 
-	return tokenResp.Data.AccessToken, tokenResp.Data.RefreshToken,
-		time.Now().Add(time.Duration(tokenResp.Data.ExpiresIn) * time.Second), nil
+	accessToken := firstNonEmpty(tokenResp.Data.AccessToken, tokenResp.AccessToken)
+	rotatedRefresh := firstNonEmpty(tokenResp.Data.RefreshToken, tokenResp.RefreshToken)
+	expiresIn := tokenResp.Data.ExpiresIn
+	if expiresIn == 0 {
+		expiresIn = tokenResp.ExpiresIn
+	}
+	if accessToken == "" {
+		return "", "", time.Time{}, fmt.Errorf("tiktok refresh: response missing access_token (body=%s)", string(respBody))
+	}
+	if rotatedRefresh == "" {
+		// TikTok always rotates refresh tokens on refresh; if the
+		// server didn't include one, reuse the caller's so we don't
+		// silently clobber the stored refresh token with "".
+		rotatedRefresh = refreshToken
+	}
+	if expiresIn <= 0 {
+		// Fall back to TikTok's documented 24h access-token lifetime
+		// so a bogus expires_in doesn't immediately re-trigger this
+		// refresh path on the next call.
+		expiresIn = 86400
+	}
+
+	return accessToken, rotatedRefresh, time.Now().Add(time.Duration(expiresIn) * time.Second), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // GetAnalytics fetches video metrics from TikTok.

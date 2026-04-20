@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { SocialAccount, SocialPostValidationIssue, TikTokCreatorInfo } from "@/lib/api";
+import type { ApiFetchError, SocialAccount, SocialPostValidationIssue, TikTokCreatorInfo } from "@/lib/api";
 import { getTikTokCreatorInfo } from "@/lib/api";
 import type { PlatformOverride } from "../use-create-post-form";
 
@@ -35,7 +35,7 @@ const PRIVACY_LABELS: Record<string, string> = {
 type LoadState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; reconnect?: boolean }
   | { status: "ready"; info: TikTokCreatorInfo };
 
 export function TikTokFields({
@@ -76,6 +76,19 @@ export function TikTokFields({
         setState({ status: "ready", info: res.data });
       } catch (err) {
         if (cancelled) return;
+        // NEEDS_RECONNECT is our signal that the stored tokens are bad
+        // (typically after a failed TikTok refresh wrote empty values).
+        // We show a tailored message + a visible reconnect CTA instead
+        // of the raw "Failed to fetch" that drove this bug report.
+        const code = err instanceof Error ? (err as ApiFetchError).code : undefined;
+        if (code === "NEEDS_RECONNECT") {
+          setState({
+            status: "error",
+            message: "Your TikTok connection has expired. Please reconnect this account.",
+            reconnect: true,
+          });
+          return;
+        }
         const message = err instanceof Error ? err.message : "Failed to load TikTok creator info";
         setState({ status: "error", message });
       }
@@ -213,10 +226,25 @@ export function TikTokFields({
             color: "color-mix(in srgb, var(--danger) 26%, white)",
           }}
         >
-          <div className="mb-0.5 text-[12.5px] font-semibold">Cannot publish to this TikTok account</div>
+          <div className="mb-0.5 text-[12.5px] font-semibold">
+            {state.reconnect ? "Reconnect this TikTok account" : "Cannot publish to this TikTok account"}
+          </div>
           <div className="leading-relaxed">
             {state.message || "This TikTok account has reached its daily posting limit. Please try again later."}
-            {" "}You can still save this post as a draft.
+            {state.reconnect ? (
+              <>
+                {" "}
+                <a
+                  href="/settings/accounts"
+                  className="underline"
+                  style={{ color: "color-mix(in srgb, var(--danger) 26%, white)" }}
+                >
+                  Go to Accounts →
+                </a>
+              </>
+            ) : (
+              <> You can still save this post as a draft.</>
+            )}
           </div>
         </div>
       )}

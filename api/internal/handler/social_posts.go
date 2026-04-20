@@ -921,19 +921,32 @@ func (h *SocialPostHandler) publishOne(
 		return
 	}
 
-	// Inline token refresh if expired.
+	// Inline token refresh if expired. We only persist the rotated
+	// tokens when EVERY step succeeds — a silent failure here used
+	// to overwrite good tokens with empty strings (see TikTok
+	// "Failed to fetch" after publish). Defensive: an error anywhere
+	// in the chain leaves the stored tokens untouched so the worker
+	// can retry the refresh later.
 	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
 		if refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
-			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(r.Context(), refreshTok); refErr == nil {
-				accessToken = newAccess
-				encAccess, _ := h.encryptor.Encrypt(newAccess)
-				encRefresh, _ := h.encryptor.Encrypt(newRefresh)
-				h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
-					ID:             acc.ID,
-					AccessToken:    encAccess,
-					RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
-					TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-				})
+			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(r.Context(), refreshTok); refErr == nil && newAccess != "" {
+				encAccess, encErr := h.encryptor.Encrypt(newAccess)
+				encRefresh, encErr2 := h.encryptor.Encrypt(newRefresh)
+				if encErr == nil && encErr2 == nil {
+					accessToken = newAccess
+					if updateErr := h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+						ID:             acc.ID,
+						AccessToken:    encAccess,
+						RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+						TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+					}); updateErr != nil {
+						slog.Error("token refresh: update failed", "account_id", acc.ID, "platform", acc.Platform, "error", updateErr)
+					}
+				} else {
+					slog.Error("token refresh: encrypt failed", "account_id", acc.ID, "platform", acc.Platform, "access_err", encErr, "refresh_err", encErr2)
+				}
+			} else if refErr != nil {
+				slog.Error("token refresh: upstream failed", "account_id", acc.ID, "platform", acc.Platform, "error", refErr)
 			}
 		}
 	}

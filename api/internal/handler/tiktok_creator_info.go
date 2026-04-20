@@ -20,7 +20,9 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -75,31 +77,66 @@ func (h *SocialAccountHandler) TikTokCreatorInfo(w http.ResponseWriter, r *http.
 
 	accessToken, err := h.encryptor.Decrypt(acc.AccessToken)
 	if err != nil {
+		slog.Error("tiktok creator_info: decrypt access token failed", "account_id", acc.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to decrypt access token")
 		return
 	}
 
-	// Refresh expired tokens inline so the caller doesn't get a 401 from
-	// TikTok and have to retry. Mirrors the pattern in social_posts.go
-	// dispatchOne.
+	// If the stored access token is already empty — typically the
+	// fallout from an old bug that wrote empty tokens to the DB after
+	// a failed refresh — treat it as a reconnect case immediately so
+	// the user sees a clear message instead of a TikTok 401.
+	if accessToken == "" {
+		slog.Warn("tiktok creator_info: stored access token is empty; user must reconnect", "account_id", acc.ID)
+		writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Your TikTok connection has expired. Please reconnect the account.")
+		return
+	}
+
+	// Refresh expired tokens inline so the caller doesn't get a 401
+	// from TikTok and have to retry. Mirrors the pattern in
+	// social_posts.go dispatchOne — every step must succeed before we
+	// overwrite the stored tokens, and the user is steered toward
+	// reconnect whenever TikTok won't cooperate.
 	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
-		if refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
-			if newAccess, newRefresh, expiresAt, refErr := tiktokAdapter.RefreshToken(r.Context(), refreshTok); refErr == nil {
-				accessToken = newAccess
-				encAccess, _ := h.encryptor.Encrypt(newAccess)
-				encRefresh, _ := h.encryptor.Encrypt(newRefresh)
-				_ = h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
-					ID:             acc.ID,
-					AccessToken:    encAccess,
-					RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
-					TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-				})
-			}
+		refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String)
+		if decErr != nil {
+			slog.Error("tiktok creator_info: decrypt refresh token failed", "account_id", acc.ID, "error", decErr)
+			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Your TikTok connection has expired. Please reconnect the account.")
+			return
+		}
+		newAccess, newRefresh, expiresAt, refErr := tiktokAdapter.RefreshToken(r.Context(), refreshTok)
+		if refErr != nil || newAccess == "" {
+			slog.Warn("tiktok creator_info: refresh failed; steering to reconnect", "account_id", acc.ID, "error", refErr)
+			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Your TikTok connection has expired. Please reconnect the account.")
+			return
+		}
+		encAccess, encErr := h.encryptor.Encrypt(newAccess)
+		encRefresh, encErr2 := h.encryptor.Encrypt(newRefresh)
+		if encErr != nil || encErr2 != nil {
+			slog.Error("tiktok creator_info: encrypt refreshed tokens failed", "account_id", acc.ID, "access_err", encErr, "refresh_err", encErr2)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to persist refreshed tokens")
+			return
+		}
+		accessToken = newAccess
+		if updateErr := h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+			ID:             acc.ID,
+			AccessToken:    encAccess,
+			RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+			TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		}); updateErr != nil {
+			slog.Error("tiktok creator_info: update tokens failed", "account_id", acc.ID, "error", updateErr)
 		}
 	}
 
 	info, err := tiktokAdapter.FetchCreatorInfo(r.Context(), accessToken)
 	if err != nil {
+		// Auth-shaped errors → reconnect message. Anything else is an
+		// upstream TikTok problem the user can't fix themselves.
+		slog.Warn("tiktok creator_info: upstream fetch failed", "account_id", acc.ID, "error", err)
+		if looksLikeTikTokAuthError(err) {
+			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "TikTok rejected your credentials. Please reconnect the account.")
+			return
+		}
 		writeError(w, http.StatusBadGateway, "TIKTOK_ERROR", err.Error())
 		return
 	}
@@ -114,6 +151,24 @@ func (h *SocialAccountHandler) TikTokCreatorInfo(w http.ResponseWriter, r *http.
 		StitchDisabled:          info.StitchDisabled,
 		MaxVideoPostDurationSec: info.MaxVideoPostDurationSec,
 	})
+}
+
+// looksLikeTikTokAuthError substring-matches the error message for signs
+// that TikTok rejected our credentials, as opposed to a network blip or
+// a transient 5xx. Kept deliberately broad so "access_token_invalid",
+// "invalid_token", generic "401", etc. all route to the reconnect path.
+func looksLikeTikTokAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "access_token_invalid") ||
+		strings.Contains(msg, "invalid_token") ||
+		strings.Contains(msg, "invalid_access_token") ||
+		strings.Contains(msg, "token_expired") ||
+		strings.Contains(msg, "unauthorized") ||
+		strings.Contains(msg, "(401)") ||
+		strings.Contains(msg, "(403)")
 }
 
 // loadAccountForRequest fetches the account row for the caller, enforcing
