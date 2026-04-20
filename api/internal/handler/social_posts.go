@@ -53,6 +53,10 @@ func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, q
 }
 
 type postResultResponse struct {
+	// ID is the social_post_results row ID. Required by the dashboard
+	// for the per-platform retry path — without it the frontend can't
+	// tell the API which failed row to re-run.
+	ID              string         `json:"id"`
 	SocialAccountID string         `json:"social_account_id"`
 	Platform        string         `json:"platform,omitempty"`
 	AccountName     string         `json:"account_name,omitempty"`
@@ -595,6 +599,7 @@ func (h *SocialPostHandler) executePublishLoop(
 		}
 
 		rr := postResultResponse{
+			ID:              dbResult.ID,
 			SocialAccountID: dbResult.SocialAccountID,
 			Platform:        oc.platform,
 			AccountName:     oc.accountName,
@@ -1302,6 +1307,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 	for _, res := range results {
 		info := accountInfo[res.SocialAccountID]
 		rr := postResultResponse{
+			ID:              res.ID,
 			SocialAccountID: res.SocialAccountID,
 			Platform:        info.Platform,
 			AccountName:     info.Name,
@@ -1359,6 +1365,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var responseResults []postResultResponse
 	for _, res := range results {
 		rr := postResultResponse{
+			ID:              res.ID,
 			SocialAccountID: res.SocialAccountID,
 			Status:          res.Status,
 		}
@@ -1522,6 +1529,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		for _, res := range postResults {
 			summary := accountMap[res.SocialAccountID]
 			rr := postResultResponse{
+				ID:              res.ID,
 				SocialAccountID: res.SocialAccountID,
 				Platform:        summary.Platform,
 				AccountName:     summary.Name,

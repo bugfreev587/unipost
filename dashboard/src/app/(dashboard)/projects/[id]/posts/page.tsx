@@ -6,7 +6,7 @@ import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
-  listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost,
+  listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost, retrySocialPostResult,
   getActivation, listProfiles,
   type SocialAccount, type SocialPost, type Profile,
 } from "@/lib/api";
@@ -125,6 +125,12 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-submitted-row{display:contents}
 .posts-submitted-row dt{font-size:11px;color:var(--dmuted2);text-transform:uppercase;letter-spacing:.06em;font-weight:500}
 .posts-submitted-row dd{font-size:12px;color:var(--dtext);margin:0;word-break:break-word;white-space:pre-wrap}
+.posts-retry-row{display:flex;align-items:center;gap:10px;margin-top:10px}
+.posts-retry-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;font-size:12px;font-weight:500;color:var(--dtext);background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;cursor:pointer;transition:border-color 140ms,background 140ms}
+.posts-retry-btn:hover:not(:disabled){border-color:var(--daccent);background:color-mix(in srgb,var(--daccent) 12%,var(--surface2))}
+.posts-retry-btn:disabled{opacity:.55;cursor:not-allowed}
+.posts-retry-error{font-size:11px;color:var(--danger);font-family:var(--font-geist-mono),monospace}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .posts-row-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dmuted2)}
 .posts-dialog-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:120}
 .posts-dialog{width:min(100%,420px);background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;padding:22px;box-shadow:0 28px 70px color-mix(in srgb,var(--shadow-color) 120%,transparent)}
@@ -544,7 +550,7 @@ export default function PostsPage() {
                             </div>
                             <div>
                               <div className="posts-meta-label" style={{ marginBottom: 10 }}>Platform Results</div>
-                              <PostResultsGrid post={post} workspaceId={workspaceId} />
+                              <PostResultsGrid post={post} workspaceId={workspaceId} onRetryComplete={loadData} />
                             </div>
                           </div>
                         </td>
@@ -635,7 +641,15 @@ function HoverHint({ children, text }: { children: React.ReactNode; text: string
   );
 }
 
-function PostResultsGrid({ post, workspaceId }: { post: SocialPost; workspaceId: string }) {
+function PostResultsGrid({
+  post,
+  workspaceId,
+  onRetryComplete,
+}: {
+  post: SocialPost;
+  workspaceId: string;
+  onRetryComplete?: () => void | Promise<void>;
+}) {
   const results = post.results || [];
   if (results.length === 0) {
     return <div className="posts-result-text">No platform results yet.</div>;
@@ -643,7 +657,13 @@ function PostResultsGrid({ post, workspaceId }: { post: SocialPost; workspaceId:
   return (
     <div className="posts-results-grid">
       {results.map((result) => (
-        <PostResultCard key={result.social_account_id} post={post} workspaceId={workspaceId} result={result} />
+        <PostResultCard
+          key={result.social_account_id}
+          post={post}
+          workspaceId={workspaceId}
+          result={result}
+          onRetryComplete={onRetryComplete}
+        />
       ))}
     </div>
   );
@@ -653,11 +673,35 @@ function PostResultCard({
   post,
   result,
   workspaceId,
+  onRetryComplete,
 }: {
   post: SocialPost;
   result: NonNullable<SocialPost["results"]>[number];
   workspaceId: string;
+  onRetryComplete?: () => void | Promise<void>;
 }) {
+  const { getToken } = useAuth();
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const handleRetry = useCallback(async () => {
+    if (!result.id || retrying) return;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await retrySocialPostResult(token, workspaceId, post.id, result.id);
+      // Parent status may have flipped to published/partial —
+      // reload the whole list so every row reflects the latest
+      // derivation instead of surgically patching one card.
+      await onRetryComplete?.();
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : "Retry failed");
+    } finally {
+      setRetrying(false);
+    }
+  }, [result.id, retrying, getToken, workspaceId, post.id, onRetryComplete]);
   // Prefer the platform-provided URL (set by the adapter, e.g. Threads
   // permalink from the Graph API). Fall back to postUrlFor only if the
   // adapter didn't return one — important for Threads, whose public
@@ -720,6 +764,26 @@ function PostResultCard({
                     </Link>
                   )}
                 </>
+              ) : null}
+            </div>
+          ) : null}
+          {/* Retry button — only meaningful for failed rows. Fire-
+              and-reload: on success the whole posts list is refetched
+              because the parent post's status may have flipped from
+              failed → partial / published. */}
+          {result.id ? (
+            <div className="posts-retry-row">
+              <button
+                type="button"
+                onClick={handleRetry}
+                disabled={retrying}
+                className="posts-retry-btn"
+              >
+                <RotateCcw style={{ width: 12, height: 12, animation: retrying ? "spin 1s linear infinite" : undefined }} />
+                {retrying ? "Retrying…" : "Retry"}
+              </button>
+              {retryError ? (
+                <span className="posts-retry-error">{retryError}</span>
               ) : null}
             </div>
           ) : null}

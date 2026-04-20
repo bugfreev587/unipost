@@ -506,6 +506,11 @@ func main() {
 			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", socialPostHandler.Archive)
 			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", socialPostHandler.Restore)
 			r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", socialPostHandler.Delete)
+			// Per-platform retry for a failed social_post_result row.
+			// Only rows with status='failed' are retryable; see
+			// social_post_retry.go for the safety gates + parent-status
+			// recomputation logic.
+			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
 
 		// OAuth connect (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
@@ -617,6 +622,7 @@ func main() {
 		r.Post("/v1/social-posts/{id}/archive", socialPostHandler.Archive)
 		r.Post("/v1/social-posts/{id}/restore", socialPostHandler.Restore)
 		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
+		r.Post("/v1/social-posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
 		// Drafts API (Sprint 2). Drafts are social_posts rows in
 		// status='draft' — no platform dispatch, no quota charge,
 		// no webhook fired. Publish flips them via optimistic lock

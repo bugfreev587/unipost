@@ -6,6 +6,26 @@ RETURNING *;
 -- name: ListSocialPostResultsByPost :many
 SELECT * FROM social_post_results WHERE post_id = $1;
 
+-- name: GetSocialPostResultByIDAndPost :one
+SELECT * FROM social_post_results WHERE id = $1 AND post_id = $2;
+
+-- name: UpdateSocialPostResultAfterRetry :one
+-- Overwrites the diagnostic columns on a failed result row after a
+-- successful or failed per-platform retry, reusing the same row so
+-- the UI doesn't grow N rows per retry attempt. debug_curl is always
+-- replaced (including with NULL on success) so a published row never
+-- carries the curl dump from its last failure.
+UPDATE social_post_results
+SET
+  status = $2,
+  external_id = $3,
+  error_message = $4,
+  published_at = $5,
+  url = $6,
+  debug_curl = $7
+WHERE id = $1
+RETURNING *;
+
 -- name: DeleteSocialPostResultsByPost :exec
 DELETE FROM social_post_results WHERE post_id = $1;
 

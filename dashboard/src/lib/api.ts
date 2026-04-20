@@ -381,6 +381,10 @@ export async function getOAuthConnectURL(
 // Social Posts (workspace-scoped)
 
 export interface SocialPostResult {
+  // id is the social_post_results row ID — used by the retry endpoint
+  // to target a specific failed row. Always present on API responses
+  // (falls back to the empty string only on stale cached objects).
+  id: string;
   social_account_id: string;
   platform?: string;
   account_name?: string;
@@ -464,6 +468,24 @@ export async function restoreSocialPost(
   return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}/restore`, token, {
     method: "POST",
   });
+}
+
+// retrySocialPostResult kicks off a per-platform retry on a single
+// failed social_post_result row. The server overwrites the same row
+// (no new rows per retry) and returns the updated result. Callers
+// usually refetch the parent post afterward because the parent's
+// status can flip to "published" or "partial" as a side effect.
+export async function retrySocialPostResult(
+  token: string,
+  workspaceId: string,
+  postId: string,
+  resultId: string
+): Promise<ApiResponse<SocialPostResult>> {
+  return request(
+    `/v1/workspaces/${workspaceId}/social-posts/${postId}/results/${resultId}/retry`,
+    token,
+    { method: "POST" }
+  );
 }
 
 export async function deleteSocialPost(

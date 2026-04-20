@@ -90,6 +90,33 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 	return err
 }
 
+const getSocialPostResultByIDAndPost = `-- name: GetSocialPostResultByIDAndPost :one
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results WHERE id = $1 AND post_id = $2
+`
+
+type GetSocialPostResultByIDAndPostParams struct {
+	ID     string `json:"id"`
+	PostID string `json:"post_id"`
+}
+
+func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSocialPostResultByIDAndPostParams) (SocialPostResult, error) {
+	row := q.db.QueryRow(ctx, getSocialPostResultByIDAndPost, arg.ID, arg.PostID)
+	var i SocialPostResult
+	err := row.Scan(
+		&i.ID,
+		&i.PostID,
+		&i.SocialAccountID,
+		&i.Status,
+		&i.ExternalID,
+		&i.ErrorMessage,
+		&i.PublishedAt,
+		&i.Caption,
+		&i.Url,
+		&i.DebugCurl,
+	)
+	return i, err
+}
+
 const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
 SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results
 WHERE social_account_id = $1
@@ -172,4 +199,58 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateSocialPostResultAfterRetry = `-- name: UpdateSocialPostResultAfterRetry :one
+UPDATE social_post_results
+SET
+  status = $2,
+  external_id = $3,
+  error_message = $4,
+  published_at = $5,
+  url = $6,
+  debug_curl = $7
+WHERE id = $1
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl
+`
+
+type UpdateSocialPostResultAfterRetryParams struct {
+	ID           string             `json:"id"`
+	Status       string             `json:"status"`
+	ExternalID   pgtype.Text        `json:"external_id"`
+	ErrorMessage pgtype.Text        `json:"error_message"`
+	PublishedAt  pgtype.Timestamptz `json:"published_at"`
+	Url          pgtype.Text        `json:"url"`
+	DebugCurl    pgtype.Text        `json:"debug_curl"`
+}
+
+// Overwrites the diagnostic columns on a failed result row after a
+// successful or failed per-platform retry, reusing the same row so
+// the UI doesn't grow N rows per retry attempt. debug_curl is always
+// replaced (including with NULL on success) so a published row never
+// carries the curl dump from its last failure.
+func (q *Queries) UpdateSocialPostResultAfterRetry(ctx context.Context, arg UpdateSocialPostResultAfterRetryParams) (SocialPostResult, error) {
+	row := q.db.QueryRow(ctx, updateSocialPostResultAfterRetry,
+		arg.ID,
+		arg.Status,
+		arg.ExternalID,
+		arg.ErrorMessage,
+		arg.PublishedAt,
+		arg.Url,
+		arg.DebugCurl,
+	)
+	var i SocialPostResult
+	err := row.Scan(
+		&i.ID,
+		&i.PostID,
+		&i.SocialAccountID,
+		&i.Status,
+		&i.ExternalID,
+		&i.ErrorMessage,
+		&i.PublishedAt,
+		&i.Caption,
+		&i.Url,
+		&i.DebugCurl,
+	)
+	return i, err
 }
