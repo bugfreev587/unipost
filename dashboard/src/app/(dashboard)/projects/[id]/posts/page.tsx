@@ -119,6 +119,12 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-debug-copy{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;font-size:10.5px;color:var(--dmuted);background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;cursor:pointer;font-family:var(--font-geist-mono),monospace}
 .posts-debug-copy:hover{color:var(--dtext);border-color:var(--daccent)}
 .posts-debug-pre{font-size:11px;line-height:1.55;color:var(--dtext);background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;padding:10px 12px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--font-geist-mono),monospace}
+.posts-submitted-panel{border:1px solid var(--dborder);border-radius:8px;background:var(--surface1)}
+.posts-submitted-body{border-top:1px solid var(--dborder);padding:10px 12px}
+.posts-submitted-list{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}
+.posts-submitted-row{display:contents}
+.posts-submitted-row dt{font-size:11px;color:var(--dmuted2);text-transform:uppercase;letter-spacing:.06em;font-weight:500}
+.posts-submitted-row dd{font-size:12px;color:var(--dtext);margin:0;word-break:break-word;white-space:pre-wrap}
 .posts-row-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dmuted2)}
 .posts-dialog-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:120}
 .posts-dialog{width:min(100%,420px);background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;padding:22px;box-shadow:0 28px 70px color-mix(in srgb,var(--shadow-color) 120%,transparent)}
@@ -718,12 +724,20 @@ function PostResultCard({
             </div>
           ) : null}
           {result.debug_curl ? <DebugCurlPanel curl={result.debug_curl} /> : null}
+          {result.submitted ? (
+            <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} />
+          ) : null}
         </>
       ) : (
-        <div className="posts-hint">
-          {result.status === "published" ? "Published successfully." : result.status === "partial" ? "Partially completed. Review other platform cards for failures." : `Status: ${result.status}`}
-          {result.external_id ? <div className="posts-result-text" style={{ marginTop: 10 }}>ID: {result.external_id}</div> : null}
-        </div>
+        <>
+          <div className="posts-hint">
+            {result.status === "published" ? "Published successfully." : result.status === "partial" ? "Partially completed. Review other platform cards for failures." : `Status: ${result.status}`}
+            {result.external_id ? <div className="posts-result-text" style={{ marginTop: 10 }}>ID: {result.external_id}</div> : null}
+          </div>
+          {result.submitted ? (
+            <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} />
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -773,6 +787,197 @@ function DebugCurlPanel({ curl, defaultOpen = false }: { curl: string; defaultOp
       ) : null}
     </div>
   );
+}
+
+// SubmittedSettingsPanel renders what the user actually sent for a
+// given account — per-account caption override, media counts, and the
+// platform-specific options that gated publishing (TikTok privacy +
+// toggles, YouTube category/visibility, Instagram media_type, etc.).
+// Collapsed by default; users expand it only when they want to review
+// their own choices after the fact.
+function SubmittedSettingsPanel({
+  platform,
+  submitted,
+}: {
+  platform: string;
+  submitted: NonNullable<NonNullable<SocialPost["results"]>[number]["submitted"]>;
+}) {
+  const [open, setOpen] = useState(false);
+  const rows = buildSubmittedRows(platform, submitted);
+  if (rows.length === 0) return null;
+  return (
+    <div className="posts-submitted-panel" style={{ marginTop: 10 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="posts-debug-toggle"
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown style={{ width: 12, height: 12 }} /> : <ChevronRight style={{ width: 12, height: 12 }} />}
+        <span>Submitted settings ({rows.length})</span>
+      </button>
+      {open ? (
+        <div className="posts-submitted-body">
+          <dl className="posts-submitted-list">
+            {rows.map((row) => (
+              <div key={row.label} className="posts-submitted-row">
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// buildSubmittedRows flattens a per-platform options blob into the
+// label/value pairs we render. Each platform has its own block so field
+// names look like what the user saw in the compose form (e.g. "Only me"
+// rather than "SELF_ONLY"). Anything we don't know how to pretty-print
+// falls through to a generic key/value dump so nothing gets silently
+// dropped.
+function buildSubmittedRows(
+  platform: string,
+  submitted: NonNullable<NonNullable<SocialPost["results"]>[number]["submitted"]>
+): Array<{ label: string; value: React.ReactNode }> {
+  const rows: Array<{ label: string; value: React.ReactNode }> = [];
+
+  if (submitted.caption) {
+    rows.push({ label: "Caption override", value: submitted.caption });
+  }
+  const mediaCount = (submitted.media_urls?.length || 0) + (submitted.media_ids?.length || 0);
+  if (mediaCount > 0) {
+    rows.push({ label: "Media attached", value: `${mediaCount} file${mediaCount === 1 ? "" : "s"}` });
+  }
+  if (submitted.first_comment) {
+    rows.push({ label: "First comment", value: submitted.first_comment });
+  }
+  if (typeof submitted.thread_position === "number" && submitted.thread_position > 0) {
+    rows.push({ label: "Thread position", value: String(submitted.thread_position) });
+  }
+
+  const opts = submitted.platform_options;
+  if (!opts) return rows;
+
+  switch (platform) {
+    case "tiktok":
+      pushTikTokRows(rows, opts);
+      break;
+    case "youtube":
+      pushYouTubeRows(rows, opts);
+      break;
+    case "instagram":
+      pushInstagramRows(rows, opts);
+      break;
+    case "linkedin":
+      pushLinkedInRows(rows, opts);
+      break;
+    default:
+      pushGenericRows(rows, opts);
+  }
+  return rows;
+}
+
+const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
+  PUBLIC_TO_EVERYONE: "Everyone",
+  MUTUAL_FOLLOW_FRIENDS: "Friends",
+  FOLLOWER_OF_CREATOR: "Followers",
+  SELF_ONLY: "Only me",
+};
+
+function pushTikTokRows(
+  rows: Array<{ label: string; value: React.ReactNode }>,
+  opts: Record<string, unknown>
+) {
+  if (typeof opts.privacy_level === "string") {
+    rows.push({ label: "Who can view", value: TIKTOK_PRIVACY_LABELS[opts.privacy_level] || opts.privacy_level });
+  }
+  // TikTok's API uses disable_* with inverted semantics; render as the
+  // user-facing "Allow ..." phrasing so the panel matches the compose UI.
+  const interactions: string[] = [];
+  if (opts.disable_comment === false) interactions.push("Comment");
+  if (opts.disable_duet === false) interactions.push("Duet");
+  if (opts.disable_stitch === false) interactions.push("Stitch");
+  if (interactions.length > 0) {
+    rows.push({ label: "Allow interactions", value: interactions.join(", ") });
+  } else if (
+    opts.disable_comment === true ||
+    opts.disable_duet === true ||
+    opts.disable_stitch === true
+  ) {
+    rows.push({ label: "Allow interactions", value: "All disabled" });
+  }
+  if (opts.brand_organic_toggle === true || opts.brand_content_toggle === true) {
+    const labels: string[] = [];
+    if (opts.brand_organic_toggle === true) labels.push("Your Brand (Promotional content)");
+    if (opts.brand_content_toggle === true) labels.push("Branded Content (Paid partnership)");
+    rows.push({ label: "Commercial disclosure", value: labels.join(" + ") });
+  }
+}
+
+function pushYouTubeRows(
+  rows: Array<{ label: string; value: React.ReactNode }>,
+  opts: Record<string, unknown>
+) {
+  if (typeof opts.title === "string" && opts.title) {
+    rows.push({ label: "Video title", value: opts.title });
+  }
+  if (typeof opts.privacy_status === "string") {
+    rows.push({ label: "Visibility", value: opts.privacy_status });
+  }
+  if (typeof opts.category_id === "string") {
+    rows.push({ label: "Category", value: opts.category_id });
+  }
+  if (opts.shorts === true) {
+    rows.push({ label: "Posted as", value: "Shorts" });
+  }
+  if (typeof opts.made_for_kids === "boolean") {
+    rows.push({ label: "Made for kids", value: opts.made_for_kids ? "Yes" : "No" });
+  }
+  if (Array.isArray(opts.tags) && opts.tags.length > 0) {
+    rows.push({ label: "Tags", value: (opts.tags as unknown[]).join(", ") });
+  }
+  if (typeof opts.publish_at === "string" && opts.publish_at) {
+    rows.push({ label: "Scheduled for", value: opts.publish_at });
+  }
+  if (typeof opts.playlist_id === "string" && opts.playlist_id) {
+    rows.push({ label: "Playlist", value: opts.playlist_id });
+  }
+  if (opts.contains_synthetic_media === true) {
+    rows.push({ label: "AI-generated content", value: "Yes" });
+  }
+}
+
+function pushInstagramRows(
+  rows: Array<{ label: string; value: React.ReactNode }>,
+  opts: Record<string, unknown>
+) {
+  if (typeof opts.mediaType === "string") {
+    rows.push({ label: "Media type", value: opts.mediaType });
+  } else if (typeof opts.media_type === "string") {
+    rows.push({ label: "Media type", value: opts.media_type });
+  }
+}
+
+function pushLinkedInRows(
+  rows: Array<{ label: string; value: React.ReactNode }>,
+  opts: Record<string, unknown>
+) {
+  if (typeof opts.visibility === "string") {
+    rows.push({ label: "Visibility", value: opts.visibility });
+  }
+}
+
+function pushGenericRows(
+  rows: Array<{ label: string; value: React.ReactNode }>,
+  opts: Record<string, unknown>
+) {
+  for (const [key, value] of Object.entries(opts)) {
+    if (value === null || value === undefined || value === "" || value === false) continue;
+    rows.push({ label: key, value: typeof value === "object" ? JSON.stringify(value) : String(value) });
+  }
 }
 
 function postUrlFor(platform: string, externalId: string): string | null {

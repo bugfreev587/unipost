@@ -383,6 +383,21 @@ export interface SocialPostResult {
   // Auth headers and token query params are redacted server-side
   // (see internal/debugrt on the API). Safe to display to the post owner.
   debug_curl?: string;
+  // Snapshot of what the user actually submitted for this account —
+  // per-account caption override, media, and platform-specific options.
+  // Used to render a "Submitted settings" panel on the expanded post
+  // view so users can review their own choices after the fact.
+  submitted?: SubmittedSettings;
+}
+
+export interface SubmittedSettings {
+  caption?: string;
+  media_urls?: string[];
+  media_ids?: string[];
+  platform_options?: Record<string, unknown>;
+  first_comment?: string;
+  in_reply_to?: string;
+  thread_position?: number;
 }
 
 export interface SocialPost {

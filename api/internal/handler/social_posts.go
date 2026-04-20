@@ -78,6 +78,52 @@ type postResultResponse struct {
 	// on status='failed'. Auth headers and token query params are
 	// redacted; see internal/debugrt for the redaction rules.
 	DebugCurl *string `json:"debug_curl,omitempty"`
+	// Submitted captures what the user actually sent for this account
+	// at publish time — the per-account caption override, media, and
+	// platform-specific options (TikTok privacy/toggles/disclosure,
+	// YouTube category/visibility, Instagram media_type, etc.). The
+	// dashboard surfaces this as a "Submitted settings" panel so users
+	// can review their own choices after the fact. Nil when we can't
+	// reconstruct it (legacy posts without metadata).
+	Submitted *submittedSettings `json:"submitted,omitempty"`
+}
+
+// submittedSettings is the per-account snapshot of what was sent to
+// the adapter. Fields mirror platform.PlatformPostInput minus the
+// identifiers (AccountID lives on the parent result already).
+type submittedSettings struct {
+	Caption         string         `json:"caption,omitempty"`
+	MediaURLs       []string       `json:"media_urls,omitempty"`
+	MediaIDs        []string       `json:"media_ids,omitempty"`
+	PlatformOptions map[string]any `json:"platform_options,omitempty"`
+	FirstComment    string         `json:"first_comment,omitempty"`
+	InReplyTo       string         `json:"in_reply_to,omitempty"`
+	ThreadPosition  int            `json:"thread_position,omitempty"`
+}
+
+// buildSubmittedMap decodes the stored metadata into an accountID →
+// submittedSettings lookup so per-result rows can attach their own
+// snapshot. Returns nil + nil for legacy posts with empty metadata; the
+// caller treats that as "no data available" rather than an error so the
+// rest of the response still renders.
+func buildSubmittedMap(metadata []byte, fallbackCaption string) map[string]*submittedSettings {
+	parsed, err := platform.DecodePostMetadata(metadata, fallbackCaption)
+	if err != nil || len(parsed) == 0 {
+		return nil
+	}
+	out := make(map[string]*submittedSettings, len(parsed))
+	for _, pp := range parsed {
+		out[pp.AccountID] = &submittedSettings{
+			Caption:         pp.Caption,
+			MediaURLs:       pp.MediaURLs,
+			MediaIDs:        pp.MediaIDs,
+			PlatformOptions: pp.PlatformOptions,
+			FirstComment:    pp.FirstComment,
+			InReplyTo:       pp.InReplyTo,
+			ThreadPosition:  pp.ThreadPosition,
+		}
+	}
+	return out
 }
 
 // accountSummary is what the List handler stores per social_account_id so the
@@ -570,6 +616,18 @@ func (h *SocialPostHandler) executePublishLoop(
 		}
 		if dbResult.DebugCurl.Valid {
 			rr.DebugCurl = &dbResult.DebugCurl.String
+		}
+		// Submitted settings come straight from parsed.Posts[i] — the
+		// request we just dispatched — instead of re-decoding metadata.
+		// Parity with the read handlers that decode from the DB blob.
+		rr.Submitted = &submittedSettings{
+			Caption:         parsed.Posts[i].Caption,
+			MediaURLs:       parsed.Posts[i].MediaURLs,
+			MediaIDs:        parsed.Posts[i].MediaIDs,
+			PlatformOptions: parsed.Posts[i].PlatformOptions,
+			FirstComment:    parsed.Posts[i].FirstComment,
+			InReplyTo:       parsed.Posts[i].InReplyTo,
+			ThreadPosition:  parsed.Posts[i].ThreadPosition,
 		}
 		// Sprint 4 PR3: surface first_comment failure as a warning
 		// without affecting the main result status.
@@ -1226,6 +1284,8 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 		resp.ArchivedAt = &t
 	}
 
+	submittedByAccount := buildSubmittedMap(post.Metadata, derefText(post.Caption))
+
 	for _, res := range results {
 		info := accountInfo[res.SocialAccountID]
 		rr := postResultResponse{
@@ -1250,6 +1310,9 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 		}
 		if res.DebugCurl.Valid {
 			rr.DebugCurl = &res.DebugCurl.String
+		}
+		if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
+			rr.Submitted = sub
 		}
 		resp.Results = append(resp.Results, rr)
 	}
@@ -1279,6 +1342,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
+	submittedByAccount := buildSubmittedMap(post.Metadata, derefText(post.Caption))
 	var responseResults []postResultResponse
 	for _, res := range results {
 		rr := postResultResponse{
@@ -1300,6 +1364,9 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		if res.DebugCurl.Valid {
 			rr.DebugCurl = &res.DebugCurl.String
+		}
+		if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
+			rr.Submitted = sub
 		}
 
 		// Resolve platform + account display name from social account
@@ -1437,6 +1504,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 
 		// Fetch results for this post
 		postResults, _ := h.queries.ListSocialPostResultsByPost(r.Context(), p.ID)
+		submittedByAccount := buildSubmittedMap(p.Metadata, derefText(p.Caption))
 		var responseResults []postResultResponse
 		for _, res := range postResults {
 			summary := accountMap[res.SocialAccountID]
@@ -1461,6 +1529,9 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 			if res.DebugCurl.Valid {
 				rr.DebugCurl = &res.DebugCurl.String
+			}
+			if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
+				rr.Submitted = sub
 			}
 			responseResults = append(responseResults, rr)
 		}
