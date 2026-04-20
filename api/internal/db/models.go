@@ -264,6 +264,7 @@ type SocialPostResult struct {
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
 	Caption         string             `json:"caption"`
 	Url             pgtype.Text        `json:"url"`
+	DebugCurl       pgtype.Text        `json:"debug_curl"`
 }
 
 type Subscription struct {

@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 )
 
 type YouTubeAdapter struct {
@@ -18,7 +20,7 @@ type YouTubeAdapter struct {
 }
 
 func NewYouTubeAdapter() *YouTubeAdapter {
-	return &YouTubeAdapter{client: &http.Client{Timeout: 120 * time.Second}}
+	return &YouTubeAdapter{client: debugrt.NewClient(120 * time.Second)}
 }
 
 func (a *YouTubeAdapter) Platform() string { return "youtube" }

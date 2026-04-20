@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 )
 
 // BlueskyAdapter implements PlatformAdapter for the AT Protocol (Bluesky).
@@ -22,7 +24,7 @@ type BlueskyAdapter struct {
 func NewBlueskyAdapter() *BlueskyAdapter {
 	return &BlueskyAdapter{
 		baseURL: "https://bsky.social",
-		client:  &http.Client{Timeout: 30 * time.Second},
+		client:  debugrt.NewClient(30 * time.Second),
 	}
 }
 

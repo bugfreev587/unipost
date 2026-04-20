@@ -19,6 +19,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
@@ -72,6 +73,11 @@ type postResultResponse struct {
 	// first_comment failure: the parent post lands and reports
 	// status='published', but the customer is told the comment didn't.
 	Warnings []string `json:"warnings,omitempty"`
+	// DebugCurl is the serialized curl dump of every failing HTTP
+	// request the adapter made during this dispatch — populated only
+	// on status='failed'. Auth headers and token query params are
+	// redacted; see internal/debugrt for the redaction rules.
+	DebugCurl *string `json:"debug_curl,omitempty"`
 }
 
 // accountSummary is what the List handler stores per social_account_id so the
@@ -482,6 +488,15 @@ func (h *SocialPostHandler) executePublishLoop(
 			publishedCount++
 		}
 
+		// Only store the debug curl dump on failed rows — successful
+		// publishes don't need diagnostic data and it'd bloat the row
+		// unnecessarily. Nil-valued when the recorder was empty
+		// (every request 2xx'd, or nothing made an HTTP call).
+		var debugCurl pgtype.Text
+		if status == "failed" && oc.debugCurl != "" {
+			debugCurl = pgtype.Text{String: oc.debugCurl, Valid: true}
+		}
+
 		dbResult, dbErr := h.queries.CreateSocialPostResult(r.Context(), db.CreateSocialPostResultParams{
 			PostID:          post.ID,
 			SocialAccountID: parsed.Posts[i].AccountID,
@@ -491,6 +506,7 @@ func (h *SocialPostHandler) executePublishLoop(
 			ErrorMessage:    errMsg,
 			PublishedAt:     pubAt,
 			Url:             postURL,
+			DebugCurl:       debugCurl,
 		})
 		if dbErr != nil {
 			// Most common cause: FK violation from a deleted social account.
@@ -551,6 +567,9 @@ func (h *SocialPostHandler) executePublishLoop(
 		if dbResult.PublishedAt.Valid {
 			t := dbResult.PublishedAt.Time.Format(time.RFC3339)
 			rr.PublishedAt = &t
+		}
+		if dbResult.DebugCurl.Valid {
+			rr.DebugCurl = &dbResult.DebugCurl.String
 		}
 		// Sprint 4 PR3: surface first_comment failure as a warning
 		// without affecting the main result status.
@@ -886,8 +905,15 @@ func (h *SocialPostHandler) publishOne(
 		"caption_preview", truncateForLog(pp.Caption, 40),
 		"media_urls", len(mediaURLs))
 
+	// Attach a debugrt recorder so the shared RoundTripper captures
+	// failing HTTP requests into a curl dump we can persist on the
+	// result row. Per-dispatch so concurrent publishes don't trample
+	// each other.
+	debugRec := debugrt.NewRecorder()
+	dispatchCtx := debugrt.WithRecorder(r.Context(), debugRec)
+
 	postResult, err := adapter.Post(
-		r.Context(),
+		dispatchCtx,
 		accessToken,
 		pp.Caption,
 		platform.MediaFromURLs(mediaURLs),
@@ -895,6 +921,7 @@ func (h *SocialPostHandler) publishOne(
 	)
 	oc.result = postResult
 	oc.err = err
+	oc.debugCurl = debugRec.Serialize()
 
 	// Sprint 4 PR3: first_comment dispatch. Only fires when the main
 	// post succeeded AND the adapter implements FirstCommentAdapter
@@ -992,6 +1019,11 @@ type publishOneOutcome struct {
 	result              *platform.PostResult
 	err                 error
 	firstCommentWarning string
+	// debugCurl is the serialized curl+response dump of every non-2xx
+	// HTTP request the adapter made during this dispatch (see
+	// internal/debugrt). Populated whenever entries exist, but only
+	// persisted on failure — successful publishes ignore it.
+	debugCurl string
 }
 
 // resolveSource classifies the publish trigger as either "ui" (Clerk
@@ -1216,6 +1248,9 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 			t := res.PublishedAt.Time.Format(time.RFC3339)
 			rr.PublishedAt = &t
 		}
+		if res.DebugCurl.Valid {
+			rr.DebugCurl = &res.DebugCurl.String
+		}
 		resp.Results = append(resp.Results, rr)
 	}
 
@@ -1262,6 +1297,9 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 		if res.PublishedAt.Valid {
 			t := res.PublishedAt.Time.Format(time.RFC3339)
 			rr.PublishedAt = &t
+		}
+		if res.DebugCurl.Valid {
+			rr.DebugCurl = &res.DebugCurl.String
 		}
 
 		// Resolve platform + account display name from social account
@@ -1420,6 +1458,9 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			if res.PublishedAt.Valid {
 				t := res.PublishedAt.Time.Format(time.RFC3339)
 				rr.PublishedAt = &t
+			}
+			if res.DebugCurl.Valid {
+				rr.DebugCurl = &res.DebugCurl.String
 			}
 			responseResults = append(responseResults, rr)
 		}

@@ -36,9 +36,9 @@ func (q *Queries) CountPublishedThisMonthByAccount(ctx context.Context, socialAc
 }
 
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
-INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url
+INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl
 `
 
 type CreateSocialPostResultParams struct {
@@ -50,6 +50,7 @@ type CreateSocialPostResultParams struct {
 	ErrorMessage    pgtype.Text        `json:"error_message"`
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
 	Url             pgtype.Text        `json:"url"`
+	DebugCurl       pgtype.Text        `json:"debug_curl"`
 }
 
 func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPostResultParams) (SocialPostResult, error) {
@@ -62,6 +63,7 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		arg.ErrorMessage,
 		arg.PublishedAt,
 		arg.Url,
+		arg.DebugCurl,
 	)
 	var i SocialPostResult
 	err := row.Scan(
@@ -74,6 +76,7 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		&i.PublishedAt,
 		&i.Caption,
 		&i.Url,
+		&i.DebugCurl,
 	)
 	return i, err
 }
@@ -88,7 +91,7 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 }
 
 const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results
 WHERE social_account_id = $1
 ORDER BY published_at DESC NULLS LAST
 LIMIT $2
@@ -124,6 +127,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 			&i.PublishedAt,
 			&i.Caption,
 			&i.Url,
+			&i.DebugCurl,
 		); err != nil {
 			return nil, err
 		}
@@ -136,7 +140,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 }
 
 const listSocialPostResultsByPost = `-- name: ListSocialPostResultsByPost :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url FROM social_post_results WHERE post_id = $1
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results WHERE post_id = $1
 `
 
 func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string) ([]SocialPostResult, error) {
@@ -158,6 +162,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 			&i.PublishedAt,
 			&i.Caption,
 			&i.Url,
+			&i.DebugCurl,
 		); err != nil {
 			return nil, err
 		}

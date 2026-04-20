@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 )
 
 type InstagramAdapter struct {
@@ -18,7 +20,7 @@ type InstagramAdapter struct {
 }
 
 func NewInstagramAdapter() *InstagramAdapter {
-	return &InstagramAdapter{client: &http.Client{Timeout: 60 * time.Second}}
+	return &InstagramAdapter{client: debugrt.NewClient(60 * time.Second)}
 }
 
 func (a *InstagramAdapter) Platform() string { return "instagram" }

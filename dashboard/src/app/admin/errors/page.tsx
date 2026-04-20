@@ -171,6 +171,10 @@ export default function AdminErrorsPage() {
                 {failure.caption ? <div className="ad-failure-caption">{failure.caption}</div> : null}
                 <div className="ad-failure-message">{message}</div>
 
+                {failure.debug_curl ? (
+                  <pre className="ad-failure-debug">{failure.debug_curl}</pre>
+                ) : null}
+
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <div className="ad-mono">
                     workspace {failure.workspace_id.slice(0, 12)} · user {failure.user_id.slice(0, 12)}

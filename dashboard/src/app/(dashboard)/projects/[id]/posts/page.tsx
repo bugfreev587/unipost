@@ -111,6 +111,14 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-error{font-size:11px;color:var(--danger);background:var(--danger-soft);border:1px solid color-mix(in srgb,var(--danger) 22%,transparent);border-radius:8px;padding:8px 10px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-geist-mono),monospace;line-height:1.55;max-height:148px;overflow:auto}
 .posts-hint{font-size:12px;color:var(--dtext);line-height:1.55}
 .posts-hint-label{color:var(--dmuted)}
+.posts-debug-panel{border:1px solid var(--dborder);border-radius:8px;background:var(--surface1)}
+.posts-debug-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:8px 10px;font-size:11px;font-weight:500;color:var(--dmuted);background:transparent;border:0;cursor:pointer;font-family:var(--font-geist-mono),monospace;text-transform:uppercase;letter-spacing:.08em}
+.posts-debug-toggle:hover{color:var(--dtext)}
+.posts-debug-body{border-top:1px solid var(--dborder);padding:8px 10px}
+.posts-debug-actions{display:flex;justify-content:flex-end;margin-bottom:6px}
+.posts-debug-copy{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;font-size:10.5px;color:var(--dmuted);background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;cursor:pointer;font-family:var(--font-geist-mono),monospace}
+.posts-debug-copy:hover{color:var(--dtext);border-color:var(--daccent)}
+.posts-debug-pre{font-size:11px;line-height:1.55;color:var(--dtext);background:var(--surface2);border:1px solid var(--dborder);border-radius:6px;padding:10px 12px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--font-geist-mono),monospace}
 .posts-row-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dmuted2)}
 .posts-dialog-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:120}
 .posts-dialog{width:min(100%,420px);background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;padding:22px;box-shadow:0 28px 70px color-mix(in srgb,var(--shadow-color) 120%,transparent)}
@@ -709,6 +717,7 @@ function PostResultCard({
               ) : null}
             </div>
           ) : null}
+          {result.debug_curl ? <DebugCurlPanel curl={result.debug_curl} /> : null}
         </>
       ) : (
         <div className="posts-hint">
@@ -716,6 +725,52 @@ function PostResultCard({
           {result.external_id ? <div className="posts-result-text" style={{ marginTop: 10 }}>ID: {result.external_id}</div> : null}
         </div>
       )}
+    </div>
+  );
+}
+
+// DebugCurlPanel renders the captured curl dump from a failed publish.
+// Collapsed by default in the user view so the error stays scannable;
+// admins get the always-expanded variant via `defaultOpen`. Includes
+// a "Copy" button because users are expected to paste this into their
+// terminal when opening a support ticket.
+function DebugCurlPanel({ curl, defaultOpen = false }: { curl: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(curl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard can be blocked by browser policy — fall back to a
+      // manual select. The <pre> below is already selectable.
+    }
+  }, [curl]);
+
+  return (
+    <div className="posts-debug-panel" style={{ marginTop: 10 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="posts-debug-toggle"
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown style={{ width: 12, height: 12 }} /> : <ChevronRight style={{ width: 12, height: 12 }} />}
+        <span>Debug request ({curl.split("\n# Request ").length - 1 || 1} HTTP call{curl.includes("\n# Request 2") ? "s" : ""})</span>
+      </button>
+      {open ? (
+        <div className="posts-debug-body">
+          <div className="posts-debug-actions">
+            <button type="button" onClick={handleCopy} className="posts-debug-copy">
+              <Copy style={{ width: 11, height: 11 }} />
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <pre className="posts-debug-pre">{curl}</pre>
+        </div>
+      ) : null}
     </div>
   );
 }

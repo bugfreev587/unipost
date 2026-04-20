@@ -355,6 +355,10 @@ type adminPostFailure struct {
 	Caption       *string   `json:"caption,omitempty"`
 	ErrorMessage  *string   `json:"error_message,omitempty"`
 	ErrorSummary  *string   `json:"error_summary,omitempty"`
+	// DebugCurl is the redacted curl dump captured by debugrt when the
+	// adapter's HTTP call failed. Always included for admins — this
+	// is the primary diagnostic surface for platform failures.
+	DebugCurl *string `json:"debug_curl,omitempty"`
 }
 
 type adminPostFailureQuery struct {
@@ -448,7 +452,8 @@ WITH failed_results AS (
     sa.account_name,
     NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
     NULLIF(spr.error_message, '') AS error_message,
-    NULL::TEXT AS error_summary
+    NULL::TEXT AS error_summary,
+    NULLIF(spr.debug_curl, '') AS debug_curl
   FROM social_posts sp
   JOIN workspaces w ON w.id = sp.workspace_id
   JOIN users u ON u.id = w.user_id
@@ -476,7 +481,8 @@ parent_failures AS (
     NULL::TEXT AS account_name,
     NULLIF(sp.caption, '') AS caption,
     NULL::TEXT AS error_message,
-    NULLIF(sp.metadata->>'error_summary', '') AS error_summary
+    NULLIF(sp.metadata->>'error_summary', '') AS error_summary,
+    NULL::TEXT AS debug_curl
   FROM social_posts sp
   JOIN workspaces w ON w.id = sp.workspace_id
   JOIN users u ON u.id = w.user_id
@@ -507,7 +513,8 @@ SELECT
   account_name,
   caption,
   error_message,
-  error_summary
+  error_summary,
+  debug_curl
 FROM (
   SELECT * FROM failed_results
   UNION ALL
@@ -532,7 +539,7 @@ LIMIT $6
 	out := make([]adminPostFailure, 0)
 	for rows.Next() {
 		var item adminPostFailure
-		var platform, accountName, caption, errorMessage, errorSummary *string
+		var platform, accountName, caption, errorMessage, errorSummary, debugCurl *string
 		if err := rows.Scan(
 			&item.PostID,
 			&item.UserID,
@@ -547,6 +554,7 @@ LIMIT $6
 			&caption,
 			&errorMessage,
 			&errorSummary,
+			&debugCurl,
 		); err != nil {
 			return nil, err
 		}
@@ -555,6 +563,7 @@ LIMIT $6
 		item.Caption = caption
 		item.ErrorMessage = errorMessage
 		item.ErrorSummary = errorSummary
+		item.DebugCurl = debugCurl
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {

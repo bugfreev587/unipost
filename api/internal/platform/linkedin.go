@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 )
 
 type LinkedInAdapter struct {
@@ -18,7 +20,7 @@ type LinkedInAdapter struct {
 }
 
 func NewLinkedInAdapter() *LinkedInAdapter {
-	return &LinkedInAdapter{client: &http.Client{Timeout: 30 * time.Second}}
+	return &LinkedInAdapter{client: debugrt.NewClient(30 * time.Second)}
 }
 
 func (a *LinkedInAdapter) Platform() string { return "linkedin" }

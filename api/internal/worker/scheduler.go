@@ -11,6 +11,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
@@ -150,6 +151,10 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 		platform   string
 		postResult *platform.PostResult
 		err        error
+		// Serialized debug curl dump from debugrt — populated by
+		// publishOne when the adapter makes any failing HTTP call.
+		// Persisted on status=failed rows only.
+		debugCurl string
 	}
 	outcomes := make([]outcome, len(posts))
 
@@ -181,6 +186,11 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 			anyPublished = true
 		}
 
+		var debugCurl pgtype.Text
+		if status == "failed" && oc.debugCurl != "" {
+			debugCurl = pgtype.Text{String: oc.debugCurl, Valid: true}
+		}
+
 		dbResult, dbErr := w.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
 			PostID:          post.ID,
 			SocialAccountID: posts[i].AccountID,
@@ -189,6 +199,7 @@ func (w *SchedulerWorker) publishPost(ctx context.Context, post db.SocialPost) {
 			ExternalID:      extID,
 			ErrorMessage:    errMsg,
 			PublishedAt:     pubAt,
+			DebugCurl:       debugCurl,
 		})
 		if dbErr != nil {
 			reason := errMsg.String
@@ -290,6 +301,7 @@ func (w *SchedulerWorker) publishOne(
 	platform   string
 	postResult *platform.PostResult
 	err        error
+	debugCurl  string
 }) {
 	oc.input = pp
 
@@ -354,9 +366,18 @@ func (w *SchedulerWorker) publishOne(
 		"platform", acc.Platform,
 		"caption_preview", truncateForLog(pp.Caption, 40))
 
-	pr, err := adapter.Post(ctx, accessToken, pp.Caption, platform.MediaFromURLs(pp.MediaURLs), options)
+	// Mirror the Create path: per-dispatch debug recorder so failing
+	// HTTP requests can be persisted on the result row (see
+	// internal/debugrt). Scheduler and Create share the same storage
+	// column + UI so admins / users get the same diagnostics whether
+	// the post went out immediately or via queue.
+	debugRec := debugrt.NewRecorder()
+	dispatchCtx := debugrt.WithRecorder(ctx, debugRec)
+
+	pr, err := adapter.Post(dispatchCtx, accessToken, pp.Caption, platform.MediaFromURLs(pp.MediaURLs), options)
 	oc.postResult = pr
 	oc.err = err
+	oc.debugCurl = debugRec.Serialize()
 	return
 }
 

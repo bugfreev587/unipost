@@ -378,6 +378,11 @@ export interface SocialPostResult {
   url?: string;
   error_message?: string;
   published_at?: string;
+  // Serialized curl dump of every failing HTTP request the adapter
+  // made during this dispatch. Populated only when status === "failed".
+  // Auth headers and token query params are redacted server-side
+  // (see internal/debugrt on the API). Safe to display to the post owner.
+  debug_curl?: string;
 }
 
 export interface SocialPost {
@@ -899,6 +904,9 @@ export interface AdminUserPostFailure {
   caption?: string;
   error_message?: string;
   error_summary?: string;
+  // Curl dump of every failing HTTP request the adapter made. Server
+  // redacts Authorization header + token query params before sending.
+  debug_curl?: string;
 }
 
 export interface AdminUserListParams {

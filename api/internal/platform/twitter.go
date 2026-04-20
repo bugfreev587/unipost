@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 )
 
 // TwitterAdapter implements PlatformAdapter and OAuthAdapter for X/Twitter.
@@ -21,7 +23,7 @@ type TwitterAdapter struct {
 }
 
 func NewTwitterAdapter() *TwitterAdapter {
-	return &TwitterAdapter{client: &http.Client{Timeout: 30 * time.Second}}
+	return &TwitterAdapter{client: debugrt.NewClient(30 * time.Second)}
 }
 
 func (a *TwitterAdapter) Platform() string { return "twitter" }

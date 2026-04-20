@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 )
 
 type ThreadsAdapter struct {
@@ -18,7 +20,7 @@ type ThreadsAdapter struct {
 }
 
 func NewThreadsAdapter() *ThreadsAdapter {
-	return &ThreadsAdapter{client: &http.Client{Timeout: 60 * time.Second}}
+	return &ThreadsAdapter{client: debugrt.NewClient(60 * time.Second)}
 }
 
 func (a *ThreadsAdapter) Platform() string { return "threads" }

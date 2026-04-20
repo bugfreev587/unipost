@@ -309,6 +309,7 @@ export const adminCss = `
 .ad-failure-title { font-size: 12.5px; color: var(--dtext); font-weight: 500; }
 .ad-failure-message { font-size: 11.5px; color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 18%, transparent); border-radius: 6px; padding: 8px 9px; white-space: pre-wrap; word-break: break-word; }
 .ad-failure-caption { font-size: 12px; color: var(--dtext); margin: 8px 0; white-space: pre-wrap; word-break: break-word; }
+.ad-failure-debug { font-size: 11px; line-height: 1.55; color: var(--dtext); background: var(--surface2); border: 1px solid var(--dborder); border-radius: 6px; padding: 10px 12px; margin-top: 8px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-family: var(--font-geist-mono), monospace; }
 .ad-link { color: var(--daccent); text-decoration: none; }
 .ad-link:hover { text-decoration: underline; }
 `;

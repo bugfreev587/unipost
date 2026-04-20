@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -22,7 +23,7 @@ type TikTokAdapter struct {
 }
 
 func NewTikTokAdapter() *TikTokAdapter {
-	return &TikTokAdapter{client: &http.Client{Timeout: 120 * time.Second}}
+	return &TikTokAdapter{client: debugrt.NewClient(120 * time.Second)}
 }
 
 // SetMediaProxy attaches an R2-backed media proxy. Photo posts require it
