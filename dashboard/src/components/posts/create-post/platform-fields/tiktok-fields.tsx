@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SocialAccount, SocialPostValidationIssue, TikTokCreatorInfo } from "@/lib/api";
 import { getTikTokCreatorInfo } from "@/lib/api";
@@ -10,18 +10,23 @@ interface TikTokFieldsProps {
   account: SocialAccount;
   fields: NonNullable<PlatformOverride["tiktok"]>;
   mediaKind: "video" | "photo" | "none";
+  // The first video file in the upload queue — we measure its duration
+  // client-side (HTML5 Video API) and compare against the creator's
+  // max_video_post_duration_sec. Null when no video is present.
+  mediaFile: File | null;
   profileId: string;
   getToken: () => Promise<string | null>;
   issues?: SocialPostValidationIssue[];
   onChange: (fields: Partial<NonNullable<PlatformOverride["tiktok"]>>) => void;
+  // Called whenever this component has a reason Publish should be blocked
+  // that can't be derived from form state alone — e.g., creator_info
+  // returned an error, or the uploaded video exceeds max length. Pass null
+  // when the blocker clears.
+  onBlockerChange: (reason: string | null) => void;
 }
 
-// Human-facing labels for TikTok's privacy enum. We render only the options
-// creator_info actually returns for this creator, so accounts in sandbox/
-// unaudited mode (TikTok forces SELF_ONLY on them) naturally see just the
-// "Only me" option and nothing misleading.
 const PRIVACY_LABELS: Record<string, string> = {
-  PUBLIC_TO_EVERYONE: "Public",
+  PUBLIC_TO_EVERYONE: "Everyone",
   MUTUAL_FOLLOW_FRIENDS: "Friends",
   FOLLOWER_OF_CREATOR: "Followers",
   SELF_ONLY: "Only me",
@@ -37,17 +42,25 @@ export function TikTokFields({
   account,
   fields,
   mediaKind,
+  mediaFile,
   profileId,
   getToken,
   onChange,
+  onBlockerChange,
 }: TikTokFieldsProps) {
   const [state, setState] = useState<LoadState>({ status: "idle" });
+  const [autoSwitchNotice, setAutoSwitchNotice] = useState<string | null>(null);
+  const [videoDurationSec, setVideoDurationSec] = useState<number | null>(null);
+  const [videoMeasureError, setVideoMeasureError] = useState<string | null>(null);
+  // Track the previous mediaFile identity so we don't re-measure on
+  // unrelated re-renders (File identity changes per render if the parent
+  // rebuilds the array).
+  const measuredFileRef = useRef<File | null>(null);
 
-  // Fetch creator_info once per mount per account. If the token/account
-  // changes we re-fetch — creator_info caps, toggles, and privacy options
-  // can all change on TikTok's side, so we don't want to cache across
-  // remounts either. The result drives every downstream toggle, so we
-  // render "loading" placeholders rather than showing stale defaults.
+  // Fetch creator_info once per mount per account. Any error (including
+  // "daily cap reached" / "account restricted") triggers the blocker
+  // path below — the PRD treats creator_info errors as unconditional
+  // publish blockers so audit reviewers always see a clear message.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -72,27 +85,158 @@ export function TikTokFields({
     };
   }, [account.id, profileId, getToken]);
 
-  // TikTok disallows Branded Content posts set to SELF_ONLY. Show the
-  // conflict inline and also require the publish-button guard in the
-  // drawer to block submission — see create-post-drawer.tsx disabledReason.
+  // Measure the selected video's duration with a throwaway <video>
+  // element. loadedmetadata fires before any frame decode, so this is
+  // cheap even for long videos. We only measure when we have a video
+  // AND we know the creator's cap (otherwise comparison is pointless).
+  useEffect(() => {
+    if (mediaKind !== "video" || !mediaFile) {
+      setVideoDurationSec(null);
+      setVideoMeasureError(null);
+      measuredFileRef.current = null;
+      return;
+    }
+    if (measuredFileRef.current === mediaFile) return;
+    measuredFileRef.current = mediaFile;
+
+    const url = URL.createObjectURL(mediaFile);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    let settled = false;
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      video.src = "";
+    };
+    video.onloadedmetadata = () => {
+      if (settled) return;
+      settled = true;
+      setVideoDurationSec(video.duration);
+      setVideoMeasureError(null);
+      cleanup();
+    };
+    video.onerror = () => {
+      if (settled) return;
+      settled = true;
+      setVideoDurationSec(null);
+      setVideoMeasureError("Couldn't read video metadata");
+      cleanup();
+    };
+    video.src = url;
+    return () => {
+      if (!settled) cleanup();
+    };
+  }, [mediaFile, mediaKind]);
+
   const brandedPrivateConflict =
     fields.disclosureEnabled && fields.brandedContent && fields.privacy === "SELF_ONLY";
   const disclosureIncomplete =
     fields.disclosureEnabled && !fields.yourBrand && !fields.brandedContent;
   const showDuetStitch = mediaKind !== "photo";
+  const brandedLocksPrivate = fields.disclosureEnabled && fields.brandedContent;
+
+  // Compute per-creator duration cap (falls back to undefined while
+  // creator_info loads; we skip the check until we have a real value).
+  const maxDurationSec = state.status === "ready" ? state.info.max_video_post_duration_sec : undefined;
+  const durationOverLimit =
+    typeof maxDurationSec === "number" &&
+    maxDurationSec > 0 &&
+    typeof videoDurationSec === "number" &&
+    videoDurationSec > maxDurationSec;
+
+  // Roll up the runtime reasons Publish should be blocked. Creator
+  // errors outrank duration errors — if creator_info failed we can't
+  // trust any of the secondary data anyway.
+  const effectiveBlocker = useMemo<string | null>(() => {
+    if (state.status === "error") {
+      // PRD treats any creator_info failure as a posting block. Show
+      // the specific message when TikTok gave us one (covers "daily
+      // cap reached", "account restricted", etc.) otherwise the
+      // generic cap message.
+      return state.message
+        ? `TikTok: ${state.message}`
+        : "This TikTok account has reached its daily posting limit. Please try again later.";
+    }
+    if (durationOverLimit && videoDurationSec != null && maxDurationSec) {
+      return `TikTok video is ${formatDuration(Math.round(videoDurationSec))} long; max for this account is ${formatDuration(maxDurationSec)}.`;
+    }
+    return null;
+  }, [state, durationOverLimit, videoDurationSec, maxDurationSec]);
+
+  useEffect(() => {
+    onBlockerChange(effectiveBlocker);
+    // We only want this to fire when the blocker itself changes — the
+    // parent's callback identity is stable via the account-scoped
+    // wrapper so we don't need to subscribe to it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveBlocker]);
+
+  // Clear the blocker on unmount so the account switching doesn't
+  // leave stale "Publish disabled" state in the drawer.
+  useEffect(() => {
+    return () => onBlockerChange(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Handler that toggles Branded Content AND enforces the
+  // "no private branded content" rule. When the user *enables*
+  // Branded Content while privacy is currently SELF_ONLY, we auto-
+  // switch to the first non-private option available for this
+  // creator (falling back to PUBLIC_TO_EVERYONE if the creator's
+  // list is unexpectedly empty) and surface an inline notice so
+  // the switch isn't silent.
+  const handleBrandedContentChange = (checked: boolean) => {
+    const updates: Partial<NonNullable<PlatformOverride["tiktok"]>> = { brandedContent: checked };
+    if (checked && fields.privacy === "SELF_ONLY") {
+      const options = state.status === "ready" ? state.info.privacy_level_options : [];
+      const firstPublic = options.find((opt) => opt !== "SELF_ONLY") || "PUBLIC_TO_EVERYONE";
+      updates.privacy = firstPublic as typeof fields.privacy;
+      const label = PRIVACY_LABELS[firstPublic] || firstPublic;
+      setAutoSwitchNotice(`Branded content cannot be set to private. Visibility changed to ${label}.`);
+    } else if (!checked) {
+      setAutoSwitchNotice(null);
+    }
+    onChange(updates);
+  };
 
   return (
     <div className="space-y-4">
-      {/* Creator identity — required for the audit so users know which
-          account they're posting from, especially when they've connected
-          multiple TikTok accounts. */}
       <CreatorHeader state={state} fallbackName={account.account_name} />
 
-      {/* Privacy — no default; options come from creator_info. */}
+      {/* Creator cannot post — PRD Fix 2 §3.3. Rendered as a prominent
+          red banner so the audit reviewer can clearly see the gate. */}
+      {state.status === "error" && (
+        <div
+          className="rounded-md border px-3 py-2 text-[12px]"
+          style={{
+            background: "color-mix(in srgb, var(--danger) 12%, var(--surface-raised))",
+            borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)",
+            color: "color-mix(in srgb, var(--danger) 26%, white)",
+          }}
+        >
+          <div className="mb-0.5 text-[12.5px] font-semibold">Cannot publish to this TikTok account</div>
+          <div className="leading-relaxed">
+            {state.message || "This TikTok account has reached its daily posting limit. Please try again later."}
+            {" "}You can still save this post as a draft.
+          </div>
+        </div>
+      )}
+
+      {autoSwitchNotice && (
+        <Hint tone="warning">{autoSwitchNotice}</Hint>
+      )}
+
+      {/* Privacy — no default; options come from creator_info. When
+          Branded Content is enabled we disable the SELF_ONLY option so
+          the rule is visually enforceable, not just a validation error. */}
       <Field label="Who can view this video">
         <select
           value={fields.privacy}
-          onChange={(e) => onChange({ privacy: e.target.value as typeof fields.privacy })}
+          onChange={(e) => {
+            // User picked something manually — clear any "we auto-switched"
+            // notice, their choice is now the source of truth.
+            setAutoSwitchNotice(null);
+            onChange({ privacy: e.target.value as typeof fields.privacy });
+          }}
           disabled={state.status !== "ready"}
           className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms] disabled:opacity-60"
           style={{
@@ -109,30 +253,37 @@ export function TikTokFields({
                 : "Select who can view"}
           </option>
           {state.status === "ready" &&
-            state.info.privacy_level_options.map((opt) => (
-              <option key={opt} value={opt}>
-                {PRIVACY_LABELS[opt] || opt}
-              </option>
-            ))}
+            state.info.privacy_level_options.map((opt) => {
+              const isPrivate = opt === "SELF_ONLY";
+              const lockedByBrand = isPrivate && brandedLocksPrivate;
+              return (
+                <option
+                  key={opt}
+                  value={opt}
+                  disabled={lockedByBrand}
+                  title={lockedByBrand ? "Branded content visibility cannot be set to private." : undefined}
+                >
+                  {PRIVACY_LABELS[opt] || opt}
+                  {lockedByBrand ? " (not allowed for branded content)" : ""}
+                </option>
+              );
+            })}
         </select>
         {!fields.privacy && state.status === "ready" && (
           <Hint tone="warning">Pick a visibility — TikTok requires an explicit choice.</Hint>
         )}
         {brandedPrivateConflict && (
-          <Hint tone="error">
-            Branded Content cannot be posted as &ldquo;Only me&rdquo; — change the visibility or turn off Branded Content.
-          </Hint>
+          <Hint tone="error">Branded content cannot be posted as private.</Hint>
         )}
       </Field>
 
       {/* Interactions — all OFF by default. If creator_info says the
           feature is disabled at the account level, the toggle is locked
-          OFF and greyed out. */}
+          OFF and greyed out (applies to Comment too — PRD Fix 2 §3.2). */}
       <Field label="Allow users to">
         <div className="flex flex-wrap gap-2">
           <InteractionToggle
             label="Comment"
-            // UI "allow X" = TikTok API "disable_X" inverted.
             checked={!fields.disableComment}
             creatorDisabled={state.status === "ready" && state.info.comment_disabled}
             onChange={(allow) => onChange({ disableComment: !allow })}
@@ -156,36 +307,49 @@ export function TikTokFields({
         </div>
       </Field>
 
-      {/* Commercial Content Disclosure — required by TikTok audit. */}
+      {/* Video duration — under cap we just show the reading; over cap
+          we surface an explicit error and the publish blocker above
+          handles the actual gating. */}
+      {mediaKind === "video" && typeof videoDurationSec === "number" && typeof maxDurationSec === "number" && maxDurationSec > 0 && (
+        durationOverLimit ? (
+          <div
+            className="rounded-md border px-3 py-2 text-[12px]"
+            style={{
+              background: "color-mix(in srgb, var(--danger) 12%, var(--surface-raised))",
+              borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)",
+              color: "color-mix(in srgb, var(--danger) 26%, white)",
+            }}
+          >
+            <div className="mb-0.5 font-semibold">Video is too long for this TikTok account</div>
+            <div className="leading-relaxed">
+              This video is {formatDuration(Math.round(videoDurationSec))} long. Maximum allowed for this account is {formatDuration(maxDurationSec)}. Please upload a shorter video.
+            </div>
+          </div>
+        ) : (
+          <Hint tone="info">
+            Video duration: {formatDuration(Math.round(videoDurationSec))} (max: {formatDuration(maxDurationSec)}).
+          </Hint>
+        )
+      )}
+      {mediaKind === "video" && videoMeasureError && (
+        <Hint tone="warning">{videoMeasureError}. TikTok will still enforce its own duration limit.</Hint>
+      )}
+      {/* If we have a cap but haven't received a video yet, show the cap
+          as a heads-up so the user knows before they upload. */}
+      {mediaKind === "video" && typeof maxDurationSec === "number" && maxDurationSec > 0 && videoDurationSec == null && !videoMeasureError && (
+        <Hint tone="info">Max video length for this account: {formatDuration(maxDurationSec)}.</Hint>
+      )}
+
       <DisclosureSection
         fields={fields}
         onChange={onChange}
+        onBrandedContentChange={handleBrandedContentChange}
         disclosureIncomplete={disclosureIncomplete}
       />
 
-      {/* Max video duration — surfaced from creator_info so users know
-          the upper bound before uploading. TikTok caps vary per account
-          (60s for some, 10min for others). Showing it satisfies audit
-          requirement #3 even when we don't validate duration client-side. */}
-      {state.status === "ready" && mediaKind === "video" && state.info.max_video_post_duration_sec > 0 && (
-        <Hint tone="info">
-          Max video length for this account: {formatDuration(state.info.max_video_post_duration_sec)}.
-        </Hint>
-      )}
-
-      {/* Consent footer — shown above Publish. The Music Usage
-          Confirmation link is required on every post; the Branded
-          Content Policy link appears only when brandedContent is on. */}
       <Consent showBrandedContent={fields.disclosureEnabled && fields.brandedContent} />
     </div>
   );
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rem = seconds % 60;
-  return rem === 0 ? `${minutes}m` : `${minutes}m ${rem}s`;
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────
@@ -261,18 +425,7 @@ function CreatorHeader({
   }
 
   if (state.status === "error") {
-    return (
-      <div
-        className="rounded-md border px-3 py-2 text-[12px]"
-        style={{
-          background: "color-mix(in srgb, var(--danger) 10%, var(--surface1))",
-          borderColor: "color-mix(in srgb, var(--danger) 40%, transparent)",
-          color: "color-mix(in srgb, var(--danger) 26%, white)",
-        }}
-      >
-        Couldn&rsquo;t load TikTok creator info: {state.message}. Reconnect the account or try again.
-      </div>
-    );
+    return null; // the dedicated error banner below handles this case
   }
 
   return (
@@ -325,10 +478,12 @@ function InteractionToggle({
 function DisclosureSection({
   fields,
   onChange,
+  onBrandedContentChange,
   disclosureIncomplete,
 }: {
   fields: NonNullable<PlatformOverride["tiktok"]>;
   onChange: (fields: Partial<NonNullable<PlatformOverride["tiktok"]>>) => void;
+  onBrandedContentChange: (checked: boolean) => void;
   disclosureIncomplete: boolean;
 }) {
   return (
@@ -341,8 +496,6 @@ function DisclosureSection({
           type="checkbox"
           checked={fields.disclosureEnabled}
           onChange={(e) => {
-            // Turning disclosure OFF clears the sub-selections so re-opening
-            // doesn't surface a stale choice the user didn't re-confirm.
             if (!e.target.checked) {
               onChange({ disclosureEnabled: false, yourBrand: false, brandedContent: false });
             } else {
@@ -373,7 +526,7 @@ function DisclosureSection({
             label="Branded Content"
             description="You got paid to promote a third party. Your video will be labeled as Paid partnership."
             checked={fields.brandedContent}
-            onChange={(c) => onChange({ brandedContent: c })}
+            onChange={onBrandedContentChange}
           />
           {disclosureIncomplete && (
             <Hint tone="error">
@@ -417,34 +570,52 @@ function DisclosureOption({
   );
 }
 
+// Consent footer — wording and link order follow the PRD exactly so the
+// audit reviewer sees a one-to-one match:
+//   - Your Brand only → "Music Usage Confirmation"
+//   - Branded Content (with or without Your Brand) → "Branded Content
+//     Policy and Music Usage Confirmation"
 function Consent({ showBrandedContent }: { showBrandedContent: boolean }) {
+  const music = (
+    <a
+      href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en"
+      target="_blank"
+      rel="noreferrer"
+      className="underline"
+      style={{ color: "var(--primary)" }}
+    >
+      Music Usage Confirmation
+    </a>
+  );
+  const branded = (
+    <a
+      href="https://www.tiktok.com/legal/page/global/bc-policy/en"
+      target="_blank"
+      rel="noreferrer"
+      className="underline"
+      style={{ color: "var(--primary)" }}
+    >
+      Branded Content Policy
+    </a>
+  );
   return (
     <div className="text-[11px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
       By posting, you agree to TikTok&rsquo;s{" "}
-      <a
-        href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en"
-        target="_blank"
-        rel="noreferrer"
-        className="underline"
-        style={{ color: "var(--primary)" }}
-      >
-        Music Usage Confirmation
-      </a>
-      {showBrandedContent && (
+      {showBrandedContent ? (
         <>
-          {" "}and{" "}
-          <a
-            href="https://www.tiktok.com/legal/bc-policy"
-            target="_blank"
-            rel="noreferrer"
-            className="underline"
-            style={{ color: "var(--primary)" }}
-          >
-            Branded Content Policy
-          </a>
+          {branded} and {music}
         </>
+      ) : (
+        music
       )}
       .
     </div>
   );
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return rem === 0 ? `${minutes}m` : `${minutes}m ${rem}s`;
 }

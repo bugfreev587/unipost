@@ -314,7 +314,12 @@ export function CreatePostDrawer({
   const [validationChecked, setValidationChecked] = useState(false);
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
   const [submitError, setSubmitError] = useState<{ message: string; mailto: string; contactHref: string } | null>(null);
-  const [submitSuccess, setSubmitSuccess] = useState<{ message: string } | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState<{ message: string; tiktokURL?: string } | null>(null);
+  // Per-account runtime blockers reported by platform-specific panels
+  // (e.g., TikTok creator_info failed, video too long for the creator).
+  // These aren't derivable from form state, so we collect them here and
+  // fold them into disabledReason + the primary button's disabled prop.
+  const [tiktokBlockers, setTiktokBlockers] = useState<Record<string, string>>({});
   const pendingCloseRef = useRef(false);
   const mainContentRef = useRef<HTMLTextAreaElement | null>(null);
   const mediaSectionRef = useRef<HTMLDivElement | null>(null);
@@ -400,9 +405,27 @@ export function CreatePostDrawer({
       setWarningsAcknowledged(false);
       setSubmitError(null);
       setSubmitSuccess(null);
+      setTiktokBlockers({});
       pendingCloseRef.current = false;
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stable per-account blocker setter. We merge into a dict so each
+  // TikTok field component only reports its own account's state, and
+  // we prune cleared blockers instead of storing "" so the any-blocker
+  // check is a simple Object.keys length.
+  const setTiktokBlocker = useCallback((accountId: string, reason: string | null) => {
+    setTiktokBlockers((prev) => {
+      if (!reason) {
+        if (!(accountId in prev)) return prev;
+        const next = { ...prev };
+        delete next[accountId];
+        return next;
+      }
+      if (prev[accountId] === reason) return prev;
+      return { ...prev, [accountId]: reason };
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -624,7 +647,7 @@ export function CreatePostDrawer({
       form.setSubmitting(true);
       const token = validation.token;
       if (!token) return;
-      await createSocialPost(token, workspaceId, payload);
+      const response = await createSocialPost(token, workspaceId, payload);
       onCreated();
       // TikTok processes video/photo uploads asynchronously — the
       // Content Posting API audit requires us to tell the user the post
@@ -634,8 +657,21 @@ export function CreatePostDrawer({
       // shows the per-platform status after the drawer closes.
       const postingToTikTok = form.selectedAccounts.some((a) => a.platform === "tiktok");
       if (postingToTikTok && form.publishMode === "now") {
+        // Pull the TikTok permalink from the create response so the
+        // success banner can link the user straight to their video
+        // (per PRD Fix 4 §5.3). The adapter returns "https://www.tiktok.com"
+        // when it only has a publish_id — skip the link in that case
+        // rather than send the user to the TikTok homepage.
+        const tiktokResult = response.data.results?.find((r) => r.platform === "tiktok");
+        const tiktokURL =
+          tiktokResult?.url && tiktokResult.url !== "https://www.tiktok.com"
+            ? tiktokResult.url
+            : undefined;
         setSubmitSuccess({
-          message: "Posted! TikTok is processing your video — it should appear on your profile within a few minutes.",
+          message: tiktokURL
+            ? "Posted! Your video should appear on your TikTok profile within a few minutes."
+            : "Posted! TikTok is still processing your video — it should appear on your profile within a few minutes.",
+          tiktokURL,
         });
         setTimeout(() => {
           setSubmitSuccess(null);
@@ -739,6 +775,21 @@ export function CreatePostDrawer({
     return hasVideo ? "video" : "photo";
   }, [form.mediaItems]);
 
+  // Hand the TikTok fields the first uploaded video file so they can
+  // measure duration client-side. We only care about the first — TikTok
+  // videos are single-file anyway, so there's no ambiguity here.
+  const primaryVideoFile = useMemo<File | null>(() => {
+    const v = form.mediaItems.find((m) => m.file.type.startsWith("video/"));
+    return v ? v.file : null;
+  }, [form.mediaItems]);
+
+  // When a TikTok account is selected, the in-flight publish label +
+  // the processing notice below both key off this flag.
+  const publishingToTikTok = useMemo(
+    () => form.selectedAccounts.some((a) => a.platform === "tiktok"),
+    [form.selectedAccounts]
+  );
+
   // Why is the primary button disabled? Surface the first blocking reason
   // as a tooltip + inline hint — otherwise the grayed-out button looks
   // like a bug (especially when uploads are silently in flight).
@@ -767,6 +818,10 @@ export function CreatePostDrawer({
       return "Pick Your Brand or Branded Content to finish disclosing commercial content on TikTok.";
     if (form.tiktokBlocker === "tiktok_branded_private")
       return "TikTok doesn't allow Branded Content to be posted as Only me — change the visibility or turn off Branded Content.";
+    // Runtime blockers reported by per-account TikTok panels (creator
+    // error from creator_info, uploaded video too long, etc.).
+    const runtimeBlocker = Object.values(tiktokBlockers).find((v) => v);
+    if (runtimeBlocker) return runtimeBlocker;
     return null;
   }, [
     form.submitting,
@@ -779,6 +834,7 @@ export function CreatePostDrawer({
     form.scheduledAt,
     form.queueId,
     form.tiktokBlocker,
+    tiktokBlockers,
   ]);
 
   return (
@@ -905,8 +961,10 @@ export function CreatePostDrawer({
                           charCount={charCount}
                           issues={accountIssues}
                           mediaKind={mediaKind}
+                          mediaFile={primaryVideoFile}
                           getToken={getToken}
                           profileId={account.profile_id || selectedProfileId}
+                          onTiktokBlockerChange={(reason) => setTiktokBlocker(account.id, reason)}
                           onCaptionChange={(caption) =>
                             form.updateOverrideCaption(account.id, caption)
                           }
@@ -987,6 +1045,28 @@ export function CreatePostDrawer({
               accounts={form.selectedAccounts}
               onSelectIssue={focusIssue}
             />
+            {form.submitting && publishingToTikTok && (
+              <section
+                className="mb-5 rounded-xl border px-4 py-3.5"
+                style={{
+                  background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))",
+                  borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: "var(--primary)" }} />
+                  <div
+                    className="font-mono text-[11px] uppercase tracking-[0.12em]"
+                    style={{ color: "color-mix(in srgb, var(--primary) 30%, white)" }}
+                  >
+                    Publishing to TikTok
+                  </div>
+                </div>
+                <p className="mt-1 text-[13px] leading-relaxed" style={{ color: "var(--dtext)" }}>
+                  Your content is being processed. It may take a few minutes to appear on your TikTok profile.
+                </p>
+              </section>
+            )}
             {submitSuccess && (
               <section
                 className="mb-5 rounded-xl border px-4 py-3.5"
@@ -1004,6 +1084,17 @@ export function CreatePostDrawer({
                 <p className="text-[13px] leading-relaxed" style={{ color: "var(--dtext)" }}>
                   {submitSuccess.message}
                 </p>
+                {submitSuccess.tiktokURL && (
+                  <a
+                    href={submitSuccess.tiktokURL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-block text-[12px] underline"
+                    style={{ color: "var(--primary)" }}
+                  >
+                    View on TikTok
+                  </a>
+                )}
               </section>
             )}
             {submitError && (
@@ -1087,7 +1178,7 @@ export function CreatePostDrawer({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={!form.canSubmit || isValidating}
+              disabled={!form.canSubmit || isValidating || Object.keys(tiktokBlockers).length > 0}
               title={disabledReason ?? undefined}
               className={cn(
                 "px-5 py-2 text-sm font-medium rounded-lg transition-colors",
@@ -1101,7 +1192,12 @@ export function CreatePostDrawer({
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Checking...
                 </span>
-              ) : form.submitting ? "Sending..." : validationChecked && (validationResult?.warnings?.length || 0) > 0 && (validationResult?.errors?.length || 0) === 0 ? "Publish anyway" : primaryLabel}
+              ) : form.submitting ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {publishingToTikTok ? "Publishing to TikTok..." : "Sending..."}
+                </span>
+              ) : validationChecked && (validationResult?.warnings?.length || 0) > 0 && (validationResult?.errors?.length || 0) === 0 ? "Publish anyway" : primaryLabel}
             </button>
           </div>
         </footer>

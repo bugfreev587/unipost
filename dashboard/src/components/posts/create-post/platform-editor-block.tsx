@@ -30,11 +30,18 @@ interface PlatformEditorBlockProps {
   // needs this to hide Duet/Stitch toggles for photo carousels (per the
   // Content Posting API audit requirements).
   mediaKind: "video" | "photo" | "none";
+  // The first video file attached to the post (null when there isn't one).
+  // TikTok fields use it to measure duration against the creator's cap.
+  mediaFile: File | null;
   // getToken is threaded down so the TikTok fields can fetch creator_info
   // with a fresh Clerk session token without owning its own auth context.
   getToken: () => Promise<string | null>;
   // profileId owns the TikTok account — used to build the creator_info URL.
   profileId: string;
+  // Called by the platform-specific panel when it has a runtime reason to
+  // block publish (e.g., TikTok creator can't post right now, video too
+  // long for this account). Null clears the blocker.
+  onTiktokBlockerChange: (reason: string | null) => void;
   onCaptionChange: (caption: string) => void;
   onPlatformFieldChange: <K extends "youtube" | "tiktok" | "instagram" | "linkedin">(
     platform: K,
@@ -51,8 +58,10 @@ export function PlatformEditorBlock({
   charCount,
   issues = [],
   mediaKind,
+  mediaFile,
   getToken,
   profileId,
+  onTiktokBlockerChange,
   onCaptionChange,
   onPlatformFieldChange,
   onToggleCollapse,
@@ -209,10 +218,12 @@ export function PlatformEditorBlock({
               account={account}
               fields={tiktokFields}
               mediaKind={mediaKind}
+              mediaFile={mediaFile}
               getToken={getToken}
               profileId={profileId}
               issues={issues}
               onChange={(f) => onPlatformFieldChange("tiktok", f)}
+              onBlockerChange={onTiktokBlockerChange}
             />
           )}
           {account.platform === "instagram" && (
