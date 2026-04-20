@@ -263,16 +263,33 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
       platform: K,
       fields: Partial<NonNullable<PlatformOverride[K]>>
     ) => {
-      setOverrides((prev) => ({
-        ...prev,
-        [accountId]: {
-          ...prev[accountId],
-          [platform]: {
-            ...(prev[accountId]?.[platform] as Record<string, unknown>),
-            ...fields,
+      setOverrides((prev) => {
+        const current = prev[accountId]?.[platform] as Record<string, unknown> | undefined;
+        // Seed platform defaults on the first touch. Without this,
+        // partial updates leave fields undefined in the stored state
+        // — the TikTok panel then falls back to React's truthiness
+        // rules when computing toggle "checked" states, so a
+        // disable_comment that was never explicitly set reads as
+        // undefined, !undefined === true, and the Comment box looks
+        // ticked the moment the user picks a privacy level. That
+        // defaults-on-first-touch problem also silently drops the
+        // disable_* booleans from buildPayload's output, which would
+        // leave TikTok to apply its own "comments allowed" default —
+        // a policy violation since TikTok requires the user to
+        // explicitly opt into each interaction type.
+        const seedDefaults: Record<string, Record<string, unknown>> = {
+          tiktok: DEFAULT_TIKTOK_FIELDS,
+          youtube: DEFAULT_YOUTUBE_FIELDS,
+        };
+        const base = current ?? seedDefaults[platform as string] ?? {};
+        return {
+          ...prev,
+          [accountId]: {
+            ...prev[accountId],
+            [platform]: { ...base, ...fields },
           },
-        },
-      }));
+        };
+      });
     },
     []
   );
