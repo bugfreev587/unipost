@@ -29,6 +29,8 @@ const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
   cancelled: { cls: "dbadge-gray", label: "cancelled" },
 };
 
+const POSTS_POLL_INTERVAL_MS = 8000;
+
 function statusBadge(status: string) {
   const b = STATUS_BADGE[status] || { cls: "dbadge-gray", label: status };
   return <span className={`dbadge ${b.cls}`}><span className="dbadge-dot" />{b.label}</span>;
@@ -196,9 +198,9 @@ export default function PostsPage() {
   const [actionBusy, setActionBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!workspaceId) return; // wait for workspace resolution
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     try {
       const token = await getToken();
       if (!token) return;
@@ -213,11 +215,21 @@ export default function PostsPage() {
     } catch (err) {
       console.error("Failed to load:", err);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [getToken, profileId, workspaceId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        loadData({ silent: true });
+      }
+    }, POSTS_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [workspaceId, loadData]);
 
   // Close menu on outside click
   useEffect(() => {
