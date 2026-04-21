@@ -49,7 +49,7 @@ func stubCapabilities() map[string]Capability {
 			Text:        TextCapability{MaxLength: 300},
 			Media: MediaCapability{
 				AllowMixed: false,
-				Images:     ImageCapability{MaxCount: 4},
+				Images:     ImageCapability{MaxCount: 4, MaxFileSizeBytes: 2_000_000},
 				Videos:     VideoCapability{MaxCount: 1},
 			},
 			Thread:       ThreadCapability{Supported: true},
@@ -614,6 +614,50 @@ func TestValidate_MediaIDUploaded(t *testing.T) {
 	if !res.Valid {
 		t.Fatalf("expected valid, got %#v", res.Errors)
 	}
+}
+
+func TestValidate_MediaIDTooLarge(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_big": {
+				Status:      "uploaded",
+				ContentType: "image/jpeg",
+				SizeBytes:   5_890_375,
+			},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_bluesky", Caption: "x", MediaIDs: []string{"med_big"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+	hasError(t, res, 0, CodeFileTooLarge)
+	if len(res.Errors) == 0 {
+		t.Fatal("expected file_too_large error")
+	}
+	if !strings.Contains(res.Errors[0].Message, "5.89 MB") || !strings.Contains(res.Errors[0].Message, "2.00 MB") {
+		t.Fatalf("expected human-readable size message, got %q", res.Errors[0].Message)
+	}
+}
+
+func TestValidate_MediaIDAtLimitAllowed(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_ok": {
+				Status:      "uploaded",
+				ContentType: "image/jpeg",
+				SizeBytes:   2_000_000,
+			},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_bluesky", Caption: "x", MediaIDs: []string{"med_ok"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+	hasNoError(t, res, CodeFileTooLarge)
 }
 
 // ─── Sprint 4 PR3: first_comment validation ───────────────────────────

@@ -29,6 +29,7 @@ package platform
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -255,6 +256,49 @@ func parseYouTubeTimestamp(value string) error {
 		}
 	}
 	return errors.New("invalid timestamp")
+}
+
+func formatBytesHuman(size int64) string {
+	if size <= 0 {
+		return "0 B"
+	}
+	const (
+		kb = 1000
+		mb = 1000 * kb
+		gb = 1000 * mb
+	)
+	switch {
+	case size >= gb:
+		return fmt.Sprintf("%.2f GB", float64(size)/float64(gb))
+	case size >= mb:
+		return fmt.Sprintf("%.2f MB", float64(size)/float64(mb))
+	case size >= kb:
+		return fmt.Sprintf("%.2f KB", float64(size)/float64(kb))
+	default:
+		return fmt.Sprintf("%d B", size)
+	}
+}
+
+func mediaSizeLimit(kind MediaKind, cap Capability) int64 {
+	switch kind {
+	case MediaKindVideo:
+		return cap.Media.Videos.MaxFileSizeBytes
+	case MediaKindImage, MediaKindGIF, MediaKindUnknown:
+		return cap.Media.Images.MaxFileSizeBytes
+	default:
+		return 0
+	}
+}
+
+func mediaLabel(kind MediaKind) string {
+	switch kind {
+	case MediaKindVideo:
+		return "video"
+	case MediaKindGIF:
+		return "GIF"
+	default:
+		return "image"
+	}
 }
 
 // ValidatePlatformPosts runs every pure check we know about and
@@ -919,6 +963,28 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 					Field:             "media_ids",
 					Code:              CodeMediaNotUploaded,
 					Message:           "media_id " + mid + " is in status " + m.Status + "; PUT the bytes to the presigned URL first",
+					Severity:          SeverityError,
+				})
+				continue
+			}
+
+			kind := MediaFromContentType(m.ContentType).Kind
+			limit := mediaSizeLimit(kind, cap)
+			if limit > 0 && m.SizeBytes > limit {
+				label := mediaLabel(kind)
+				displayName := cap.DisplayName
+				if strings.TrimSpace(displayName) == "" {
+					displayName = plat
+				}
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "media_ids",
+					Code:              CodeFileTooLarge,
+					Message:           fmt.Sprintf("%s %s is %s, which exceeds %s's %s limit of %s", displayName, label, formatBytesHuman(m.SizeBytes), displayName, label, formatBytesHuman(limit)),
+					Actual:            m.SizeBytes,
+					Limit:             limit,
 					Severity:          SeverityError,
 				})
 			}

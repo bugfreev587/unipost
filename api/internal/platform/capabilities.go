@@ -312,7 +312,7 @@ var Capabilities = map[string]Capability{
 			AllowMixed:    false, // image and video can't be mixed in one record
 			Images: ImageCapability{
 				MaxCount:         4,
-				MaxFileSizeBytes: 1024 * 1024, // 1 MB per image (PDS-side cap)
+				MaxFileSizeBytes: 2_000_000, // observed ATProto blob cap error from production
 				AllowedFormats:   []string{"jpg", "png", "webp"},
 			},
 			Videos: VideoCapability{
