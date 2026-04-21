@@ -1,5 +1,13 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Environment
+
+The dashboard should not be deployed with `CLERK_SECRET_KEY`.
+
+- Set Clerk public/frontend variables such as `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in the dashboard deployment.
+- Keep `CLERK_SECRET_KEY` only in the API/backend service where Clerk admin operations run.
+- If `CLERK_SECRET_KEY` is present in the dashboard runtime, the app logs a server-side warning so the misconfiguration is visible.
+
 ## Getting Started
 
 First, run the development server:

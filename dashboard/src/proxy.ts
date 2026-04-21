@@ -1,7 +1,10 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { warnIfFrontendHasClerkSecret } from "@/lib/clerk-env";
 
 const APP_HOST = process.env.NEXT_PUBLIC_APP_HOST || "app.unipost.dev";
+
+warnIfFrontendHasClerkSecret();
 
 export default clerkMiddleware(async (auth, request) => {
   const hostname = request.headers.get("host") || "";
