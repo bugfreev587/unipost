@@ -211,7 +211,7 @@ function byNewestActivity(a: ConversationGroup, b: ConversationGroup) {
 // Messenger needs the exact same conversation-style handling, so
 // the checks now route through this helper.
 function isDMSource(source?: string | null): boolean {
-  return isDMSource(source) || source === "fb_dm";
+  return source === "ig_dm" || source === "fb_dm";
 }
 
 function conversationRootKey(item: InboxItem, source: ConversationGroup["source"]) {
