@@ -354,8 +354,9 @@ export function CreatePostDrawer({
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [profileAccounts, setProfileAccounts] = useState<SocialAccount[]>(accounts);
+  const [allLoadedAccounts, setAllLoadedAccounts] = useState<SocialAccount[]>(accounts);
 
-  const form = useCreatePostForm(profileAccounts);
+  const form = useCreatePostForm(allLoadedAccounts);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [queues] = useState<Array<{ id: string; name: string }>>([]);
   const [queuesLoaded, setQueuesLoaded] = useState(false);
@@ -408,6 +409,13 @@ export function CreatePostDrawer({
         if (!token) return;
         const res = await listSocialAccounts(token, selectedProfileId);
         setProfileAccounts(res.data);
+        setAllLoadedAccounts((current) => {
+          const next = new Map(current.map((account) => [account.id, account]));
+          for (const account of res.data) {
+            next.set(account.id, account);
+          }
+          return Array.from(next.values());
+        });
       } catch (err) {
         console.error("Failed to load accounts:", err);
       }
@@ -447,6 +455,7 @@ export function CreatePostDrawer({
       form.reset();
       setSelectedProfileId("");
       setProfileAccounts(accounts);
+      setAllLoadedAccounts(accounts);
       setShowDiscardConfirm(false);
       setQueuesLoaded(false);
       setValidationResult(null);
@@ -1067,7 +1076,7 @@ export function CreatePostDrawer({
                   Connected accounts
                 </label>
               <ConnectedAccountsGrid
-                accounts={form.activeAccounts}
+                accounts={profileAccounts.filter((account) => account.status === "active")}
                 selectedIds={form.selectedAccountIds}
                 onToggle={form.toggleAccount}
               />
