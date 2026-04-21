@@ -79,6 +79,10 @@ type CommentNode = {
   children: CommentNode[];
 };
 
+const COMMENT_THREAD_INDENT = 28;
+const COMMENT_THREAD_LINE_COLOR = "rgba(255,255,255,.14)";
+const COMMENT_THREAD_ELBOW_HEIGHT = 38;
+
 function initialsFromName(name?: string) {
   const value = (name || "?").trim();
   if (!value) return "?";
@@ -984,6 +988,82 @@ export default function InboxPage() {
     );
   }
 
+  function renderCommentNode(node: CommentNode, depth = 0, ancestorLines: boolean[] = [], isLast = true) {
+    const gutterWidth = depth * COMMENT_THREAD_INDENT;
+    return (
+      <div key={node.item.id} style={{ position: "relative", marginTop: depth === 0 ? 10 : 8 }}>
+        {gutterWidth > 0 ? (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: gutterWidth,
+              pointerEvents: "none",
+            }}
+          >
+            {ancestorLines.map((show, idx) =>
+              show ? (
+                <div
+                  key={`ancestor-${node.item.id}-${idx}`}
+                  style={{
+                    position: "absolute",
+                    left: idx * COMMENT_THREAD_INDENT + 13,
+                    top: 0,
+                    bottom: 0,
+                    width: 2,
+                    borderRadius: 999,
+                    background: COMMENT_THREAD_LINE_COLOR,
+                  }}
+                />
+              ) : null
+            )}
+            <div
+              style={{
+                position: "absolute",
+                left: (depth - 1) * COMMENT_THREAD_INDENT + 13,
+                top: 0,
+                width: 18,
+                height: COMMENT_THREAD_ELBOW_HEIGHT,
+                borderLeft: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
+                borderBottom: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
+                borderBottomLeftRadius: 14,
+              }}
+            />
+            {!isLast ? (
+              <div
+                style={{
+                  position: "absolute",
+                  left: (depth - 1) * COMMENT_THREAD_INDENT + 13,
+                  top: COMMENT_THREAD_ELBOW_HEIGHT,
+                  bottom: 0,
+                  width: 2,
+                  borderRadius: 999,
+                  background: COMMENT_THREAD_LINE_COLOR,
+                }}
+              />
+            ) : null}
+          </div>
+        ) : null}
+
+        <div style={{ marginLeft: gutterWidth }}>
+          {renderConversationItem(node.item, depth)}
+        </div>
+
+        {node.children.map((child, index) =>
+          renderCommentNode(
+            child,
+            depth + 1,
+            [...ancestorLines, !isLast],
+            index === node.children.length - 1
+          )
+        )}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
@@ -1453,58 +1533,9 @@ export default function InboxPage() {
               }}>
                 {isDMSource(selectedGroup.source)
                   ? selectedGroup.items.map((item) => renderConversationItem(item))
-                  : commentTree.map(function renderNode(node, depth = 0) {
-                      return (
-                        <div key={node.item.id} style={{ marginTop: depth === 0 ? 10 : 6 }}>
-                          {renderConversationItem(node.item, depth)}
-                          {node.children.length > 0 ? (
-                            <div
-                              style={{
-                                position: "relative",
-                                marginLeft: 18,
-                                paddingLeft: 18,
-                                marginTop: 4,
-                              }}
-                            >
-                              <div
-                                aria-hidden="true"
-                                style={{
-                                  position: "absolute",
-                                  left: 7,
-                                  top: 0,
-                                  bottom: 16,
-                                  width: 2,
-                                  borderRadius: 999,
-                                  background: "rgba(255,255,255,.12)",
-                                }}
-                              />
-                              {node.children.map((child) => (
-                                <div
-                                  key={child.item.id}
-                                  style={{
-                                    position: "relative",
-                                  }}
-                                >
-                                  <div
-                                    aria-hidden="true"
-                                    style={{
-                                      position: "absolute",
-                                      left: -11,
-                                      top: 16,
-                                      width: 12,
-                                      height: 2,
-                                      borderRadius: 999,
-                                      background: "rgba(255,255,255,.12)",
-                                    }}
-                                  />
-                                  {renderNode(child, depth + 1)}
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
+                  : commentTree.map((node, index) =>
+                      renderCommentNode(node, 0, [], index === commentTree.length - 1)
+                    )}
               </div>
 
               {isDMSource(selectedGroup.source) ? (() => {
