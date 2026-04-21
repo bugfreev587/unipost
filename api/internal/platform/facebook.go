@@ -494,6 +494,9 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 			return nil, fmt.Errorf("facebook video: stage to R2: %w", err)
 		}
 		stagedURL = proxied
+		slog.Info("facebook video: staged to R2", "staged_url", proxied, "source_url", videoURL)
+	} else {
+		slog.Warn("facebook video: no media proxy configured; passing source URL directly to FB (may expire mid-fetch)", "source_url", videoURL)
 	}
 	form := url.Values{
 		"access_token": {accessToken},
