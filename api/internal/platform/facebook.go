@@ -15,6 +15,7 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -872,6 +873,212 @@ func (a *FacebookAdapter) FetchComments(ctx context.Context, accessToken string,
 		})
 	}
 	return entries, nil
+}
+
+// FetchConversations returns recent Messenger messages across all
+// conversations the Page participates in. One nested Graph call
+// pulls the latest 25 messages per conversation along with the
+// participant metadata so the sync loop doesn't need an extra
+// round trip to resolve names and avatars. `platform=messenger`
+// scopes the list to Messenger (Instagram DMs on linked accounts
+// live under the same endpoint family).
+//
+// Returns one InboxEntry per message, matching the pattern IG's
+// adapter uses. The sync worker picks own/not-own by comparing
+// AuthorID against the stored Page id.
+func (a *FacebookAdapter) FetchConversations(ctx context.Context, accessToken string) ([]InboxEntry, error) {
+	pageID, err := a.fetchPageSelfID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	params := url.Values{
+		"access_token": {accessToken},
+		"platform":     {"messenger"},
+		"fields":       {"id,participants{id,name,picture{url}},messages.limit(25){id,message,from,created_time}"},
+		"limit":        {"25"},
+	}
+	endpoint := facebookGraphBase + "/" + pageID + "/conversations?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook fetch conversations: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("facebook fetch conversations failed",
+			"status", resp.StatusCode, "body", string(body))
+		return nil, fmt.Errorf("facebook fetch conversations %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []struct {
+			ID           string `json:"id"`
+			Participants struct {
+				Data []struct {
+					ID      string `json:"id"`
+					Name    string `json:"name"`
+					Picture struct {
+						Data struct {
+							URL string `json:"url"`
+						} `json:"data"`
+					} `json:"picture"`
+				} `json:"data"`
+			} `json:"participants"`
+			Messages struct {
+				Data []struct {
+					ID          string `json:"id"`
+					Message     string `json:"message"`
+					CreatedTime string `json:"created_time"`
+					From        struct {
+						ID   string `json:"id"`
+						Name string `json:"name"`
+					} `json:"from"`
+				} `json:"data"`
+			} `json:"messages"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("facebook fetch conversations decode: %w", err)
+	}
+
+	entries := make([]InboxEntry, 0, len(result.Data)*5)
+	for _, conv := range result.Data {
+		// Index participants so each message can look up its sender's
+		// avatar without a second request. Page itself appears here
+		// too but we just skip it when we see our own id.
+		participantIndex := make(map[string]struct {
+			Name   string
+			Avatar string
+		}, len(conv.Participants.Data))
+		for _, p := range conv.Participants.Data {
+			participantIndex[p.ID] = struct {
+				Name   string
+				Avatar string
+			}{Name: p.Name, Avatar: p.Picture.Data.URL}
+		}
+
+		for _, msg := range conv.Messages.Data {
+			ts, _ := time.Parse(time.RFC3339Nano, msg.CreatedTime)
+			if ts.IsZero() {
+				ts, _ = time.Parse("2006-01-02T15:04:05-0700", msg.CreatedTime)
+			}
+			if ts.IsZero() {
+				ts = time.Now()
+			}
+			name := msg.From.Name
+			avatar := ""
+			if p, ok := participantIndex[msg.From.ID]; ok {
+				if name == "" {
+					name = p.Name
+				}
+				avatar = p.Avatar
+			}
+			entries = append(entries, InboxEntry{
+				ExternalID:       msg.ID,
+				ParentExternalID: conv.ID,
+				AuthorID:         msg.From.ID,
+				AuthorName:       name,
+				AuthorAvatarURL:  avatar,
+				Body:             msg.Message,
+				Timestamp:        ts,
+				Source:           "fb_dm",
+			})
+		}
+	}
+	return entries, nil
+}
+
+// ResolveDMRecipient returns the PSID of the non-Page participant
+// in a conversation. Used by the reply path as a fallback when the
+// clicked inbox item doesn't carry an author id we can send to
+// (e.g. the user is replying to their own last message).
+func (a *FacebookAdapter) ResolveDMRecipient(ctx context.Context, accessToken string, conversationID string) (string, error) {
+	pageID, err := a.fetchPageSelfID(ctx, accessToken)
+	if err != nil {
+		return "", err
+	}
+	params := url.Values{
+		"access_token": {accessToken},
+		"fields":       {"participants{id,name}"},
+	}
+	endpoint := facebookGraphBase + "/" + conversationID + "?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("facebook resolve dm recipient: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("facebook resolve dm recipient %d: %s", resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		Participants struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		} `json:"participants"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("facebook resolve dm recipient decode: %w", err)
+	}
+	for _, p := range parsed.Participants.Data {
+		if p.ID != "" && p.ID != pageID {
+			return p.ID, nil
+		}
+	}
+	return "", fmt.Errorf("recipient not found for conversation %s", conversationID)
+}
+
+// SendDM sends a Messenger message from the Page to a user. Meta's
+// 24-hour window applies: if the user hasn't messaged the Page in
+// the last day, this call will return an error. The dashboard
+// disables the Send button client-side in that case so users don't
+// see a cryptic rejection — see the fb_dm reply gate in inbox UI.
+func (a *FacebookAdapter) SendDM(ctx context.Context, accessToken string, recipientPSID string, text string) (*PostResult, error) {
+	pageID, err := a.fetchPageSelfID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := map[string]any{
+		"recipient":      map[string]string{"id": recipientPSID},
+		"messaging_type": "RESPONSE",
+		"message":        map[string]string{"text": text},
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := facebookGraphBase + "/" + pageID + "/messages?access_token=" + url.QueryEscape(accessToken)
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook send dm: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, wrapFacebookPublishError(resp.StatusCode, respBody)
+	}
+	var parsed struct {
+		MessageID      string `json:"message_id"`
+		RecipientID    string `json:"recipient_id"`
+	}
+	_ = json.Unmarshal(respBody, &parsed)
+	return &PostResult{ExternalID: parsed.MessageID}, nil
 }
 
 // ReplyToComment posts a reply to a Page comment. The reply is

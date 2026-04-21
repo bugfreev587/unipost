@@ -259,6 +259,41 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 				}
 			}
 
+			// Messenger DMs — not scoped to UniPost-published posts
+			// because DMs aren't attached to any specific post. The
+			// IG branch above also runs a reconciliation step to
+			// migrate webhook-created rows to canonical thread keys;
+			// we don't have FB webhooks yet so skip it here.
+			dmEntries, dmErr := fbAdapter.FetchConversations(ctx, accessToken)
+			if dmErr != nil {
+				slog.Warn("inbox sync worker: facebook fetch conversations failed",
+					"account_id", acc.ID, "err", dmErr)
+			} else {
+				for _, e := range dmEntries {
+					isOwn := e.AuthorID != "" && e.AuthorID == acc.ExternalAccountID
+					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
+						SocialAccountID:  acc.ID,
+						WorkspaceID:      acc.WorkspaceID,
+						Source:           e.Source,
+						ExternalID:       e.ExternalID,
+						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+						IsOwn:            isOwn,
+						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
+						Metadata:         []byte("{}"),
+						ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+						ThreadStatus:     "open",
+						AssignedTo:       pgtype.Text{},
+						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
+					})
+					if uErr == nil {
+						totalNew++
+					}
+				}
+			}
+
 		case "threads":
 			adapter := platform.NewThreadsAdapter()
 			// Fetch recent posts directly from Threads API.

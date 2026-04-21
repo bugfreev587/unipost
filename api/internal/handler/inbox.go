@@ -412,6 +412,37 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		// resolution like the IG DM path.
 		adapter := platform.NewFacebookAdapter()
 		replyResult, err = adapter.ReplyToComment(r.Context(), accessToken, item.ExternalID, body.Text)
+	case "fb_dm":
+		// Mirror the IG DM resolution pattern: prefer the item's
+		// author_id when it isn't our own Page (covers the common
+		// "reply to their message" flow), else fall back to
+		// ResolveDMRecipient against the conversation id. The
+		// dashboard already gates the Send button on the 24-hour
+		// window, so by the time we get here we expect Meta to
+		// accept the message — but we surface any rejection as a
+		// normal error below.
+		adapter := platform.NewFacebookAdapter()
+		recipientID := ""
+		if item.AuthorID.Valid && item.AuthorID.String != "" && item.AuthorID.String != account.ExternalAccountID {
+			recipientID = item.AuthorID.String
+		}
+		resolveMethod := "inbox_author"
+		if recipientID == "" && item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
+			if resolved, resolveErr := adapter.ResolveDMRecipient(r.Context(), accessToken, item.ParentExternalID.String); resolveErr == nil {
+				recipientID = resolved
+				resolveMethod = "conversation_participant"
+			}
+		}
+		slog.Info("inbox fb dm reply: resolved recipient",
+			"recipient_id", recipientID, "method", resolveMethod,
+			"author_id", item.AuthorID.String,
+			"parent_external_id", item.ParentExternalID.String,
+			"external_account_id", account.ExternalAccountID)
+		if recipientID == "" {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Cannot reply: missing Messenger recipient")
+			return
+		}
+		replyResult, err = adapter.SendDM(r.Context(), accessToken, recipientID, body.Text)
 	default:
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Unsupported source for reply")
 		return

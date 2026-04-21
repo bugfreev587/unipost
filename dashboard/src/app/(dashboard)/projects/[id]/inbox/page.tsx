@@ -206,8 +206,16 @@ function byNewestActivity(a: ConversationGroup, b: ConversationGroup) {
   return new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime();
 }
 
+// isDMSource returns true for any DM source. Several grouping +
+// rendering branches below used to hard-code "ig_dm"; Facebook
+// Messenger needs the exact same conversation-style handling, so
+// the checks now route through this helper.
+function isDMSource(source?: string | null): boolean {
+  return isDMSource(source) || source === "fb_dm";
+}
+
 function conversationRootKey(item: InboxItem, source: ConversationGroup["source"]) {
-  if (source === "ig_dm") {
+  if (isDMSource(source)) {
     return item.thread_key || item.parent_external_id || item.author_id || item.external_id;
   }
 
@@ -237,11 +245,11 @@ function groupItems(items: InboxItem[], source: ConversationGroup["source"]): Co
       [...sorted].reverse().find((item) => !item.is_own) || latest;
     const unreadCount = sorted.filter((item) => !item.is_read && !item.is_own).length;
     const title =
-      source === "ig_dm"
+      isDMSource(source)
         ? `@${firstInbound.author_name || firstInbound.author_id || "unknown"}`
         : ""; // enriched later with post caption
     const subtitle =
-      source === "ig_dm"
+      isDMSource(source)
         ? (latest.body || "(no text)")
         : (latestInbound.body || latest.body || "(no text)");
 
@@ -254,10 +262,10 @@ function groupItems(items: InboxItem[], source: ConversationGroup["source"]): Co
       items: sorted,
       accountName: latest.account_name || undefined,
       accountPlatform: latest.account_platform || undefined,
-      latestActivityAt: source === "ig_dm" ? latest.received_at : latestInbound.received_at,
+      latestActivityAt: isDMSource(source) ? latest.received_at : latestInbound.received_at,
       unreadCount,
       parentExternalID:
-        source === "ig_dm"
+        isDMSource(source)
           ? latest.parent_external_id
           : firstInbound.parent_external_id || latest.parent_external_id,
       threadStatus: latest.thread_status || "open",
@@ -478,7 +486,7 @@ export default function InboxPage() {
 
   // Enrich comment/thread group titles with post captions from mediaContext or socialPosts.
   function enrichGroupTitle(group: ConversationGroup): ConversationGroup {
-    if (group.source === "ig_dm" || group.title) return group;
+    if (isDMSource(group.source) || group.title) return group;
     const rootExternalID = group.parentExternalID || group.threadKey;
     // Try mediaContext first (fetched from IG API directly)
     if (rootExternalID && mediaContext[rootExternalID]?.caption) {
@@ -496,8 +504,14 @@ export default function InboxPage() {
     return { ...group, title: group.accountName ? `@${group.accountName}` : "Post" };
   }
 
-  const commentsGroups = useMemo(() => groupItems(items, "ig_comment").map(enrichGroupTitle), [items, socialPosts, mediaContext]);
-  const dmGroups = useMemo(() => groupItems(items, "ig_dm"), [items]);
+  const commentsGroups = useMemo(() => [
+    ...groupItems(items, "ig_comment"),
+    ...groupItems(items, "fb_comment"),
+  ].map(enrichGroupTitle), [items, socialPosts, mediaContext]);
+  const dmGroups = useMemo(() => [
+    ...groupItems(items, "ig_dm"),
+    ...groupItems(items, "fb_dm"),
+  ], [items]);
   const threadsGroups = useMemo(() => groupItems(items, "threads_reply").map(enrichGroupTitle), [items, socialPosts, mediaContext]);
 
   const activeGroups = useMemo(() => {
@@ -650,7 +664,7 @@ export default function InboxPage() {
     }
 
     const rootExternalID =
-      selectedGroup.source === "ig_dm"
+      isDMSource(selectedGroup.source)
         ? selectedGroup.parentExternalID
         : selectedGroup.threadKey || selectedGroup.parentExternalID;
 
@@ -720,7 +734,7 @@ export default function InboxPage() {
   // Fetch media context from platform API when post image isn't available locally.
   useEffect(() => {
     if (!selectedGroup || !workspaceId) return;
-    if (selectedGroup.source === "ig_dm") return;
+    if (isDMSource(selectedGroup.source)) return;
     // Skip if selectedPost already has media_urls (image available locally).
     if (selectedPost && selectedPost.media_urls && selectedPost.media_urls.length > 0) return;
     const parentID = selectedGroup.parentExternalID || selectedGroup.threadKey;
@@ -754,10 +768,10 @@ export default function InboxPage() {
     : null;
 
   const detailStatus = selectedGroup ? selectedGroup.threadStatus || "open" : "open";
-  const showHumanAgent = selectedGroup?.source === "ig_dm";
+  const showHumanAgent = isDMSource(selectedGroup?.source);
   const commentTree = useMemo(
     () =>
-      selectedGroup && selectedGroup.source !== "ig_dm"
+      selectedGroup && !isDMSource(selectedGroup.source)
         ? buildCommentTree(selectedGroup.items, selectedGroup.threadKey)
         : [],
     [selectedGroup, items]
@@ -794,8 +808,8 @@ export default function InboxPage() {
     if (!selectedGroup) return null;
     const draft = replyDrafts[item.id] || "";
     const replyOpen = Object.prototype.hasOwnProperty.call(replyDrafts, item.id);
-    const isCommentLike = selectedGroup.source !== "ig_dm";
-    const isDM = selectedGroup.source === "ig_dm";
+    const isCommentLike = !isDMSource(selectedGroup.source);
+    const isDM = isDMSource(selectedGroup.source);
     const avatarSrc = item.is_own ? item.account_avatar_url : item.author_avatar_url;
     const avatarLabel = item.is_own ? selectedGroup.accountName || "You" : item.author_name || item.author_id || "unknown";
 
@@ -1180,7 +1194,7 @@ export default function InboxPage() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <span className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {group.source === "ig_dm" ? group.title : group.title || `@${group.accountName || "post"}`}
+                          {isDMSource(group.source) ? group.title : group.title || `@${group.accountName || "post"}`}
                         </span>
                         <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
                           {sourceLabel(group.source)}
@@ -1205,7 +1219,7 @@ export default function InboxPage() {
                         {group.subtitle}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <StatusPill status={status} humanAgent={group.source === "ig_dm"} />
+                        <StatusPill status={status} humanAgent={isDMSource(group.source)} />
                         <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
                           {timeAgo(group.latestActivityAt)}
                         </span>
@@ -1249,7 +1263,7 @@ export default function InboxPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                     {sourceIcon(selectedGroup.source)}
                     <h2 className="dt-body" style={{ margin: 0, fontWeight: 700, color: "var(--dtext)" }}>
-                      {selectedGroup.source === "ig_dm" ? selectedGroup.title : `${selectedGroup.items.length} ${sourceLabel(selectedGroup.source).toLowerCase()}${selectedGroup.items.length === 1 ? "" : "s"}`}
+                      {isDMSource(selectedGroup.source) ? selectedGroup.title : `${selectedGroup.items.length} ${sourceLabel(selectedGroup.source).toLowerCase()}${selectedGroup.items.length === 1 ? "" : "s"}`}
                     </h2>
                   </div>
                   <p className="dt-body-sm" style={{ margin: 0, color: "var(--dmuted)" }}>
@@ -1296,7 +1310,7 @@ export default function InboxPage() {
                 </div>
               </div>
 
-              {selectedGroup.source !== "ig_dm" ? (
+              {!isDMSource(selectedGroup.source) ? (
                 <div style={{ margin: "20px 20px 0", padding: 16, borderRadius: 12, border: "1px solid var(--dborder)", background: "var(--surface2)", position: "relative", overflow: "hidden", boxShadow: "0 10px 24px rgb(15 23 42 / 0.04)" }}>
                   <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1, background: "linear-gradient(90deg, transparent, rgba(16,185,129,.45), transparent)" }} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
@@ -1413,12 +1427,12 @@ export default function InboxPage() {
 
               <div style={{
                 flex: 1, overflowY: "auto",
-                padding: selectedGroup.source === "ig_dm" ? "16px 14px" : "16px 20px",
+                padding: isDMSource(selectedGroup.source) ? "16px 14px" : "16px 20px",
                 display: "flex", flexDirection: "column",
                 gap: 0,
-                ...(selectedGroup.source === "ig_dm" ? { justifyContent: "flex-end" } : {}),
+                ...(isDMSource(selectedGroup.source) ? { justifyContent: "flex-end" } : {}),
               }}>
-                {selectedGroup.source === "ig_dm"
+                {isDMSource(selectedGroup.source)
                   ? selectedGroup.items.map((item) => renderConversationItem(item))
                   : commentTree.map(function renderNode(node, depth = 0) {
                       return (
@@ -1474,63 +1488,94 @@ export default function InboxPage() {
                     })}
               </div>
 
-              {selectedGroup.source === "ig_dm" ? (
-                <div style={{ borderTop: "1px solid var(--dborder)", padding: "10px 14px", background: "var(--surface2)", display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    value={replyDrafts["__dm_bottom__"] || ""}
-                    onChange={(e) => setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: e.target.value }))}
-                    placeholder="Message..."
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        const lastInbound = [...selectedGroup.items].reverse().find((i) => !i.is_own);
-                        if (lastInbound && (replyDrafts["__dm_bottom__"] || "").trim()) {
-                          handleReply(selectedGroup, lastInbound);
-                          setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
-                        }
-                      }
-                    }}
-                    className="dt-body-sm"
-                    style={{
-                      flex: 1,
-                      padding: "10px 16px",
-                      borderRadius: 999,
-                      border: "1px solid var(--dborder)",
-                      background: "var(--surface)",
-                      color: "var(--dtext)",
-                      outline: "none",
-                      fontSize: 13,
-                    }}
-                  />
-                  <button
-                    onClick={() => {
-                      const lastInbound = [...selectedGroup.items].reverse().find((i) => !i.is_own);
-                      if (lastInbound && (replyDrafts["__dm_bottom__"] || "").trim()) {
-                        handleReply(selectedGroup, lastInbound);
-                        setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
-                      }
-                    }}
-                    disabled={replyingGroupId === selectedGroup.id || !(replyDrafts["__dm_bottom__"] || "").trim()}
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 999,
-                      border: "none",
-                      background: (replyDrafts["__dm_bottom__"] || "").trim() ? "linear-gradient(135deg, #4f46e5, #7c3aed)" : "var(--surface3)",
-                      color: (replyDrafts["__dm_bottom__"] || "").trim() ? "#fff" : "var(--dmuted2)",
-                      boxShadow: (replyDrafts["__dm_bottom__"] || "").trim() ? "0 10px 24px rgb(79 70 229 / 0.18)" : "none",
-                      cursor: (replyDrafts["__dm_bottom__"] || "").trim() ? "pointer" : "default",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                      transition: "background .15s, color .15s",
-                    }}
-                  >
-                    <Send style={{ width: 16, height: 16 }} />
-                  </button>
-                </div>
-              ) : null}
+              {isDMSource(selectedGroup.source) ? (() => {
+                // Messenger enforces a 24-hour reply window: Pages
+                // can only send a response within 24h of the user's
+                // last inbound message. Computing this client-side
+                // and disabling the Send button is kinder than
+                // surfacing Meta's opaque rejection after the user
+                // types + hits Enter. IG doesn't have this rule so
+                // the check is fb_dm-only.
+                const lastInbound = [...selectedGroup.items].reverse().find((i) => !i.is_own);
+                const windowClosed = selectedGroup.source === "fb_dm" && lastInbound
+                  ? (Date.now() - new Date(lastInbound.received_at).getTime()) > 24 * 60 * 60 * 1000
+                  : false;
+                const draftReady = (replyDrafts["__dm_bottom__"] || "").trim().length > 0;
+                const sendAllowed = !windowClosed && draftReady && !!lastInbound;
+                return (
+                  <div style={{ borderTop: "1px solid var(--dborder)", background: "var(--surface2)" }}>
+                    {windowClosed ? (
+                      <div style={{
+                        padding: "8px 14px",
+                        background: "color-mix(in srgb, var(--warning, #f59e0b) 12%, var(--surface2))",
+                        borderBottom: "1px solid color-mix(in srgb, var(--warning, #f59e0b) 30%, transparent)",
+                        fontSize: 12,
+                        lineHeight: 1.45,
+                        color: "var(--dtext)",
+                      }}>
+                        Reply window closed — this user last messaged over 24 hours ago. They need to message your Page again before you can reply.
+                      </div>
+                    ) : null}
+                    <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        value={replyDrafts["__dm_bottom__"] || ""}
+                        onChange={(e) => setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: e.target.value }))}
+                        placeholder={windowClosed ? "Messenger's 24h window is closed" : "Message..."}
+                        disabled={windowClosed}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            if (sendAllowed && lastInbound) {
+                              handleReply(selectedGroup, lastInbound);
+                              setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
+                            }
+                          }
+                        }}
+                        className="dt-body-sm"
+                        style={{
+                          flex: 1,
+                          padding: "10px 16px",
+                          borderRadius: 999,
+                          border: "1px solid var(--dborder)",
+                          background: "var(--surface)",
+                          color: "var(--dtext)",
+                          outline: "none",
+                          fontSize: 13,
+                          opacity: windowClosed ? 0.55 : 1,
+                          cursor: windowClosed ? "not-allowed" : "text",
+                        }}
+                      />
+                      <button
+                        onClick={() => {
+                          if (sendAllowed && lastInbound) {
+                            handleReply(selectedGroup, lastInbound);
+                            setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
+                          }
+                        }}
+                        disabled={replyingGroupId === selectedGroup.id || !sendAllowed}
+                        title={windowClosed ? "Reply window closed" : undefined}
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 999,
+                          border: "none",
+                          background: sendAllowed ? "linear-gradient(135deg, #4f46e5, #7c3aed)" : "var(--surface3)",
+                          color: sendAllowed ? "#fff" : "var(--dmuted2)",
+                          boxShadow: sendAllowed ? "0 10px 24px rgb(79 70 229 / 0.18)" : "none",
+                          cursor: sendAllowed ? "pointer" : "not-allowed",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                          transition: "background .15s, color .15s",
+                        }}
+                      >
+                        <Send style={{ width: 16, height: 16 }} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })() : null}
             </>
           )}
         </section>
