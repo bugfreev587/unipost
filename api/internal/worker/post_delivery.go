@@ -14,6 +14,8 @@ type PostDispatchWorker struct {
 	postHandler *handler.SocialPostHandler
 }
 
+const staleDeliveryAttemptTimeout = 5 * time.Minute
+
 func NewPostDispatchWorker(queries *db.Queries, postHandler *handler.SocialPostHandler) *PostDispatchWorker {
 	return &PostDispatchWorker{queries: queries, postHandler: postHandler}
 }
@@ -35,6 +37,9 @@ func (w *PostDispatchWorker) Start(ctx context.Context) {
 }
 
 func (w *PostDispatchWorker) runOnce(ctx context.Context) {
+	if err := w.postHandler.RecoverStaleDeliveryJobs(ctx, staleDeliveryAttemptTimeout); err != nil {
+		slog.Error("post dispatch worker: stale recovery failed", "error", err)
+	}
 	jobs, err := w.queries.ClaimPostDispatchJobs(ctx, 20)
 	if err != nil {
 		slog.Error("post dispatch worker: claim failed", "error", err)
@@ -73,6 +78,9 @@ func (w *PostRetryWorker) Start(ctx context.Context) {
 }
 
 func (w *PostRetryWorker) runOnce(ctx context.Context) {
+	if err := w.postHandler.RecoverStaleDeliveryJobs(ctx, staleDeliveryAttemptTimeout); err != nil {
+		slog.Error("post retry worker: stale recovery failed", "error", err)
+	}
 	jobs, err := w.queries.ClaimPostRetryJobs(ctx, 20)
 	if err != nil {
 		slog.Error("post retry worker: claim failed", "error", err)

@@ -41,6 +41,13 @@ SELECT * FROM post_delivery_jobs
 WHERE social_post_result_id = $1
 ORDER BY created_at DESC;
 
+-- name: ListStaleActivePostDeliveryJobs :many
+SELECT * FROM post_delivery_jobs
+WHERE state IN ('running', 'retrying')
+  AND last_attempt_at IS NOT NULL
+  AND last_attempt_at <= sqlc.arg('stale_before')::timestamptz
+ORDER BY last_attempt_at ASC, id ASC;
+
 -- name: ListPostDeliveryJobsByWorkspace :many
 SELECT * FROM post_delivery_jobs
 WHERE workspace_id = $1

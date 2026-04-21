@@ -18,6 +18,7 @@ import (
 
 const (
 	defaultDeliveryJobMaxAttempts = 5
+	staleDeliveryAttemptTimeout   = 5 * time.Minute
 )
 
 type postQueueSummary struct {
@@ -590,6 +591,124 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 		}
 	}
 
+	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
+	h.refreshParentPostStatusContext(ctx, post, allResults)
+	return nil
+}
+
+func (h *SocialPostHandler) RecoverStaleDeliveryJobs(ctx context.Context, maxAge time.Duration) error {
+	staleBefore := time.Now().Add(-maxAge)
+	jobs, err := h.queries.ListStaleActivePostDeliveryJobs(ctx, pgtype.Timestamptz{
+		Time:  staleBefore,
+		Valid: true,
+	})
+	if err != nil {
+		return err
+	}
+	for _, job := range jobs {
+		if err := h.recoverStaleDeliveryJob(ctx, job); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.PostDeliveryJob) error {
+	post, err := h.queries.GetSocialPostByID(ctx, job.PostID)
+	if err != nil {
+		return err
+	}
+	result, err := h.queries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{
+		ID:     job.SocialPostResultID,
+		PostID: job.PostID,
+	})
+	if err != nil {
+		return err
+	}
+
+	errMsg := fmt.Sprintf("delivery attempt stalled after %s and was re-queued automatically", staleDeliveryAttemptTimeout.Round(time.Second))
+	if job.Kind == "retry" && job.Attempts >= job.MaxAttempts {
+		errMsg = fmt.Sprintf("delivery attempt stalled after %s and exhausted retry attempts", staleDeliveryAttemptTimeout.Round(time.Second))
+	}
+
+	if _, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+		ID:           result.ID,
+		Status:       "failed",
+		ExternalID:   pgtype.Text{},
+		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
+		PublishedAt:  pgtype.Timestamptz{},
+		Url:          pgtype.Text{},
+		DebugCurl:    pgtype.Text{},
+	}); err != nil {
+		return err
+	}
+
+	failureStage := pgtype.Text{String: "worker_timeout", Valid: true}
+	errorCode := pgtype.Text{String: "worker_stalled", Valid: true}
+	lastError := pgtype.Text{String: errMsg, Valid: true}
+
+	switch job.Kind {
+	case "dispatch":
+		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
+			ID:                job.ID,
+			State:             "failed",
+			FailureStage:      failureStage,
+			ErrorCode:         errorCode,
+			PlatformErrorCode: pgtype.Text{},
+			LastError:         lastError,
+			NextRunAt:         pgtype.Timestamptz{},
+		}); err != nil {
+			return err
+		}
+		if _, err := h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
+			PostID:             post.ID,
+			SocialPostResultID: result.ID,
+			WorkspaceID:        post.WorkspaceID,
+			SocialAccountID:    result.SocialAccountID,
+			Platform:           job.Platform,
+			PostInputIndex:     job.PostInputIndex,
+			Kind:               "retry",
+			State:              "pending",
+			Attempts:           0,
+			MaxAttempts:        int32(defaultDeliveryJobMaxAttempts),
+			FailureStage:       failureStage,
+			ErrorCode:          errorCode,
+			PlatformErrorCode:  pgtype.Text{},
+			LastError:          lastError,
+			NextRunAt:          pgtype.Timestamptz{Time: time.Now().Add(retryBackoff(job.Attempts)), Valid: true},
+		}); err != nil {
+			return err
+		}
+	default:
+		nextRunAt := pgtype.Timestamptz{Time: time.Now().Add(retryBackoff(job.Attempts)), Valid: true}
+		state := "pending"
+		if job.Attempts >= job.MaxAttempts {
+			state = "dead"
+			nextRunAt = pgtype.Timestamptz{}
+		}
+		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
+			ID:                job.ID,
+			State:             state,
+			FailureStage:      failureStage,
+			ErrorCode:         errorCode,
+			PlatformErrorCode: pgtype.Text{},
+			LastError:         lastError,
+			NextRunAt:         nextRunAt,
+		}); err != nil {
+			return err
+		}
+	}
+
+	h.recordPostFailure(ctx, postfailures.BuildParams(
+		post.ID,
+		result.ID,
+		post.WorkspaceID,
+		result.SocialAccountID,
+		postfailures.FirstNonEmpty(job.Platform),
+		"worker_timeout",
+		errMsg,
+		errMsg,
+	))
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
 	return nil

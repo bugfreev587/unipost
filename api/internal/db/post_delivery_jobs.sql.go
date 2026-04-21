@@ -590,6 +590,55 @@ func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListP
 	return items, nil
 }
 
+const listStaleActivePostDeliveryJobs = `-- name: ListStaleActivePostDeliveryJobs :many
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at FROM post_delivery_jobs
+WHERE state IN ('running', 'retrying')
+  AND last_attempt_at IS NOT NULL
+  AND last_attempt_at <= $1::timestamptz
+ORDER BY last_attempt_at ASC, id ASC
+`
+
+func (q *Queries) ListStaleActivePostDeliveryJobs(ctx context.Context, staleBefore pgtype.Timestamptz) ([]PostDeliveryJob, error) {
+	rows, err := q.db.Query(ctx, listStaleActivePostDeliveryJobs, staleBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PostDeliveryJob{}
+	for rows.Next() {
+		var i PostDeliveryJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.PostID,
+			&i.SocialPostResultID,
+			&i.WorkspaceID,
+			&i.SocialAccountID,
+			&i.Platform,
+			&i.PostInputIndex,
+			&i.Kind,
+			&i.State,
+			&i.Attempts,
+			&i.MaxAttempts,
+			&i.FailureStage,
+			&i.ErrorCode,
+			&i.PlatformErrorCode,
+			&i.LastError,
+			&i.NextRunAt,
+			&i.LastAttemptAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markPostDeliveryJobFailed = `-- name: MarkPostDeliveryJobFailed :one
 UPDATE post_delivery_jobs
 SET state = $2,
