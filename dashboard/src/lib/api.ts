@@ -1092,6 +1092,10 @@ export interface MeResponse {
   email: string;
   name?: string;
   is_admin: boolean;
+  // is_super_admin flags users on the SUPER_ADMINS env var. Dashboard
+  // uses it to gate in-development features (currently the Facebook
+  // Pages entry in Connections) without a second env var.
+  is_super_admin?: boolean;
   // Intent-collection redesign: the dashboard uses these to decide
   // whether to pop the Welcome modal on first load.
   onboarding_intent?: OnboardingIntent;

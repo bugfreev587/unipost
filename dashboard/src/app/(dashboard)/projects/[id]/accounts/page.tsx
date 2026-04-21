@@ -9,10 +9,10 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation,
+  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation, getMe,
   type SocialAccount, type Profile,
 } from "@/lib/api";
-import { isFacebookEnabled } from "@/components/dashboard/shell";
+import { isFacebookEnabledForMe } from "@/components/dashboard/shell";
 import { FacebookPagePicker } from "@/components/accounts/facebook-page-picker";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
@@ -47,14 +47,17 @@ const FIRST_TIME_PLATFORM_IDS = new Set(["bluesky", "linkedin", "instagram", "th
 export default function AccountsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const { getToken, userId } = useAuth();
+  const { getToken } = useAuth();
+  // isSuperAdmin comes from /v1/me and authoritatively gates the
+  // Facebook Pages entry during in-development lockdown. Starts
+  // undefined so we don't flash the Facebook button before the
+  // /me round-trip resolves — the splice below only runs when the
+  // value lands true.
+  const [isSuperAdmin, setIsSuperAdmin] = useState<boolean>(false);
 
-  // PLATFORMS is memoized on userId so the Facebook feature-flag check
-  // (which supports per-user allowlisting) picks up changes without a
-  // full reload. Stable otherwise.
   const PLATFORMS = (() => {
     const list = [...BASE_PLATFORMS];
-    if (isFacebookEnabled(userId || undefined)) list.splice(3, 0, FACEBOOK_PLATFORM);
+    if (isFacebookEnabledForMe(isSuperAdmin)) list.splice(3, 0, FACEBOOK_PLATFORM);
     return list;
   })();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
@@ -141,6 +144,23 @@ export default function AccountsPage() {
   }, [getToken]);
 
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
+
+  // Resolve super-admin status once per mount. If the /me call fails
+  // we fall back to "not super admin" — this page is the only
+  // Facebook Pages entry point, so a failed fetch simply hides the
+  // in-development button until the user refreshes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await getMe(token);
+        if (!cancelled) setIsSuperAdmin(!!res.data.is_super_admin);
+      } catch { /* silent — leave the FB button hidden */ }
+    })();
+    return () => { cancelled = true; };
+  }, [getToken]);
 
   async function handleBlueskyConnect() {
     if (!handle.trim() || !appPassword.trim()) return;

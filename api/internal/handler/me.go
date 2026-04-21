@@ -17,11 +17,12 @@ import (
 
 type MeHandler struct {
 	queries      *db.Queries
-	adminChecker *auth.AdminChecker
+	adminChecker      *auth.AdminChecker
+	superAdminChecker *auth.SuperAdminChecker
 }
 
-func NewMeHandler(queries *db.Queries, adminChecker *auth.AdminChecker) *MeHandler {
-	return &MeHandler{queries: queries, adminChecker: adminChecker}
+func NewMeHandler(queries *db.Queries, adminChecker *auth.AdminChecker, superAdminChecker *auth.SuperAdminChecker) *MeHandler {
+	return &MeHandler{queries: queries, adminChecker: adminChecker, superAdminChecker: superAdminChecker}
 }
 
 type meResponse struct {
@@ -29,6 +30,10 @@ type meResponse struct {
 	Email   string `json:"email"`
 	Name    string `json:"name,omitempty"`
 	IsAdmin bool   `json:"is_admin"`
+	// IsSuperAdmin flags users on SUPER_ADMINS. The dashboard uses it
+	// to gate in-development features (currently just the Facebook
+	// Pages entry in Connections) without a second env var.
+	IsSuperAdmin bool `json:"is_super_admin"`
 	// Intent-collection fields. The frontend uses OnboardingShownAt to
 	// decide whether to pop the Welcome modal on first dashboard load.
 	// OnboardingIntent is one of: "exploring", "own_accounts",
@@ -55,10 +60,11 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := meResponse{
-		UserID:  user.ID,
-		Email:   user.Email,
-		Name:    user.Name.String,
-		IsAdmin: h.adminChecker.IsAdmin(r.Context(), userID),
+		UserID:       user.ID,
+		Email:        user.Email,
+		Name:         user.Name.String,
+		IsAdmin:      h.adminChecker.IsAdmin(r.Context(), userID),
+		IsSuperAdmin: h.superAdminChecker.IsSuperAdminByUser(userID, user.Email),
 	}
 	if user.OnboardingIntent.Valid {
 		v := user.OnboardingIntent.String

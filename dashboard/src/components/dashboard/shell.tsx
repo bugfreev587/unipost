@@ -67,18 +67,15 @@ const ALL_NAV_ITEMS = [
 
 const FEATURE_FLAGS: Record<string, string | undefined> = {
   INBOX: process.env.NEXT_PUBLIC_FEATURE_INBOX,
-  // FACEBOOK gates the "Connect Facebook" button in Connections and
-  // the Facebook entry in compose / inbox / analytics surfaces.
-  // Matches server-side ENABLE_FACEBOOK_PAGES — both must be on for
-  // the flow to work end-to-end. See internal/auth/feature_flags.go.
-  FACEBOOK: process.env.NEXT_PUBLIC_ENABLE_FACEBOOK_PAGES,
 };
 
-// isFacebookEnabled is exported so non-nav consumers (e.g., the
-// Connections page's platform list, the compose-drawer platform
-// picker) can gate their own UI without duplicating the env-var read.
-export function isFacebookEnabled(userId?: string, userEmail?: string): boolean {
-  return isFeatureEnabled(FEATURE_FLAGS.FACEBOOK, userId, userEmail);
+// Facebook Pages is in-development and only exposed to SUPER_ADMINS
+// (internal team). The authoritative check lives server-side via the
+// /v1/me response's is_super_admin field — consumers read that rather
+// than consult an env var, so the allowlist stays in one place
+// (SUPER_ADMINS) on the API.
+export function isFacebookEnabledForMe(isSuperAdmin: boolean | undefined): boolean {
+  return !!isSuperAdmin;
 }
 
 // Filter nav items based only on feature flags.

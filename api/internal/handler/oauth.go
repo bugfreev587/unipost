@@ -18,20 +18,25 @@ import (
 )
 
 type OAuthHandler struct {
-	queries         *db.Queries
-	encryptor       *crypto.AESEncryptor
-	baseRedirectURL string
+	queries           *db.Queries
+	encryptor         *crypto.AESEncryptor
+	baseRedirectURL   string
+	// superAdminChecker gates the Facebook Pages detour. A nil checker
+	// behaves as "no super admins configured" — every FB attempt
+	// returns 403. Non-FB platforms ignore it.
+	superAdminChecker *auth.SuperAdminChecker
 }
 
-func NewOAuthHandler(queries *db.Queries, encryptor *crypto.AESEncryptor) *OAuthHandler {
+func NewOAuthHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, superAdmins *auth.SuperAdminChecker) *OAuthHandler {
 	baseURL := os.Getenv("OAUTH_REDIRECT_BASE_URL")
 	if baseURL == "" {
 		baseURL = "https://api.unipost.dev"
 	}
 	return &OAuthHandler{
-		queries:         queries,
-		encryptor:       encryptor,
-		baseRedirectURL: baseURL,
+		queries:           queries,
+		encryptor:         encryptor,
+		baseRedirectURL:   baseURL,
+		superAdminChecker: superAdmins,
 	}
 }
 
@@ -41,12 +46,16 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	platformName := chi.URLParam(r, "platform")
 	redirectURL := r.URL.Query().Get("redirect_url")
 
-	// Feature-flag gate for Facebook during App Review — blocks both
-	// dashboard initiation and any curious direct caller so the
-	// adapter never mints an auth URL while the flag is off.
-	if platformName == "facebook" && !auth.FacebookEnabled() {
-		writeError(w, http.StatusForbidden, "FACEBOOK_DISABLED", "Facebook integration is not enabled")
-		return
+	// Super-admin-only gate for Facebook during App Review — only
+	// users on SUPER_ADMINS can kick off OAuth so the app never mints
+	// an auth URL for a regular customer while scopes are still being
+	// reviewed. Non-FB platforms skip this check entirely.
+	if platformName == "facebook" {
+		userID := auth.GetUserID(r.Context())
+		if !h.superAdminChecker.IsSuperAdmin(r.Context(), userID) {
+			writeError(w, http.StatusForbidden, "FACEBOOK_DISABLED", "Facebook integration is not enabled for your account")
+			return
+		}
 	}
 
 	profileID := h.getProfileID(r)
@@ -161,7 +170,11 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	// pending_connections and redirect the browser to the dashboard
 	// picker. See PRD §4.2.
 	if platformName == "facebook" {
-		if !auth.FacebookEnabled() {
+		// This callback is hit by Meta's browser redirect, which
+		// doesn't run through Clerk middleware — so we re-derive the
+		// super-admin check from profile → workspace.user_id instead
+		// of reading auth.GetUserID from context.
+		if !h.callerIsFacebookSuperAdmin(r, oauthState.ProfileID) {
 			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Facebook integration is not enabled")
 			return
 		}

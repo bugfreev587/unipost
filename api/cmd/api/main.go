@@ -302,7 +302,8 @@ func main() {
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
-	oauthHandler := handler.NewOAuthHandler(queries, encryptor)
+	superAdminChecker := auth.NewSuperAdminChecker(queries)
+	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus)
@@ -316,7 +317,7 @@ func main() {
 	apiMetricsRecorder := metrics.NewRecorder(queries)
 	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
-	meHandler := handler.NewMeHandler(queries, adminChecker)
+	meHandler := handler.NewMeHandler(queries, adminChecker, superAdminChecker)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
@@ -520,7 +521,7 @@ func main() {
 		// ENABLE_FACEBOOK_PAGES gates both so a toggled-off flag
 		// keeps unreviewed traffic off Meta's Graph API during audit.
 		r.Route("/v1/workspaces/{workspaceID}/pending-connections", func(r chi.Router) {
-			r.Use(auth.RequireFacebookEnabled)
+			r.Use(auth.RequireFacebookSuperAdmin(superAdminChecker))
 			r.Use(func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
