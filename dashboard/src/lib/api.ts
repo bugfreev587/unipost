@@ -481,6 +481,11 @@ export interface SocialPost {
   caption: string | null;
   media_urls?: string[];
   status: string;
+  execution_mode?: string;
+  queued_results_count?: number;
+  active_job_count?: number;
+  retrying_count?: number;
+  dead_count?: number;
   scheduled_at?: string;
   created_at: string;
   published_at?: string;
@@ -497,6 +502,34 @@ export interface SocialPost {
   // platforms even when no result rows have been persisted yet.
   target_platforms?: string[];
   results?: SocialPostResult[];
+}
+
+export interface PostDeliveryJob {
+  id: string;
+  post_id: string;
+  social_post_result_id: string;
+  social_account_id: string;
+  platform: string;
+  kind: "dispatch" | "retry";
+  state: "pending" | "running" | "retrying" | "succeeded" | "failed" | "dead" | "cancelled";
+  attempts: number;
+  max_attempts: number;
+  failure_stage?: string;
+  error_code?: string;
+  platform_error_code?: string;
+  last_error?: string;
+  next_run_at?: string;
+  last_attempt_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PostDeliveryJobsSummary {
+  pending_count: number;
+  running_count: number;
+  retrying_count: number;
+  dead_count: number;
+  recovered_today_count: number;
 }
 
 export async function listSocialPosts(
@@ -551,6 +584,40 @@ export async function deleteSocialPost(
 ): Promise<ApiResponse<{ deleted: boolean }>> {
   return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}`, token, {
     method: "DELETE",
+  });
+}
+
+export async function listPostDeliveryJobs(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<PostDeliveryJob[]>> {
+  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs`, token);
+}
+
+export async function getPostDeliveryJobsSummary(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<PostDeliveryJobsSummary>> {
+  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/summary`, token);
+}
+
+export async function retryPostDeliveryJobNow(
+  token: string,
+  workspaceId: string,
+  jobId: string
+): Promise<ApiResponse<PostDeliveryJob>> {
+  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/${jobId}/retry-now`, token, {
+    method: "POST",
+  });
+}
+
+export async function cancelPostDeliveryJob(
+  token: string,
+  workspaceId: string,
+  jobId: string
+): Promise<ApiResponse<PostDeliveryJob>> {
+  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/${jobId}/cancel`, token, {
+    method: "POST",
   });
 }
 

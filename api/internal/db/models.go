@@ -210,6 +210,29 @@ type PostAnalytic struct {
 	LastFailureReason   pgtype.Text        `json:"last_failure_reason"`
 }
 
+type PostDeliveryJob struct {
+	ID                 string             `json:"id"`
+	PostID             string             `json:"post_id"`
+	SocialPostResultID string             `json:"social_post_result_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	SocialAccountID    string             `json:"social_account_id"`
+	Platform           string             `json:"platform"`
+	PostInputIndex     int32              `json:"post_input_index"`
+	Kind               string             `json:"kind"`
+	State              string             `json:"state"`
+	Attempts           int32              `json:"attempts"`
+	MaxAttempts        int32              `json:"max_attempts"`
+	FailureStage       pgtype.Text        `json:"failure_stage"`
+	ErrorCode          pgtype.Text        `json:"error_code"`
+	PlatformErrorCode  pgtype.Text        `json:"platform_error_code"`
+	LastError          pgtype.Text        `json:"last_error"`
+	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
+	LastAttemptAt      pgtype.Timestamptz `json:"last_attempt_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+}
+
 type PostFailure struct {
 	ID                 string             `json:"id"`
 	PostID             string             `json:"post_id"`

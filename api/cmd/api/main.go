@@ -268,14 +268,24 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
 	managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus)
 	go managedTokenWorker.Start(workerCtx)
 
-	schedulerWorker := worker.NewSchedulerWorker(queries, encryptor, eventBus)
+	schedulerWorker := worker.NewSchedulerWorker(queries, socialPostHandler)
 	go schedulerWorker.Start(workerCtx)
+
+	dispatchWorker := worker.NewPostDispatchWorker(queries, socialPostHandler)
+	go dispatchWorker.Start(workerCtx)
+
+	retryWorker := worker.NewPostRetryWorker(queries, socialPostHandler)
+	go retryWorker.Start(workerCtx)
+
+	postDeliveryCleanupWorker := worker.NewPostDeliveryCleanupWorker(socialPostHandler)
+	go postDeliveryCleanupWorker.Start(workerCtx)
 
 	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
 	go analyticsRefreshWorker.Start(workerCtx)
@@ -309,7 +319,6 @@ func main() {
 	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus)
-	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker)
@@ -522,6 +531,11 @@ func main() {
 			// social_post_retry.go for the safety gates + parent-status
 			// recomputation logic.
 			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
+			r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/queue", socialPostHandler.GetPostQueue)
+			r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
+			r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
+			r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
+			r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
 
 		// OAuth connect (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
@@ -649,6 +663,11 @@ func main() {
 		r.Post("/v1/social-posts/{id}/restore", socialPostHandler.Restore)
 		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
 		r.Post("/v1/social-posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
+		r.Get("/v1/social-posts/{id}/queue", socialPostHandler.GetPostQueue)
+		r.Get("/v1/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
+		r.Get("/v1/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
+		r.Post("/v1/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
+		r.Post("/v1/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
 		// Drafts API (Sprint 2). Drafts are social_posts rows in
 		// status='draft' — no platform dispatch, no quota charge,
 		// no webhook fired. Publish flips them via optimistic lock

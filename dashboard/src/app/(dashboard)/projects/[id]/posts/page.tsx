@@ -19,6 +19,9 @@ type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft" | "archi
 const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
   published: { cls: "dbadge-green", label: "published" },
   scheduled: { cls: "dbadge-blue", label: "scheduled" },
+  queued: { cls: "dbadge-blue", label: "queued" },
+  dispatching: { cls: "dbadge-blue", label: "dispatching" },
+  retrying: { cls: "dbadge-amber", label: "retrying" },
   processing: { cls: "dbadge-blue", label: "processing" },
   partial: { cls: "dbadge-amber", label: "partial" },
   failed: { cls: "dbadge-red", label: "failed" },
@@ -29,6 +32,22 @@ const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
 function statusBadge(status: string) {
   const b = STATUS_BADGE[status] || { cls: "dbadge-gray", label: status };
   return <span className={`dbadge ${b.cls}`}><span className="dbadge-dot" />{b.label}</span>;
+}
+
+function queueHint(post: SocialPost) {
+  if ((post.queued_results_count ?? 0) > 0) {
+    const count = post.queued_results_count ?? 0;
+    return `${count} deliver${count === 1 ? "y" : "ies"} queued`;
+  }
+  if ((post.retrying_count ?? 0) > 0) {
+    const count = post.retrying_count ?? 0;
+    return `${count} deliver${count === 1 ? "y" : "ies"} retrying`;
+  }
+  if ((post.dead_count ?? 0) > 0 && post.status !== "failed") {
+    const count = post.dead_count ?? 0;
+    return `${count} dead deliver${count === 1 ? "y" : "ies"}`;
+  }
+  return "";
 }
 
 function sourceBadge(source: SocialPost["source"] | undefined) {
@@ -500,7 +519,14 @@ export default function PostsPage() {
                       <td>{platformIcons(post)}</td>
                       <td>{sourceBadge(post.source)}</td>
                       <td>{profileLabel(post, profiles)}</td>
-                      <td>{statusBadge(post.status)}</td>
+                      <td>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {statusBadge(post.status)}
+                          {queueHint(post) ? (
+                            <span style={{ fontSize: 11, color: "var(--dmuted2)", lineHeight: 1.3 }}>{queueHint(post)}</span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td><span className="posts-time">{getTime(post)}</span></td>
                       <td>
                         <div className="posts-actions" ref={menuOpen === post.id ? menuRef : undefined}>

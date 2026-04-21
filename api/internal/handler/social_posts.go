@@ -143,6 +143,11 @@ type socialPostResponse struct {
 	Caption     *string              `json:"caption"`
 	MediaURLs   []string             `json:"media_urls,omitempty"`
 	Status      string               `json:"status"`
+	ExecutionMode string             `json:"execution_mode,omitempty"`
+	QueuedResultsCount int           `json:"queued_results_count,omitempty"`
+	ActiveJobCount int               `json:"active_job_count,omitempty"`
+	RetryingCount int                `json:"retrying_count,omitempty"`
+	DeadCount int                    `json:"dead_count,omitempty"`
 	CreatedAt   time.Time            `json:"created_at"`
 	ScheduledAt *time.Time           `json:"scheduled_at,omitempty"`
 	PublishedAt *time.Time           `json:"published_at,omitempty"`
@@ -334,10 +339,9 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 	})
 }
 
-// createImmediatePost is the synchronous publish path. Walks each
-// PlatformPostInput, dispatches to its account's adapter with the
-// per-post caption / media / options, persists results with the
-// per-result caption populated, and returns the full response.
+// createImmediatePost persists the post and queues one delivery job per
+// target input. The actual adapter dispatch happens asynchronously in
+// the background workers.
 func (h *SocialPostHandler) createImmediatePost(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -362,60 +366,12 @@ func (h *SocialPostHandler) executeImmediatePost(
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
 ) (socialPostResponse, error) {
-	// We still need the FULL db.SocialAccount for each unique account
-	// (token, refresh, etc.) — accountMap only has platform name +
-	// disconnected flag. Look up each unique account_id once.
-	uniqueIDs := uniqueAccountIDs(parsed.Posts)
-	dbAccounts := make(map[string]db.SocialAccount, len(uniqueIDs))
-	for _, id := range uniqueIDs {
-		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
-			ID:          id,
-			WorkspaceID: workspaceID,
-		})
-		if err != nil {
-			// Missing accounts are reported as failed results below;
-			// continue so we don't fail the whole request.
-			continue
-		}
-		dbAccounts[id] = acc
-	}
-
-	// Persist the parent post FIRST so per-result rows can FK to it.
-	metaJSON, _ := platform.EncodePostMetadata(parsed.Posts)
-	canonicalCaption := pgtype.Text{}
-	if len(parsed.Posts) > 0 && parsed.Posts[0].Caption != "" {
-		canonicalCaption = pgtype.Text{String: parsed.Posts[0].Caption, Valid: true}
-	}
-	canonicalMedia := []string{}
-	if len(parsed.Posts) > 0 && parsed.Posts[0].MediaURLs != nil {
-		canonicalMedia = parsed.Posts[0].MediaURLs
-	}
-
-	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
-		WorkspaceID:    workspaceID,
-		Caption:        canonicalCaption,
-		MediaUrls:      canonicalMedia,
-		Status:         "publishing",
-		Metadata:       metaJSON,
-		ScheduledAt:    pgtype.Timestamptz{},
-		IdempotencyKey: idempotencyKeyParam(parsed.IdempotencyKey),
-		Source:         resolveSource(r.Context()),
-		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueIDs),
-	})
-	if err != nil {
-		return socialPostResponse{}, fmt.Errorf("failed to create post: %w", err)
-	}
-
-	resp := h.executePublishLoop(r, workspaceID, post, parsed, dbAccounts, accountMap)
-	return resp, nil
+	return h.queueImmediatePost(r.Context(), workspaceID, parsed, accountMap)
 }
 
-// publishExistingPost is the publish-from-draft entry point. The
-// parent social_posts row already exists (in status='publishing'
-// after ClaimDraftForPublish locked it); we just need to load
-// accounts and run the same publish loop createImmediatePost uses.
-// Used by PublishDraft so quota counting / event emission /
-// per-result caption persistence stay in one code path.
+// publishExistingPost is the publish-from-draft entry point. The parent
+// row already exists after ClaimDraftForPublish locked it; we now create
+// pending result rows plus dispatch jobs instead of publishing inline.
 func (h *SocialPostHandler) publishExistingPost(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -426,18 +382,12 @@ func (h *SocialPostHandler) publishExistingPost(
 ) {
 	uniqueIDs := uniqueAccountIDs(parsed.Posts)
 	post.ProfileIds = h.ensureProfileIDsForPost(r.Context(), post, uniqueIDs)
-	dbAccounts := make(map[string]db.SocialAccount, len(uniqueIDs))
-	for _, id := range uniqueIDs {
-		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
-			ID:          id,
-			WorkspaceID: workspaceID,
-		})
-		if err != nil {
-			continue
-		}
-		dbAccounts[id] = acc
+	resp, err := h.enqueueExistingPostDeliveries(r.Context(), post, parsed.Posts, accountMap)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
 	}
-	h.runPublishLoop(w, r, workspaceID, post, parsed, dbAccounts, accountMap)
+	writeSuccess(w, resp)
 }
 
 // runPublishLoop is the shared body of createImmediatePost and
@@ -891,6 +841,16 @@ func (h *SocialPostHandler) publishOne(
 	accountMap map[string]platform.ValidateAccount,
 	tracker *quota.PerAccountTracker,
 ) (oc publishOneOutcome) {
+	return h.publishOneContext(r.Context(), pp, dbAccounts, accountMap, tracker)
+}
+
+func (h *SocialPostHandler) publishOneContext(
+	ctx context.Context,
+	pp platform.PlatformPostInput,
+	dbAccounts map[string]db.SocialAccount,
+	accountMap map[string]platform.ValidateAccount,
+	tracker *quota.PerAccountTracker,
+) (oc publishOneOutcome) {
 	// Resolve account.
 	acc, ok := dbAccounts[pp.AccountID]
 	if !ok {
@@ -948,12 +908,12 @@ func (h *SocialPostHandler) publishOne(
 	// can retry the refresh later.
 	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
 		if refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
-			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(r.Context(), refreshTok); refErr == nil && newAccess != "" {
+			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshTok); refErr == nil && newAccess != "" {
 				encAccess, encErr := h.encryptor.Encrypt(newAccess)
 				encRefresh, encErr2 := h.encryptor.Encrypt(newRefresh)
 				if encErr == nil && encErr2 == nil {
 					accessToken = newAccess
-					if updateErr := h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+					if updateErr := h.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
 						ID:             acc.ID,
 						AccessToken:    encAccess,
 						RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
@@ -977,7 +937,7 @@ func (h *SocialPostHandler) publishOne(
 	// the media), so we surface them as the post's err.
 	mediaURLs := append([]string(nil), pp.MediaURLs...)
 	if len(pp.MediaIDs) > 0 {
-		extra, mediaErr := h.resolveMediaIDsToURLs(r.Context(), pp.MediaIDs)
+		extra, mediaErr := h.resolveMediaIDsToURLs(ctx, pp.MediaIDs)
 		if mediaErr != nil {
 			oc.err = mediaErr
 			return
@@ -1000,7 +960,7 @@ func (h *SocialPostHandler) publishOne(
 	// result row. Per-dispatch so concurrent publishes don't trample
 	// each other.
 	debugRec := debugrt.NewRecorder()
-	dispatchCtx := debugrt.WithRecorder(r.Context(), debugRec)
+	dispatchCtx := debugrt.WithRecorder(ctx, debugRec)
 
 	postResult, err := adapter.Post(
 		dispatchCtx,
@@ -1020,7 +980,7 @@ func (h *SocialPostHandler) publishOne(
 	// back the main post — it's recorded as a warning instead.
 	if err == nil && postResult != nil && pp.FirstComment != "" {
 		if commenter, ok := adapter.(platform.FirstCommentAdapter); ok {
-			if _, ferr := commenter.PostComment(r.Context(), accessToken, postResult.ExternalID, pp.FirstComment); ferr != nil {
+			if _, ferr := commenter.PostComment(ctx, accessToken, postResult.ExternalID, pp.FirstComment); ferr != nil {
 				oc.firstCommentWarning = ferr.Error()
 				slog.Warn("first_comment failed",
 					"account_id", acc.ID,
@@ -1272,6 +1232,7 @@ func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Req
 // Used by both writeReplayedPost (single) and processBulkOne (bulk).
 func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.SocialPost) socialPostResponse {
 	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
+	jobs, _ := h.queries.ListPostDeliveryJobsByPost(r.Context(), post.ID)
 
 	// Resolve platform + account name once per result via the workspace
 	// account map (cheaper than per-result GetSocialAccount calls).
@@ -1294,7 +1255,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 	resp := socialPostResponse{
 		ID:         post.ID,
 		MediaURLs:  post.MediaUrls,
-		Status:     post.Status,
+		Status:     deriveSocialPostStatus(post, results, jobs),
 		CreatedAt:  post.CreatedAt.Time,
 		Source:     post.Source,
 		ProfileIDs: post.ProfileIds,
@@ -1349,6 +1310,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 		}
 		resp.Results = append(resp.Results, rr)
 	}
+	applyQueueSummary(&resp, jobs)
 
 	return resp
 }
@@ -1375,6 +1337,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
+	jobs, _ := h.queries.ListPostDeliveryJobsByPost(r.Context(), post.ID)
 	submittedByAccount := buildSubmittedMap(post.Metadata, derefText(post.Caption))
 	var responseResults []postResultResponse
 	for _, res := range results {
@@ -1502,17 +1465,19 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 		publishedAt = &post.PublishedAt.Time
 	}
 
-	writeSuccess(w, socialPostResponse{
+	resp := socialPostResponse{
 		ID:          post.ID,
 		Caption:     caption,
 		MediaURLs:   post.MediaUrls,
-		Status:      post.Status,
+		Status:      deriveSocialPostStatus(post, results, jobs),
 		CreatedAt:   post.CreatedAt.Time,
 		PublishedAt: publishedAt,
 		Source:      post.Source,
 		ProfileIDs:  post.ProfileIds,
 		Results:     responseResults,
-	})
+	}
+	applyQueueSummary(&resp, jobs)
+	writeSuccess(w, resp)
 }
 
 // List handles GET /v1/social-posts. Sprint 2 added query-string
@@ -1579,6 +1544,15 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			name = acc.AccountName.String
 		}
 		accountMap[acc.ID] = accountSummary{Platform: acc.Platform, Name: name}
+	}
+	postIDs := make([]string, 0, len(posts))
+	for _, p := range posts {
+		postIDs = append(postIDs, p.ID)
+	}
+	jobRows, _ := h.queries.ListPostDeliveryJobsByPostIDs(r.Context(), postIDs)
+	jobsByPost := make(map[string][]db.PostDeliveryJob, len(postIDs))
+	for _, job := range jobRows {
+		jobsByPost[job.PostID] = append(jobsByPost[job.PostID], job)
 	}
 
 	var result []socialPostResponse
@@ -1649,11 +1623,11 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		result = append(result, socialPostResponse{
+		resp := socialPostResponse{
 			ID:          p.ID,
 			Caption:     caption,
 			MediaURLs:   p.MediaUrls,
-			Status:      p.Status,
+			Status:      deriveSocialPostStatus(p, postResults, jobsByPost[p.ID]),
 			CreatedAt:   p.CreatedAt.Time,
 			ScheduledAt: scheduledAt,
 			PublishedAt: publishedAt,
@@ -1662,7 +1636,9 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			ProfileIDs:  p.ProfileIds,
 			TargetPlatforms: targetPlatforms,
 			Results:         responseResults,
-		})
+		}
+		applyQueueSummary(&resp, jobsByPost[p.ID])
+		result = append(result, resp)
 	}
 	if result == nil {
 		result = []socialPostResponse{}
