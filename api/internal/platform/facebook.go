@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 // FacebookAdapter implements PlatformAdapter and OAuthAdapter for
@@ -33,11 +34,23 @@ import (
 // permanent); OAuth returns a User Token which we use once to
 // enumerate the Pages the user manages.
 type FacebookAdapter struct {
-	client *http.Client
+	client     *http.Client
+	mediaProxy *storage.Client // optional; recommended for video posts
 }
 
 func NewFacebookAdapter() *FacebookAdapter {
 	return &FacebookAdapter{client: debugrt.NewClient(60 * time.Second)}
+}
+
+// SetMediaProxy attaches an R2-backed media proxy. Facebook video
+// uploads rely on the file_url pull model — FB fetches the source
+// asynchronously, often long after the 15-minute presigned URL we
+// mint from R2 has expired, which leaves the video stuck in
+// video_status=uploading forever. Staging video bytes through the
+// public R2 bucket (no TTL on those URLs) avoids that race entirely.
+// Safe to call with nil; videos then fall back to the original URL.
+func (a *FacebookAdapter) SetMediaProxy(c *storage.Client) {
+	a.mediaProxy = c
 }
 
 func (a *FacebookAdapter) Platform() string { return "facebook" }
@@ -459,10 +472,24 @@ func (a *FacebookAdapter) postPhoto(ctx context.Context, accessToken, pageID, ca
 // as photos; `file_url` is FB's param for the remote source. v1 does
 // not support resumable upload — videos over ~1GB should be
 // rejected at the validator.
+//
+// When a media proxy is configured (the usual case), we stage the
+// video through our public R2 bucket first so FB's async fetch
+// sees a URL that won't expire mid-download. Without this, any FB
+// video upload that takes longer than the source URL's TTL gets
+// stuck in video_status="uploading" indefinitely.
 func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, description, videoURL string) (*PostResult, error) {
+	stagedURL := videoURL
+	if a.mediaProxy != nil {
+		proxied, err := a.mediaProxy.UploadFromURL(ctx, videoURL)
+		if err != nil {
+			return nil, fmt.Errorf("facebook video: stage to R2: %w", err)
+		}
+		stagedURL = proxied
+	}
 	form := url.Values{
 		"access_token": {accessToken},
-		"file_url":     {videoURL},
+		"file_url":     {stagedURL},
 	}
 	if description != "" {
 		form.Set("description", description)

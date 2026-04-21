@@ -87,7 +87,6 @@ func main() {
 	platform.Register(platform.NewLinkedInAdapter())
 	platform.Register(platform.NewInstagramAdapter())
 	platform.Register(platform.NewThreadsAdapter())
-	platform.Register(platform.NewFacebookAdapter())
 
 	platform.Register(platform.NewTwitterAdapter()) // Native mode only — requires user's own API credentials
 
@@ -124,6 +123,16 @@ func main() {
 		platform.Register(tiktokAdapter)
 		slog.Info("tiktok adapter registered", "media_proxy", storageClient != nil)
 	}
+
+	// Facebook adapter is registered here (not above with the
+	// non-credential adapters) because it needs the media proxy to
+	// stage video uploads — without a public, long-lived R2 URL,
+	// FB's async /videos fetch races our 15-minute presigned URLs
+	// and leaves videos stuck in video_status=uploading.
+	fbAdapter := platform.NewFacebookAdapter()
+	fbAdapter.SetMediaProxy(storageClient)
+	platform.Register(fbAdapter)
+	slog.Info("facebook adapter registered", "media_proxy", storageClient != nil)
 	if os.Getenv("YOUTUBE_CLIENT_ID") != "" {
 		platform.Register(platform.NewYouTubeAdapter())
 		slog.Info("youtube adapter registered")
