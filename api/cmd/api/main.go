@@ -500,6 +500,11 @@ func main() {
 		// TikTok creator_info — required for the Content Posting API audit
 		// UI (see internal/handler/tiktok_creator_info.go).
 		r.Get("/v1/profiles/{profileID}/social-accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		// Facebook Page Insights — still super-admin gated while
+		// Facebook Pages is in development. Drop the middleware when
+		// the feature ships to all users.
+		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
+			Get("/v1/profiles/{profileID}/social-accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
 
 		// Managed Users view (dashboard, profile-scoped).
 		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
@@ -637,6 +642,8 @@ func main() {
 		// TikTok creator_info — required for the Content Posting API audit
 		// UI (see internal/handler/tiktok_creator_info.go).
 		r.Get("/v1/social-accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
+			Get("/v1/social-accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
 
 		// Media library — two-step upload (POST returns presigned URL,
 		// client PUTs to R2 directly), then reference the media_id in

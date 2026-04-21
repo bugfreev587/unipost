@@ -158,6 +158,12 @@ func (h *MetaWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.handleInstagramEntry(r, entry)
 		case "threads":
 			h.handleThreadsEntry(r, entry)
+		case "page":
+			// Facebook Page webhooks share Meta's generic envelope
+			// but use the "page" object type. Feed events (new
+			// comments, posts, reactions) arrive in `changes`;
+			// Messenger events in `messaging`.
+			h.handleFacebookEntry(r, entry)
 		default:
 			slog.Info("meta webhook: unhandled object type", "object", envelope.Object)
 		}
@@ -451,6 +457,175 @@ func (h *MetaWebhookHandler) handleThreadsReply(r *http.Request, account *webhoo
 	} else {
 		ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(replyItem))
 	}
+}
+
+// handleFacebookEntry processes a single Facebook Page webhook entry.
+// Entry.ID is the Page ID. Feed events (comments, posts, reactions)
+// arrive in Changes with field="feed"; Messenger events arrive in
+// Messaging the same way Instagram DMs do.
+//
+// We mirror the fallback pattern used by the Threads handler: look up
+// the account by ExternalAccountID first, then fall back to any active
+// Facebook account if Meta's webhook uses an ID we can't match.
+func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebhookEntry) {
+	account, err := h.findAccountByExternalID(r, "facebook", entry.ID)
+	if err != nil {
+		account, err = h.findAnyActiveAccount(r, "facebook")
+		if err != nil {
+			slog.Warn("meta webhook: no active Facebook account found",
+				"webhook_page_id", entry.ID, "err", err)
+			return
+		}
+		slog.Info("meta webhook: matched Facebook account via fallback",
+			"webhook_page_id", entry.ID, "account_id", account.ID)
+	}
+
+	// Feed events (comments, reactions). We only surface comments to
+	// the inbox — reactions/posts don't need human reply.
+	for _, change := range entry.Changes {
+		if change.Field != "feed" {
+			slog.Info("meta webhook: unhandled facebook change field",
+				"field", change.Field, "page_id", entry.ID)
+			continue
+		}
+		h.handleFacebookFeedChange(r, account, change.Value)
+	}
+
+	// Messenger DMs. Mirrors IG DM handling but stores Source="fb_dm"
+	// and uses the conversation ID (resolved from the sender PSID)
+	// as thread_key to match sync-fetched DMs.
+	for _, msg := range entry.Messaging {
+		if msg.Message == nil {
+			continue
+		}
+		isOwn := msg.Sender.ID == account.ExternalAccountID
+		ts := time.Unix(msg.Timestamp/1000, (msg.Timestamp%1000)*int64(time.Millisecond))
+		if msg.Timestamp == 0 {
+			ts = time.Now()
+		}
+
+		senderID := msg.Sender.ID
+		if isOwn {
+			senderID = msg.Recipient.ID
+		}
+		threadKey := senderID
+		parentExternalID := pgtype.Text{}
+		authorName := pgtype.Text{}
+		existing, lookupErr := h.queries.FindDMThreadKeyBySender(r.Context(), db.FindDMThreadKeyBySenderParams{
+			SocialAccountID: account.ID,
+			AuthorID:        pgtype.Text{String: msg.Sender.ID, Valid: true},
+		})
+		if lookupErr == nil {
+			if existing.ThreadKey != "" {
+				threadKey = existing.ThreadKey
+			}
+			parentExternalID = existing.ParentExternalID
+			authorName = existing.AuthorName
+		}
+
+		dmItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+			SocialAccountID:  account.ID,
+			WorkspaceID:      account.WorkspaceID,
+			Source:           "fb_dm",
+			ExternalID:       msg.Message.Mid,
+			ParentExternalID: parentExternalID,
+			AuthorName:       authorName,
+			AuthorID:         pgtype.Text{String: msg.Sender.ID, Valid: true},
+			Body:             pgtype.Text{String: msg.Message.Text, Valid: msg.Message.Text != ""},
+			IsOwn:            isOwn,
+			ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
+			Metadata:         []byte("{}"),
+			ThreadKey:        threadKey,
+			ThreadStatus:     "open",
+			AssignedTo:       pgtype.Text{},
+			LinkedPostID:     pgtype.Text{},
+		})
+		if err != nil {
+			slog.Warn("meta webhook: upsert fb dm failed", "err", err)
+		} else {
+			ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
+		}
+	}
+}
+
+// fbFeedValue is the shape of the "value" field for Facebook Page
+// feed webhooks. Meta reuses the same envelope for comments, posts,
+// reactions, and likes — we key off (item, verb) to decide what to do.
+type fbFeedValue struct {
+	Item       string `json:"item"` // "comment" | "post" | "reaction" | ...
+	Verb       string `json:"verb"` // "add" | "edit" | "edited" | "remove"
+	CommentID  string `json:"comment_id"`
+	PostID     string `json:"post_id"`
+	ParentID   string `json:"parent_id"`
+	SenderID   string `json:"sender_id"`
+	SenderName string `json:"sender_name"`
+	From       struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"from"`
+	Message     string `json:"message"`
+	CreatedTime int64  `json:"created_time"`
+}
+
+func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *webhookAccount, raw json.RawMessage) {
+	var val fbFeedValue
+	if err := json.Unmarshal(raw, &val); err != nil {
+		slog.Warn("meta webhook: decode facebook feed value failed", "err", err)
+		return
+	}
+	if val.Item != "comment" || val.Verb != "add" {
+		// Only new comments land in the inbox for v1.
+		return
+	}
+	if val.CommentID == "" {
+		return
+	}
+
+	// Prefer the structured `from` object (delivered when the app has
+	// pages_read_user_content); fall back to the flat sender_* fields
+	// Meta sends for less-privileged subscriptions.
+	authorID := val.From.ID
+	if authorID == "" {
+		authorID = val.SenderID
+	}
+	authorName := val.From.Name
+	if authorName == "" {
+		authorName = val.SenderName
+	}
+
+	parentID := val.PostID
+	if val.ParentID != "" && val.ParentID != val.PostID {
+		parentID = val.ParentID
+	}
+
+	isOwn := authorID != "" && authorID == account.ExternalAccountID
+	ts := time.Unix(val.CreatedTime, 0)
+	if val.CreatedTime == 0 {
+		ts = time.Now()
+	}
+
+	item, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+		SocialAccountID:  account.ID,
+		WorkspaceID:      account.WorkspaceID,
+		Source:           "fb_comment",
+		ExternalID:       val.CommentID,
+		ParentExternalID: pgtype.Text{String: parentID, Valid: parentID != ""},
+		AuthorName:       pgtype.Text{String: authorName, Valid: authorName != ""},
+		AuthorID:         pgtype.Text{String: authorID, Valid: authorID != ""},
+		Body:             pgtype.Text{String: val.Message, Valid: val.Message != ""},
+		IsOwn:            isOwn,
+		ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
+		Metadata:         []byte("{}"),
+		ThreadKey:        inboxThreadKey("fb_comment", val.CommentID, parentID, authorID),
+		ThreadStatus:     "open",
+		AssignedTo:       pgtype.Text{},
+		LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, account.ID, parentID),
+	})
+	if err != nil {
+		slog.Warn("meta webhook: upsert facebook comment failed", "err", err)
+		return
+	}
+	ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(item))
 }
 
 // findAllActiveAccounts returns all active accounts for a platform.

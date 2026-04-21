@@ -327,6 +327,8 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 		return
 	}
 
+	fbAdapter, _ := getFacebookAdapter()
+
 	createdAccounts := make([]string, 0, len(selected))
 	for _, page := range selected {
 		metadata := map[string]any{
@@ -351,6 +353,7 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 				TokenExpiresAt: pgtype.Timestamptz{Valid: false},
 			})
 			createdAccounts = append(createdAccounts, existing.ID)
+			h.subscribePageToWebhooks(r, fbAdapter, page)
 			continue
 		}
 
@@ -372,6 +375,7 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 			return
 		}
 		createdAccounts = append(createdAccounts, newAcc.ID)
+		h.subscribePageToWebhooks(r, fbAdapter, page)
 	}
 
 	// Swept last so a partial failure leaves the pending row around
@@ -423,6 +427,30 @@ func facebookFeedStoryURL(pageID, storyID string) string {
 		return "https://www.facebook.com/" + pageID + "/posts/" + storyID
 	}
 	return "https://www.facebook.com/" + storyID
+}
+
+// subscribePageToWebhooks asks Meta to deliver this Page's feed +
+// Messenger events to our App. Best-effort: a failure here doesn't
+// block connect finalize (the Page is still usable for publishing),
+// but it does mean comments/DMs won't arrive in the inbox in near
+// real-time until the user reconnects or we retry. We rely on sync
+// loops as the fallback until retry is wired.
+func (h *OAuthHandler) subscribePageToWebhooks(r *http.Request, fb *platform.FacebookAdapter, page pendingFacebookPage) {
+	if fb == nil {
+		return
+	}
+	pageToken, err := h.encryptor.Decrypt(page.PageAccessTokenEncrypted)
+	if err != nil {
+		slog.Warn("facebook finalize: decrypt page token for subscribe failed",
+			"page_id", page.ID, "err", err)
+		return
+	}
+	if err := fb.SubscribePageToWebhooks(r.Context(), pageToken, page.ID); err != nil {
+		slog.Warn("facebook finalize: subscribe page webhooks failed",
+			"page_id", page.ID, "err", err)
+		return
+	}
+	slog.Info("facebook finalize: subscribed page to webhooks", "page_id", page.ID)
 }
 
 // getFacebookAdapter pulls the registered FacebookAdapter instance.
