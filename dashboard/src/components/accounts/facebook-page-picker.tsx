@@ -14,7 +14,7 @@
 // After finalize, the modal calls `onFinalized` so the parent page
 // can refetch the account list.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 
@@ -28,7 +28,10 @@ interface Props {
   open: boolean;
   pendingId: string;
   workspaceId: string;
-  getToken: () => Promise<string | null>;
+  // Loose return type to match Clerk's useAuth().getToken signature
+  // directly without wrapping it in an extra arrow function whose
+  // identity changes every render.
+  getToken: () => Promise<string | null | undefined>;
   onClose: () => void;
   onFinalized: (connectedCount: number) => void;
 }
@@ -43,9 +46,22 @@ export function FacebookPagePicker({ open, pendingId, workspaceId, getToken, onC
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // finalizedRef short-circuits the fetch effect once finalize
+  // succeeds. The server deletes the pending row inside finalize,
+  // so any refetch between that moment and the parent unmounting
+  // this component (URL transition) would 404 and briefly render
+  // "Pending connection not found or expired" on a modal that's
+  // about to disappear.
+  const finalizedRef = useRef(false);
+
+  // Reset the guard when the parent hands us a NEW pendingId, so a
+  // second Connect attempt within the same session works.
+  useEffect(() => {
+    finalizedRef.current = false;
+  }, [pendingId]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || finalizedRef.current) return;
     let cancelled = false;
     (async () => {
       setLoad({ kind: "loading" });
@@ -99,6 +115,10 @@ export function FacebookPagePicker({ open, pendingId, workspaceId, getToken, onC
         return;
       }
       const res = await finalizePendingConnection(token, workspaceId, pendingId, Array.from(selected));
+      // Block any further refetches: the pending row is gone on the
+      // server, so the next GET would 404 and flash an error banner
+      // on the modal right before the parent unmounts us.
+      finalizedRef.current = true;
       onFinalized(res.data.connected_count);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Failed to connect selected Pages");

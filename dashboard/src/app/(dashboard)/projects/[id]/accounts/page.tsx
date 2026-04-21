@@ -458,20 +458,24 @@ export default function AccountsPage() {
           open
           pendingId={pendingFacebookId}
           workspaceId={workspaceId}
-          getToken={async () => (await getToken()) ?? null}
+          getToken={getToken}
           onClose={closePicker}
           onFinalized={(count) => {
-            closePicker();
-            loadAccounts();
-            setAccountsError(null);
+            // Atomic URL transition: strip `pending` AND add the
+            // success banner params in one router.replace so there's
+            // no intermediate render where the picker is still
+            // mounted but its backing row has been deleted (that
+            // race produced a "Pending connection not found" flash
+            // on the modal before unmount).
+            const url = new URL(window.location.href);
+            url.searchParams.delete("pending");
             if (count > 0) {
-              // Reuse the success banner that the non-FB OAuth flow
-              // already uses; replaceState avoids an extra fetch.
-              const url = new URL(window.location.href);
               url.searchParams.set("status", "success");
               url.searchParams.set("account_name", `${count} Facebook Page${count === 1 ? "" : "s"}`);
-              router.replace(url.pathname + url.search);
             }
+            router.replace(url.pathname + url.search);
+            loadAccounts();
+            setAccountsError(null);
           }}
         />
       )}
