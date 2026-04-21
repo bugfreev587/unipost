@@ -19,6 +19,7 @@ import { buildContactPageHref } from "@/lib/support";
 import {
   Key,
   Send,
+  ListTodo,
   BarChart3,
   ChevronDown,
   Settings,
@@ -53,10 +54,8 @@ const ALL_NAV_ITEMS = [
     { href: "/accounts/native", label: "White-label" },
     { href: "/users", label: "Developer App Users" },
   ]},
-  { href: "/posts", label: "Posts", icon: Send, submenu: [
-    { href: "/posts", label: "Overview" },
-    { href: "/posts/queue", label: "Queue" },
-  ]},
+  { href: "/posts", label: "Posts", icon: Send, exactMatch: true },
+  { href: "/posts/queue", label: "Queue", icon: ListTodo, exactMatch: true },
   { href: "/inbox", label: "Inbox", icon: MessageSquare, featureFlag: "INBOX" },
   { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
@@ -91,6 +90,12 @@ function filterNavItems(userId?: string, userEmail?: string) {
     const filteredSub = item.submenu;
     return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
   }).filter((item) => item.submenu === undefined || item.submenu.length > 0);
+}
+
+function navItemIsActive(pathname: string, profileId: string | undefined, itemHref: string, exactMatch?: boolean) {
+  if (!profileId) return false;
+  const fullHref = `/projects/${profileId}${itemHref}`;
+  return exactMatch ? pathname === fullHref : pathname.startsWith(fullHref);
 }
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -190,11 +195,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     }
     loadWorkspace();
   }, [currentProfile?.workspace_id, getToken]);
-
-  function isActive(href: string) {
-    if (!profileId) return false;
-    return pathname.startsWith(`/projects/${profileId}${href}`);
-  }
 
   const displayName = user?.firstName || user?.username || "User";
   const planName = billing?.plan_name || "Free";
@@ -296,7 +296,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 Navigate
               </div>
               {navItems.map((item) => {
-                const active = isActive(item.href);
+                const active = navItemIsActive(pathname, profileId, item.href, "exactMatch" in item ? item.exactMatch : undefined);
                 const Icon = item.icon;
                 const hasSubmenu = !!item.submenu;
                 const submenuOpen = hasSubmenu && expandedMenu === item.href;
