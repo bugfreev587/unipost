@@ -67,7 +67,7 @@ WHERE workspace_id = $1;
 
 -- name: ClaimPostDispatchJobs :many
 WITH eligible AS (
-  SELECT DISTINCT ON (j.social_account_id) j.id
+  SELECT j.id
   FROM post_delivery_jobs j
   WHERE j.kind = 'dispatch'
     AND j.state = 'pending'
@@ -77,7 +77,18 @@ WITH eligible AS (
       WHERE active.social_account_id = j.social_account_id
         AND active.state IN ('running', 'retrying')
     )
-  ORDER BY j.social_account_id, j.created_at ASC
+    AND NOT EXISTS (
+      SELECT 1
+      FROM post_delivery_jobs earlier
+      WHERE earlier.social_account_id = j.social_account_id
+        AND earlier.kind = 'dispatch'
+        AND earlier.state = 'pending'
+        AND (
+          earlier.created_at < j.created_at
+          OR (earlier.created_at = j.created_at AND earlier.id < j.id)
+        )
+    )
+  ORDER BY j.created_at ASC, j.id ASC
   LIMIT $1
   FOR UPDATE SKIP LOCKED
 )
@@ -92,7 +103,7 @@ RETURNING j.*;
 
 -- name: ClaimPostRetryJobs :many
 WITH eligible AS (
-  SELECT DISTINCT ON (j.social_account_id) j.id
+  SELECT j.id
   FROM post_delivery_jobs j
   WHERE j.kind = 'retry'
     AND j.state = 'pending'
@@ -103,7 +114,22 @@ WITH eligible AS (
       WHERE active.social_account_id = j.social_account_id
         AND active.state IN ('running', 'retrying')
     )
-  ORDER BY j.social_account_id, COALESCE(j.next_run_at, j.created_at) ASC, j.created_at ASC
+    AND NOT EXISTS (
+      SELECT 1
+      FROM post_delivery_jobs earlier
+      WHERE earlier.social_account_id = j.social_account_id
+        AND earlier.kind = 'retry'
+        AND earlier.state = 'pending'
+        AND (earlier.next_run_at IS NULL OR earlier.next_run_at <= NOW())
+        AND (
+          COALESCE(earlier.next_run_at, earlier.created_at) < COALESCE(j.next_run_at, j.created_at)
+          OR (
+            COALESCE(earlier.next_run_at, earlier.created_at) = COALESCE(j.next_run_at, j.created_at)
+            AND earlier.id < j.id
+          )
+        )
+    )
+  ORDER BY COALESCE(j.next_run_at, j.created_at) ASC, j.id ASC
   LIMIT $1
   FOR UPDATE SKIP LOCKED
 )
