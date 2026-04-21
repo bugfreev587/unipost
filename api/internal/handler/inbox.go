@@ -142,6 +142,55 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Best-effort Facebook author enrichment. Some Page comment webhooks
+	// arrive without sender metadata, which leaves the UI showing
+	// "unknown". When we have a Page token and the item is missing author
+	// fields, fetch the comment's `from` block and persist it.
+	decryptedTokens := map[string]string{}
+	fbAdapter := platform.NewFacebookAdapter()
+	for idx := range items {
+		item := &items[idx]
+		if item.Source != "fb_comment" || item.IsOwn {
+			continue
+		}
+		if item.AuthorName.Valid && item.AuthorName.String != "" && item.AuthorAvatarUrl.Valid && item.AuthorAvatarUrl.String != "" {
+			continue
+		}
+		account, ok := accountMap[item.SocialAccountID]
+		if !ok {
+			continue
+		}
+		accessToken, ok := decryptedTokens[item.SocialAccountID]
+		if !ok {
+			decrypted, decErr := h.encryptor.Decrypt(account.AccessToken)
+			if decErr != nil || decrypted == "" {
+				continue
+			}
+			accessToken = decrypted
+			decryptedTokens[item.SocialAccountID] = decrypted
+		}
+		author, fetchErr := fbAdapter.FetchCommentAuthor(r.Context(), accessToken, item.ExternalID)
+		if fetchErr != nil || author == nil {
+			continue
+		}
+		if author.Name != "" {
+			item.AuthorName = pgtype.Text{String: author.Name, Valid: true}
+		}
+		if author.ID != "" {
+			item.AuthorID = pgtype.Text{String: author.ID, Valid: true}
+		}
+		if author.AvatarURL != "" {
+			item.AuthorAvatarUrl = pgtype.Text{String: author.AvatarURL, Valid: true}
+		}
+		_, _ = h.queries.UpdateInboxItemAuthorMetadata(r.Context(), db.UpdateInboxItemAuthorMetadataParams{
+			ID:              item.ID,
+			WorkspaceID:     item.WorkspaceID,
+			AuthorName:      author.Name,
+			AuthorID:        author.ID,
+			AuthorAvatarUrl: author.AvatarURL,
+		})
+	}
+
 	resp := make([]inboxItemResponse, 0, len(items))
 	for _, item := range items {
 		r := toInboxResponse(item)

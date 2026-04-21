@@ -595,6 +595,37 @@ func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadPa
 	return err
 }
 
+const updateInboxItemAuthorMetadata = `-- name: UpdateInboxItemAuthorMetadata :execrows
+UPDATE inbox_items
+SET author_name = NULLIF($3, ''),
+    author_id = NULLIF($4, ''),
+    author_avatar_url = NULLIF($5, '')
+WHERE id = $1
+  AND workspace_id = $2
+`
+
+type UpdateInboxItemAuthorMetadataParams struct {
+	ID              string `json:"id"`
+	WorkspaceID     string `json:"workspace_id"`
+	AuthorName      string `json:"author_name"`
+	AuthorID        string `json:"author_id"`
+	AuthorAvatarUrl string `json:"author_avatar_url"`
+}
+
+func (q *Queries) UpdateInboxItemAuthorMetadata(ctx context.Context, arg UpdateInboxItemAuthorMetadataParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateInboxItemAuthorMetadata,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AuthorName,
+		arg.AuthorID,
+		arg.AuthorAvatarUrl,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const reconcileDMThreadKeys = `-- name: ReconcileDMThreadKeys :execrows
 UPDATE inbox_items
 SET thread_key = $3,

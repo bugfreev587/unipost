@@ -79,9 +79,10 @@ type CommentNode = {
   children: CommentNode[];
 };
 
-const COMMENT_THREAD_INDENT = 28;
+const COMMENT_THREAD_INDENT = 36;
 const COMMENT_THREAD_LINE_COLOR = "rgba(255,255,255,.14)";
-const COMMENT_THREAD_ELBOW_HEIGHT = 38;
+const COMMENT_THREAD_ELBOW_HEIGHT = 34;
+const COMMENT_THREAD_LINE_X = 15;
 
 function initialsFromName(name?: string) {
   const value = (name || "?").trim();
@@ -909,7 +910,7 @@ export default function InboxPage() {
     // Facebook-style comment bubble
     const avatarSize = depth > 0 ? 28 : 32;
     return (
-      <div key={item.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", maxWidth: "100%" }}>
+      <div key={item.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "100%" }}>
         <Avatar src={avatarSrc} label={avatarLabel} size={avatarSize} />
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Bubble */}
@@ -1010,7 +1011,7 @@ export default function InboxPage() {
                   key={`ancestor-${node.item.id}-${idx}`}
                   style={{
                     position: "absolute",
-                    left: idx * COMMENT_THREAD_INDENT + 13,
+                    left: idx * COMMENT_THREAD_INDENT + COMMENT_THREAD_LINE_X,
                     top: 0,
                     bottom: 0,
                     width: 2,
@@ -1023,20 +1024,20 @@ export default function InboxPage() {
             <div
               style={{
                 position: "absolute",
-                left: (depth - 1) * COMMENT_THREAD_INDENT + 13,
+                left: (depth - 1) * COMMENT_THREAD_INDENT + COMMENT_THREAD_LINE_X,
                 top: 0,
-                width: 18,
+                width: COMMENT_THREAD_INDENT,
                 height: COMMENT_THREAD_ELBOW_HEIGHT,
                 borderLeft: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
                 borderBottom: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
-                borderBottomLeftRadius: 14,
+                borderBottomLeftRadius: 18,
               }}
             />
             {!isLast ? (
               <div
                 style={{
                   position: "absolute",
-                  left: (depth - 1) * COMMENT_THREAD_INDENT + 13,
+                  left: (depth - 1) * COMMENT_THREAD_INDENT + COMMENT_THREAD_LINE_X,
                   top: COMMENT_THREAD_ELBOW_HEIGHT,
                   bottom: 0,
                   width: 2,

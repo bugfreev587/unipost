@@ -35,6 +35,14 @@ UPDATE inbox_items
 SET is_read = true
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: UpdateInboxItemAuthorMetadata :execrows
+UPDATE inbox_items
+SET author_name = NULLIF($3, ''),
+    author_id = NULLIF($4, ''),
+    author_avatar_url = NULLIF($5, '')
+WHERE id = $1
+  AND workspace_id = $2;
+
 -- name: MarkAllInboxItemsRead :execrows
 UPDATE inbox_items
 SET is_read = true

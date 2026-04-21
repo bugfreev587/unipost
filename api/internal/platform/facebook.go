@@ -40,6 +40,12 @@ type FacebookAdapter struct {
 	mediaProxy *storage.Client // optional; recommended for video posts
 }
 
+type FacebookCommentAuthor struct {
+	ID        string
+	Name      string
+	AvatarURL string
+}
+
 func NewFacebookAdapter() *FacebookAdapter {
 	return &FacebookAdapter{client: debugrt.NewClient(60 * time.Second)}
 }
@@ -1113,6 +1119,53 @@ func (a *FacebookAdapter) FetchComments(ctx context.Context, accessToken string,
 		}
 	}
 	return entries, nil
+}
+
+// FetchCommentAuthor looks up a single comment by ID and returns the
+// author identity fields when Meta exposes them. Used as a best-effort
+// enrichment path for webhook rows that arrived without sender metadata.
+func (a *FacebookAdapter) FetchCommentAuthor(ctx context.Context, accessToken, commentExternalID string) (*FacebookCommentAuthor, error) {
+	params := url.Values{
+		"access_token": {accessToken},
+		"fields":       {"from{id,name,picture{url}}"},
+	}
+	endpoint := facebookGraphBase + "/" + commentExternalID + "?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook fetch comment author: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("facebook fetch comment author %d: %s", resp.StatusCode, string(body))
+	}
+
+	var parsed struct {
+		From struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Picture struct {
+				Data struct {
+					URL string `json:"url"`
+				} `json:"data"`
+			} `json:"picture"`
+		} `json:"from"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("facebook fetch comment author decode: %w", err)
+	}
+	if parsed.From.ID == "" && parsed.From.Name == "" && parsed.From.Picture.Data.URL == "" {
+		return nil, nil
+	}
+	return &FacebookCommentAuthor{
+		ID:        parsed.From.ID,
+		Name:      parsed.From.Name,
+		AvatarURL: parsed.From.Picture.Data.URL,
+	}, nil
 }
 
 // FetchConversations returns recent Messenger messages across all
