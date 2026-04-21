@@ -23,6 +23,10 @@ interface TikTokFieldsProps {
   // returned an error, or the uploaded video exceeds max length. Pass null
   // when the blocker clears.
   onBlockerChange: (reason: string | null) => void;
+  // Reports the creator's max_video_post_duration_sec from creator_info
+  // so the drawer can gate R2 uploads before they start. Null while
+  // loading / on error / on unmount.
+  onMaxDurationChange: (sec: number | null) => void;
 }
 
 const PRIVACY_LABELS: Record<string, string> = {
@@ -47,6 +51,7 @@ export function TikTokFields({
   getToken,
   onChange,
   onBlockerChange,
+  onMaxDurationChange,
 }: TikTokFieldsProps) {
   const [state, setState] = useState<LoadState>({ status: "idle" });
   const [autoSwitchNotice, setAutoSwitchNotice] = useState<string | null>(null);
@@ -190,10 +195,20 @@ export function TikTokFields({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveBlocker]);
 
+  // Report the creator's video-length cap up so the drawer can gate
+  // uploads pre-R2. Null while creator_info is unavailable.
+  useEffect(() => {
+    onMaxDurationChange(typeof maxDurationSec === "number" ? maxDurationSec : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [maxDurationSec]);
+
   // Clear the blocker on unmount so the account switching doesn't
   // leave stale "Publish disabled" state in the drawer.
   useEffect(() => {
-    return () => onBlockerChange(null);
+    return () => {
+      onBlockerChange(null);
+      onMaxDurationChange(null);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -342,29 +357,13 @@ export function TikTokFields({
         </div>
       </Field>
 
-      {/* Video duration — under cap we just show the reading; over cap
-          we surface an explicit error and the publish blocker above
-          handles the actual gating. */}
-      {mediaKind === "video" && typeof videoDurationSec === "number" && typeof maxDurationSec === "number" && maxDurationSec > 0 && (
-        durationOverLimit ? (
-          <div
-            className="rounded-md border px-3 py-2 text-[12px]"
-            style={{
-              background: "color-mix(in srgb, var(--danger) 12%, var(--surface-raised))",
-              borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)",
-              color: "color-mix(in srgb, var(--danger) 26%, white)",
-            }}
-          >
-            <div className="mb-0.5 font-semibold">Video is too long for this TikTok account</div>
-            <div className="leading-relaxed">
-              This video is {formatDuration(Math.round(videoDurationSec))} long. Maximum allowed for this account is {formatDuration(maxDurationSec)}. Please upload a shorter video.
-            </div>
-          </div>
-        ) : (
-          <Hint tone="info">
-            Video duration: {formatDuration(Math.round(videoDurationSec))} (max: {formatDuration(maxDurationSec)}).
-          </Hint>
-        )
+      {/* Under-cap readout stays inline as a heads-up. Over-cap is
+          surfaced under the MEDIA section (the panel is too narrow for
+          the full explanation and it keeps one source of truth). */}
+      {mediaKind === "video" && typeof videoDurationSec === "number" && typeof maxDurationSec === "number" && maxDurationSec > 0 && !durationOverLimit && (
+        <Hint tone="info">
+          Video duration: {formatDuration(Math.round(videoDurationSec))} (max: {formatDuration(maxDurationSec)}).
+        </Hint>
       )}
       {mediaKind === "video" && videoMeasureError && (
         <Hint tone="warning">{videoMeasureError}. TikTok will still enforce its own duration limit.</Hint>

@@ -43,6 +43,9 @@ interface PlatformEditorBlockProps {
   // block publish (e.g., TikTok creator can't post right now, video too
   // long for this account). Null clears the blocker.
   onTiktokBlockerChange: (reason: string | null) => void;
+  // Forwarded to TikTokFields so the drawer knows each selected
+  // account's creator cap and can gate R2 uploads accordingly.
+  onTiktokMaxDurationChange: (sec: number | null) => void;
   onCaptionChange: (caption: string) => void;
   onPlatformFieldChange: <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook">(
     platform: K,
@@ -63,6 +66,7 @@ export function PlatformEditorBlock({
   getToken,
   profileId,
   onTiktokBlockerChange,
+  onTiktokMaxDurationChange,
   onCaptionChange,
   onPlatformFieldChange,
   onToggleCollapse,
@@ -226,6 +230,7 @@ export function PlatformEditorBlock({
               issues={issues}
               onChange={(f) => onPlatformFieldChange("tiktok", f)}
               onBlockerChange={onTiktokBlockerChange}
+              onMaxDurationChange={onTiktokMaxDurationChange}
             />
           )}
           {account.platform === "instagram" && (

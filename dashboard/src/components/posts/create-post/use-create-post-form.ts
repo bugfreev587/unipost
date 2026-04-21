@@ -169,11 +169,50 @@ export interface MediaItem {
   mediaId: string | null; // null = not uploaded yet
   progress: number; // 0-100
   error: string | null;
+  // Measured video duration in seconds, or null once we've confirmed the
+  // file isn't a readable video / can't be measured. `undefined` means
+  // we haven't tried yet (or measurement is still in flight).
+  durationSec: number | null | undefined;
 }
 
 /** Fingerprint a File for dedup — same file re-selected → same key */
 function fileFingerprint(file: File): string {
   return `${file.name}::${file.size}::${file.lastModified}`;
+}
+
+/**
+ * Measure a video file's duration in seconds using a hidden <video>
+ * element. Resolves to null when the file isn't a video the browser
+ * can decode metadata for (unusual codecs, truncated files).
+ * Used by the TikTok cap check so we can reject oversize uploads
+ * before they ever hit R2.
+ */
+export function measureVideoDuration(file: File): Promise<number | null> {
+  if (!file.type.startsWith("video/")) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    let settled = false;
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      video.src = "";
+    };
+    video.onloadedmetadata = () => {
+      if (settled) return;
+      settled = true;
+      const d = video.duration;
+      cleanup();
+      resolve(Number.isFinite(d) ? d : null);
+    };
+    video.onerror = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(null);
+    };
+    video.src = url;
+  });
 }
 
 export function useCreatePostForm(accounts: SocialAccount[]) {
@@ -340,12 +379,12 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
       const cachedId = uploadCacheRef.current.get(fp);
       if (cachedId) {
         result = { cached: true, fingerprint: fp, mediaId: cachedId };
-        return [...prev, { file, fingerprint: fp, mediaId: cachedId, progress: 100, error: null }];
+        return [...prev, { file, fingerprint: fp, mediaId: cachedId, progress: 100, error: null, durationSec: undefined }];
       }
 
       // New file — needs upload
       result = { cached: false, fingerprint: fp, mediaId: null };
-      return [...prev, { file, fingerprint: fp, mediaId: null, progress: 0, error: null }];
+      return [...prev, { file, fingerprint: fp, mediaId: null, progress: 0, error: null, durationSec: undefined }];
     });
 
     // Add to mediaFiles unless it was already displayed (duplicate)

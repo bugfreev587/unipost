@@ -12,6 +12,7 @@ import { PublishModePanel } from "./publish-mode-panel";
 import {
   useCreatePostForm,
   PRIMARY_BUTTON_LABELS,
+  measureVideoDuration,
   type MediaItem,
 } from "./use-create-post-form";
 import { ChevronDown } from "lucide-react";
@@ -135,21 +136,48 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry, onPreview
   );
 });
 
-function MediaThumbnails({ items, onRemove, onAdd, onRetry, onPreview }: {
+function MediaThumbnails({
+  items,
+  onRemove,
+  onAdd,
+  onRetry,
+  onPreview,
+  strictestTiktokMaxSec,
+}: {
   items: MediaItem[];
   onRemove: (index: number) => void;
   onAdd: (files: File[]) => void;
   onRetry: (index: number) => void;
   onPreview: (file: File) => void;
+  strictestTiktokMaxSec: number | null;
 }) {
   // The per-thumb "Retry" icon is too small to explain *why* the
   // upload failed (server errors like "size_bytes exceeds the global
   // hard cap of 26214400" only showed up as a tooltip before). Roll
   // all failed items into a single red banner beneath the grid so
   // users see the actual error without having to hover.
+  // TikTok-duration rejections are shown in a dedicated banner below
+  // *while a cap is in force*; if the user unselects TikTok we move
+  // them back here so Retry is available.
   const failedItems = items
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => !!item.error);
+    .filter(({ item }) => {
+      if (!item.error) return false;
+      if (item.error === "TIKTOK_VIDEO_TOO_LONG" && strictestTiktokMaxSec) return false;
+      return true;
+    });
+
+  // Over-cap videos — whether blocked pre-upload or already in R2 but
+  // retroactively too long because a TikTok account was just added.
+  const oversizeVideos = strictestTiktokMaxSec
+    ? items
+        .map((item, index) => ({ item, index }))
+        .filter(
+          ({ item }) =>
+            typeof item.durationSec === "number" &&
+            item.durationSec > strictestTiktokMaxSec
+        )
+    : [];
 
   return (
     <section className="mt-6">
@@ -205,8 +233,47 @@ function MediaThumbnails({ items, onRemove, onAdd, onRetry, onPreview }: {
           ))}
         </div>
       )}
+      {oversizeVideos.length > 0 && strictestTiktokMaxSec && (
+        <div
+          className="mt-2.5 rounded-md border px-3 py-2 text-[12px] leading-relaxed"
+          style={{
+            background: "color-mix(in srgb, var(--danger) 12%, var(--surface-raised))",
+            borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)",
+            color: "color-mix(in srgb, var(--danger) 26%, white)",
+          }}
+        >
+          <div className="mb-1 font-semibold">Video is too long for TikTok</div>
+          {oversizeVideos.map(({ item, index }) => (
+            <div key={item.fingerprint} className="flex items-start gap-2">
+              <span className="font-mono text-[11px] opacity-80">{item.file.name}</span>
+              <span>
+                — {formatDurationShort(Math.round(item.durationSec as number))} long;
+                this TikTok account allows at most {formatDurationShort(strictestTiktokMaxSec)}.
+              </span>
+              <button
+                type="button"
+                onClick={() => onRemove(index)}
+                className="ml-auto underline"
+                style={{ color: "inherit" }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <div className="mt-1 opacity-80">
+            Replace with a shorter video, or unselect the TikTok account to keep this one.
+          </div>
+        </div>
+      )}
     </section>
   );
+}
+
+function formatDurationShort(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return rem === 0 ? `${minutes}m` : `${minutes}m ${rem}s`;
 }
 
 // humanizeMediaError rewrites the rawest server messages into something
@@ -221,6 +288,9 @@ function humanizeMediaError(raw: string, file: File): string {
     const capMB = (capBytes / (1024 * 1024)).toFixed(0);
     const fileMB = (file.size / (1024 * 1024)).toFixed(1);
     return `File is ${fileMB} MB — max upload size is ${capMB} MB. Compress the file or use a shorter clip.`;
+  }
+  if (raw === "TIKTOK_VIDEO_TOO_LONG") {
+    return "Video was rejected because it was too long for the TikTok account that was selected. Retry now that TikTok is unselected, or pick a shorter video.";
   }
   return raw;
 }
@@ -455,6 +525,9 @@ export function CreatePostDrawer({
   // These aren't derivable from form state, so we collect them here and
   // fold them into disabledReason + the primary button's disabled prop.
   const [tiktokBlockers, setTiktokBlockers] = useState<Record<string, string>>({});
+  // Per-account creator video-length cap reported by each TikTokFields
+  // panel once creator_info resolves. Missing entry = cap unknown.
+  const [tiktokMaxByAccount, setTiktokMaxByAccount] = useState<Record<string, number>>({});
   const pendingCloseRef = useRef(false);
   const mainContentRef = useRef<HTMLTextAreaElement | null>(null);
   const mediaSectionRef = useRef<HTMLDivElement | null>(null);
@@ -550,6 +623,7 @@ export function CreatePostDrawer({
       setSubmitError(null);
       setSubmitSuccess(null);
       setTiktokBlockers({});
+      setTiktokMaxByAccount({});
       pendingCloseRef.current = false;
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -568,6 +642,19 @@ export function CreatePostDrawer({
       }
       if (prev[accountId] === reason) return prev;
       return { ...prev, [accountId]: reason };
+    });
+  }, []);
+
+  const setTiktokMaxDuration = useCallback((accountId: string, sec: number | null) => {
+    setTiktokMaxByAccount((prev) => {
+      if (sec == null || !Number.isFinite(sec) || sec <= 0) {
+        if (!(accountId in prev)) return prev;
+        const next = { ...prev };
+        delete next[accountId];
+        return next;
+      }
+      if (prev[accountId] === sec) return prev;
+      return { ...prev, [accountId]: sec };
     });
   }, []);
 
@@ -645,6 +732,30 @@ export function CreatePostDrawer({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, form.canSubmit]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Strictest TikTok video-length cap across currently-selected TikTok
+  // accounts. Null when no TikTok account is selected or creator_info
+  // hasn't resolved yet. Used to gate R2 uploads pre-hoc and to flag
+  // already-uploaded videos that fall foul of a later-added account.
+  const strictestTiktokMaxSec = useMemo(() => {
+    const caps: number[] = [];
+    for (const id of form.selectedAccountIds) {
+      const cap = tiktokMaxByAccount[id];
+      if (typeof cap === "number" && cap > 0) caps.push(cap);
+    }
+    return caps.length ? Math.min(...caps) : null;
+  }, [form.selectedAccountIds, tiktokMaxByAccount]);
+
+  // Uploaded or in-flight videos that exceed the current cap. Rendered
+  // in a banner below MEDIA so the error doesn't try to fit inside the
+  // narrow TikTok panel. This is the single source of truth for the
+  // UX — the TikTok panel no longer duplicates it.
+  const oversizeVideos = useMemo(() => {
+    if (!strictestTiktokMaxSec) return [];
+    return form.mediaItems.filter(
+      (m) => typeof m.durationSec === "number" && m.durationSec > strictestTiktokMaxSec
+    );
+  }, [form.mediaItems, strictestTiktokMaxSec]);
+
   // Compute SHA-256 hash of a file
   async function hashFile(file: File): Promise<string> {
     const buffer = await file.arrayBuffer();
@@ -658,6 +769,31 @@ export function CreatePostDrawer({
     const { cached, fingerprint } = form.addMediaItem(file);
     if (cached) return;
     try {
+      // Always measure video duration — the TikTok panel, the publish
+      // blocker, and the MEDIA-level oversize banner all key off it,
+      // and a retroactive account selection needs duration for already-
+      // uploaded items too.
+      if (file.type.startsWith("video/")) {
+        form.updateMediaItem(fingerprint, { progress: 5 });
+        const duration = await measureVideoDuration(file);
+        form.updateMediaItem(fingerprint, { durationSec: duration });
+        // Pre-R2 TikTok duration gate — keeps oversize videos out of
+        // object storage entirely. Measured before the first R2 byte.
+        if (
+          strictestTiktokMaxSec &&
+          typeof duration === "number" &&
+          duration > strictestTiktokMaxSec
+        ) {
+          form.updateMediaItem(fingerprint, {
+            error: "TIKTOK_VIDEO_TOO_LONG",
+            progress: 0,
+          });
+          return;
+        }
+      } else {
+        form.updateMediaItem(fingerprint, { durationSec: null });
+      }
+
       const token = await getToken();
       if (!token) return;
       form.updateMediaItem(fingerprint, { progress: 5 });
@@ -942,7 +1078,13 @@ export function CreatePostDrawer({
     if (form.selectedAccountIds.size === 0) return "Select at least one account to post to.";
     const uploading = form.mediaItems.filter((m) => m.mediaId === null && !m.error).length;
     if (uploading > 0) return `Waiting for ${uploading} media upload${uploading === 1 ? "" : "s"} to finish…`;
-    const failed = form.mediaItems.filter((m) => m.error).length;
+    // Oversize-for-TikTok items are flagged separately so the tooltip
+    // matches the MEDIA-section banner instead of the generic "upload
+    // failed" copy (which wrongly implies Retry would help).
+    if (oversizeVideos.length > 0) {
+      return "Video is too long for the selected TikTok account — remove or replace it, or unselect TikTok.";
+    }
+    const failed = form.mediaItems.filter((m) => m.error && m.error !== "TIKTOK_VIDEO_TOO_LONG").length;
     if (failed > 0) return `${failed} media upload${failed === 1 ? "" : "s"} failed — retry or remove.`;
     if (form.hasOverLimit) return "One of your captions is over its platform limit.";
     // "hasContent" here has to agree with the hook's canSubmit logic,
@@ -984,6 +1126,7 @@ export function CreatePostDrawer({
     form.queueId,
     form.tiktokBlocker,
     tiktokBlockers,
+    oversizeVideos.length,
   ]);
 
   return (
@@ -1070,6 +1213,7 @@ export function CreatePostDrawer({
                   form.removeMediaItem(i);
                   handleFileUpload(failed.file);
                 }}
+                strictestTiktokMaxSec={strictestTiktokMaxSec}
               />
             </div>
 
@@ -1115,6 +1259,7 @@ export function CreatePostDrawer({
                           getToken={getToken}
                           profileId={account.profile_id || selectedProfileId}
                           onTiktokBlockerChange={(reason) => setTiktokBlocker(account.id, reason)}
+                          onTiktokMaxDurationChange={(sec) => setTiktokMaxDuration(account.id, sec)}
                           onCaptionChange={(caption) =>
                             form.updateOverrideCaption(account.id, caption)
                           }
@@ -1328,7 +1473,7 @@ export function CreatePostDrawer({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={!form.canSubmit || isValidating || Object.keys(tiktokBlockers).length > 0}
+              disabled={!form.canSubmit || isValidating || Object.keys(tiktokBlockers).length > 0 || oversizeVideos.length > 0}
               title={disabledReason ?? undefined}
               className={cn(
                 "px-5 py-2 text-sm font-medium rounded-lg transition-colors",
