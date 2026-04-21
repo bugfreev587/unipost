@@ -130,6 +130,13 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-retry-btn:hover:not(:disabled){border-color:var(--daccent);background:color-mix(in srgb,var(--daccent) 12%,var(--surface2))}
 .posts-retry-btn:disabled{opacity:.55;cursor:not-allowed}
 .posts-retry-error{font-size:11px;color:var(--danger);font-family:var(--font-geist-mono),monospace}
+.posts-fb-phases{display:flex;flex-direction:column;gap:4px;margin-top:8px;padding:8px 10px;background:var(--surface1);border:1px solid var(--dborder);border-radius:6px}
+.posts-fb-phase{display:flex;align-items:center;justify-content:space-between;font-size:11.5px}
+.posts-fb-phase-label{color:var(--dmuted)}
+.posts-fb-phase-status{font-family:var(--font-geist-mono),monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dmuted2)}
+.posts-fb-phase-complete{color:var(--success,#10b981)}
+.posts-fb-phase-progress{color:var(--primary)}
+.posts-fb-phase-error{color:var(--danger)}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .posts-row-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dmuted2)}
 .posts-dialog-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:20px;z-index:120}
@@ -798,6 +805,9 @@ function PostResultCard({
             {result.status === "published" ? "Published successfully." : result.status === "partial" ? "Partially completed. Review other platform cards for failures." : `Status: ${result.status}`}
             {result.external_id ? <div className="posts-result-text" style={{ marginTop: 10 }}>ID: {result.external_id}</div> : null}
           </div>
+          {result.status === "processing" && result.platform === "facebook" ? (
+            <FacebookProcessingPanel publishStatus={result.publish_status} />
+          ) : null}
           {result.submitted ? (
             <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} />
           ) : null}
@@ -805,6 +815,42 @@ function PostResultCard({
       )}
     </div>
   );
+}
+
+// FacebookProcessingPanel shows the three-phase lifecycle for a FB
+// video post that's still being processed by Meta at view time:
+// Uploading → Processing → Publishing. Renders whatever phase data
+// /v1/social-posts/{id} refreshed server-side. The "status is
+// processing" banner reassures the user that published will flip
+// automatically once FB is done (via Get's re-poll logic).
+function FacebookProcessingPanel({ publishStatus }: { publishStatus?: Record<string, unknown> }) {
+  const phases: Array<{ label: string; status: string }> = [
+    { label: "Uploading", status: (publishStatus?.uploading_phase_status as string) || "—" },
+    { label: "Processing", status: (publishStatus?.processing_phase_status as string) || "—" },
+    { label: "Publishing", status: (publishStatus?.publishing_phase_status as string) || "—" },
+  ];
+  return (
+    <div className="posts-hint" style={{ marginTop: 10 }}>
+      <div style={{ marginBottom: 6 }}>
+        Facebook is still processing this video. The post will appear on the Page once all phases complete — usually within a few minutes for short clips.
+      </div>
+      <div className="posts-fb-phases">
+        {phases.map((p) => (
+          <div key={p.label} className="posts-fb-phase">
+            <span className="posts-fb-phase-label">{p.label}</span>
+            <span className={`posts-fb-phase-status ${statusToClass(p.status)}`}>{p.status}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function statusToClass(status: string): string {
+  if (status === "complete") return "posts-fb-phase-complete";
+  if (status === "in_progress") return "posts-fb-phase-progress";
+  if (status === "error") return "posts-fb-phase-error";
+  return "";
 }
 
 // DebugCurlPanel renders the captured curl dump from a failed publish.

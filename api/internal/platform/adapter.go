@@ -137,6 +137,14 @@ type PostResult struct {
 	ExternalID string // Platform-specific post ID
 	URL        string // Public URL to view the post
 	CID        string // Content hash; populated only by Bluesky for threading
+	// Status, when non-empty, overrides the dispatcher's default
+	// "published" for this row. Currently used by Facebook videos:
+	// after the publish-time poll times out without a ready state,
+	// the adapter returns Status="processing" so the UI reflects
+	// that FB is still finishing the upload rather than claiming
+	// the post is live. Get handlers re-poll FB and flip the row
+	// to "published" once processing completes.
+	Status string
 }
 
 // PostMetrics holds unified analytics metrics across all platforms.

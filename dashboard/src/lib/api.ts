@@ -459,6 +459,11 @@ export interface SocialPostResult {
   // Used to render a "Submitted settings" panel on the expanded post
   // view so users can review their own choices after the fact.
   submitted?: SubmittedSettings;
+  // Real-time publish state refreshed server-side when the post is
+  // viewed — populated for platforms with async publish lifecycles
+  // (TikTok, Facebook video). Shape is platform-specific; the
+  // Facebook processing panel reads video_status / *_phase_status.
+  publish_status?: Record<string, unknown>;
 }
 
 export interface SubmittedSettings {

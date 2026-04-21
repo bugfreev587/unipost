@@ -534,8 +534,22 @@ func (h *SocialPostHandler) executePublishLoop(
 			if oc.result.URL != "" {
 				postURL = pgtype.Text{String: oc.result.URL, Valid: true}
 			}
-			anyPublished = true
-			publishedCount++
+			// Adapters may override the default "published" with
+			// "processing" when the upstream is still finishing the
+			// job (currently Facebook videos when our poll times
+			// out). A processing row doesn't count toward the
+			// parent post's "all published" summary — the Get
+			// handler's re-poll is what flips it to "published"
+			// once the platform confirms completion.
+			if oc.result.Status != "" {
+				status = oc.result.Status
+			}
+			if status == "published" {
+				anyPublished = true
+				publishedCount++
+			} else {
+				allPublished = false
+			}
 		}
 
 		// Only store the debug curl dump on failed rows — successful
@@ -1406,6 +1420,70 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 					if decErr == nil {
 						if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
 							rr.PublishStatus = status
+						}
+					}
+				}
+			}
+		}
+
+		// For Facebook videos stuck in "processing", refresh the
+		// status from Graph — if FB is now done we flip the row to
+		// "published" with the final /posts/{story} URL so the user
+		// doesn't have to retry or reload. Only runs for "processing"
+		// rows to avoid an unnecessary round-trip on every Get.
+		if res.ExternalID.Valid && accErr == nil && acc.Platform == "facebook" && res.Status == "processing" {
+			if adapter, adErr := platform.Get("facebook"); adErr == nil {
+				if fbAdapter, ok := adapter.(*platform.FacebookAdapter); ok {
+					accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
+					if decErr == nil {
+						st, stErr := fbAdapter.CheckVideoStatus(r.Context(), accessToken, res.ExternalID.String)
+						if stErr == nil && st != nil {
+							// Surface the phase breakdown so the UI can
+							// render "Uploading → Processing → Ready".
+							rr.PublishStatus = map[string]any{
+								"video_status":            st.VideoStatus,
+								"uploading_phase_status":  st.UploadingStatus,
+								"processing_phase_status": st.ProcessingStatus,
+								"publishing_phase_status": st.PublishingStatus,
+								"post_id":                 st.PostID,
+							}
+							// Promote to published when FB finishes.
+							if st.VideoStatus == "ready" {
+								pageID := acc.ExternalAccountID
+								newURL := res.Url.String
+								if st.PostID != "" {
+									newURL = facebookFeedStoryURL(pageID, st.PostID)
+								}
+								_, _ = h.queries.UpdateSocialPostResultAfterRetry(r.Context(), db.UpdateSocialPostResultAfterRetryParams{
+									ID:           res.ID,
+									Status:       "published",
+									ExternalID:   res.ExternalID,
+									ErrorMessage: pgtype.Text{Valid: false},
+									PublishedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
+									Url:          pgtype.Text{String: newURL, Valid: newURL != ""},
+									DebugCurl:    pgtype.Text{Valid: false},
+								})
+								rr.Status = "published"
+								if newURL != "" {
+									rr.URL = &newURL
+								}
+							} else if st.VideoStatus == "error" {
+								errMsg := "Facebook rejected the video"
+								if st.ErrorMessage != "" {
+									errMsg = "Facebook rejected the video: " + st.ErrorMessage
+								}
+								_, _ = h.queries.UpdateSocialPostResultAfterRetry(r.Context(), db.UpdateSocialPostResultAfterRetryParams{
+									ID:           res.ID,
+									Status:       "failed",
+									ExternalID:   res.ExternalID,
+									ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
+									PublishedAt:  pgtype.Timestamptz{Valid: false},
+									Url:          res.Url,
+									DebugCurl:    pgtype.Text{Valid: false},
+								})
+								rr.Status = "failed"
+								rr.ErrorMessage = &errMsg
+							}
 						}
 					}
 				}

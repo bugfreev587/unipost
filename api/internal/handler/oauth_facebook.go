@@ -408,6 +408,23 @@ func (h *OAuthHandler) callerIsFacebookSuperAdmin(r *http.Request, profileID str
 	return h.superAdminChecker.IsSuperAdminByUser(workspace.UserID, user.Email)
 }
 
+// facebookFeedStoryURL mirrors the adapter's URL builder for use
+// outside the adapter (e.g. on Get-time status refresh). Kept
+// exported from handler only so callers don't reach into the
+// platform package's unexported helpers.
+func facebookFeedStoryURL(pageID, storyID string) string {
+	if storyID == "" {
+		return ""
+	}
+	if idx := strings.Index(storyID, "_"); idx > 0 {
+		return "https://www.facebook.com/" + storyID[:idx] + "/posts/" + storyID[idx+1:]
+	}
+	if pageID != "" {
+		return "https://www.facebook.com/" + pageID + "/posts/" + storyID
+	}
+	return "https://www.facebook.com/" + storyID
+}
+
 // getFacebookAdapter pulls the registered FacebookAdapter instance.
 // Kept local to this file so other handlers don't accidentally reach
 // into platform internals.

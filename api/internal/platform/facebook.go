@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -478,6 +479,13 @@ func (a *FacebookAdapter) postPhoto(ctx context.Context, accessToken, pageID, ca
 // sees a URL that won't expire mid-download. Without this, any FB
 // video upload that takes longer than the source URL's TTL gets
 // stuck in video_status="uploading" indefinitely.
+//
+// After the initial POST we poll FB's status endpoint for up to
+// 60s. If the video finishes processing within that window we
+// return the canonical /posts/{story} URL and a normal published
+// result. If it doesn't, we return Status="processing" so the row
+// shows as in-flight in the dashboard — the Get handler's re-poll
+// flips it to "published" once FB is done.
 func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, description, videoURL string) (*PostResult, error) {
 	stagedURL := videoURL
 	if a.mediaProxy != nil {
@@ -498,17 +506,137 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 	if err != nil {
 		return nil, err
 	}
-	// /videos returns only { id: <video_id> } — there's no story id
-	// yet because Facebook processes the video asynchronously. The
-	// public URL uses the /videos/ path; /posts/<video_id> 404s
-	// because video ids aren't story ids.
 	if raw.ID == "" {
 		return nil, fmt.Errorf("facebook video publish: response missing id")
 	}
+	videoID := raw.ID
+
+	// Poll FB for up to ~60s (12 × 5s) until the video is either
+	// ready or errored. This turns the common "small video finishes
+	// in <60s" case into a clean "published" result, and leaves the
+	// larger-video case as "processing" for the Get handler to
+	// refresh.
+	for i := 0; i < 12; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+		st, err := a.CheckVideoStatus(ctx, accessToken, videoID)
+		if err != nil {
+			// Transient errors get another poll round rather than
+			// bailing — the caller already got a video_id, so
+			// giving up mid-poll would mean losing state.
+			slog.Warn("facebook: video status poll failed", "video_id", videoID, "error", err)
+			continue
+		}
+		switch st.VideoStatus {
+		case "ready":
+			// Prefer the feed-story id so the public URL lands on
+			// the Page timeline rather than the raw video watch
+			// page. post_id only becomes available after processing
+			// completes.
+			if st.PostID != "" {
+				return &PostResult{
+					ExternalID: videoID,
+					URL:        feedStoryURL(pageID, st.PostID),
+				}, nil
+			}
+			return &PostResult{
+				ExternalID: videoID,
+				URL:        fmt.Sprintf("https://www.facebook.com/%s/videos/%s", pageID, videoID),
+			}, nil
+		case "error":
+			msg := "facebook: video processing failed"
+			if st.ErrorMessage != "" {
+				msg += ": " + st.ErrorMessage
+			}
+			return nil, fmt.Errorf("%s", msg)
+		}
+		// "uploading" / "processing" / "publishing" → keep polling
+	}
+
+	// Timeout — FB is still working on it. Return a "processing"
+	// row; the Get handler's re-poll will flip to "published" once
+	// FB finishes. The /videos/ URL still works for the user to
+	// check progress directly on Facebook.
+	slog.Info("facebook: video still processing after 60s; returning processing state", "video_id", videoID)
 	return &PostResult{
-		ExternalID: raw.ID,
-		URL:        fmt.Sprintf("https://www.facebook.com/%s/videos/%s", pageID, raw.ID),
+		ExternalID: videoID,
+		URL:        fmt.Sprintf("https://www.facebook.com/%s/videos/%s", pageID, videoID),
+		Status:     "processing",
 	}, nil
+}
+
+// FacebookVideoStatus mirrors the subset of /{video_id}?fields=status,post_id
+// we care about. "uploading" / "processing" / "publishing" are
+// all transient; "ready" is terminal success; "error" is terminal
+// failure. The individual phase sub-objects are kept so the
+// dashboard can eventually render a three-step progress indicator.
+type FacebookVideoStatus struct {
+	VideoStatus     string `json:"video_status"`
+	UploadingStatus string `json:"uploading_phase_status"`
+	ProcessingStatus string `json:"processing_phase_status"`
+	PublishingStatus string `json:"publishing_phase_status"`
+	PostID           string `json:"post_id"`
+	PermalinkURL     string `json:"permalink_url"`
+	ErrorMessage     string `json:"error_message"`
+}
+
+// CheckVideoStatus queries Graph for the lifecycle state of a video.
+// Used both by the publish-time poll in postVideo and by the Get
+// handler to refresh the stored row when the user views a video
+// whose status hasn't been confirmed yet.
+func (a *FacebookAdapter) CheckVideoStatus(ctx context.Context, accessToken, videoID string) (*FacebookVideoStatus, error) {
+	params := url.Values{
+		"access_token": {accessToken},
+		"fields":       {"status,post_id,permalink_url"},
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", facebookGraphBase+"/"+videoID+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook status: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+	}
+
+	var raw struct {
+		Status struct {
+			VideoStatus     string `json:"video_status"`
+			UploadingPhase  struct{ Status, Error string } `json:"uploading_phase"`
+			ProcessingPhase struct{ Status, Error string } `json:"processing_phase"`
+			PublishingPhase struct{ Status, Error string } `json:"publishing_phase"`
+		} `json:"status"`
+		PostID       string `json:"post_id"`
+		PermalinkURL string `json:"permalink_url"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("facebook status: decode: %w", err)
+	}
+	out := &FacebookVideoStatus{
+		VideoStatus:      raw.Status.VideoStatus,
+		UploadingStatus:  raw.Status.UploadingPhase.Status,
+		ProcessingStatus: raw.Status.ProcessingPhase.Status,
+		PublishingStatus: raw.Status.PublishingPhase.Status,
+		PostID:           raw.PostID,
+		PermalinkURL:     raw.PermalinkURL,
+	}
+	// Surface the first non-empty phase error so the caller can
+	// include it in a user-facing message when the whole upload
+	// fails.
+	for _, phase := range []struct{ Status, Error string }{raw.Status.UploadingPhase, raw.Status.ProcessingPhase, raw.Status.PublishingPhase} {
+		if phase.Error != "" {
+			out.ErrorMessage = phase.Error
+			break
+		}
+	}
+	return out, nil
 }
 
 // facebookPublishResult is the shape every publish endpoint returns,
