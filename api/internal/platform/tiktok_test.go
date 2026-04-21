@@ -52,3 +52,25 @@ func TestShouldRetryTikTokWithSelfOnly(t *testing.T) {
 		t.Fatal("did not expect retry for non-400 responses")
 	}
 }
+
+func TestTikTokPublicPostURLFromStatusData(t *testing.T) {
+	data := map[string]any{
+		"status":                      "PUBLISH_COMPLETE",
+		"publicaly_available_post_id": []any{"7350123456789012345"},
+	}
+	got := TikTokPublicPostURLFromStatusData(data)
+	want := "https://www.tiktok.com/player/v1/7350123456789012345"
+	if got != want {
+		t.Fatalf("url = %q, want %q", got, want)
+	}
+}
+
+func TestTikTokPublicPostURLFromStatusDataMissingID(t *testing.T) {
+	data := map[string]any{
+		"status":                      "PUBLISH_COMPLETE",
+		"publicaly_available_post_id": []any{},
+	}
+	if got := TikTokPublicPostURLFromStatusData(data); got != "" {
+		t.Fatalf("url = %q, want empty", got)
+	}
+}

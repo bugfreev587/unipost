@@ -56,22 +56,22 @@ type postResultResponse struct {
 	// ID is the social_post_results row ID. Required by the dashboard
 	// for the per-platform retry path — without it the frontend can't
 	// tell the API which failed row to re-run.
-	ID              string         `json:"id"`
-	SocialAccountID string         `json:"social_account_id"`
-	Platform        string         `json:"platform,omitempty"`
-	AccountName     string         `json:"account_name,omitempty"`
-	Caption         string         `json:"caption,omitempty"`
-	Status          string         `json:"status"`
-	ExternalID      *string        `json:"external_id,omitempty"`
+	ID              string  `json:"id"`
+	SocialAccountID string  `json:"social_account_id"`
+	Platform        string  `json:"platform,omitempty"`
+	AccountName     string  `json:"account_name,omitempty"`
+	Caption         string  `json:"caption,omitempty"`
+	Status          string  `json:"status"`
+	ExternalID      *string `json:"external_id,omitempty"`
 	// URL is the platform's canonical post URL, returned by the
 	// adapter at publish time (e.g. Threads permalink from the Graph
 	// API). When present, the dashboard uses this directly instead of
 	// constructing one from external_id — important for platforms like
 	// Threads where the public URL uses shortcodes, not numeric IDs.
-	URL             *string        `json:"url,omitempty"`
-	ErrorMessage    *string        `json:"error_message,omitempty"`
-	PublishedAt     *string        `json:"published_at,omitempty"`
-	PublishStatus   map[string]any `json:"publish_status,omitempty"`
+	URL           *string        `json:"url,omitempty"`
+	ErrorMessage  *string        `json:"error_message,omitempty"`
+	PublishedAt   *string        `json:"published_at,omitempty"`
+	PublishStatus map[string]any `json:"publish_status,omitempty"`
 	// Warnings (Sprint 4 PR3) carries non-fatal issues that didn't
 	// prevent the main post from being published. The first user is
 	// first_comment failure: the parent post lands and reports
@@ -130,6 +130,42 @@ func buildSubmittedMap(metadata []byte, fallbackCaption string) map[string]*subm
 	return out
 }
 
+func applyTikTokLiveStatus(rr *postResultResponse, status map[string]any) {
+	rr.PublishStatus = status
+	data, _ := status["data"].(map[string]any)
+	if data == nil {
+		return
+	}
+
+	if url := platform.TikTokPublicPostURLFromStatusData(data); url != "" {
+		rr.URL = &url
+	} else if rr.URL != nil && *rr.URL == "https://www.tiktok.com" {
+		rr.URL = nil
+	}
+
+	publishStatus, _ := data["status"].(string)
+	switch publishStatus {
+	case "PUBLISH_COMPLETE":
+		if rr.Status == "processing" || rr.Status == "published" {
+			rr.Status = "published"
+		}
+	case "FAILED":
+		rr.Status = "failed"
+		if rr.ErrorMessage == nil {
+			reason, _ := data["fail_reason"].(string)
+			if strings.TrimSpace(reason) == "" {
+				reason = "unknown_error"
+			}
+			msg := "tiktok publish failed: " + reason
+			rr.ErrorMessage = &msg
+		}
+	default:
+		if rr.Status == "published" || rr.Status == "processing" {
+			rr.Status = "processing"
+		}
+	}
+}
+
 // accountSummary is what the List handler stores per social_account_id so the
 // per-result rows can resolve both the platform name and the human-readable
 // display name in a single map lookup.
@@ -139,19 +175,19 @@ type accountSummary struct {
 }
 
 type socialPostResponse struct {
-	ID          string               `json:"id"`
-	Caption     *string              `json:"caption"`
-	MediaURLs   []string             `json:"media_urls,omitempty"`
-	Status      string               `json:"status"`
-	ExecutionMode string             `json:"execution_mode,omitempty"`
-	QueuedResultsCount int           `json:"queued_results_count,omitempty"`
-	ActiveJobCount int               `json:"active_job_count,omitempty"`
-	RetryingCount int                `json:"retrying_count,omitempty"`
-	DeadCount int                    `json:"dead_count,omitempty"`
-	CreatedAt   time.Time            `json:"created_at"`
-	ScheduledAt *time.Time           `json:"scheduled_at,omitempty"`
-	PublishedAt *time.Time           `json:"published_at,omitempty"`
-	ArchivedAt  *time.Time           `json:"archived_at,omitempty"`
+	ID                 string     `json:"id"`
+	Caption            *string    `json:"caption"`
+	MediaURLs          []string   `json:"media_urls,omitempty"`
+	Status             string     `json:"status"`
+	ExecutionMode      string     `json:"execution_mode,omitempty"`
+	QueuedResultsCount int        `json:"queued_results_count,omitempty"`
+	ActiveJobCount     int        `json:"active_job_count,omitempty"`
+	RetryingCount      int        `json:"retrying_count,omitempty"`
+	DeadCount          int        `json:"dead_count,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	ScheduledAt        *time.Time `json:"scheduled_at,omitempty"`
+	PublishedAt        *time.Time `json:"published_at,omitempty"`
+	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
 	// Source identifies who triggered this post: "ui" (dashboard) vs
 	// "api" (external API key). Stamped at row creation from the auth
 	// context and never changes thereafter.
@@ -159,7 +195,7 @@ type socialPostResponse struct {
 	// ProfileIDs is the set of distinct profile_ids derived from the
 	// target social_accounts — a single post can target accounts across
 	// multiple profiles. Drives per-profile filtering in the dashboard.
-	ProfileIDs []string             `json:"profile_ids"`
+	ProfileIDs []string `json:"profile_ids"`
 	// TargetPlatforms are derived from the post's stored metadata, so the
 	// dashboard can still show intended platforms before or without any
 	// social_post_results rows.
@@ -1382,7 +1418,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 					accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
 					if decErr == nil {
 						if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
-							rr.PublishStatus = status
+							applyTikTokLiveStatus(&rr, status)
 						}
 					}
 				}
@@ -1606,6 +1642,20 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
 				rr.Submitted = sub
 			}
+			if res.ExternalID.Valid && summary.Platform == "tiktok" {
+				if acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID); accErr == nil {
+					accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
+					if decErr == nil {
+						if adapter, adErr := platform.Get("tiktok"); adErr == nil {
+							if tiktokAdapter, ok := adapter.(*platform.TikTokAdapter); ok {
+								if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
+									applyTikTokLiveStatus(&rr, status)
+								}
+							}
+						}
+					}
+				}
+			}
 			responseResults = append(responseResults, rr)
 		}
 
@@ -1624,16 +1674,16 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp := socialPostResponse{
-			ID:          p.ID,
-			Caption:     caption,
-			MediaURLs:   p.MediaUrls,
-			Status:      deriveSocialPostStatus(p, postResults, jobsByPost[p.ID]),
-			CreatedAt:   p.CreatedAt.Time,
-			ScheduledAt: scheduledAt,
-			PublishedAt: publishedAt,
-			ArchivedAt:  archivedAt,
-			Source:      p.Source,
-			ProfileIDs:  p.ProfileIds,
+			ID:              p.ID,
+			Caption:         caption,
+			MediaURLs:       p.MediaUrls,
+			Status:          deriveSocialPostStatus(p, postResults, jobsByPost[p.ID]),
+			CreatedAt:       p.CreatedAt.Time,
+			ScheduledAt:     scheduledAt,
+			PublishedAt:     publishedAt,
+			ArchivedAt:      archivedAt,
+			Source:          p.Source,
+			ProfileIDs:      p.ProfileIds,
 			TargetPlatforms: targetPlatforms,
 			Results:         responseResults,
 		}

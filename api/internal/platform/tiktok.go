@@ -22,6 +22,8 @@ type TikTokAdapter struct {
 	mediaProxy *storage.Client // optional; required only for photo posts
 }
 
+const tiktokHomepageURL = "https://www.tiktok.com"
+
 func NewTikTokAdapter() *TikTokAdapter {
 	return &TikTokAdapter{client: debugrt.NewClient(120 * time.Second)}
 }
@@ -48,7 +50,7 @@ func (a *TikTokAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 		// the reason. Add "video.list" to this slice AND to the scope query
 		// param in GetAuthURL below, then have every connected account
 		// disconnect/reconnect, ONLY after the app has production access.
-		Scopes:       []string{"video.publish", "video.upload", "user.info.basic"},
+		Scopes: []string{"video.publish", "video.upload", "user.info.basic"},
 	}
 }
 
@@ -60,8 +62,8 @@ func (a *TikTokAdapter) GetAuthURL(config OAuthConfig, state string) string {
 		"response_type": {"code"},
 		// Keep in sync with DefaultOAuthConfig.Scopes above. video.list is
 		// intentionally absent until production access — see the note there.
-		"scope":         {"video.publish,video.upload,user.info.basic"},
-		"state":         {state},
+		"scope": {"video.publish,video.upload,user.info.basic"},
+		"state": {state},
 	}
 	return config.AuthURL + "?" + params.Encode()
 }
@@ -307,53 +309,7 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 	}
 
 	slog.Info("tiktok post: video submitted, polling status", "publish_id", publishID)
-	// Local stand-in so the existing polling block (which references
-	// initResult.Data.PublishID) keeps working without further edits.
-	initResult := struct {
-		Data struct {
-			PublishID string
-		}
-	}{}
-	initResult.Data.PublishID = publishID
-
-	// Step 4: Poll publish status until complete or failed (max 60 seconds)
-	for i := 0; i < 12; i++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-
-		status, err := a.CheckPublishStatus(ctx, accessToken, initResult.Data.PublishID)
-		if err != nil {
-			continue
-		}
-
-		data, _ := status["data"].(map[string]any)
-		if data == nil {
-			continue
-		}
-
-		publishStatus, _ := data["status"].(string)
-		switch publishStatus {
-		case "PUBLISH_COMPLETE":
-			slog.Info("tiktok post: publish complete", "publish_id", initResult.Data.PublishID)
-			return &PostResult{
-				ExternalID: initResult.Data.PublishID,
-				URL:        "https://www.tiktok.com",
-			}, nil
-		case "FAILED":
-			reason, _ := data["fail_reason"].(string)
-			return nil, fmt.Errorf("tiktok publish failed: %s", reason)
-		}
-		// PROCESSING_UPLOAD or PROCESSING_DOWNLOAD — keep polling
-	}
-
-	// Timeout — return as published with publish_id, user can check status later
-	return &PostResult{
-		ExternalID: initResult.Data.PublishID,
-		URL:        "https://www.tiktok.com",
-	}, nil
+	return a.waitForPublish(ctx, accessToken, publishID)
 }
 
 // postPhoto handles TikTok photo carousels via the content/init endpoint.
@@ -456,10 +412,54 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 		return nil, fmt.Errorf("tiktok photo error: %s", result.Error.Message)
 	}
 
+	slog.Info("tiktok photo post: submitted, polling status", "publish_id", result.Data.PublishID)
+	return a.waitForPublish(ctx, accessToken, result.Data.PublishID)
+}
+
+func (a *TikTokAdapter) waitForPublish(ctx context.Context, accessToken string, publishID string) (*PostResult, error) {
+	for i := 0; i < 12; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+
+		status, err := a.CheckPublishStatus(ctx, accessToken, publishID)
+		if err != nil {
+			continue
+		}
+
+		data, _ := status["data"].(map[string]any)
+		if data == nil {
+			continue
+		}
+
+		publishStatus, _ := data["status"].(string)
+		switch publishStatus {
+		case "PUBLISH_COMPLETE":
+			slog.Info("tiktok post: publish complete", "publish_id", publishID)
+			return tiktokPublishedResult(publishID, data), nil
+		case "FAILED":
+			reason, _ := data["fail_reason"].(string)
+			if strings.TrimSpace(reason) == "" {
+				reason = "unknown_error"
+			}
+			return nil, fmt.Errorf("tiktok publish failed: %s", reason)
+		}
+	}
+
 	return &PostResult{
-		ExternalID: result.Data.PublishID,
-		URL:        "https://www.tiktok.com",
+		ExternalID: publishID,
+		Status:     "processing",
 	}, nil
+}
+
+func tiktokPublishedResult(publishID string, data map[string]any) *PostResult {
+	result := &PostResult{ExternalID: publishID}
+	if url := TikTokPublicPostURLFromStatusData(data); url != "" {
+		result.URL = url
+	}
+	return result
 }
 
 // initVideoPull asks TikTok to pull the video itself from the source URL.
@@ -631,14 +631,14 @@ func (a *TikTokAdapter) initAndPushVideoFileWithPrivacy(ctx context.Context, acc
 // reject videos longer than max_video_post_duration_sec. See
 // https://developers.tiktok.com/doc/content-posting-api-reference-query-creator-info/
 type TikTokCreatorInfo struct {
-	CreatorAvatarURL            string   `json:"creator_avatar_url"`
-	CreatorUsername             string   `json:"creator_username"`
-	CreatorNickname             string   `json:"creator_nickname"`
-	PrivacyLevelOptions         []string `json:"privacy_level_options"`
-	CommentDisabled             bool     `json:"comment_disabled"`
-	DuetDisabled                bool     `json:"duet_disabled"`
-	StitchDisabled              bool     `json:"stitch_disabled"`
-	MaxVideoPostDurationSec     int      `json:"max_video_post_duration_sec"`
+	CreatorAvatarURL        string   `json:"creator_avatar_url"`
+	CreatorUsername         string   `json:"creator_username"`
+	CreatorNickname         string   `json:"creator_nickname"`
+	PrivacyLevelOptions     []string `json:"privacy_level_options"`
+	CommentDisabled         bool     `json:"comment_disabled"`
+	DuetDisabled            bool     `json:"duet_disabled"`
+	StitchDisabled          bool     `json:"stitch_disabled"`
+	MaxVideoPostDurationSec int      `json:"max_video_post_duration_sec"`
 }
 
 // FetchCreatorInfo calls /v2/post/publish/creator_info/query/ and returns the
@@ -949,6 +949,25 @@ func tiktokExtractPublicPostID(data map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func TikTokPublicPostURL(postID string) string {
+	if strings.TrimSpace(postID) == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://www.tiktok.com/player/v1/%s", postID)
+}
+
+func TikTokPublicPostURLFromStatus(status map[string]any) string {
+	data, _ := status["data"].(map[string]any)
+	return TikTokPublicPostURLFromStatusData(data)
+}
+
+func TikTokPublicPostURLFromStatusData(data map[string]any) string {
+	if data == nil {
+		return ""
+	}
+	return TikTokPublicPostURL(tiktokExtractPublicPostID(data))
 }
 
 type tiktokUserInfo struct {
