@@ -149,6 +149,18 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1 AND sa.disconnected_at IS NULL
 ORDER BY sa.connected_at DESC;
 
+-- name: ListAllSocialAccountsByWorkspaceIncludingDisconnected :many
+-- Same shape as ListSocialAccountsByWorkspace but returns disconnected
+-- accounts too. The Posts list renders historical results by joining
+-- their social_account_id through this map — filtering disconnected
+-- accounts out would strip the platform badges from any post whose
+-- account was later removed (the user's "platform column went empty"
+-- bug).
+SELECT sa.* FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+ORDER BY sa.connected_at DESC;
+
 -- name: ListSocialAccountsByWorkspaceFiltered :many
 -- Workspace-level list with optional profile_id, external_user_id, and platform filters.
 SELECT sa.* FROM social_accounts sa

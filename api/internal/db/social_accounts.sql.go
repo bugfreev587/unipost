@@ -430,6 +430,59 @@ func (q *Queries) ListAllSocialAccountsByProfile(ctx context.Context, profileID 
 	return items, nil
 }
 
+const listAllSocialAccountsByWorkspaceIncludingDisconnected = `-- name: ListAllSocialAccountsByWorkspaceIncludingDisconnected :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+ORDER BY sa.connected_at DESC
+`
+
+// Same shape as ListSocialAccountsByWorkspace but returns disconnected
+// accounts too. The Posts list renders historical results by joining
+// their social_account_id through this map — filtering disconnected
+// accounts out would strip the platform badges from any post whose
+// account was later removed (the user's "platform column went empty"
+// bug).
+func (q *Queries) ListAllSocialAccountsByWorkspaceIncludingDisconnected(ctx context.Context, workspaceID string) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listAllSocialAccountsByWorkspaceIncludingDisconnected, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+			&i.Status,
+			&i.ConnectionType,
+			&i.ConnectSessionID,
+			&i.ExternalUserID,
+			&i.ExternalUserEmail,
+			&i.LastRefreshedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedAccountsDueForRefresh = `-- name: ListManagedAccountsDueForRefresh :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 FROM social_accounts

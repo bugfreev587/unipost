@@ -1269,8 +1269,10 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 	jobs, _ := h.queries.ListPostDeliveryJobsByPost(r.Context(), post.ID)
 
 	// Resolve platform + account name once per result via the workspace
-	// account map (cheaper than per-result GetSocialAccount calls).
-	allAccounts, _ := h.queries.ListSocialAccountsByWorkspace(r.Context(), post.WorkspaceID)
+	// account map (cheaper than per-result GetSocialAccount calls). Uses
+	// the disconnected-inclusive variant so posts targeted at accounts
+	// that have since been removed still render their platform badge.
+	allAccounts, _ := h.queries.ListAllSocialAccountsByWorkspaceIncludingDisconnected(r.Context(), post.WorkspaceID)
 	accountInfo := make(map[string]struct {
 		Platform string
 		Name     string
@@ -1570,7 +1572,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 	// to resolve platform names AND display names. Historical post results
 	// may reference accounts that have since been disconnected — we still
 	// want their platform / handle to show up in the analytics list.
-	allAccounts, _ := h.queries.ListSocialAccountsByWorkspace(r.Context(), workspaceID)
+	allAccounts, _ := h.queries.ListAllSocialAccountsByWorkspaceIncludingDisconnected(r.Context(), workspaceID)
 	accountMap := make(map[string]accountSummary, len(allAccounts))
 	for _, acc := range allAccounts {
 		name := ""
