@@ -188,6 +188,7 @@ export default function PostsPage() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
+  const [pendingExpandedPostId, setPendingExpandedPostId] = useState<string | null>(null);
   // Auto-open the create drawer when arriving from activation modal
   // (?action=new&template=welcome). See activation-modal.tsx STEP_META.send_post.
   const searchParams = useSearchParams();
@@ -197,6 +198,7 @@ export default function PostsPage() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!workspaceId) return; // wait for workspace resolution
@@ -212,6 +214,7 @@ export default function PostsPage() {
       setAccounts(a.data);
       setPosts(p.data);
       setProfiles(pr.data);
+      return p.data;
     } catch (err) {
       console.error("Failed to load:", err);
     } finally {
@@ -230,6 +233,19 @@ export default function PostsPage() {
     }, POSTS_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [workspaceId, loadData]);
+
+  useEffect(() => {
+    if (!pendingExpandedPostId) return;
+    if (!posts.some((post) => post.id === pendingExpandedPostId)) return;
+    setExpandedPostId(pendingExpandedPostId);
+    window.requestAnimationFrame(() => {
+      rowRefs.current[pendingExpandedPostId]?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    setPendingExpandedPostId(null);
+  }, [pendingExpandedPostId, posts]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -505,7 +521,13 @@ export default function PostsPage() {
                 const isExpanded = expandedPostId === post.id;
                 return (
                   <Fragment key={post.id}>
-                    <tr className="posts-row" onClick={() => setExpandedPostId((current) => current === post.id ? null : post.id)}>
+                    <tr
+                      ref={(node) => {
+                        rowRefs.current[post.id] = node;
+                      }}
+                      className="posts-row"
+                      onClick={() => setExpandedPostId((current) => current === post.id ? null : post.id)}
+                    >
                       <td className="posts-select-cell" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
@@ -595,7 +617,13 @@ export default function PostsPage() {
                             </div>
                             <div>
                               <div className="posts-meta-label" style={{ marginBottom: 10 }}>Platform Results</div>
-                              <PostResultsGrid post={post} workspaceId={workspaceId} onRetryComplete={loadData} />
+                              <PostResultsGrid
+                                post={post}
+                                workspaceId={workspaceId}
+                                onRetryComplete={async () => {
+                                  await loadData();
+                                }}
+                              />
                             </div>
                           </div>
                         </td>
@@ -616,9 +644,13 @@ export default function PostsPage() {
         accounts={accounts}
         workspaceId={workspaceId}
         getToken={getToken}
-        onCreated={async () => {
-          loadData();
+        onCreated={async (postId) => {
           if (tab !== "all") setTab("all");
+          if (postId) {
+            setPendingExpandedPostId(postId);
+            setExpandedPostId(postId);
+          }
+          await loadData({ silent: true });
           // During activation (arrived via ?action=new&template=welcome),
           // bounce back to /projects/[id] so the Welcome modal re-pops
           // with step 2 ✓ and step 3 (optional) visible.

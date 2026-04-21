@@ -332,7 +332,7 @@ interface CreatePostDrawerProps {
   workspaceId: string;
   profileName?: string;
   getToken: () => Promise<string | null>;
-  onCreated: () => void;
+  onCreated: (postId?: string) => void | Promise<void>;
   // Activation guide: prefill caption + preselect all connected accounts
   // so a first-time user just clicks Publish.
   initialCaption?: string;
@@ -698,7 +698,7 @@ export function CreatePostDrawer({
       const token = validation.token;
       if (!token) return;
       const response = await createSocialPost(token, workspaceId, payload);
-      onCreated();
+      await onCreated(response.data.id);
       // TikTok processes video/photo uploads asynchronously — the
       // Content Posting API audit requires us to tell the user the post
       // is in-flight, not silently assume "published". Hold the drawer
@@ -769,8 +769,8 @@ export function CreatePostDrawer({
       if (!token) return;
       const payload = form.buildPayload();
       payload.status = "draft";
-      await createSocialPost(token, workspaceId, payload);
-      onCreated();
+      const response = await createSocialPost(token, workspaceId, payload);
+      await onCreated(response.data.id);
       onOpenChange(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to save draft";
