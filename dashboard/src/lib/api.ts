@@ -504,6 +504,20 @@ export interface SocialPost {
   results?: SocialPostResult[];
 }
 
+export interface SocialPostSummaryResult {
+  external_id?: string;
+}
+
+export interface SocialPostSummary {
+  id: string;
+  caption: string | null;
+  media_urls?: string[];
+  status: string;
+  created_at: string;
+  published_at?: string;
+  results?: SocialPostSummaryResult[];
+}
+
 export interface PostDeliveryJob {
   id: string;
   post_id: string;
@@ -537,6 +551,13 @@ export async function listSocialPosts(
   workspaceId: string
 ): Promise<ApiResponse<SocialPost[]>> {
   return request(`/v1/workspaces/${workspaceId}/social-posts`, token);
+}
+
+export async function listSocialPostSummaries(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<SocialPostSummary[]>> {
+  return request(`/v1/workspaces/${workspaceId}/social-posts/summaries`, token);
 }
 
 export async function archiveSocialPost(

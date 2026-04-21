@@ -127,6 +127,42 @@ WHERE social_account_id = $1
 ORDER BY published_at DESC
 `
 
+const listSocialPostResultsByPostIDs = `-- name: ListSocialPostResultsByPostIDs :many
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results
+WHERE post_id = ANY($1::text[])
+`
+
+func (q *Queries) ListSocialPostResultsByPostIDs(ctx context.Context, dollar_1 []string) ([]SocialPostResult, error) {
+	rows, err := q.db.Query(ctx, listSocialPostResultsByPostIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialPostResult{}
+	for rows.Next() {
+		var i SocialPostResult
+		if err := rows.Scan(
+			&i.ID,
+			&i.PostID,
+			&i.SocialAccountID,
+			&i.Status,
+			&i.ExternalID,
+			&i.ErrorMessage,
+			&i.PublishedAt,
+			&i.Caption,
+			&i.Url,
+			&i.DebugCurl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 type ListPublishedExternalIDsForInboxSyncParams struct {
 	SocialAccountID string `json:"social_account_id"`
 	Column2         int32  `json:"column_2"`

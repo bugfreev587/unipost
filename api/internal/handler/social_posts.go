@@ -209,6 +209,40 @@ type socialPostResponse struct {
 	Results         []postResultResponse `json:"results,omitempty"`
 }
 
+type socialPostSummaryResultResponse struct {
+	ExternalID *string `json:"external_id,omitempty"`
+}
+
+type socialPostSummaryResponse struct {
+	ID          string                            `json:"id"`
+	Caption     *string                           `json:"caption"`
+	MediaURLs   []string                          `json:"media_urls,omitempty"`
+	Status      string                            `json:"status"`
+	CreatedAt   time.Time                         `json:"created_at"`
+	PublishedAt *time.Time                        `json:"published_at,omitempty"`
+	Results     []socialPostSummaryResultResponse `json:"results,omitempty"`
+}
+
+func buildAccountSummaryMap(accounts []db.SocialAccount) map[string]accountSummary {
+	accountMap := make(map[string]accountSummary, len(accounts))
+	for _, acc := range accounts {
+		name := ""
+		if acc.AccountName.Valid {
+			name = acc.AccountName.String
+		}
+		accountMap[acc.ID] = accountSummary{Platform: acc.Platform, Name: name}
+	}
+	return accountMap
+}
+
+func groupPostResultsByPostID(rows []db.SocialPostResult) map[string][]db.SocialPostResult {
+	grouped := make(map[string][]db.SocialPostResult, len(rows))
+	for _, row := range rows {
+		grouped[row.PostID] = append(grouped[row.PostID], row)
+	}
+	return grouped
+}
+
 // Create handles POST /v1/social-posts.
 //
 // Sprint 1 rewrite — accepts both the legacy shape (caption +
@@ -1573,23 +1607,18 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 	// may reference accounts that have since been disconnected — we still
 	// want their platform / handle to show up in the analytics list.
 	allAccounts, _ := h.queries.ListAllSocialAccountsByWorkspaceIncludingDisconnected(r.Context(), workspaceID)
-	accountMap := make(map[string]accountSummary, len(allAccounts))
-	for _, acc := range allAccounts {
-		name := ""
-		if acc.AccountName.Valid {
-			name = acc.AccountName.String
-		}
-		accountMap[acc.ID] = accountSummary{Platform: acc.Platform, Name: name}
-	}
+	accountMap := buildAccountSummaryMap(allAccounts)
 	postIDs := make([]string, 0, len(posts))
 	for _, p := range posts {
 		postIDs = append(postIDs, p.ID)
 	}
 	jobRows, _ := h.queries.ListPostDeliveryJobsByPostIDs(r.Context(), postIDs)
+	resultRows, _ := h.queries.ListSocialPostResultsByPostIDs(r.Context(), postIDs)
 	jobsByPost := make(map[string][]db.PostDeliveryJob, len(postIDs))
 	for _, job := range jobRows {
 		jobsByPost[job.PostID] = append(jobsByPost[job.PostID], job)
 	}
+	resultsByPost := groupPostResultsByPostID(resultRows)
 
 	var result []socialPostResponse
 	for _, p := range posts {
@@ -1610,8 +1639,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			archivedAt = &p.ArchivedAt.Time
 		}
 
-		// Fetch results for this post
-		postResults, _ := h.queries.ListSocialPostResultsByPost(r.Context(), p.ID)
+		postResults := resultsByPost[p.ID]
 		submittedByAccount := buildSubmittedMap(p.Metadata, derefText(p.Caption))
 		var responseResults []postResultResponse
 		for _, res := range postResults {
@@ -1641,20 +1669,6 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 			if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
 				rr.Submitted = sub
-			}
-			if res.ExternalID.Valid && summary.Platform == "tiktok" {
-				if acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID); accErr == nil {
-					accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
-					if decErr == nil {
-						if adapter, adErr := platform.Get("tiktok"); adErr == nil {
-							if tiktokAdapter, ok := adapter.(*platform.TikTokAdapter); ok {
-								if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
-									applyTikTokLiveStatus(r.Context(), &rr, status, tiktokAdapter, accessToken)
-								}
-							}
-						}
-					}
-				}
 			}
 			responseResults = append(responseResults, rr)
 		}
@@ -1712,6 +1726,65 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		"data":        result,
 		"next_cursor": nextCursor,
 	})
+}
+
+// ListSummaries returns a lightweight subset of post data for pages
+// that only need captions, media URLs, status, and result external IDs.
+func (h *SocialPostHandler) ListSummaries(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.getWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+
+	posts, err := h.queries.ListSocialPostsByWorkspace(r.Context(), db.ListSocialPostsByWorkspaceParams{
+		WorkspaceID: workspaceID,
+		Limit:       200,
+		Offset:      0,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list post summaries")
+		return
+	}
+
+	postIDs := make([]string, 0, len(posts))
+	for _, p := range posts {
+		postIDs = append(postIDs, p.ID)
+	}
+	resultRows, _ := h.queries.ListSocialPostResultsByPostIDs(r.Context(), postIDs)
+	resultsByPost := groupPostResultsByPostID(resultRows)
+
+	resp := make([]socialPostSummaryResponse, 0, len(posts))
+	for _, p := range posts {
+		var caption *string
+		if p.Caption.Valid {
+			caption = &p.Caption.String
+		}
+
+		summary := socialPostSummaryResponse{
+			ID:        p.ID,
+			Caption:   caption,
+			MediaURLs: p.MediaUrls,
+			Status:    p.Status,
+			CreatedAt: p.CreatedAt.Time,
+		}
+		if p.PublishedAt.Valid {
+			t := p.PublishedAt.Time
+			summary.PublishedAt = &t
+		}
+		for _, res := range resultsByPost[p.ID] {
+			var externalID *string
+			if res.ExternalID.Valid {
+				externalID = &res.ExternalID.String
+			}
+			summary.Results = append(summary.Results, socialPostSummaryResultResponse{
+				ExternalID: externalID,
+			})
+		}
+		resp = append(resp, summary)
+	}
+
+	writeSuccess(w, resp)
 }
 
 func derefText(v pgtype.Text) string {

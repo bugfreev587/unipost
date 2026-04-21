@@ -6,6 +6,10 @@ RETURNING *;
 -- name: ListSocialPostResultsByPost :many
 SELECT * FROM social_post_results WHERE post_id = $1;
 
+-- name: ListSocialPostResultsByPostIDs :many
+SELECT * FROM social_post_results
+WHERE post_id = ANY($1::text[]);
+
 -- name: GetSocialPostResultByIDAndPost :one
 SELECT * FROM social_post_results WHERE id = $1 AND post_id = $2;
 

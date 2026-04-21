@@ -7,11 +7,11 @@ import {
   cancelPostDeliveryJob,
   getPostDeliveryJobsSummary,
   listPostDeliveryJobs,
-  listSocialPosts,
+  listSocialPostSummaries,
   retryPostDeliveryJobNow,
   type PostDeliveryJob,
   type PostDeliveryJobsSummary,
-  type SocialPost,
+  type SocialPostSummary,
 } from "@/lib/api";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 
@@ -56,7 +56,7 @@ export default function QueuePage() {
   const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
   const [jobs, setJobs] = useState<PostDeliveryJob[]>([]);
-  const [posts, setPosts] = useState<SocialPost[]>([]);
+  const [posts, setPosts] = useState<SocialPostSummary[]>([]);
   const [summary, setSummary] = useState<PostDeliveryJobsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -73,7 +73,7 @@ export default function QueuePage() {
         const [jobsRes, summaryRes, postsRes] = await Promise.all([
           listPostDeliveryJobs(token, workspaceId),
           getPostDeliveryJobsSummary(token, workspaceId),
-          listSocialPosts(token, workspaceId),
+          listSocialPostSummaries(token, workspaceId),
         ]);
         if (cancelled) return;
         setJobs(jobsRes.data);
@@ -98,8 +98,8 @@ export default function QueuePage() {
   }, [workspaceId, getToken]);
 
   const grouped = useMemo(() => {
-    const byId = new Map(posts.map((post) => [post.id, post]));
-    const groups = new Map<string, { post?: SocialPost; jobs: PostDeliveryJob[] }>();
+      const byId = new Map(posts.map((post) => [post.id, post]));
+    const groups = new Map<string, { post?: SocialPostSummary; jobs: PostDeliveryJob[] }>();
     for (const job of jobs) {
       const current = groups.get(job.post_id) || { post: byId.get(job.post_id), jobs: [] };
       current.jobs.push(job);

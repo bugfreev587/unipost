@@ -521,26 +521,27 @@ func main() {
 			mediaHandler.Get(w, r.WithContext(ctx))
 		})
 
-			// Social posts (dashboard, workspace-scoped)
-			r.Get("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.List)
-			r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)
-			r.Post("/v1/workspaces/{workspaceID}/social-posts/validate", func(w http.ResponseWriter, r *http.Request) {
-				ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
-				socialPostHandler.Validate(w, r.WithContext(ctx))
-			})
-			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", socialPostHandler.Archive)
-			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", socialPostHandler.Restore)
-			r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", socialPostHandler.Delete)
-			// Per-platform retry for a failed social_post_result row.
-			// Only rows with status='failed' are retryable; see
-			// social_post_retry.go for the safety gates + parent-status
-			// recomputation logic.
-			r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
-			r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/queue", socialPostHandler.GetPostQueue)
-			r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
-			r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
-			r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
-			r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
+		// Social posts (dashboard, workspace-scoped)
+		r.Get("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.List)
+		r.Get("/v1/workspaces/{workspaceID}/social-posts/summaries", socialPostHandler.ListSummaries)
+		r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/validate", func(w http.ResponseWriter, r *http.Request) {
+			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
+			socialPostHandler.Validate(w, r.WithContext(ctx))
+		})
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", socialPostHandler.Archive)
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", socialPostHandler.Restore)
+		r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", socialPostHandler.Delete)
+		// Per-platform retry for a failed social_post_result row.
+		// Only rows with status='failed' are retryable; see
+		// social_post_retry.go for the safety gates + parent-status
+		// recomputation logic.
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
+		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/queue", socialPostHandler.GetPostQueue)
+		r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
+		r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
+		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
+		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
 
 		// OAuth connect (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)

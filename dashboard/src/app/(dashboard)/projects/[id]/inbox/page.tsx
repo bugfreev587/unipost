@@ -12,11 +12,11 @@ import {
   syncInbox,
   updateInboxThreadState,
   listSocialAccounts,
-  listSocialPosts,
+  listSocialPostSummaries,
   getInboxMediaContext,
   type InboxItem,
   type SocialAccount,
-  type SocialPost,
+  type SocialPostSummary,
   type IGMediaContext,
 } from "@/lib/api";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
@@ -421,7 +421,7 @@ export default function InboxPage() {
 
   const [items, setItems] = useState<InboxItem[]>([]);
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
-  const [socialPosts, setSocialPosts] = useState<SocialPost[]>([]);
+  const [socialPosts, setSocialPosts] = useState<SocialPostSummary[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -444,7 +444,7 @@ export default function InboxPage() {
       const [itemsRes, unreadRes, socialPostsRes] = await Promise.all([
         listInboxItems(token, workspaceId),
         getInboxUnreadCount(token, workspaceId),
-        listSocialPosts(token, workspaceId),
+        listSocialPostSummaries(token, workspaceId),
       ]);
       const accountsRes = profileId ? await listSocialAccounts(token, profileId) : null;
       setItems(itemsRes.data || []);
