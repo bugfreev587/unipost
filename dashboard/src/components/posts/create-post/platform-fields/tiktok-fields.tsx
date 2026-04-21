@@ -548,40 +548,54 @@ function DisclosureSection({
         </div>
       </label>
 
-      {fields.disclosureEnabled && (
-        <div className="mt-3 space-y-2 border-t pt-3" style={{ borderTopColor: "var(--dborder)" }}>
-          {/* Per TikTok's audit copy, when Branded Content is checked
-              every labeled row reads "Paid partnership" (it outranks
-              Promotional content). Compute the label once so both
-              checkboxes stay in sync. */}
-          {(() => {
-            const labelText = fields.brandedContent ? "Paid partnership" : "Promotional content";
-            return (
-              <>
-                <DisclosureOption
-                  label="Your Brand"
-                  description="You are promoting yourself or your own business."
-                  checked={fields.yourBrand}
-                  onChange={(c) => onChange({ yourBrand: c })}
-                  labeledAs={fields.yourBrand ? labelText : null}
-                />
-                <DisclosureOption
-                  label="Branded Content"
-                  description="You got paid to promote a third party."
-                  checked={fields.brandedContent}
-                  onChange={onBrandedContentChange}
-                  labeledAs={fields.brandedContent ? "Paid partnership" : null}
-                />
-              </>
-            );
-          })()}
-          {disclosureIncomplete && (
-            <Hint tone="error">
-              You need to indicate if your content promotes yourself, a third party, or both.
-            </Hint>
-          )}
-        </div>
-      )}
+      {fields.disclosureEnabled && (() => {
+        // Branded Content outranks Your Brand in TikTok's audit copy —
+        // whenever Branded Content is checked the label is "Paid
+        // partnership", otherwise Your Brand alone reads "Promotional
+        // content". Show the single consolidated badge directly under
+        // the "Disclose video content" row so the per-option rows stay
+        // uncluttered.
+        const labeledAs = fields.brandedContent
+          ? "Paid partnership"
+          : fields.yourBrand
+            ? "Promotional content"
+            : null;
+        return (
+          <>
+            {labeledAs && (
+              <div
+                className="mt-2 inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium"
+                style={{
+                  background: "color-mix(in srgb, var(--success, #16a34a) 18%, var(--surface1))",
+                  color: "color-mix(in srgb, var(--success, #16a34a) 55%, white)",
+                  border: "1px solid color-mix(in srgb, var(--success, #16a34a) 35%, transparent)",
+                }}
+              >
+                Your video will be labeled as &ldquo;{labeledAs}&rdquo;
+              </div>
+            )}
+            <div className="mt-3 space-y-2 border-t pt-3" style={{ borderTopColor: "var(--dborder)" }}>
+              <DisclosureOption
+                label="Your Brand"
+                description="You are promoting yourself or your own business."
+                checked={fields.yourBrand}
+                onChange={(c) => onChange({ yourBrand: c })}
+              />
+              <DisclosureOption
+                label="Branded Content"
+                description="You got paid to promote a third party."
+                checked={fields.brandedContent}
+                onChange={onBrandedContentChange}
+              />
+              {disclosureIncomplete && (
+                <Hint tone="error">
+                  You need to indicate if your content promotes yourself, a third party, or both.
+                </Hint>
+              )}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -591,13 +605,11 @@ function DisclosureOption({
   description,
   checked,
   onChange,
-  labeledAs,
 }: {
   label: string;
   description: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
-  labeledAs: string | null;
 }) {
   return (
     <label className="flex cursor-pointer items-start gap-2">
@@ -614,18 +626,6 @@ function DisclosureOption({
         <div className="mt-0.5 text-[11px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
           {description}
         </div>
-        {labeledAs && (
-          <div
-            className="mt-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium"
-            style={{
-              background: "color-mix(in srgb, var(--success, #16a34a) 18%, var(--surface1))",
-              color: "color-mix(in srgb, var(--success, #16a34a) 55%, white)",
-              border: "1px solid color-mix(in srgb, var(--success, #16a34a) 35%, transparent)",
-            }}
-          >
-            Your video will be labeled as &ldquo;{labeledAs}&rdquo;
-          </div>
-        )}
       </div>
     </label>
   );
