@@ -219,6 +219,15 @@ function conversationRootKey(item: InboxItem, source: ConversationGroup["source"
     return item.thread_key || item.parent_external_id || item.author_id || item.external_id;
   }
 
+  // For comment-style inbox items, prefer the internal linked post ID
+  // when present. Facebook can surface different upstream identifiers
+  // for the same underlying Page post across webhook vs sync paths;
+  // grouping on linked_post_id keeps all comments on one published post
+  // in the same left-hand conversation.
+  if (item.linked_post_id) {
+    return `post:${item.linked_post_id}`;
+  }
+
   if (item.thread_key) return item.thread_key;
   if (!item.is_own) return item.external_id;
   return item.parent_external_id || item.external_id;
@@ -635,16 +644,26 @@ export default function InboxPage() {
         ? group.assignedTo || "UniPost agent"
         : "";
 
-    await updateInboxThreadState(token, workspaceId, group.items[0].id, {
-      thread_status: threadStatus,
-      assigned_to: assignedTo,
-    });
+    const distinctThreadLeaders = new Map<string, InboxItem>();
+    for (const item of group.items) {
+      const key = item.thread_key || item.parent_external_id || item.external_id;
+      if (!distinctThreadLeaders.has(key)) {
+        distinctThreadLeaders.set(key, item);
+      }
+    }
+
+    await Promise.all(
+      Array.from(distinctThreadLeaders.values()).map((item) =>
+        updateInboxThreadState(token, workspaceId, item.id, {
+          thread_status: threadStatus,
+          assigned_to: assignedTo,
+        })
+      )
+    );
 
     setItems((prev) =>
       prev.map((item) =>
-        item.social_account_id === group.items[0].social_account_id &&
-        item.source === group.source &&
-        item.thread_key === group.threadKey
+        group.items.some((groupItem) => groupItem.id === item.id)
           ? {
               ...item,
               thread_status: threadStatus,
