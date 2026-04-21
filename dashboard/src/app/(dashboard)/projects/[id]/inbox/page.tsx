@@ -1087,7 +1087,27 @@ export default function InboxPage() {
           </div>
         ) : null}
 
-        <div style={{ marginLeft: gutterWidth }}>
+        <div style={{ position: "relative", marginLeft: gutterWidth }}>
+          {/* Descender from this node's own avatar down through its
+              bubble, bridging into the margin above the first child.
+              Without this, the child's elbow starts in empty space —
+              this is the stroke the user was missing that made the
+              curves read as "floating decoration". */}
+          {node.children.length > 0 ? (
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: (depth === 0 ? ROOT_AVATAR_RADIUS : NESTED_AVATAR_RADIUS) - 1,
+                top: depth === 0 ? ROOT_AVATAR_RADIUS : NESTED_AVATAR_RADIUS,
+                bottom: -COMMENT_THREAD_GUTTER_OVERLAP,
+                width: 2,
+                borderRadius: 999,
+                background: COMMENT_THREAD_LINE_COLOR,
+                pointerEvents: "none",
+              }}
+            />
+          ) : null}
           {renderConversationItem(node.item, depth)}
         </div>
 
