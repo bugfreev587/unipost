@@ -14,6 +14,7 @@ import { YouTubeFields } from "./platform-fields/youtube-fields";
 import { TikTokFields } from "./platform-fields/tiktok-fields";
 import { InstagramFields } from "./platform-fields/instagram-fields";
 import { LinkedInFields } from "./platform-fields/linkedin-fields";
+import { FacebookFields } from "./platform-fields/facebook-fields";
 import type { SocialAccount } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { SocialPostValidationIssue } from "@/lib/api";
@@ -43,7 +44,7 @@ interface PlatformEditorBlockProps {
   // long for this account). Null clears the blocker.
   onTiktokBlockerChange: (reason: string | null) => void;
   onCaptionChange: (caption: string) => void;
-  onPlatformFieldChange: <K extends "youtube" | "tiktok" | "instagram" | "linkedin">(
+  onPlatformFieldChange: <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook">(
     platform: K,
     fields: Partial<NonNullable<PlatformOverride[K]>>
   ) => void;
@@ -81,6 +82,7 @@ export function PlatformEditorBlock({
   const tiktokFields = override.tiktok || DEFAULT_TIKTOK_FIELDS;
   const instagramFields = override.instagram || { mediaType: "feed" as const };
   const linkedinFields = override.linkedin || { visibility: "anyone" as const };
+  const facebookFields = override.facebook || { link: "" };
 
   return (
     <div
@@ -237,6 +239,13 @@ export function PlatformEditorBlock({
             <LinkedInFields
               fields={linkedinFields}
               onChange={(f) => onPlatformFieldChange("linkedin", f)}
+            />
+          )}
+          {account.platform === "facebook" && (
+            <FacebookFields
+              fields={facebookFields}
+              onChange={(f) => onPlatformFieldChange("facebook", f)}
+              mediaAttached={mediaKind !== "none"}
             />
           )}
         </div>

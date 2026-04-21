@@ -336,15 +336,255 @@ func (a *FacebookAdapter) Connect(ctx context.Context, credentials map[string]st
 	return nil, fmt.Errorf("facebook requires OAuth flow, use /v1/oauth/connect/facebook")
 }
 
-// Post is stubbed for Phase 1. Full publishing lands in Phase 2 of
-// the Facebook PRD (text + photo + video + link + scheduled).
+// Post publishes text, a link, a single photo, or a single video to
+// a Facebook Page. The Page Access Token is scoped to one Page, so
+// we don't need a page_id in opts — we resolve it by asking Graph
+// "GET /me" with the Page Token, which returns the Page itself.
+//
+// Combination matrix (PRD §4, answer 4). Everything outside this
+// set is rejected by the adapter (and additionally by the validator
+// at compose time, so direct API callers get the same error):
+//
+//	text only                   → /{page_id}/feed     message
+//	link only                   → /{page_id}/feed     link
+//	text + link                 → /{page_id}/feed     message + link
+//	text + single image         → /{page_id}/photos   url + caption
+//	text + single video         → /{page_id}/videos   file_url + description
+//
+// Scheduling: UniPost's scheduler owns timing for every platform,
+// including Facebook. By the time this method runs, scheduled_at is
+// already "now" — no FB-native scheduled_publish_time params are
+// emitted from here. Photo/video scheduling is rejected at the
+// validator level per the Phase-2 decisions, not here.
 func (a *FacebookAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {
-	return nil, fmt.Errorf("facebook publishing is not yet implemented (Phase 2)")
+	link := strings.TrimSpace(optString(opts, "link"))
+	hasText := strings.TrimSpace(text) != ""
+	hasLink := link != ""
+	hasMedia := len(media) > 0
+
+	if !hasText && !hasLink && !hasMedia {
+		return nil, fmt.Errorf("facebook: need text, link, or media to post")
+	}
+	// Link + media is explicitly disallowed per the PRD matrix: FB's
+	// link preview gets absorbed into the photo/video post, which
+	// silently drops one of the user's inputs. Refuse cleanly.
+	if hasLink && hasMedia {
+		return nil, fmt.Errorf("facebook: link and media cannot be combined in the same post")
+	}
+	if hasMedia && len(media) > 1 {
+		return nil, fmt.Errorf("facebook: v1 supports one photo or one video per post (got %d media items)", len(media))
+	}
+
+	pageID, err := a.fetchPageSelfID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dispatch by media kind.
+	if hasMedia {
+		m := media[0]
+		kind := m.Kind
+		if kind == MediaKindUnknown {
+			kind = SniffMediaKind(m.URL)
+		}
+		switch kind {
+		case MediaKindImage, MediaKindGIF:
+			return a.postPhoto(ctx, accessToken, pageID, text, m.URL)
+		case MediaKindVideo:
+			return a.postVideo(ctx, accessToken, pageID, text, m.URL)
+		default:
+			return nil, fmt.Errorf("facebook: unsupported media kind %q for %s", kind, m.URL)
+		}
+	}
+
+	// No media → /feed. Scheduling params (published=false,
+	// scheduled_publish_time) are intentionally omitted; UniPost's
+	// scheduler owns timing uniformly across platforms.
+	return a.postFeed(ctx, accessToken, pageID, text, link)
 }
 
-// DeletePost is stubbed for Phase 1.
+// postFeed handles /feed posts — text, link, or text+link.
+func (a *FacebookAdapter) postFeed(ctx context.Context, accessToken, pageID, text, link string) (*PostResult, error) {
+	form := url.Values{
+		"access_token": {accessToken},
+	}
+	if text != "" {
+		form.Set("message", text)
+	}
+	if link != "" {
+		form.Set("link", link)
+	}
+	return a.publishAndShape(ctx, "POST", facebookGraphBase+"/"+pageID+"/feed", form, pageID)
+}
+
+// postPhoto uploads a single photo by remote URL. FB's /photos
+// endpoint treats `url=<remote>` as pull-from-URL; message doubles
+// as the caption. No multipart streaming path in v1.
+func (a *FacebookAdapter) postPhoto(ctx context.Context, accessToken, pageID, caption, imageURL string) (*PostResult, error) {
+	form := url.Values{
+		"access_token": {accessToken},
+		"url":          {imageURL},
+	}
+	if caption != "" {
+		form.Set("message", caption)
+	}
+	return a.publishAndShape(ctx, "POST", facebookGraphBase+"/"+pageID+"/photos", form, pageID)
+}
+
+// postVideo uploads a single video by remote URL. Same pull model
+// as photos; `file_url` is FB's param for the remote source. v1 does
+// not support resumable upload — videos over ~1GB should be
+// rejected at the validator.
+func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, description, videoURL string) (*PostResult, error) {
+	form := url.Values{
+		"access_token": {accessToken},
+		"file_url":     {videoURL},
+	}
+	if description != "" {
+		form.Set("description", description)
+	}
+	return a.publishAndShape(ctx, "POST", facebookGraphBase+"/"+pageID+"/videos", form, pageID)
+}
+
+// publishAndShape sends the request and normalizes the response
+// into a PostResult (ExternalID + public URL) or a shaped error.
+// Error codes 190 / 102 / 200 are auth-related — we surface them
+// as a "needs reconnect" message so the Posts Overview's retry
+// button can steer the user to the right fix without parsing raw
+// Meta JSON.
+func (a *FacebookAdapter) publishAndShape(ctx context.Context, method, url string, form url.Values, pageID string) (*PostResult, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook publish: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+	}
+
+	var parsed struct {
+		ID     string `json:"id"`      // /feed returns {page_id}_{post_id}; /photos + /videos return bare id
+		PostID string `json:"post_id"` // /photos and /videos echo a post_id for the underlying story
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("facebook publish: decode response: %w (body=%s)", err, string(body))
+	}
+	externalID := parsed.ID
+	if externalID == "" {
+		externalID = parsed.PostID
+	}
+	if externalID == "" {
+		return nil, fmt.Errorf("facebook publish: response missing id (body=%s)", string(body))
+	}
+
+	// Public URL pattern: FB resolves /{id} for both the short photo/
+	// video id and the combined feed id, but the canonical "posts"
+	// path reads cleaner in share links. Fall back to the short form
+	// when we only have a bare id.
+	publicURL := "https://www.facebook.com/" + externalID
+	if strings.Contains(externalID, "_") {
+		parts := strings.SplitN(externalID, "_", 2)
+		publicURL = fmt.Sprintf("https://www.facebook.com/%s/posts/%s", parts[0], parts[1])
+	} else if pageID != "" {
+		publicURL = fmt.Sprintf("https://www.facebook.com/%s/posts/%s", pageID, externalID)
+	}
+	return &PostResult{
+		ExternalID: externalID,
+		URL:        publicURL,
+	}, nil
+}
+
+// wrapFacebookPublishError turns Graph API error responses into
+// something the UI can act on. Auth-shaped errors (190 / 102 / 200)
+// route to a "needs reconnect" message that the Posts Overview's
+// error hint logic recognizes.
+func wrapFacebookPublishError(status int, body []byte) error {
+	var parsed struct {
+		Error struct {
+			Code      int    `json:"code"`
+			Message   string `json:"message"`
+			Type      string `json:"type"`
+			FBTraceID string `json:"fbtrace_id"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(body, &parsed)
+
+	if parsed.Error.Message != "" {
+		switch parsed.Error.Code {
+		case 190, 102, 200:
+			return fmt.Errorf("facebook: access token rejected (code %d: %s). Please reconnect the Page.",
+				parsed.Error.Code, parsed.Error.Message)
+		}
+		return fmt.Errorf("facebook publish (%d): %s [code=%d trace=%s]",
+			status, parsed.Error.Message, parsed.Error.Code, parsed.Error.FBTraceID)
+	}
+	return fmt.Errorf("facebook publish (%d): %s", status, string(body))
+}
+
+// fetchPageSelfID calls /me with a Page Access Token, which returns
+// the Page (not the authorizing user). Used by Post() to avoid
+// threading page_id through the adapter signature. One cached call
+// per publish is fine — they already cost one HTTP round trip on
+// Meta's side.
+func (a *FacebookAdapter) fetchPageSelfID(ctx context.Context, pageAccessToken string) (string, error) {
+	params := url.Values{
+		"access_token": {pageAccessToken},
+		"fields":       {"id"},
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", facebookGraphBase+"/me?"+params.Encode(), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("facebook /me (page): %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", wrapFacebookPublishError(resp.StatusCode, body)
+	}
+	var parsed struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	if parsed.ID == "" {
+		return "", fmt.Errorf("facebook /me (page): response missing id (body=%s)", string(body))
+	}
+	return parsed.ID, nil
+}
+
+// DeletePost removes a post by its external id. Not exercised in
+// Phase 2 (the posts list doesn't wire a delete action for FB yet)
+// but wiring it now means the Retry flow on the UI also fails
+// cleanly when a post was deleted out-of-band.
 func (a *FacebookAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
-	return fmt.Errorf("facebook post deletion is not yet implemented")
+	form := url.Values{"access_token": {accessToken}}
+	req, err := http.NewRequestWithContext(ctx, "DELETE",
+		facebookGraphBase+"/"+externalID+"?"+form.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("facebook delete: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return wrapFacebookPublishError(resp.StatusCode, body)
+	}
+	return nil
 }
 
 // RefreshToken is a no-op for Facebook. Page Tokens derived from

@@ -210,6 +210,12 @@ const (
 	CodeInvalidInstagramMediaType       = "invalid_instagram_media_type"
 	CodeInstagramReelsRequireVideo      = "instagram_reels_require_video"
 	CodeInstagramStorySingleMediaOnly   = "instagram_story_single_media_only"
+	// Facebook Pages v1 codes. Kept narrow on purpose — wider
+	// matrices (multi-photo, link+media, scheduled photo/video) get
+	// their own explicit rejects at the validator so direct API
+	// callers hit the same guards the compose UI already enforces.
+	CodeFacebookLinkWithMedia           = "facebook_link_with_media"
+	CodeFacebookScheduledMediaUnsupported = "facebook_scheduled_media_unsupported"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -813,6 +819,40 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Message:           plat + " does not allow mixing images and video in one post",
 			Severity:          SeverityError,
 		})
+	}
+
+	if plat == "facebook" {
+		// Facebook v1 rejects two combinations the adapter also
+		// refuses, so direct-API callers get the same error the
+		// compose UI surfaces at the button:
+		//   (a) link + media — FB's link preview gets absorbed into
+		//       the photo/video post, silently dropping one input.
+		//   (b) scheduled photo/video — uses a different FB publish
+		//       path we're not shipping in v1. Text + link scheduling
+		//       stays supported via UniPost's own scheduler.
+		fbLink := strings.TrimSpace(optString(post.PlatformOptions, "link"))
+		if fbLink != "" && len(mediaItems) > 0 {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.link",
+				Code:              CodeFacebookLinkWithMedia,
+				Message:           "Facebook does not support link and media in the same post — choose one.",
+				Severity:          SeverityError,
+			})
+		}
+		if opts.ScheduledAt != nil && len(mediaItems) > 0 {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "scheduled_at",
+				Code:              CodeFacebookScheduledMediaUnsupported,
+				Message:           "Scheduled publishing for Facebook photos/videos is not yet supported.",
+				Severity:          SeverityError,
+			})
+		}
 	}
 
 	if plat == "instagram" {

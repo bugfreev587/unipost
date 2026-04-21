@@ -51,6 +51,12 @@ export interface PlatformOverride {
   linkedin?: {
     visibility: "anyone" | "connections";
   };
+  // Facebook-specific — v1 only exposes an optional `link` input.
+  // Disallowed alongside media (validated server-side and enforced
+  // in the Facebook fields panel via the mediaAttached prop).
+  facebook?: {
+    link: string;
+  };
 }
 
 export interface CreatePostFormState {
@@ -76,6 +82,7 @@ export const PLATFORM_ORDER = [
   "bluesky",
   "threads",
   "instagram",
+  "facebook",
   "tiktok",
   "youtube",
 ] as const;
@@ -86,6 +93,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   bluesky: "Bluesky",
   threads: "Threads",
   instagram: "Instagram",
+  facebook: "Facebook",
   tiktok: "TikTok",
   youtube: "YouTube",
 };
@@ -96,6 +104,7 @@ export const PLATFORM_CHAR_LIMITS: Record<string, number> = {
   bluesky: 300,
   threads: 500,
   instagram: 2200,
+  facebook: 63206,
   tiktok: 2200,
   youtube: 5000,
 };
@@ -106,6 +115,7 @@ export const PLATFORM_BRAND_COLORS: Record<string, string> = {
   bluesky: "#1185fe",
   threads: "#e7e7ea",
   instagram: "#e1306c",
+  facebook: "#1877f2",
   tiktok: "#ff0050",
   youtube: "#ff0000",
 };
@@ -258,7 +268,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   }, []);
 
   const updateOverridePlatformField = useCallback(
-    <K extends "youtube" | "tiktok" | "instagram" | "linkedin">(
+    <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook">(
       accountId: string,
       platform: K,
       fields: Partial<NonNullable<PlatformOverride[K]>>
@@ -513,6 +523,13 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
         }
         if (o?.instagram) entry.platform_options = { ...o.instagram };
         if (o?.linkedin) entry.platform_options = { ...o.linkedin };
+        if (o?.facebook) {
+          // Only forward `link` when it's non-empty — otherwise we'd
+          // spam the API with empty strings that the adapter has to
+          // trim anyway.
+          const link = (o.facebook.link || "").trim();
+          if (link) entry.platform_options = { link };
+        }
         return entry;
       });
     } else {

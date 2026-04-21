@@ -326,6 +326,41 @@ var Capabilities = map[string]Capability{
 		Scheduling:   SchedulingCapability{Supported: true},
 		FirstComment: FirstCommentCapability{Supported: false},
 	},
+	"facebook": {
+		DisplayName: "Facebook Page",
+		Text: TextCapability{
+			// Facebook's documented post-body cap. In practice we'll
+			// rarely see anything close — most FB posts are 1-2
+			// paragraphs — but the hard limit is enforced by the
+			// Graph API so we mirror it.
+			MaxLength: 63206,
+			MinLength: 0,
+			Required:  false,
+		},
+		Media: MediaCapability{
+			// Phase-2 scope: one photo OR one video per post. No
+			// carousel in v1 (Facebook's batch_publish API is a
+			// separate code path), no mixed media, no albums.
+			RequiresMedia: false,
+			AllowMixed:    false,
+			Images: ImageCapability{
+				MaxCount:         1,
+				MaxFileSizeBytes: 10 * 1024 * 1024,
+				AllowedFormats:   []string{"jpg", "png", "gif"},
+			},
+			Videos: VideoCapability{
+				MaxCount:           1,
+				MaxDurationSeconds: 240 * 60, // Facebook's 4-hour upper bound
+				// 1 GB matches the decision to skip resumable upload
+				// in v1 — anything larger has to wait for Phase 2.5.
+				MaxFileSizeBytes:   1024 * 1024 * 1024,
+				AllowedFormats:     []string{"mp4", "mov", "avi"},
+			},
+		},
+		Thread:       ThreadCapability{Supported: false},
+		Scheduling:   SchedulingCapability{Supported: true},
+		FirstComment: FirstCommentCapability{Supported: false},
+	},
 }
 
 // CapabilityFor returns the capability for a platform, or false if the
