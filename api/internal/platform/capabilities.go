@@ -37,7 +37,10 @@ package platform
 // 1.3 → 1.4 (Sprint 4 PR3): added FirstCommentCapability.MaxLength
 // and flipped twitter.first_comment.supported to true. Old consumers
 // keep working — the new MaxLength field is omitempty.
-const CapabilitiesSchemaVersion = "1.4"
+// 1.4 → 1.5 (2026-04): tightened TikTok photo formats to the
+// official JPEG/WebP set and corrected Bluesky / TikTok photo limits
+// based on current docs + production failures. Field shape unchanged.
+const CapabilitiesSchemaVersion = "1.5"
 
 // Capability is the full set of post-creation rules for one platform.
 // Clients hit GET /v1/platforms/capabilities to fetch the whole map.
@@ -72,10 +75,10 @@ type TextCapability struct {
 // platform accepts. RequiresMedia means the platform doesn't support
 // text-only posts (Instagram, TikTok video, YouTube).
 type MediaCapability struct {
-	RequiresMedia bool             `json:"requires_media"`
-	Images        ImageCapability  `json:"images"`
-	Videos        VideoCapability  `json:"videos"`
-	AllowMixed    bool             `json:"allow_mixed"` // image + video in one post
+	RequiresMedia bool            `json:"requires_media"`
+	Images        ImageCapability `json:"images"`
+	Videos        VideoCapability `json:"videos"`
+	AllowMixed    bool            `json:"allow_mixed"` // image + video in one post
 }
 
 // ImageCapability lists per-image and per-post image limits. Most
@@ -162,8 +165,8 @@ var Capabilities = map[string]Capability{
 			},
 			Videos: VideoCapability{
 				MaxCount:           1,
-				MaxDurationSeconds: 140,                  // 2:20 for non-verified
-				MaxFileSizeBytes:   512 * 1024 * 1024,    // 512 MB
+				MaxDurationSeconds: 140,               // 2:20 for non-verified
+				MaxFileSizeBytes:   512 * 1024 * 1024, // 512 MB
 				AllowedFormats:     []string{"mp4", "mov"},
 			},
 		},
@@ -210,7 +213,7 @@ var Capabilities = map[string]Capability{
 			Images: ImageCapability{
 				MaxCount:         35, // photo carousel upper bound
 				MaxFileSizeBytes: 20 * 1024 * 1024,
-				AllowedFormats:   []string{"jpg", "png", "webp"},
+				AllowedFormats:   []string{"jpg", "jpeg", "webp"},
 			},
 			Videos: VideoCapability{
 				MaxCount:           1,
@@ -353,8 +356,8 @@ var Capabilities = map[string]Capability{
 				MaxDurationSeconds: 240 * 60, // Facebook's 4-hour upper bound
 				// 1 GB matches the decision to skip resumable upload
 				// in v1 — anything larger has to wait for Phase 2.5.
-				MaxFileSizeBytes:   1024 * 1024 * 1024,
-				AllowedFormats:     []string{"mp4", "mov", "avi"},
+				MaxFileSizeBytes: 1024 * 1024 * 1024,
+				AllowedFormats:   []string{"mp4", "mov", "avi"},
 			},
 		},
 		Thread:       ThreadCapability{Supported: false},

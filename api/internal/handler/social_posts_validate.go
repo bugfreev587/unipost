@@ -11,6 +11,10 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"net/http"
 	"time"
 
@@ -61,7 +65,7 @@ type platformPostBody struct {
 	PlatformOptions map[string]any `json:"platform_options"`
 	InReplyTo       string         `json:"in_reply_to"`
 	ThreadPosition  int            `json:"thread_position"`
-	ScheduledAt     *string        `json:"scheduled_at"` // forbidden
+	ScheduledAt     *string        `json:"scheduled_at"`  // forbidden
 	FirstComment    string         `json:"first_comment"` // Sprint 4 PR3
 }
 
@@ -222,6 +226,98 @@ func (h *SocialPostHandler) loadValidateMedia(r *http.Request, workspaceID strin
 	return out
 }
 
+func (h *SocialPostHandler) runPublishValidation(r *http.Request, workspaceID string, posts []platform.PlatformPostInput, scheduledAt *time.Time, accounts map[string]platform.ValidateAccount) platform.ValidationResult {
+	media := h.loadValidateMedia(r, workspaceID, posts)
+	result := platform.ValidatePlatformPosts(platform.ValidateOptions{
+		Capabilities: platform.Capabilities,
+		Accounts:     accounts,
+		Media:        media,
+		Posts:        posts,
+		ScheduledAt:  scheduledAt,
+	})
+	result.Errors = append(result.Errors, h.loadImageMetadataValidationIssues(r, workspaceID, posts, accounts)...)
+	result.Valid = len(result.Errors) == 0
+	return result
+}
+
+func (h *SocialPostHandler) loadImageMetadataValidationIssues(r *http.Request, workspaceID string, posts []platform.PlatformPostInput, accounts map[string]platform.ValidateAccount) []platform.Issue {
+	if h.storage == nil {
+		return nil
+	}
+	var issues []platform.Issue
+	for i, post := range posts {
+		acc, ok := accounts[post.AccountID]
+		if !ok || acc.Platform != "tiktok" {
+			continue
+		}
+		for _, mediaID := range post.MediaIDs {
+			row, err := h.queries.GetMediaByIDAndWorkspace(r.Context(), db.GetMediaByIDAndWorkspaceParams{
+				ID:          mediaID,
+				WorkspaceID: workspaceID,
+			})
+			if err != nil || (row.Status != "uploaded" && row.Status != "attached") {
+				continue
+			}
+			if row.ContentType != "image/jpeg" && row.ContentType != "image/jpg" && row.ContentType != "image/png" {
+				continue
+			}
+			cfg, err := h.loadImageConfig(r, row.StorageKey)
+			if err != nil {
+				continue
+			}
+			if tiktokImageWithin1080p(cfg.Width, cfg.Height) {
+				continue
+			}
+			issues = append(issues, platform.Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          "tiktok",
+				Field:             "media_ids",
+				Code:              platform.CodeDimensionsOutOfRange,
+				Message:           fmt.Sprintf("TikTok photos must be no larger than 1080p. This image is %dx%d. Resize it so the long edge is at most 1920 px and the short edge is at most 1080 px.", cfg.Width, cfg.Height),
+				Actual:            map[string]int{"width": cfg.Width, "height": cfg.Height},
+				Limit:             map[string]int{"long_edge": 1920, "short_edge": 1080},
+				Severity:          platform.SeverityError,
+			})
+		}
+	}
+	return issues
+}
+
+func (h *SocialPostHandler) loadImageConfig(r *http.Request, storageKey string) (image.Config, error) {
+	url, err := h.storage.PresignGet(r.Context(), storageKey, 5*time.Minute)
+	if err != nil {
+		return image.Config{}, err
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		return image.Config{}, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return image.Config{}, err
+	}
+	defer resp.Body.Close()
+	cfg, _, err := image.DecodeConfig(resp.Body)
+	if err != nil {
+		return image.Config{}, err
+	}
+	return cfg, nil
+}
+
+func tiktokImageWithin1080p(width, height int) bool {
+	if width <= 0 || height <= 0 {
+		return true
+	}
+	longEdge := width
+	shortEdge := height
+	if height > width {
+		longEdge = height
+		shortEdge = width
+	}
+	return longEdge <= 1920 && shortEdge <= 1080
+}
+
 // Validate handles POST /v1/social-posts/validate.
 //
 // Pure preflight — no DB writes, no platform API calls. Returns the
@@ -256,15 +352,7 @@ func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	media := h.loadValidateMedia(r, workspaceID, parsed.Posts)
-
-	result := platform.ValidatePlatformPosts(platform.ValidateOptions{
-		Capabilities: platform.Capabilities,
-		Accounts:     accounts,
-		Media:        media,
-		Posts:        parsed.Posts,
-		ScheduledAt:  parsed.ScheduledAt,
-	})
+	result := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accounts)
 
 	// Always 200 even on validation failures — the body carries the
 	// outcome. Treating /validate as a 200-only endpoint is what

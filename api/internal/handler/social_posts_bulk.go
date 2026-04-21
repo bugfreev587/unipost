@@ -57,9 +57,9 @@ type bulkRequestBody struct {
 // single-post call would have returned, included so callers can
 // switch on it without parsing the error code string.
 type bulkResultEntry struct {
-	Status int                  `json:"status"`
-	Data   *socialPostResponse  `json:"data,omitempty"`
-	Error  *bulkErrorEnvelope   `json:"error,omitempty"`
+	Status int                 `json:"status"`
+	Data   *socialPostResponse `json:"data,omitempty"`
+	Error  *bulkErrorEnvelope  `json:"error,omitempty"`
 }
 
 type bulkErrorEnvelope struct {
@@ -174,11 +174,7 @@ func (h *SocialPostHandler) processBulkOne(
 	}
 
 	// Validate.
-	vr := platform.ValidatePlatformPosts(platform.ValidateOptions{
-		Capabilities: platform.Capabilities,
-		Accounts:     accountMap,
-		Posts:        parsed.Posts,
-	})
+	vr := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accountMap)
 	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
 		// Surface the first fatal error in the message; the full
 		// list isn't carried in the bulk response shape (callers

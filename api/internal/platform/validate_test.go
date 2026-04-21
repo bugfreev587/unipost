@@ -44,6 +44,16 @@ func stubCapabilities() map[string]Capability {
 			},
 			FirstComment: FirstCommentCapability{Supported: true, MaxLength: 1250},
 		},
+		"tiktok": {
+			DisplayName: "TikTok",
+			Text:        TextCapability{MaxLength: 2200},
+			Media: MediaCapability{
+				RequiresMedia: true,
+				AllowMixed:    false,
+				Images:        ImageCapability{MaxCount: 35, MaxFileSizeBytes: 20 * 1024 * 1024, AllowedFormats: []string{"jpg", "jpeg", "webp"}},
+				Videos:        VideoCapability{MaxCount: 1, AllowedFormats: []string{"mp4", "mov", "webm"}},
+			},
+		},
 		"bluesky": {
 			DisplayName: "Bluesky",
 			Text:        TextCapability{MaxLength: 300},
@@ -72,6 +82,7 @@ func stubAccounts() map[string]ValidateAccount {
 		"acc_twitter":   {Platform: "twitter"},
 		"acc_instagram": {Platform: "instagram"},
 		"acc_linkedin":  {Platform: "linkedin"},
+		"acc_tiktok":    {Platform: "tiktok"},
 		"acc_bluesky":   {Platform: "bluesky"},
 		"acc_youtube":   {Platform: "youtube"},
 		"acc_dead":      {Platform: "twitter", Disconnected: true},
@@ -658,6 +669,25 @@ func TestValidate_MediaIDAtLimitAllowed(t *testing.T) {
 		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
 	})
 	hasNoError(t, res, CodeFileTooLarge)
+}
+
+func TestValidate_MediaIDUnsupportedFormat(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_png": {
+				Status:      "uploaded",
+				ContentType: "image/png",
+				SizeBytes:   512_000,
+			},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_tiktok", Caption: "x", MediaIDs: []string{"med_png"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+	hasError(t, res, 0, CodeUnsupportedFormat)
 }
 
 // ─── Sprint 4 PR3: first_comment validation ───────────────────────────

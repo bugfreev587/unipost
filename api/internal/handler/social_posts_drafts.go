@@ -163,11 +163,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	// Re-run the validator with strict (fatal) gating — same as a
 	// fresh immediate publish. We don't want to dispatch a draft
 	// whose content was edited into something invalid after creation.
-	vr := platform.ValidatePlatformPosts(platform.ValidateOptions{
-		Capabilities: platform.Capabilities,
-		Accounts:     accountMap,
-		Posts:        posts,
-	})
+	vr := h.runPublishValidation(r, workspaceID, posts, nil, accountMap)
 	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
 		_ = h.rollbackToDraft(r, claimed.ID)
 		writeValidationErrors(w, fatal)
@@ -366,12 +362,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	// Re-run validation against the new content so the editor sees
 	// fresh diagnostics in the response.
 	accountMap, _ := h.loadValidateAccounts(r, workspaceID)
-	vr := platform.ValidatePlatformPosts(platform.ValidateOptions{
-		Capabilities: platform.Capabilities,
-		Accounts:     accountMap,
-		Posts:        parsed.Posts,
-		ScheduledAt:  parsed.ScheduledAt,
-	})
+	vr := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accountMap)
 
 	resp := draftResponse{
 		socialPostResponse: socialPostResponseFromRow(updated),

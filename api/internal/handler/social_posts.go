@@ -274,19 +274,11 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Load media rows referenced by the request so the validator can
 	// check ownership, status, and content type.
-	mediaMap := h.loadValidateMedia(r, workspaceID, parsed.Posts)
-
 	// Run the same validator /social-posts/validate uses, then filter
 	// out non-fatal issues (account_disconnected, account_not_in_workspace)
 	// — those are still recorded as failed results below to preserve
 	// legacy soft-failure semantics.
-	vr := platform.ValidatePlatformPosts(platform.ValidateOptions{
-		Capabilities: platform.Capabilities,
-		Accounts:     accountMap,
-		Media:        mediaMap,
-		Posts:        parsed.Posts,
-		ScheduledAt:  parsed.ScheduledAt,
-	})
+	vr := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accountMap)
 	// Drafts (Sprint 2): persist with status='draft', skip the
 	// publish loop entirely, but still SURFACE validation results in
 	// the response so the user can see what's wrong before publishing.

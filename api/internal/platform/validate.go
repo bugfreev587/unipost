@@ -17,7 +17,7 @@
 //   - in_reply_to on a platform that doesn't support threads
 //
 // What this function CANNOT check (deferred to runtime adapter calls):
-//   - actual file size, dimensions, duration, codec
+//   - dimensions, duration, codec
 //   - fresh OAuth token validity (vs. just disconnected_at)
 //   - quota — that's a soft block in the live path anyway
 //
@@ -215,7 +215,7 @@ const (
 	// matrices (multi-photo, link+media, scheduled photo/video) get
 	// their own explicit rejects at the validator so direct API
 	// callers hit the same guards the compose UI already enforces.
-	CodeFacebookLinkWithMedia           = "facebook_link_with_media"
+	CodeFacebookLinkWithMedia             = "facebook_link_with_media"
 	CodeFacebookScheduledMediaUnsupported = "facebook_scheduled_media_unsupported"
 )
 
@@ -299,6 +299,59 @@ func mediaLabel(kind MediaKind) string {
 	default:
 		return "image"
 	}
+}
+
+func contentTypeFormats(contentType string) []string {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	switch ct {
+	case "image/jpeg", "image/jpg":
+		return []string{"jpg", "jpeg"}
+	case "image/png":
+		return []string{"png"}
+	case "image/webp":
+		return []string{"webp"}
+	case "image/gif":
+		return []string{"gif"}
+	case "image/heic":
+		return []string{"heic"}
+	case "video/mp4":
+		return []string{"mp4"}
+	case "video/quicktime":
+		return []string{"mov"}
+	case "video/webm":
+		return []string{"webm"}
+	case "video/x-m4v":
+		return []string{"m4v"}
+	default:
+		return nil
+	}
+}
+
+func mediaAllowedFormats(kind MediaKind, cap Capability) []string {
+	switch kind {
+	case MediaKindVideo:
+		return cap.Media.Videos.AllowedFormats
+	case MediaKindImage, MediaKindGIF, MediaKindUnknown:
+		return cap.Media.Images.AllowedFormats
+	default:
+		return nil
+	}
+}
+
+func intersectsFormats(actual []string, allowed []string) bool {
+	if len(actual) == 0 || len(allowed) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(allowed))
+	for _, f := range allowed {
+		set[strings.ToLower(strings.TrimSpace(f))] = struct{}{}
+	}
+	for _, f := range actual {
+		if _, ok := set[strings.ToLower(strings.TrimSpace(f))]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidatePlatformPosts runs every pure check we know about and
@@ -969,6 +1022,26 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			}
 
 			kind := MediaFromContentType(m.ContentType).Kind
+			allowedFormats := mediaAllowedFormats(kind, cap)
+			if len(allowedFormats) > 0 && !intersectsFormats(contentTypeFormats(m.ContentType), allowedFormats) {
+				label := mediaLabel(kind)
+				displayName := cap.DisplayName
+				if strings.TrimSpace(displayName) == "" {
+					displayName = plat
+				}
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "media_ids",
+					Code:              CodeUnsupportedFormat,
+					Message:           fmt.Sprintf("%s %s format %q is not supported. Use one of: %s.", displayName, label, m.ContentType, strings.Join(allowedFormats, ", ")),
+					Actual:            m.ContentType,
+					Limit:             allowedFormats,
+					Severity:          SeverityError,
+				})
+			}
+
 			limit := mediaSizeLimit(kind, cap)
 			if limit > 0 && m.SizeBytes > limit {
 				label := mediaLabel(kind)
