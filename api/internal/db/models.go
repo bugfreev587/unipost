@@ -102,6 +102,15 @@ type Media struct {
 	ContentHash pgtype.Text        `json:"content_hash"`
 }
 
+type MetaUserToken struct {
+	WorkspaceID             string             `json:"workspace_id"`
+	MetaUserID              string             `json:"meta_user_id"`
+	LongLivedTokenEncrypted string             `json:"long_lived_token_encrypted"`
+	ExpiresAt               pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
 type NotificationChannel struct {
 	ID          string             `json:"id"`
 	UserID      string             `json:"user_id"`
@@ -147,6 +156,19 @@ type OauthState struct {
 	RedirectUrl pgtype.Text        `json:"redirect_url"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type PendingConnection struct {
+	ID                 string             `json:"id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	ProfileID          string             `json:"profile_id"`
+	Platform           string             `json:"platform"`
+	MetaUserID         string             `json:"meta_user_id"`
+	UserTokenEncrypted string             `json:"user_token_encrypted"`
+	UserTokenExpiresAt pgtype.Timestamptz `json:"user_token_expires_at"`
+	PagesJson          []byte             `json:"pages_json"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
 type Plan struct {

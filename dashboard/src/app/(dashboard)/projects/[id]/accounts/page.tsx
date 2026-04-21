@@ -9,15 +9,23 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation, type SocialAccount, type Profile,
+  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation,
+  type SocialAccount, type Profile,
 } from "@/lib/api";
+import { isFacebookEnabled } from "@/components/dashboard/shell";
+import { FacebookPagePicker } from "@/components/accounts/facebook-page-picker";
+import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { QuickstartStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
-const PLATFORMS = [
+// BASE_PLATFORMS is the always-available set. Feature-flagged platforms
+// (currently just Facebook during audit) are appended at render time
+// via the isFacebookEnabled() check so a flag-off deploy doesn't show a
+// broken entry.
+const BASE_PLATFORMS = [
   { id: "bluesky", name: "Bluesky", type: "credentials" as const },
   { id: "linkedin", name: "LinkedIn", type: "oauth" as const },
   { id: "instagram", name: "Instagram", type: "oauth" as const },
@@ -26,6 +34,8 @@ const PLATFORMS = [
   { id: "youtube", name: "YouTube", type: "oauth" as const },
   { id: "twitter", name: "X / Twitter", type: "oauth" as const },
 ];
+
+const FACEBOOK_PLATFORM = { id: "facebook", name: "Facebook Page", type: "oauth" as const };
 
 // Platforms that work with text-only or simple image posts. These are the
 // most reliable choices for a first-time Connect during activation — video
@@ -37,7 +47,16 @@ const FIRST_TIME_PLATFORM_IDS = new Set(["bluesky", "linkedin", "instagram", "th
 export default function AccountsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const { getToken } = useAuth();
+  const { getToken, userId } = useAuth();
+
+  // PLATFORMS is memoized on userId so the Facebook feature-flag check
+  // (which supports per-user allowlisting) picks up changes without a
+  // full reload. Stable otherwise.
+  const PLATFORMS = (() => {
+    const list = [...BASE_PLATFORMS];
+    if (isFacebookEnabled(userId || undefined)) list.splice(3, 0, FACEBOOK_PLATFORM);
+    return list;
+  })();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileFilter, setProfileFilter] = useState<string>("all");
@@ -58,8 +77,21 @@ export default function AccountsPage() {
   const [accountsError, setAccountsError] = useState<{ message: string; topic: string } | null>(null);
 
   const router = useRouter();
+  const workspaceId = useWorkspaceId();
   const callbackStatus = searchParams.get("status");
   const callbackAccount = searchParams.get("account_name");
+  // Facebook detour lands here with ?pending=<id>; mount the picker
+  // when present, clear the URL param on close so a refresh doesn't
+  // re-open an already-finalized pending row.
+  const pendingFacebookId = searchParams.get("pending");
+
+  const closePicker = useCallback(() => {
+    // Strip the `pending` param from the URL without a full nav so the
+    // success banner + account list don't re-render from scratch.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("pending");
+    router.replace(url.pathname + (url.search ? url.search : ""));
+  }, [router]);
 
   // Activation flow: if this success is the user's FIRST-ever connection
   // (activation modal was the origin), bounce them back to the dashboard
@@ -400,6 +432,29 @@ export default function AccountsPage() {
         onConfirm={() => disconnectTarget && handleDisconnect(disconnectTarget)}
         onCancel={() => setDisconnectTarget(null)}
       />
+
+      {pendingFacebookId && workspaceId && (
+        <FacebookPagePicker
+          open
+          pendingId={pendingFacebookId}
+          workspaceId={workspaceId}
+          getToken={async () => (await getToken()) ?? null}
+          onClose={closePicker}
+          onFinalized={(count) => {
+            closePicker();
+            loadAccounts();
+            setAccountsError(null);
+            if (count > 0) {
+              // Reuse the success banner that the non-FB OAuth flow
+              // already uses; replaceState avoids an extra fetch.
+              const url = new URL(window.location.href);
+              url.searchParams.set("status", "success");
+              url.searchParams.set("account_name", `${count} Facebook Page${count === 1 ? "" : "s"}`);
+              router.replace(url.pathname + url.search);
+            }
+          }}
+        />
+      )}
     </>
   );
 }

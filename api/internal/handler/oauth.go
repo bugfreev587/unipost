@@ -41,6 +41,14 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	platformName := chi.URLParam(r, "platform")
 	redirectURL := r.URL.Query().Get("redirect_url")
 
+	// Feature-flag gate for Facebook during App Review — blocks both
+	// dashboard initiation and any curious direct caller so the
+	// adapter never mints an auth URL while the flag is off.
+	if platformName == "facebook" && !auth.FacebookEnabled() {
+		writeError(w, http.StatusForbidden, "FACEBOOK_DISABLED", "Facebook integration is not enabled")
+		return
+	}
+
 	profileID := h.getProfileID(r)
 	if profileID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
@@ -143,6 +151,21 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("oauth callback: code exchange failed", "platform", platformName, "error", err)
 		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to exchange authorization code")
+		return
+	}
+
+	// Facebook detour: ExchangeCode returned a Meta user identity +
+	// short-lived User Token. We don't yet know which Page(s) the
+	// user wants to connect, so instead of writing a social_accounts
+	// row, we stash everything needed to finalize later into
+	// pending_connections and redirect the browser to the dashboard
+	// picker. See PRD §4.2.
+	if platformName == "facebook" {
+		if !auth.FacebookEnabled() {
+			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Facebook integration is not enabled")
+			return
+		}
+		h.handleFacebookCallback(w, r, oauthState, config, result)
 		return
 	}
 

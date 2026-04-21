@@ -87,6 +87,7 @@ func main() {
 	platform.Register(platform.NewLinkedInAdapter())
 	platform.Register(platform.NewInstagramAdapter())
 	platform.Register(platform.NewThreadsAdapter())
+	platform.Register(platform.NewFacebookAdapter())
 
 	platform.Register(platform.NewTwitterAdapter()) // Native mode only — requires user's own API credentials
 
@@ -514,6 +515,21 @@ func main() {
 
 		// OAuth connect (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
+
+		// Facebook Page picker — pending-connection read + finalize.
+		// ENABLE_FACEBOOK_PAGES gates both so a toggled-off flag
+		// keeps unreviewed traffic off Meta's Graph API during audit.
+		r.Route("/v1/workspaces/{workspaceID}/pending-connections", func(r chi.Router) {
+			r.Use(auth.RequireFacebookEnabled)
+			r.Use(func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
+					next.ServeHTTP(w, r.WithContext(ctx))
+				})
+			})
+			r.Get("/{id}", oauthHandler.PendingConnectionGet)
+			r.Post("/{id}/finalize", oauthHandler.PendingConnectionFinalize)
+		})
 
 		// Platform credentials (White Label, workspace-scoped)
 		r.Post("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.Create)

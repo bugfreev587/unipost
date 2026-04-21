@@ -327,6 +327,57 @@ export async function connectSocialAccount(
   });
 }
 
+// Facebook Page Picker types + helpers. Lives in lib/api alongside the
+// other account-connection helpers so callers find it next to
+// listSocialAccounts / connectSocialAccount. The backend endpoint is
+// gated by ENABLE_FACEBOOK_PAGES — expect 403 FACEBOOK_DISABLED until
+// the flag is flipped on.
+export interface PendingFacebookPage {
+  id: string;
+  name: string;
+  category: string;
+  picture_url: string;
+  tasks: string[];
+  // can_publish reflects whether the current user's admin role on
+  // this Page includes content-publishing permissions. When false,
+  // the picker should still show the row but disable selection so
+  // the user understands why they can't connect it.
+  can_publish: boolean;
+}
+
+export interface PendingConnection {
+  id: string;
+  platform: string;
+  profile_id: string;
+  meta_user: { meta_user_id: string };
+  pages: PendingFacebookPage[];
+  expires_at: string;
+}
+
+export async function getPendingConnection(
+  token: string,
+  workspaceId: string,
+  pendingId: string
+): Promise<ApiResponse<PendingConnection>> {
+  return request(
+    `/v1/workspaces/${workspaceId}/pending-connections/${pendingId}`,
+    token
+  );
+}
+
+export async function finalizePendingConnection(
+  token: string,
+  workspaceId: string,
+  pendingId: string,
+  pageIds: string[]
+): Promise<ApiResponse<{ connected_account_ids: string[]; connected_count: number }>> {
+  return request(
+    `/v1/workspaces/${workspaceId}/pending-connections/${pendingId}/finalize`,
+    token,
+    { method: "POST", body: JSON.stringify({ page_ids: pageIds }) }
+  );
+}
+
 export async function disconnectSocialAccount(
   token: string,
   profileId: string,
