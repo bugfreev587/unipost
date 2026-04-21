@@ -80,9 +80,22 @@ type CommentNode = {
 };
 
 const COMMENT_THREAD_INDENT = 36;
-const COMMENT_THREAD_LINE_COLOR = "rgba(255,255,255,.14)";
-const COMMENT_THREAD_ELBOW_HEIGHT = 34;
+const COMMENT_THREAD_LINE_COLOR = "rgba(255,255,255,.22)";
+// Vertical distance from the top of the child row to the horizontal
+// bend of the elbow. Lines up with the vertical midline of the child
+// avatar — ~ (avatar_size / 2) + 20px of bubble padding above.
+const COMMENT_THREAD_ELBOW_HEIGHT = 24;
+// X column the vertical guide-rail sits in. This is the parent avatar's
+// center line (depth 0 avatar is 32px = center 16, nested avatars are
+// 28px = center 14). 15 splits the difference and avoids branching per
+// depth for a 1-pixel offset nobody will notice.
 const COMMENT_THREAD_LINE_X = 15;
+// Nested rows sit 8px below their parent (`marginTop: 8`). Extending
+// the gutter that far upward lets the ancestor line + elbow begin
+// visually inside the parent avatar's column instead of abruptly
+// starting at the top of the child row. Depth-0 rows don't need this
+// (no parent above to connect to).
+const COMMENT_THREAD_GUTTER_OVERLAP = 8;
 
 function initialsFromName(name?: string) {
   const value = (name || "?").trim();
@@ -835,7 +848,13 @@ export default function InboxPage() {
     const isCommentLike = !isDMSource(selectedGroup.source);
     const isDM = isDMSource(selectedGroup.source);
     const avatarSrc = item.is_own ? item.account_avatar_url : item.author_avatar_url;
-    const avatarLabel = item.is_own ? selectedGroup.accountName || "You" : item.author_name || item.author_id || "unknown";
+    // Meta's Graph API strips the `from` block for commenters who
+    // haven't granted our app permission, so for fb_comment rows we
+    // often have nothing to show. "Facebook user" is friendlier than
+    // "unknown" and mirrors the fallback Meta itself uses in its
+    // messenger + creator tools.
+    const fallbackLabel = item.source === "fb_comment" ? "Facebook user" : "unknown";
+    const avatarLabel = item.is_own ? selectedGroup.accountName || "You" : item.author_name || item.author_id || fallbackLabel;
 
     if (isDM) {
       // Compact IG-style DM bubble — no per-message actions, no username
@@ -923,7 +942,7 @@ export default function InboxPage() {
             maxWidth: "100%",
           }}>
             <span className="dt-body-sm" style={{ fontWeight: 600, color: item.is_own ? "var(--daccent)" : "var(--dtext)", display: "block", marginBottom: 2, fontSize: 12 }}>
-              {item.is_own ? "You" : (item.author_name || item.author_id || "unknown")}
+              {item.is_own ? "You" : (item.author_name || item.author_id || fallbackLabel)}
             </span>
             <span className="dt-body-sm" style={{ color: "var(--dtext)", whiteSpace: "pre-wrap", lineHeight: 1.5, fontSize: 13 }}>
               {item.body || "(no text)"}
@@ -991,6 +1010,11 @@ export default function InboxPage() {
 
   function renderCommentNode(node: CommentNode, depth = 0, ancestorLines: boolean[] = [], isLast = true) {
     const gutterWidth = depth * COMMENT_THREAD_INDENT;
+    // Elbow horizontal length — from the parent avatar's column (X =
+    // (depth-1)*INDENT + LINE_X) to just before the child avatar's
+    // left edge (X = depth*INDENT). Subtracting 1px keeps the curve
+    // tangent to the avatar instead of slipping underneath it.
+    const elbowWidth = Math.max(0, COMMENT_THREAD_INDENT - COMMENT_THREAD_LINE_X - 1);
     return (
       <div key={node.item.id} style={{ position: "relative", marginTop: depth === 0 ? 10 : 8 }}>
         {gutterWidth > 0 ? (
@@ -999,7 +1023,9 @@ export default function InboxPage() {
             style={{
               position: "absolute",
               left: 0,
-              top: 0,
+              // Reach above the child row into the gap below the parent
+              // so the line visually continues from the parent avatar.
+              top: -COMMENT_THREAD_GUTTER_OVERLAP,
               bottom: 0,
               width: gutterWidth,
               pointerEvents: "none",
@@ -1025,12 +1051,17 @@ export default function InboxPage() {
               style={{
                 position: "absolute",
                 left: (depth - 1) * COMMENT_THREAD_INDENT + COMMENT_THREAD_LINE_X,
+                // Start inside the overlap so the vertical stroke
+                // visually originates in the parent avatar's column,
+                // not abruptly at the top of this row.
                 top: 0,
-                width: COMMENT_THREAD_INDENT,
-                height: COMMENT_THREAD_ELBOW_HEIGHT,
+                width: elbowWidth,
+                // The overlap adds to the vertical stroke before the
+                // bend so the line isn't just a decorative hook.
+                height: COMMENT_THREAD_ELBOW_HEIGHT + COMMENT_THREAD_GUTTER_OVERLAP,
                 borderLeft: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
                 borderBottom: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
-                borderBottomLeftRadius: 18,
+                borderBottomLeftRadius: 14,
               }}
             />
             {!isLast ? (
@@ -1038,7 +1069,7 @@ export default function InboxPage() {
                 style={{
                   position: "absolute",
                   left: (depth - 1) * COMMENT_THREAD_INDENT + COMMENT_THREAD_LINE_X,
-                  top: COMMENT_THREAD_ELBOW_HEIGHT,
+                  top: COMMENT_THREAD_ELBOW_HEIGHT + COMMENT_THREAD_GUTTER_OVERLAP,
                   bottom: 0,
                   width: 2,
                   borderRadius: 999,
