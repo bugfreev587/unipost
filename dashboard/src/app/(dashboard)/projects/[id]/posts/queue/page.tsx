@@ -22,6 +22,8 @@ const STATUS_BADGE: Record<string, string> = {
   dead: "dbadge-red",
 };
 
+const ACTIVE_JOB_STATES = new Set(["pending", "running", "retrying"]);
+
 const CSS = `
 .queue-shell{display:flex;flex-direction:column;gap:18px}
 .queue-summary{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
@@ -103,7 +105,40 @@ export default function QueuePage() {
       current.jobs.push(job);
       groups.set(job.post_id, current);
     }
-    return Array.from(groups.entries()).map(([postId, value]) => ({ postId, ...value }));
+    return Array.from(groups.entries()).map(([postId, value]) => {
+      const visibleJobsByResult = new Map<string, PostDeliveryJob>();
+      for (const job of value.jobs) {
+        const current = visibleJobsByResult.get(job.social_post_result_id);
+        if (!current) {
+          visibleJobsByResult.set(job.social_post_result_id, job);
+          continue;
+        }
+
+        const currentIsActive = ACTIVE_JOB_STATES.has(current.state);
+        const nextIsActive = ACTIVE_JOB_STATES.has(job.state);
+        if (nextIsActive && !currentIsActive) {
+          visibleJobsByResult.set(job.social_post_result_id, job);
+          continue;
+        }
+        if (nextIsActive === currentIsActive) {
+          const currentUpdatedAt = new Date(current.updated_at).getTime();
+          const nextUpdatedAt = new Date(job.updated_at).getTime();
+          if (nextUpdatedAt > currentUpdatedAt) {
+            visibleJobsByResult.set(job.social_post_result_id, job);
+          }
+        }
+      }
+
+      return {
+        postId,
+        post: value.post,
+        jobs: Array.from(visibleJobsByResult.values()).sort((a, b) => {
+          const aTime = new Date(a.updated_at).getTime();
+          const bTime = new Date(b.updated_at).getTime();
+          return bTime - aTime;
+        }),
+      };
+    });
   }, [jobs, posts]);
 
   const runAction = async (job: PostDeliveryJob, action: "retry" | "cancel") => {
