@@ -56,3 +56,18 @@ SELECT * FROM social_post_results
 WHERE social_account_id = $1
 ORDER BY published_at DESC NULLS LAST
 LIMIT $2;
+
+-- name: ListPublishedExternalIDsForInboxSync :many
+-- Returns platform post external ids for an account that were
+-- successfully published via UniPost and whose published_at falls
+-- within the given window. The Facebook inbox sync walks this list
+-- (instead of all recent Page posts) so we only fetch comments on
+-- content the user created through us — matches the Q&A decision
+-- to keep FB comment polling scoped to UniPost-managed content.
+SELECT external_id
+FROM social_post_results
+WHERE social_account_id = $1
+  AND status = 'published'
+  AND external_id IS NOT NULL
+  AND published_at >= NOW() - ($2::INT * INTERVAL '1 day')
+ORDER BY published_at DESC;

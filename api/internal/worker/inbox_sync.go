@@ -206,6 +206,59 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 				}
 			}
 
+		case "facebook":
+			// Facebook's comment sync is scoped to posts we
+			// published through UniPost (Q&A decision #11): 30-day
+			// window, pull external_ids from social_post_results
+			// instead of asking the Graph API for every Page post.
+			// Keeps us well under Meta's per-user rate limit even
+			// for Pages with lots of content.
+			fbAdapter := platform.NewFacebookAdapter()
+			postIDs, listErr := w.queries.ListPublishedExternalIDsForInboxSync(ctx, db.ListPublishedExternalIDsForInboxSyncParams{
+				SocialAccountID: acc.ID,
+				Column2:         30,
+			})
+			if listErr != nil {
+				slog.Warn("inbox sync worker: list facebook posts failed", "account_id", acc.ID, "err", listErr)
+				break
+			}
+			for _, pidText := range postIDs {
+				if !pidText.Valid || pidText.String == "" {
+					continue
+				}
+				entries, fetchErr := fbAdapter.FetchComments(ctx, accessToken, pidText.String)
+				if fetchErr != nil {
+					slog.Warn("inbox sync worker: facebook fetch comments failed",
+						"account_id", acc.ID, "post_id", pidText.String, "err", fetchErr)
+					continue
+				}
+				for _, e := range entries {
+					// Comments authored by the Page itself shouldn't
+					// show in the inbox as "to review" — flag them.
+					isOwn := e.AuthorID != "" && e.AuthorID == acc.ExternalAccountID
+					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
+						SocialAccountID:  acc.ID,
+						WorkspaceID:      acc.WorkspaceID,
+						Source:           e.Source,
+						ExternalID:       e.ExternalID,
+						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+						IsOwn:            isOwn,
+						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
+						Metadata:         []byte("{}"),
+						ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+						ThreadStatus:     "open",
+						AssignedTo:       pgtype.Text{},
+						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
+					})
+					if uErr == nil {
+						totalNew++
+					}
+				}
+			}
+
 		case "threads":
 			adapter := platform.NewThreadsAdapter()
 			// Fetch recent posts directly from Threads API.

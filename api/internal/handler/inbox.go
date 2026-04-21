@@ -406,6 +406,12 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	case "threads_reply":
 		adapter := platform.NewThreadsAdapter()
 		replyResult, err = adapter.ReplyToComment(r.Context(), accessToken, item.ExternalID, body.Text)
+	case "fb_comment":
+		// Facebook Page Token is already scoped to the Page, so the
+		// reply is authored by the Page itself — no separate recipient
+		// resolution like the IG DM path.
+		adapter := platform.NewFacebookAdapter()
+		replyResult, err = adapter.ReplyToComment(r.Context(), accessToken, item.ExternalID, body.Text)
 	default:
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Unsupported source for reply")
 		return

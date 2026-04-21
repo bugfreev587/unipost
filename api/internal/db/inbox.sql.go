@@ -362,7 +362,7 @@ FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.disconnected_at IS NULL
   AND sa.status = 'active'
-  AND sa.platform IN ('instagram', 'threads')
+  AND sa.platform IN ('instagram', 'threads', 'facebook')
 ORDER BY sa.connected_at DESC
 `
 
@@ -375,8 +375,9 @@ type ListAllInboxAccountsRow struct {
 	WorkspaceID       string      `json:"workspace_id"`
 }
 
-// All active IG/Threads accounts across all workspaces, for the
-// background inbox sync worker. Returns account fields plus workspace_id.
+// All active IG / Threads / Facebook accounts across all workspaces,
+// for the background inbox sync worker. Returns account fields plus
+// workspace_id.
 func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccountsRow, error) {
 	rows, err := q.db.Query(ctx, listAllInboxAccounts)
 	if err != nil {

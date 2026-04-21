@@ -117,6 +117,47 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 	return i, err
 }
 
+const listPublishedExternalIDsForInboxSync = `-- name: ListPublishedExternalIDsForInboxSync :many
+SELECT external_id
+FROM social_post_results
+WHERE social_account_id = $1
+  AND status = 'published'
+  AND external_id IS NOT NULL
+  AND published_at >= NOW() - ($2::INT * INTERVAL '1 day')
+ORDER BY published_at DESC
+`
+
+type ListPublishedExternalIDsForInboxSyncParams struct {
+	SocialAccountID string `json:"social_account_id"`
+	Column2         int32  `json:"column_2"`
+}
+
+// Returns platform post external ids for an account that were
+// successfully published via UniPost and whose published_at falls
+// within the given window. The Facebook inbox sync walks this list
+// (instead of all recent Page posts) so we only fetch comments on
+// content the user created through us — matches the Q&A decision
+// to keep FB comment polling scoped to UniPost-managed content.
+func (q *Queries) ListPublishedExternalIDsForInboxSync(ctx context.Context, arg ListPublishedExternalIDsForInboxSyncParams) ([]pgtype.Text, error) {
+	rows, err := q.db.Query(ctx, listPublishedExternalIDsForInboxSync, arg.SocialAccountID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.Text{}
+	for rows.Next() {
+		var external_id pgtype.Text
+		if err := rows.Scan(&external_id); err != nil {
+			return nil, err
+		}
+		items = append(items, external_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
 SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results
 WHERE social_account_id = $1

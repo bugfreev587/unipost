@@ -794,3 +794,126 @@ func (a *FacebookAdapter) DeletePost(ctx context.Context, accessToken string, ex
 func (a *FacebookAdapter) RefreshToken(ctx context.Context, refreshToken string) (string, string, time.Time, error) {
 	return "", "", time.Time{}, fmt.Errorf("facebook page tokens do not support refresh; reconnect the account on invalidation")
 }
+
+// FetchComments reads replies on a single Page post by ID. Returns
+// at most 25 entries (Meta's default limit) sorted newest first;
+// the sync worker relies on the UNIQUE(social_account_id,
+// external_id) constraint on inbox_items for dedup across polls
+// rather than tracking a "since" cursor here.
+//
+// Meta's comment order field (`reverse_chronological`) is the
+// default for Pages — omitted intentionally so we match whatever
+// default the account's locale/version applies.
+func (a *FacebookAdapter) FetchComments(ctx context.Context, accessToken string, postExternalID string) ([]InboxEntry, error) {
+	params := url.Values{
+		"access_token": {accessToken},
+		"fields":       {"id,message,from{id,name,picture},created_time"},
+		"limit":        {"25"},
+	}
+	endpoint := facebookGraphBase + "/" + postExternalID + "/comments?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook fetch comments: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("facebook fetch comments failed",
+			"status", resp.StatusCode,
+			"post_id", postExternalID,
+			"body", string(body))
+		return nil, fmt.Errorf("facebook fetch comments %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Message string `json:"message"`
+			From    struct {
+				ID      string `json:"id"`
+				Name    string `json:"name"`
+				Picture struct {
+					Data struct {
+						URL string `json:"url"`
+					} `json:"data"`
+				} `json:"picture"`
+			} `json:"from"`
+			CreatedTime string `json:"created_time"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("facebook fetch comments decode: %w", err)
+	}
+
+	entries := make([]InboxEntry, 0, len(result.Data))
+	for _, c := range result.Data {
+		ts, _ := time.Parse(time.RFC3339Nano, c.CreatedTime)
+		if ts.IsZero() {
+			// Meta's typical created_time format (no fractional seconds):
+			// "2026-04-20T18:47:30+0000"
+			ts, _ = time.Parse("2006-01-02T15:04:05-0700", c.CreatedTime)
+		}
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+		entries = append(entries, InboxEntry{
+			ExternalID:       c.ID,
+			ParentExternalID: postExternalID,
+			AuthorID:         c.From.ID,
+			AuthorName:       c.From.Name,
+			AuthorAvatarURL:  c.From.Picture.Data.URL,
+			Body:             c.Message,
+			Timestamp:        ts,
+			Source:           "fb_comment",
+		})
+	}
+	return entries, nil
+}
+
+// ReplyToComment posts a reply to a Page comment. The reply is
+// authored by the Page itself (since the Page token is the
+// actor), and the returned id is the new comment's own id.
+func (a *FacebookAdapter) ReplyToComment(ctx context.Context, accessToken string, commentExternalID string, text string) (*PostResult, error) {
+	form := url.Values{
+		"access_token": {accessToken},
+		"message":      {text},
+	}
+	endpoint := facebookGraphBase + "/" + commentExternalID + "/comments"
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook reply comment: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("facebook reply comment decode: %w", err)
+	}
+	if result.ID == "" {
+		return nil, fmt.Errorf("facebook reply comment: response missing id (body=%s)", string(body))
+	}
+	return &PostResult{
+		ExternalID: result.ID,
+		// FB's reply URLs resolve via the parent comment path; we
+		// don't try to construct a canonical URL here because comment
+		// URLs on Pages require the enclosing post_id + comment_id.
+		// Callers that need the link can derive it from the inbox
+		// item's parent post.
+	}, nil
+}

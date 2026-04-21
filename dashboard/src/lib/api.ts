@@ -1489,7 +1489,7 @@ export interface InboxItem {
   id: string;
   social_account_id: string;
   workspace_id: string;
-  source: "ig_comment" | "ig_dm" | "threads_reply";
+  source: "ig_comment" | "ig_dm" | "threads_reply" | "fb_comment" | "fb_dm";
   external_id: string;
   thread_key: string;
   thread_status: "open" | "assigned" | "resolved";

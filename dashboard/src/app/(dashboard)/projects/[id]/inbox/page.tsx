@@ -60,7 +60,7 @@ type SyncResponse = {
 type ConversationGroup = {
   id: string;
   threadKey: string;
-  source: "ig_comment" | "ig_dm" | "threads_reply";
+  source: "ig_comment" | "ig_dm" | "threads_reply" | "fb_comment" | "fb_dm";
   title: string;
   subtitle: string;
   items: InboxItem[];
@@ -151,8 +151,10 @@ function timeAgo(dateStr: string): string {
 function sourceLabel(source: InboxItem["source"]) {
   switch (source) {
     case "ig_comment":
+    case "fb_comment":
       return "Comment";
     case "ig_dm":
+    case "fb_dm":
       return "DM";
     case "threads_reply":
       return "Reply";
@@ -161,11 +163,30 @@ function sourceLabel(source: InboxItem["source"]) {
   }
 }
 
+// platformFromSource maps an InboxItem.source back to the platform
+// name used by PlatformIcon. Falls back to "instagram" for any
+// unrecognized source so we never render a "missing icon" glyph —
+// worst case the IG icon is wrong for a row, but it's still
+// something recognizable.
+function platformFromSource(source: InboxItem["source"] | ConversationGroup["source"]): string {
+  switch (source) {
+    case "threads_reply":
+      return "threads";
+    case "fb_comment":
+    case "fb_dm":
+      return "facebook";
+    default:
+      return "instagram";
+  }
+}
+
 function sourceIcon(source: InboxItem["source"]) {
   switch (source) {
     case "ig_comment":
+    case "fb_comment":
       return <MessageCircle style={{ width: 14, height: 14 }} />;
     case "ig_dm":
+    case "fb_dm":
       return <Mail style={{ width: 14, height: 14 }} />;
     case "threads_reply":
       return <AtSign style={{ width: 14, height: 14 }} />;
@@ -1154,7 +1175,7 @@ export default function InboxPage() {
                 >
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                     <div style={{ paddingTop: 2 }}>
-                      <PlatformIcon platform={group.accountPlatform || (group.source === "threads_reply" ? "threads" : "instagram")} size={18} />
+                      <PlatformIcon platform={group.accountPlatform || platformFromSource(group.source)} size={18} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -1280,7 +1301,7 @@ export default function InboxPage() {
                   <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1, background: "linear-gradient(90deg, transparent, rgba(16,185,129,.45), transparent)" }} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <PlatformIcon platform={selectedGroup.accountPlatform || (selectedGroup.source === "threads_reply" ? "threads" : "instagram")} size={18} />
+                      <PlatformIcon platform={selectedGroup.accountPlatform || platformFromSource(selectedGroup.source)} size={18} />
                       <span className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)" }}>
                         {selectedPost || currentMediaContext ? "Original post" : selectedGroup.accountName ? `@${selectedGroup.accountName}` : "Post context"}
                       </span>
