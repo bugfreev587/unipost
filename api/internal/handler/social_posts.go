@@ -130,7 +130,7 @@ func buildSubmittedMap(metadata []byte, fallbackCaption string) map[string]*subm
 	return out
 }
 
-func applyTikTokLiveStatus(rr *postResultResponse, status map[string]any) {
+func applyTikTokLiveStatus(ctx context.Context, rr *postResultResponse, status map[string]any, adapter *platform.TikTokAdapter, accessToken string) {
 	rr.PublishStatus = status
 	data, _ := status["data"].(map[string]any)
 	if data == nil {
@@ -139,6 +139,12 @@ func applyTikTokLiveStatus(rr *postResultResponse, status map[string]any) {
 
 	if url := platform.TikTokPublicPostURLFromStatusData(data); url != "" {
 		rr.URL = &url
+	} else if adapter != nil {
+		if fallback := adapter.ResolvePostOrProfileURL(ctx, accessToken, status); fallback != "" {
+			rr.URL = &fallback
+		} else if rr.URL != nil && *rr.URL == "https://www.tiktok.com" {
+			rr.URL = nil
+		}
 	} else if rr.URL != nil && *rr.URL == "https://www.tiktok.com" {
 		rr.URL = nil
 	}
@@ -1410,7 +1416,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 					accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
 					if decErr == nil {
 						if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
-							applyTikTokLiveStatus(&rr, status)
+							applyTikTokLiveStatus(r.Context(), &rr, status, tiktokAdapter, accessToken)
 						}
 					}
 				}
@@ -1641,7 +1647,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 						if adapter, adErr := platform.Get("tiktok"); adErr == nil {
 							if tiktokAdapter, ok := adapter.(*platform.TikTokAdapter); ok {
 								if status, stErr := tiktokAdapter.CheckPublishStatus(r.Context(), accessToken, res.ExternalID.String); stErr == nil {
-									applyTikTokLiveStatus(&rr, status)
+									applyTikTokLiveStatus(r.Context(), &rr, status, tiktokAdapter, accessToken)
 								}
 							}
 						}

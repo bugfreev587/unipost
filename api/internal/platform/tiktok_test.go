@@ -74,3 +74,11 @@ func TestTikTokPublicPostURLFromStatusDataMissingID(t *testing.T) {
 		t.Fatalf("url = %q, want empty", got)
 	}
 }
+
+func TestTikTokProfileURL(t *testing.T) {
+	got := TikTokProfileURL("@magicxiaobo")
+	want := "https://www.tiktok.com/@magicxiaobo"
+	if got != want {
+		t.Fatalf("url = %q, want %q", got, want)
+	}
+}

@@ -438,7 +438,7 @@ func (a *TikTokAdapter) waitForPublish(ctx context.Context, accessToken string, 
 		switch publishStatus {
 		case "PUBLISH_COMPLETE":
 			slog.Info("tiktok post: publish complete", "publish_id", publishID)
-			return tiktokPublishedResult(publishID, data), nil
+			return a.tiktokPublishedResult(ctx, accessToken, publishID, data), nil
 		case "FAILED":
 			reason, _ := data["fail_reason"].(string)
 			if strings.TrimSpace(reason) == "" {
@@ -454,9 +454,13 @@ func (a *TikTokAdapter) waitForPublish(ctx context.Context, accessToken string, 
 	}, nil
 }
 
-func tiktokPublishedResult(publishID string, data map[string]any) *PostResult {
+func (a *TikTokAdapter) tiktokPublishedResult(ctx context.Context, accessToken string, publishID string, data map[string]any) *PostResult {
 	result := &PostResult{ExternalID: publishID}
 	if url := TikTokPublicPostURLFromStatusData(data); url != "" {
+		result.URL = url
+		return result
+	}
+	if url := a.TikTokProfileURL(ctx, accessToken); url != "" {
 		result.URL = url
 	}
 	return result
@@ -958,6 +962,14 @@ func TikTokPublicPostURL(postID string) string {
 	return fmt.Sprintf("https://www.tiktok.com/player/v1/%s", postID)
 }
 
+func TikTokProfileURL(username string) string {
+	username = strings.TrimSpace(strings.TrimPrefix(username, "@"))
+	if username == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/@%s", tiktokHomepageURL, username)
+}
+
 func TikTokPublicPostURLFromStatus(status map[string]any) string {
 	data, _ := status["data"].(map[string]any)
 	return TikTokPublicPostURLFromStatusData(data)
@@ -968,6 +980,21 @@ func TikTokPublicPostURLFromStatusData(data map[string]any) string {
 		return ""
 	}
 	return TikTokPublicPostURL(tiktokExtractPublicPostID(data))
+}
+
+func (a *TikTokAdapter) ResolvePostOrProfileURL(ctx context.Context, accessToken string, status map[string]any) string {
+	if url := TikTokPublicPostURLFromStatus(status); url != "" {
+		return url
+	}
+	return a.TikTokProfileURL(ctx, accessToken)
+}
+
+func (a *TikTokAdapter) TikTokProfileURL(ctx context.Context, accessToken string) string {
+	info, err := a.FetchCreatorInfo(ctx, accessToken)
+	if err != nil || info == nil {
+		return ""
+	}
+	return TikTokProfileURL(info.CreatorUsername)
 }
 
 type tiktokUserInfo struct {
