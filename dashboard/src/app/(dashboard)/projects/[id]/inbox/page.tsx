@@ -82,20 +82,24 @@ type CommentNode = {
 const COMMENT_THREAD_INDENT = 36;
 const COMMENT_THREAD_LINE_COLOR = "rgba(255,255,255,.22)";
 // Vertical distance from the top of the child row to the horizontal
-// bend of the elbow. Lines up with the vertical midline of the child
-// avatar — ~ (avatar_size / 2) + 20px of bubble padding above.
+// bend of the elbow. Aligns with the child avatar's vertical midline.
 const COMMENT_THREAD_ELBOW_HEIGHT = 24;
-// X column the vertical guide-rail sits in. This is the parent avatar's
-// center line (depth 0 avatar is 32px = center 16, nested avatars are
-// 28px = center 14). 15 splits the difference and avoids branching per
-// depth for a 1-pixel offset nobody will notice.
-const COMMENT_THREAD_LINE_X = 15;
-// Nested rows sit 8px below their parent (`marginTop: 8`). Extending
-// the gutter that far upward lets the ancestor line + elbow begin
-// visually inside the parent avatar's column instead of abruptly
-// starting at the top of the child row. Depth-0 rows don't need this
-// (no parent above to connect to).
+// Avatar radii — root comments get a slightly larger avatar than
+// nested replies so the top of the thread feels anchored.
+const ROOT_AVATAR_RADIUS = 16; // avatar size 32
+const NESTED_AVATAR_RADIUS = 14; // avatar size 28
+// Extend the gutter up into the margin between rows so the line
+// visually originates inside the parent avatar instead of starting
+// abruptly at the top of the child row.
 const COMMENT_THREAD_GUTTER_OVERLAP = 8;
+
+// avatarCenterXAtDepth returns the X coordinate of a comment row's
+// avatar center, measured from the left edge of the conversation
+// container (which is the same coordinate space the gutter uses).
+function avatarCenterXAtDepth(depth: number): number {
+  const radius = depth === 0 ? ROOT_AVATAR_RADIUS : NESTED_AVATAR_RADIUS;
+  return depth * COMMENT_THREAD_INDENT + radius;
+}
 
 function initialsFromName(name?: string) {
   const value = (name || "?").trim();
@@ -1010,11 +1014,13 @@ export default function InboxPage() {
 
   function renderCommentNode(node: CommentNode, depth = 0, ancestorLines: boolean[] = [], isLast = true) {
     const gutterWidth = depth * COMMENT_THREAD_INDENT;
-    // Elbow horizontal length — from the parent avatar's column (X =
-    // (depth-1)*INDENT + LINE_X) to just before the child avatar's
-    // left edge (X = depth*INDENT). Subtracting 1px keeps the curve
-    // tangent to the avatar instead of slipping underneath it.
-    const elbowWidth = Math.max(0, COMMENT_THREAD_INDENT - COMMENT_THREAD_LINE_X - 1);
+    // Geometry of the elbow: the vertical stroke sits in the parent
+    // avatar's column; the horizontal leg ends at the child avatar's
+    // center. Both measured in the gutter's own coordinate space
+    // (gutter's left edge = X 0).
+    const parentCenterX = depth >= 1 ? avatarCenterXAtDepth(depth - 1) : 0;
+    const childCenterX = avatarCenterXAtDepth(depth);
+    const elbowWidth = Math.max(0, childCenterX - parentCenterX);
     return (
       <div key={node.item.id} style={{ position: "relative", marginTop: depth === 0 ? 10 : 8 }}>
         {gutterWidth > 0 ? (
@@ -1027,6 +1033,9 @@ export default function InboxPage() {
               // so the line visually continues from the parent avatar.
               top: -COMMENT_THREAD_GUTTER_OVERLAP,
               bottom: 0,
+              // Gutter only reserves width up to the child avatar's
+              // left edge; the elbow is allowed to overflow rightward
+              // to meet the avatar's center (overflow:visible default).
               width: gutterWidth,
               pointerEvents: "none",
             }}
@@ -1037,7 +1046,10 @@ export default function InboxPage() {
                   key={`ancestor-${node.item.id}-${idx}`}
                   style={{
                     position: "absolute",
-                    left: idx * COMMENT_THREAD_INDENT + COMMENT_THREAD_LINE_X,
+                    // Each ancestor line sits in its own avatar's
+                    // column, computed per depth so sizes 32 vs 28 both
+                    // line up with their respective avatar centers.
+                    left: avatarCenterXAtDepth(idx) - 1,
                     top: 0,
                     bottom: 0,
                     width: 2,
@@ -1050,14 +1062,9 @@ export default function InboxPage() {
             <div
               style={{
                 position: "absolute",
-                left: (depth - 1) * COMMENT_THREAD_INDENT + COMMENT_THREAD_LINE_X,
-                // Start inside the overlap so the vertical stroke
-                // visually originates in the parent avatar's column,
-                // not abruptly at the top of this row.
+                left: parentCenterX - 1,
                 top: 0,
                 width: elbowWidth,
-                // The overlap adds to the vertical stroke before the
-                // bend so the line isn't just a decorative hook.
                 height: COMMENT_THREAD_ELBOW_HEIGHT + COMMENT_THREAD_GUTTER_OVERLAP,
                 borderLeft: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
                 borderBottom: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
@@ -1068,7 +1075,7 @@ export default function InboxPage() {
               <div
                 style={{
                   position: "absolute",
-                  left: (depth - 1) * COMMENT_THREAD_INDENT + COMMENT_THREAD_LINE_X,
+                  left: parentCenterX - 1,
                   top: COMMENT_THREAD_ELBOW_HEIGHT + COMMENT_THREAD_GUTTER_OVERLAP,
                   bottom: 0,
                   width: 2,

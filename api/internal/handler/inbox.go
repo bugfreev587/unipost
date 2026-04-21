@@ -514,8 +514,12 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Insert the reply as an inbox item so it appears in the thread view.
+	// For comment-style sources (ig_comment / fb_comment / threads_reply),
+	// the reply's parent is the comment being replied to, so the tree
+	// renderer on the dashboard nests it one level deeper. DMs keep the
+	// existing thread-key-level parent (if any).
 	parentID := item.ParentExternalID
-	if item.Source == "ig_comment" || item.Source == "threads_reply" {
+	if item.Source == "ig_comment" || item.Source == "fb_comment" || item.Source == "threads_reply" {
 		parentID = pgtype.Text{String: item.ExternalID, Valid: true}
 	} else if !parentID.Valid {
 		parentID = pgtype.Text{String: item.ExternalID, Valid: true}
