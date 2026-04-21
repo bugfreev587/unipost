@@ -851,9 +851,14 @@ export function CreatePostDrawer({
     const failed = form.mediaItems.filter((m) => m.error).length;
     if (failed > 0) return `${failed} media upload${failed === 1 ? "" : "s"} failed — retry or remove.`;
     if (form.hasOverLimit) return "One of your captions is over its platform limit.";
+    // "hasContent" here has to agree with the hook's canSubmit logic,
+    // which treats platform-only inputs (YouTube title, Facebook link)
+    // as valid post bodies even without a main caption or media.
     const hasContent =
       form.mainContent.trim() ||
-      Object.values(form.overrides).some((o) => o.caption?.trim()) ||
+      Object.values(form.overrides).some(
+        (o) => o.caption?.trim() || o.youtube?.title?.trim() || o.facebook?.link?.trim()
+      ) ||
       form.mediaItems.length > 0;
     if (!hasContent) return "Add caption text or media to publish.";
     if (form.publishMode === "schedule" && !form.scheduledAt) return "Pick a time to schedule this post.";

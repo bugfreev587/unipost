@@ -392,7 +392,11 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
 
   const hasPlatformOnlyContent = useCallback((accountId: string) => {
     const override = overrides[accountId];
-    return !!override?.youtube?.title?.trim();
+    // Platform-only content means the user has filled in something
+    // that counts as a valid post body even without a main caption:
+    //   - YouTube: video title (main caption is the description)
+    //   - Facebook: link-only post (FB generates the preview card)
+    return !!override?.youtube?.title?.trim() || !!override?.facebook?.link?.trim();
   }, [overrides]);
 
   const hasUnsavedContent = useMemo(() => {
