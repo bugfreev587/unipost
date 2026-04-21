@@ -293,9 +293,15 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var details *platform.MediaDetails
-	if item.Source == "threads_reply" {
+	switch item.Source {
+	case "threads_reply":
 		details, err = platform.NewThreadsAdapter().FetchMediaDetails(fetchCtx, accessToken, mediaID)
-	} else {
+	case "fb_comment", "fb_dm":
+		// Facebook Pages — the parent is a Page post. Using the IG
+		// adapter here hits graph.instagram.com with a Page token and
+		// 502s the whole request; FB has its own endpoint shape.
+		details, err = platform.NewFacebookAdapter().FetchMediaDetails(fetchCtx, accessToken, mediaID)
+	default:
 		details, err = platform.NewInstagramAdapter().FetchMediaDetails(fetchCtx, accessToken, mediaID)
 	}
 	if err != nil {

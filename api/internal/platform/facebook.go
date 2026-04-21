@@ -1319,6 +1319,79 @@ func (a *FacebookAdapter) ReplyToComment(ctx context.Context, accessToken string
 	}, nil
 }
 
+// FetchMediaDetails returns post details for the inbox's media-context
+// panel. The inbox handler dispatches to this for `fb_comment` items
+// so the conversation view can render the parent post's caption +
+// permalink alongside the comment thread. Full picture is exposed
+// for photo/video posts; link posts surface the preview via
+// attachments[0].media.image.src which Facebook returns for both.
+func (a *FacebookAdapter) FetchMediaDetails(ctx context.Context, accessToken, postID string) (*MediaDetails, error) {
+	params := url.Values{
+		"access_token": {accessToken},
+		"fields":       {"id,message,permalink_url,full_picture,created_time,attachments{media{image{src}},media_type}"},
+	}
+	endpoint := facebookGraphBase + "/" + postID + "?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook fetch media details: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+	}
+
+	var parsed struct {
+		ID           string `json:"id"`
+		Message      string `json:"message"`
+		PermalinkURL string `json:"permalink_url"`
+		FullPicture  string `json:"full_picture"`
+		CreatedTime  string `json:"created_time"`
+		Attachments  struct {
+			Data []struct {
+				MediaType string `json:"media_type"`
+				Media     struct {
+					Image struct {
+						Src string `json:"src"`
+					} `json:"image"`
+				} `json:"media"`
+			} `json:"data"`
+		} `json:"attachments"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("facebook fetch media details decode: %w", err)
+	}
+
+	mediaURL := parsed.FullPicture
+	mediaType := "POST"
+	if len(parsed.Attachments.Data) > 0 {
+		att := parsed.Attachments.Data[0]
+		if att.Media.Image.Src != "" && mediaURL == "" {
+			mediaURL = att.Media.Image.Src
+		}
+		switch strings.ToLower(att.MediaType) {
+		case "photo":
+			mediaType = "IMAGE"
+		case "video", "video_inline", "video_autoplay":
+			mediaType = "VIDEO"
+		case "share":
+			mediaType = "LINK"
+		}
+	}
+	return &MediaDetails{
+		ID:        parsed.ID,
+		Caption:   parsed.Message,
+		MediaURL:  mediaURL,
+		Timestamp: parsed.CreatedTime,
+		MediaType: mediaType,
+		Permalink: parsed.PermalinkURL,
+	}, nil
+}
+
 // SubscribePageToWebhooks subscribes our Meta App to the Page's feed +
 // Messenger events. Without this call, Meta only delivers webhooks to
 // the Page owner's own App — our App receives nothing. Called once per
