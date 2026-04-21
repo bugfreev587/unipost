@@ -998,11 +998,11 @@ export function CreatePostDrawer({
                 </span>
               </div>
 
-              {form.selectedAccounts.length === 0 ? (
+              {form.uniqueSelectedAccounts.length === 0 ? (
                 <EmptyPlatformState />
               ) : (
                 <div className="space-y-3">
-                  {form.selectedAccounts.map((account, i) => {
+                  {form.uniqueSelectedAccounts.map((account, i) => {
                     const override = form.overrides[account.id] || { caption: "" };
                     const text = override.caption || form.mainContent;
                     const charCount = form.getCharCount(text, account.platform);
@@ -1106,7 +1106,7 @@ export function CreatePostDrawer({
             <ValidationPanel
               errors={validationResult?.errors || []}
               warnings={validationResult?.warnings || []}
-              accounts={form.selectedAccounts}
+              accounts={form.uniqueSelectedAccounts}
               onSelectIssue={focusIssue}
             />
             {form.submitting && publishingToTikTok && (

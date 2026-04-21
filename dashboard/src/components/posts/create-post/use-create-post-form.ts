@@ -594,6 +594,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     collapsedBlocks,
     allMediaUploaded,
     duplicateAccountIds,
+    uniqueSelectedAccounts,
 
     // Actions
     toggleAccount,
