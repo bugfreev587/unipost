@@ -32,7 +32,7 @@ func (a *YouTubeAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig 
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/youtube",
-		Scopes:       []string{"https://www.googleapis.com/auth/youtube", "https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"},
+		Scopes:       []string{"https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"},
 	}
 }
 
@@ -41,7 +41,7 @@ func (a *YouTubeAdapter) GetAuthURL(config OAuthConfig, state string) string {
 		"client_id":     {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
 		"response_type": {"code"},
-		"scope":         {"https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"},
+		"scope":         {"https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"},
 		"state":         {state},
 		"access_type":   {"offline"},
 		"prompt":        {"consent"},
