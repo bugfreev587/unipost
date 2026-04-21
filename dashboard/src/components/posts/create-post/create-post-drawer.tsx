@@ -4,6 +4,7 @@ import { useEffect, useCallback, useState, useRef, useMemo, memo } from "react";
 import Link from "next/link";
 import { AlertTriangle, Loader2, Plus } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ConnectedAccountsGrid, PostToGrid } from "./account-card-grid";
 import { PlatformEditorBlock } from "./platform-editor-block";
 import { EmptyPlatformState } from "./empty-platform-state";
@@ -40,10 +41,11 @@ function clampDrawerWidth(width: number) {
 
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
 
-const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
+const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry, onPreview }: {
   item: MediaItem;
   onRemove: () => void;
   onRetry?: () => void;
+  onPreview?: (file: File) => void;
 }) {
   const url = useMemo(() => URL.createObjectURL(item.file), [item.file]);
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
@@ -51,6 +53,7 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
   const uploading = item.mediaId === null && !item.error;
   const failed = !!item.error;
   const ready = item.mediaId !== null;
+  const previewable = ready && !failed;
 
   return (
     <div
@@ -60,6 +63,7 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
       style={{
         background: "var(--surface1)",
         borderColor: failed ? "var(--danger)" : ready ? "var(--dborder2)" : "color-mix(in srgb, var(--primary) 60%, transparent)",
+        cursor: previewable ? "zoom-in" : "default",
       }}
       title={
         failed
@@ -68,6 +72,18 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
           ? `Uploading… ${item.progress}%`
           : item.file.name
       }
+      role={previewable ? "button" : undefined}
+      tabIndex={previewable ? 0 : undefined}
+      onClick={() => {
+        if (previewable) onPreview?.(item.file);
+      }}
+      onKeyDown={(e) => {
+        if (!previewable) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPreview?.(item.file);
+        }
+      }}
     >
       {item.file.type.startsWith("video/") ? (
         <video
@@ -104,11 +120,14 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
 
       <button
         type="button"
-        onClick={onRemove}
+        onClick={(e) => { e.stopPropagation(); onRemove(); }}
         className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity text-xs z-10"
       >
         &times;
       </button>
+      {previewable && (
+        <div className="pointer-events-none absolute inset-0 bg-black/0 transition-colors group-hover/thumb:bg-black/12" />
+      )}
       <div className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1.5 py-0.5 font-mono text-[9px]" style={{ color: "rgb(229 231 235)" }}>
         {item.file.name}
       </div>
@@ -116,11 +135,12 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry }: {
   );
 });
 
-function MediaThumbnails({ items, onRemove, onAdd, onRetry }: {
+function MediaThumbnails({ items, onRemove, onAdd, onRetry, onPreview }: {
   items: MediaItem[];
   onRemove: (index: number) => void;
   onAdd: (files: File[]) => void;
   onRetry: (index: number) => void;
+  onPreview: (file: File) => void;
 }) {
   // The per-thumb "Retry" icon is too small to explain *why* the
   // upload failed (server errors like "size_bytes exceeds the global
@@ -143,6 +163,7 @@ function MediaThumbnails({ items, onRemove, onAdd, onRetry }: {
             item={item}
             onRemove={() => onRemove(i)}
             onRetry={() => onRetry(i)}
+            onPreview={onPreview}
           />
         ))}
         <label className="group flex h-[88px] w-[88px] flex-shrink-0 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed transition-colors" style={{ borderColor: "var(--dborder2)", background: "color-mix(in srgb, var(--surface1) 60%, transparent)" }}>
@@ -202,6 +223,68 @@ function humanizeMediaError(raw: string, file: File): string {
     return `File is ${fileMB} MB — max upload size is ${capMB} MB. Compress the file or use a shorter clip.`;
   }
   return raw;
+}
+
+function MediaPreviewDialog({
+  file,
+  open,
+  onOpenChange,
+}: {
+  file: File | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const url = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => () => {
+    if (url) URL.revokeObjectURL(url);
+  }, [url]);
+
+  const isVideo = !!file && file.type.startsWith("video/");
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton
+        className={cn(
+          "border-none bg-transparent p-0 shadow-none ring-0",
+          isVideo ? "max-w-4xl" : "max-w-6xl"
+        )}
+      >
+        <DialogTitle className="sr-only">
+          {isVideo ? "Video preview" : "Image preview"}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          Preview uploaded media before publishing.
+        </DialogDescription>
+        {file && url && (
+          <div
+            className="overflow-hidden rounded-2xl"
+            style={{ background: "color-mix(in srgb, #000 82%, var(--surface1))" }}
+          >
+            {isVideo ? (
+              <div className="p-3 sm:p-4">
+                <video
+                  src={url}
+                  controls
+                  autoPlay
+                  preload="metadata"
+                  className="max-h-[78vh] w-full rounded-xl bg-black"
+                />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center p-2 sm:p-4">
+                <img
+                  src={url}
+                  alt={file.name}
+                  className="max-h-[84vh] max-w-full rounded-xl object-contain"
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 const ISSUE_COPY: Record<string, string> = {
@@ -351,6 +434,7 @@ export function CreatePostDrawer({
   preselectAllAccounts,
 }: CreatePostDrawerProps) {
   // Profile management
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [profileAccounts, setProfileAccounts] = useState<SocialAccount[]>(accounts);
@@ -453,6 +537,7 @@ export function CreatePostDrawer({
   useEffect(() => {
     if (!open) {
       form.reset();
+      setPreviewFile(null);
       setSelectedProfileId("");
       setProfileAccounts(accounts);
       setAllLoadedAccounts(accounts);
@@ -978,6 +1063,7 @@ export function CreatePostDrawer({
                 items={form.mediaItems}
                 onRemove={(i) => form.removeMediaItem(i)}
                 onAdd={(newFiles) => newFiles.forEach((f) => handleFileUpload(f))}
+                onPreview={(file) => setPreviewFile(file)}
                 onRetry={(i) => {
                   const failed = form.mediaItems[i];
                   if (!failed) return;
@@ -1302,6 +1388,13 @@ export function CreatePostDrawer({
           </>
         )}
       </SheetContent>
+      <MediaPreviewDialog
+        file={previewFile}
+        open={previewFile !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPreviewFile(null);
+        }}
+      />
     </Sheet>
   );
 }
