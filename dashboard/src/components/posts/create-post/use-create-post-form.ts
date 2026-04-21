@@ -451,7 +451,14 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   // stale closure issues with mediaItems/uploadedMediaIds.
   function buildPayload(): CreateSocialPostPayload {
     const accountIds = uniqueSelectedAccounts.map((a) => a.id);
-    const hasOverrides = accountIds.some((id) => overrides[id]?.caption?.trim());
+    // Any sign of per-account content forces the per-platform
+    // payload branch: caption override, a YouTube title-only post,
+    // a Facebook link-only post, etc. Without this, platform_options
+    // (link / title / etc.) get dropped and the backend sees an
+    // empty request — the user's input is silently lost.
+    const hasOverrides = accountIds.some(
+      (id) => overrides[id]?.caption?.trim() || hasPlatformOnlyContent(id)
+    );
 
     const payload: CreateSocialPostPayload = {};
 
