@@ -879,7 +879,7 @@ export function CreatePostDrawer({
     if (form.tiktokBlocker === "tiktok_privacy")
       return "Select a TikTok visibility (TikTok requires an explicit choice).";
     if (form.tiktokBlocker === "tiktok_disclosure")
-      return "Pick Your Brand or Branded Content to finish disclosing commercial content on TikTok.";
+      return "You need to indicate if your content promotes yourself, a third party, or both.";
     if (form.tiktokBlocker === "tiktok_branded_private")
       return "TikTok doesn't allow Branded Content to be posted as Only me — change the visibility or turn off Branded Content.";
     // Runtime blockers reported by per-account TikTok panels (creator
