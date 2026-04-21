@@ -414,7 +414,16 @@ func (a *FacebookAdapter) postFeed(ctx context.Context, accessToken, pageID, tex
 	if link != "" {
 		form.Set("link", link)
 	}
-	return a.publishAndShape(ctx, "POST", facebookGraphBase+"/"+pageID+"/feed", form, pageID)
+	raw, err := a.publishRaw(ctx, facebookGraphBase+"/"+pageID+"/feed", form)
+	if err != nil {
+		return nil, err
+	}
+	// /feed returns id as "{page_id}_{story_id}" — canonical URL
+	// splits on the underscore.
+	return &PostResult{
+		ExternalID: raw.ID,
+		URL:        feedStoryURL(pageID, raw.ID),
+	}, nil
 }
 
 // postPhoto uploads a single photo by remote URL. FB's /photos
@@ -428,7 +437,22 @@ func (a *FacebookAdapter) postPhoto(ctx context.Context, accessToken, pageID, ca
 	if caption != "" {
 		form.Set("message", caption)
 	}
-	return a.publishAndShape(ctx, "POST", facebookGraphBase+"/"+pageID+"/photos", form, pageID)
+	raw, err := a.publishRaw(ctx, facebookGraphBase+"/"+pageID+"/photos", form)
+	if err != nil {
+		return nil, err
+	}
+	// /photos returns { id: <photo_id>, post_id: "{page}_{story}" }.
+	// Prefer post_id because it's the feed-story id — that's what
+	// "View on Facebook" should resolve to, and also what the
+	// analytics endpoint will later recognize.
+	storyID := raw.PostID
+	if storyID == "" {
+		storyID = raw.ID
+	}
+	return &PostResult{
+		ExternalID: storyID,
+		URL:        feedStoryURL(pageID, storyID),
+	}, nil
 }
 
 // postVideo uploads a single video by remote URL. Same pull model
@@ -443,17 +467,38 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 	if description != "" {
 		form.Set("description", description)
 	}
-	return a.publishAndShape(ctx, "POST", facebookGraphBase+"/"+pageID+"/videos", form, pageID)
+	raw, err := a.publishRaw(ctx, facebookGraphBase+"/"+pageID+"/videos", form)
+	if err != nil {
+		return nil, err
+	}
+	// /videos returns only { id: <video_id> } — there's no story id
+	// yet because Facebook processes the video asynchronously. The
+	// public URL uses the /videos/ path; /posts/<video_id> 404s
+	// because video ids aren't story ids.
+	if raw.ID == "" {
+		return nil, fmt.Errorf("facebook video publish: response missing id")
+	}
+	return &PostResult{
+		ExternalID: raw.ID,
+		URL:        fmt.Sprintf("https://www.facebook.com/%s/videos/%s", pageID, raw.ID),
+	}, nil
 }
 
-// publishAndShape sends the request and normalizes the response
-// into a PostResult (ExternalID + public URL) or a shaped error.
-// Error codes 190 / 102 / 200 are auth-related — we surface them
-// as a "needs reconnect" message so the Posts Overview's retry
-// button can steer the user to the right fix without parsing raw
-// Meta JSON.
-func (a *FacebookAdapter) publishAndShape(ctx context.Context, method, url string, form url.Values, pageID string) (*PostResult, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(form.Encode()))
+// facebookPublishResult is the shape every publish endpoint returns,
+// parsed once here so callers don't each replicate the error envelope
+// handling. ID + PostID are both captured because each endpoint
+// populates them differently (see postPhoto / postVideo comments).
+type facebookPublishResult struct {
+	ID     string `json:"id"`
+	PostID string `json:"post_id"`
+}
+
+// publishRaw POSTs the form and returns the parsed response. Auth
+// codes (190 / 102 / 200) are promoted to the "needs reconnect"
+// error; other Graph API errors pass through with code + trace id
+// so the admin debug view can surface them verbatim.
+func (a *FacebookAdapter) publishRaw(ctx context.Context, endpoint string, form url.Values) (*facebookPublishResult, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -470,36 +515,32 @@ func (a *FacebookAdapter) publishAndShape(ctx context.Context, method, url strin
 		return nil, wrapFacebookPublishError(resp.StatusCode, body)
 	}
 
-	var parsed struct {
-		ID     string `json:"id"`      // /feed returns {page_id}_{post_id}; /photos + /videos return bare id
-		PostID string `json:"post_id"` // /photos and /videos echo a post_id for the underlying story
-	}
+	var parsed facebookPublishResult
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("facebook publish: decode response: %w (body=%s)", err, string(body))
 	}
-	externalID := parsed.ID
-	if externalID == "" {
-		externalID = parsed.PostID
-	}
-	if externalID == "" {
+	if parsed.ID == "" && parsed.PostID == "" {
 		return nil, fmt.Errorf("facebook publish: response missing id (body=%s)", string(body))
 	}
+	return &parsed, nil
+}
 
-	// Public URL pattern: FB resolves /{id} for both the short photo/
-	// video id and the combined feed id, but the canonical "posts"
-	// path reads cleaner in share links. Fall back to the short form
-	// when we only have a bare id.
-	publicURL := "https://www.facebook.com/" + externalID
-	if strings.Contains(externalID, "_") {
-		parts := strings.SplitN(externalID, "_", 2)
-		publicURL = fmt.Sprintf("https://www.facebook.com/%s/posts/%s", parts[0], parts[1])
-	} else if pageID != "" {
-		publicURL = fmt.Sprintf("https://www.facebook.com/%s/posts/%s", pageID, externalID)
+// feedStoryURL builds the canonical "/{page}/posts/{story}" URL from
+// either a combined "{page}_{story}" id or a bare story id.
+// Empty pageID falls back to the short form, which Facebook redirects
+// to the right Page if the id is globally unique.
+func feedStoryURL(pageID, storyID string) string {
+	if storyID == "" {
+		return "https://www.facebook.com/"
 	}
-	return &PostResult{
-		ExternalID: externalID,
-		URL:        publicURL,
-	}, nil
+	if strings.Contains(storyID, "_") {
+		parts := strings.SplitN(storyID, "_", 2)
+		return fmt.Sprintf("https://www.facebook.com/%s/posts/%s", parts[0], parts[1])
+	}
+	if pageID != "" {
+		return fmt.Sprintf("https://www.facebook.com/%s/posts/%s", pageID, storyID)
+	}
+	return "https://www.facebook.com/" + storyID
 }
 
 // wrapFacebookPublishError turns Graph API error responses into
