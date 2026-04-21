@@ -81,15 +81,16 @@ type CommentNode = {
 
 const COMMENT_THREAD_INDENT = 36;
 const COMMENT_THREAD_LINE_COLOR = "rgba(255,255,255,.22)";
-// Vertical distance from the top of the child row to the horizontal
-// bend of the elbow. Aligns with the child avatar's vertical midline.
-const COMMENT_THREAD_ELBOW_HEIGHT = 24;
+// Y-offset in the child row where the elbow's horizontal stroke
+// lives. Equals the child avatar's vertical midline so the bend
+// lands squarely on the avatar's left edge.
+const COMMENT_THREAD_ELBOW_HEIGHT = 14;
 // Avatar radii — root comments get a slightly larger avatar than
 // nested replies so the top of the thread feels anchored.
 const ROOT_AVATAR_RADIUS = 16; // avatar size 32
 const NESTED_AVATAR_RADIUS = 14; // avatar size 28
 // Extend the gutter up into the margin between rows so the line
-// visually originates inside the parent avatar instead of starting
+// visually originates below the parent avatar instead of starting
 // abruptly at the top of the child row.
 const COMMENT_THREAD_GUTTER_OVERLAP = 8;
 
@@ -1014,13 +1015,16 @@ export default function InboxPage() {
 
   function renderCommentNode(node: CommentNode, depth = 0, ancestorLines: boolean[] = [], isLast = true) {
     const gutterWidth = depth * COMMENT_THREAD_INDENT;
-    // Geometry of the elbow: the vertical stroke sits in the parent
-    // avatar's column; the horizontal leg ends at the child avatar's
-    // center. Both measured in the gutter's own coordinate space
-    // (gutter's left edge = X 0).
+    // Geometry of the elbow: the vertical stroke sits under the
+    // parent avatar's center (the natural exit point of a circle is
+    // its bottom apex, which shares the same X as its center). The
+    // horizontal leg ends at the child avatar's LEFT edge so the
+    // curve visually attaches to the outside of the avatar instead
+    // of tunnelling under it. All X values measured in the gutter's
+    // own coordinate space (gutter's left edge = X 0).
     const parentCenterX = depth >= 1 ? avatarCenterXAtDepth(depth - 1) : 0;
-    const childCenterX = avatarCenterXAtDepth(depth);
-    const elbowWidth = Math.max(0, childCenterX - parentCenterX);
+    const childAvatarLeftX = depth * COMMENT_THREAD_INDENT;
+    const elbowWidth = Math.max(0, childAvatarLeftX - parentCenterX);
     return (
       <div key={node.item.id} style={{ position: "relative", marginTop: depth === 0 ? 10 : 8 }}>
         {gutterWidth > 0 ? (
@@ -1088,26 +1092,29 @@ export default function InboxPage() {
         ) : null}
 
         <div style={{ position: "relative", marginLeft: gutterWidth }}>
-          {/* Descender from this node's own avatar down through its
-              bubble, bridging into the margin above the first child.
-              Without this, the child's elbow starts in empty space —
-              this is the stroke the user was missing that made the
-              curves read as "floating decoration". */}
-          {node.children.length > 0 ? (
-            <div
-              aria-hidden="true"
-              style={{
-                position: "absolute",
-                left: (depth === 0 ? ROOT_AVATAR_RADIUS : NESTED_AVATAR_RADIUS) - 1,
-                top: depth === 0 ? ROOT_AVATAR_RADIUS : NESTED_AVATAR_RADIUS,
-                bottom: -COMMENT_THREAD_GUTTER_OVERLAP,
-                width: 2,
-                borderRadius: 999,
-                background: COMMENT_THREAD_LINE_COLOR,
-                pointerEvents: "none",
-              }}
-            />
-          ) : null}
+          {/* Descender from the BOTTOM EDGE of this node's avatar
+              down through its bubble, bridging into the margin above
+              the first child. Starts at Y = avatar_size (bottom apex
+              of the circle) so the stroke appears to exit the avatar
+              tangentially instead of piercing its midline. */}
+          {node.children.length > 0 ? (() => {
+            const avatarRadius = depth === 0 ? ROOT_AVATAR_RADIUS : NESTED_AVATAR_RADIUS;
+            return (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  left: avatarRadius - 1,
+                  top: avatarRadius * 2,
+                  bottom: -COMMENT_THREAD_GUTTER_OVERLAP,
+                  width: 2,
+                  borderRadius: 999,
+                  background: COMMENT_THREAD_LINE_COLOR,
+                  pointerEvents: "none",
+                }}
+              />
+            );
+          })() : null}
           {renderConversationItem(node.item, depth)}
         </div>
 
