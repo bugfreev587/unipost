@@ -687,9 +687,9 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 				// update them to use the canonical conversation ID.
 				for senderID, convID := range senderConvMap {
 					if n, err := h.queries.ReconcileDMThreadKeys(r.Context(), db.ReconcileDMThreadKeysParams{
-						SocialAccountID: acc.ID,
-						ThreadKey:       senderID,
-						ThreadKey_2:     convID,
+						SocialAccountID:  acc.ID,
+						ThreadKey:        senderID,
+						ThreadKey_2:      convID,
 						ParentExternalID: pgtype.Text{String: convID, Valid: true},
 					}); err == nil && n > 0 {
 						slog.Info("inbox sync: reconciled DM thread keys",
@@ -745,6 +745,90 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				detail.CommentsFound = threadRepliesFetched
+			}
+
+		case "facebook":
+			adapter := platform.NewFacebookAdapter()
+			postIDs, err := h.queries.ListPublishedExternalIDsForInboxSync(r.Context(), db.ListPublishedExternalIDsForInboxSyncParams{
+				SocialAccountID: acc.ID,
+				Column2:         30,
+			})
+			if err != nil {
+				slog.Warn("inbox sync: list facebook posts failed", "account_id", acc.ID, "err", err)
+				errors = append(errors, syncError{acc.ID, acc.Platform, "list_posts", err.Error()})
+			} else {
+				detail.MediaFound = len(postIDs)
+				facebookCommentsFetched := 0
+				for _, postIDText := range postIDs {
+					if !postIDText.Valid || postIDText.String == "" {
+						continue
+					}
+					postID := postIDText.String
+					entries, err := adapter.FetchComments(r.Context(), accessToken, postID)
+					if err != nil {
+						slog.Warn("inbox sync: fetch facebook comments failed",
+							"account_id", acc.ID, "post_id", postID, "err", err)
+						errors = append(errors, syncError{acc.ID, acc.Platform, "fetch_comments:" + postID, err.Error()})
+						continue
+					}
+					facebookCommentsFetched += len(entries)
+					slog.Info("inbox sync: fetched facebook comments",
+						"account_id", acc.ID, "post_id", postID, "count", len(entries))
+					for _, e := range entries {
+						isOwn := e.AuthorID != "" && e.AuthorID == acc.ExternalAccountID
+						_, uErr := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+							SocialAccountID:  acc.ID,
+							WorkspaceID:      workspaceID,
+							Source:           e.Source,
+							ExternalID:       e.ExternalID,
+							ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+							AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+							AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+							Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+							IsOwn:            isOwn,
+							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
+							Metadata:         []byte("{}"),
+							ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+							ThreadStatus:     "open",
+							AssignedTo:       pgtype.Text{},
+							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
+						})
+						if uErr == nil {
+							totalNew++
+						}
+					}
+				}
+				detail.CommentsFound = facebookCommentsFetched
+			}
+
+			dmEntries, err := adapter.FetchConversations(r.Context(), accessToken)
+			if err != nil {
+				slog.Warn("inbox sync: fetch facebook DMs failed", "account_id", acc.ID, "err", err)
+				errors = append(errors, syncError{acc.ID, acc.Platform, "fetch_conversations", err.Error()})
+			} else {
+				for _, e := range dmEntries {
+					isOwn := e.AuthorID != "" && e.AuthorID == acc.ExternalAccountID
+					_, uErr := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+						SocialAccountID:  acc.ID,
+						WorkspaceID:      workspaceID,
+						Source:           e.Source,
+						ExternalID:       e.ExternalID,
+						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
+						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
+						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
+						IsOwn:            isOwn,
+						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
+						Metadata:         []byte("{}"),
+						ThreadKey:        inboxThreadKey(e.Source, e.ExternalID, e.ParentExternalID, e.AuthorID),
+						ThreadStatus:     "open",
+						AssignedTo:       pgtype.Text{},
+						LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
+					})
+					if uErr == nil {
+						totalNew++
+					}
+				}
 			}
 		}
 

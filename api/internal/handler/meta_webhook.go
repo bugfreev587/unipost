@@ -190,77 +190,77 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 
 	for _, account := range accounts {
 
-	// Process changes (comments).
-	slog.Info("meta webhook: processing entry",
-		"ig_user_id", entry.ID,
-		"changes_count", len(entry.Changes),
-		"messaging_count", len(entry.Messaging))
-	for _, change := range entry.Changes {
-		slog.Info("meta webhook: change", "field", change.Field)
-		switch change.Field {
-		case "comments":
-			h.handleIGComment(r, account, change.Value)
-		default:
-			slog.Info("meta webhook: unhandled change field",
-				"field", change.Field, "ig_user_id", entry.ID)
-		}
-	}
-
-	// Process messaging (DMs).
-	for _, msg := range entry.Messaging {
-		if msg.Message == nil {
-			continue
-		}
-		isOwn := msg.Sender.ID == account.ExternalAccountID
-		ts := time.Unix(msg.Timestamp, 0)
-
-		// Look up the existing thread for this sender so webhook
-		// messages join the same conversation as sync-fetched ones.
-		// Sync uses the conversation ID as thread_key; without this
-		// lookup, webhook messages would create a separate thread
-		// keyed by sender ID.
-		senderID := msg.Sender.ID
-		if isOwn {
-			senderID = msg.Recipient.ID
-		}
-		threadKey := senderID // fallback
-		parentExternalID := pgtype.Text{}
-		authorName := pgtype.Text{}
-		existing, lookupErr := h.queries.FindDMThreadKeyBySender(r.Context(), db.FindDMThreadKeyBySenderParams{
-			SocialAccountID: account.ID,
-			AuthorID:        pgtype.Text{String: msg.Sender.ID, Valid: true},
-		})
-		if lookupErr == nil {
-			if existing.ThreadKey != "" {
-				threadKey = existing.ThreadKey
+		// Process changes (comments).
+		slog.Info("meta webhook: processing entry",
+			"ig_user_id", entry.ID,
+			"changes_count", len(entry.Changes),
+			"messaging_count", len(entry.Messaging))
+		for _, change := range entry.Changes {
+			slog.Info("meta webhook: change", "field", change.Field)
+			switch change.Field {
+			case "comments":
+				h.handleIGComment(r, account, change.Value)
+			default:
+				slog.Info("meta webhook: unhandled change field",
+					"field", change.Field, "ig_user_id", entry.ID)
 			}
-			parentExternalID = existing.ParentExternalID
-			authorName = existing.AuthorName
 		}
 
-		dmItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
-			SocialAccountID:  account.ID,
-			WorkspaceID:      account.WorkspaceID,
-			Source:           "ig_dm",
-			ExternalID:       msg.Message.Mid,
-			ParentExternalID: parentExternalID,
-			AuthorName:       authorName,
-			AuthorID:         pgtype.Text{String: msg.Sender.ID, Valid: true},
-			Body:             pgtype.Text{String: msg.Message.Text, Valid: msg.Message.Text != ""},
-			IsOwn:            isOwn,
-			ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
-			Metadata:         []byte("{}"),
-			ThreadKey:        threadKey,
-			ThreadStatus:     "open",
-			AssignedTo:       pgtype.Text{},
-			LinkedPostID:     pgtype.Text{},
-		})
-		if err != nil {
-			slog.Warn("meta webhook: upsert DM failed", "err", err)
-		} else {
-			ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
+		// Process messaging (DMs).
+		for _, msg := range entry.Messaging {
+			if msg.Message == nil {
+				continue
+			}
+			isOwn := msg.Sender.ID == account.ExternalAccountID
+			ts := time.Unix(msg.Timestamp, 0)
+
+			// Look up the existing thread for this sender so webhook
+			// messages join the same conversation as sync-fetched ones.
+			// Sync uses the conversation ID as thread_key; without this
+			// lookup, webhook messages would create a separate thread
+			// keyed by sender ID.
+			senderID := msg.Sender.ID
+			if isOwn {
+				senderID = msg.Recipient.ID
+			}
+			threadKey := senderID // fallback
+			parentExternalID := pgtype.Text{}
+			authorName := pgtype.Text{}
+			existing, lookupErr := h.queries.FindDMThreadKeyBySender(r.Context(), db.FindDMThreadKeyBySenderParams{
+				SocialAccountID: account.ID,
+				AuthorID:        pgtype.Text{String: msg.Sender.ID, Valid: true},
+			})
+			if lookupErr == nil {
+				if existing.ThreadKey != "" {
+					threadKey = existing.ThreadKey
+				}
+				parentExternalID = existing.ParentExternalID
+				authorName = existing.AuthorName
+			}
+
+			dmItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+				SocialAccountID:  account.ID,
+				WorkspaceID:      account.WorkspaceID,
+				Source:           "ig_dm",
+				ExternalID:       msg.Message.Mid,
+				ParentExternalID: parentExternalID,
+				AuthorName:       authorName,
+				AuthorID:         pgtype.Text{String: msg.Sender.ID, Valid: true},
+				Body:             pgtype.Text{String: msg.Message.Text, Valid: msg.Message.Text != ""},
+				IsOwn:            isOwn,
+				ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
+				Metadata:         []byte("{}"),
+				ThreadKey:        threadKey,
+				ThreadStatus:     "open",
+				AssignedTo:       pgtype.Text{},
+				LinkedPostID:     pgtype.Text{},
+			})
+			if err != nil {
+				slog.Warn("meta webhook: upsert DM failed", "err", err)
+			} else {
+				ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
+			}
 		}
-	}
 	} // end for accounts
 }
 
@@ -468,82 +468,102 @@ func (h *MetaWebhookHandler) handleThreadsReply(r *http.Request, account *webhoo
 // the account by ExternalAccountID first, then fall back to any active
 // Facebook account if Meta's webhook uses an ID we can't match.
 func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebhookEntry) {
-	account, err := h.findAccountByExternalID(r, "facebook", entry.ID)
-	if err != nil {
-		account, err = h.findAnyActiveAccount(r, "facebook")
-		if err != nil {
+	if h.queries == nil {
+		slog.Warn("meta webhook: facebook entry skipped because queries is nil")
+		return
+	}
+
+	rows, err := h.queries.FindAllSocialAccountsByPlatformAndExternalID(r.Context(), db.FindAllSocialAccountsByPlatformAndExternalIDParams{
+		Platform:          "facebook",
+		ExternalAccountID: entry.ID,
+	})
+	var accounts []*webhookAccount
+	if err == nil && len(rows) > 0 {
+		for _, row := range rows {
+			accounts = append(accounts, &webhookAccount{
+				ID:                row.ID,
+				WorkspaceID:       row.WorkspaceID,
+				ExternalAccountID: row.ExternalAccountID,
+			})
+		}
+	} else {
+		account, fallbackErr := h.findAnyActiveAccount(r, "facebook")
+		if fallbackErr != nil {
 			slog.Warn("meta webhook: no active Facebook account found",
-				"webhook_page_id", entry.ID, "err", err)
+				"webhook_page_id", entry.ID, "err", err, "fallback_err", fallbackErr)
 			return
 		}
 		slog.Info("meta webhook: matched Facebook account via fallback",
 			"webhook_page_id", entry.ID, "account_id", account.ID)
+		accounts = []*webhookAccount{account}
 	}
 
-	// Feed events (comments, reactions). We only surface comments to
-	// the inbox — reactions/posts don't need human reply.
-	for _, change := range entry.Changes {
-		if change.Field != "feed" {
-			slog.Info("meta webhook: unhandled facebook change field",
-				"field", change.Field, "page_id", entry.ID)
-			continue
-		}
-		h.handleFacebookFeedChange(r, account, change.Value)
-	}
-
-	// Messenger DMs. Mirrors IG DM handling but stores Source="fb_dm"
-	// and uses the conversation ID (resolved from the sender PSID)
-	// as thread_key to match sync-fetched DMs.
-	for _, msg := range entry.Messaging {
-		if msg.Message == nil {
-			continue
-		}
-		isOwn := msg.Sender.ID == account.ExternalAccountID
-		ts := time.Unix(msg.Timestamp/1000, (msg.Timestamp%1000)*int64(time.Millisecond))
-		if msg.Timestamp == 0 {
-			ts = time.Now()
-		}
-
-		senderID := msg.Sender.ID
-		if isOwn {
-			senderID = msg.Recipient.ID
-		}
-		threadKey := senderID
-		parentExternalID := pgtype.Text{}
-		authorName := pgtype.Text{}
-		existing, lookupErr := h.queries.FindDMThreadKeyBySender(r.Context(), db.FindDMThreadKeyBySenderParams{
-			SocialAccountID: account.ID,
-			AuthorID:        pgtype.Text{String: msg.Sender.ID, Valid: true},
-		})
-		if lookupErr == nil {
-			if existing.ThreadKey != "" {
-				threadKey = existing.ThreadKey
+	for _, account := range accounts {
+		// Feed events (comments, reactions). We only surface comments to
+		// the inbox — reactions/posts don't need human reply.
+		for _, change := range entry.Changes {
+			if change.Field != "feed" {
+				slog.Info("meta webhook: unhandled facebook change field",
+					"field", change.Field, "page_id", entry.ID)
+				continue
 			}
-			parentExternalID = existing.ParentExternalID
-			authorName = existing.AuthorName
+			h.handleFacebookFeedChange(r, account, change.Value)
 		}
 
-		dmItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
-			SocialAccountID:  account.ID,
-			WorkspaceID:      account.WorkspaceID,
-			Source:           "fb_dm",
-			ExternalID:       msg.Message.Mid,
-			ParentExternalID: parentExternalID,
-			AuthorName:       authorName,
-			AuthorID:         pgtype.Text{String: msg.Sender.ID, Valid: true},
-			Body:             pgtype.Text{String: msg.Message.Text, Valid: msg.Message.Text != ""},
-			IsOwn:            isOwn,
-			ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
-			Metadata:         []byte("{}"),
-			ThreadKey:        threadKey,
-			ThreadStatus:     "open",
-			AssignedTo:       pgtype.Text{},
-			LinkedPostID:     pgtype.Text{},
-		})
-		if err != nil {
-			slog.Warn("meta webhook: upsert fb dm failed", "err", err)
-		} else {
-			ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
+		// Messenger DMs. Mirrors IG DM handling but stores Source="fb_dm"
+		// and uses the conversation ID (resolved from the sender PSID)
+		// as thread_key to match sync-fetched DMs.
+		for _, msg := range entry.Messaging {
+			if msg.Message == nil {
+				continue
+			}
+			isOwn := msg.Sender.ID == account.ExternalAccountID
+			ts := time.Unix(msg.Timestamp/1000, (msg.Timestamp%1000)*int64(time.Millisecond))
+			if msg.Timestamp == 0 {
+				ts = time.Now()
+			}
+
+			senderID := msg.Sender.ID
+			if isOwn {
+				senderID = msg.Recipient.ID
+			}
+			threadKey := senderID
+			parentExternalID := pgtype.Text{}
+			authorName := pgtype.Text{}
+			existing, lookupErr := h.queries.FindDMThreadKeyBySender(r.Context(), db.FindDMThreadKeyBySenderParams{
+				SocialAccountID: account.ID,
+				AuthorID:        pgtype.Text{String: msg.Sender.ID, Valid: true},
+			})
+			if lookupErr == nil {
+				if existing.ThreadKey != "" {
+					threadKey = existing.ThreadKey
+				}
+				parentExternalID = existing.ParentExternalID
+				authorName = existing.AuthorName
+			}
+
+			dmItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+				SocialAccountID:  account.ID,
+				WorkspaceID:      account.WorkspaceID,
+				Source:           "fb_dm",
+				ExternalID:       msg.Message.Mid,
+				ParentExternalID: parentExternalID,
+				AuthorName:       authorName,
+				AuthorID:         pgtype.Text{String: msg.Sender.ID, Valid: true},
+				Body:             pgtype.Text{String: msg.Message.Text, Valid: msg.Message.Text != ""},
+				IsOwn:            isOwn,
+				ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
+				Metadata:         []byte("{}"),
+				ThreadKey:        threadKey,
+				ThreadStatus:     "open",
+				AssignedTo:       pgtype.Text{},
+				LinkedPostID:     pgtype.Text{},
+			})
+			if err != nil {
+				slog.Warn("meta webhook: upsert fb dm failed", "err", err)
+			} else {
+				ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
+			}
 		}
 	}
 }

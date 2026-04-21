@@ -180,4 +180,16 @@ FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND sa.disconnected_at IS NULL
-  AND sa.platform IN ('instagram', 'threads');
+  AND sa.platform IN ('instagram', 'threads', 'facebook');
+
+-- name: FindAllSocialAccountsByPlatformAndExternalID :many
+-- Webhook routing: find every active social account for platform +
+-- external_account_id, joining to profiles for workspace_id.
+SELECT sa.id, sa.external_account_id, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.external_account_id = $2
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC;

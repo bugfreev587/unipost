@@ -578,8 +578,8 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 // failure. The individual phase sub-objects are kept so the
 // dashboard can eventually render a three-step progress indicator.
 type FacebookVideoStatus struct {
-	VideoStatus     string `json:"video_status"`
-	UploadingStatus string `json:"uploading_phase_status"`
+	VideoStatus      string `json:"video_status"`
+	UploadingStatus  string `json:"uploading_phase_status"`
 	ProcessingStatus string `json:"processing_phase_status"`
 	PublishingStatus string `json:"publishing_phase_status"`
 	PostID           string `json:"post_id"`
@@ -612,7 +612,7 @@ func (a *FacebookAdapter) CheckVideoStatus(ctx context.Context, accessToken, vid
 
 	var raw struct {
 		Status struct {
-			VideoStatus     string `json:"video_status"`
+			VideoStatus     string                         `json:"video_status"`
 			UploadingPhase  struct{ Status, Error string } `json:"uploading_phase"`
 			ProcessingPhase struct{ Status, Error string } `json:"processing_phase"`
 			PublishingPhase struct{ Status, Error string } `json:"publishing_phase"`
@@ -1002,7 +1002,7 @@ func coerceInsightInt(v any) int64 {
 func (a *FacebookAdapter) FetchComments(ctx context.Context, accessToken string, postExternalID string) ([]InboxEntry, error) {
 	params := url.Values{
 		"access_token": {accessToken},
-		"fields":       {"id,message,from{id,name,picture},created_time"},
+		"fields":       {"id,message,from{id,name,picture{url}},created_time,parent{id},comments.limit(50){id,message,from{id,name,picture{url}},created_time,parent{id}}"},
 		"limit":        {"25"},
 	}
 	endpoint := facebookGraphBase + "/" + postExternalID + "/comments?" + params.Encode()
@@ -1038,33 +1038,79 @@ func (a *FacebookAdapter) FetchComments(ctx context.Context, accessToken string,
 				} `json:"picture"`
 			} `json:"from"`
 			CreatedTime string `json:"created_time"`
+			Parent      struct {
+				ID string `json:"id"`
+			} `json:"parent"`
+			Comments struct {
+				Data []struct {
+					ID      string `json:"id"`
+					Message string `json:"message"`
+					From    struct {
+						ID      string `json:"id"`
+						Name    string `json:"name"`
+						Picture struct {
+							Data struct {
+								URL string `json:"url"`
+							} `json:"data"`
+						} `json:"picture"`
+					} `json:"from"`
+					CreatedTime string `json:"created_time"`
+					Parent      struct {
+						ID string `json:"id"`
+					} `json:"parent"`
+				} `json:"data"`
+			} `json:"comments"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("facebook fetch comments decode: %w", err)
 	}
 
-	entries := make([]InboxEntry, 0, len(result.Data))
-	for _, c := range result.Data {
-		ts, _ := time.Parse(time.RFC3339Nano, c.CreatedTime)
+	parseFacebookCommentTime := func(raw string) time.Time {
+		ts, _ := time.Parse(time.RFC3339Nano, raw)
 		if ts.IsZero() {
 			// Meta's typical created_time format (no fractional seconds):
 			// "2026-04-20T18:47:30+0000"
-			ts, _ = time.Parse("2006-01-02T15:04:05-0700", c.CreatedTime)
+			ts, _ = time.Parse("2006-01-02T15:04:05-0700", raw)
 		}
 		if ts.IsZero() {
 			ts = time.Now()
 		}
+		return ts
+	}
+
+	entries := make([]InboxEntry, 0, len(result.Data))
+	for _, c := range result.Data {
+		parentID := postExternalID
+		if c.Parent.ID != "" {
+			parentID = c.Parent.ID
+		}
 		entries = append(entries, InboxEntry{
 			ExternalID:       c.ID,
-			ParentExternalID: postExternalID,
+			ParentExternalID: parentID,
 			AuthorID:         c.From.ID,
 			AuthorName:       c.From.Name,
 			AuthorAvatarURL:  c.From.Picture.Data.URL,
 			Body:             c.Message,
-			Timestamp:        ts,
+			Timestamp:        parseFacebookCommentTime(c.CreatedTime),
 			Source:           "fb_comment",
 		})
+		for _, reply := range c.Comments.Data {
+			replyParentID := c.ID
+			if reply.Parent.ID != "" {
+				replyParentID = reply.Parent.ID
+			}
+			entries = append(entries, InboxEntry{
+				ExternalID:       reply.ID,
+				ParentExternalID: replyParentID,
+				AuthorID:         reply.From.ID,
+				AuthorName:       reply.From.Name,
+				AuthorAvatarURL:  reply.From.Picture.Data.URL,
+				Body:             reply.Message,
+				Timestamp:        parseFacebookCommentTime(reply.CreatedTime),
+				Source:           "fb_comment",
+			})
+		}
 	}
 	return entries, nil
 }
@@ -1268,8 +1314,8 @@ func (a *FacebookAdapter) SendDM(ctx context.Context, accessToken string, recipi
 		return nil, wrapFacebookPublishError(resp.StatusCode, respBody)
 	}
 	var parsed struct {
-		MessageID      string `json:"message_id"`
-		RecipientID    string `json:"recipient_id"`
+		MessageID   string `json:"message_id"`
+		RecipientID string `json:"recipient_id"`
 	}
 	_ = json.Unmarshal(respBody, &parsed)
 	return &PostResult{ExternalID: parsed.MessageID}, nil

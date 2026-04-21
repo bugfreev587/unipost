@@ -149,7 +149,7 @@ FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND sa.disconnected_at IS NULL
-  AND sa.platform IN ('instagram', 'threads')
+  AND sa.platform IN ('instagram', 'threads', 'facebook')
 `
 
 // Distinct social accounts that have inbox items, for the sync handler.
@@ -183,6 +183,50 @@ func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, workspaceID 
 			&i.ExternalUserEmail,
 			&i.LastRefreshedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findAllSocialAccountsByPlatformAndExternalID = `-- name: FindAllSocialAccountsByPlatformAndExternalID :many
+SELECT sa.id, sa.external_account_id, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.external_account_id = $2
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC
+`
+
+type FindAllSocialAccountsByPlatformAndExternalIDParams struct {
+	Platform          string `json:"platform"`
+	ExternalAccountID string `json:"external_account_id"`
+}
+
+type FindAllSocialAccountsByPlatformAndExternalIDRow struct {
+	ID                string `json:"id"`
+	ExternalAccountID string `json:"external_account_id"`
+	WorkspaceID       string `json:"workspace_id"`
+}
+
+// Webhook routing: find every active social account for platform +
+// external_account_id, joining to profiles for workspace_id.
+func (q *Queries) FindAllSocialAccountsByPlatformAndExternalID(ctx context.Context, arg FindAllSocialAccountsByPlatformAndExternalIDParams) ([]FindAllSocialAccountsByPlatformAndExternalIDRow, error) {
+	rows, err := q.db.Query(ctx, findAllSocialAccountsByPlatformAndExternalID, arg.Platform, arg.ExternalAccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindAllSocialAccountsByPlatformAndExternalIDRow{}
+	for rows.Next() {
+		var i FindAllSocialAccountsByPlatformAndExternalIDRow
+		if err := rows.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
