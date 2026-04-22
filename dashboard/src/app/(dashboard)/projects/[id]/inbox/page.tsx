@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useParams } from "next/navigation";
 import {
@@ -81,26 +81,10 @@ type CommentNode = {
 
 const COMMENT_THREAD_INDENT = 36;
 const COMMENT_THREAD_LINE_COLOR = "rgba(255,255,255,.22)";
-// Y-offset in the child row where the elbow's horizontal stroke
-// lives. Equals the child avatar's vertical midline so the bend
-// lands squarely on the avatar's left edge.
-const COMMENT_THREAD_ELBOW_HEIGHT = 14;
-// Avatar radii — root comments get a slightly larger avatar than
-// nested replies so the top of the thread feels anchored.
-const ROOT_AVATAR_RADIUS = 16; // avatar size 32
-const NESTED_AVATAR_RADIUS = 14; // avatar size 28
-// Extend the gutter up into the margin between rows so the line
-// visually originates below the parent avatar instead of starting
-// abruptly at the top of the child row.
-const COMMENT_THREAD_GUTTER_OVERLAP = 8;
-
-// avatarCenterXAtDepth returns the X coordinate of a comment row's
-// avatar center, measured from the left edge of the conversation
-// container (which is the same coordinate space the gutter uses).
-function avatarCenterXAtDepth(depth: number): number {
-  const radius = depth === 0 ? ROOT_AVATAR_RADIUS : NESTED_AVATAR_RADIUS;
-  return depth * COMMENT_THREAD_INDENT + radius;
-}
+// Radius of the rounded bend where the vertical stroke turns into
+// the horizontal stroke. Small enough to feel tight, big enough to
+// read as a curve rather than a kink at most zoom levels.
+const COMMENT_THREAD_BEND_RADIUS = 10;
 
 function initialsFromName(name?: string) {
   const value = (name || "?").trim();
@@ -112,16 +96,21 @@ function Avatar({
   src,
   label,
   size = 36,
+  dataId,
 }: {
   src?: string;
   label?: string;
   size?: number;
+  // Optional stable id written to a `data-comment-avatar` attribute
+  // so the thread-line SVG overlay can find and measure this avatar.
+  dataId?: string;
 }) {
   if (src) {
     return (
       <img
         src={src}
         alt={label || "avatar"}
+        data-comment-avatar={dataId}
         style={{
           width: size,
           height: size,
@@ -138,6 +127,7 @@ function Avatar({
   return (
     <div
       className="dt-mono"
+      data-comment-avatar={dataId}
       style={{
         width: size,
         height: size,
@@ -339,6 +329,141 @@ function buildCommentTree(items: InboxItem[], threadKey: string): CommentNode[] 
   sortNodes(roots);
 
   return roots;
+}
+
+// CommentThread owns the layout + SVG overlay for a threaded comment
+// view. It renders every comment node normally via the provided render
+// function, then reads the actual post-layout DOM positions of each
+// avatar (tagged with data-comment-avatar="<item.id>") and draws one
+// continuous <path> per parent→child edge.
+//
+// Because the paths come from measured coordinates instead of stacked
+// per-row decorations, they can't end up "too long" or "too short"
+// relative to the content — the geometry is always tangent to the
+// actual avatars the user sees.
+function CommentThread({
+  tree,
+  render,
+}: {
+  tree: CommentNode[];
+  render: (node: CommentNode, depth?: number) => React.ReactNode;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState<
+    { id: string; fromX: number; fromY: number; toX: number; toY: number }[]
+  >([]);
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  // Flatten (parentID, childID) pairs from the tree so the layout
+  // effect can loop in a fixed order regardless of structure depth.
+  const edgePairs = useMemo(() => {
+    const pairs: { parent: string; child: string }[] = [];
+    const walk = (nodes: CommentNode[]) => {
+      for (const node of nodes) {
+        for (const child of node.children) {
+          pairs.push({ parent: node.item.id, child: child.item.id });
+          walk([child]);
+        }
+      }
+    };
+    walk(tree);
+    return pairs;
+  }, [tree]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const measure = () => {
+      const rect = container.getBoundingClientRect();
+      setSize({ w: rect.width, h: rect.height });
+      const map = new Map<string, DOMRect>();
+      container
+        .querySelectorAll<HTMLElement>("[data-comment-avatar]")
+        .forEach((el) => {
+          const id = el.getAttribute("data-comment-avatar");
+          if (id) map.set(id, el.getBoundingClientRect());
+        });
+      const next: typeof edges = [];
+      for (const { parent, child } of edgePairs) {
+        const pr = map.get(parent);
+        const cr = map.get(child);
+        if (!pr || !cr) continue;
+        next.push({
+          id: `${parent}->${child}`,
+          // Bottom-center of parent avatar.
+          fromX: pr.left + pr.width / 2 - rect.left,
+          fromY: pr.bottom - rect.top,
+          // Left-center of child avatar.
+          toX: cr.left - rect.left,
+          toY: cr.top + cr.height / 2 - rect.top,
+        });
+      }
+      setEdges(next);
+    };
+
+    measure();
+    // Re-measure on content changes, font loads, image loads, etc.
+    const ro = new ResizeObserver(measure);
+    ro.observe(container);
+    container
+      .querySelectorAll<HTMLElement>("[data-comment-avatar]")
+      .forEach((el) => ro.observe(el));
+    // Images in the thread (avatars, bubble media previews) can push
+    // layout around as they decode — schedule one more pass once the
+    // browser has painted everything.
+    const raf = requestAnimationFrame(measure);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [edgePairs]);
+
+  return (
+    <div ref={containerRef} style={{ position: "relative" }}>
+      {/* SVG overlay — absolutely positioned so it doesn't affect
+          layout. Pointer events pass through to the underlying DOM. */}
+      <svg
+        aria-hidden="true"
+        width={size.w}
+        height={size.h}
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          pointerEvents: "none",
+        }}
+      >
+        {edges.map((e) => {
+          // Path recipe: vertical from parent bottom-center, rounded
+          // quarter-arc bend, horizontal to child left-center. One
+          // continuous stroke per edge — no seams, no stitching.
+          const r = Math.min(
+            COMMENT_THREAD_BEND_RADIUS,
+            Math.abs(e.toX - e.fromX),
+            Math.abs(e.toY - e.fromY)
+          );
+          const d = [
+            `M ${e.fromX} ${e.fromY}`,
+            `V ${e.toY - r}`,
+            `Q ${e.fromX} ${e.toY} ${e.fromX + r} ${e.toY}`,
+            `H ${e.toX}`,
+          ].join(" ");
+          return (
+            <path
+              key={e.id}
+              d={d}
+              stroke={COMMENT_THREAD_LINE_COLOR}
+              strokeWidth={2}
+              fill="none"
+              strokeLinecap="round"
+            />
+          );
+        })}
+      </svg>
+      {tree.map((node) => render(node, 0))}
+    </div>
+  );
 }
 
 function StatusPill({ status, humanAgent = false }: { status: ThreadStatus; humanAgent?: boolean }) {
@@ -935,7 +1060,7 @@ export default function InboxPage() {
     const avatarSize = depth > 0 ? 28 : 32;
     return (
       <div key={item.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "100%" }}>
-        <Avatar src={avatarSrc} label={avatarLabel} size={avatarSize} />
+        <Avatar src={avatarSrc} label={avatarLabel} size={avatarSize} dataId={item.id} />
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Bubble */}
           <div style={{
@@ -1013,130 +1138,20 @@ export default function InboxPage() {
     );
   }
 
-  function renderCommentNode(node: CommentNode, depth = 0, ancestorLines: boolean[] = [], isLast = true) {
-    const gutterWidth = depth * COMMENT_THREAD_INDENT;
-    // Geometry of the elbow: the vertical stroke sits under the
-    // parent avatar's center (the natural exit point of a circle is
-    // its bottom apex, which shares the same X as its center). The
-    // horizontal leg ends at the child avatar's LEFT edge so the
-    // curve visually attaches to the outside of the avatar instead
-    // of tunnelling under it. All X values measured in the gutter's
-    // own coordinate space (gutter's left edge = X 0).
-    const parentCenterX = depth >= 1 ? avatarCenterXAtDepth(depth - 1) : 0;
-    const childAvatarLeftX = depth * COMMENT_THREAD_INDENT;
-    const elbowWidth = Math.max(0, childAvatarLeftX - parentCenterX);
+  // Render a comment node as a plain indented row + recursive children.
+  // No thread-line drawing here — that lives in the SVG overlay below,
+  // which measures actual avatar positions after layout and draws one
+  // continuous path per parent→child edge. This separation is why the
+  // lines can't end up "too long" or "too short" relative to the
+  // surrounding content: they're derived from measured coordinates, not
+  // reassembled from per-row segments that have to meet by hand.
+  function renderCommentNode(node: CommentNode, depth = 0) {
     return (
-      <div key={node.item.id} style={{ position: "relative", marginTop: depth === 0 ? 10 : 8 }}>
-        {gutterWidth > 0 ? (
-          <div
-            aria-hidden="true"
-            style={{
-              position: "absolute",
-              left: 0,
-              // Reach above the child row into the gap below the parent
-              // so the line visually continues from the parent avatar.
-              top: -COMMENT_THREAD_GUTTER_OVERLAP,
-              bottom: 0,
-              // Gutter only reserves width up to the child avatar's
-              // left edge; the elbow is allowed to overflow rightward
-              // to meet the avatar's center (overflow:visible default).
-              width: gutterWidth,
-              pointerEvents: "none",
-            }}
-          >
-            {ancestorLines.map((show, idx) => {
-              // Skip the immediate parent's column (idx === depth - 1).
-              // The elbow already paints that column from top down to
-              // its bend, and the `!isLast` continuation below paints
-              // from the bend to the next sibling. Drawing a full-height
-              // rail here on top of them makes a single-child parent
-              // look like it continues into the parent's next *sibling*
-              // (user reported "nice pic looks like a child of hello
-              // there"). Deeper ancestor columns still need the rail so
-              // grandparent threads stay visually traceable.
-              if (!show || idx === depth - 1) return null;
-              return (
-                <div
-                  key={`ancestor-${node.item.id}-${idx}`}
-                  style={{
-                    position: "absolute",
-                    left: avatarCenterXAtDepth(idx) - 1,
-                    top: 0,
-                    bottom: 0,
-                    width: 2,
-                    borderRadius: 999,
-                    background: COMMENT_THREAD_LINE_COLOR,
-                  }}
-                />
-              );
-            })}
-            <div
-              style={{
-                position: "absolute",
-                left: parentCenterX - 1,
-                top: 0,
-                width: elbowWidth,
-                height: COMMENT_THREAD_ELBOW_HEIGHT + COMMENT_THREAD_GUTTER_OVERLAP,
-                borderLeft: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
-                borderBottom: `2px solid ${COMMENT_THREAD_LINE_COLOR}`,
-                borderBottomLeftRadius: 14,
-              }}
-            />
-            {!isLast ? (
-              <div
-                style={{
-                  position: "absolute",
-                  left: parentCenterX - 1,
-                  top: COMMENT_THREAD_ELBOW_HEIGHT + COMMENT_THREAD_GUTTER_OVERLAP,
-                  bottom: 0,
-                  width: 2,
-                  borderRadius: 999,
-                  background: COMMENT_THREAD_LINE_COLOR,
-                }}
-              />
-            ) : null}
-          </div>
-        ) : null}
-
-        <div style={{ position: "relative", marginLeft: gutterWidth }}>
-          {/* Descender from the BOTTOM EDGE of this node's avatar
-              down through its bubble, bridging into the margin above
-              the first child. Starts at Y = avatar_size (bottom apex
-              of the circle) so the stroke appears to exit the avatar
-              tangentially instead of piercing its midline. */}
-          {node.children.length > 0 ? (() => {
-            const avatarRadius = depth === 0 ? ROOT_AVATAR_RADIUS : NESTED_AVATAR_RADIUS;
-            return (
-              <div
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  left: avatarRadius - 1,
-                  top: avatarRadius * 2,
-                  // End at the bottom of this row, not past it. The
-                  // child's elbow reaches back up via its gutter
-                  // overlap, so the handoff happens exactly at the
-                  // margin between rows with no gap and no overshoot.
-                  bottom: 0,
-                  width: 2,
-                  borderRadius: 999,
-                  background: COMMENT_THREAD_LINE_COLOR,
-                  pointerEvents: "none",
-                }}
-              />
-            );
-          })() : null}
+      <div key={node.item.id} style={{ marginTop: depth === 0 ? 10 : 8 }}>
+        <div style={{ marginLeft: depth * COMMENT_THREAD_INDENT }}>
           {renderConversationItem(node.item, depth)}
         </div>
-
-        {node.children.map((child, index) =>
-          renderCommentNode(
-            child,
-            depth + 1,
-            [...ancestorLines, !isLast],
-            index === node.children.length - 1
-          )
-        )}
+        {node.children.map((child) => renderCommentNode(child, depth + 1))}
       </div>
     );
   }
@@ -1610,9 +1625,9 @@ export default function InboxPage() {
               }}>
                 {isDMSource(selectedGroup.source)
                   ? selectedGroup.items.map((item) => renderConversationItem(item))
-                  : commentTree.map((node, index) =>
-                      renderCommentNode(node, 0, [], index === commentTree.length - 1)
-                    )}
+                  : (
+                    <CommentThread tree={commentTree} render={renderCommentNode} />
+                  )}
               </div>
 
               {isDMSource(selectedGroup.source) ? (() => {
