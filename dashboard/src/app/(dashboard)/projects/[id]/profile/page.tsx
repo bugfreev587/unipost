@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
   listProfiles,
+  getProfile,
   createProfile,
   deleteProfile,
   type Profile,
@@ -22,6 +23,7 @@ export default function ProfilePage() {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [switchingProfileId, setSwitchingProfileId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [profileError, setProfileError] = useState<{ message: string; topic: string } | null>(null);
 
@@ -90,6 +92,24 @@ export default function ProfilePage() {
       const message = err instanceof Error ? err.message : "Failed to delete profile";
       console.error("Failed to delete profile:", err);
       setProfileError({ message, topic: "profile-delete-failure" });
+    }
+  }
+
+  async function handleSwitchProfile(profile: Profile) {
+    if (profile.id === currentProfileId || switchingProfileId) return;
+    try {
+      setProfileError(null);
+      setSwitchingProfileId(profile.id);
+      const token = await getToken();
+      if (!token) return;
+      await getProfile(token, profile.id);
+      router.push(`/projects/${profile.id}/profile`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to switch profile";
+      console.error("Failed to switch profile:", err);
+      setProfileError({ message, topic: "profile-switch-failure" });
+    } finally {
+      setSwitchingProfileId(null);
     }
   }
 
@@ -238,7 +258,7 @@ export default function ProfilePage() {
             return (
               <div
                 key={profile.id}
-                onClick={() => router.push(`/projects/${profile.id}`)}
+                onClick={() => void handleSwitchProfile(profile)}
                 style={{
                   border: `1px solid ${isCurrent ? "var(--daccent)" : "var(--dborder)"}`,
                   borderRadius: 8,
@@ -246,9 +266,10 @@ export default function ProfilePage() {
                   display: "flex",
                   alignItems: "center",
                   gap: 12,
-                  cursor: "pointer",
+                  cursor: isCurrent ? "default" : "pointer",
                   transition: "all 0.1s",
                   background: isCurrent ? "rgba(16,185,129,0.05)" : "transparent",
+                  opacity: switchingProfileId === profile.id ? 0.72 : 1,
                 }}
                 onMouseEnter={(e) => {
                   if (!isCurrent) e.currentTarget.style.borderColor = "#333";
@@ -275,7 +296,9 @@ export default function ProfilePage() {
                   </div>
                   <div style={{ fontSize: 12, color: "#888", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
                     <Calendar style={{ width: 10, height: 10 }} />
-                    Created {new Date(profile.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    {switchingProfileId === profile.id
+                      ? "Switching..."
+                      : `Created ${new Date(profile.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
@@ -286,7 +309,7 @@ export default function ProfilePage() {
                     }}
                     className="dbtn dbtn-ghost"
                     style={{ padding: 6 }}
-                    title="View details"
+                    title="Open profile"
                   >
                     <ArrowRight style={{ width: 13, height: 13 }} />
                   </button>
