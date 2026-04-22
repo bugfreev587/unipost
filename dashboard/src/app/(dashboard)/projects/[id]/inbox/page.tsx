@@ -1226,7 +1226,26 @@ export default function InboxPage() {
             <InboxIcon style={{ width: 18, height: 18, color: "var(--daccent)" }} />
           </div>
           <div>
-            <h1 className="dt-heading" style={{ margin: 0 }}>Inbox</h1>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <h1 className="dt-heading" style={{ margin: 0 }}>Inbox</h1>
+              <span
+                className="dt-mono"
+                title="The inbox is still under active development — some flows may change or break as we harden the comment & DM pipelines."
+                style={{
+                  fontSize: 10,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  padding: "3px 8px",
+                  borderRadius: 999,
+                  background: "var(--warning-soft)",
+                  color: "var(--warning)",
+                  border: "1px solid color-mix(in srgb, var(--warning) 35%, transparent)",
+                  lineHeight: 1,
+                }}
+              >
+                Beta
+              </span>
+            </div>
             <p className="dt-body-sm" style={{ margin: "4px 0 0", color: "var(--dmuted)" }}>
               {accounts.filter((a) => a.platform === "instagram" || a.platform === "threads").length} Meta accounts · {counts.comments + counts.dms + counts.threads} unread
             </p>
