@@ -20,6 +20,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -141,20 +142,30 @@ type publicBrandingPayload struct {
 // /authorize endpoint (PR3) can derive the challenge from the row
 // without re-rolling the verifier on every click.
 func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
-	profileID := auth.GetWorkspaceID(r.Context())
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+	// API keys are workspace-scoped; connect_sessions rows reference
+	// profiles. Resolve the right profile below from the request body
+	// (explicit) or the workspace's single profile (implicit).
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
 	var body struct {
 		Platform          string `json:"platform"`
+		ProfileID         string `json:"profile_id"`
 		ExternalUserID    string `json:"external_user_id"`
 		ExternalUserEmail string `json:"external_user_email"`
 		ReturnURL         string `json:"return_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	profileID, perr := h.resolveProfileForWorkspace(r.Context(), workspaceID, body.ProfileID)
+	if perr != nil {
+		writeError(w, perr.status, perr.code, perr.msg)
 		return
 	}
 
@@ -231,23 +242,28 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 // run a webhook receiver. Webhooks remain the recommended path —
 // this is here for the curl-loop dev case.
 func (h *ConnectSessionHandler) Get(w http.ResponseWriter, r *http.Request) {
-	profileID := auth.GetWorkspaceID(r.Context())
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 	sessionID := chi.URLParam(r, "id")
 
-	session, err := h.queries.GetConnectSessionByID(r.Context(), db.GetConnectSessionByIDParams{
-		ID:        sessionID,
-		ProfileID: profileID,
-	})
+	// Fetch the session by id alone, then verify it belongs to a
+	// profile inside the caller's workspace. Avoids the project_id↔
+	// workspace_id confusion from before migration 025.
+	session, err := h.queries.GetConnectSessionByIDOnly(r.Context(), sessionID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Connect session not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load session")
+		return
+	}
+	profile, err := h.queries.GetProfile(r.Context(), session.ProfileID)
+	if err != nil || profile.WorkspaceID != workspaceID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Connect session not found")
 		return
 	}
 
@@ -388,5 +404,61 @@ func randomBase64URL(n int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// httpError carries enough structured info for the caller to emit a
+// proper writeError without this helper needing to know about the
+// response writer.
+type httpError struct {
+	status int
+	code   string
+	msg    string
+}
+
+// resolveProfileForWorkspace figures out which profile row a
+// connect_session should be anchored to, given an API key that only
+// names a workspace.
+//
+//	requestedID != ""  — accept only if it belongs to this workspace
+//	requestedID == ""  — if the workspace has exactly one profile, use it;
+//	                     otherwise fail with a helpful error.
+//
+// Returning (profileID, nil) tells the caller to proceed.
+func (h *ConnectSessionHandler) resolveProfileForWorkspace(ctx context.Context, workspaceID, requestedID string) (string, *httpError) {
+	requestedID = strings.TrimSpace(requestedID)
+	if requestedID != "" {
+		profile, err := h.queries.GetProfile(ctx, requestedID)
+		if err != nil || profile.WorkspaceID != workspaceID {
+			return "", &httpError{
+				status: http.StatusUnprocessableEntity,
+				code:   "VALIDATION_ERROR",
+				msg:    "profile_id does not belong to this workspace",
+			}
+		}
+		return profile.ID, nil
+	}
+	profiles, err := h.queries.ListProfilesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return "", &httpError{
+			status: http.StatusInternalServerError,
+			code:   "INTERNAL_ERROR",
+			msg:    "Failed to list profiles",
+		}
+	}
+	if len(profiles) == 0 {
+		return "", &httpError{
+			status: http.StatusUnprocessableEntity,
+			code:   "VALIDATION_ERROR",
+			msg:    "Workspace has no profile; create one first",
+		}
+	}
+	if len(profiles) > 1 {
+		return "", &httpError{
+			status: http.StatusUnprocessableEntity,
+			code:   "VALIDATION_ERROR",
+			msg:    "Workspace has multiple profiles; include profile_id in the request body",
+		}
+	}
+	return profiles[0].ID, nil
 }
 

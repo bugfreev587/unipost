@@ -85,6 +85,50 @@ func (q *Queries) FindAllActiveAccountsByPlatform(ctx context.Context, platform 
 	return items, nil
 }
 
+const findAllSocialAccountsByPlatformAndExternalID = `-- name: FindAllSocialAccountsByPlatformAndExternalID :many
+SELECT sa.id, sa.external_account_id, p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = $1
+  AND sa.external_account_id = $2
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC
+`
+
+type FindAllSocialAccountsByPlatformAndExternalIDParams struct {
+	Platform          string `json:"platform"`
+	ExternalAccountID string `json:"external_account_id"`
+}
+
+type FindAllSocialAccountsByPlatformAndExternalIDRow struct {
+	ID                string `json:"id"`
+	ExternalAccountID string `json:"external_account_id"`
+	WorkspaceID       string `json:"workspace_id"`
+}
+
+// Webhook routing: find every active social account for platform +
+// external_account_id, joining to profiles for workspace_id.
+func (q *Queries) FindAllSocialAccountsByPlatformAndExternalID(ctx context.Context, arg FindAllSocialAccountsByPlatformAndExternalIDParams) ([]FindAllSocialAccountsByPlatformAndExternalIDRow, error) {
+	rows, err := q.db.Query(ctx, findAllSocialAccountsByPlatformAndExternalID, arg.Platform, arg.ExternalAccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindAllSocialAccountsByPlatformAndExternalIDRow{}
+	for rows.Next() {
+		var i FindAllSocialAccountsByPlatformAndExternalIDRow
+		if err := rows.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const findAnyActiveAccountByPlatform = `-- name: FindAnyActiveAccountByPlatform :one
 SELECT sa.id, sa.external_account_id, p.workspace_id
 FROM social_accounts sa
@@ -183,50 +227,6 @@ func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, workspaceID 
 			&i.ExternalUserEmail,
 			&i.LastRefreshedAt,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const findAllSocialAccountsByPlatformAndExternalID = `-- name: FindAllSocialAccountsByPlatformAndExternalID :many
-SELECT sa.id, sa.external_account_id, p.workspace_id
-FROM social_accounts sa
-JOIN profiles p ON p.id = sa.profile_id
-WHERE sa.platform = $1
-  AND sa.external_account_id = $2
-  AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
-ORDER BY sa.connected_at DESC
-`
-
-type FindAllSocialAccountsByPlatformAndExternalIDParams struct {
-	Platform          string `json:"platform"`
-	ExternalAccountID string `json:"external_account_id"`
-}
-
-type FindAllSocialAccountsByPlatformAndExternalIDRow struct {
-	ID                string `json:"id"`
-	ExternalAccountID string `json:"external_account_id"`
-	WorkspaceID       string `json:"workspace_id"`
-}
-
-// Webhook routing: find every active social account for platform +
-// external_account_id, joining to profiles for workspace_id.
-func (q *Queries) FindAllSocialAccountsByPlatformAndExternalID(ctx context.Context, arg FindAllSocialAccountsByPlatformAndExternalIDParams) ([]FindAllSocialAccountsByPlatformAndExternalIDRow, error) {
-	rows, err := q.db.Query(ctx, findAllSocialAccountsByPlatformAndExternalID, arg.Platform, arg.ExternalAccountID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []FindAllSocialAccountsByPlatformAndExternalIDRow{}
-	for rows.Next() {
-		var i FindAllSocialAccountsByPlatformAndExternalIDRow
-		if err := rows.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -595,37 +595,6 @@ func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadPa
 	return err
 }
 
-const updateInboxItemAuthorMetadata = `-- name: UpdateInboxItemAuthorMetadata :execrows
-UPDATE inbox_items
-SET author_name = NULLIF($3, ''),
-    author_id = NULLIF($4, ''),
-    author_avatar_url = NULLIF($5, '')
-WHERE id = $1
-  AND workspace_id = $2
-`
-
-type UpdateInboxItemAuthorMetadataParams struct {
-	ID              string `json:"id"`
-	WorkspaceID     string `json:"workspace_id"`
-	AuthorName      string `json:"author_name"`
-	AuthorID        string `json:"author_id"`
-	AuthorAvatarUrl string `json:"author_avatar_url"`
-}
-
-func (q *Queries) UpdateInboxItemAuthorMetadata(ctx context.Context, arg UpdateInboxItemAuthorMetadataParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateInboxItemAuthorMetadata,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.AuthorName,
-		arg.AuthorID,
-		arg.AuthorAvatarUrl,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const reconcileDMThreadKeys = `-- name: ReconcileDMThreadKeys :execrows
 UPDATE inbox_items
 SET thread_key = $3,
@@ -652,6 +621,37 @@ func (q *Queries) ReconcileDMThreadKeys(ctx context.Context, arg ReconcileDMThre
 		arg.ThreadKey,
 		arg.ThreadKey_2,
 		arg.ParentExternalID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateInboxItemAuthorMetadata = `-- name: UpdateInboxItemAuthorMetadata :execrows
+UPDATE inbox_items
+SET author_name = NULLIF($1::TEXT, ''),
+    author_id = NULLIF($2::TEXT, ''),
+    author_avatar_url = NULLIF($3::TEXT, '')
+WHERE id = $4
+  AND workspace_id = $5
+`
+
+type UpdateInboxItemAuthorMetadataParams struct {
+	AuthorName      string `json:"author_name"`
+	AuthorID        string `json:"author_id"`
+	AuthorAvatarUrl string `json:"author_avatar_url"`
+	ID              string `json:"id"`
+	WorkspaceID     string `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateInboxItemAuthorMetadata(ctx context.Context, arg UpdateInboxItemAuthorMetadataParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateInboxItemAuthorMetadata,
+		arg.AuthorName,
+		arg.AuthorID,
+		arg.AuthorAvatarUrl,
+		arg.ID,
+		arg.WorkspaceID,
 	)
 	if err != nil {
 		return 0, err

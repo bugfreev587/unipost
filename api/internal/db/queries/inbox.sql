@@ -37,11 +37,11 @@ WHERE id = $1 AND workspace_id = $2;
 
 -- name: UpdateInboxItemAuthorMetadata :execrows
 UPDATE inbox_items
-SET author_name = NULLIF($3, ''),
-    author_id = NULLIF($4, ''),
-    author_avatar_url = NULLIF($5, '')
-WHERE id = $1
-  AND workspace_id = $2;
+SET author_name = NULLIF(@author_name::TEXT, ''),
+    author_id = NULLIF(@author_id::TEXT, ''),
+    author_avatar_url = NULLIF(@author_avatar_url::TEXT, '')
+WHERE id = @id
+  AND workspace_id = @workspace_id;
 
 -- name: MarkAllInboxItemsRead :execrows
 UPDATE inbox_items

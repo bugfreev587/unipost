@@ -9,6 +9,13 @@ RETURNING *;
 SELECT * FROM connect_sessions
 WHERE id = $1 AND profile_id = $2;
 
+-- name: GetConnectSessionByIDOnly :one
+-- API-key callers authenticate at the workspace level, not the profile
+-- level. Handlers fetch the session by id here and then verify the
+-- session's profile belongs to the caller's workspace.
+SELECT * FROM connect_sessions
+WHERE id = $1;
+
 -- name: GetConnectSessionByOAuthState :one
 SELECT * FROM connect_sessions
 WHERE oauth_state = $1;

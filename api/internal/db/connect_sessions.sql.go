@@ -102,6 +102,35 @@ func (q *Queries) GetConnectSessionByID(ctx context.Context, arg GetConnectSessi
 	return i, err
 }
 
+const getConnectSessionByIDOnly = `-- name: GetConnectSessionByIDOnly :one
+SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
+WHERE id = $1
+`
+
+// API-key callers authenticate at the workspace level, not the profile
+// level. Handlers fetch the session by id here and then verify the
+// session's profile belongs to the caller's workspace.
+func (q *Queries) GetConnectSessionByIDOnly(ctx context.Context, id string) (ConnectSession, error) {
+	row := q.db.QueryRow(ctx, getConnectSessionByIDOnly, id)
+	var i ConnectSession
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.ReturnUrl,
+		&i.Status,
+		&i.CompletedSocialAccountID,
+		&i.OauthState,
+		&i.PkceVerifier,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const getConnectSessionByOAuthState = `-- name: GetConnectSessionByOAuthState :one
 SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
 WHERE oauth_state = $1
