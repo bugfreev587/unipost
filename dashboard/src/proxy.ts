@@ -1,10 +1,7 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { warnIfFrontendHasClerkSecret } from "@/lib/clerk-env";
 
 const APP_HOST = process.env.NEXT_PUBLIC_APP_HOST || "app.unipost.dev";
-
-warnIfFrontendHasClerkSecret();
 
 export default clerkMiddleware(async (auth, request) => {
   const hostname = request.headers.get("host") || "";
@@ -27,6 +24,12 @@ export default clerkMiddleware(async (auth, request) => {
     pathname.startsWith("/alternatives") ||
     pathname === "/contact" ||
     pathname.startsWith("/tools") ||
+    // Hosted white-label Connect pages. End users arrive here from the
+    // customer's own product — they don't have UniPost accounts and
+    // shouldn't be asked for one. The page authenticates via the
+    // `session=<id>&state=<oauth_state>` pair in the URL (verified
+    // server-side against /v1/public/connect/sessions).
+    pathname.startsWith("/connect") ||
     pathname.endsWith("-api"); // platform landing pages: /twitter-api, /instagram-api, etc.
   if (isPublicPage) {
     return NextResponse.next();
