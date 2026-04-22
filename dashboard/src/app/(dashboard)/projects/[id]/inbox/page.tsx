@@ -246,12 +246,63 @@ function conversationRootKey(item: InboxItem, source: ConversationGroup["source"
   return item.parent_external_id || item.external_id;
 }
 
+// commentPostRootKey walks the parent chain of a comment item using the
+// full batch of siblings as context. Each reply's parent_external_id
+// points at the comment directly above it, and eventually a parent
+// falls outside the set — that outermost parent is the POST itself and
+// makes a stable grouping key for every comment on the same post.
+//
+// Why this exists: when our webhook fan-out inserts comment rows for IG
+// accounts that don't own the underlying post, resolveInboxLinkedPostID
+// returns empty (the account has no matching social_post_result), so
+// linked_post_id is null. Falling back to thread_key (which is each
+// row's immediate parent_external_id) splits a single post's comments
+// into N conversation groups — one per branch the replies take. Walking
+// to the post root here sidesteps that regardless of what the backend
+// set.
+function commentPostRootKey(item: InboxItem, byExternalID: Map<string, InboxItem>): string {
+  let current: InboxItem = item;
+  const seen = new Set<string>();
+  // The first parent that ISN'T in the inbox item set is the post. A
+  // top-level comment's `parent_external_id` is already the post id.
+  while (true) {
+    if (seen.has(current.external_id)) return current.external_id; // cycle guard
+    seen.add(current.external_id);
+    const parentID = current.parent_external_id;
+    if (!parentID) return current.external_id;
+    const parent = byExternalID.get(parentID);
+    if (!parent) return parentID;
+    current = parent;
+  }
+}
+
 function groupItems(items: InboxItem[], source: ConversationGroup["source"]): ConversationGroup[] {
   const filtered = items.filter((item) => item.source === source);
   const map = new Map<string, InboxItem[]>();
 
+  // For comment-style sources, precompute an external_id → item index so
+  // commentPostRootKey can walk the chain without O(n²) lookups. DMs
+  // skip this since their root key logic doesn't need it.
+  const byExternalID = isDMSource(source) ? null : (() => {
+    const m = new Map<string, InboxItem>();
+    for (const item of filtered) m.set(item.external_id, item);
+    return m;
+  })();
+
   for (const item of filtered) {
-    const key = `${item.social_account_id}:${source}:${conversationRootKey(item, source)}`;
+    let rootKey: string;
+    if (isDMSource(source)) {
+      rootKey = conversationRootKey(item, source);
+    } else if (item.linked_post_id) {
+      // Backend already resolved the post — most trustworthy signal.
+      rootKey = `post:${item.linked_post_id}`;
+    } else if (byExternalID) {
+      // Walk to the post root via parent chain.
+      rootKey = `post-ext:${commentPostRootKey(item, byExternalID)}`;
+    } else {
+      rootKey = conversationRootKey(item, source);
+    }
+    const key = `${item.social_account_id}:${source}:${rootKey}`;
     const existing = map.get(key) || [];
     existing.push(item);
     map.set(key, existing);
