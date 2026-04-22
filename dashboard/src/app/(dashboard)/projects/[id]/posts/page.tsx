@@ -10,7 +10,7 @@ import {
   getActivation, listProfiles,
   type SocialAccount, type SocialPost, type Profile,
 } from "@/lib/api";
-import { Plus, Search, MoreHorizontal, Eye, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 
@@ -266,11 +266,6 @@ export default function PostsPage() {
     setMenuOpen(null);
   }
 
-  async function handleDuplicate() {
-    // TODO: open create modal pre-filled with post content
-    setMenuOpen(null);
-  }
-
   async function runConfirmAction(action: ConfirmAction) {
     try {
       const token = await getToken();
@@ -379,10 +374,7 @@ export default function PostsPage() {
 
   function actionsMenu(post: SocialPost) {
     const isArchived = Boolean(post.archived_at);
-    const items: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean; tooltip?: string }[] = [
-      { icon: <Eye />, label: "View details", action: () => { setExpandedPostId((current) => current === post.id ? null : post.id); setMenuOpen(null); } },
-      { icon: <Copy />, label: "Duplicate", action: () => handleDuplicate() },
-    ];
+    const items: { icon: React.ReactNode; label: string; action: () => void; danger?: boolean; tooltip?: string }[] = [];
     if (isArchived) {
       items.push({ icon: <RotateCcw />, label: "Restore", action: () => requestRestore([post.id]) });
     } else {
