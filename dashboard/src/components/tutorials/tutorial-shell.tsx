@@ -31,11 +31,13 @@ import {
 export function TutorialShell({
   tutorial,
   ctx,
+  replayMode = false,
   onRequestClose,
   onRequestComplete,
 }: {
   tutorial: TutorialDefinition;
   ctx: TutorialContext;
+  replayMode?: boolean;
   onRequestClose: () => void;
   onRequestComplete: () => void;
 }) {
@@ -53,7 +55,7 @@ export function TutorialShell({
 
   const stepsWithState = tutorial.steps.map((s) => ({
     ...s,
-    completed: stepCompleted(s.signal, ctx.counts),
+    completed: replayMode ? false : stepCompleted(s.signal, ctx.counts),
   }));
   const completedCount = stepsWithState.filter((s) => s.completed).length;
   const total = stepsWithState.length;
@@ -71,6 +73,11 @@ export function TutorialShell({
             <div className="dt-body-sm" style={{ color: "var(--dmuted)" }}>
               {tutorial.description}
             </div>
+            {replayMode && (
+              <div className="dt-mono" style={{ fontSize: 10, color: "var(--daccent)", marginTop: 8, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                Replay mode
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -115,6 +122,7 @@ export function TutorialShell({
           <DefaultStepList
             tutorial={tutorial}
             ctx={ctx}
+            replayMode={replayMode}
             stepsWithState={stepsWithState}
             onStepCtaClick={onRequestClose}
           />
@@ -127,11 +135,13 @@ export function TutorialShell({
 function DefaultStepList({
   tutorial,
   ctx,
+  replayMode = false,
   stepsWithState,
   onStepCtaClick,
 }: {
   tutorial: TutorialDefinition;
   ctx: TutorialContext;
+  replayMode?: boolean;
   stepsWithState: ReadonlyArray<{
     id: string;
     title: string;
@@ -146,6 +156,7 @@ function DefaultStepList({
   // First incomplete step is active, rest are locked.
   const firstIncompleteIdx = stepsWithState.findIndex((s) => !s.completed);
   const stepState = (idx: number, completed: boolean): "completed" | "active" | "locked" => {
+    if (replayMode) return "active";
     if (completed) return "completed";
     return idx === firstIncompleteIdx ? "active" : "locked";
   };

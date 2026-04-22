@@ -65,6 +65,11 @@ type TutorialHostState = {
   completedIds: Set<TutorialId>;
 };
 
+type ActiveTutorialSession = {
+  id: TutorialId;
+  replay: boolean;
+};
+
 const TutorialHostContext = createContext<TutorialHostControls | null>(null);
 
 export function useTutorialHost(): TutorialHostControls {
@@ -87,7 +92,7 @@ export function TutorialHostProvider({
   const [state, setState] = useState<TutorialHostState | null>(null);
 
   // Which tutorial is currently open (null = no modal shown).
-  const [activeTutorialId, setActiveTutorialId] = useState<TutorialId | null>(null);
+  const [activeSession, setActiveSession] = useState<ActiveTutorialSession | null>(null);
   // When transitioning from tutorial → celebration, we keep showing the
   // celebration until the user clicks Done.
   const [celebratingId, setCelebratingId] = useState<TutorialId | null>(null);
@@ -156,7 +161,7 @@ export function TutorialHostProvider({
   // Auto-open the mandatory tutorial on the profile page if it's not
   // complete. Clears any prior dismissal so the modal pops fresh.
   useEffect(() => {
-    if (!state || !profileId || autoOpenedRef.current || activeTutorialId) return;
+    if (!state || !profileId || autoOpenedRef.current || activeSession) return;
     if (celebratingId) return;
 
     const quickstart = getTutorial("quickstart");
@@ -173,10 +178,10 @@ export function TutorialHostProvider({
         } catch { /* silent */ }
       }
       autoOpenedRef.current = true;
-      setActiveTutorialId("quickstart");
+      setActiveSession({ id: "quickstart", replay: false });
       track("tutorial_opened", { tutorial_id: "quickstart", trigger: "auto" });
     })();
-  }, [state, profileId, activeTutorialId, celebratingId, getToken]);
+  }, [state, profileId, activeSession, celebratingId, getToken]);
 
   // Auto-complete tutorials whose completeOn is "all_steps_done" when
   // all signals are met. Fires celebration on first completion per tab.
@@ -198,7 +203,7 @@ export function TutorialHostProvider({
             celebratedRef.current.add(tut.id);
             track("tutorial_completed", { tutorial_id: tut.id });
             setCelebratingId(tut.id);
-            setActiveTutorialId(null);
+            setActiveSession(null);
           }
           load();
         } catch { /* silent */ }
@@ -211,15 +216,18 @@ export function TutorialHostProvider({
   const startTutorial = useCallback(
     (id: TutorialId) => {
       setCelebratingId(null);
-      setActiveTutorialId(id);
-      track("tutorial_opened", { tutorial_id: id, trigger: "manual" });
+      const replay = state?.completedIds.has(id) ?? false;
+      setActiveSession({ id, replay });
+      track("tutorial_opened", { tutorial_id: id, trigger: replay ? "replay" : "manual" });
     },
-    [],
+    [state],
   );
 
   const handleClose = useCallback(
-    async (id: TutorialId) => {
-      setActiveTutorialId(null);
+    async (session: ActiveTutorialSession) => {
+      setActiveSession(null);
+      if (session.replay) return;
+      const { id } = session;
       track("tutorial_dismissed", { tutorial_id: id });
       try {
         const token = await getToken();
@@ -234,7 +242,7 @@ export function TutorialHostProvider({
 
   const handleManualComplete = useCallback(
     async (id: TutorialId) => {
-      setActiveTutorialId(null);
+      setActiveSession(null);
       try {
         const token = await getToken();
         if (token) await completeTutorial(token, id);
@@ -256,7 +264,7 @@ export function TutorialHostProvider({
     }
   }, [profileId, router]);
 
-  const activeTutorial = activeTutorialId ? getTutorial(activeTutorialId) : undefined;
+  const activeTutorial = activeSession ? getTutorial(activeSession.id) : undefined;
   const tutorialCtx: TutorialContext | null = useMemo(() => {
     if (!state || !profileId) return null;
     return { profileId, counts: state.counts };
@@ -282,7 +290,8 @@ export function TutorialHostProvider({
         <TutorialShell
           tutorial={activeTutorial}
           ctx={tutorialCtx}
-          onRequestClose={() => handleClose(activeTutorial.id)}
+          replayMode={activeSession?.replay ?? false}
+          onRequestClose={() => activeSession && handleClose(activeSession)}
           onRequestComplete={() => handleManualComplete(activeTutorial.id)}
         />
       )}
