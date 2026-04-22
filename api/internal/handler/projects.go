@@ -359,3 +359,79 @@ func (h *ProfileHandler) APIGet(w http.ResponseWriter, r *http.Request) {
 	}
 	writeSuccess(w, toProfileResponse(profile))
 }
+
+// APIUpdate handles PATCH /v1/profiles/{id} under API-key auth. Scoped
+// to the three branding fields so white-label customers can set their
+// hosted Connect appearance programmatically during onboarding without
+// needing a human in the Dashboard. `name` stays Clerk-only — renaming
+// a profile is a human decision.
+func (h *ProfileHandler) APIUpdate(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	profileID := chi.URLParam(r, "id")
+
+	profile, err := h.queries.GetProfile(r.Context(), profileID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get profile")
+		return
+	}
+	if profile.WorkspaceID != workspaceID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+		return
+	}
+
+	var body struct {
+		BrandingLogoURL      *string `json:"branding_logo_url"`
+		BrandingDisplayName  *string `json:"branding_display_name"`
+		BrandingPrimaryColor *string `json:"branding_primary_color"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	if body.BrandingLogoURL != nil && *body.BrandingLogoURL != "" {
+		if err := validateBrandingLogoURL(*body.BrandingLogoURL); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+			return
+		}
+	}
+	if body.BrandingDisplayName != nil && len(*body.BrandingDisplayName) > 60 {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+			"branding_display_name must be ≤ 60 chars")
+		return
+	}
+	if body.BrandingPrimaryColor != nil && *body.BrandingPrimaryColor != "" {
+		if !isHexColor(*body.BrandingPrimaryColor) {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+				"branding_primary_color must be a 6-digit hex color (e.g. #10b981)")
+			return
+		}
+	}
+
+	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil {
+		if _, err := h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
+			ID:           profileID,
+			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
+			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
+			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update branding")
+			return
+		}
+	}
+
+	final, err := h.queries.GetProfile(r.Context(), profileID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reload profile")
+		return
+	}
+	writeSuccess(w, toProfileResponse(final))
+}

@@ -629,6 +629,8 @@ func main() {
 		// Profiles (API key scoped)
 		r.Get("/v1/profiles", profileHandler.APIList)
 		r.Get("/v1/profiles/{id}", profileHandler.APIGet)
+		// PATCH limited to branding fields — see projects.go APIUpdate.
+		r.Patch("/v1/profiles/{id}", profileHandler.APIUpdate)
 
 		r.Get("/v1/social-accounts", socialAccountHandler.List)
 		r.Post("/v1/social-accounts/connect", socialAccountHandler.Connect)
