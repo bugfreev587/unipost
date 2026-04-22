@@ -93,7 +93,7 @@ export default function WhiteLabelPage() {
         rows={[
           ["You publish to social accounts your team owns", "Quickstart (no white-label)"],
           ["Your customers bring their own accounts via a hosted flow", "White-label"],
-          ["Your customers shouldn&apos;t know UniPost exists", "White-label (required)"],
+          ["Your customers shouldn’t know UniPost exists", "White-label (required)"],
           ["Your product is on the free tier", "Quickstart — white-label is a paid feature"],
         ]}
       />
@@ -106,12 +106,12 @@ export default function WhiteLabelPage() {
           [
             "OAuth credentials",
             "Which platform App ID / secret is used when the end user authorizes",
-            "UniPost&apos;s global App — consent shows &ldquo;UniPost&rdquo;",
+            "UniPost’s global App — consent shows “UniPost”",
           ],
           [
             "Profile branding",
             "Logo, display name, and primary color on the hosted Connect page",
-            "UniPost&apos;s default look",
+            "UniPost’s default look",
           ],
           [
             "Connect URL",
@@ -202,13 +202,13 @@ export default function WhiteLabelPage() {
         columns={["Symptom", "Likely cause", "Fix"]}
         rows={[
           [
-            "Platform consent says &ldquo;UniPost&rdquo;, not my App name",
-            "Credentials for this platform weren&apos;t uploaded to this workspace",
+            "Platform consent says “UniPost”, not my App name",
+            "Credentials for this platform weren’t uploaded to this workspace",
             "Step 3 — POST platform-credentials with your client_id + client_secret",
           ],
           [
-            "&ldquo;Redirect URI mismatch&rdquo; error from the platform",
-            "Platform App&apos;s allowed redirect list doesn&apos;t include UniPost&apos;s callback",
+            "“Redirect URI mismatch” error from the platform",
+            "Platform App’s allowed redirect list doesn’t include UniPost’s callback",
             "Step 2 — add /v1/oauth/callback/{platform} to the platform App",
           ],
           [
@@ -217,9 +217,9 @@ export default function WhiteLabelPage() {
             "Report to UniPost support with your dashboard host",
           ],
           [
-            "&ldquo;App not approved for public use&rdquo; on Meta / TikTok",
-            "Your platform App hasn&apos;t completed App Review",
-            "Complete the platform&apos;s App Review — UniPost can&apos;t shortcut this",
+            "“App not approved for public use” on Meta / TikTok",
+            "Your platform App hasn’t completed App Review",
+            "Complete the platform’s App Review — UniPost can’t shortcut this",
           ],
           [
             "Hosted Connect page still shows UniPost branding",
