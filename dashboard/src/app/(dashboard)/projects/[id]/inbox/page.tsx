@@ -1044,15 +1044,22 @@ export default function InboxPage() {
               pointerEvents: "none",
             }}
           >
-            {ancestorLines.map((show, idx) =>
-              show ? (
+            {ancestorLines.map((show, idx) => {
+              // Skip the immediate parent's column (idx === depth - 1).
+              // The elbow already paints that column from top down to
+              // its bend, and the `!isLast` continuation below paints
+              // from the bend to the next sibling. Drawing a full-height
+              // rail here on top of them makes a single-child parent
+              // look like it continues into the parent's next *sibling*
+              // (user reported "nice pic looks like a child of hello
+              // there"). Deeper ancestor columns still need the rail so
+              // grandparent threads stay visually traceable.
+              if (!show || idx === depth - 1) return null;
+              return (
                 <div
                   key={`ancestor-${node.item.id}-${idx}`}
                   style={{
                     position: "absolute",
-                    // Each ancestor line sits in its own avatar's
-                    // column, computed per depth so sizes 32 vs 28 both
-                    // line up with their respective avatar centers.
                     left: avatarCenterXAtDepth(idx) - 1,
                     top: 0,
                     bottom: 0,
@@ -1061,8 +1068,8 @@ export default function InboxPage() {
                     background: COMMENT_THREAD_LINE_COLOR,
                   }}
                 />
-              ) : null
-            )}
+              );
+            })}
             <div
               style={{
                 position: "absolute",
@@ -1106,7 +1113,11 @@ export default function InboxPage() {
                   position: "absolute",
                   left: avatarRadius - 1,
                   top: avatarRadius * 2,
-                  bottom: -COMMENT_THREAD_GUTTER_OVERLAP,
+                  // End at the bottom of this row, not past it. The
+                  // child's elbow reaches back up via its gutter
+                  // overlap, so the handoff happens exactly at the
+                  // margin between rows with no gap and no overshoot.
+                  bottom: 0,
                   width: 2,
                   borderRadius: 999,
                   background: COMMENT_THREAD_LINE_COLOR,
