@@ -17,7 +17,11 @@ export default function DocsPricingPage() {
         rows={[
           ["Ship your own content", "Quickstart + Posts API", "Standard publish usage"],
           ["Onboard customer accounts", "Connect Sessions + Managed Users", "Managed account usage"],
-          ["Brand the onboarding flow", "Connect + Branding", "White-label plan"],
+          [
+            "Brand the onboarding flow",
+            <Link href="/docs/white-label" key="wl">White-label</Link>,
+            "White-label plan",
+          ],
         ]}
       />
 

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-shell";
 
 const CREATE_SNIPPETS = [
@@ -50,6 +51,7 @@ export default function ConnectSessionsPage() {
     >
       <h2 id="when-to-use">When to use Connect sessions</h2>
       <p>Use Connect sessions when you are building a product where your customers connect their own end-user-owned social accounts. This is how UniPost becomes account-onboarding infrastructure rather than just a direct posting API.</p>
+      <p>New to this pattern? Start with the <Link href="/docs/white-label">white-label guide</Link> — it walks through the full setup (OAuth app, branding, credentials) and returns here for the endpoint-level reference.</p>
 
       <h2 id="flow">Flow</h2>
       <DocsTable

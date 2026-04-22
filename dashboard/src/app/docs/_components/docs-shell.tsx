@@ -145,6 +145,13 @@ export const DOCS_NAV: NavSection[] = [
     ],
   },
   {
+    title: "White-label",
+    description: "Ship UniPost under your own brand for customer-facing products.",
+    items: [
+      { label: "Overview", href: "/docs/white-label" },
+    ],
+  },
+  {
     title: "Platforms",
     description: "Per-platform support, constraints, and examples.",
     items: [
