@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 import { ApiInlineLink } from "../api/_components/doc-components";
 
@@ -129,18 +130,38 @@ export default function WhiteLabelPage() {
       <DocsTable
         columns={["Platform", "Portal", "Needs App Review?"]}
         rows={[
-          ["Meta (Facebook + Instagram + Threads)", "developers.facebook.com", "Yes, for public use"],
-          ["LinkedIn", "www.linkedin.com/developers", "No — products auto-approve"],
-          ["TikTok", "developers.tiktok.com", "Yes — audit required"],
-          ["YouTube", "console.cloud.google.com", "No, but scope approval helps"],
-          ["X / Twitter", "developer.x.com", "Tier-dependent"],
+          [
+            "Meta (Facebook + Instagram + Threads)",
+            <a key="meta" href="https://developers.facebook.com" target="_blank" rel="noreferrer noopener">developers.facebook.com</a>,
+            "Yes, for public use",
+          ],
+          [
+            "LinkedIn",
+            <a key="li" href="https://www.linkedin.com/developers" target="_blank" rel="noreferrer noopener">www.linkedin.com/developers</a>,
+            "No — products auto-approve",
+          ],
+          [
+            "TikTok",
+            <a key="tt" href="https://developers.tiktok.com" target="_blank" rel="noreferrer noopener">developers.tiktok.com</a>,
+            "Yes — audit required",
+          ],
+          [
+            "YouTube",
+            <a key="yt" href="https://console.cloud.google.com" target="_blank" rel="noreferrer noopener">console.cloud.google.com</a>,
+            "No, but scope approval helps",
+          ],
+          [
+            "X / Twitter",
+            <a key="x" href="https://developer.x.com" target="_blank" rel="noreferrer noopener">developer.x.com</a>,
+            "Tier-dependent",
+          ],
         ]}
       />
 
       <h3 id="step-2">2. Whitelist the redirect URI</h3>
       <p>In each platform&apos;s App settings, add UniPost&apos;s OAuth callback as an authorized redirect URI. The platform refuses to redirect back with the <code>code</code> otherwise and your users see a generic error page.</p>
       <pre><code>https://api.unipost.dev/v1/oauth/callback/{"{platform}"}</code></pre>
-      <p>Substitute <code>{"{platform}"}</code> with <code>linkedin</code>, <code>twitter</code>, <code>tiktok</code>, <code>youtube</code>, or <code>meta</code> — one entry per platform whose credentials you&apos;ll upload.</p>
+      <p>Substitute <code>{"{platform}"}</code> with <code>linkedin</code>, <code>twitter</code>, <code>tiktok</code>, <code>youtube</code>, or <code>meta</code> — one entry per platform whose credentials you&apos;ll upload. This is UniPost&apos;s fixed callback path; the full OAuth round-trip is documented in the <Link href="/docs/api/connect/sessions">Connect Sessions reference</Link>.</p>
 
       <h3 id="step-3">3. Upload credentials to UniPost</h3>
       <p>Upload your Client ID and Client Secret for each platform. Either from the dashboard at Accounts → White-label Credentials, or via the API:</p>
@@ -195,7 +216,7 @@ export default function WhiteLabelPage() {
           ],
         ]}
       />
-      <p>Polling example: <ApiInlineLink endpoint="GET /v1/connect/sessions/{id}" />. Webhook payload format: see the webhooks reference.</p>
+      <p>Polling example: <ApiInlineLink endpoint="GET /v1/connect/sessions/{id}" href="/docs/api/connect/sessions" />. Webhook payload format: <Link href="/docs/api/webhooks">see the webhooks reference</Link>.</p>
 
       <h2 id="troubleshooting">Troubleshooting</h2>
       <DocsTable
@@ -233,10 +254,26 @@ export default function WhiteLabelPage() {
       <DocsTable
         columns={["Next capability", "When to add it", "Docs path"]}
         rows={[
-          ["Connect Sessions reference", "When you need every field + status the sessions API exposes", "API References → Connect Sessions"],
-          ["Webhooks", "Before production — replace polling with push delivery", "API References → Webhooks"],
-          ["Managed Users", "When you need to query which end users are connected to which accounts", "API References → Managed Users"],
-          ["Platform guides", "Per-platform content rules, caption limits, supported media", "Platforms"],
+          [
+            "Connect Sessions reference",
+            "When you need every field + status the sessions API exposes",
+            <Link key="cs" href="/docs/api/connect/sessions">API References → Connect Sessions</Link>,
+          ],
+          [
+            "Webhooks",
+            "Before production — replace polling with push delivery",
+            <Link key="wh" href="/docs/api/webhooks">API References → Webhooks</Link>,
+          ],
+          [
+            "Managed Users",
+            "When you need to query which end users are connected to which accounts",
+            <Link key="mu" href="/docs/api/users">API References → Managed Users</Link>,
+          ],
+          [
+            "Platform guides",
+            "Per-platform content rules, caption limits, supported media",
+            <Link key="pl" href="/docs/platforms">Platforms</Link>,
+          ],
         ]}
       />
     </DocsPage>
