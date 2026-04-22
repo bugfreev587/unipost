@@ -206,6 +206,13 @@ export const DOCS_NAV: NavSection[] = [
           { label: "Billing", href: "/docs/api/billing" },
         ],
       },
+      {
+        title: "White-label",
+        items: [
+          { label: "Platform Credentials", href: "/docs/api/white-label/credentials" },
+          { label: "Profile Branding", href: "/docs/api/white-label/branding" },
+        ],
+      },
     ],
   },
 ];

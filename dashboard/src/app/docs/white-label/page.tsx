@@ -164,12 +164,12 @@ export default function WhiteLabelPage() {
       <p>Substitute <code>{"{platform}"}</code> with <code>linkedin</code>, <code>twitter</code>, <code>tiktok</code>, <code>youtube</code>, or <code>meta</code> — one entry per platform whose credentials you&apos;ll upload. This is UniPost&apos;s fixed callback path; the full OAuth round-trip is documented in the <Link href="/docs/api/connect/sessions">Connect Sessions reference</Link>.</p>
 
       <h3 id="step-3">3. Upload credentials to UniPost</h3>
-      <p>Upload your Client ID and Client Secret for each platform. Either from the dashboard at Accounts → White-label Credentials, or via the API:</p>
+      <p>Upload your Client ID and Client Secret for each platform. Either from the dashboard at Accounts → White-label Credentials, or via <ApiInlineLink endpoint="POST /v1/workspaces/{id}/platform-credentials" />:</p>
       <DocsCodeTabs snippets={UPLOAD_CREDS_SNIPPETS} />
       <p>UniPost encrypts the secret at rest. Once uploaded, every Connect session on this workspace for that platform runs against <em>your</em> App — the platform consent screen shows your App name, your privacy policy URL, your logo.</p>
 
       <h3 id="step-4">4. Set profile branding</h3>
-      <p>PATCH the three branding fields on the profile that will own the Connect sessions. The hosted Connect page pulls these values at render time; there&apos;s no cache layer in between, so the change is immediate.</p>
+      <p><ApiInlineLink endpoint="PATCH /v1/profiles/{id}" /> the three branding fields on the profile that will own the Connect sessions. The hosted Connect page pulls these values at render time; there&apos;s no cache layer in between, so the change is immediate.</p>
       <DocsCodeTabs snippets={PATCH_BRANDING_SNIPPETS} />
       <DocsTable
         columns={["Field", "Validation", "Where it appears"]}
@@ -181,7 +181,7 @@ export default function WhiteLabelPage() {
       />
 
       <h3 id="step-5">5. Create a session and test</h3>
-      <p>Create a session for the platform, with a stable <code>external_user_id</code> you own, and a <code>return_url</code> where you want the end user to land when they&apos;re done.</p>
+      <p>Call <ApiInlineLink endpoint="POST /v1/connect/sessions" /> for the platform, with a stable <code>external_user_id</code> you own, and a <code>return_url</code> where you want the end user to land when they&apos;re done.</p>
       <DocsCodeTabs snippets={CREATE_SESSION_SNIPPETS} />
       <p>Response includes a <code>url</code> field — that&apos;s the hosted Connect URL. Open it in a private / incognito window (so you experience the flow the way a fresh end user will) and verify: your branding renders, OAuth redirects to <em>your</em> App&apos;s consent screen, and you land back at <code>return_url</code> after authorizing.</p>
       <p>A reference test script in the repo, <code>scripts/test_whitelabel_linkedin.py</code>, walks the full flow for LinkedIn end-to-end: profile + branding, session creation, OAuth wait, publish, analytics, cleanup.</p>
@@ -254,6 +254,16 @@ export default function WhiteLabelPage() {
       <DocsTable
         columns={["Next capability", "When to add it", "Docs path"]}
         rows={[
+          [
+            "Platform Credentials reference",
+            "Field-by-field details for uploading your OAuth apps",
+            <Link key="cr" href="/docs/api/white-label/credentials">API References → White-label → Platform Credentials</Link>,
+          ],
+          [
+            "Profile Branding reference",
+            "Validation rules for logo, display name, and color",
+            <Link key="br" href="/docs/api/white-label/branding">API References → White-label → Profile Branding</Link>,
+          ],
           [
             "Connect Sessions reference",
             "When you need every field + status the sessions API exposes",

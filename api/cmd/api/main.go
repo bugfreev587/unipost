@@ -661,6 +661,16 @@ func main() {
 		r.Post("/v1/connect/sessions", connectSessionHandler.Create)
 		r.Get("/v1/connect/sessions/{id}", connectSessionHandler.Get)
 
+		// White-label platform credentials (API-key). Same handlers as
+		// the Clerk dashboard routes above — requireWorkspace() handles
+		// the auth-mode split. URL keeps the workspaceID so the caller
+		// can't accidentally mutate a different workspace's creds if
+		// they later share an API key (defense-in-depth; the middleware
+		// already scopes the context to one workspace per key).
+		r.Post("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.Create)
+		r.Get("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.List)
+		r.Delete("/v1/workspaces/{workspaceID}/platform-credentials/{platform}", platformCredHandler.Delete)
+
 		r.Get("/v1/social-posts", socialPostHandler.List)
 		r.Post("/v1/social-posts", socialPostHandler.Create)
 		// Pure preflight — runs the same checks Create() will run, but

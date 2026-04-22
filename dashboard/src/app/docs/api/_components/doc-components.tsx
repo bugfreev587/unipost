@@ -35,11 +35,17 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^POST \/v1\/social-posts(?:\/bulk)?$/i, href: "/docs/api/posts/create" },
   { match: /^GET \/v1\/social-posts\/[^/]+\/analytics$/i, href: "/docs/api/analytics" },
   { match: /^GET \/v1\/social-accounts(?:\/[^/]+\/health)?$/i, href: "/docs/api/accounts/list" },
-  { match: /^POST \/v1\/connect\/sessions/i, href: "/docs/api/connect/sessions" },
+  { match: /^(?:POST|GET) \/v1\/connect\/sessions(?:\/[^/]+)?$/i, href: "/docs/api/connect/sessions" },
   { match: /^POST \/v1\/webhooks\/[^/]+\/rotate$/i, href: "/docs/api/webhooks" },
   { match: /^GET \/v1\/webhooks\/[^/]+$/i, href: "/docs/api/webhooks" },
   { match: /^POST \/v1\/media$/i, href: "/docs/api/media" },
   { match: /^GET \/v1\/users/i, href: "/docs/api/users" },
+  // White-label group.
+  {
+    match: /^(?:POST|GET|DELETE) \/v1\/workspaces\/[^/]+\/platform-credentials(?:\/[^/]+)?$/i,
+    href: "/docs/api/white-label/credentials",
+  },
+  { match: /^PATCH \/v1\/profiles\/[^/]+$/i, href: "/docs/api/white-label/branding" },
 ];
 
 function normalizeEndpointReference(value: string) {
