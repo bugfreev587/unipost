@@ -1,7 +1,4 @@
 "use client";
-import { useMemo, useState } from "react";
-import { ChevronDown, Loader2 } from "lucide-react";
-import { CodeBlock, codeBlockStyles } from "../../../_components/code-block";
 import {
   ApiReferencePage,
   ApiReferenceGrid,
@@ -11,6 +8,28 @@ import {
   CodeTabs,
   type ApiFieldItem,
 } from "../../_components/doc-components";
+
+const AUTH_FIELDS: ApiFieldItem[] = [
+  {
+    name: "Authorization",
+    type: "Bearer <token>",
+    meta: "In header",
+    description: "Workspace API key.",
+  },
+];
+
+const QUERY_FIELDS: ApiFieldItem[] = [
+  {
+    name: "platform?",
+    type: "string",
+    description: "Only return accounts for one platform.",
+  },
+  {
+    name: "external_user_id?",
+    type: "string",
+    description: "Only return accounts for one Connect user.",
+  },
+];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
@@ -159,145 +178,9 @@ const RESPONSE_SNIPPETS = RESPONSE_TABS.map((tab) => ({
   code: tab.body,
 }));
 
-function TryItSection({
-  title,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <details open={defaultOpen} className="accounts-try-section">
-      <summary
-        style={{
-          listStyle: "none",
-          cursor: "pointer",
-          padding: "16px 18px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          fontSize: 15,
-          fontWeight: 700,
-          color: "var(--docs-text)",
-        }}
-      >
-        <span>{title}</span>
-        <ChevronDown className="accounts-try-chevron" style={{ width: 18, height: 18, color: "var(--docs-text-muted)" }} />
-      </summary>
-      <div style={{ padding: "0 18px 18px" }}>{children}</div>
-    </details>
-  );
-}
-
-function TryItField({
-  label,
-  type,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  type: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-}) {
-  return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <label style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>{label}</label>
-        <span style={{ fontFamily: "var(--docs-mono)", fontSize: 13, color: "var(--docs-text-faint)" }}>{type}</span>
-      </div>
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        style={{
-          width: "100%",
-          border: "1px solid var(--docs-border)",
-          borderRadius: 12,
-          background: "var(--docs-bg-muted)",
-          color: "var(--docs-text)",
-          fontSize: 15,
-          lineHeight: 1.4,
-          padding: "14px 16px",
-          outline: "none",
-        }}
-      />
-    </div>
-  );
-}
-
 export function ListAccountsContent() {
-  const [apiKey, setApiKey] = useState("");
-  const [platform, setPlatform] = useState("");
-  const [externalUserId, setExternalUserId] = useState("");
-  const [isSending, setIsSending] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<number | null>(null);
-  const [liveResponse, setLiveResponse] = useState<string>(RESPONSE_200);
-  const [liveError, setLiveError] = useState<string>("");
-
-  const requestPath = useMemo(() => {
-    const params = new URLSearchParams();
-    if (platform.trim()) params.set("platform", platform.trim());
-    if (externalUserId.trim()) params.set("external_user_id", externalUserId.trim());
-    const query = params.toString();
-    return query ? `/v1/social-accounts?${query}` : "/v1/social-accounts";
-  }, [externalUserId, platform]);
-
-  const authHeader = useMemo(() => {
-    const trimmed = apiKey.trim();
-    if (!trimmed) return "";
-    return /^Bearer\s+/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`;
-  }, [apiKey]);
-
-  async function handleSend() {
-    setIsSending(true);
-    setLiveError("");
-
-    try {
-      const response = await fetch(`https://api.unipost.dev${requestPath}`, {
-        headers: authHeader
-          ? {
-              Authorization: authHeader,
-            }
-          : {},
-      });
-
-      const text = await response.text();
-      setLiveStatus(response.status);
-
-      try {
-        const parsed = JSON.parse(text);
-        setLiveResponse(JSON.stringify(parsed, null, 2));
-      } catch {
-        setLiveResponse(text || "{}");
-      }
-    } catch (error) {
-      setLiveStatus(null);
-      setLiveError(error instanceof Error ? error.message : "Request failed");
-      setLiveResponse(`{\n  "error": {\n    "message": "Request failed."\n  }\n}`);
-    } finally {
-      setIsSending(false);
-    }
-  }
-
   return (
     <>
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-            .accounts-try-section > summary::-webkit-details-marker{display:none}
-            .accounts-try-section + .accounts-try-section{border-top:1px solid var(--docs-border)}
-            .accounts-try-section .accounts-try-chevron{transition:transform .18s ease}
-            .accounts-try-section[open] .accounts-try-chevron{transform:rotate(180deg)}
-          `,
-        }}
-      />
-      <style dangerouslySetInnerHTML={{ __html: codeBlockStyles() }} />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -321,102 +204,29 @@ export function ListAccountsContent() {
         <ApiReferenceGrid
           left={
             <>
-              <div style={{ display: "grid", gap: 14 }}>
-                <ApiEndpointCard method="GET" path="/v1/social-accounts">
-                  <div style={{ padding: "16px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
-                      <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>{requestPath}</code>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleSend}
-                      disabled={isSending}
-                      style={{
-                        border: 0,
-                        borderRadius: 12,
-                        background: isSending ? "#fb6c45" : "#f04d23",
-                        color: "#fff",
-                        fontSize: 15,
-                        fontWeight: 700,
-                        padding: "13px 22px",
-                        cursor: isSending ? "default" : "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 8,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {isSending ? <Loader2 style={{ width: 16, height: 16 }} className="animate-spin" /> : null}
-                      {isSending ? "Sending..." : "Send"}
-                    </button>
-                  </div>
-                </ApiEndpointCard>
-
-                <ApiEndpointCard method="GET" path="/v1/social-accounts">
-                  <TryItSection title="Authorization" defaultOpen>
-                    <TryItField
-                      label="Authorization (header)"
-                      type="string"
-                      value={apiKey}
-                      onChange={setApiKey}
-                      placeholder="Bearer up_live_xxxx"
-                    />
-                  </TryItSection>
-                  <TryItSection title="Query Params">
-                    <div style={{ display: "grid", gap: 16 }}>
-                      <TryItField
-                        label="platform?"
-                        type="string"
-                        value={platform}
-                        onChange={setPlatform}
-                        placeholder="instagram"
-                      />
-                      <TryItField
-                        label="external_user_id?"
-                        type="string"
-                        value={externalUserId}
-                        onChange={setExternalUserId}
-                        placeholder="user_123"
-                      />
-                    </div>
-                  </TryItSection>
-                </ApiEndpointCard>
-
-                <ApiEndpointCard method="GET" path="/v1/social-accounts">
-                  <div style={{ padding: "18px" }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
-                    {liveStatus !== null || liveError ? (
-                      <div style={{ marginBottom: 18 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                          <span style={{ fontFamily: "var(--docs-mono)", fontSize: 12, fontWeight: 700, color: "var(--docs-text-faint)", letterSpacing: ".08em", textTransform: "uppercase" }}>
-                            Live Response
-                          </span>
-                          {liveStatus !== null ? (
-                            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 12, fontWeight: 700, color: liveStatus < 300 ? "#10b981" : "#f04d23" }}>
-                              {liveStatus}
-                            </span>
-                          ) : null}
-                        </div>
-                        <CodeBlock code={liveResponse} language="json" compact />
-                        {liveError ? (
-                          <div style={{ fontSize: 13, color: "#f04d23", marginTop: 10 }}>{liveError}</div>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 14, lineHeight: 1.6, color: "var(--docs-text-muted)", marginBottom: 18 }}>
-                        Send a request to see a live response here.
-                      </div>
-                    )}
-                  </div>
-                  <ApiAccordion title="200">
-                    <ApiFieldList items={RESPONSE_200_FIELDS} />
-                  </ApiAccordion>
-                  <ApiAccordion title="401">
-                    <ApiFieldList items={RESPONSE_401_FIELDS} />
-                  </ApiAccordion>
-                </ApiEndpointCard>
-              </div>
+              <ApiEndpointCard method="GET" path="/v1/social-accounts">
+                <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)" }}>
+                  <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
+                  <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/social-accounts</code>
+                </div>
+                <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
+                  <ApiFieldList items={AUTH_FIELDS} />
+                </div>
+                <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Query Params</div>
+                  <ApiFieldList items={QUERY_FIELDS} />
+                </div>
+                <div style={{ padding: "18px" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
+                </div>
+                <ApiAccordion title="200">
+                  <ApiFieldList items={RESPONSE_200_FIELDS} />
+                </ApiAccordion>
+                <ApiAccordion title="401">
+                  <ApiFieldList items={RESPONSE_401_FIELDS} />
+                </ApiAccordion>
+              </ApiEndpointCard>
             </>
           }
           right={
