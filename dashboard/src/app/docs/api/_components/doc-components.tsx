@@ -464,10 +464,18 @@ export function ApiRequestConfigCard({
   const [responseBody, setResponseBody] = useState("{}");
   const [responseCopied, setResponseCopied] = useState(false);
   const [modalPosition, setModalPosition] = useState({ x: 80, y: 80 });
+  const [modalSize, setModalSize] = useState({ width: 720, height: 560 });
   const dragState = useRef<{ offsetX: number; offsetY: number; dragging: boolean }>({
     offsetX: 0,
     offsetY: 0,
     dragging: false,
+  });
+  const resizeState = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number; resizing: boolean }>({
+    startX: 0,
+    startY: 0,
+    startWidth: 720,
+    startHeight: 560,
+    resizing: false,
   });
 
   const pathPreview = requestPathTemplate || path;
@@ -556,6 +564,38 @@ export function ApiRequestConfigCard({
 
     const stop = () => {
       dragState.current.dragging = false;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  }
+
+  function startResize(event: React.PointerEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    resizeState.current = {
+      resizing: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: modalSize.width,
+      startHeight: modalSize.height,
+    };
+
+    const move = (moveEvent: PointerEvent) => {
+      if (!resizeState.current.resizing) {
+        return;
+      }
+      const nextWidth = resizeState.current.startWidth + (moveEvent.clientX - resizeState.current.startX);
+      const nextHeight = resizeState.current.startHeight + (moveEvent.clientY - resizeState.current.startY);
+      setModalSize({
+        width: Math.min(Math.max(nextWidth, 420), window.innerWidth - 32),
+        height: Math.min(Math.max(nextHeight, 280), window.innerHeight - 32),
+      });
+    };
+
+    const stop = () => {
+      resizeState.current.resizing = false;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
     };
@@ -667,8 +707,8 @@ export function ApiRequestConfigCard({
               position: "absolute",
               left: modalPosition.x,
               top: modalPosition.y,
-              width: "min(720px, calc(100vw - 32px))",
-              maxHeight: "min(70vh, 680px)",
+              width: `min(${modalSize.width}px, calc(100vw - 32px))`,
+              height: `min(${modalSize.height}px, calc(100vh - 32px))`,
               background: "var(--docs-bg-elevated)",
               border: "1px solid var(--docs-border)",
               borderRadius: 18,
@@ -686,7 +726,7 @@ export function ApiRequestConfigCard({
                 gap: 12,
                 padding: "12px 14px",
                 borderBottom: "1px solid var(--docs-border)",
-                background: "var(--docs-bg-muted)",
+                background: "color-mix(in srgb, var(--docs-bg-muted) 74%, #d7dde9)",
                 cursor: "grab",
               }}
             >
@@ -739,13 +779,43 @@ export function ApiRequestConfigCard({
                 </button>
               </div>
             </div>
-            <div style={{ padding: 14, overflow: "auto", maxHeight: "calc(min(70vh, 680px) - 58px)" }}>
+            <div style={{ padding: 14, overflow: "auto", height: "calc(100% - 58px)" }}>
               {useMonacoForJsonResponse ? (
-                <JsonMonacoViewer code={responseBody} height={420} />
+                <JsonMonacoViewer code={responseBody} height={Math.max(modalSize.height - 92, 180)} />
               ) : (
                 <CodeBlock code={responseBody} language="json" bare />
               )}
             </div>
+            <button
+              type="button"
+              onPointerDown={startResize}
+              aria-label="Resize response"
+              style={{
+                position: "absolute",
+                right: 6,
+                bottom: 6,
+                width: 18,
+                height: 18,
+                border: "none",
+                background: "transparent",
+                cursor: "nwse-resize",
+                pointerEvents: "auto",
+                padding: 0,
+              }}
+            >
+              <span
+                style={{
+                  position: "absolute",
+                  right: 1,
+                  bottom: 1,
+                  width: 12,
+                  height: 12,
+                  background:
+                    "linear-gradient(135deg, transparent 0 43%, color-mix(in srgb, var(--docs-text-faint) 78%, transparent) 43% 54%, transparent 54% 64%, color-mix(in srgb, var(--docs-text-faint) 78%, transparent) 64% 75%, transparent 75%)",
+                  opacity: 0.8,
+                }}
+              />
+            </button>
           </div>
         </div>
       ) : null}
