@@ -370,7 +370,17 @@ export function ApiAccordion({
   children: React.ReactNode;
 }) {
   return (
-    <details open={defaultOpen} style={{ borderBottom: "1px solid var(--docs-border)" }}>
+    <details open={defaultOpen} className="api-accordion">
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            .api-accordion > summary::-webkit-details-marker{display:none}
+            .api-accordion .api-accordion-arrow-open{display:none}
+            .api-accordion[open] .api-accordion-arrow-open{display:inline}
+            .api-accordion[open] .api-accordion-arrow-closed{display:none}
+          `,
+        }}
+      />
       <summary
         style={{
           listStyle: "none",
@@ -385,7 +395,10 @@ export function ApiAccordion({
         }}
       >
         <span>{title}</span>
-        <span style={{ color: "var(--docs-text-faint)", fontSize: 13 }}>Expand</span>
+        <span style={{ color: "var(--docs-text-faint)", fontSize: 15, lineHeight: 1 }}>
+          <span className="api-accordion-arrow-closed">▸</span>
+          <span className="api-accordion-arrow-open">▾</span>
+        </span>
       </summary>
       <div style={{ padding: "0 18px 18px" }}>{children}</div>
     </details>

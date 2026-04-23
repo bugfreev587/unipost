@@ -9,8 +9,6 @@ import {
   ApiFieldList,
   CodeTabs,
   ResponseBlock,
-  ErrorTable,
-  type ErrorCodeRow,
   type ApiFieldItem,
 } from "../../_components/doc-components";
 
@@ -87,11 +85,6 @@ const RESPONSE_401_FIELDS: ApiFieldItem[] = [
   },
 ];
 
-const ERRORS: ErrorCodeRow[] = [
-  { code: "UNAUTHORIZED", http: 401, description: "Missing API key, malformed Bearer token, or invalid key." },
-  { code: "INTERNAL_ERROR", http: 500, description: "Unexpected server error while reading accounts. Retry the request." },
-];
-
 const SNIPPETS = [
   {
     lang: "js",
@@ -146,22 +139,12 @@ const RESPONSE_200 = `{
     {
       "id": "sa_instagram_123",
       "platform": "instagram",
-      "account_name": "magicxiaobo416",
+      "account_name": "studio.alex",
       "account_avatar_url": "https://...",
       "status": "active",
       "connection_type": "byo",
       "connected_at": "2026-04-02T10:00:00Z",
       "external_user_id": null
-    },
-    {
-      "id": "sa_linkedin_456",
-      "platform": "linkedin",
-      "account_name": "Xiaobo Yu",
-      "account_avatar_url": "https://...",
-      "status": "active",
-      "connection_type": "managed",
-      "connected_at": "2026-04-05T14:30:00Z",
-      "external_user_id": "user_abc"
     }
   ]
 }`;
@@ -236,7 +219,7 @@ export function ListAccountsContent() {
       <ApiReferencePage
         section="accounts"
         title="List accounts"
-        description={<>Returns connected social accounts in the current workspace. Use this endpoint to discover publishable <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>account_id</code> values.</>}
+        description={<>Returns connected social accounts in the current workspace. Use it to discover publishable <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>account_id</code> values.</>}
       >
         <ApiReferenceGrid
           left={
@@ -275,15 +258,6 @@ export function ListAccountsContent() {
               </div>
 
               <ResponseExampleTabs />
-
-              <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, overflow: "hidden", background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)" }}>
-                <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 13, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--docs-text-faint)" }}>
-                  Error Codes
-                </div>
-                <div style={{ padding: 16 }}>
-                  <ErrorTable errors={ERRORS} />
-                </div>
-              </div>
             </div>
           }
         />
