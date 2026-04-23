@@ -46,6 +46,7 @@ export function SingleEndpointReferencePage({
   responses,
   snippets,
   responseSnippets,
+  children,
 }: {
   section: string;
   title: string;
@@ -56,6 +57,7 @@ export function SingleEndpointReferencePage({
   responses: ResponseSection[];
   snippets: Snippet[];
   responseSnippets: Snippet[];
+  children?: React.ReactNode;
 }) {
   return (
     <ApiReferencePage section={section} title={title} description={description}>
@@ -103,6 +105,7 @@ export function SingleEndpointReferencePage({
           </div>
         }
       />
+      {children ? <div style={{ marginTop: 20 }}>{children}</div> : null}
     </ApiReferencePage>
   );
 }
