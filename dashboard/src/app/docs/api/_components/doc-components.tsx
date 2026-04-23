@@ -374,7 +374,6 @@ export function ApiAccordion({
         dangerouslySetInnerHTML={{
           __html: `
             .api-accordion > summary::-webkit-details-marker{display:none}
-            .api-accordion + .api-accordion{border-top:1px solid var(--docs-border)}
             .api-accordion .api-accordion-chevron{
               width:18px;
               height:18px;
