@@ -276,3 +276,140 @@ export function ChangelogEntry({ version, date, items }: { version: string; date
     </div>
   );
 }
+
+export interface ApiFieldItem {
+  name: string;
+  type?: string;
+  description: React.ReactNode;
+  meta?: string;
+}
+
+export function ApiReferencePage({
+  section,
+  title,
+  description,
+  children,
+}: {
+  section: string;
+  title: string;
+  description: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <article style={{ width: "100%" }}>
+      <div style={{ padding: "10px 0 22px", borderBottom: "1px solid var(--docs-border)", marginBottom: 26 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#f04d23", marginBottom: 18 }}>{section}</div>
+        <h1 style={{ fontSize: 52, lineHeight: 1.04, letterSpacing: "-0.05em", fontWeight: 760, margin: 0, color: "var(--docs-text)" }}>{title}</h1>
+        <div style={{ fontSize: 17, lineHeight: 1.75, color: "var(--docs-text-soft)", marginTop: 18, maxWidth: "72ch" }}>{description}</div>
+      </div>
+      {children}
+    </article>
+  );
+}
+
+export function ApiReferenceGrid({
+  left,
+  right,
+}: {
+  left: React.ReactNode;
+  right: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1.18fr) minmax(320px, 0.82fr)",
+        gap: 28,
+        alignItems: "start",
+      }}
+      className="api-reference-grid"
+    >
+      <style dangerouslySetInnerHTML={{ __html: "@media (max-width: 1080px){.api-reference-grid{grid-template-columns:1fr!important;}}" }} />
+      <div>{left}</div>
+      <div>{right}</div>
+    </div>
+  );
+}
+
+export function ApiEndpointCard({
+  method,
+  path,
+  children,
+}: {
+  method: string;
+  path: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)", overflow: "hidden" }}>
+      <div style={{ padding: "14px 18px", background: "var(--docs-bg-muted)", borderBottom: "1px solid var(--docs-border)", textAlign: "center", color: "var(--docs-text-muted)", fontSize: 13.5, fontWeight: 600 }}>
+        https://api.unipost.dev
+      </div>
+      <div style={{ padding: "18px 20px 8px", borderBottom: "1px solid var(--docs-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+          <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: METHOD_COLORS[method]?.text || "#10b981" }}>{method}</span>
+          <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{path}</code>
+        </div>
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+export function ApiAccordion({
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details open={defaultOpen} style={{ borderBottom: "1px solid var(--docs-border)" }}>
+      <summary
+        style={{
+          listStyle: "none",
+          cursor: "pointer",
+          padding: "16px 18px",
+          fontSize: 14.5,
+          fontWeight: 650,
+          color: "var(--docs-text)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <span>{title}</span>
+        <span style={{ color: "var(--docs-text-faint)", fontSize: 13 }}>Expand</span>
+      </summary>
+      <div style={{ padding: "0 18px 18px" }}>{children}</div>
+    </details>
+  );
+}
+
+export function ApiFieldList({
+  title,
+  items,
+}: {
+  title?: string;
+  items: ApiFieldItem[];
+}) {
+  return (
+    <div>
+      {title ? <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--docs-text)", margin: "0 0 14px" }}>{title}</h3> : null}
+      <div style={{ display: "grid", gap: 14 }}>
+        {items.map((item) => (
+          <div key={item.name}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+              <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#f04d23" }}>{item.name}</span>
+              {item.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 13, color: "var(--docs-text-muted)" }}>{item.type}</span> : null}
+              {item.meta ? <span style={{ fontSize: 12.5, color: "var(--docs-text-faint)" }}>{item.meta}</span> : null}
+            </div>
+            <div style={{ fontSize: 15, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>{item.description}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

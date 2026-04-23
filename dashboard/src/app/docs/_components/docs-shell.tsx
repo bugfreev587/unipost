@@ -333,7 +333,8 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-auth-btn.ghost:hover{background:var(--docs-bg-muted);color:var(--docs-text);border-color:var(--docs-border-strong)}
 .docs-auth-btn.primary{background:var(--docs-accent);color:#07140d;box-shadow:0 10px 22px rgba(16,185,129,.18)}
 .docs-auth-btn.primary:hover{filter:brightness(1.04)}
-.docs-layout{max-width:1540px;margin:0 auto;padding:28px 28px 88px;display:grid;grid-template-columns:264px minmax(0,var(--docs-reading-width)) 224px;justify-content:center;gap:30px}
+.docs-layout{max-width:1540px;margin:0 auto;padding:28px 28px 88px;display:grid;grid-template-columns:264px minmax(0,1fr) 224px;gap:30px}
+.docs-layout-api{grid-template-columns:264px minmax(0,1fr)}
 .docs-sidebar,.docs-toc{position:sticky;top:96px;align-self:start;max-height:calc(100vh - 118px);overflow:auto;padding-bottom:16px}
 .docs-sidebar-card,.docs-toc-card{background:var(--docs-nav-surface);border:1px solid var(--docs-border);border-radius:18px;padding:15px 14px;box-shadow:var(--docs-card-shadow)}
 .docs-sidebar-section{padding:10px 0 2px;margin-bottom:14px}
@@ -354,6 +355,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-api-inline-path{color:var(--docs-link)}
 .docs-nav-badge{font-size:10px;font-family:var(--docs-mono);padding:2px 6px;border-radius:999px;background:color-mix(in srgb, var(--docs-bg-elevated) 78%, var(--docs-nav-surface));color:var(--docs-nav-text-faint)}
 .docs-main{min-width:0}
+.docs-main-api{max-width:none}
 .docs-page{background:color-mix(in srgb, var(--docs-bg-elevated) 98%, transparent);border:1px solid var(--docs-border);border-radius:24px;padding:48px 52px 56px;box-shadow:var(--docs-card-shadow)}
 .docs-eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:18px}
 .docs-page h1{font-size:42px;line-height:1.04;letter-spacing:-.045em;font-weight:730;margin:0 0 14px;color:var(--docs-text);max-width:12ch}
@@ -406,7 +408,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-step-list li{padding-left:4px;margin-bottom:10px;font-size:16px;line-height:1.72;color:var(--docs-text-soft)}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
-@media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,var(--docs-reading-width));gap:26px}.docs-toc{display:none}}
+@media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,1fr);gap:26px}.docs-toc{display:none}.docs-layout-api{grid-template-columns:252px minmax(0,1fr)}}
 @media (max-width:960px){.docs-topbar-inner{padding:12px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-left,.docs-topbar-right{width:100%}.docs-topbar-left{gap:14px}.docs-primary-nav{gap:14px;overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.docs-topbar-right{align-items:flex-start;justify-content:flex-start;flex-direction:row}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}}
 `;
 
@@ -482,6 +484,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const [activeHeading, setActiveHeading] = useState("");
   const activePrimaryNav = getActivePrimaryNav(pathname);
   const sidebarSections = DOCS_SIDEBAR_NAV[activePrimaryNav];
+  const isApiPage = pathname.startsWith("/docs/api");
 
   useEffect(() => {
     let frame = 0;
@@ -570,7 +573,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <div className="docs-layout">
+      <div className={`docs-layout${isApiPage ? " docs-layout-api" : ""}`}>
         <aside className="docs-sidebar">
           <div className="docs-sidebar-card">
             {sidebarSections.map((section) => (
@@ -594,26 +597,28 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
 
-        <main className="docs-main">{children}</main>
+        <main className={`docs-main${isApiPage ? " docs-main-api" : ""}`}>{children}</main>
 
-        <aside className="docs-toc">
-          <div className="docs-toc-card">
-            <div className="docs-toc-title">On This Page</div>
-            {headings.length === 0 ? (
-              <div className="docs-empty-toc">This page is a navigation hub. Open a guide or reference page to see section links here.</div>
-            ) : (
-              headings.map((heading) => (
-                <a
-                  key={heading.id}
-                  href={`#${heading.id}`}
-                  className={`docs-toc-link level-${heading.level}${activeHeading === heading.id ? " active" : ""}`}
-                >
-                  {heading.text}
-                </a>
-              ))
-            )}
-          </div>
-        </aside>
+        {!isApiPage ? (
+          <aside className="docs-toc">
+            <div className="docs-toc-card">
+              <div className="docs-toc-title">On This Page</div>
+              {headings.length === 0 ? (
+                <div className="docs-empty-toc">This page is a navigation hub. Open a guide or reference page to see section links here.</div>
+              ) : (
+                headings.map((heading) => (
+                  <a
+                    key={heading.id}
+                    href={`#${heading.id}`}
+                    className={`docs-toc-link level-${heading.level}${activeHeading === heading.id ? " active" : ""}`}
+                  >
+                    {heading.text}
+                  </a>
+                ))
+              )}
+            </div>
+          </aside>
+        ) : null}
       </div>
     </div>
   );
