@@ -1,7 +1,7 @@
 "use client";
 
+import { useState } from "react";
 import {
-  ApiInlineLink,
   ApiReferencePage,
   ApiReferenceGrid,
   ApiEndpointCard,
@@ -19,7 +19,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
     name: "Authorization",
     type: "Bearer <token>",
     meta: "In header",
-    description: "Use your UniPost API key as a Bearer token. Every request to the public API uses workspace-scoped API key authentication.",
+    description: "Use your UniPost API key as a Bearer token.",
   },
 ];
 
@@ -27,20 +27,20 @@ const QUERY_FIELDS: ApiFieldItem[] = [
   {
     name: "platform",
     type: "string",
-    description: 'Filter returned accounts by destination platform such as "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", or "bluesky".',
+    description: 'Filter returned accounts by platform such as "twitter", "linkedin", "instagram", or "bluesky".',
   },
   {
     name: "external_user_id",
     type: "string",
-    description: "Filter accounts connected on behalf of a specific end user during a Connect flow. This is the main lookup key when you embed account onboarding into your own product.",
+    description: "Filter accounts connected on behalf of a specific end user during a Connect flow.",
   },
 ];
 
-const RESPONSE_SUCCESS_FIELDS: ApiFieldItem[] = [
+const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
     name: "id",
     type: "string",
-    description: <>UniPost social account ID. Use this as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>account_id</code> when creating a post through <ApiInlineLink endpoint="POST /v1/social-posts" />.</>,
+    description: "UniPost social account ID used in publish requests.",
   },
   {
     name: "platform",
@@ -55,12 +55,12 @@ const RESPONSE_SUCCESS_FIELDS: ApiFieldItem[] = [
   {
     name: "status",
     type: "string",
-    description: 'Connection state for the account. In practice this is usually "active" or "reconnect_required".',
+    description: 'Connection state for the account, usually "active" or "reconnect_required".',
   },
   {
     name: "connection_type",
     type: "string",
-    description: '"byo" means white-label / your own platform credentials. "managed" means the account was connected through UniPost Connect.',
+    description: '"byo" means your own platform credentials. "managed" means the account was connected through UniPost Connect.',
   },
   {
     name: "connected_at",
@@ -71,6 +71,19 @@ const RESPONSE_SUCCESS_FIELDS: ApiFieldItem[] = [
     name: "external_user_id",
     type: "string | null",
     description: "Your own end-user identifier from Connect. Null for workspace-owned or BYO accounts.",
+  },
+];
+
+const RESPONSE_401_FIELDS: ApiFieldItem[] = [
+  {
+    name: "error.code",
+    type: "string",
+    description: 'Returns "UNAUTHORIZED" when the API key is missing or invalid.',
+  },
+  {
+    name: "error.message",
+    type: "string",
+    description: "Human-readable authentication failure message.",
   },
 ];
 
@@ -160,6 +173,48 @@ const RESPONSE_401 = `{
   }
 }`;
 
+const RESPONSE_TABS = [
+  { code: "200", body: RESPONSE_200, fields: RESPONSE_200_FIELDS },
+  { code: "401", body: RESPONSE_401, fields: RESPONSE_401_FIELDS },
+];
+
+function ResponseExampleTabs() {
+  const [activeCode, setActiveCode] = useState("200");
+  const active = RESPONSE_TABS.find((tab) => tab.code === activeCode) || RESPONSE_TABS[0];
+
+  return (
+    <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, overflow: "hidden", background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)" }}>
+      <div style={{ display: "flex", gap: 18, padding: "14px 18px 0", borderBottom: "1px solid var(--docs-border)" }}>
+        {RESPONSE_TABS.map((tab) => {
+          const activeTab = tab.code === activeCode;
+          return (
+            <button
+              key={tab.code}
+              type="button"
+              onClick={() => setActiveCode(tab.code)}
+              style={{
+                border: 0,
+                borderBottom: activeTab ? "2px solid #f04d23" : "2px solid transparent",
+                background: "transparent",
+                color: activeTab ? "#f04d23" : "var(--docs-text-muted)",
+                fontSize: 14,
+                fontWeight: 700,
+                padding: "0 0 12px",
+                cursor: "pointer",
+              }}
+            >
+              {tab.code}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ padding: 16 }}>
+        <ResponseBlock title={active.code} code={active.body} />
+      </div>
+    </div>
+  );
+}
+
 export function ListAccountsContent() {
   return (
     <>
@@ -181,23 +236,32 @@ export function ListAccountsContent() {
       <ApiReferencePage
         section="accounts"
         title="List accounts"
-        description={<>Returns connected social accounts in the current workspace. Use this endpoint to discover publishable <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>account_id</code> values, or to look up accounts created through your embedded Connect flow.</>}
+        description={<>Returns connected social accounts in the current workspace. Use this endpoint to discover publishable <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>account_id</code> values.</>}
       >
         <ApiReferenceGrid
           left={
             <>
-              <ApiEndpointCard method="GET" path="/v1/social-accounts">
-                <ApiAccordion title="Authorization" defaultOpen>
+              <ApiEndpointCard method="GET" path="/v1/social-accounts" hideEndpointRow>
+                <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)" }}>
+                  <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
+                  <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/social-accounts</code>
+                </div>
+                <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
                   <ApiFieldList items={AUTH_FIELDS} />
-                </ApiAccordion>
-                <ApiAccordion title="Query Params" defaultOpen>
+                </div>
+                <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Query Params</div>
                   <ApiFieldList items={QUERY_FIELDS} />
+                </div>
+                <div style={{ padding: "18px" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
+                </div>
+                <ApiAccordion title="200">
+                  <ApiFieldList items={RESPONSE_200_FIELDS} />
                 </ApiAccordion>
-                <ApiAccordion title="Response Body" defaultOpen>
-                  <ApiFieldList
-                    title="200 response fields"
-                    items={RESPONSE_SUCCESS_FIELDS}
-                  />
+                <ApiAccordion title="401">
+                  <ApiFieldList items={RESPONSE_401_FIELDS} />
                 </ApiAccordion>
               </ApiEndpointCard>
             </>
@@ -205,23 +269,12 @@ export function ListAccountsContent() {
           right={
             <div style={{ display: "grid", gap: 20 }}>
               <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, overflow: "hidden", background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)" }}>
-                <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 13, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--docs-text-faint)" }}>
-                  Examples
-                </div>
                 <div style={{ padding: 16 }}>
                   <CodeTabs snippets={SNIPPETS} />
                 </div>
               </div>
 
-              <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, overflow: "hidden", background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)" }}>
-                <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 13, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--docs-text-faint)" }}>
-                  Response Examples
-                </div>
-                <div style={{ padding: 16, display: "grid", gap: 16 }}>
-                  <ResponseBlock title="200" code={RESPONSE_200} />
-                  <ResponseBlock title="401" code={RESPONSE_401} />
-                </div>
-              </div>
+              <ResponseExampleTabs />
 
               <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, overflow: "hidden", background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)" }}>
                 <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 13, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--docs-text-faint)" }}>
