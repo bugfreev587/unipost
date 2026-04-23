@@ -16,8 +16,11 @@ const BODY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data", type: "array", description: "Per-post outcomes in input order." },
   { name: "data[].status", type: "integer", description: "Equivalent single-post HTTP status for that slot." },
-  { name: "data[].data", type: "object", description: "Successful post payload when the slot succeeded." },
-  { name: "data[].error", type: "object", description: "Per-slot error when that post failed validation or publish." },
+  { name: "data[].data", type: "object", description: "Accepted post payload for that slot. Immediate bulk publish returns async post objects, not final platform results." },
+  { name: "data[].data.id", type: "string", description: "UniPost post ID for that slot." },
+  { name: "data[].data.execution_mode", type: "string", description: 'Successful immediate slots return "async".' },
+  { name: "data[].data.status", type: "string", description: 'Initial post state, typically "queued" or "publishing".' },
+  { name: "data[].error", type: "object", description: "Per-slot error when that post failed validation before enqueue or the server failed before acceptance." },
   { name: "data[].error.code", type: "string", description: "Machine-readable error code for the slot." },
   { name: "data[].error.message", type: "string", description: "Human-readable error message for the slot." },
 ];
@@ -97,7 +100,8 @@ const RESPONSE_SNIPPETS = [
       "status": 200,
       "data": {
         "id": "post_abc123",
-        "status": "published"
+        "execution_mode": "async",
+        "status": "queued"
       }
     },
     {
@@ -127,7 +131,7 @@ export default function BulkPostsPage() {
     <SingleEndpointReferencePage
       section="publishing"
       title="Bulk publish"
-      description="Publishes up to 50 immediate posts in one request. Each slot is processed independently, so partial success is returned in the response body instead of failing the entire batch."
+      description="Accepts up to 50 immediate publish requests in one call. Each slot is validated and enqueued independently, so successful slots return async post resources while invalid slots return per-slot errors."
       method="POST"
       path="/v1/social-posts/bulk"
       requestSections={[
@@ -142,6 +146,12 @@ export default function BulkPostsPage() {
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
-    />
+    >
+      <div style={{ borderTop: "1px solid var(--docs-border)", paddingTop: 20 }}>
+        <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: 0 }}>
+          Bulk publish is also asynchronous at the post level. A `200` slot means UniPost accepted that item and queued background delivery. Final publish outcome should be read from the returned post IDs or received via webhooks.
+        </p>
+      </div>
+    </SingleEndpointReferencePage>
   );
 }

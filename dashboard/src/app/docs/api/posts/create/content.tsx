@@ -57,7 +57,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "scheduled_at?",
     type: "string",
-    description: "ISO-8601 timestamp. If present, the post is queued for future publish instead of publishing immediately.",
+    description: "ISO-8601 timestamp. If present, UniPost stores the post in scheduled state and the scheduler enqueues delivery later.",
   },
   {
     name: "idempotency_key?",
@@ -67,7 +67,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "status?",
     type: '"draft"',
-    description: <>Set to <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code> to save without publishing. Drafts are published later via <ApiInlineLink endpoint="POST /v1/social-posts/:post_id/publish" />.</>,
+    description: <>Set to <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code> to save without dispatching any platform jobs. Drafts are published later via <ApiInlineLink endpoint="POST /v1/social-posts/:post_id/publish" />.</>,
   },
 ];
 
@@ -116,6 +116,11 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     description: "UniPost post ID.",
   },
   {
+    name: "execution_mode",
+    type: "string",
+    description: 'Immediate publish returns "async" because the request enqueues delivery jobs and returns before platform dispatch finishes.',
+  },
+  {
     name: "caption",
     type: "string | null",
     description: "Top-level shared caption when one exists.",
@@ -123,7 +128,17 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
     name: "status",
     type: "string",
-    description: 'Lifecycle state such as "published", "scheduled", "partial", "failed", or "draft".',
+    description: 'Initial lifecycle state for the accepted post. Immediate creates usually return "queued" or "publishing", not final success/failure.',
+  },
+  {
+    name: "queued_results_count",
+    type: "integer",
+    description: "How many per-account delivery results were queued for background processing.",
+  },
+  {
+    name: "active_job_count",
+    type: "integer",
+    description: "How many queue jobs are currently active for this post.",
   },
   {
     name: "created_at",
@@ -143,7 +158,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
     name: "results",
     type: "array",
-    description: "Per-account publish outcomes.",
+    description: "Initial per-account result rows created at enqueue time.",
   },
   {
     name: "results[].social_account_id",
@@ -158,17 +173,40 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
     name: "results[].status",
     type: "string",
-    description: 'Per-account status such as "published", "failed", or "processing".',
+    description: 'Initial per-account state, usually "queued" or another pre-final status until workers finish dispatch.',
   },
   {
     name: "results[].external_id",
     type: "string | null",
-    description: "Platform-native post identifier when available.",
+    description: "Platform-native post identifier when available after delivery completes.",
   },
   {
     name: "results[].error_message",
     type: "string | null",
-    description: "Platform-specific failure reason for that result.",
+    description: "Platform-specific failure reason when delivery eventually fails.",
+  },
+];
+
+const RESPONSE_201_FIELDS: ApiFieldItem[] = [
+  {
+    name: "id",
+    type: "string",
+    description: "UniPost post ID.",
+  },
+  {
+    name: "status",
+    type: "string",
+    description: 'Created resource state such as "scheduled" or "draft".',
+  },
+  {
+    name: "created_at",
+    type: "string",
+    description: "Creation timestamp.",
+  },
+  {
+    name: "scheduled_at",
+    type: "string | null",
+    description: "Scheduled publish time when the post was created as scheduled content.",
   },
 ];
 
@@ -222,7 +260,8 @@ const post = await client.posts.create({
 });
 
 console.log(post.id);
-console.log(post.status);`,
+console.log(post.status); // queued/publishing
+console.log(post.executionMode); // async`,
   },
   {
     lang: "python",
@@ -247,7 +286,8 @@ post = client.posts.create(
 )
 
 print(post["data"]["id"])
-print(post["data"]["status"])`,
+print(post["data"]["status"])  # queued/publishing
+print(post["data"]["execution_mode"])`,
   },
   {
     lang: "go",
@@ -284,7 +324,7 @@ func main() {
     log.Fatal(err)
   }
 
-  _, _ = post.ID, post.Status
+  _, _, _ = post.ID, post.Status, post.ExecutionMode
 }`,
   },
 ];
@@ -296,26 +336,42 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "id": "post_abc123",
+    "execution_mode": "async",
     "caption": null,
-    "status": "published",
+    "status": "queued",
+    "queued_results_count": 2,
+    "active_job_count": 2,
     "created_at": "2026-04-22T10:00:00Z",
-    "published_at": "2026-04-22T10:00:02Z",
+    "published_at": null,
     "results": [
       {
         "social_account_id": "sa_twitter_789",
         "platform": "twitter",
-        "status": "published",
-        "external_id": "191234567890",
+        "status": "queued",
+        "external_id": null,
         "error_message": null
       },
       {
         "social_account_id": "sa_linkedin_456",
         "platform": "linkedin",
-        "status": "published",
-        "external_id": "urn:li:share:7049876543210",
+        "status": "queued",
+        "external_id": null,
         "error_message": null
       }
     ]
+  }
+}`,
+  },
+  {
+    lang: "json",
+    label: "201",
+    code: `{
+  "data": {
+    "id": "post_sched_123",
+    "caption": "Launch update",
+    "status": "scheduled",
+    "created_at": "2026-04-22T10:00:00Z",
+    "scheduled_at": "2026-04-23T16:00:00Z"
   }
 }`,
   },
@@ -346,7 +402,7 @@ export function CreatePostContent() {
     <SingleEndpointReferencePage
       section="publishing"
       title="Create post"
-      description={<>Publishes content to connected social accounts with the same payload shape used by <ApiInlineLink endpoint="POST /v1/social-posts/validate" />. Supports immediate publish, scheduling, drafts, media IDs, per-account overrides, and idempotent retries.</>}
+      description={<>Creates a UniPost post resource using the same payload shape as <ApiInlineLink endpoint="POST /v1/social-posts/validate" />. Immediate publish requests are accepted and queued asynchronously; background workers perform the actual platform delivery. Use scheduling or draft mode when you want creation without immediate dispatch.</>}
       method="POST"
       path="/v1/social-posts"
       requestSections={[
@@ -356,6 +412,7 @@ export function CreatePostContent() {
       ]}
       responses={[
         { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "201", fields: RESPONSE_201_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
         { code: "404", fields: ERROR_FIELDS },
         { code: "409", fields: ERROR_FIELDS },
@@ -366,6 +423,12 @@ export function CreatePostContent() {
       responseSnippets={RESPONSE_SNIPPETS}
     >
       <div style={{ borderTop: "1px solid var(--docs-border)", paddingTop: 20 }}>
+        <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: "0 0 14px" }}>
+          Immediate publish is asynchronous. A successful create response means UniPost accepted the request, created per-account result rows, and enqueued delivery jobs. It does not guarantee every destination already published.
+        </p>
+        <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: "0 0 18px" }}>
+          To observe final outcome, poll <ApiInlineLink endpoint="GET /v1/social-posts/:post_id" />. If you need queue-level progress, use <ApiInlineLink endpoint="GET /v1/social-posts/:post_id/queue" />. For push delivery, subscribe to webhook events such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.partial</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.failed</code>.
+        </p>
         <RelatedEndpoints
           items={[
             { method: "POST", path: "/v1/social-posts/validate", label: "Validate post", href: "/docs/api/posts/validate" },
@@ -373,6 +436,7 @@ export function CreatePostContent() {
             { method: "GET", path: "/v1/social-posts/:post_id", label: "Get post", href: "/docs/api/posts/get" },
             { method: "POST", path: "/v1/social-posts/bulk", label: "Bulk publish", href: "/docs/api/posts/bulk" },
             { method: "GET", path: "/v1/social-posts/:post_id/analytics", label: "Post analytics", href: "/docs/api/analytics/posts" },
+            { method: "GET", path: "/v1/webhooks", label: "List webhooks", href: "/docs/api/webhooks" },
             { method: "POST", path: "/v1/media", label: "Reserve media upload", href: "/docs/api/media/reserve" },
             { method: "GET", path: "/v1/media/:media_id", label: "Get media", href: "/docs/api/media/get" },
             { method: "GET", path: "/v1/social-accounts", label: "List accounts", href: "/docs/api/accounts/list" },

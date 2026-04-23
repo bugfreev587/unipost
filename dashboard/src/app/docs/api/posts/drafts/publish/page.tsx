@@ -10,9 +10,12 @@ const PATH_FIELDS: ApiFieldItem[] = [
   { name: "post_id", type: "string", description: "Draft post ID to publish." },
 ];
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
-  { name: "id", type: "string", description: "Published post ID." },
-  { name: "status", type: "string", description: 'Transitions from "draft" to a publish state.' },
-  { name: "results", type: "array", description: "Per-platform publish results." },
+  { name: "id", type: "string", description: "Draft post ID." },
+  { name: "execution_mode", type: "string", description: 'Returns "async" because draft publish enqueues delivery jobs and returns before workers finish dispatch.' },
+  { name: "status", type: "string", description: 'Initial post state after draft publish begins, typically "queued" or "publishing".' },
+  { name: "queued_results_count", type: "integer", description: "How many per-account delivery results were queued." },
+  { name: "active_job_count", type: "integer", description: "How many queue jobs are currently active." },
+  { name: "results", type: "array", description: "Initial per-platform result rows created at enqueue time." },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: "Machine-readable error code." },
@@ -38,13 +41,26 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "id": "post_abc123",
-    "status": "published",
+    "execution_mode": "async",
+    "status": "queued",
+    "queued_results_count": 1,
+    "active_job_count": 1,
     "results": [
       {
         "platform": "twitter",
-        "status": "published"
+        "status": "queued"
       }
     ]
+  }
+}`,
+  },
+  {
+    lang: "json",
+    label: "409",
+    code: `{
+  "error": {
+    "code": "CONFLICT",
+    "message": "Post is not a draft (already publishing, published, or not found in this workspace)"
   }
 }`,
   },
@@ -55,7 +71,7 @@ export default function PublishDraftPage() {
     <SingleEndpointReferencePage
       section="publishing"
       title="Publish draft"
-      description="Publishes a draft post that already exists in UniPost. Use it when a human or automation has approved the saved content."
+      description="Accepts an existing draft for publication. UniPost flips the draft into a publishable state, creates result rows, and enqueues background delivery jobs."
       method="POST"
       path="/v1/social-posts/:post_id/publish"
       requestSections={[
@@ -65,9 +81,16 @@ export default function PublishDraftPage() {
       responses={[
         { code: "200", fields: RESPONSE_200_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
+        { code: "409", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
-    />
+    >
+      <div style={{ borderTop: "1px solid var(--docs-border)", paddingTop: 20 }}>
+        <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: 0 }}>
+          Draft publish is asynchronous. A successful response means the draft was accepted for dispatch, not that every destination already published. Read final status from the post resource or via publish webhooks.
+        </p>
+      </div>
+    </SingleEndpointReferencePage>
   );
 }
