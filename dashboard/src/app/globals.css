@@ -51,17 +51,17 @@
 :root {
   color-scheme: light;
 
-  --app-bg: #f3f6fb;
+  --app-bg: #f7f8fb;
   --surface: #ffffff;
-  --surface2: #f5f8fc;
-  --surface3: #ebf1f7;
+  --surface2: #f3f5f8;
+  --surface3: #e9edf2;
   --surface-raised: #ffffff;
-  --surface-inset: #e9eff6;
+  --surface-inset: #edf1f5;
   --text: #1d1c1d;
-  --text-muted: #4c5564;
-  --text-subtle: #697586;
-  --border-soft: #d9e1ea;
-  --border-strong: #c6d0dc;
+  --text-muted: #566173;
+  --text-subtle: #738095;
+  --border-soft: #dbe2ea;
+  --border-strong: #cdd6e0;
   --overlay: rgb(15 23 42 / 0.34);
   --shadow-color: rgb(15 23 42 / 0.1);
 
@@ -111,7 +111,7 @@
   --chart-4: #7c3aed;
   --chart-5: var(--danger);
   --radius: 6px;
-  --sidebar: #fbfcff;
+  --sidebar: #f8fafc;
   --sidebar-foreground: var(--text-muted);
   --sidebar-primary: var(--text);
   --sidebar-primary-foreground: var(--surface);
@@ -240,8 +240,8 @@
   body {
     background: var(--app-bg);
     color: var(--text);
-    font-size: 14px;
-    line-height: 1.5;
+    font-size: 15px;
+    line-height: 1.6;
     -webkit-font-smoothing: antialiased;
   }
   body,
@@ -255,17 +255,25 @@
   }
 }
 
+.dashboard-typography {
+  font-family: var(--font-inter), var(--font-dm-sans), system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--dtext);
+  text-rendering: optimizeLegibility;
+}
+
 /* ── Dashboard typography tokens ────────────────────────────────────── */
-.dt-page-title    { font-size: 24px; line-height: 32px; font-weight: 700; color: var(--dtext); letter-spacing: -0.5px; }
-.dt-section-title { font-size: 20px; line-height: 28px; font-weight: 700; color: var(--dtext); }
-.dt-card-title    { font-size: 16px; line-height: 24px; font-weight: 600; color: var(--dtext); }
-.dt-body          { font-size: 14px; line-height: 20px; color: var(--dtext); }
-.dt-body-sm       { font-size: 13px; line-height: 18px; color: var(--dmuted); }
-.dt-label         { font-size: 11px; line-height: 16px; font-weight: 700; color: color-mix(in srgb, var(--dmuted) 82%, var(--dtext)); text-transform: uppercase; letter-spacing: 0.08em; }
-.dt-label-plain   { font-size: 13px; line-height: 18px; font-weight: 500; color: color-mix(in srgb, var(--dmuted) 92%, var(--dtext)); }
-.dt-mono          { font-size: 12px; line-height: 16px; font-weight: 500; font-family: var(--font-geist-mono), monospace; color: color-mix(in srgb, var(--dmuted) 90%, var(--dtext)); }
-.dt-micro         { font-size: 11px; line-height: 16px; font-weight: 600; color: color-mix(in srgb, var(--dmuted) 82%, var(--dtext)); }
-.dt-subtitle      { font-size: 15px; line-height: 23px; color: color-mix(in srgb, var(--dmuted) 92%, var(--dtext)); margin-top: 6px; }
+.dt-page-title    { font-size: 28px; line-height: 34px; font-weight: 720; color: var(--dtext); letter-spacing: -0.035em; }
+.dt-section-title { font-size: 22px; line-height: 30px; font-weight: 700; color: var(--dtext); letter-spacing: -0.02em; }
+.dt-card-title    { font-size: 17px; line-height: 24px; font-weight: 650; color: var(--dtext); letter-spacing: -0.015em; }
+.dt-body          { font-size: 15px; line-height: 24px; color: var(--dtext); }
+.dt-body-sm       { font-size: 14px; line-height: 22px; color: var(--dmuted); }
+.dt-label         { font-size: 12px; line-height: 16px; font-weight: 650; color: color-mix(in srgb, var(--dmuted) 78%, var(--dtext)); text-transform: uppercase; letter-spacing: 0.1em; }
+.dt-label-plain   { font-size: 14px; line-height: 20px; font-weight: 560; color: color-mix(in srgb, var(--dmuted) 90%, var(--dtext)); }
+.dt-mono          { font-size: 12.5px; line-height: 18px; font-weight: 500; font-family: var(--font-geist-mono), monospace; color: color-mix(in srgb, var(--dmuted) 88%, var(--dtext)); }
+.dt-micro         { font-size: 12px; line-height: 18px; font-weight: 600; color: color-mix(in srgb, var(--dmuted) 80%, var(--dtext)); }
+.dt-subtitle      { font-size: 16px; line-height: 26px; color: color-mix(in srgb, var(--dmuted) 90%, var(--dtext)); margin-top: 8px; }
 
 /* ── Mono ── */
 .mono {
@@ -312,12 +320,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 11px 13px;
+  border-radius: 10px;
   cursor: pointer;
-  color: color-mix(in srgb, var(--dmuted) 90%, var(--dtext));
-  font-size: 14px;
-  font-weight: 500;
+  color: color-mix(in srgb, var(--dmuted) 86%, var(--dtext));
+  font-size: 14.5px;
+  font-weight: 560;
   transition: all 0.15s;
   margin-bottom: 4px;
   border: 1px solid transparent;
@@ -344,21 +352,21 @@
 .table-wrap table { width: 100%; border-collapse: collapse; }
 .table-wrap thead { background: color-mix(in srgb, var(--surface2) 84%, white); }
 .table-wrap th {
-  padding: 14px 20px;
+  padding: 15px 20px;
   text-align: left;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: color-mix(in srgb, var(--dmuted) 82%, var(--dtext));
   border-bottom: 1px solid var(--dborder);
 }
 .table-wrap td {
-  padding: 14px 20px;
-  font-size: 14px;
+  padding: 16px 20px;
+  font-size: 15px;
   border-bottom: 1px solid var(--dborder);
   color: var(--dtext);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 .table-wrap tr:last-child td { border-bottom: none; }
 .table-wrap tbody tr { transition: background 0.1s; }
@@ -369,10 +377,10 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 8px;
+  padding: 4px 9px;
   border-radius: 20px;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 11.5px;
+  font-weight: 600;
   font-family: var(--font-geist-mono), monospace;
 }
 .dbadge-green { background: var(--success-soft); color: var(--success); border: 1px solid color-mix(in srgb, var(--success) 24%, transparent); }
@@ -387,9 +395,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  border-radius: 6px;
-  font-size: 13px;
+  padding: 8px 15px;
+  border-radius: 8px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
@@ -419,16 +427,16 @@
 .dbtn svg { width: 13px; height: 13px; }
 
 /* ── Forms ── */
-.dform-label { display: block; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--dmuted); margin-bottom: 6px; }
+.dform-label { display: block; font-size: 12.5px; line-height: 18px; font-weight: 650; color: var(--dmuted); margin-bottom: 7px; }
 .dform-input {
   width: 100%;
   background: var(--surface2);
   border: 1px solid var(--dborder2);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--dtext);
-  font-size: 14px;
-  line-height: 20px;
-  padding: 8px 12px;
+  font-size: 15px;
+  line-height: 24px;
+  padding: 10px 13px;
   font-family: inherit;
   outline: none;
   transition: border-color 0.15s;
