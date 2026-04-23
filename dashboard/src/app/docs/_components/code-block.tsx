@@ -260,14 +260,33 @@ export function CodeBlock({
   language,
   title,
   compact = false,
+  bare = false,
 }: {
   code: string;
   language?: string;
   title?: string;
   compact?: boolean;
+  bare?: boolean;
 }) {
   const normalized = useMemo(() => normalizeLanguage(language, code), [code, language]);
   const tokens = useMemo(() => tokenize(code, normalized), [code, normalized]);
+
+  if (bare) {
+    return (
+      <pre className="docs-code-surface bare">
+        <code className={`docs-code-content language-${normalized}`}>
+          {tokens.map((token, index) => (
+            <span
+              key={`${token.kind}-${index}`}
+              style={{ color: TOKEN_COLORS[token.kind] }}
+            >
+              {token.value}
+            </span>
+          ))}
+        </code>
+      </pre>
+    );
+  }
 
   return (
     <div className={`docs-code-block${compact ? " compact" : ""}`}>
@@ -342,6 +361,7 @@ export function codeBlockStyles() {
 .docs-copy-button svg{width:16px;height:16px}
 .docs-code-surface{margin:0 14px 14px;padding:18px 20px;background:var(--docs-tech-bg);overflow:auto;border-radius:16px}
 .docs-code-surface.tabs{border-radius:16px}
+.docs-code-surface.bare{margin:0;padding:18px 20px;border-radius:16px}
 .docs-code-content{display:block;white-space:pre;font-family:var(--docs-mono, var(--mono), monospace);font-size:13px;line-height:1.75;color:var(--docs-tech-text-soft)}
 .docs-code-tab-list{display:flex;gap:6px;flex-wrap:wrap}
 .docs-code-tab{padding:8px 12px;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);color:var(--docs-text-muted);font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}

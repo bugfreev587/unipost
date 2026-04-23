@@ -1,6 +1,4 @@
 "use client";
-
-import { useState } from "react";
 import {
   ApiReferencePage,
   ApiReferenceGrid,
@@ -8,7 +6,6 @@ import {
   ApiAccordion,
   ApiFieldList,
   CodeTabs,
-  ResponseBlock,
   type ApiFieldItem,
 } from "../../_components/doc-components";
 
@@ -161,42 +158,11 @@ const RESPONSE_TABS = [
   { code: "401", body: RESPONSE_401, fields: RESPONSE_401_FIELDS },
 ];
 
-function ResponseExampleTabs() {
-  const [activeCode, setActiveCode] = useState("200");
-  const active = RESPONSE_TABS.find((tab) => tab.code === activeCode) || RESPONSE_TABS[0];
-
-  return (
-    <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, overflow: "hidden", background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)" }}>
-      <div style={{ display: "flex", gap: 18, padding: "14px 18px 0", borderBottom: "1px solid var(--docs-border)" }}>
-        {RESPONSE_TABS.map((tab) => {
-          const activeTab = tab.code === activeCode;
-          return (
-            <button
-              key={tab.code}
-              type="button"
-              onClick={() => setActiveCode(tab.code)}
-              style={{
-                border: 0,
-                borderBottom: activeTab ? "2px solid #f04d23" : "2px solid transparent",
-                background: "transparent",
-                color: activeTab ? "#f04d23" : "var(--docs-text-muted)",
-                fontSize: 14,
-                fontWeight: 700,
-                padding: "0 0 12px",
-                cursor: "pointer",
-              }}
-            >
-              {tab.code}
-            </button>
-          );
-        })}
-      </div>
-      <div style={{ padding: 16 }}>
-        <ResponseBlock title={active.code} code={active.body} />
-      </div>
-    </div>
-  );
-}
+const RESPONSE_SNIPPETS = RESPONSE_TABS.map((tab) => ({
+  lang: "json",
+  label: tab.code,
+  code: tab.body,
+}));
 
 export function ListAccountsContent() {
   return (
@@ -251,13 +217,8 @@ export function ListAccountsContent() {
           }
           right={
             <div style={{ display: "grid", gap: 20 }}>
-              <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, overflow: "hidden", background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)" }}>
-                <div style={{ padding: 16 }}>
-                  <CodeTabs snippets={SNIPPETS} />
-                </div>
-              </div>
-
-              <ResponseExampleTabs />
+              <CodeTabs snippets={SNIPPETS} />
+              <CodeTabs snippets={RESPONSE_SNIPPETS} />
             </div>
           }
         />
