@@ -280,6 +280,10 @@ html.light{
   --docs-code-function: #f6a76c;
   --docs-code-type: #7ae0b2;
   --docs-code-constant: #f39abb;
+  --docs-tab-active-bg: #e8f1ff;
+  --docs-tab-active-border: #9bbcf1;
+  --docs-tab-active-text: #0f56b8;
+  --docs-tab-active-shadow: inset 0 0 0 1px rgba(15, 86, 184, 0.12);
 }
 html.dark{
   --docs-bg: #0c1017;
@@ -321,6 +325,10 @@ html.dark{
   --docs-code-function: #ff9857;
   --docs-code-type: #6dd39a;
   --docs-code-constant: #f08ab1;
+  --docs-tab-active-bg: #223752;
+  --docs-tab-active-border: #4e77b9;
+  --docs-tab-active-text: #dce9ff;
+  --docs-tab-active-shadow: inset 0 0 0 1px rgba(124, 178, 255, 0.18), 0 0 0 1px rgba(124, 178, 255, 0.08);
 }
 *{box-sizing:border-box}
 body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}

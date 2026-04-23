@@ -366,6 +366,6 @@ export function codeBlockStyles() {
 .docs-code-tab-list{display:flex;gap:6px;flex-wrap:wrap}
 .docs-code-tab{padding:8px 12px;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);color:var(--docs-text-muted);font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
 .docs-code-tab:hover{color:var(--docs-text);background:var(--docs-bg-muted)}
-.docs-code-tab.active{color:#0f56b8;border-color:color-mix(in srgb, var(--docs-link) 24%, var(--docs-border));background:color-mix(in srgb, var(--docs-link) 10%, var(--docs-bg-elevated));box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--docs-link) 16%, transparent)}
+.docs-code-tab.active{color:var(--docs-tab-active-text);border-color:var(--docs-tab-active-border);background:var(--docs-tab-active-bg);box-shadow:var(--docs-tab-active-shadow)}
 `;
 }
