@@ -568,21 +568,23 @@ export async function listSocialPostSummaries(
 
 export async function archiveSocialPost(
   token: string,
-  workspaceId: string,
+  _workspaceId: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}/archive`, token, {
-    method: "POST",
+  return request(`/v1/social-posts/${postId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ archived: true }),
   });
 }
 
 export async function restoreSocialPost(
   token: string,
-  workspaceId: string,
+  _workspaceId: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}/restore`, token, {
-    method: "POST",
+  return request(`/v1/social-posts/${postId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ archived: false }),
   });
 }
 
@@ -633,7 +635,7 @@ export async function retryPostDeliveryJobNow(
   workspaceId: string,
   jobId: string
 ): Promise<ApiResponse<PostDeliveryJob>> {
-  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/${jobId}/retry-now`, token, {
+  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/${jobId}/retry`, token, {
     method: "POST",
   });
 }
@@ -771,8 +773,9 @@ export async function cancelSocialPost(
   token: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/social-posts/${postId}/cancel`, token, {
-    method: "POST",
+  return request(`/v1/social-posts/${postId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ status: "canceled" }),
   });
 }
 
@@ -920,7 +923,7 @@ export async function getPostAnalytics(
   postId: string,
   opts?: { refresh?: boolean }
 ): Promise<ApiResponse<PostAnalytics[]>> {
-  const qs = opts?.refresh ? "?refresh=1" : "";
+  const qs = opts?.refresh ? "?refresh=true" : "";
   return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}/analytics${qs}`, token);
 }
 
@@ -974,6 +977,8 @@ export interface PlatformAnalytics {
 }
 
 export interface AnalyticsRangeParams {
+  from?: string;       // YYYY-MM-DD
+  to?: string;         // YYYY-MM-DD
   start_date?: string; // YYYY-MM-DD
   end_date?: string;   // YYYY-MM-DD
   platform?: string;   // platform key, omit or "all" to disable
@@ -983,8 +988,8 @@ export interface AnalyticsRangeParams {
 function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string {
   if (!params) return "";
   const qs = new URLSearchParams();
-  if (params.start_date) qs.set("start_date", params.start_date);
-  if (params.end_date) qs.set("end_date", params.end_date);
+  if (params.from || params.start_date) qs.set("from", params.from || params.start_date || "");
+  if (params.to || params.end_date) qs.set("to", params.to || params.end_date || "");
   if (params.platform && params.platform !== "all") qs.set("platform", params.platform);
   if (params.status && params.status !== "all") qs.set("status", params.status);
   if (params.metric) qs.set("metric", params.metric);
