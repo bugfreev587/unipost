@@ -5,6 +5,7 @@ import {
   ApiEndpointCard,
   ApiAccordion,
   ApiFieldList,
+  ApiRequestConfigCard,
   CodeTabs,
   type ApiFieldItem,
 } from "../../_components/doc-components";
@@ -205,6 +206,8 @@ export function ListAccountsContent() {
           left={
             <>
               <div style={{ display: "grid", gap: 16 }}>
+                <ApiRequestConfigCard authFields={AUTH_FIELDS} queryFields={QUERY_FIELDS} />
+
                 <ApiEndpointCard method="GET" path="/v1/social-accounts">
                   <div style={{ padding: "16px 18px" }}>
                     <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>

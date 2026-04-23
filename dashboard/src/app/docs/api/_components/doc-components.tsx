@@ -302,6 +302,187 @@ export interface ApiFieldItem {
   meta?: string;
 }
 
+function normalizeConfigFieldName(name: string) {
+  if (name.endsWith("?")) {
+    return {
+      label: name.slice(0, -1),
+      optional: true,
+    };
+  }
+
+  return {
+    label: name,
+    optional: false,
+  };
+}
+
+function buildFieldPlaceholder(field: ApiFieldItem, section: "auth" | "path" | "query") {
+  if (section === "auth") {
+    return field.type ? `Enter ${field.type}` : "Enter value";
+  }
+  if (field.type === "string[]") {
+    return "Comma-separated values";
+  }
+  if (field.type === "integer" || field.type === "number") {
+    return "Enter number";
+  }
+  return "Enter value";
+}
+
+function RequestConfigSection({
+  title,
+  fields,
+  section,
+}: {
+  title: string;
+  fields: ApiFieldItem[];
+  section: "auth" | "path" | "query";
+}) {
+  if (fields.length === 0) {
+    return null;
+  }
+
+  return (
+    <details className="api-request-config-section">
+      <summary
+        className="api-request-config-summary"
+        style={{
+          listStyle: "none",
+          cursor: "pointer",
+          padding: "15px 18px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+        }}
+      >
+        <span style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", letterSpacing: ".01em" }}>{title}</span>
+        <ChevronRight className="api-accordion-chevron" strokeWidth={2.2} />
+      </summary>
+      <div className="api-request-config-panel">
+        {fields.map((field) => {
+          const normalized = normalizeConfigFieldName(field.name);
+          const inputId = `request-config-${section}-${normalized.label}`;
+
+          return (
+            <div
+              key={`${section}-${field.name}`}
+              style={{
+                border: "1px solid var(--docs-border)",
+                borderRadius: 14,
+                padding: "14px 14px 12px",
+                background: "var(--docs-bg-muted)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <label htmlFor={inputId} style={{ fontFamily: "var(--docs-mono)", fontSize: 14, fontWeight: 700, color: "#f04d23" }}>
+                  {normalized.label}
+                </label>
+                {field.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 12.5, color: "var(--docs-text-muted)" }}>{field.type}</span> : null}
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    color: normalized.optional ? "var(--docs-text-faint)" : "var(--docs-text)",
+                    fontFamily: "var(--docs-mono)",
+                    textTransform: "uppercase",
+                    letterSpacing: ".04em",
+                  }}
+                >
+                  {normalized.optional ? "Optional" : "Required"}
+                </span>
+                {field.meta ? <span style={{ fontSize: 12, color: "var(--docs-text-faint)" }}>{field.meta}</span> : null}
+              </div>
+              <input
+                id={inputId}
+                type={section === "auth" ? "password" : "text"}
+                placeholder={buildFieldPlaceholder(field, section)}
+                spellCheck={false}
+                autoComplete="off"
+                style={{
+                  width: "100%",
+                  borderRadius: 10,
+                  border: "1px solid var(--docs-border)",
+                  background: "var(--docs-bg-elevated)",
+                  color: "var(--docs-text)",
+                  fontSize: 14,
+                  lineHeight: 1.5,
+                  padding: "11px 12px",
+                  outline: "none",
+                  fontFamily: "var(--docs-mono)",
+                }}
+              />
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--docs-text-soft)", marginTop: 10 }}>
+                {field.description}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
+export function ApiRequestConfigCard({
+  authFields = [],
+  pathFields = [],
+  queryFields = [],
+}: {
+  authFields?: ApiFieldItem[];
+  pathFields?: ApiFieldItem[];
+  queryFields?: ApiFieldItem[];
+}) {
+  const sections = [
+    authFields.length > 0 ? <RequestConfigSection key="auth" title="Authorization" fields={authFields} section="auth" /> : null,
+    pathFields.length > 0 ? <RequestConfigSection key="path" title="Path" fields={pathFields} section="path" /> : null,
+    queryFields.length > 0 ? <RequestConfigSection key="query" title="Query" fields={queryFields} section="query" /> : null,
+  ].filter(Boolean);
+
+  if (sections.length === 0) {
+    return null;
+  }
+
+  return (
+    <ApiEndpointCard method="" path="">
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            .api-request-config-section > summary::-webkit-details-marker{display:none}
+            .api-request-config-section .api-accordion-chevron{
+              width:18px;
+              height:18px;
+              color:var(--docs-text-muted);
+              flex-shrink:0;
+              transition:transform .18s ease,color .18s ease;
+              transform:rotate(0deg);
+              transform-origin:50% 50%;
+            }
+            .api-request-config-section[open] .api-accordion-chevron{
+              transform:rotate(90deg);
+              color:var(--docs-text-faint);
+            }
+            .api-request-config-section .api-request-config-summary:hover .api-accordion-chevron{
+              color:var(--docs-text);
+            }
+            .api-request-config-section + .api-request-config-section{
+              border-top:1px solid var(--docs-border);
+            }
+            .api-request-config-section .api-request-config-panel{
+              padding:0 18px 18px;
+              display:grid;
+              gap:12px;
+            }
+          `,
+        }}
+      />
+      <div style={{ padding: "16px 18px 6px", borderBottom: "1px solid var(--docs-border)" }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>Current API request</div>
+      </div>
+      <div>{sections}</div>
+    </ApiEndpointCard>
+  );
+}
+
 export function ApiReferencePage({
   section,
   title,
