@@ -15,16 +15,18 @@ type NavLeaf = {
   badge?: string;
 };
 
-type NavGroup = {
-  title: string;
-  items: NavLeaf[];
+type DocsPrimaryKey = "overview" | "platforms" | "api-reference";
+
+type DocsPrimaryNav = {
+  key: DocsPrimaryKey;
+  label: string;
+  href: string;
 };
 
-type NavSection = {
+type DocsSidebarSection = {
   title: string;
   description?: string;
-  groups?: NavGroup[];
-  items?: NavLeaf[];
+  items: NavLeaf[];
 };
 
 type HeadingItem = {
@@ -133,89 +135,92 @@ const userButtonAppearance = {
   },
 };
 
-export const DOCS_NAV: NavSection[] = [
-  {
-    title: "Get Started",
-    description: "Fastest path from API key to first publish.",
-    items: [
-      { label: "Quickstart", href: "/docs/quickstart" },
-      { label: "SDKs", href: "/docs/sdk" },
-      { label: "MCP", href: "/docs/mcp" },
-      { label: "Pricing", href: "/docs/pricing" },
-    ],
-  },
-  {
-    title: "White-label",
-    description: "Ship UniPost under your own brand for customer-facing products.",
-    items: [
-      { label: "Overview", href: "/docs/white-label" },
-    ],
-  },
-  {
-    title: "Platforms",
-    description: "Per-platform support, constraints, and examples.",
-    items: [
-      { label: "Overview", href: "/docs/platforms" },
-      { label: "Twitter/X", href: "/docs/platforms/twitter" },
-      { label: "LinkedIn", href: "/docs/platforms/linkedin" },
-      { label: "Instagram", href: "/docs/platforms/instagram" },
-      { label: "Threads", href: "/docs/platforms/threads" },
-      { label: "TikTok", href: "/docs/platforms/tiktok" },
-      { label: "YouTube", href: "/docs/platforms/youtube" },
-      { label: "Bluesky", href: "/docs/platforms/bluesky" },
-    ],
-  },
-  {
-    title: "API References",
-    description: "Endpoint-level docs for auth, publishing, and analytics.",
-    groups: [
-      {
-        title: "Core",
-        items: [
-          { label: "Overview", href: "/docs/api" },
-          { label: "Authentication", href: "/docs/api/authentication" },
-          { label: "Errors", href: "/docs/api/errors" },
-        ],
-      },
-      {
-        title: "Accounts",
-        items: [
-          { label: "Social Accounts", href: "/docs/api/accounts/list" },
-          { label: "Connect Sessions", href: "/docs/api/connect/sessions" },
-          { label: "Managed Users", href: "/docs/api/users" },
-          { label: "Account Health", href: "/docs/api/accounts/health" },
-        ],
-      },
-      {
-        title: "Publishing",
-        items: [
-          { label: "Create Post", href: "/docs/api/posts/create" },
-          { label: "Validate", href: "/docs/api/posts/validate" },
-          { label: "Drafts", href: "/docs/api/posts/drafts" },
-          { label: "Media", href: "/docs/api/media" },
-        ],
-      },
-      {
-        title: "Insights",
-        items: [
-          { label: "Analytics", href: "/docs/api/analytics" },
-          { label: "Notifications", href: "/docs/api/notifications" },
-          { label: "Slack Webhook URL", href: "/docs/api/slack-webhook" },
-          { label: "Discord Webhook URL", href: "/docs/api/discord-webhook" },
-          { label: "Webhooks", href: "/docs/api/webhooks" },
-          { label: "Billing", href: "/docs/api/billing" },
-        ],
-      },
-      {
-        title: "White-label",
-        items: [
-          { label: "Platform Credentials", href: "/docs/api/white-label/credentials" },
-          { label: "Profile Branding", href: "/docs/api/white-label/branding" },
-        ],
-      },
-    ],
-  },
+const DOCS_PRIMARY_NAV: DocsPrimaryNav[] = [
+  { key: "overview", label: "Overview", href: "/docs" },
+  { key: "platforms", label: "Platforms", href: "/docs/platforms" },
+  { key: "api-reference", label: "API Reference", href: "/docs/api" },
 ];
+
+const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
+  overview: [
+    {
+      title: "Overview",
+      description: "Core onboarding and developer surfaces for UniPost.",
+      items: [
+        { label: "Quickstart", href: "/docs/quickstart" },
+        { label: "SDKs", href: "/docs/sdk" },
+        { label: "MCP", href: "/docs/mcp" },
+        { label: "CLI", href: "/docs/cli" },
+        { label: "White-label", href: "/docs/white-label" },
+      ],
+    },
+  ],
+  platforms: [
+    {
+      title: "Platforms",
+      description: "Supported publishing destinations and implementation notes.",
+      items: [
+        { label: "Twitter/X", href: "/docs/platforms/twitter" },
+        { label: "LinkedIn", href: "/docs/platforms/linkedin" },
+        { label: "Instagram", href: "/docs/platforms/instagram" },
+        { label: "Threads", href: "/docs/platforms/threads" },
+        { label: "TikTok", href: "/docs/platforms/tiktok" },
+        { label: "YouTube", href: "/docs/platforms/youtube" },
+        { label: "Bluesky", href: "/docs/platforms/bluesky" },
+      ],
+    },
+  ],
+  "api-reference": [
+    {
+      title: "Core",
+      items: [
+        { label: "Overview", href: "/docs/api" },
+        { label: "Authentication", href: "/docs/api/authentication" },
+        { label: "Errors", href: "/docs/api/errors" },
+      ],
+    },
+    {
+      title: "Accounts",
+      items: [
+        { label: "Social Accounts", href: "/docs/api/accounts/list" },
+        { label: "Connect Sessions", href: "/docs/api/connect/sessions" },
+        { label: "Managed Users", href: "/docs/api/users" },
+        { label: "Account Health", href: "/docs/api/accounts/health" },
+      ],
+    },
+    {
+      title: "Publishing",
+      items: [
+        { label: "Create Post", href: "/docs/api/posts/create" },
+        { label: "Validate", href: "/docs/api/posts/validate" },
+        { label: "Drafts", href: "/docs/api/posts/drafts" },
+        { label: "Media", href: "/docs/api/media" },
+      ],
+    },
+    {
+      title: "Inbox",
+      items: [
+        { label: "Overview", href: "/docs/api/inbox" },
+      ],
+    },
+    {
+      title: "Analytics",
+      items: [
+        { label: "Analytics", href: "/docs/api/analytics" },
+      ],
+    },
+    {
+      title: "Insights",
+      items: [
+        { label: "Notifications", href: "/docs/api/notifications" },
+        { label: "Slack Webhook URL", href: "/docs/api/slack-webhook" },
+        { label: "Discord Webhook URL", href: "/docs/api/discord-webhook" },
+        { label: "Webhooks", href: "/docs/api/webhooks" },
+        { label: "Billing", href: "/docs/api/billing" },
+      ],
+    },
+  ],
+};
 
 const CSS = `
 :root{
@@ -312,24 +317,23 @@ html.dark{
 body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .docs-shell{min-height:100vh;background:var(--docs-shell-gradient)}
 .docs-topbar{position:sticky;top:0;z-index:50;border-bottom:1px solid color-mix(in srgb, var(--docs-border) 82%, transparent);background:var(--docs-topbar-bg);backdrop-filter:blur(16px)}
-.docs-topbar-inner{max-width:1540px;margin:0 auto;padding:0 28px;min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+.docs-topbar-inner{max-width:1540px;margin:0 auto;padding:0 28px;min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+.docs-topbar-left{display:flex;align-items:center;gap:28px;min-width:0;flex-wrap:wrap}
 .docs-brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;min-width:0}
 .docs-brand-mark{width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.docs-brand-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
-.docs-brand-name{display:block;font-size:14px;font-weight:700;letter-spacing:-.015em;line-height:1.15}
-.docs-brand-context{display:block;font-size:12px;line-height:1.45;color:var(--docs-text-muted)}
+.docs-brand-name{display:block;font-size:15px;font-weight:760;letter-spacing:-.02em;line-height:1.1}
+.docs-primary-nav{display:flex;align-items:center;gap:18px;min-width:0;flex-wrap:wrap}
+.docs-primary-link{display:inline-flex;align-items:center;padding:12px 2px 14px;border-bottom:3px solid transparent;font-size:15px;font-weight:650;line-height:1;color:var(--docs-text-muted);text-decoration:none;transition:color .12s,border-color .12s}
+.docs-primary-link:hover{color:var(--docs-text)}
+.docs-primary-link.active{color:var(--docs-text);border-bottom-color:var(--docs-link)}
 .docs-topbar-right{display:flex;align-items:center;gap:14px;justify-content:flex-end;flex-wrap:wrap}
-.docs-topbar-links{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.docs-topbar-link{padding:7px 10px;border-radius:10px;font-size:13px;font-weight:500;color:var(--docs-text-muted);text-decoration:none;transition:all .12s}
-.docs-topbar-link:hover{color:var(--docs-text);background:color-mix(in srgb, var(--docs-bg-muted) 86%, transparent)}
-.docs-topbar-link.active{color:var(--docs-text);background:color-mix(in srgb, var(--docs-bg-muted) 100%, transparent)}
 .docs-auth-actions{display:flex;align-items:center;gap:8px}
 .docs-auth-btn{display:inline-flex;align-items:center;justify-content:center;padding:8px 13px;border-radius:10px;border:1px solid transparent;font-family:var(--docs-ui);font-size:13px;font-weight:600;line-height:1;text-decoration:none;cursor:pointer;transition:all .14s}
 .docs-auth-btn.ghost{background:transparent;color:var(--docs-text-muted);border-color:var(--docs-border)}
 .docs-auth-btn.ghost:hover{background:var(--docs-bg-muted);color:var(--docs-text);border-color:var(--docs-border-strong)}
 .docs-auth-btn.primary{background:var(--docs-accent);color:#07140d;box-shadow:0 10px 22px rgba(16,185,129,.18)}
 .docs-auth-btn.primary:hover{filter:brightness(1.04)}
-.docs-layout{max-width:1540px;margin:0 auto;padding:32px 28px 88px;display:grid;grid-template-columns:252px minmax(0,var(--docs-reading-width)) 224px;justify-content:center;gap:34px}
+.docs-layout{max-width:1540px;margin:0 auto;padding:28px 28px 88px;display:grid;grid-template-columns:264px minmax(0,var(--docs-reading-width)) 224px;justify-content:center;gap:30px}
 .docs-sidebar,.docs-toc{position:sticky;top:96px;align-self:start;max-height:calc(100vh - 118px);overflow:auto;padding-bottom:16px}
 .docs-sidebar-card,.docs-toc-card{background:var(--docs-nav-surface);border:1px solid var(--docs-border);border-radius:18px;padding:15px 14px;box-shadow:var(--docs-card-shadow)}
 .docs-sidebar-section{padding:10px 0 2px;margin-bottom:14px}
@@ -403,21 +407,17 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
 @media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,var(--docs-reading-width));gap:26px}.docs-toc{display:none}}
-@media (max-width:960px){.docs-topbar-inner{padding:10px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-right{width:100%;align-items:flex-start;justify-content:flex-start;flex-direction:column}.docs-topbar-links{width:100%}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}}
+@media (max-width:960px){.docs-topbar-inner{padding:12px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-left,.docs-topbar-right{width:100%}.docs-topbar-left{gap:14px}.docs-primary-nav{gap:14px;overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.docs-topbar-right{align-items:flex-start;justify-content:flex-start;flex-direction:row}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}}
 `;
 
 function isLeafActive(current: string, href: string) {
   return current === href.split("#")[0];
 }
 
-function isTopLevelActive(current: string, href: string) {
-  if (href.includes("#")) {
-    return current === href.split("#")[0];
-  }
-  if (href === "/docs") {
-    return current === "/docs" || current.startsWith("/docs/");
-  }
-  return current === href || current.startsWith(`${href}/`);
+function getActivePrimaryNav(current: string): DocsPrimaryKey {
+  if (current.startsWith("/docs/platforms")) return "platforms";
+  if (current.startsWith("/docs/api")) return "api-reference";
+  return "overview";
 }
 
 function collectHeadingItems() {
@@ -480,6 +480,8 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn } = useAuth();
   const [headings, setHeadings] = useState<HeadingItem[]>([]);
   const [activeHeading, setActiveHeading] = useState("");
+  const activePrimaryNav = getActivePrimaryNav(pathname);
+  const sidebarSections = DOCS_SIDEBAR_NAV[activePrimaryNav];
 
   useEffect(() => {
     let frame = 0;
@@ -513,39 +515,31 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     return () => observer.disconnect();
   }, [pathname, headings]);
 
-  const topLinks = useMemo(
-    () => [
-      { label: "Docs", href: "/docs" },
-      { label: "API", href: "/docs/api" },
-      { label: "Pricing", href: "/pricing" },
-    ],
-    []
-  );
+  const topLinks = useMemo(() => DOCS_PRIMARY_NAV, []);
 
   return (
     <div className="docs-shell">
       <style dangerouslySetInnerHTML={{ __html: `${CSS}\n${codeBlockStyles()}` }} />
       <header className="docs-topbar">
         <div className="docs-topbar-inner">
-          <Link href="/docs" className="docs-brand">
-            <span className="docs-brand-mark"><UniPostMark size={30} /></span>
-            <span className="docs-brand-copy">
-              <span className="docs-brand-name">UniPost Docs</span>
-              <span className="docs-brand-context">Build social publishing, account onboarding, and analytics.</span>
-            </span>
-          </Link>
-          <div className="docs-topbar-right">
-            <nav className="docs-topbar-links">
+          <div className="docs-topbar-left">
+            <Link href="/docs" className="docs-brand">
+              <span className="docs-brand-mark"><UniPostMark size={30} /></span>
+              <span className="docs-brand-name">UniPost</span>
+            </Link>
+            <nav className="docs-primary-nav">
               {topLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`docs-topbar-link${isTopLevelActive(pathname, link.href) ? " active" : ""}`}
+                  className={`docs-primary-link${activePrimaryNav === link.key ? " active" : ""}`}
                 >
                   {link.label}
                 </Link>
               ))}
             </nav>
+          </div>
+          <div className="docs-topbar-right">
             <ThemeToggle />
             {isLoaded ? (
               isSignedIn ? (
@@ -579,13 +573,13 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
       <div className="docs-layout">
         <aside className="docs-sidebar">
           <div className="docs-sidebar-card">
-            {DOCS_NAV.map((section) => (
+            {sidebarSections.map((section) => (
               <section key={section.title} className="docs-sidebar-section">
                 <div className="docs-sidebar-section-header">
                   <div className="docs-section-label">{section.title}</div>
                   {section.description ? <div className="docs-section-desc">{section.description}</div> : null}
                 </div>
-                {section.items?.map((item) => (
+                {section.items.map((item) => (
                   <Link
                     key={item.href}
                     href={item.href}
@@ -594,21 +588,6 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                     <span>{item.label}</span>
                     {item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
                   </Link>
-                ))}
-                {section.groups?.map((group) => (
-                  <div key={group.title}>
-                    <div className="docs-nav-group-title">{group.title}</div>
-                    {group.items.map((item) => (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
-                      >
-                        <span>{item.label}</span>
-                        {item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
-                      </Link>
-                    ))}
-                  </div>
                 ))}
               </section>
             ))}
