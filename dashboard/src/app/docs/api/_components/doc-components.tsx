@@ -308,7 +308,7 @@ export function ApiReferencePage({
   children: React.ReactNode;
 }) {
   return (
-    <article style={{ width: "100%" }}>
+    <article className="docs-page docs-page-api" style={{ width: "100%" }}>
       <div style={{ padding: "10px 0 22px", borderBottom: "1px solid var(--docs-border)", marginBottom: 26 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: "#f04d23", marginBottom: 18 }}>{section}</div>
         <h1 style={{ fontSize: 42, lineHeight: 1.06, letterSpacing: "-0.045em", fontWeight: 740, margin: 0, color: "var(--docs-text)" }}>{title}</h1>

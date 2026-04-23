@@ -4,7 +4,6 @@ import { DM_Sans, Fira_Code } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SiteFooterGate } from "@/components/marketing/site-footer";
-import { warnIfFrontendHasClerkSecret } from "@/lib/clerk-env";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -76,8 +75,6 @@ const themeInitScript = `
   } catch (_) {}
 })();
 `;
-
-warnIfFrontendHasClerkSecret();
 
 export default function RootLayout({
   children,
