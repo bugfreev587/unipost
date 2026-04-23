@@ -1,7 +1,8 @@
 "use client";
 
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { Check, ChevronRight, Copy, Play, X } from "lucide-react";
 import { CodeBlock, CodeTabs as SharedCodeTabs, codeBlockStyles } from "../../_components/code-block";
 
 // ── Method badge ──
@@ -329,14 +330,22 @@ function buildFieldPlaceholder(field: ApiFieldItem, section: "auth" | "path" | "
   return "Enter value";
 }
 
+function buildFieldKey(name: string) {
+  return normalizeConfigFieldName(name).label;
+}
+
 function RequestConfigSection({
   title,
   fields,
   section,
+  values,
+  onValueChange,
 }: {
   title: string;
   fields: ApiFieldItem[];
   section: "auth" | "path" | "query";
+  values: Record<string, string>;
+  onValueChange: (key: string, value: string) => void;
 }) {
   if (fields.length === 0) {
     return null;
@@ -356,13 +365,14 @@ function RequestConfigSection({
           gap: 16,
         }}
       >
-        <span style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", letterSpacing: ".01em" }}>{title}</span>
+        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--docs-text-soft)", letterSpacing: ".01em" }}>{title}</span>
         <ChevronRight className="api-accordion-chevron" strokeWidth={2.2} />
       </summary>
       <div className="api-request-config-panel">
         {fields.map((field) => {
           const normalized = normalizeConfigFieldName(field.name);
           const inputId = `request-config-${section}-${normalized.label}`;
+          const fieldKey = buildFieldKey(field.name);
 
           return (
             <div
@@ -370,19 +380,19 @@ function RequestConfigSection({
               style={{
                 border: "1px solid var(--docs-border)",
                 borderRadius: 14,
-                padding: "14px 14px 12px",
+                padding: "12px 12px 10px",
                 background: "var(--docs-bg-muted)",
               }}
             >
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <label htmlFor={inputId} style={{ fontFamily: "var(--docs-mono)", fontSize: 14, fontWeight: 700, color: "#f04d23" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                <label htmlFor={inputId} style={{ fontFamily: "var(--docs-mono)", fontSize: 12.5, fontWeight: 600, color: "var(--docs-text)" }}>
                   {normalized.label}
                 </label>
-                {field.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 12.5, color: "var(--docs-text-muted)" }}>{field.type}</span> : null}
+                {field.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 11.5, color: "var(--docs-text-muted)" }}>{field.type}</span> : null}
                 <span
                   style={{
-                    fontSize: 11.5,
-                    fontWeight: 700,
+                    fontSize: 10.5,
+                    fontWeight: 600,
                     color: normalized.optional ? "var(--docs-text-faint)" : "var(--docs-text)",
                     fontFamily: "var(--docs-mono)",
                     textTransform: "uppercase",
@@ -399,20 +409,22 @@ function RequestConfigSection({
                 placeholder={buildFieldPlaceholder(field, section)}
                 spellCheck={false}
                 autoComplete="off"
+                value={values[fieldKey] || ""}
+                onChange={(event) => onValueChange(fieldKey, event.target.value)}
                 style={{
                   width: "100%",
                   borderRadius: 10,
                   border: "1px solid var(--docs-border)",
                   background: "var(--docs-bg-elevated)",
                   color: "var(--docs-text)",
-                  fontSize: 14,
+                  fontSize: 12.5,
                   lineHeight: 1.5,
-                  padding: "11px 12px",
+                  padding: "9px 11px",
                   outline: "none",
                   fontFamily: "var(--docs-mono)",
                 }}
               />
-              <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--docs-text-soft)", marginTop: 10 }}>
+              <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--docs-text-soft)", marginTop: 8 }}>
                 {field.description}
               </div>
             </div>
@@ -424,18 +436,135 @@ function RequestConfigSection({
 }
 
 export function ApiRequestConfigCard({
+  method,
+  path,
+  requestPathTemplate,
+  baseUrl = "https://api.unipost.dev",
   authFields = [],
   pathFields = [],
   queryFields = [],
 }: {
+  method: string;
+  path: string;
+  requestPathTemplate?: string;
+  baseUrl?: string;
   authFields?: ApiFieldItem[];
   pathFields?: ApiFieldItem[];
   queryFields?: ApiFieldItem[];
 }) {
+  const [authValues, setAuthValues] = useState<Record<string, string>>({});
+  const [pathValues, setPathValues] = useState<Record<string, string>>({});
+  const [queryValues, setQueryValues] = useState<Record<string, string>>({});
+  const [isRunning, setIsRunning] = useState(false);
+  const [responseOpen, setResponseOpen] = useState(false);
+  const [responseStatus, setResponseStatus] = useState<number | null>(null);
+  const [responseBody, setResponseBody] = useState("{}");
+  const [responseCopied, setResponseCopied] = useState(false);
+  const [modalPosition, setModalPosition] = useState({ x: 80, y: 80 });
+  const dragState = useRef<{ offsetX: number; offsetY: number; dragging: boolean }>({
+    offsetX: 0,
+    offsetY: 0,
+    dragging: false,
+  });
+
+  const pathPreview = requestPathTemplate || path;
+  const queryParamKeys = useMemo(() => queryFields.map((field) => buildFieldKey(field.name)), [queryFields]);
+  const authFieldKey = authFields.length > 0 ? buildFieldKey(authFields[0].name) : null;
+
+  const requestUrl = useMemo(() => {
+    const resolvedPath = pathFields.reduce((acc, field) => {
+      const key = buildFieldKey(field.name);
+      const value = pathValues[key]?.trim();
+      return acc.replace(`:${key}`, value || `:${key}`);
+    }, path);
+
+    const params = new URLSearchParams();
+    for (const key of queryParamKeys) {
+      const value = queryValues[key]?.trim();
+      if (value) {
+        params.set(key, value);
+      }
+    }
+
+    const queryString = params.toString();
+    return `${baseUrl}${resolvedPath}${queryString ? `?${queryString}` : ""}`;
+  }, [baseUrl, path, pathFields, pathValues, queryParamKeys, queryValues]);
+
+  async function handleRun() {
+    try {
+      setIsRunning(true);
+
+      const headers: Record<string, string> = {};
+      if (authFieldKey) {
+        const rawToken = authValues[authFieldKey]?.trim();
+        if (rawToken) {
+          headers.Authorization = /^Bearer\s+/i.test(rawToken) ? rawToken : `Bearer ${rawToken}`;
+        }
+      }
+
+      const response = await fetch(requestUrl, {
+        method,
+        headers,
+      });
+
+      const text = await response.text();
+      let formatted = text;
+      try {
+        formatted = JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        formatted = JSON.stringify({ raw: text || "" }, null, 2);
+      }
+
+      setResponseStatus(response.status);
+      setResponseBody(formatted);
+      setResponseOpen(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown request error";
+      setResponseStatus(null);
+      setResponseBody(JSON.stringify({ error: message }, null, 2));
+      setResponseOpen(true);
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
+  async function handleCopyResponse() {
+    await navigator.clipboard.writeText(responseBody);
+    setResponseCopied(true);
+    window.setTimeout(() => setResponseCopied(false), 1600);
+  }
+
+  function startDrag(event: React.PointerEvent<HTMLDivElement>) {
+    dragState.current = {
+      dragging: true,
+      offsetX: event.clientX - modalPosition.x,
+      offsetY: event.clientY - modalPosition.y,
+    };
+
+    const move = (moveEvent: PointerEvent) => {
+      if (!dragState.current.dragging) {
+        return;
+      }
+      setModalPosition({
+        x: Math.max(16, moveEvent.clientX - dragState.current.offsetX),
+        y: Math.max(16, moveEvent.clientY - dragState.current.offsetY),
+      });
+    };
+
+    const stop = () => {
+      dragState.current.dragging = false;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  }
+
   const sections = [
-    authFields.length > 0 ? <RequestConfigSection key="auth" title="Authorization" fields={authFields} section="auth" /> : null,
-    pathFields.length > 0 ? <RequestConfigSection key="path" title="Path" fields={pathFields} section="path" /> : null,
-    queryFields.length > 0 ? <RequestConfigSection key="query" title="Query" fields={queryFields} section="query" /> : null,
+    authFields.length > 0 ? <RequestConfigSection key="auth" title="Authorization" fields={authFields} section="auth" values={authValues} onValueChange={(key, value) => setAuthValues((current) => ({ ...current, [key]: value }))} /> : null,
+    pathFields.length > 0 ? <RequestConfigSection key="path" title="Path" fields={pathFields} section="path" values={pathValues} onValueChange={(key, value) => setPathValues((current) => ({ ...current, [key]: value }))} /> : null,
+    queryFields.length > 0 ? <RequestConfigSection key="query" title="Query" fields={queryFields} section="query" values={queryValues} onValueChange={(key, value) => setQueryValues((current) => ({ ...current, [key]: value }))} /> : null,
   ].filter(Boolean);
 
   if (sections.length === 0) {
@@ -443,43 +572,177 @@ export function ApiRequestConfigCard({
   }
 
   return (
-    <ApiEndpointCard method="" path="">
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-            .api-request-config-section > summary::-webkit-details-marker{display:none}
-            .api-request-config-section .api-accordion-chevron{
-              width:18px;
-              height:18px;
-              color:var(--docs-text-muted);
-              flex-shrink:0;
-              transition:transform .18s ease,color .18s ease;
-              transform:rotate(0deg);
-              transform-origin:50% 50%;
-            }
-            .api-request-config-section[open] .api-accordion-chevron{
-              transform:rotate(90deg);
-              color:var(--docs-text-faint);
-            }
-            .api-request-config-section .api-request-config-summary:hover .api-accordion-chevron{
-              color:var(--docs-text);
-            }
-            .api-request-config-section + .api-request-config-section{
-              border-top:1px solid var(--docs-border);
-            }
-            .api-request-config-section .api-request-config-panel{
-              padding:0 18px 18px;
-              display:grid;
-              gap:12px;
-            }
-          `,
-        }}
-      />
-      <div style={{ padding: "16px 18px 6px", borderBottom: "1px solid var(--docs-border)" }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>Current API request</div>
-      </div>
-      <div>{sections}</div>
-    </ApiEndpointCard>
+    <>
+      <ApiEndpointCard method="" path="">
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+              .api-request-config-section > summary::-webkit-details-marker{display:none}
+              .api-request-config-section .api-accordion-chevron{
+                width:18px;
+                height:18px;
+                color:var(--docs-text-muted);
+                flex-shrink:0;
+                transition:transform .18s ease,color .18s ease;
+                transform:rotate(0deg);
+                transform-origin:50% 50%;
+              }
+              .api-request-config-section[open] .api-accordion-chevron{
+                transform:rotate(90deg);
+                color:var(--docs-text-faint);
+              }
+              .api-request-config-section .api-request-config-summary:hover .api-accordion-chevron{
+                color:var(--docs-text);
+              }
+              .api-request-config-section + .api-request-config-section{
+                border-top:1px solid var(--docs-border);
+              }
+              .api-request-config-section .api-request-config-panel{
+                padding:0 16px 16px;
+                display:grid;
+                gap:10px;
+              }
+            `,
+          }}
+        />
+        <div
+          style={{
+            padding: "8px 18px",
+            borderBottom: "1px solid var(--docs-border)",
+            background: "var(--docs-bg-muted)",
+            fontSize: 11.5,
+            fontFamily: "var(--docs-mono)",
+            color: "var(--docs-text-faint)",
+            textAlign: "center",
+          }}
+        >
+          {baseUrl}
+        </div>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--docs-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+          <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 13, fontWeight: 700, color: METHOD_COLORS[method]?.text || "var(--docs-text)" }}>{method}</span>
+            <code style={{ fontFamily: "var(--docs-mono)", fontSize: 13, color: "var(--docs-text-soft)", wordBreak: "break-all" }}>{pathPreview}</code>
+          </div>
+          <button
+            type="button"
+            onClick={handleRun}
+            disabled={isRunning}
+            style={{
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              border: "1px solid color-mix(in srgb, #3b82f6 26%, var(--docs-border))",
+              background: isRunning ? "color-mix(in srgb, #3b82f6 14%, var(--docs-bg-muted))" : "color-mix(in srgb, #3b82f6 18%, var(--docs-bg-elevated))",
+              color: "#2563eb",
+              borderRadius: 10,
+              padding: "8px 11px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: isRunning ? "wait" : "pointer",
+              fontFamily: "var(--docs-mono)",
+            }}
+          >
+            <Play size={13} />
+            {isRunning ? "Running" : "Run"}
+          </button>
+        </div>
+        <div>{sections}</div>
+      </ApiEndpointCard>
+
+      {responseOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 120,
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: modalPosition.x,
+              top: modalPosition.y,
+              width: "min(720px, calc(100vw - 32px))",
+              maxHeight: "min(70vh, 680px)",
+              background: "var(--docs-bg-elevated)",
+              border: "1px solid var(--docs-border)",
+              borderRadius: 18,
+              boxShadow: "var(--docs-card-shadow)",
+              overflow: "hidden",
+              pointerEvents: "auto",
+            }}
+          >
+            <div
+              onPointerDown={startDrag}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "12px 14px",
+                borderBottom: "1px solid var(--docs-border)",
+                background: "var(--docs-bg-muted)",
+                cursor: "grab",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--docs-text-soft)" }}>Response</div>
+                {responseStatus !== null ? (
+                  <span style={{ fontFamily: "var(--docs-mono)", fontSize: 11.5, color: "var(--docs-text-faint)" }}>
+                    HTTP {responseStatus}
+                  </span>
+                ) : null}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={handleCopyResponse}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: 9,
+                    border: "1px solid var(--docs-border)",
+                    background: "var(--docs-bg-elevated)",
+                    color: "var(--docs-text-muted)",
+                    cursor: "pointer",
+                  }}
+                  aria-label="Copy response"
+                >
+                  {responseCopied ? <Check size={15} /> : <Copy size={15} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setResponseOpen(false)}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: 9,
+                    border: "1px solid var(--docs-border)",
+                    background: "var(--docs-bg-elevated)",
+                    color: "var(--docs-text-muted)",
+                    cursor: "pointer",
+                  }}
+                  aria-label="Close response"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+            <div style={{ padding: 14, overflow: "auto", maxHeight: "calc(min(70vh, 680px) - 58px)" }}>
+              <CodeBlock code={responseBody} language="json" bare />
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 

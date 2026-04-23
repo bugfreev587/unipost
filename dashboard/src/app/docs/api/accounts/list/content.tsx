@@ -206,7 +206,14 @@ export function ListAccountsContent() {
           left={
             <>
               <div style={{ display: "grid", gap: 16 }}>
-                <ApiRequestConfigCard authFields={AUTH_FIELDS} queryFields={QUERY_FIELDS} />
+                <ApiRequestConfigCard
+                  method="GET"
+                  path="/v1/social-accounts"
+                  requestPathTemplate="/v1/social-accounts?{platform}&{external_user_id}"
+                  baseUrl="https://api.unipost.dev"
+                  authFields={AUTH_FIELDS}
+                  queryFields={QUERY_FIELDS}
+                />
 
                 <ApiEndpointCard method="GET" path="/v1/social-accounts">
                   <div style={{ padding: "16px 18px" }}>
