@@ -6,6 +6,9 @@ import { SingleEndpointReferencePage } from "../../_components/single-endpoint-p
 const AUTH_FIELDS: ApiFieldItem[] = [
   { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key." },
 ];
+const QUERY_FIELDS: ApiFieldItem[] = [
+  { name: "limit?", type: "integer", description: "Maximum number of webhook subscriptions to return. Default is all, max 100." },
+];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data[]", type: "array", description: "Webhook subscriptions for the current workspace." },
@@ -15,11 +18,15 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data[].active", type: "boolean", description: "Whether delivery is enabled." },
   { name: "data[].secret_preview", type: "string", description: "Short preview of the active signing secret." },
   { name: "meta.total", type: "number", description: "Total webhook count in the response." },
+  { name: "meta.limit", type: "number", description: "Applied list limit for this response." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized".' },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
 const SNIPPETS = [
@@ -38,7 +45,7 @@ const client = new UniPost({
   apiKey: process.env.UNIPOST_API_KEY,
 });
 
-const { data: webhooks } = await client.webhooks.list();
+const { data: webhooks, meta } = await client.webhooks.list();
 console.log(webhooks.length);`,
   },
 ];
@@ -59,8 +66,10 @@ const RESPONSE_SNIPPETS = [
     }
   ],
   "meta": {
-    "total": 1
-  }
+    "total": 1,
+    "limit": 100
+  },
+  "request_id": "req_123"
 }`,
   },
 ];
@@ -73,7 +82,10 @@ export default function ListWebhooksPage() {
       description="Returns every developer webhook subscription configured for the current workspace. Plaintext secrets are never returned from list reads."
       method="GET"
       path="/v1/webhooks"
-      requestSections={[{ title: "Authorization", items: AUTH_FIELDS }]}
+      requestSections={[
+        { title: "Authorization", items: AUTH_FIELDS },
+        { title: "Query Params", items: QUERY_FIELDS },
+      ]}
       responses={[
         { code: "200", fields: RESPONSE_200_FIELDS },
         { code: "401", fields: ERROR_FIELDS },

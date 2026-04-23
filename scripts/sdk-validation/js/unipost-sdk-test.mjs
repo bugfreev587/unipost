@@ -76,6 +76,8 @@ async function main() {
   const accounts = await test('listAccounts()', async () => {
     const res = await client.accounts.list();
     if (!res || !Array.isArray(res.data)) throw new Error('Expected data array');
+    if (!res.meta || typeof res.meta.total !== 'number') throw new Error('Expected meta.total');
+    if (typeof res.meta.limit !== 'number') throw new Error('Expected meta.limit');
     if (res.data.length === 0) throw new Error('No accounts found — connect at least one');
     return res.data;
   });
@@ -163,6 +165,8 @@ async function main() {
       const res = await client.webhooks.list();
       if (!Array.isArray(res?.data)) throw new Error('Expected data array');
       if (!res.data.find((item) => item.id === webhook.id)) throw new Error('Created webhook not found in list');
+      if (!res.meta || typeof res.meta.total !== 'number') throw new Error('Expected meta.total');
+      if (typeof res.meta.limit !== 'number') throw new Error('Expected meta.limit');
       return res.data;
     });
 
@@ -198,6 +202,9 @@ async function main() {
   const posts = await test('posts.list()', async () => {
     const res = await client.posts.list({ limit: 5 });
     if (!res || !Array.isArray(res.data)) throw new Error('Expected data array');
+    if (res.meta && res.meta.next_cursor !== undefined && res.nextCursor !== res.meta.next_cursor) {
+      throw new Error('Expected nextCursor to mirror meta.next_cursor');
+    }
     return res.data;
   });
 

@@ -344,8 +344,8 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // createScheduledPost persists the post with status="scheduled" and
 // the v2 metadata blob so the scheduler can later fan out per-account
-// when the time arrives. Returns 200 with a minimal response (no
-// results yet — they'll exist after the scheduler fires).
+// when the time arrives. Returns 201 Created with a minimal response
+// (no results yet — they'll exist after the scheduler fires).
 func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) {
 	// Persist the parsed request shape into metadata so the scheduler
 	// can reconstruct the per-account captions.
@@ -422,7 +422,7 @@ func (h *SocialPostHandler) createImmediatePost(
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeSuccess(w, resp)
+	writeAccepted(w, resp)
 }
 
 // executeImmediatePost is createImmediatePost without the response
@@ -455,7 +455,7 @@ func (h *SocialPostHandler) publishExistingPost(
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	writeSuccess(w, resp)
+	writeAccepted(w, resp)
 }
 
 // runPublishLoop is the shared body of createImmediatePost and
@@ -1291,7 +1291,18 @@ func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
 func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Request, post db.SocialPost) {
 	resp := h.replayedPostResponse(r, post)
 	w.Header().Set("Idempotent-Replay", "true")
-	writeSuccess(w, resp)
+	if socialPostCreateStatusCode(post) == http.StatusAccepted {
+		writeAccepted(w, resp)
+		return
+	}
+	writeCreated(w, resp)
+}
+
+func socialPostCreateStatusCode(post db.SocialPost) int {
+	if post.Status == "draft" || post.Status == "scheduled" || post.ScheduledAt.Valid {
+		return http.StatusCreated
+	}
+	return http.StatusAccepted
 }
 
 // replayedPostResponse rebuilds a socialPostResponse from a previously-
@@ -1716,16 +1727,12 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		last := posts[len(posts)-1]
 		nextCursor = encodeListCursor(last.CreatedAt.Time, last.ID)
 	}
+	hasMore := nextCursor != ""
 
-	// Cursor pagination uses a flat envelope ({data, next_cursor}) rather
-	// than the nested writeSuccess path. Calling writeSuccess here would
-	// double-wrap as {data: {data: [...], next_cursor: ""}}, which the
-	// dashboard and the smoke test both reject because they read .data
-	// and .next_cursor at the top level.
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data":        result,
-		"next_cursor": nextCursor,
-	})
+	// Transitional shape: expose the new cursor metadata under meta while
+	// keeping the legacy top-level next_cursor field so existing SDKs,
+	// smoke tests, and MCP tooling do not break during the migration.
+	writeSuccessWithLegacyCursor(w, result, nextCursor, hasMore, limit)
 }
 
 // ListSummaries returns a lightweight subset of post data for pages
@@ -1863,21 +1870,10 @@ func (h *SocialPostHandler) Archive(w http.ResponseWriter, r *http.Request) {
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
 	}
-
-	post, err := h.queries.ArchiveSocialPost(r.Context(), db.ArchiveSocialPostParams{
-		ID:          postID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to archive post")
-		return
-	}
-
-	writeSuccess(w, socialPostResponseFromRow(post))
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
+	w.Header().Set("Link", `</v1/social-posts/`+postID+`>; rel="successor-version"`)
+	h.archiveSocialPost(w, r, workspaceID, postID)
 }
 
 // Restore handles POST /v1/social-posts/{id}/restore.
@@ -1887,21 +1883,10 @@ func (h *SocialPostHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
 	}
-
-	post, err := h.queries.RestoreSocialPost(r.Context(), db.RestoreSocialPostParams{
-		ID:          postID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to restore post")
-		return
-	}
-
-	writeSuccess(w, socialPostResponseFromRow(post))
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
+	w.Header().Set("Link", `</v1/social-posts/`+postID+`>; rel="successor-version"`)
+	h.restoreSocialPost(w, r, workspaceID, postID)
 }
 
 // Delete handles DELETE /v1/social-posts/{id}

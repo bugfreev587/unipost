@@ -82,9 +82,19 @@ const RESPONSE_401_FIELDS: ApiFieldItem[] = [
     description: 'Usually "UNAUTHORIZED".',
   },
   {
+    name: "error.normalized_code",
+    type: "string",
+    description: 'Lowercase alias such as "unauthorized".',
+  },
+  {
     name: "error.message",
     type: "string",
     description: "Human-readable auth error.",
+  },
+  {
+    name: "request_id",
+    type: "string",
+    description: "Request identifier for debugging and support.",
   },
 ];
 
@@ -95,9 +105,19 @@ const RESPONSE_422_FIELDS: ApiFieldItem[] = [
     description: 'Usually "VALIDATION_FAILED".',
   },
   {
+    name: "error.normalized_code",
+    type: "string",
+    description: 'Lowercase alias such as "validation_error".',
+  },
+  {
     name: "error.message",
     type: "string",
     description: "Returned when the request body shape is invalid.",
+  },
+  {
+    name: "request_id",
+    type: "string",
+    description: "Request identifier for debugging and support.",
   },
 ];
 

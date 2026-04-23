@@ -57,11 +57,12 @@ export default function BrandingPage() {
       <DocsTable
         columns={["Status", "Code", "When"]}
         rows={[
-          ["401", "UNAUTHORIZED", "Missing or invalid API key"],
-          ["404", "NOT_FOUND", "Profile does not belong to the caller&rsquo;s workspace"],
-          ["422", "VALIDATION_ERROR", "A field failed validation (URL scheme, length, or hex format)"],
+          ["401", "UNAUTHORIZED / unauthorized", "Missing or invalid API key"],
+          ["404", "NOT_FOUND / not_found", "Profile does not belong to the caller&rsquo;s workspace"],
+          ["422", "VALIDATION_ERROR / validation_error", "A field failed validation (URL scheme, length, or hex format)"],
         ]}
       />
+      <p>Public API errors also include a lowercase <code>error.normalized_code</code> alias and a top-level <code>request_id</code> for tracing.</p>
     </DocsPage>
   );
 }

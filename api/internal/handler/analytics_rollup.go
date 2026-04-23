@@ -17,7 +17,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -238,8 +237,7 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 		resp.Series = append(resp.Series, *bucketsByTime[t])
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"data": resp})
+	writeSuccess(w, resp)
 }
 
 // parseRollupRange reads from + to from the query string. Both are

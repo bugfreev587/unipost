@@ -109,7 +109,7 @@ const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
   },
 ];
 
-const RESPONSE_200_FIELDS: ApiFieldItem[] = [
+const RESPONSE_202_FIELDS: ApiFieldItem[] = [
   {
     name: "id",
     type: "string",
@@ -185,6 +185,11 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     type: "string | null",
     description: "Platform-specific failure reason when delivery eventually fails.",
   },
+  {
+    name: "request_id",
+    type: "string",
+    description: "Request identifier for debugging and support.",
+  },
 ];
 
 const RESPONSE_201_FIELDS: ApiFieldItem[] = [
@@ -208,11 +213,18 @@ const RESPONSE_201_FIELDS: ApiFieldItem[] = [
     type: "string | null",
     description: "Scheduled publish time when the post was created as scheduled content.",
   },
+  {
+    name: "request_id",
+    type: "string",
+    description: "Request identifier for debugging and support.",
+  },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: "Machine-readable error code." },
+  { name: "error.normalized_code", type: "string", description: "Lowercase compatibility alias for the error code." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
 const SNIPPETS = [
@@ -332,7 +344,7 @@ func main() {
 const RESPONSE_SNIPPETS = [
   {
     lang: "json",
-    label: "200",
+    label: "202",
     code: `{
   "data": {
     "id": "post_abc123",
@@ -359,7 +371,8 @@ const RESPONSE_SNIPPETS = [
         "error_message": null
       }
     ]
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
   {
@@ -372,7 +385,8 @@ const RESPONSE_SNIPPETS = [
     "status": "scheduled",
     "created_at": "2026-04-22T10:00:00Z",
     "scheduled_at": "2026-04-23T16:00:00Z"
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
   {
@@ -381,8 +395,10 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "error": {
     "code": "VALIDATION_ERROR",
+    "normalized_code": "validation_error",
     "message": "Caption exceeds maximum length for twitter (280 characters)"
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
   {
@@ -391,8 +407,10 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "error": {
     "code": "CONFLICT",
+    "normalized_code": "conflict",
     "message": "Idempotency key already used with different request body."
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
 ];
@@ -411,7 +429,7 @@ export function CreatePostContent() {
         { title: "platform_posts[]", items: PLATFORM_POST_FIELDS },
       ]}
       responses={[
-        { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "202", fields: RESPONSE_202_FIELDS },
         { code: "201", fields: RESPONSE_201_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
         { code: "404", fields: ERROR_FIELDS },

@@ -34,6 +34,9 @@ export default function PlatformCredentialsPage() {
           ["platform", "Which platform these credentials are for"],
           ["client_id", "The public App ID, safe to return"],
           ["created_at", "ISO timestamp of when the credentials were uploaded"],
+          ["meta.total", "Total configured platform credential rows returned by the list endpoint"],
+          ["meta.limit", "Applied list limit when the endpoint starts supporting partial reads"],
+          ["request_id", "Request identifier for debugging and support"],
         ]}
       />
 
@@ -45,10 +48,10 @@ export default function PlatformCredentialsPage() {
       <DocsTable
         columns={["Status", "Code", "When"]}
         rows={[
-          ["401", "UNAUTHORIZED", "Missing or invalid API key / session"],
-          ["403", "FORBIDDEN", "Workspace is on the free plan"],
-          ["404", "NOT_FOUND", "Workspace does not belong to the caller"],
-          ["422", "VALIDATION_ERROR", "Missing platform, client_id, or client_secret"],
+          ["401", "UNAUTHORIZED / unauthorized", "Missing or invalid API key / session"],
+          ["403", "FORBIDDEN / forbidden", "Workspace is on the free plan"],
+          ["404", "NOT_FOUND / not_found", "Workspace does not belong to the caller"],
+          ["422", "VALIDATION_ERROR / validation_error", "Missing platform, client_id, or client_secret"],
         ]}
       />
 

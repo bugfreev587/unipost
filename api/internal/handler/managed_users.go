@@ -67,13 +67,13 @@ func (h *ManagedUsersHandler) getProfileID(r *http.Request) string {
 // rows on the fly via the SQL GROUP BY in
 // ListManagedUsersByProject.
 type managedUserListEntry struct {
-	ExternalUserID    string                      `json:"external_user_id"`
-	ExternalUserEmail string                      `json:"external_user_email,omitempty"`
-	AccountCount      int                         `json:"account_count"`
-	PlatformCounts    map[string]int              `json:"platform_counts"`
-	ReconnectCount    int                         `json:"reconnect_count"`
-	FirstConnectedAt  time.Time                   `json:"first_connected_at"`
-	LastRefreshedAt   *time.Time                  `json:"last_refreshed_at,omitempty"`
+	ExternalUserID    string         `json:"external_user_id"`
+	ExternalUserEmail string         `json:"external_user_email,omitempty"`
+	AccountCount      int            `json:"account_count"`
+	PlatformCounts    map[string]int `json:"platform_counts"`
+	ReconnectCount    int            `json:"reconnect_count"`
+	FirstConnectedAt  time.Time      `json:"first_connected_at"`
+	LastRefreshedAt   *time.Time     `json:"last_refreshed_at,omitempty"`
 }
 
 // managedUserDetail is the GET /v1/users/{id} response shape. Same
@@ -142,7 +142,7 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Get the total count for the meta.
 	total, _ := h.queries.CountManagedUsersByProfile(r.Context(), profileID)
 
-	writeSuccessWithMeta(w, out, int(total))
+	writeSuccessWithListMeta(w, out, int(total), int(limit))
 }
 
 // Get handles GET /v1/users/{external_user_id}.

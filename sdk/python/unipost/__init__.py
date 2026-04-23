@@ -59,7 +59,11 @@ class _HttpClient:
             except Exception:
                 payload = {}
             error = payload.get("error", {})
-            raise UniPostError(error.get("message", f"HTTP {response.status_code}"), response.status_code, error.get("code", ""))
+            raise UniPostError(
+                error.get("message", f"HTTP {response.status_code}"),
+                response.status_code,
+                error.get("normalized_code") or error.get("code", ""),
+            )
         if response.status_code == 204 or not response.text:
             return {}
         return response.json()
@@ -91,6 +95,8 @@ class PostsAPI:
     def list(self, **kwargs):
         payload = self._http.request("GET", "/v1/social-posts", params=kwargs)
         payload["data"] = [_wrap(item) for item in payload.get("data", [])]
+        meta = payload.get("meta") or {}
+        payload["next_cursor"] = meta.get("next_cursor") or payload.get("next_cursor")
         return payload
 
     def get(self, post_id: str):

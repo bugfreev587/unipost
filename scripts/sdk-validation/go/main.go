@@ -74,6 +74,16 @@ func main() {
 		accounts = accs
 		return nil
 	})
+	test("Accounts.ListPage()", func() error {
+		page, err := client.Accounts.ListPage(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if page.Meta.Total == nil || page.Meta.Limit == nil {
+			return fmt.Errorf("expected meta.total and meta.limit")
+		}
+		return nil
+	})
 
 	if len(accounts) > 0 {
 		fmt.Printf("\n  Found %d connected accounts:\n", len(accounts))
@@ -200,6 +210,16 @@ func main() {
 				}
 			}
 			return fmt.Errorf("created webhook not found in list")
+		})
+		test("Webhooks.ListPage()", func() error {
+			page, err := client.Webhooks.ListPage(ctx)
+			if err != nil {
+				return err
+			}
+			if page.Meta.Total == nil || page.Meta.Limit == nil {
+				return fmt.Errorf("expected meta.total and meta.limit")
+			}
+			return nil
 		})
 
 		test(fmt.Sprintf("Webhooks.Get(\"%s...\")", createdWebhook.ID[:8]), func() error {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -126,9 +127,9 @@ func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Reque
 
 	wh, err := h.queries.CreateWebhook(r.Context(), db.CreateWebhookParams{
 		WorkspaceID: workspaceID,
-		Url:       body.URL,
-		Secret:    secret,
-		Events:    body.Events,
+		Url:         body.URL,
+		Secret:      secret,
+		Events:      body.Events,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create webhook")
@@ -154,13 +155,24 @@ func (h *WebhookSubscriptionHandler) List(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list webhooks")
 		return
 	}
+	total := len(webhooks)
+
+	limit := total
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	if limit < len(webhooks) {
+		webhooks = webhooks[:limit]
+	}
 
 	result := make([]webhookResponse, len(webhooks))
 	for i, wh := range webhooks {
 		result[i] = toWebhookResponse(wh)
 	}
 
-	writeSuccessWithMeta(w, result, len(result))
+	writeSuccessWithListMeta(w, result, total, limit)
 }
 
 // Get handles GET /v1/webhooks/{id}.
@@ -172,7 +184,7 @@ func (h *WebhookSubscriptionHandler) Get(w http.ResponseWriter, r *http.Request)
 	}
 	id := chi.URLParam(r, "id")
 	wh, err := h.queries.GetWebhookByIDAndWorkspace(r.Context(), db.GetWebhookByIDAndWorkspaceParams{
-		ID:        id,
+		ID:          id,
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
@@ -200,7 +212,7 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 	// fields. The patch query writes ALL three columns; sqlc doesn't
 	// have great partial-update support without per-field flags.
 	existing, err := h.queries.GetWebhookByIDAndWorkspace(r.Context(), db.GetWebhookByIDAndWorkspaceParams{
-		ID:        id,
+		ID:          id,
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
@@ -242,11 +254,11 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 	}
 
 	updated, err := h.queries.UpdateWebhookURLEventsActive(r.Context(), db.UpdateWebhookURLEventsActiveParams{
-		ID:        id,
+		ID:          id,
 		WorkspaceID: workspaceID,
-		Url:       url,
-		Events:    evs,
-		Active:    active,
+		Url:         url,
+		Events:      evs,
+		Active:      active,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update webhook")
@@ -272,9 +284,9 @@ func (h *WebhookSubscriptionHandler) Rotate(w http.ResponseWriter, r *http.Reque
 	}
 
 	wh, err := h.queries.RotateWebhookSecret(r.Context(), db.RotateWebhookSecretParams{
-		ID:        id,
+		ID:          id,
 		WorkspaceID: workspaceID,
-		Secret:    secret,
+		Secret:      secret,
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {

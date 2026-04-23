@@ -54,7 +54,7 @@ class QuotaError extends UniPostError {
 
 function parseApiError(status, body) {
   const msg = body?.error?.message || "Unknown API error";
-  const code = body?.error?.code || "unknown";
+  const code = body?.error?.normalized_code || body?.error?.code || "unknown";
 
   switch (status) {
     case 401:
@@ -249,7 +249,12 @@ class Posts {
     if (params?.to) query.to = params.to;
     if (params?.limit) query.limit = params.limit;
     if (params?.cursor) query.cursor = params.cursor;
-    return this.http.get("/v1/social-posts", query);
+    const response = await this.http.get("/v1/social-posts", query);
+    const nextCursor = response?.meta?.next_cursor ?? response?.next_cursor;
+    return {
+      ...response,
+      nextCursor,
+    };
   }
 
   async *listAll(params) {

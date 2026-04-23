@@ -306,8 +306,8 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://app.unipost.dev", "https://unipost.dev", "http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		ExposedHeaders:   []string{"Link", "X-UniPost-Usage", "X-UniPost-Warning"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
+		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-UniPost-Usage", "X-UniPost-Warning"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -540,6 +540,7 @@ func main() {
 		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/queue", socialPostHandler.GetPostQueue)
 		r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
 		r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
+		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry", socialPostHandler.RetryDeliveryJob)
 		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
 		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
 
@@ -686,6 +687,7 @@ func main() {
 		r.Get("/v1/social-posts/{id}/queue", socialPostHandler.GetPostQueue)
 		r.Get("/v1/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
 		r.Get("/v1/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
+		r.Post("/v1/post-delivery-jobs/{jobID}/retry", socialPostHandler.RetryDeliveryJob)
 		r.Post("/v1/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
 		r.Post("/v1/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
 		// Drafts API (Sprint 2). Drafts are social_posts rows in

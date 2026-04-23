@@ -78,7 +78,7 @@ func toProfileResponse(p db.Profile) profileResponse {
 func (h *ProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	if workspaceID == "" {
-		writeSuccessWithMeta(w, []profileResponse{}, 0)
+		writeSuccessWithListMeta(w, []profileResponse{}, 0, 0)
 		return
 	}
 
@@ -93,7 +93,7 @@ func (h *ProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 		result[i] = toProfileResponse(p)
 	}
 
-	writeSuccessWithMeta(w, result, len(result))
+	writeSuccessWithListMeta(w, result, len(result), len(result))
 }
 
 func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -332,7 +332,7 @@ func (h *ProfileHandler) APIList(w http.ResponseWriter, r *http.Request) {
 	for i, p := range profiles {
 		result[i] = toProfileResponse(p)
 	}
-	writeSuccessWithMeta(w, result, len(result))
+	writeSuccessWithListMeta(w, result, len(result), len(result))
 }
 
 // APIGet returns a single profile, verified to belong to the API key's workspace.

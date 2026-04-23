@@ -223,6 +223,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Create post", href: "/docs/api/posts/create", method: "POST" },
             { label: "List posts", href: "/docs/api/posts/list", method: "GET" },
             { label: "Get post", href: "/docs/api/posts/get", method: "GET" },
+            { label: "Update post", href: "/docs/api/posts/update", method: "PATCH" },
             { label: "Bulk publish", href: "/docs/api/posts/bulk", method: "POST" },
             { label: "Validate post", href: "/docs/api/posts/validate", method: "POST" },
           ],

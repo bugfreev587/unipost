@@ -22,14 +22,14 @@ const (
 )
 
 type postQueueSummary struct {
-	PendingCount    int
-	RunningCount    int
-	RetryingCount   int
-	DeadCount       int
-	CancelledCount  int
-	SucceededCount  int
-	ActiveJobCount  int
-	QueuedCount     int
+	PendingCount   int
+	RunningCount   int
+	RetryingCount  int
+	DeadCount      int
+	CancelledCount int
+	SucceededCount int
+	ActiveJobCount int
+	QueuedCount    int
 }
 
 func summarizePostJobs(jobs []db.PostDeliveryJob) postQueueSummary {
@@ -983,8 +983,8 @@ func (h *SocialPostHandler) GetPostQueue(w http.ResponseWriter, r *http.Request)
 	}
 	resp := h.socialPostResponseFromData(post, results, jobs, "async")
 	writeSuccess(w, map[string]any{
-		"post":  resp,
-		"jobs":  mapJobsForQueue(jobs),
+		"post": resp,
+		"jobs": mapJobsForQueue(jobs),
 	})
 }
 
@@ -996,7 +996,7 @@ func mapJobsForQueue(rows []db.PostDeliveryJob) []postDeliveryJobResponse {
 	return resp
 }
 
-func (h *SocialPostHandler) RetryDeliveryJobNow(w http.ResponseWriter, r *http.Request) {
+func (h *SocialPostHandler) RetryDeliveryJob(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.getWorkspaceID(r)
 	jobID := chi.URLParam(r, "jobID")
 	if jobID == "" {
@@ -1013,6 +1013,16 @@ func (h *SocialPostHandler) RetryDeliveryJobNow(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeSuccess(w, postDeliveryJobResponseFromRow(job))
+}
+
+// RetryDeliveryJobNow is the legacy alias for RetryDeliveryJob.
+// Retained for compatibility while clients migrate from /retry-now
+// to the canonical /retry command route.
+func (h *SocialPostHandler) RetryDeliveryJobNow(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
+	w.Header().Set("Link", `</v1/post-delivery-jobs/`+chi.URLParam(r, "jobID")+`/retry>; rel="successor-version"`)
+	h.RetryDeliveryJob(w, r)
 }
 
 func (h *SocialPostHandler) CancelDeliveryJobHandler(w http.ResponseWriter, r *http.Request) {

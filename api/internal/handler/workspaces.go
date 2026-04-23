@@ -124,7 +124,7 @@ func (h *WorkspaceHandler) DashboardList(w http.ResponseWriter, r *http.Request)
 	for i, ws := range workspaces {
 		result[i] = toWorkspaceResponse(ws)
 	}
-	writeSuccessWithMeta(w, result, len(result))
+	writeSuccessWithListMeta(w, result, len(result), len(result))
 }
 
 // DashboardGet returns a single workspace after verifying ownership.

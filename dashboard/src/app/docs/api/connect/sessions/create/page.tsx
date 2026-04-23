@@ -23,7 +23,9 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
 
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized".' },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
 const SNIPPETS = [
@@ -79,8 +81,10 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "error": {
     "code": "UNAUTHORIZED",
+    "normalized_code": "unauthorized",
     "message": "Missing or invalid API key."
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
 ];

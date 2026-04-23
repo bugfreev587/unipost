@@ -279,8 +279,9 @@ export interface PaginatedResponse<T> {
   nextCursor?: string;
   meta?: {
     total?: number;
-    page?: number;
-    per_page?: number;
+    limit?: number;
+    has_more?: boolean;
+    next_cursor?: string;
   };
 }
 

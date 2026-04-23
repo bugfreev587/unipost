@@ -22,12 +22,15 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data[].data.status", type: "string", description: 'Initial post state, typically "queued" or "publishing".' },
   { name: "data[].error", type: "object", description: "Per-slot error when that post failed validation before enqueue or the server failed before acceptance." },
   { name: "data[].error.code", type: "string", description: "Machine-readable error code for the slot." },
+  { name: "data[].error.normalized_code", type: "string", description: "Lowercase alias for the slot error code." },
   { name: "data[].error.message", type: "string", description: "Human-readable error message for the slot." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED" or "VALIDATION_ERROR".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized" or "validation_error".' },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
 const SNIPPETS = [
@@ -108,6 +111,7 @@ const RESPONSE_SNIPPETS = [
       "status": 422,
       "error": {
         "code": "VALIDATION_ERROR",
+        "normalized_code": "validation_error",
         "message": "drafts are not supported in bulk publish — use POST /v1/social-posts"
       }
     }
@@ -120,8 +124,10 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "error": {
     "code": "VALIDATION_ERROR",
+    "normalized_code": "validation_error",
     "message": "posts must contain at least one entry"
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
 ];

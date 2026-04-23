@@ -430,7 +430,7 @@ api GET "/v1/social-posts?limit=2"
 assert_status "200" "GET /v1/social-posts?limit=2"
 assert_jq_truthy '.data' 'data array present'
 
-NEXT_CURSOR=$(echo "$RESP_BODY" | jq -r '.next_cursor // empty')
+NEXT_CURSOR=$(echo "$RESP_BODY" | jq -r '.meta.next_cursor // .next_cursor // empty')
 if [[ -n "$NEXT_CURSOR" ]]; then
   pass "next_cursor returned for paginated list"
   api GET "/v1/social-posts?limit=2&cursor=${NEXT_CURSOR}"

@@ -104,7 +104,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	cred, err := h.queries.CreatePlatformCredential(r.Context(), db.CreatePlatformCredentialParams{
-		WorkspaceID:    workspaceID,
+		WorkspaceID:  workspaceID,
 		Platform:     body.Platform,
 		ClientID:     body.ClientID,
 		ClientSecret: encSecret,
@@ -143,7 +143,7 @@ func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	writeSuccessWithMeta(w, result, len(result))
+	writeSuccessWithListMeta(w, result, len(result), len(result))
 }
 
 // Delete handles DELETE /v1/workspaces/{workspaceID}/platform-credentials/{platform}
@@ -156,7 +156,7 @@ func (h *PlatformCredentialHandler) Delete(w http.ResponseWriter, r *http.Reques
 
 	h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
 		WorkspaceID: workspaceID,
-		Platform:  platformName,
+		Platform:    platformName,
 	})
 
 	w.WriteHeader(http.StatusNoContent)

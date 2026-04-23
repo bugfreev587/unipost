@@ -91,16 +91,26 @@ func (e *APIError) Error() string {
 type apiEnvelope[T any] struct {
 	Data T `json:"data"`
 	Meta struct {
-		Total   int `json:"total"`
-		Page    int `json:"page"`
-		PerPage int `json:"per_page"`
+		Total      *int   `json:"total,omitempty"`
+		Limit      *int   `json:"limit,omitempty"`
+		HasMore    *bool  `json:"has_more,omitempty"`
+		NextCursor string `json:"next_cursor,omitempty"`
 	} `json:"meta"`
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+type PageMeta struct {
+	Total      *int   `json:"total,omitempty"`
+	Limit      *int   `json:"limit,omitempty"`
+	HasMore    *bool  `json:"has_more,omitempty"`
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 type apiErrorEnvelope struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code           string `json:"code"`
+		NormalizedCode string `json:"normalized_code"`
+		Message        string `json:"message"`
 	} `json:"error"`
 }
 
@@ -163,7 +173,7 @@ func (c *Client) do(ctx context.Context, method, path string, query map[string]s
 		}
 		return &APIError{
 			Status:  resp.StatusCode,
-			Code:    apiErr.Error.Code,
+			Code:    firstNonEmpty(apiErr.Error.NormalizedCode, apiErr.Error.Code),
 			Message: apiErr.Error.Message,
 		}
 	}
@@ -172,6 +182,15 @@ func (c *Client) do(ctx context.Context, method, path string, query map[string]s
 		return nil
 	}
 	return json.Unmarshal(data, out)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type SocialAccount struct {
@@ -196,6 +215,19 @@ type AccountsService struct {
 }
 
 func (s *AccountsService) List(ctx context.Context, params *ListAccountsParams) ([]SocialAccount, error) {
+	page, err := s.ListPage(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	return page.Data, nil
+}
+
+type PaginatedAccounts struct {
+	Data []SocialAccount
+	Meta PageMeta
+}
+
+func (s *AccountsService) ListPage(ctx context.Context, params *ListAccountsParams) (*PaginatedAccounts, error) {
 	query := map[string]string{}
 	if params != nil {
 		query["platform"] = params.Platform
@@ -207,7 +239,15 @@ func (s *AccountsService) List(ctx context.Context, params *ListAccountsParams) 
 	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts", query, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
-	return envelope.Data, nil
+	return &PaginatedAccounts{
+		Data: envelope.Data,
+		Meta: PageMeta{
+			Total:      envelope.Meta.Total,
+			Limit:      envelope.Meta.Limit,
+			HasMore:    envelope.Meta.HasMore,
+			NextCursor: envelope.Meta.NextCursor,
+		},
+	}, nil
 }
 
 type PlatformResult struct {
@@ -243,10 +283,12 @@ type Post struct {
 type PaginatedPosts struct {
 	Data []Post
 	Meta struct {
-		Total   int `json:"total"`
-		Page    int `json:"page"`
-		PerPage int `json:"per_page"`
+		Total      *int   `json:"total,omitempty"`
+		Limit      *int   `json:"limit,omitempty"`
+		HasMore    *bool  `json:"has_more,omitempty"`
+		NextCursor string `json:"next_cursor,omitempty"`
 	}
+	NextCursor string
 }
 
 type CreatePostPlatform struct {
@@ -355,6 +397,11 @@ func (s *PostsService) List(ctx context.Context, params *ListPostsParams) (*Pagi
 		return nil, err
 	}
 	resp := &PaginatedPosts{Data: envelope.Data, Meta: envelope.Meta}
+	if envelope.Meta.NextCursor != "" {
+		resp.NextCursor = envelope.Meta.NextCursor
+	} else {
+		resp.NextCursor = envelope.NextCursor
+	}
 	return resp, nil
 }
 
@@ -497,11 +544,32 @@ type UsersService struct {
 }
 
 func (s *UsersService) List(ctx context.Context) ([]ManagedUser, error) {
+	page, err := s.ListPage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return page.Data, nil
+}
+
+type PaginatedManagedUsers struct {
+	Data []ManagedUser
+	Meta PageMeta
+}
+
+func (s *UsersService) ListPage(ctx context.Context) (*PaginatedManagedUsers, error) {
 	var envelope apiEnvelope[[]ManagedUser]
 	if err := s.client.do(ctx, http.MethodGet, "/v1/users", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
-	return envelope.Data, nil
+	return &PaginatedManagedUsers{
+		Data: envelope.Data,
+		Meta: PageMeta{
+			Total:      envelope.Meta.Total,
+			Limit:      envelope.Meta.Limit,
+			HasMore:    envelope.Meta.HasMore,
+			NextCursor: envelope.Meta.NextCursor,
+		},
+	}, nil
 }
 
 func (s *UsersService) Get(ctx context.Context, externalUserID string) (*ManagedUser, error) {
@@ -546,11 +614,32 @@ func (s *WebhooksService) Create(ctx context.Context, params *CreateWebhookParam
 }
 
 func (s *WebhooksService) List(ctx context.Context) ([]WebhookSubscription, error) {
+	page, err := s.ListPage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return page.Data, nil
+}
+
+type PaginatedWebhookSubscriptions struct {
+	Data []WebhookSubscription
+	Meta PageMeta
+}
+
+func (s *WebhooksService) ListPage(ctx context.Context) (*PaginatedWebhookSubscriptions, error) {
 	var envelope apiEnvelope[[]WebhookSubscription]
 	if err := s.client.do(ctx, http.MethodGet, "/v1/webhooks", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
-	return envelope.Data, nil
+	return &PaginatedWebhookSubscriptions{
+		Data: envelope.Data,
+		Meta: PageMeta{
+			Total:      envelope.Meta.Total,
+			Limit:      envelope.Meta.Limit,
+			HasMore:    envelope.Meta.HasMore,
+			NextCursor: envelope.Meta.NextCursor,
+		},
+	}, nil
 }
 
 func (s *WebhooksService) Get(ctx context.Context, webhookID string) (*WebhookSubscription, error) {

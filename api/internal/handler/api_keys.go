@@ -90,7 +90,7 @@ func (h *APIKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 		result[i] = toAPIKeyResponse(k)
 	}
 
-	writeSuccessWithMeta(w, result, len(result))
+	writeSuccessWithListMeta(w, result, len(result), len(result))
 }
 
 func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {

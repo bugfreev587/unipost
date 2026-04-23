@@ -237,7 +237,7 @@ try {
   } else if (error instanceof RateLimitError) {
     console.error("Retry after", error.retryAfter);
   } else if (error instanceof UniPostError) {
-    console.error(error.status, error.code, error.message);
+    console.error(error.status, error.code, error.message); // error.code is normalized_code when available
   }
 }`,
   },

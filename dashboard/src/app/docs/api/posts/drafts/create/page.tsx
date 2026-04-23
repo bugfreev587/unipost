@@ -13,10 +13,13 @@ const BODY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Draft post ID." },
   { name: "status", type: "string", description: 'Stored as "draft" until explicitly published.' },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: "Machine-readable error code." },
+  { name: "error.normalized_code", type: "string", description: "Lowercase compatibility alias for the error code." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 const SNIPPETS = [
   {
@@ -47,7 +50,20 @@ const RESPONSE_SNIPPETS = [
   "data": {
     "id": "post_abc123",
     "status": "draft"
-  }
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "401",
+    code: `{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "normalized_code": "unauthorized",
+    "message": "Unauthorized"
+  },
+  "request_id": "req_123"
 }`,
   },
 ];

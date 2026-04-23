@@ -27,7 +27,9 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
 
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "NOT_FOUND", "UNAUTHORIZED", or "VALIDATION_ERROR".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "not_found", "unauthorized", or "validation_error".' },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
 const SNIPPETS = [

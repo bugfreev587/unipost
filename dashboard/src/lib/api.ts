@@ -36,17 +36,21 @@ export interface ApiKeyCreateResponse {
 export interface ApiResponse<T> {
   data: T;
   meta?: {
-    total: number;
-    page: number;
-    per_page: number;
+    total?: number;
+    limit?: number;
+    has_more?: boolean;
+    next_cursor?: string;
   };
+  request_id?: string;
 }
 
 export interface ApiError {
   error: {
     code: string;
+    normalized_code?: string;
     message: string;
   };
+  request_id?: string;
 }
 
 // ApiFetchError is the Error subtype thrown by request() when the API
@@ -125,7 +129,9 @@ async function request<T>(
     // on it without parsing the message. Typed on ApiFetchError below.
     const thrown = new Error(message) as ApiFetchError;
     thrown.status = res.status;
-    if (err.error?.code) thrown.code = err.error.code;
+    if (err.error?.normalized_code || err.error?.code) {
+      thrown.code = err.error?.normalized_code || err.error?.code;
+    }
     throw thrown;
   }
 

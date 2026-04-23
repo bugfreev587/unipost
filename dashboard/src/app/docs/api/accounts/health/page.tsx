@@ -63,9 +63,19 @@ const RESPONSE_401_FIELDS: ApiFieldItem[] = [
     description: 'Usually "UNAUTHORIZED".',
   },
   {
+    name: "error.normalized_code",
+    type: "string",
+    description: 'Lowercase alias such as "unauthorized".',
+  },
+  {
     name: "error.message",
     type: "string",
     description: "Human-readable auth error.",
+  },
+  {
+    name: "request_id",
+    type: "string",
+    description: "Request identifier for debugging and support.",
   },
 ];
 
@@ -76,9 +86,19 @@ const RESPONSE_404_FIELDS: ApiFieldItem[] = [
     description: 'Usually "NOT_FOUND".',
   },
   {
+    name: "error.normalized_code",
+    type: "string",
+    description: 'Lowercase alias such as "not_found".',
+  },
+  {
     name: "error.message",
     type: "string",
     description: "Returned when the account is missing or outside the workspace.",
+  },
+  {
+    name: "request_id",
+    type: "string",
+    description: "Request identifier for debugging and support.",
   },
 ];
 
@@ -123,8 +143,10 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "error": {
     "code": "UNAUTHORIZED",
+    "normalized_code": "unauthorized",
     "message": "Missing or invalid API key."
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
   {
@@ -133,8 +155,10 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "error": {
     "code": "NOT_FOUND",
+    "normalized_code": "not_found",
     "message": "Account not found."
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
 ];

@@ -35,39 +35,59 @@ const QUERY_FIELDS: ApiFieldItem[] = [
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
-    name: "id",
+    name: "data[]",
+    type: "array",
+    description: "Connected social accounts in the current workspace.",
+  },
+  {
+    name: "data[].id",
     type: "string",
     description: "Publishable UniPost account ID.",
   },
   {
-    name: "platform",
+    name: "data[].platform",
     type: "string",
     description: "Normalized platform name.",
   },
   {
-    name: "account_name",
+    name: "data[].account_name",
     type: "string | null",
     description: "Handle or display name.",
   },
   {
-    name: "status",
+    name: "data[].status",
     type: "string",
     description: 'Connection state such as "active" or "reconnect_required".',
   },
   {
-    name: "connection_type",
+    name: "data[].connection_type",
     type: "string",
     description: '"byo" or "managed".',
   },
   {
-    name: "connected_at",
+    name: "data[].connected_at",
     type: "string",
     description: "Connection timestamp.",
   },
   {
-    name: "external_user_id",
+    name: "data[].external_user_id",
     type: "string | null",
     description: "Your Connect user ID, if present.",
+  },
+  {
+    name: "meta.total",
+    type: "number",
+    description: "Total number of returned accounts.",
+  },
+  {
+    name: "meta.limit",
+    type: "number",
+    description: "Applied list size for this response.",
+  },
+  {
+    name: "request_id",
+    type: "string",
+    description: "Request identifier for debugging and support.",
   },
 ];
 
@@ -76,6 +96,11 @@ const RESPONSE_401_FIELDS: ApiFieldItem[] = [
     name: "error.code",
     type: "string",
     description: 'Usually "UNAUTHORIZED".',
+  },
+  {
+    name: "error.normalized_code",
+    type: "string",
+    description: 'Lowercase compatibility alias such as "unauthorized".',
   },
   {
     name: "error.message",
@@ -159,14 +184,21 @@ const RESPONSE_200 = `{
       "connected_at": "2026-04-02T10:00:00Z",
       "external_user_id": null
     }
-  ]
+  ],
+  "meta": {
+    "total": 1,
+    "limit": 1
+  },
+  "request_id": "req_123"
 }`;
 
 const RESPONSE_401 = `{
   "error": {
     "code": "UNAUTHORIZED",
+    "normalized_code": "unauthorized",
     "message": "Missing or invalid API key."
-  }
+  },
+  "request_id": "req_123"
 }`;
 
 const RESPONSE_TABS = [

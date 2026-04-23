@@ -63,8 +63,9 @@ func computeEngagementRate(m *platform.PostMetrics) float64 {
 // GetAnalytics handles GET /v1/social-posts/{id}/analytics
 // (and the workspace-scoped /v1/workspaces/{workspaceID}/social-posts/{id}/analytics).
 //
-// Pass ?refresh=1 to bypass the 1-hour cache and force a live fetch from each
-// platform. Without it, cached rows are served whenever fresh — the
+// Pass ?refresh=true to bypass the 1-hour cache and force a live fetch from
+// each platform. For backward compatibility, ?refresh=1 is also accepted.
+// Without it, cached rows are served whenever fresh — the
 // AnalyticsRefreshWorker keeps them up to date in the background.
 func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.getWorkspaceID(r)
@@ -72,7 +73,7 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")
 	}
-	forceRefresh := r.URL.Query().Get("refresh") == "1"
+	forceRefresh := parseBoolQueryParam(r, "refresh")
 
 	post, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
 		ID: postID, WorkspaceID: workspaceID,

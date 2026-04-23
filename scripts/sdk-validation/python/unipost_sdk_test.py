@@ -230,6 +230,11 @@ def _test_list_accounts(client):
     data = res.get("data", [])
     if not isinstance(data, list):
         raise ValueError("Expected data array")
+    meta = res.get("meta", {})
+    if not isinstance(meta.get("total"), int):
+        raise ValueError("Expected meta.total")
+    if not isinstance(meta.get("limit"), int):
+        raise ValueError("Expected meta.limit")
     return data
 
 
@@ -238,6 +243,9 @@ def _test_list_posts(client):
     data = res.get("data", [])
     if not isinstance(data, list):
         raise ValueError("Expected data array")
+    meta = res.get("meta", {})
+    if meta.get("next_cursor") and meta.get("next_cursor") != res.get("next_cursor"):
+        raise ValueError("Expected next_cursor to mirror meta.next_cursor")
     return data
 
 
@@ -344,8 +352,13 @@ def _test_verify_signature():
 def _test_list_webhooks(client, webhook_id):
     payload = client.webhooks.list()
     data = payload.get("data", [])
+    meta = payload.get("meta", {})
     if not any(item.id == webhook_id for item in data):
         raise ValueError("Created webhook not found in list")
+    if not isinstance(meta.get("total"), int):
+        raise ValueError("Expected meta.total")
+    if not isinstance(meta.get("limit"), int):
+        raise ValueError("Expected meta.limit")
     return data
 
 

@@ -152,18 +152,18 @@ func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 // ── User list ────────────────────────────────────────────────────────
 
 type adminUserRow struct {
-	ID              string     `json:"id"`
-	Email           string     `json:"email"`
-	CreatedAt       time.Time  `json:"created_at"`
-	WorkspaceCount  int64      `json:"workspace_count"`
-	APIKeyCount     int64      `json:"api_key_count"`
-	PlatformCount   int64      `json:"platform_count"`
-	Platforms       []string   `json:"platforms"`
-	PostsUsed       int64      `json:"posts_used"`
-	PostLimit       int64      `json:"post_limit"`
-	MRRCents        int64      `json:"mrr_cents"`
-	IsPaid          bool       `json:"is_paid"`
-	LastPostAt      *time.Time `json:"last_post_at"`
+	ID             string     `json:"id"`
+	Email          string     `json:"email"`
+	CreatedAt      time.Time  `json:"created_at"`
+	WorkspaceCount int64      `json:"workspace_count"`
+	APIKeyCount    int64      `json:"api_key_count"`
+	PlatformCount  int64      `json:"platform_count"`
+	Platforms      []string   `json:"platforms"`
+	PostsUsed      int64      `json:"posts_used"`
+	PostLimit      int64      `json:"post_limit"`
+	MRRCents       int64      `json:"mrr_cents"`
+	IsPaid         bool       `json:"is_paid"`
+	LastPostAt     *time.Time `json:"last_post_at"`
 }
 
 var adminUserSortOrders = map[string]string{
@@ -305,7 +305,7 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 		search, excluded,
 	).Scan(&total)
 
-	writeSuccessWithMeta(w, out, int(total))
+	writeSuccessWithListMeta(w, out, int(total), limit)
 }
 
 // ── User detail ──────────────────────────────────────────────────────
@@ -862,9 +862,9 @@ func (h *AdminHandler) ListUserPostFailures(w http.ResponseWriter, r *http.Reque
 	days, _ := strconv.Atoi(q.Get("days"))
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	out, err := h.queryPostFailures(r.Context(), adminPostFailureQuery{
-		UserID: userID,
-		Days:   days,
-		Limit:  limit,
+		UserID:   userID,
+		Days:     days,
+		Limit:    limit,
 		Excluded: []string{},
 	})
 	if err != nil {

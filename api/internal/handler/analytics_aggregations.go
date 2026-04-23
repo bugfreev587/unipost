@@ -12,7 +12,16 @@ import (
 
 // ── Shared range parsing ───────────────────────────────────────────────────
 
-// parseDateRange reads start_date / end_date query params (YYYY-MM-DD).
+// parseDateRange reads analytics date range params.
+//
+// Preferred query params:
+// - from=YYYY-MM-DD
+// - to=YYYY-MM-DD
+//
+// Legacy aliases retained for compatibility:
+// - start_date=YYYY-MM-DD
+// - end_date=YYYY-MM-DD
+//
 // Defaults: end = today (UTC, end-of-day), start = end - 30 days.
 // end is exclusive in the SQL queries (`<`), so the caller passes end+1d.
 //
@@ -23,28 +32,46 @@ func parseDateRange(w http.ResponseWriter, r *http.Request) (time.Time, time.Tim
 	end := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(24 * time.Hour)
 	start := end.Add(-30 * 24 * time.Hour)
 
-	if v := r.URL.Query().Get("end_date"); v != "" {
+	if v := firstQueryValue(r, "to", "end_date"); v != "" {
 		t, err := time.Parse("2006-01-02", v)
 		if err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid end_date, expected YYYY-MM-DD")
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid to, expected YYYY-MM-DD")
 			return time.Time{}, time.Time{}, false
 		}
-		// end is exclusive: include the entire end_date day.
 		end = t.UTC().Add(24 * time.Hour)
 	}
-	if v := r.URL.Query().Get("start_date"); v != "" {
+	if v := firstQueryValue(r, "from", "start_date"); v != "" {
 		t, err := time.Parse("2006-01-02", v)
 		if err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid start_date, expected YYYY-MM-DD")
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid from, expected YYYY-MM-DD")
 			return time.Time{}, time.Time{}, false
 		}
 		start = t.UTC()
 	}
 	if !start.Before(end) {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "start_date must be before end_date")
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "from must be before to")
 		return time.Time{}, time.Time{}, false
 	}
 	return start, end, true
+}
+
+func firstQueryValue(r *http.Request, keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(r.URL.Query().Get(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func parseBoolQueryParam(r *http.Request, key string) bool {
+	v := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func tsParam(t time.Time) pgtype.Timestamptz {
@@ -127,10 +154,10 @@ type summaryDelta struct {
 }
 
 type summaryResponse struct {
-	Period             summaryPeriod     `json:"period"`
-	Posts              summaryPosts      `json:"posts"`
-	Engagement         summaryEngagement `json:"engagement"`
-	VsPreviousPeriod   summaryDelta      `json:"vs_previous_period"`
+	Period           summaryPeriod     `json:"period"`
+	Posts            summaryPosts      `json:"posts"`
+	Engagement       summaryEngagement `json:"engagement"`
+	VsPreviousPeriod summaryDelta      `json:"vs_previous_period"`
 }
 
 // GetSummary handles GET /v1/analytics/summary
@@ -155,7 +182,7 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 	prevEnd := start
 
 	curr, err := h.queries.GetAnalyticsSummaryByWorkspace(r.Context(), db.GetAnalyticsSummaryByWorkspaceParams{
-		WorkspaceID:   workspaceID,
+		WorkspaceID: workspaceID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
 		Column4:     platform,
@@ -166,7 +193,7 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prev, err := h.queries.GetAnalyticsSummaryByWorkspace(r.Context(), db.GetAnalyticsSummaryByWorkspaceParams{
-		WorkspaceID:   workspaceID,
+		WorkspaceID: workspaceID,
 		CreatedAt:   tsParam(prevStart),
 		CreatedAt_2: tsParam(prevEnd),
 		Column4:     platform,
@@ -197,8 +224,8 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 	resp := summaryResponse{
 		Period: summaryPeriod{
 			Start: start.Format("2006-01-02"),
-			// SQL end is exclusive (start of day after end_date), so report
-			// the inclusive end date the caller asked for.
+			// SQL end is exclusive for date-only input, so report the
+			// inclusive day-oriented range in the summary response.
 			End: end.Add(-24 * time.Hour).Format("2006-01-02"),
 		},
 		Posts: summaryPosts{
@@ -232,8 +259,8 @@ func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 // ── GET /v1/analytics/trend ────────────────────────────────────────────────
 
 type trendResponse struct {
-	Dates  []string             `json:"dates"`
-	Series map[string][]int64   `json:"series"`
+	Dates  []string           `json:"dates"`
+	Series map[string][]int64 `json:"series"`
 }
 
 // GetTrend handles GET /v1/analytics/trend
@@ -271,7 +298,7 @@ func (h *AnalyticsHandler) GetTrend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.queries.GetAnalyticsTrendByWorkspace(r.Context(), db.GetAnalyticsTrendByWorkspaceParams{
-		WorkspaceID:   workspaceID,
+		WorkspaceID: workspaceID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
 		Column4:     platformFilter(r),
@@ -351,7 +378,7 @@ func (h *AnalyticsHandler) GetByPlatform(w http.ResponseWriter, r *http.Request)
 	}
 
 	rows, err := h.queries.GetAnalyticsByPlatformByWorkspace(r.Context(), db.GetAnalyticsByPlatformByWorkspaceParams{
-		WorkspaceID:   workspaceID,
+		WorkspaceID: workspaceID,
 		CreatedAt:   tsParam(start),
 		CreatedAt_2: tsParam(end),
 		Column4:     platformFilter(r),

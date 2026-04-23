@@ -16,7 +16,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -188,6 +191,125 @@ func (h *SocialPostHandler) rollbackToDraft(r *http.Request, postID string) erro
 	})
 }
 
+type socialPostLifecyclePatch struct {
+	Archived *bool
+	Status   *string
+}
+
+func parseSocialPostLifecyclePatch(raw []byte) (socialPostLifecyclePatch, bool, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return socialPostLifecyclePatch{}, false, nil
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return socialPostLifecyclePatch{}, false, err
+	}
+
+	archivedRaw, hasArchived := fields["archived"]
+	statusRaw, hasStatus := fields["status"]
+	if !hasArchived && !hasStatus {
+		return socialPostLifecyclePatch{}, false, nil
+	}
+	if len(fields) > 1 {
+		if hasArchived && len(fields) > 1 {
+			return socialPostLifecyclePatch{}, true, fmt.Errorf("archived lifecycle patch cannot be combined with other fields")
+		}
+		if hasStatus && len(fields) > 1 {
+			return socialPostLifecyclePatch{}, true, fmt.Errorf("status lifecycle patch cannot be combined with other fields")
+		}
+	}
+
+	var patch socialPostLifecyclePatch
+	if hasArchived {
+		var archived bool
+		if err := json.Unmarshal(archivedRaw, &archived); err != nil {
+			return socialPostLifecyclePatch{}, true, fmt.Errorf("archived must be a boolean")
+		}
+		patch.Archived = &archived
+		return patch, true, nil
+	}
+
+	var status string
+	if err := json.Unmarshal(statusRaw, &status); err != nil {
+		return socialPostLifecyclePatch{}, true, fmt.Errorf("status must be a string")
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "canceled", "cancelled":
+		normalized := "canceled"
+		patch.Status = &normalized
+		return patch, true, nil
+	default:
+		return socialPostLifecyclePatch{}, true, fmt.Errorf("unsupported status transition: %s", status)
+	}
+}
+
+func (h *SocialPostHandler) archiveSocialPost(w http.ResponseWriter, r *http.Request, workspaceID, postID string) {
+	post, err := h.queries.ArchiveSocialPost(r.Context(), db.ArchiveSocialPostParams{
+		ID:          postID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to archive post")
+		return
+	}
+	writeSuccess(w, socialPostResponseFromRow(post))
+}
+
+func (h *SocialPostHandler) restoreSocialPost(w http.ResponseWriter, r *http.Request, workspaceID, postID string) {
+	post, err := h.queries.RestoreSocialPost(r.Context(), db.RestoreSocialPostParams{
+		ID:          postID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Post not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to restore post")
+		return
+	}
+	writeSuccess(w, socialPostResponseFromRow(post))
+}
+
+func (h *SocialPostHandler) cancelSocialPost(w http.ResponseWriter, r *http.Request, workspaceID, postID string) {
+	cancelled, err := h.queries.CancelSocialPost(r.Context(), db.CancelSocialPostParams{
+		ID:          postID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusConflict, "CONFLICT",
+				"Post cannot be cancelled (not a draft or scheduled post in this workspace)")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel post")
+		return
+	}
+	writeSuccess(w, socialPostResponseFromRow(cancelled))
+}
+
+func (h *SocialPostHandler) applyLifecyclePatch(w http.ResponseWriter, r *http.Request, workspaceID, postID string, patch socialPostLifecyclePatch) {
+	if patch.Archived != nil {
+		if *patch.Archived {
+			h.archiveSocialPost(w, r, workspaceID, postID)
+			return
+		}
+		h.restoreSocialPost(w, r, workspaceID, postID)
+		return
+	}
+	if patch.Status != nil && *patch.Status == "canceled" {
+		h.cancelSocialPost(w, r, workspaceID, postID)
+		return
+	}
+	writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Unsupported lifecycle patch")
+}
+
 // reschedulePost handles the PATCH branch where the post is in
 // status='scheduled'. Only scheduled_at is editable; the body must
 // carry a future RFC3339 timestamp. Optimistic-locked: if the row
@@ -250,21 +372,10 @@ func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	postID := chi.URLParam(r, "id")
-
-	cancelled, err := h.queries.CancelSocialPost(r.Context(), db.CancelSocialPostParams{
-		ID:          postID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusConflict, "CONFLICT",
-				"Post cannot be cancelled (not a draft or scheduled post in this workspace)")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel post")
-		return
-	}
-	writeSuccess(w, socialPostResponseFromRow(cancelled))
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
+	w.Header().Set("Link", `</v1/social-posts/`+postID+`>; rel="successor-version"`)
+	h.cancelSocialPost(w, r, workspaceID, postID)
 }
 
 // UpdateDraft handles PATCH /v1/social-posts/{id} for both drafts and
@@ -284,6 +395,19 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	postID := chi.URLParam(r, "id")
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	if patch, ok, err := parseSocialPostLifecyclePatch(rawBody); ok {
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		h.applyLifecyclePatch(w, r, workspaceID, postID, patch)
+		return
+	}
 
 	// Read current state once. We don't trust this for the actual
 	// write — the locked UPDATE below has its own WHERE — but we use
@@ -310,7 +434,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var body publishRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(rawBody, &body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
 		return
 	}

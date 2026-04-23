@@ -36,7 +36,7 @@ func Logger(next http.Handler) http.Handler {
 		requestID := uuid.New().String()
 
 		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
-		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set("X-Request-Id", requestID)
 
 		next.ServeHTTP(rw, r)
 

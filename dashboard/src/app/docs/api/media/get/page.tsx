@@ -17,7 +17,9 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED" or "NOT_FOUND".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized" or "not_found".' },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 const SNIPPETS = [
   {
@@ -58,8 +60,10 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "error": {
     "code": "NOT_FOUND",
+    "normalized_code": "not_found",
     "message": "Media not found."
-  }
+  },
+  "request_id": "req_123"
 }`,
   },
 ];
