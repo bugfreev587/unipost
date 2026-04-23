@@ -16,6 +16,13 @@ type NavLeaf = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 };
 
+type NavGroup = {
+  label: string;
+  children: NavLeaf[];
+};
+
+type SidebarItem = NavLeaf | NavGroup;
+
 type DocsPrimaryKey = "overview" | "platforms" | "api-reference";
 
 type DocsPrimaryNav = {
@@ -27,7 +34,7 @@ type DocsPrimaryNav = {
 type DocsSidebarSection = {
   title: string;
   description?: string;
-  items: NavLeaf[];
+  items: SidebarItem[];
 };
 
 type HeadingItem = {
@@ -183,19 +190,53 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Accounts",
       items: [
-        { label: "Social Accounts", href: "/docs/api/accounts/list", method: "GET" },
-        { label: "Connect Sessions", href: "/docs/api/connect/sessions", method: "POST" },
-        { label: "Managed Users", href: "/docs/api/users", method: "GET" },
-        { label: "Account Health", href: "/docs/api/accounts/health", method: "GET" },
+        {
+          label: "accounts",
+          children: [
+            { label: "List accounts", href: "/docs/api/accounts/list", method: "GET" },
+            { label: "Check account health", href: "/docs/api/accounts/health", method: "GET" },
+          ],
+        },
+        {
+          label: "connect",
+          children: [
+            { label: "Create session", href: "/docs/api/connect/sessions/create", method: "POST" },
+            { label: "Get session", href: "/docs/api/connect/sessions/get", method: "GET" },
+          ],
+        },
+        {
+          label: "users",
+          children: [
+            { label: "List users", href: "/docs/api/users/list", method: "GET" },
+            { label: "Get user", href: "/docs/api/users/get", method: "GET" },
+          ],
+        },
       ],
     },
     {
       title: "Publishing",
       items: [
-        { label: "Create Post", href: "/docs/api/posts/create", method: "POST" },
-        { label: "Validate", href: "/docs/api/posts/validate", method: "POST" },
-        { label: "Drafts", href: "/docs/api/posts/drafts", method: "POST" },
-        { label: "Media", href: "/docs/api/media", method: "POST" },
+        {
+          label: "posts",
+          children: [
+            { label: "Create post", href: "/docs/api/posts/create", method: "POST" },
+            { label: "Validate post", href: "/docs/api/posts/validate", method: "POST" },
+          ],
+        },
+        {
+          label: "drafts",
+          children: [
+            { label: "Create draft", href: "/docs/api/posts/drafts/create", method: "POST" },
+            { label: "Publish draft", href: "/docs/api/posts/drafts/publish", method: "POST" },
+          ],
+        },
+        {
+          label: "media",
+          children: [
+            { label: "Reserve upload", href: "/docs/api/media/reserve", method: "POST" },
+            { label: "Get media", href: "/docs/api/media/get", method: "GET" },
+          ],
+        },
       ],
     },
     {
@@ -207,7 +248,13 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Analytics",
       items: [
-        { label: "Analytics", href: "/docs/api/analytics", method: "GET" },
+        {
+          label: "analytics",
+          children: [
+            { label: "Workspace summary", href: "/docs/api/analytics/summary", method: "GET" },
+            { label: "Post analytics", href: "/docs/api/analytics/posts", method: "GET" },
+          ],
+        },
       ],
     },
     {
@@ -360,6 +407,9 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-section-label{padding:0;font-size:11px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-nav-text-faint)}
 .docs-section-desc{margin-top:7px;font-size:13px;line-height:1.58;color:var(--docs-nav-text-faint)}
 .docs-nav-group-title{padding:12px 8px 6px;font-size:11px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-nav-text-faint)}
+.docs-nav-subgroup{margin:4px 0 8px}
+.docs-nav-subgroup-label{padding:10px 8px 6px;color:var(--docs-nav-text);font-size:15px;font-weight:560;line-height:1.35}
+.docs-nav-subgroup-items{margin-left:12px;padding-left:12px;border-left:1px solid color-mix(in srgb, var(--docs-border) 88%, transparent);display:grid;gap:2px}
 .docs-nav-link{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 8px;border-radius:10px;font-size:14.5px;font-weight:560;line-height:1.38;color:var(--docs-nav-text);text-decoration:none;transition:all .12s}
 .docs-nav-link:hover{color:var(--docs-nav-text-strong);background:var(--docs-nav-hover)}
 .docs-nav-link.active{color:var(--docs-nav-text-strong);font-weight:600;background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
@@ -431,6 +481,10 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 
 function isLeafActive(current: string, href: string) {
   return current === href.split("#")[0];
+}
+
+function isNavGroup(item: SidebarItem): item is NavGroup {
+  return "children" in item;
 }
 
 function getActivePrimaryNav(current: string): DocsPrimaryKey {
@@ -599,29 +653,60 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                   <div className="docs-section-label">{section.title}</div>
                   {section.description ? <div className="docs-section-desc">{section.description}</div> : null}
                 </div>
-                {section.items.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
-                  >
-                    <span>{item.label}</span>
-                    {item.method ? (
-                      <span
-                        style={{
-                          fontFamily: "var(--docs-mono)",
-                          fontSize: 12,
-                          fontWeight: 700,
-                          letterSpacing: ".04em",
-                          color: DOCS_METHOD_COLORS[item.method],
-                          flexShrink: 0,
-                        }}
-                      >
-                        {item.method}
-                      </span>
-                    ) : item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
-                  </Link>
-                ))}
+                {section.items.map((item) =>
+                  isNavGroup(item) ? (
+                    <div key={item.label} className="docs-nav-subgroup">
+                      <div className="docs-nav-subgroup-label">{item.label}</div>
+                      <div className="docs-nav-subgroup-items">
+                        {item.children.map((child) => (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            className={`docs-nav-link${isLeafActive(pathname, child.href) ? " active" : ""}`}
+                          >
+                            <span>{child.label}</span>
+                            {child.method ? (
+                              <span
+                                style={{
+                                  fontFamily: "var(--docs-mono)",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  letterSpacing: ".04em",
+                                  color: DOCS_METHOD_COLORS[child.method],
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {child.method}
+                              </span>
+                            ) : child.badge ? <span className="docs-nav-badge">{child.badge}</span> : null}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
+                    >
+                      <span>{item.label}</span>
+                      {item.method ? (
+                        <span
+                          style={{
+                            fontFamily: "var(--docs-mono)",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            letterSpacing: ".04em",
+                            color: DOCS_METHOD_COLORS[item.method],
+                            flexShrink: 0,
+                          }}
+                        >
+                          {item.method}
+                        </span>
+                      ) : item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
+                    </Link>
+                  )
+                )}
               </section>
             ))}
           </div>
