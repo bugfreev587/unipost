@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ChevronRight } from "lucide-react";
 import { CodeBlock, CodeTabs as SharedCodeTabs, codeBlockStyles } from "../../_components/code-block";
 
 // ── Method badge ──
@@ -362,32 +363,49 @@ export function ApiAccordion({
         dangerouslySetInnerHTML={{
           __html: `
             .api-accordion > summary::-webkit-details-marker{display:none}
-            .api-accordion .api-accordion-arrow-open{display:none}
-            .api-accordion[open] .api-accordion-arrow-open{display:inline}
-            .api-accordion[open] .api-accordion-arrow-closed{display:none}
+            .api-accordion + .api-accordion{border-top:1px solid var(--docs-border)}
+            .api-accordion .api-accordion-chevron{
+              width:18px;
+              height:18px;
+              color:var(--docs-text-muted);
+              flex-shrink:0;
+              transition:transform .18s ease,color .18s ease;
+              transform:rotate(0deg);
+              transform-origin:50% 50%;
+            }
+            .api-accordion[open] .api-accordion-chevron{
+              transform:rotate(90deg);
+              color:var(--docs-text-faint);
+            }
+            .api-accordion .api-accordion-summary:hover .api-accordion-chevron{
+              color:var(--docs-text);
+            }
+            .api-accordion .api-accordion-panel{
+              padding:2px 18px 18px 44px;
+            }
           `,
         }}
       />
       <summary
+        className="api-accordion-summary"
         style={{
           listStyle: "none",
           cursor: "pointer",
-          padding: "16px 18px",
-          fontSize: 18,
+          padding: "15px 18px",
+          fontSize: 15,
           fontWeight: 700,
           color: "var(--docs-text)",
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          gap: 10,
+          fontFamily: "var(--docs-mono)",
+          letterSpacing: ".01em",
         }}
       >
-        <span style={{ color: "var(--docs-text-faint)", fontSize: 26, lineHeight: 1, display: "inline-flex", alignItems: "center", width: 20 }}>
-          <span className="api-accordion-arrow-closed">›</span>
-          <span className="api-accordion-arrow-open">⌄</span>
-        </span>
+        <ChevronRight className="api-accordion-chevron" strokeWidth={2.2} />
         <span>{title}</span>
       </summary>
-      <div style={{ padding: "0 18px 18px" }}>{children}</div>
+      <div className="api-accordion-panel">{children}</div>
     </details>
   );
 }
