@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Check, ChevronRight, Copy, Play, X } from "lucide-react";
 import { CodeBlock, CodeTabs as SharedCodeTabs, codeBlockStyles } from "../../_components/code-block";
+import { JsonMonacoViewer } from "./json-monaco-viewer";
 
 // ── Method badge ──
 const METHOD_COLORS: Record<string, { bg: string; text: string }> = {
@@ -443,6 +444,7 @@ export function ApiRequestConfigCard({
   authFields = [],
   pathFields = [],
   queryFields = [],
+  useMonacoForJsonResponse = false,
 }: {
   method: string;
   path: string;
@@ -451,6 +453,7 @@ export function ApiRequestConfigCard({
   authFields?: ApiFieldItem[];
   pathFields?: ApiFieldItem[];
   queryFields?: ApiFieldItem[];
+  useMonacoForJsonResponse?: boolean;
 }) {
   const [authValues, setAuthValues] = useState<Record<string, string>>({});
   const [pathValues, setPathValues] = useState<Record<string, string>>({});
@@ -737,7 +740,11 @@ export function ApiRequestConfigCard({
               </div>
             </div>
             <div style={{ padding: 14, overflow: "auto", maxHeight: "calc(min(70vh, 680px) - 58px)" }}>
-              <CodeBlock code={responseBody} language="json" bare />
+              {useMonacoForJsonResponse ? (
+                <JsonMonacoViewer code={responseBody} height={420} />
+              ) : (
+                <CodeBlock code={responseBody} language="json" bare />
+              )}
             </div>
           </div>
         </div>

@@ -9,6 +9,7 @@ import {
   CodeTabs,
   type ApiFieldItem,
 } from "../../_components/doc-components";
+import { JsonMonacoTabs } from "../../_components/json-monaco-viewer";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
   {
@@ -213,6 +214,7 @@ export function ListAccountsContent() {
                   baseUrl="https://api.unipost.dev"
                   authFields={AUTH_FIELDS}
                   queryFields={QUERY_FIELDS}
+                  useMonacoForJsonResponse
                 />
 
                 <ApiEndpointCard method="GET" path="/v1/social-accounts">
@@ -250,7 +252,7 @@ export function ListAccountsContent() {
           right={
             <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
               <CodeTabs snippets={SNIPPETS} />
-              <CodeTabs snippets={RESPONSE_SNIPPETS} />
+              <JsonMonacoTabs snippets={RESPONSE_SNIPPETS} />
             </div>
           }
         />
