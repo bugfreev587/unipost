@@ -194,7 +194,18 @@ export function CodeTabs({ snippets }: { snippets: { lang: string; label: string
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: codeBlockStyles() }} />
-      <SharedCodeTabs snippets={snippets} />
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            .docs-api-code-tabs .docs-code-tabs{
+              margin:0;
+            }
+          `,
+        }}
+      />
+      <div className="docs-api-code-tabs">
+        <SharedCodeTabs snippets={snippets} />
+      </div>
     </>
   );
 }

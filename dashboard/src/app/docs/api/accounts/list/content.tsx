@@ -137,6 +137,12 @@ func main() {
   _ = accounts
 }`,
   },
+  {
+    lang: "curl",
+    label: "cURL",
+    code: `curl "https://api.unipost.dev/v1/social-accounts?platform=instagram" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
 ];
 
 const RESPONSE_200 = `{
@@ -224,7 +230,7 @@ export function ListAccountsContent() {
             </>
           }
           right={
-            <div style={{ display: "grid", gap: 20 }}>
+            <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
               <CodeTabs snippets={SNIPPETS} />
               <CodeTabs snippets={RESPONSE_SNIPPETS} />
             </div>
