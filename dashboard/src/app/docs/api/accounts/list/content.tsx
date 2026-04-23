@@ -204,29 +204,37 @@ export function ListAccountsContent() {
         <ApiReferenceGrid
           left={
             <>
-              <ApiEndpointCard method="GET" path="/v1/social-accounts">
-                <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)" }}>
-                  <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
-                  <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/social-accounts</code>
-                </div>
-                <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
-                  <ApiFieldList items={AUTH_FIELDS} />
-                </div>
-                <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Query Params</div>
-                  <ApiFieldList items={QUERY_FIELDS} />
-                </div>
-                <div style={{ padding: "18px" }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
-                </div>
-                <ApiAccordion title="200">
-                  <ApiFieldList items={RESPONSE_200_FIELDS} />
-                </ApiAccordion>
-                <ApiAccordion title="401">
-                  <ApiFieldList items={RESPONSE_401_FIELDS} />
-                </ApiAccordion>
-              </ApiEndpointCard>
+              <div style={{ display: "grid", gap: 16 }}>
+                <ApiEndpointCard method="GET" path="/v1/social-accounts">
+                  <div style={{ padding: "16px 18px" }}>
+                    <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
+                    <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/social-accounts</code>
+                  </div>
+                </ApiEndpointCard>
+
+                <ApiEndpointCard method="GET" path="/v1/social-accounts">
+                  <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
+                    <ApiFieldList items={AUTH_FIELDS} />
+                  </div>
+                  <div style={{ padding: "18px" }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Query Params</div>
+                    <ApiFieldList items={QUERY_FIELDS} />
+                  </div>
+                </ApiEndpointCard>
+
+                <ApiEndpointCard method="GET" path="/v1/social-accounts">
+                  <div style={{ padding: "18px" }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
+                  </div>
+                  <ApiAccordion title="200">
+                    <ApiFieldList items={RESPONSE_200_FIELDS} />
+                  </ApiAccordion>
+                  <ApiAccordion title="401">
+                    <ApiFieldList items={RESPONSE_401_FIELDS} />
+                  </ApiAccordion>
+                </ApiEndpointCard>
+              </div>
             </>
           }
           right={
