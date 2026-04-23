@@ -335,26 +335,13 @@ export function ApiEndpointCard({
   method,
   path,
   children,
-  hideEndpointRow = false,
 }: {
   method: string;
   path: string;
   children: React.ReactNode;
-  hideEndpointRow?: boolean;
 }) {
   return (
     <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)", overflow: "hidden" }}>
-      <div style={{ padding: "14px 18px", background: "var(--docs-bg-muted)", borderBottom: "1px solid var(--docs-border)", textAlign: "center", color: "var(--docs-text-muted)", fontSize: 13.5, fontWeight: 600 }}>
-        https://api.unipost.dev
-      </div>
-      {!hideEndpointRow ? (
-        <div style={{ padding: "18px 20px 8px", borderBottom: "1px solid var(--docs-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: METHOD_COLORS[method]?.text || "#10b981" }}>{method}</span>
-            <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{path}</code>
-          </div>
-        </div>
-      ) : null}
       <div>{children}</div>
     </div>
   );
@@ -386,19 +373,19 @@ export function ApiAccordion({
           listStyle: "none",
           cursor: "pointer",
           padding: "16px 18px",
-          fontSize: 14.5,
-          fontWeight: 650,
+          fontSize: 18,
+          fontWeight: 700,
           color: "var(--docs-text)",
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          gap: 12,
         }}
       >
-        <span>{title}</span>
-        <span style={{ color: "var(--docs-text-faint)", fontSize: 15, lineHeight: 1 }}>
-          <span className="api-accordion-arrow-closed">▸</span>
-          <span className="api-accordion-arrow-open">▾</span>
+        <span style={{ color: "var(--docs-text-faint)", fontSize: 26, lineHeight: 1, display: "inline-flex", alignItems: "center", width: 20 }}>
+          <span className="api-accordion-arrow-closed">›</span>
+          <span className="api-accordion-arrow-open">⌄</span>
         </span>
+        <span>{title}</span>
       </summary>
       <div style={{ padding: "0 18px 18px" }}>{children}</div>
     </details>

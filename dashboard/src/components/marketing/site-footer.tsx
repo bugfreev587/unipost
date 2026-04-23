@@ -22,6 +22,7 @@ const FOOTER_CSS = `
 // Routes where the marketing footer must not render — every page in the
 // (dashboard) route group belongs here, plus onboarding/admin flows.
 const HIDDEN_PREFIXES = [
+  "/docs",
   "/projects",
   "/tutorials",
   "/settings",

@@ -224,7 +224,7 @@ export function ListAccountsContent() {
         <ApiReferenceGrid
           left={
             <>
-              <ApiEndpointCard method="GET" path="/v1/social-accounts" hideEndpointRow>
+              <ApiEndpointCard method="GET" path="/v1/social-accounts">
                 <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)" }}>
                   <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
                   <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/social-accounts</code>
