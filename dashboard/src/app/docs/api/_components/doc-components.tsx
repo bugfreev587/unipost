@@ -335,6 +335,47 @@ function buildFieldKey(name: string) {
   return normalizeConfigFieldName(name).label;
 }
 
+function buildJsonTemplateValue(type?: string) {
+  const normalized = (type || "").trim().toLowerCase();
+
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.includes('"draft"')) {
+    return "draft";
+  }
+  if (normalized.includes("boolean")) {
+    return false;
+  }
+  if (normalized.includes("integer") || normalized.includes("number")) {
+    return 0;
+  }
+  if (normalized.includes("string[]")) {
+    return [];
+  }
+  if (normalized === "array" || normalized.includes("[]")) {
+    return [];
+  }
+  if (normalized.includes("object")) {
+    return {};
+  }
+  if (normalized.includes("null")) {
+    return null;
+  }
+  return "";
+}
+
+function buildRequestBodyTemplate(fields: ApiFieldItem[]) {
+  const template: Record<string, unknown> = {};
+
+  for (const field of fields) {
+    const key = buildFieldKey(field.name);
+    template[key] = buildJsonTemplateValue(field.type);
+  }
+
+  return JSON.stringify(template, null, 2);
+}
+
 function RequestConfigSection({
   title,
   fields,
@@ -436,6 +477,91 @@ function RequestConfigSection({
   );
 }
 
+function RequestBodySection({
+  fields,
+  value,
+  onChange,
+}: {
+  fields: ApiFieldItem[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  if (fields.length === 0) {
+    return null;
+  }
+
+  return (
+    <details className="api-request-config-section">
+      <summary
+        className="api-request-config-summary"
+        style={{
+          listStyle: "none",
+          cursor: "pointer",
+          padding: "15px 18px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--docs-text-soft)", letterSpacing: ".01em" }}>Request Body</span>
+        <ChevronRight className="api-accordion-chevron" strokeWidth={2.2} />
+      </summary>
+      <div className="api-request-config-panel">
+        <div
+          style={{
+            border: "1px solid var(--docs-border)",
+            borderRadius: 14,
+            padding: 12,
+            background: "var(--docs-bg-muted)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 12.5, fontWeight: 500, color: "var(--docs-text-soft)" }}>body</span>
+            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 11.5, color: "var(--docs-text-muted)" }}>application/json</span>
+          </div>
+          <textarea
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            spellCheck={false}
+            style={{
+              width: "100%",
+              minHeight: 180,
+              resize: "vertical",
+              borderRadius: 12,
+              border: "1px solid var(--docs-border)",
+              background: "var(--docs-tech-bg)",
+              color: "var(--docs-tech-text)",
+              fontSize: 12.5,
+              lineHeight: 1.55,
+              padding: "12px 13px",
+              outline: "none",
+              fontFamily: "var(--docs-mono)",
+            }}
+          />
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            {fields.map((field) => {
+              const normalized = normalizeConfigFieldName(field.name);
+              return (
+                <div key={`body-${field.name}`}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                    <span style={{ fontFamily: "var(--docs-mono)", fontSize: 12, color: "var(--docs-text)" }}>{normalized.label}</span>
+                    {field.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 11, color: "var(--docs-text-muted)" }}>{field.type}</span> : null}
+                    <span style={{ fontSize: 10.5, color: "var(--docs-text-faint)", fontFamily: "var(--docs-mono)", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                      {normalized.optional ? "Optional" : "Required"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--docs-text-soft)" }}>{field.description}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export function ApiRequestConfigCard({
   method,
   path,
@@ -444,6 +570,7 @@ export function ApiRequestConfigCard({
   authFields = [],
   pathFields = [],
   queryFields = [],
+  bodyFields = [],
   useMonacoForJsonResponse = false,
 }: {
   method: string;
@@ -453,11 +580,13 @@ export function ApiRequestConfigCard({
   authFields?: ApiFieldItem[];
   pathFields?: ApiFieldItem[];
   queryFields?: ApiFieldItem[];
+  bodyFields?: ApiFieldItem[];
   useMonacoForJsonResponse?: boolean;
 }) {
   const [authValues, setAuthValues] = useState<Record<string, string>>({});
   const [pathValues, setPathValues] = useState<Record<string, string>>({});
   const [queryValues, setQueryValues] = useState<Record<string, string>>({});
+  const [bodyValue, setBodyValue] = useState(() => buildRequestBodyTemplate(bodyFields));
   const [isRunning, setIsRunning] = useState(false);
   const [responseOpen, setResponseOpen] = useState(false);
   const [responseStatus, setResponseStatus] = useState<number | null>(null);
@@ -480,7 +609,7 @@ export function ApiRequestConfigCard({
 
   const pathPreview = requestPathTemplate || path;
   const queryParamKeys = useMemo(() => queryFields.map((field) => buildFieldKey(field.name)), [queryFields]);
-  const authFieldKey = authFields.length > 0 ? buildFieldKey(authFields[0].name) : null;
+  const hasBody = bodyFields.length > 0;
 
   const requestUrl = useMemo(() => {
     const resolvedPath = pathFields.reduce((acc, field) => {
@@ -506,16 +635,34 @@ export function ApiRequestConfigCard({
       setIsRunning(true);
 
       const headers: Record<string, string> = {};
-      if (authFieldKey) {
-        const rawToken = authValues[authFieldKey]?.trim();
-        if (rawToken) {
-          headers.Authorization = /^Bearer\s+/i.test(rawToken) ? rawToken : `Bearer ${rawToken}`;
+      for (const field of authFields) {
+        const key = buildFieldKey(field.name);
+        const rawValue = authValues[key]?.trim();
+        if (!rawValue) {
+          continue;
         }
+
+        if (key.toLowerCase() === "authorization") {
+          headers.Authorization = /^Bearer\s+/i.test(rawValue) ? rawValue : `Bearer ${rawValue}`;
+          continue;
+        }
+
+        headers[key] = rawValue;
+      }
+
+      if (hasBody && !headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
+      }
+
+      let requestBody: string | undefined;
+      if (hasBody) {
+        requestBody = bodyValue.trim() ? JSON.stringify(JSON.parse(bodyValue), null, 2) : "{}";
       }
 
       const response = await fetch(requestUrl, {
         method,
         headers,
+        body: requestBody,
       });
 
       const text = await response.text();
@@ -608,6 +755,7 @@ export function ApiRequestConfigCard({
     authFields.length > 0 ? <RequestConfigSection key="auth" title="Authorization" fields={authFields} section="auth" values={authValues} onValueChange={(key, value) => setAuthValues((current) => ({ ...current, [key]: value }))} /> : null,
     pathFields.length > 0 ? <RequestConfigSection key="path" title="Path" fields={pathFields} section="path" values={pathValues} onValueChange={(key, value) => setPathValues((current) => ({ ...current, [key]: value }))} /> : null,
     queryFields.length > 0 ? <RequestConfigSection key="query" title="Query" fields={queryFields} section="query" values={queryValues} onValueChange={(key, value) => setQueryValues((current) => ({ ...current, [key]: value }))} /> : null,
+    bodyFields.length > 0 ? <RequestBodySection key="body" fields={bodyFields} value={bodyValue} onChange={setBodyValue} /> : null,
   ].filter(Boolean);
 
   if (sections.length === 0) {

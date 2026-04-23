@@ -3,9 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Check, Copy } from "lucide-react";
-import { codeBlockStyles, type CodeSnippet } from "../../_components/code-block";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
+
+export type JsonViewerSnippet = {
+  label: string;
+  code: string;
+  lang?: string;
+};
 
 function tryFormatJson(value: string) {
   try {
@@ -102,56 +107,53 @@ export function JsonMonacoViewer({
   }, []);
 
   return (
-    <>
-      <style dangerouslySetInnerHTML={{ __html: codeBlockStyles() }} />
-      <div
-        style={{
-          border: "1px solid var(--docs-border)",
-          borderRadius: 16,
-          overflow: "hidden",
-          background: "var(--docs-tech-bg)",
+    <div
+      style={{
+        border: "1px solid var(--docs-border)",
+        borderRadius: 16,
+        overflow: "hidden",
+        background: "var(--docs-tech-bg)",
+      }}
+    >
+      <MonacoEditor
+        height={height ?? estimateHeight(formatted)}
+        defaultLanguage="json"
+        theme={themeName}
+        value={formatted}
+        beforeMount={(monaco) => {
+          applyTheme(monaco);
         }}
-      >
-        <MonacoEditor
-          height={height ?? estimateHeight(formatted)}
-          defaultLanguage="json"
-          theme={themeName}
-          value={formatted}
-          beforeMount={(monaco) => {
-            applyTheme(monaco);
-          }}
-          onMount={(_, monaco) => {
-            (window as typeof window & { monaco?: typeof import("monaco-editor") }).monaco = monaco;
-            applyTheme(monaco);
-          }}
-          options={{
-            readOnly: true,
-            domReadOnly: true,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            wordWrap: "on",
-            folding: true,
-            lineNumbers: "on",
-            renderLineHighlight: "none",
-            glyphMargin: false,
-            overviewRulerBorder: false,
-            overviewRulerLanes: 0,
-            padding: { top: 12, bottom: 12 },
-            fontSize: 13,
-            lineHeight: 21,
-            fontFamily: "var(--docs-mono, var(--mono), monospace)",
-            scrollbar: {
-              verticalScrollbarSize: 10,
-              horizontalScrollbarSize: 10,
-            },
-          }}
-        />
-      </div>
-    </>
+        onMount={(_, monaco) => {
+          (window as typeof window & { monaco?: typeof import("monaco-editor") }).monaco = monaco;
+          applyTheme(monaco);
+        }}
+        options={{
+          readOnly: true,
+          domReadOnly: true,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          wordWrap: "on",
+          folding: true,
+          lineNumbers: "on",
+          renderLineHighlight: "none",
+          glyphMargin: false,
+          overviewRulerBorder: false,
+          overviewRulerLanes: 0,
+          padding: { top: 12, bottom: 12 },
+          fontSize: 13,
+          lineHeight: 21,
+          fontFamily: "var(--docs-mono, var(--mono), monospace)",
+          scrollbar: {
+            verticalScrollbarSize: 10,
+            horizontalScrollbarSize: 10,
+          },
+        }}
+      />
+    </div>
   );
 }
 
-export function JsonMonacoTabs({ snippets }: { snippets: CodeSnippet[] }) {
+export function JsonMonacoTabs({ snippets }: { snippets: JsonViewerSnippet[] }) {
   const validSnippets = useMemo(
     () => snippets.filter((snippet) => tryFormatJson(snippet.code)),
     [snippets]
@@ -169,26 +171,23 @@ export function JsonMonacoTabs({ snippets }: { snippets: CodeSnippet[] }) {
   }
 
   return (
-    <>
-      <style dangerouslySetInnerHTML={{ __html: codeBlockStyles() }} />
-      <div className="docs-code-tabs" style={{ margin: 0 }}>
-        <div className="docs-code-tabs-header">
-          <div className="docs-code-tab-list">
-            {validSnippets.map((snippet, index) => (
-              <button
-                key={`${snippet.label}-${index}`}
-                type="button"
-                onClick={() => setActive(index)}
-                className={`docs-code-tab${index === active ? " active" : ""}`}
-              >
-                {snippet.label}
-              </button>
-            ))}
-          </div>
-          <CopyButton code={formatted} />
+    <div className="docs-code-tabs" style={{ margin: 0 }}>
+      <div className="docs-code-tabs-header">
+        <div className="docs-code-tab-list">
+          {validSnippets.map((snippet, index) => (
+            <button
+              key={`${snippet.label}-${index}`}
+              type="button"
+              onClick={() => setActive(index)}
+              className={`docs-code-tab${index === active ? " active" : ""}`}
+            >
+              {snippet.label}
+            </button>
+          ))}
         </div>
-        <JsonMonacoViewer code={formatted} />
+        <CopyButton code={formatted} />
       </div>
-    </>
+      <JsonMonacoViewer code={formatted} />
+    </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { JsonMonacoTabs, JsonMonacoViewer } from "../api/_components/json-monaco-viewer";
 
 export type CodeLanguage =
   | "javascript"
@@ -178,6 +179,14 @@ function normalizeLanguage(value?: string, code?: string): CodeLanguage {
   return "text";
 }
 
+function formatJsonForCopy(code: string) {
+  try {
+    return JSON.stringify(JSON.parse(code), null, 2);
+  } catch {
+    return code;
+  }
+}
+
 function tokenize(code: string, language: CodeLanguage): Token[] {
   if (language === "text") {
     return [{ kind: "plain", value: code }];
@@ -269,6 +278,23 @@ export function CodeBlock({
   bare?: boolean;
 }) {
   const normalized = useMemo(() => normalizeLanguage(language, code), [code, language]);
+  if (normalized === "json") {
+    if (bare) {
+      return <JsonMonacoViewer code={code} height={compact ? 220 : undefined} />;
+    }
+
+    return (
+      <div className={`docs-code-block${compact ? " compact" : ""}`}>
+        <div className="docs-code-toolbar">
+          <div className="docs-code-meta">
+            <span className="docs-code-lang">{title || normalized}</span>
+          </div>
+          <CopyButton code={formatJsonForCopy(code)} />
+        </div>
+        <JsonMonacoViewer code={code} />
+      </div>
+    );
+  }
   const tokens = useMemo(() => tokenize(code, normalized), [code, normalized]);
 
   if (bare) {
@@ -315,6 +341,11 @@ export function CodeBlock({
 export function CodeTabs({ snippets }: { snippets: CodeSnippet[] }) {
   const [active, setActive] = useState(0);
   const current = snippets[active];
+  const allJson = snippets.length > 0 && snippets.every((snippet) => normalizeLanguage(snippet.lang || snippet.label, snippet.code) === "json");
+
+  if (allJson) {
+    return <JsonMonacoTabs snippets={snippets} />;
+  }
 
   return (
     <div className="docs-code-tabs">

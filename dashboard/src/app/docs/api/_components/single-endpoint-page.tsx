@@ -78,13 +78,14 @@ export function SingleEndpointReferencePage({
   const authSection = requestSections.find((section) => normalizeSectionTitle(section.title) === "authorization");
   const pathSection = requestSections.find((section) => normalizeSectionTitle(section.title).startsWith("path"));
   const querySection = requestSections.find((section) => normalizeSectionTitle(section.title).startsWith("query"));
+  const bodySection = requestSections.find((section) => normalizeSectionTitle(section.title) === "request body");
   const unsupportedSections = requestSections.filter((section) => {
     const title = normalizeSectionTitle(section.title);
-    return title !== "authorization" && !title.startsWith("path") && !title.startsWith("query");
+    return title !== "authorization" && !title.startsWith("path") && !title.startsWith("query") && title !== "request body";
   });
   const shouldRenderPlayground =
     unsupportedSections.length === 0 &&
-    Boolean(authSection || pathSection || querySection);
+    Boolean(authSection || pathSection || querySection || bodySection);
 
   return (
     <ApiReferencePage section={section} title={title} description={description}>
@@ -100,6 +101,7 @@ export function SingleEndpointReferencePage({
                 authFields={authSection?.items || []}
                 pathFields={pathSection?.items || []}
                 queryFields={querySection?.items || []}
+                bodyFields={bodySection?.items || []}
                 useMonacoForJsonResponse
               />
             ) : null}
