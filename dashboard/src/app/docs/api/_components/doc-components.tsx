@@ -73,6 +73,7 @@ export function ApiInlineLink({
   const [method, ...rest] = trimmed.split(" ");
   const path = rest.join(" ");
   const isPathOnly = trimmed.startsWith("/v1/");
+  const methodClassName = !isPathOnly && method ? `docs-api-inline-${method.toLowerCase()}` : "";
   const content = (
     <>
       <span className="docs-api-inline-glow" />
@@ -91,14 +92,14 @@ export function ApiInlineLink({
 
   if (!resolvedHref) {
     return (
-      <code className="docs-api-inline docs-api-inline-static">
+      <code className={`docs-api-inline docs-api-inline-static ${methodClassName}`.trim()}>
         {content}
       </code>
     );
   }
 
   return (
-    <Link href={resolvedHref} className="docs-api-inline">
+    <Link href={resolvedHref} className={`docs-api-inline ${methodClassName}`.trim()}>
       {content}
     </Link>
   );
