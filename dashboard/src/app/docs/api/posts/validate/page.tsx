@@ -3,38 +3,69 @@ import { ApiInlineLink } from "../../_components/doc-components";
 
 const VALIDATE_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl -X POST https://api.unipost.dev/v1/social-posts/validate \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platform_posts": [
-      {
-        "account_id": "sa_twitter_1",
-        "caption": "A platform-specific draft to validate"
-      }
-    ]
-  }'`,
-  },
-  {
-    label: "JavaScript",
-    code: `const response = await fetch("https://api.unipost.dev/v1/social-posts/validate", {
-  method: "POST",
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    platform_posts: [
-      {
-        account_id: "sa_twitter_1",
-        caption: draftForX,
-      },
-    ],
-  }),
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
 });
 
-const { data } = await response.json();`,
+const result = await client.posts.validate({
+  platformPosts: [
+    {
+      accountId: "sa_twitter_1",
+      caption: draftForX,
+    },
+  ],
+});`,
+  },
+  {
+    label: "Python",
+    code: `from unipost import UniPost
+import os
+
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+
+result = client.posts.validate(
+  platform_posts=[
+    {
+      "account_id": "sa_twitter_1",
+      "caption": draft_for_x,
+    }
+  ]
+)`,
+  },
+  {
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient(
+    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+  )
+
+  validation, err := client.Posts.Validate(context.Background(), &unipost.ValidatePostParams{
+    PlatformPosts: []unipost.PlatformPost{
+      {
+        AccountID: "sa_twitter_1",
+        Caption:   draftForX,
+      },
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = validation
+}`,
   },
 ];
 

@@ -2,19 +2,69 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../../_components/docs-shell"
 
 const ANALYTICS_SNIPPETS = [
   {
-    label: "Summary",
-    code: `curl "https://api.unipost.dev/v1/analytics/summary?start_date=2026-04-01&end_date=2026-04-30" \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const rollup = await client.analytics.rollup({
+  from: "2026-04-01T00:00:00Z",
+  to: "2026-04-30T00:00:00Z",
+  granularity: "day",
+});
+
+const postAnalytics = await client.posts.analytics("post_abc123");`,
   },
   {
-    label: "By platform",
-    code: `curl "https://api.unipost.dev/v1/analytics/by-platform?start_date=2026-04-01&end_date=2026-04-30" \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+    label: "Python",
+    code: `from unipost import UniPost
+import os
+
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+
+rollup = client.analytics.rollup(
+  from_date="2026-04-01T00:00:00Z",
+  to_date="2026-04-30T00:00:00Z",
+  granularity="day",
+)
+
+post_analytics = client.posts.analytics("post_abc123")`,
   },
   {
-    label: "Per-post analytics",
-    code: `curl https://api.unipost.dev/v1/social-posts/post_abc123/analytics \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient(
+    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+  )
+
+  rollup, err := client.Analytics.Rollup(context.Background(), &unipost.RollupParams{
+    From:        "2026-04-01T00:00:00Z",
+    To:          "2026-04-30T00:00:00Z",
+    Granularity: "day",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  postAnalytics, err := client.Posts.Analytics(context.Background(), "post_abc123")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _, _ = rollup, postAnalytics
+}`,
   },
 ];
 
@@ -39,7 +89,7 @@ export default function AnalyticsPage() {
         ]}
       />
 
-      <h2 id="examples">Examples</h2>
+      <h2 id="examples">SDK examples</h2>
       <DocsCodeTabs snippets={ANALYTICS_SNIPPETS} />
 
       <h2 id="behavior">Behavior notes</h2>

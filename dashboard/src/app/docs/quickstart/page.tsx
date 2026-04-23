@@ -3,164 +3,225 @@ import { ApiInlineLink } from "../api/_components/doc-components";
 
 const CONNECT_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl -X POST https://api.unipost.dev/v1/social-accounts/connect \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platform": "bluesky",
-    "credentials": {
-      "handle": "alice.bsky.social",
-      "app_password": "xxxx-xxxx-xxxx-xxxx"
-    }
-  }'`,
-  },
-  {
-    label: "JavaScript",
-    code: `const response = await fetch("https://api.unipost.dev/v1/social-accounts/connect", {
-  method: "POST",
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    platform: "bluesky",
-    credentials: {
-      handle: "alice.bsky.social",
-      app_password: "xxxx-xxxx-xxxx-xxxx",
-    },
-  }),
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
 });
 
-const { data } = await response.json();`,
+const session = await client.connect.createSession({
+  platform: "bluesky",
+  externalUserId: "user_123",
+  returnUrl: "https://app.acme.com/integrations/done",
+});
+
+console.log(session.url);`,
   },
 ];
 
 const LIST_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl https://api.unipost.dev/v1/social-accounts \\
-  -H "Authorization: Bearer up_live_xxxx"`,
-  },
-  {
-    label: "JavaScript",
-    code: `const response = await fetch("https://api.unipost.dev/v1/social-accounts", {
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-  },
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
 });
 
-const { data: accounts } = await response.json();
-const accountId = accounts[0].id;`,
+const { data: accounts } = await client.accounts.list();
+const accountId = accounts[0]?.id;`,
+  },
+  {
+    label: "Python",
+    code: `from unipost import UniPost
+import os
+
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+
+accounts = client.accounts.list()
+account_id = accounts["data"][0]["id"]`,
+  },
+  {
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient(
+    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+  )
+
+  accounts, err := client.Accounts.List(context.Background(), nil)
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  accountID := accounts[0].ID
+  _ = accountID
+}`,
   },
 ];
 
 const CREATE_POST_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl -X POST https://api.unipost.dev/v1/social-posts \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platform_posts": [
-      {
-        "account_id": "sa_twitter_123",
-        "caption": "Shipping on every platform with one API."
-      },
-      {
-        "account_id": "sa_linkedin_456",
-        "caption": "We shipped a new release today. Here is what changed."
-      }
-    ],
-    "idempotency_key": "launch-2026-04-13-001"
-  }'`,
-  },
-  {
-    label: "JavaScript",
-    code: `const response = await fetch("https://api.unipost.dev/v1/social-posts", {
-  method: "POST",
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    platform_posts: [
-      {
-        account_id: "sa_twitter_123",
-        caption: "Shipping on every platform with one API.",
-      },
-      {
-        account_id: "sa_linkedin_456",
-        caption: "We shipped a new release today. Here is what changed.",
-      },
-    ],
-    idempotency_key: "launch-2026-04-13-001",
-  }),
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
 });
 
-const { data } = await response.json();`,
+const post = await client.posts.create({
+  platformPosts: [
+    {
+      accountId: "sa_twitter_123",
+      caption: "Shipping on every platform with one API.",
+    },
+    {
+      accountId: "sa_linkedin_456",
+      caption: "We shipped a new release today. Here is what changed.",
+    },
+  ],
+  idempotencyKey: "launch-2026-04-13-001",
+});
+
+console.log(post.id);`,
   },
   {
     label: "Python",
-    code: `import requests
+    code: `from unipost import UniPost
+import os
 
-response = requests.post(
-    "https://api.unipost.dev/v1/social-posts",
-    headers={
-        "Authorization": "Bearer up_live_xxxx",
-        "Content-Type": "application/json",
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+
+post = client.posts.create(
+  platform_posts=[
+    {
+      "account_id": "sa_twitter_123",
+      "caption": "Shipping on every platform with one API.",
     },
-    json={
-        "platform_posts": [
-            {
-                "account_id": "sa_twitter_123",
-                "caption": "Shipping on every platform with one API.",
-            },
-            {
-                "account_id": "sa_linkedin_456",
-                "caption": "We shipped a new release today. Here is what changed.",
-            },
-        ],
-        "idempotency_key": "launch-2026-04-13-001",
+    {
+      "account_id": "sa_linkedin_456",
+      "caption": "We shipped a new release today. Here is what changed.",
     },
+  ],
+  idempotency_key="launch-2026-04-13-001",
 )`,
+  },
+  {
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient(
+    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+  )
+
+  post, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
+    PlatformPosts: []unipost.PlatformPost{
+      {
+        AccountID: "sa_twitter_123",
+        Caption:   "Shipping on every platform with one API.",
+      },
+      {
+        AccountID: "sa_linkedin_456",
+        Caption:   "We shipped a new release today. Here is what changed.",
+      },
+    },
+    IdempotencyKey: "launch-2026-04-13-001",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = post.ID
+}`,
   },
 ];
 
 const VALIDATE_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl -X POST https://api.unipost.dev/v1/social-posts/validate \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platform_posts": [
-      {
-        "account_id": "sa_twitter_123",
-        "caption": "This is a draft to validate before publish"
-      }
-    ]
-  }'`,
-  },
-  {
-    label: "JavaScript",
-    code: `const response = await fetch("https://api.unipost.dev/v1/social-posts/validate", {
-  method: "POST",
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    platform_posts: [
-      {
-        account_id: "sa_twitter_123",
-        caption: draftForX,
-      },
-    ],
-  }),
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
 });
 
-const { data } = await response.json();`,
+const result = await client.posts.validate({
+  platformPosts: [
+    {
+      accountId: "sa_twitter_123",
+      caption: draftForX,
+    },
+  ],
+});
+
+console.log(result);`,
+  },
+  {
+    label: "Python",
+    code: `from unipost import UniPost
+import os
+
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+
+result = client.posts.validate(
+  platform_posts=[
+    {
+      "account_id": "sa_twitter_123",
+      "caption": draft_for_x,
+    }
+  ]
+)`,
+  },
+  {
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient(
+    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+  )
+
+  validation, err := client.Posts.Validate(context.Background(), &unipost.ValidatePostParams{
+    PlatformPosts: []unipost.PlatformPost{
+      {
+        AccountID: "sa_twitter_123",
+        Caption:   draftForX,
+      },
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = validation
+}`,
   },
 ];
 
@@ -195,7 +256,7 @@ export default function QuickstartPage() {
       <p>Create a workspace in UniPost, then generate an API key from the dashboard. Production keys start with <code>up_live_</code>. Test keys start with <code>up_test_</code>.</p>
 
       <h2 id="step-2">2. Connect an account</h2>
-      <p>For your own team-owned accounts, connect directly. For customer-owned accounts, switch to Connect sessions instead. The example below uses Bluesky because it gives you the fastest working path.</p>
+      <p>For customer-owned accounts, create a hosted Connect session and redirect the user to the returned URL. If you are wiring up a team-owned account for yourself, you can connect it once from the dashboard and continue with the SDK flow below.</p>
       <DocsCodeTabs snippets={CONNECT_SNIPPETS} />
 
       <h2 id="step-3">3. List accounts and capture the ID</h2>

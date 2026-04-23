@@ -1,50 +1,5 @@
 import Link from "next/link";
-import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-shell";
-
-const POST_SNIPPETS = [
-  {
-    label: "cURL",
-    code: `curl -X POST https://api.unipost.dev/v1/workspaces/{workspace_id}/platform-credentials \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platform": "linkedin",
-    "client_id": "86acmecustomerid",
-    "client_secret": "AcMeCuStOmErSeCrEt"
-  }'`,
-  },
-  {
-    label: "JavaScript",
-    code: `await fetch(\`https://api.unipost.dev/v1/workspaces/\${workspaceId}/platform-credentials\`, {
-  method: "POST",
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    platform: "linkedin",
-    client_id: "86acmecustomerid",
-    client_secret: "AcMeCuStOmErSeCrEt",
-  }),
-});`,
-  },
-];
-
-const LIST_SNIPPETS = [
-  {
-    label: "cURL",
-    code: `curl https://api.unipost.dev/v1/workspaces/{workspace_id}/platform-credentials \\
-  -H "Authorization: Bearer up_live_xxxx"`,
-  },
-];
-
-const DELETE_SNIPPETS = [
-  {
-    label: "cURL",
-    code: `curl -X DELETE https://api.unipost.dev/v1/workspaces/{workspace_id}/platform-credentials/linkedin \\
-  -H "Authorization: Bearer up_live_xxxx"`,
-  },
-];
+import { DocsPage, DocsTable } from "../../../_components/docs-shell";
 
 export default function PlatformCredentialsPage() {
   return (
@@ -60,7 +15,7 @@ export default function PlatformCredentialsPage() {
       <p>The Create endpoint rejects calls from free-plan workspaces with <code>403 FORBIDDEN</code>. Upgrade the workspace before attempting to upload credentials.</p>
 
       <h2 id="create">Upload credentials</h2>
-      <DocsCodeTabs snippets={POST_SNIPPETS} />
+      <p>SDK support for platform credential management is coming soon. For now, upload credentials from the dashboard or call the REST endpoint directly.</p>
       <DocsTable
         columns={["Field", "Required", "Notes"]}
         rows={[
@@ -73,7 +28,6 @@ export default function PlatformCredentialsPage() {
 
       <h2 id="list">List configured platforms</h2>
       <p>Returns one row per platform that has credentials stored. <code>client_secret</code> is never included — there is no read endpoint that exposes it.</p>
-      <DocsCodeTabs snippets={LIST_SNIPPETS} />
       <DocsTable
         columns={["Response field", "Notes"]}
         rows={[
@@ -85,7 +39,6 @@ export default function PlatformCredentialsPage() {
 
       <h2 id="delete">Remove credentials</h2>
       <p>Deletes the stored credentials for one platform. After a successful delete, Connect sessions for that platform fall back to UniPost&rsquo;s global App. Existing already-connected accounts continue to publish using their stored Page tokens — deletion only affects <em>future</em> OAuth flows.</p>
-      <DocsCodeTabs snippets={DELETE_SNIPPETS} />
       <p>Returns <code>204 No Content</code> on success; safe to call when no credentials exist for that platform.</p>
 
       <h2 id="errors">Errors</h2>

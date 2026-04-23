@@ -44,155 +44,161 @@ const ERRORS: ErrorCodeRow[] = [
 ];
 
 const SNIPPETS_BASIC = [
-  { lang: "js", label: "JavaScript", code: `const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
-  {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer up_live_xxxx',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      caption: 'Hello from UniPost! \\u{1F680}',
-      account_ids: ['sa_instagram_123', 'sa_linkedin_456'],
-    }),
-  }
-);
+  { lang: "js", label: "Node.js", code: `import { UniPost } from "@unipost/sdk";
 
-const { data } = await response.json();
-console.log(data.id);      // post_abc123
-console.log(data.status);  // "published"` },
-  { lang: "python", label: "Python", code: `import requests
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
 
-response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
-    headers={
-        'Authorization': 'Bearer up_live_xxxx',
-        'Content-Type': 'application/json',
-    },
-    json={
-        'caption': 'Hello from UniPost! \\u{1F680}',
-        'account_ids': ['sa_instagram_123', 'sa_linkedin_456'],
-    }
+const post = await client.posts.create({
+  caption: "Hello from UniPost! 🚀",
+  accountIds: ["sa_instagram_123", "sa_linkedin_456"],
+});
+
+console.log(post.id);
+console.log(post.status);` },
+  { lang: "python", label: "Python", code: `from unipost import UniPost
+import os
+
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+
+post = client.posts.create(
+  caption="Hello from UniPost! 🚀",
+  account_ids=["sa_instagram_123", "sa_linkedin_456"],
 )
 
-data = response.json()['data']
-print(data['id'])      # post_abc123
-print(data['status'])  # "published"` },
-  { lang: "go", label: "Go", code: `body := strings.NewReader(\`{
-  "caption": "Hello from UniPost!",
-  "account_ids": ["sa_instagram_123", "sa_linkedin_456"]
-}\`)
+print(post.id)
+print(post.status)` },
+  { lang: "go", label: "Go", code: `package main
 
-req, _ := http.NewRequest("POST",
-    "https://api.unipost.dev/v1/social-posts", body)
-req.Header.Set("Authorization", "Bearer up_live_xxxx")
-req.Header.Set("Content-Type", "application/json")
+import (
+  "context"
+  "log"
+  "os"
 
-resp, _ := http.DefaultClient.Do(req)
-// resp.StatusCode == 200` },
-  { lang: "curl", label: "cURL", code: `curl -X POST https://api.unipost.dev/v1/social-posts \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "caption": "Hello from UniPost!",
-    "account_ids": ["sa_instagram_123", "sa_linkedin_456"]
-  }'` },
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient(
+    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+  )
+
+  post, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
+    Caption:    "Hello from UniPost! 🚀",
+    AccountIDs: []string{"sa_instagram_123", "sa_linkedin_456"},
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _, _ = post.ID, post.Status
+}` },
 ];
 
 const SNIPPETS_ADVANCED = [
-  { lang: "js", label: "JavaScript", code: `// Per-platform captions + scheduling + idempotency
-const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
-  {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer up_live_xxxx',
-      'Content-Type': 'application/json',
-      'Idempotency-Key': 'release-v1.4.0-2026-04-08',
+  { lang: "js", label: "Node.js", code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const post = await client.posts.create({
+  scheduledAt: "2026-05-01T09:00:00Z",
+  idempotencyKey: "release-v1.4.0-2026-04-08",
+  platformPosts: [
+    {
+      accountId: "sa_twitter_789",
+      caption: "v1.4 is live 🎉 webhooks + bulk publish",
     },
-    body: JSON.stringify({
-      scheduled_at: '2026-05-01T09:00:00Z',
-      platform_posts: [
-        {
-          account_id: 'sa_twitter_789',
-          caption: 'v1.4 is live \\u{1F389} webhooks + bulk publish',
-        },
-        {
-          account_id: 'sa_linkedin_456',
-          caption: 'We just shipped v1.4 with two features our customers have been asking for: webhook event subscriptions and a bulk publish endpoint that accepts up to 50 posts in one call.',
-        },
-        {
-          account_id: 'sa_bluesky_012',
-          caption: 'v1.4 shipped \\u{2014} webhooks and bulk publish are live',
-        },
-      ],
-    }),
-  }
-);` },
-  { lang: "curl", label: "cURL", code: `curl -X POST https://api.unipost.dev/v1/social-posts \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -H "Idempotency-Key: release-v1.4.0-2026-04-08" \\
-  -d '{
-    "scheduled_at": "2026-05-01T09:00:00Z",
-    "platform_posts": [
+    {
+      accountId: "sa_linkedin_456",
+      caption: "We just shipped v1.4 with two features our customers have been asking for.",
+    },
+    {
+      accountId: "sa_bluesky_012",
+      caption: "v1.4 shipped — webhooks and bulk publish are live",
+    },
+  ],
+});` },
+  { lang: "python", label: "Python", code: `from unipost import UniPost
+import os
+
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+
+post = client.posts.create(
+  scheduled_at="2026-05-01T09:00:00Z",
+  idempotency_key="release-v1.4.0-2026-04-08",
+  platform_posts=[
+    {
+      "account_id": "sa_twitter_789",
+      "caption": "v1.4 is live 🎉 webhooks + bulk publish",
+    },
+    {
+      "account_id": "sa_linkedin_456",
+      "caption": "We just shipped v1.4 with two features our customers have been asking for.",
+    },
+  ],
+)` },
+  { lang: "go", label: "Go", code: `package main
+
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient(
+    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+  )
+
+  _, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
+    ScheduledAt:    "2026-05-01T09:00:00Z",
+    IdempotencyKey: "release-v1.4.0-2026-04-08",
+    PlatformPosts: []unipost.PlatformPost{
       {
-        "account_id": "sa_twitter_789",
-        "caption": "v1.4 is live! webhooks + bulk publish"
+        AccountID: "sa_twitter_789",
+        Caption:   "v1.4 is live 🎉 webhooks + bulk publish",
       },
       {
-        "account_id": "sa_linkedin_456",
-        "caption": "We just shipped v1.4 with webhook subscriptions and a bulk publish endpoint."
-      }
-    ]
-  }'` },
+        AccountID: "sa_linkedin_456",
+        Caption:   "We just shipped v1.4 with two features our customers have been asking for.",
+      },
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+}` },
 ];
 
 const SNIPPETS_MEDIA_WORKFLOW = [
-  { lang: "curl", label: "1. Reserve Upload", code: `curl -X POST https://api.unipost.dev/v1/media \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "filename": "quarterly-update.mp4",
-    "content_type": "video/mp4",
-    "size_bytes": 18451234
-  }'` },
-  { lang: "json", label: "2. Reserve Response", code: `{
-  "data": {
-    "id": "med_uploaded_video_1",
-    "status": "pending",
-    "content_type": "video/mp4",
-    "size_bytes": 18451234,
-    "upload_url": "https://r2.example.com/...",
-    "expires_at": "2026-04-17T20:15:00Z"
-  }
-}` },
-  { lang: "bash", label: "3. PUT File To upload_url", code: `curl -X PUT "https://r2.example.com/..." \\
-  -H "Content-Type: video/mp4" \\
-  --data-binary @./quarterly-update.mp4` },
-  { lang: "curl", label: "4. Publish With media_ids", code: `curl -X POST https://api.unipost.dev/v1/social-posts \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "caption": "Quarterly product update",
-    "account_ids": ["sa_youtube_1"],
-    "media_ids": ["med_uploaded_video_1"],
-    "platform_options": {
-      "youtube": {
-        "title": "Quarterly product update",
-        "made_for_kids": false,
-        "privacy_status": "public",
-        "category_id": "22",
-        "tags": ["product", "quarterly", "update"],
-        "default_language": "en-US",
-        "notify_subscribers": true,
-        "embeddable": true,
-        "license": "youtube",
-        "public_stats_viewable": true
-      }
-    }
-  }'` },
+  { lang: "js", label: "Node.js", code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const mediaId = await client.media.uploadFile("./quarterly-update.mp4");
+
+const post = await client.posts.create({
+  caption: "Quarterly product update",
+  accountIds: ["sa_youtube_1"],
+  mediaIds: [mediaId],
+  platformOptions: {
+    youtube: {
+      title: "Quarterly product update",
+      made_for_kids: false,
+      privacy_status: "public",
+      category_id: "22",
+    },
+  },
+});
+
+console.log(post.id);` },
 ];
 
 const RESPONSE_SUCCESS = `{

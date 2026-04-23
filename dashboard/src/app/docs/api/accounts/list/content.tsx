@@ -86,48 +86,56 @@ const SNIPPETS = [
   {
     lang: "js",
     label: "Node.js",
-    code: `const response = await fetch(
-  "https://api.unipost.dev/v1/social-accounts",
-  {
-    headers: {
-      Authorization: "Bearer up_live_xxxx",
-    },
-  }
-);
+    code: `import { UniPost } from "@unipost/sdk";
 
-const { data } = await response.json();
-console.log(data);`,
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const { data: accounts } = await client.accounts.list({
+  platform: "instagram",
+});
+
+console.log(accounts);`,
   },
   {
     lang: "python",
     label: "Python",
-    code: `import requests
+    code: `from unipost import UniPost
+import os
 
-response = requests.get(
-    "https://api.unipost.dev/v1/social-accounts",
-    headers={"Authorization": "Bearer up_live_xxxx"},
-)
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
 
-data = response.json()["data"]
-print(data)`,
+accounts = client.accounts.list(platform="instagram")
+print(accounts["data"])`,
   },
   {
     lang: "go",
     label: "Go",
-    code: `req, _ := http.NewRequest(
-    "GET",
-    "https://api.unipost.dev/v1/social-accounts",
-    nil,
-)
-req.Header.Set("Authorization", "Bearer up_live_xxxx")
+    code: `package main
 
-resp, _ := http.DefaultClient.Do(req)`,
-  },
-  {
-    lang: "curl",
-    label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-accounts" \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient(
+    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+  )
+
+  accounts, err := client.Accounts.List(context.Background(), &unipost.ListAccountsParams{
+    Platform: "instagram",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = accounts
+}`,
   },
 ];
 

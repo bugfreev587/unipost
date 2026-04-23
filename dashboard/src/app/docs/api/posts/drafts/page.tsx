@@ -3,24 +3,31 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-she
 const DRAFT_SNIPPETS = [
   {
     label: "Create draft",
-    code: `curl -X POST https://api.unipost.dev/v1/social-posts \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "account_ids": ["sa_twitter_1"],
-    "caption": "Work in progress",
-    "status": "draft"
-  }'`,
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const draft = await client.posts.create({
+  accountIds: ["sa_twitter_1"],
+  caption: "Work in progress",
+  status: "draft",
+});`,
   },
   {
     label: "Publish draft",
-    code: `curl -X POST https://api.unipost.dev/v1/social-posts/post_abc123/publish \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+await client.posts.publish("post_abc123");`,
   },
   {
     label: "Preview link",
-    code: `curl -X POST https://api.unipost.dev/v1/social-posts/post_abc123/preview-link \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+    code: ``,
   },
 ];
 
@@ -43,7 +50,7 @@ export default function DraftsPage() {
 
       <h2 id="preview">Generate a preview link</h2>
       <p>Preview links are signed and time-bounded. They let a human review the resolved content before you commit to publish. This is especially useful when an LLM or automation generated the first draft.</p>
-      <DocsCodeTabs snippets={[DRAFT_SNIPPETS[2]]} />
+      <p>Preview-link generation is not in the SDK yet. Use SDK draft creation + publish today, and keep preview-link generation on the REST endpoint if your workflow needs it.</p>
 
       <h2 id="when-to-use">When drafts are the right choice</h2>
       <DocsTable

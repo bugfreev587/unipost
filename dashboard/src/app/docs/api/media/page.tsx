@@ -2,27 +2,47 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../../_components/docs-shell"
 
 const MEDIA_SNIPPETS = [
   {
-    label: "Reserve upload",
-    code: `curl -X POST https://api.unipost.dev/v1/media \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "filename": "photo.jpg",
-    "content_type": "image/jpeg",
-    "size_bytes": 284192
-  }'`,
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const { mediaId, uploadUrl } = await client.media.upload({
+  filename: "photo.jpg",
+  contentType: "image/jpeg",
+  sizeBytes: 284192,
+});
+
+await fetch(uploadUrl, {
+  method: "PUT",
+  body: fileBuffer,
+});
+
+console.log(mediaId);`,
   },
   {
-    label: "Use media_ids in post",
-    code: `{
-  "platform_posts": [
+    label: "Publish with mediaIds",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const mediaId = await client.media.uploadFile("./photo.jpg");
+
+const post = await client.posts.create({
+  platformPosts: [
     {
-      "account_id": "sa_instagram_1",
-      "caption": "Launch day.",
-      "media_ids": ["med_abc123"]
-    }
-  ]
-}`,
+      accountId: "sa_instagram_1",
+      caption: "Launch day.",
+      mediaIds: [mediaId],
+    },
+  ],
+});
+
+console.log(post.id);`,
   },
 ];
 

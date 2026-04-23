@@ -2,9 +2,15 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-she
 
 const HEALTH_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl https://api.unipost.dev/v1/social-accounts/sa_twitter_1/health \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const health = await client.accounts.health("sa_twitter_1");
+console.log(health.status);`,
   },
 ];
 

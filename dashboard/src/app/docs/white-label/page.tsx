@@ -4,79 +4,37 @@ import { ApiInlineLink } from "../api/_components/doc-components";
 
 const UPLOAD_CREDS_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl -X POST https://api.unipost.dev/v1/workspaces/{workspace_id}/platform-credentials \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platform": "linkedin",
-    "client_id": "86acmecustomerid",
-    "client_secret": "AcMeCuStOmErSeCrEt"
-  }'`,
+    label: "Note",
+    code: `SDK support for platform credential management is coming soon.
+Use the dashboard or the REST endpoint for this workspace-admin step today.`,
   },
 ];
 
 const PATCH_BRANDING_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl -X PATCH https://api.unipost.dev/v1/profiles/{profile_id} \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "branding_logo_url": "https://acme.com/brand/logo.png",
-    "branding_display_name": "Acme",
-    "branding_primary_color": "#0066cc"
-  }'`,
-  },
-  {
-    label: "JavaScript",
-    code: `await fetch(\`https://api.unipost.dev/v1/profiles/\${profileId}\`, {
-  method: "PATCH",
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    branding_logo_url: "https://acme.com/brand/logo.png",
-    branding_display_name: "Acme",
-    branding_primary_color: "#0066cc",
-  }),
-});`,
+    label: "Note",
+    code: `SDK support for profile branding management is coming soon.
+Use the dashboard or the REST endpoint for this profile-admin step today.`,
   },
 ];
 
 const CREATE_SESSION_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl -X POST https://api.unipost.dev/v1/connect/sessions \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platform": "linkedin",
-    "profile_id": "{profile_id}",
-    "external_user_id": "acme_user_42",
-    "external_user_email": "user42@customer.com",
-    "return_url": "https://app.acme.com/integrations/linkedin/done"
-  }'`,
-  },
-  {
-    label: "JavaScript",
-    code: `const res = await fetch("https://api.unipost.dev/v1/connect/sessions", {
-  method: "POST",
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    platform: "linkedin",
-    profile_id: profileId,
-    external_user_id: "acme_user_42",
-    return_url: "https://app.acme.com/integrations/linkedin/done",
-  }),
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
 });
 
-// Redirect your end user to data.url
-const { data } = await res.json();`,
+const session = await client.connect.createSession({
+  platform: "linkedin",
+  externalUserId: "acme_user_42",
+  externalUserEmail: "user42@customer.com",
+  returnUrl: "https://app.acme.com/integrations/linkedin/done",
+});
+
+console.log(session.url);`,
   },
 ];
 
@@ -164,12 +122,12 @@ export default function WhiteLabelPage() {
       <p>Substitute <code>{"{platform}"}</code> with <code>linkedin</code>, <code>twitter</code>, <code>tiktok</code>, <code>youtube</code>, or <code>meta</code> — one entry per platform whose credentials you&apos;ll upload. This is UniPost&apos;s fixed callback path; the full OAuth round-trip is documented in the <Link href="/docs/api/connect/sessions">Connect Sessions reference</Link>.</p>
 
       <h3 id="step-3">3. Upload credentials to UniPost</h3>
-      <p>Upload your Client ID and Client Secret for each platform. Either from the dashboard at Accounts → White-label Credentials, or via <ApiInlineLink endpoint="POST /v1/workspaces/{id}/platform-credentials" />:</p>
+      <p>Upload your Client ID and Client Secret for each platform. Either from the dashboard at Accounts → White-label Credentials, or via <ApiInlineLink endpoint="POST /v1/workspaces/{id}/platform-credentials" />. This workspace-admin endpoint is not in the SDK yet:</p>
       <DocsCodeTabs snippets={UPLOAD_CREDS_SNIPPETS} />
       <p>UniPost encrypts the secret at rest. Once uploaded, every Connect session on this workspace for that platform runs against <em>your</em> App — the platform consent screen shows your App name, your privacy policy URL, your logo.</p>
 
       <h3 id="step-4">4. Set profile branding</h3>
-      <p><ApiInlineLink endpoint="PATCH /v1/profiles/{id}" /> the three branding fields on the profile that will own the Connect sessions. The hosted Connect page pulls these values at render time; there&apos;s no cache layer in between, so the change is immediate.</p>
+      <p><ApiInlineLink endpoint="PATCH /v1/profiles/{id}" /> the three branding fields on the profile that will own the Connect sessions. The hosted Connect page pulls these values at render time; there&apos;s no cache layer in between, so the change is immediate. This profile-admin endpoint is not in the SDK yet:</p>
       <DocsCodeTabs snippets={PATCH_BRANDING_SNIPPETS} />
       <DocsTable
         columns={["Field", "Validation", "Where it appears"]}

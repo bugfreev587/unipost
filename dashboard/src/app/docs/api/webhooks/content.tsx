@@ -56,48 +56,21 @@ const PAYLOAD_CONNECTED = `{
 }`;
 
 const VERIFY_SNIPPETS = [
-  { lang: "js", label: "Node.js", code: `const crypto = require('crypto');
+  { lang: "js", label: "Node.js", code: `import { verifyWebhookSignature } from "@unipost/sdk";
 
-function verifyWebhookSignature(payload, signature, secret) {
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(payload, 'utf8')
-    .digest('hex');
-
-  const expectedSig = 'sha256=' + expected;
-
-  // Use timingSafeEqual to prevent timing attacks
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSig)
-  );
-}
-
-// In your webhook handler:
-app.post('/webhooks/unipost', (req, res) => {
-  const signature = req.headers['x-unipost-signature'];
-  const isValid = verifyWebhookSignature(
-    JSON.stringify(req.body),
-    signature,
-    process.env.WEBHOOK_SECRET  // whsec_xxxx from POST /v1/webhooks
-  );
+app.post("/webhooks/unipost", async (req, res) => {
+  const isValid = await verifyWebhookSignature({
+    payload: JSON.stringify(req.body),
+    signature: req.headers["x-unipost-signature"],
+    secret: process.env.WEBHOOK_SECRET,
+  });
 
   if (!isValid) {
-    return res.status(401).json({ error: 'Invalid signature' });
+    return res.status(401).json({ error: "Invalid signature" });
   }
 
   const { event, data } = req.body;
-  switch (event) {
-    case 'post.published':
-      console.log('Published:', data.id);
-      break;
-    case 'post.failed':
-      console.error('Failed:', data.id, data.results);
-      break;
-    case 'account.connected':
-      console.log('New account:', data.social_account_id);
-      break;
-  }
+  console.log(event, data.id);
 
   res.status(200).json({ received: true });
 });` },
@@ -135,31 +108,6 @@ def handle_webhook(request):
     return {'received': True}` },
 ];
 
-const SETUP_SNIPPETS = [
-  { lang: "curl", label: "cURL", code: `# Create a webhook subscription
-curl -X POST https://api.unipost.dev/v1/webhooks \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "url": "https://yourapp.com/webhooks/unipost",
-    "events": ["post.published", "post.failed", "account.connected"]
-  }'
-
-# Response (save the secret — it's shown only once):
-# {
-#   "data": {
-#     "id": "wh_abc123",
-#     "url": "https://yourapp.com/webhooks/unipost",
-#     "events": ["post.published", "post.failed", "account.connected"],
-#     "secret": "whsec_a1b2c3d4e5f6..."
-#   }
-# }
-
-# Rotate the signing secret
-curl -X POST https://api.unipost.dev/v1/webhooks/wh_abc123/rotate \\
-  -H "Authorization: Bearer up_live_xxxx"` },
-];
-
 export function WebhooksContent() {
   return (
     <>
@@ -189,7 +137,10 @@ export function WebhooksContent() {
         <p style={{ fontSize: 14, color: "var(--docs-text-soft)", lineHeight: 1.6, marginBottom: 16 }}>
           Create a webhook subscription via the API. The signing secret is returned <strong style={{ color: "var(--docs-text)" }}>once</strong> in the create response — store it securely. Use <ApiInlineLink endpoint="POST /v1/webhooks/:id/rotate" /> to generate a new secret if needed.
         </p>
-        <CodeTabs snippets={SETUP_SNIPPETS} />
+        <InfoBox>
+          <strong style={{ color: "var(--docs-link)" }}>SDK note</strong><br />
+          Webhook subscription management is not in the SDK yet. Keep webhook create / rotate on the REST API for now, then use the SDK helper below to verify incoming signatures in your app.
+        </InfoBox>
       </DocSection>
 
       {/* Events table */}

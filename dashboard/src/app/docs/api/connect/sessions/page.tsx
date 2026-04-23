@@ -3,42 +3,35 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-she
 
 const CREATE_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl -X POST https://api.unipost.dev/v1/connect/sessions \\
-  -H "Authorization: Bearer up_live_xxxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platform": "twitter",
-    "external_user_id": "user_123",
-    "external_user_email": "alice@acme.com",
-    "return_url": "https://app.acme.com/integrations/done"
-  }'`,
-  },
-  {
-    label: "JavaScript",
-    code: `const response = await fetch("https://api.unipost.dev/v1/connect/sessions", {
-  method: "POST",
-  headers: {
-    Authorization: "Bearer up_live_xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    platform: "twitter",
-    external_user_id: "user_123",
-    external_user_email: "alice@acme.com",
-    return_url: "https://app.acme.com/integrations/done",
-  }),
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
 });
 
-const { data } = await response.json();`,
+const session = await client.connect.createSession({
+  platform: "twitter",
+  externalUserId: "user_123",
+  externalUserEmail: "alex@acme.com",
+  returnUrl: "https://app.acme.com/integrations/done",
+});
+
+console.log(session.url);`,
   },
 ];
 
 const GET_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl https://api.unipost.dev/v1/connect/sessions/cs_abc123 \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const session = await client.connect.getSession("cs_abc123");
+console.log(session.status);`,
   },
 ];
 

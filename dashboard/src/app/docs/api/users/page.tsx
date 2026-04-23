@@ -2,14 +2,17 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../../_components/docs-shell"
 
 const USERS_SNIPPETS = [
   {
-    label: "cURL",
-    code: `curl https://api.unipost.dev/v1/users \\
-  -H "Authorization: Bearer up_live_xxxx"`,
-  },
-  {
-    label: "cURL (detail)",
-    code: `curl https://api.unipost.dev/v1/users/user_abc \\
-  -H "Authorization: Bearer up_live_xxxx"`,
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});
+
+const { data: users } = await client.users.list();
+const user = await client.users.get("user_abc");
+
+console.log(users.length, user.external_user_id);`,
   },
 ];
 
