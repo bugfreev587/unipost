@@ -224,7 +224,7 @@ export function ListAccountsContent() {
                 </ApiEndpointCard>
 
                 <ApiEndpointCard method="GET" path="/v1/social-accounts">
-                  <div style={{ padding: "18px" }}>
+                  <div style={{ padding: "18px 18px 4px" }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
                   </div>
                   <ApiAccordion title="200">
