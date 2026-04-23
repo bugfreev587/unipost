@@ -5,27 +5,31 @@ export type Platform =
   | "threads"
   | "tiktok"
   | "youtube"
-  | "bluesky";
+  | "bluesky"
+  | string;
 
-export type AccountStatus = "active" | "reconnect_required" | "disconnected";
-export type ConnectionType = "byo" | "managed";
+export type AccountStatus = "active" | "reconnect_required" | "disconnected" | string;
+export type ConnectionType = "byo" | "managed" | string;
 
 export interface SocialAccount {
   id: string;
+  profile_id?: string;
+  profile_name?: string;
   platform: Platform;
-  account_name: string | null;
+  account_name?: string | null;
   external_user_id?: string;
   external_user_email?: string;
-  connected_at?: string;
   status: AccountStatus;
   connection_type?: ConnectionType;
 }
 
 export interface AccountHealth {
-  account_id: string;
-  status: "ok" | "degraded" | "disconnected";
-  last_checked_at?: string;
-  error?: string;
+  social_account_id: string;
+  platform: Platform;
+  status: "ok" | "degraded" | "disconnected" | string;
+  last_successful_post_at?: string;
+  token_expires_at?: string;
+  last_error?: Record<string, unknown>;
 }
 
 export interface ListAccountsParams {
@@ -33,6 +37,42 @@ export interface ListAccountsParams {
   externalUserId?: string;
   status?: AccountStatus;
   profileId?: string;
+}
+
+export interface ConnectAccountParams {
+  platform: Platform;
+  credentials: Record<string, string>;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  per_account_monthly_limit?: number | null;
+  usage_modes?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateWorkspaceParams {
+  perAccountMonthlyLimit?: number | null;
+}
+
+export interface Profile {
+  id: string;
+  workspace_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  branding_logo_url?: string | null;
+  branding_display_name?: string | null;
+  branding_primary_color?: string | null;
+}
+
+export interface UpdateProfileParams {
+  name?: string;
+  brandingLogoUrl?: string | null;
+  brandingDisplayName?: string | null;
+  brandingPrimaryColor?: string | null;
 }
 
 export type PostStatus =
@@ -46,7 +86,9 @@ export type PostStatus =
   | "published"
   | "partial"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "canceled"
+  | string;
 
 export interface PlatformResult {
   id?: string;
@@ -60,14 +102,13 @@ export interface PlatformResult {
   error_message?: string;
   published_at?: string;
   warnings?: string[];
-  submitted?: Record<string, unknown>;
 }
 
 export interface Post {
   id: string;
   caption: string | null;
   media_urls?: string[];
-  status: PostStatus | string;
+  status: PostStatus;
   execution_mode?: string;
   queued_results_count?: number;
   active_job_count?: number;
@@ -96,9 +137,28 @@ export interface CreatePostParams {
   mediaUrls?: string[];
   mediaIds?: string[];
   scheduledAt?: string;
-  status?: "draft";
+  status?: "draft" | "canceled" | "cancelled";
+  archived?: boolean;
   idempotencyKey?: string;
   platformPosts?: CreatePostPlatformPost[];
+}
+
+export interface UpdatePostParams extends CreatePostParams {}
+
+export interface ValidationIssue {
+  platform_post_index: number;
+  account_id?: string;
+  platform?: string;
+  field: string;
+  code: string;
+  message: string;
+  severity: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
 }
 
 export interface ListPostsParams {
@@ -130,20 +190,40 @@ export interface DeliveryJob {
   updated_at: string;
 }
 
+export interface ListDeliveryJobsParams {
+  limit?: number;
+  offset?: number;
+  states?: string[] | string;
+}
+
 export interface PostQueueSnapshot {
   post: Post;
   jobs: DeliveryJob[];
 }
 
-export interface PostAnalytics {
+export interface PostAnalyticsItem {
   post_id: string;
+  social_account_id: string;
+  platform: string;
+  external_id: string;
   impressions: number;
-  engagements: number;
+  reach: number;
   likes: number;
   comments: number;
   shares: number;
+  saves: number;
   clicks: number;
-  results?: Record<string, Record<string, number>>;
+  video_views: number;
+  views: number;
+  engagement_rate: number;
+  consecutive_failures?: number;
+  last_failure_reason?: string;
+}
+
+export interface PostPreviewLink {
+  url: string;
+  token: string;
+  expires_at: string;
 }
 
 export type WebhookEventType =
@@ -155,10 +235,11 @@ export type WebhookEventType =
   | "account.disconnected"
   | "account.refreshed"
   | "account.quota_warning"
-  | "account.quota_exceeded";
+  | "account.quota_exceeded"
+  | string;
 
 export interface WebhookEvent<TData = Record<string, unknown>> {
-  event: WebhookEventType | string;
+  event: WebhookEventType;
   timestamp: string;
   data: TData;
 }
@@ -196,10 +277,15 @@ export interface UpdateWebhookParams {
 export interface ConnectSession {
   id: string;
   url: string;
-  status: "pending" | "completed" | "expired";
+  status: "pending" | "completed" | "expired" | string;
   expires_at: string;
   platform: string;
   external_user_id: string;
+  external_user_email?: string;
+  return_url?: string;
+  created_at?: string;
+  completed_at?: string;
+  completed_social_account_id?: string;
 }
 
 export interface CreateConnectSessionParams {
@@ -216,8 +302,6 @@ export interface ManagedUser {
   account_count?: number;
   platform_counts?: Record<string, number>;
   reconnect_count?: number;
-  accounts?: SocialAccount[];
-  created_at?: string;
 }
 
 export interface MediaUploadRequest {
@@ -228,27 +312,33 @@ export interface MediaUploadRequest {
 }
 
 export interface MediaUploadResponse {
-  media_id: string;
-  mediaId: string;
-  upload_url: string;
-  uploadUrl: string;
-  status: string;
-  expires_at?: string;
-}
-
-export interface MediaObject {
-  id: string;
-  status: string;
-  content_type: string;
-  size_bytes: number;
+  id?: string;
+  media_id?: string;
+  mediaId?: string;
   upload_url?: string;
+  uploadUrl?: string;
+  status: string;
+  content_type?: string;
+  size_bytes?: number;
   download_url?: string;
   expires_at?: string;
   created_at?: string;
 }
 
-export type Granularity = "day" | "week" | "month";
-export type GroupBy = "platform" | "social_account_id" | "status" | "external_user_id";
+export interface PlatformCredential {
+  platform: string;
+  client_id: string;
+  created_at: string;
+}
+
+export interface CreatePlatformCredentialParams {
+  platform: string;
+  clientId: string;
+  clientSecret: string;
+}
+
+export type Granularity = "day" | "week" | "month" | string;
+export type GroupBy = "platform" | "social_account_id" | "status" | "external_user_id" | string;
 
 export interface AnalyticsRollupParams {
   from: string;
@@ -257,21 +347,30 @@ export interface AnalyticsRollupParams {
   groupBy?: GroupBy;
 }
 
-export interface AnalyticsBucket {
-  key: string;
-  impressions: number;
-  engagements: number;
-  likes: number;
-  comments: number;
-  shares: number;
-  clicks: number;
+export interface AnalyticsQueryParams {
+  from?: string;
+  to?: string;
+  platform?: string;
+  status?: string;
 }
 
 export interface AnalyticsRollup {
-  from: string;
-  to: string;
-  granularity: Granularity;
-  buckets: AnalyticsBucket[];
+  granularity: string;
+  group_by: string[];
+  series: Record<string, unknown>[];
+}
+
+export interface Usage {
+  period: string;
+  post_count: number;
+  post_limit: number;
+  plan: string;
+  percentage: number;
+  warning?: string;
+}
+
+export interface OAuthConnectResponse {
+  auth_url: string;
 }
 
 export interface PaginatedResponse<T> {
@@ -291,37 +390,89 @@ export interface UniPostClientOptions {
   timeout?: number;
 }
 
+declare class WorkspaceApi {
+  constructor(http: unknown);
+  get(): Promise<Workspace>;
+  update(params?: UpdateWorkspaceParams): Promise<Workspace>;
+}
+
+declare class Profiles {
+  constructor(http: unknown);
+  list(): Promise<PaginatedResponse<Profile>>;
+  get(profileId: string): Promise<Profile>;
+  update(profileId: string, params?: UpdateProfileParams): Promise<Profile>;
+}
+
 declare class Accounts {
   constructor(http: unknown);
   list(params?: ListAccountsParams): Promise<PaginatedResponse<SocialAccount>>;
   get(accountId: string): Promise<SocialAccount>;
+  connect(params: ConnectAccountParams): Promise<SocialAccount>;
+  disconnect(accountId: string): Promise<Record<string, unknown> | undefined>;
+  capabilities(accountId: string): Promise<Record<string, unknown>>;
   health(accountId: string): Promise<AccountHealth>;
+  tikTokCreatorInfo(accountId: string): Promise<Record<string, unknown>>;
+  facebookPageInsights(accountId: string): Promise<Record<string, unknown>>;
+}
+
+declare class Platforms {
+  constructor(http: unknown);
+  capabilities(): Promise<Record<string, unknown>>;
+}
+
+declare class Plans {
+  constructor(http: unknown);
+  list(): Promise<Record<string, unknown>[]>;
+}
+
+declare class PlatformCredentials {
+  constructor(http: unknown);
+  create(workspaceId: string, params: CreatePlatformCredentialParams): Promise<PlatformCredential>;
+  list(workspaceId: string): Promise<PaginatedResponse<PlatformCredential>>;
+  delete(workspaceId: string, platform: string): Promise<Record<string, unknown> | undefined>;
 }
 
 declare class Posts {
   constructor(http: unknown);
   create(params: CreatePostParams): Promise<Post>;
+  validate(params: CreatePostParams): Promise<ValidationResult>;
   list(params?: ListPostsParams): Promise<PaginatedResponse<Post> & { nextCursor?: string }>;
   listAll(params?: Omit<ListPostsParams, "cursor">): AsyncGenerator<Post>;
   get(postId: string): Promise<Post>;
   getQueue(postId: string): Promise<PostQueueSnapshot>;
-  analytics(postId: string): Promise<PostAnalytics>;
+  analytics(postId: string, params?: { refresh?: boolean }): Promise<PostAnalyticsItem[]>;
   publish(postId: string): Promise<Post>;
+  update(postId: string, params?: UpdatePostParams): Promise<Post>;
+  archive(postId: string): Promise<Post>;
+  restore(postId: string): Promise<Post>;
   cancel(postId: string): Promise<Post>;
-  retryResult(postId: string, resultId: string): Promise<DeliveryJob>;
+  delete(postId: string): Promise<Record<string, unknown> | undefined>;
+  previewLink(postId: string): Promise<PostPreviewLink>;
+  retryResult(postId: string, resultId: string): Promise<PlatformResult>;
   bulkCreate(posts: CreatePostParams[]): Promise<Post[]>;
+}
+
+declare class DeliveryJobs {
+  constructor(http: unknown);
+  list(params?: ListDeliveryJobsParams): Promise<PaginatedResponse<DeliveryJob> | { data: DeliveryJob[] }>;
+  summary(): Promise<Record<string, unknown>>;
+  retry(jobId: string): Promise<DeliveryJob>;
+  cancel(jobId: string): Promise<DeliveryJob>;
 }
 
 declare class Media {
   constructor(http: unknown);
   upload(params: MediaUploadRequest): Promise<MediaUploadResponse>;
-  get(mediaId: string): Promise<MediaObject>;
+  get(mediaId: string): Promise<MediaUploadResponse>;
   delete(mediaId: string): Promise<Record<string, unknown> | undefined>;
   uploadFile(filePath: string): Promise<string>;
 }
 
 declare class Analytics {
   constructor(http: unknown);
+  summary(params?: AnalyticsQueryParams): Promise<Record<string, unknown>>;
+  trend(params?: AnalyticsQueryParams): Promise<Record<string, unknown>>;
+  byPlatform(params?: AnalyticsQueryParams): Promise<Record<string, unknown>[]>;
   rollup(params: AnalyticsRollupParams): Promise<AnalyticsRollup>;
 }
 
@@ -347,67 +498,51 @@ declare class Webhooks {
   delete(webhookId: string): Promise<Record<string, unknown> | undefined>;
 }
 
+declare class OAuth {
+  constructor(http: unknown);
+  connect(platform: string, params?: { redirectUrl?: string }): Promise<OAuthConnectResponse>;
+}
+
+declare class UsageApi {
+  constructor(http: unknown);
+  get(): Promise<Usage>;
+}
+
 declare class UniPost {
+  readonly workspace: WorkspaceApi;
+  readonly profiles: Profiles;
   readonly accounts: Accounts;
+  readonly platforms: Platforms;
+  readonly plans: Plans;
+  readonly platformCredentials: PlatformCredentials;
   readonly posts: Posts;
+  readonly deliveryJobs: DeliveryJobs;
   readonly media: Media;
   readonly analytics: Analytics;
   readonly connect: Connect;
   readonly users: Users;
   readonly webhooks: Webhooks;
+  readonly oauth: OAuth;
+  readonly usage: UsageApi;
   constructor(options?: UniPostClientOptions);
 }
 
-declare class UniPostError extends Error {
-  readonly status: number;
-  readonly code: string;
-  constructor(message: string, status: number, code: string);
+export declare function verifyWebhookSignature(options: VerifyWebhookOptions): Promise<boolean>;
+export declare class UniPostError extends Error {
+  status: number;
+  code: string;
 }
-
-declare class AuthError extends UniPostError {
-  constructor(message?: string);
+export declare class AuthError extends UniPostError {}
+export declare class NotFoundError extends UniPostError {}
+export declare class ValidationError extends UniPostError {
+  errors: Record<string, unknown>;
 }
-
-declare class NotFoundError extends UniPostError {
-  constructor(message?: string);
+export declare class RateLimitError extends UniPostError {
+  retryAfter: number;
 }
-
-declare class ValidationError extends UniPostError {
-  readonly errors: Record<string, string[]>;
-  constructor(message?: string, errors?: Record<string, string[]>);
+export declare class PlatformError extends UniPostError {
+  platform?: string;
 }
+export declare class QuotaError extends UniPostError {}
 
-declare class RateLimitError extends UniPostError {
-  readonly retryAfter: number;
-  constructor(retryAfter: number, message?: string);
-}
-
-declare class PlatformError extends UniPostError {
-  readonly platform: string;
-  constructor(message: string, platform: string);
-}
-
-declare class QuotaError extends UniPostError {
-  constructor(message?: string);
-}
-
-declare function verifyWebhookSignature(options: VerifyWebhookOptions): Promise<boolean>;
-
-export {
-  Accounts,
-  Analytics,
-  AuthError,
-  Connect,
-  Media,
-  NotFoundError,
-  PlatformError,
-  Posts,
-  QuotaError,
-  RateLimitError,
-  UniPost,
-  UniPostError,
-  Users,
-  ValidationError,
-  Webhooks,
-  verifyWebhookSignature,
-};
+export { UniPost };

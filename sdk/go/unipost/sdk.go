@@ -43,15 +43,24 @@ func WithHTTPClient(client *http.Client) Option {
 }
 
 type Client struct {
-	apiKey    string
-	baseURL   string
-	http      *http.Client
-	Accounts  *AccountsService
-	Posts     *PostsService
-	Analytics *AnalyticsService
-	Connect   *ConnectService
-	Users     *UsersService
-	Webhooks  *WebhooksService
+	apiKey              string
+	baseURL             string
+	http                *http.Client
+	Workspace           *WorkspaceService
+	Profiles            *ProfilesService
+	Accounts            *AccountsService
+	Platforms           *PlatformsService
+	Plans               *PlansService
+	PlatformCredentials *PlatformCredentialsService
+	Posts               *PostsService
+	DeliveryJobs        *DeliveryJobsService
+	Media               *MediaService
+	Analytics           *AnalyticsService
+	Connect             *ConnectService
+	Users               *UsersService
+	Webhooks            *WebhooksService
+	OAuth               *OAuthService
+	Usage               *UsageService
 }
 
 func NewClient(opts ...Option) *Client {
@@ -63,12 +72,21 @@ func NewClient(opts ...Option) *Client {
 	for _, opt := range opts {
 		opt(client)
 	}
+	client.Workspace = &WorkspaceService{client: client}
+	client.Profiles = &ProfilesService{client: client}
 	client.Accounts = &AccountsService{client: client}
+	client.Platforms = &PlatformsService{client: client}
+	client.Plans = &PlansService{client: client}
+	client.PlatformCredentials = &PlatformCredentialsService{client: client}
 	client.Posts = &PostsService{client: client}
+	client.DeliveryJobs = &DeliveryJobsService{client: client}
+	client.Media = &MediaService{client: client}
 	client.Analytics = &AnalyticsService{client: client}
 	client.Connect = &ConnectService{client: client}
 	client.Users = &UsersService{client: client}
 	client.Webhooks = &WebhooksService{client: client}
+	client.OAuth = &OAuthService{client: client}
+	client.Usage = &UsageService{client: client}
 	return client
 }
 
@@ -87,6 +105,8 @@ func (e *APIError) Error() string {
 	}
 	return fmt.Sprintf("unipost api error (%d %s): %s", e.Status, e.Code, e.Message)
 }
+
+type JSONMap map[string]any
 
 type apiEnvelope[T any] struct {
 	Data T `json:"data"`
@@ -126,7 +146,7 @@ func (c *Client) do(ctx context.Context, method, path string, query map[string]s
 	if len(query) > 0 {
 		values := fullURL.Query()
 		for key, value := range query {
-			if value != "" {
+			if strings.TrimSpace(value) != "" {
 				values.Set(key, value)
 			}
 		}
@@ -193,14 +213,166 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func pageMetaFromEnvelope[T any](envelope apiEnvelope[T]) PageMeta {
+	return PageMeta{
+		Total:      envelope.Meta.Total,
+		Limit:      envelope.Meta.Limit,
+		HasMore:    envelope.Meta.HasMore,
+		NextCursor: envelope.Meta.NextCursor,
+	}
+}
+
+func queryFromAnalytics(params *AnalyticsQueryParams) map[string]string {
+	query := map[string]string{}
+	if params == nil {
+		return query
+	}
+	query["from"] = params.From
+	query["to"] = params.To
+	query["platform"] = params.Platform
+	query["status"] = params.Status
+	return query
+}
+
+func compactMap(items map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range items {
+		switch v := value.(type) {
+		case nil:
+			continue
+		case string:
+			if strings.TrimSpace(v) == "" {
+				continue
+			}
+		}
+		out[key] = value
+	}
+	return out
+}
+
+type Workspace struct {
+	ID                     string    `json:"id"`
+	Name                   string    `json:"name"`
+	PerAccountMonthlyLimit *int32    `json:"per_account_monthly_limit,omitempty"`
+	UsageModes             []string  `json:"usage_modes,omitempty"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
+}
+
+type WorkspaceService struct {
+	client *Client
+}
+
+func (s *WorkspaceService) Get(ctx context.Context) (*Workspace, error) {
+	var envelope apiEnvelope[Workspace]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/workspace", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *WorkspaceService) Update(ctx context.Context, perAccountMonthlyLimit *int32) (*Workspace, error) {
+	body := map[string]any{}
+	if perAccountMonthlyLimit != nil {
+		body["per_account_monthly_limit"] = *perAccountMonthlyLimit
+	}
+	var envelope apiEnvelope[Workspace]
+	if err := s.client.do(ctx, http.MethodPatch, "/v1/workspace", nil, body, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+type Profile struct {
+	ID                   string    `json:"id"`
+	WorkspaceID          string    `json:"workspace_id"`
+	Name                 string    `json:"name"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+	BrandingLogoURL      *string   `json:"branding_logo_url,omitempty"`
+	BrandingDisplayName  *string   `json:"branding_display_name,omitempty"`
+	BrandingPrimaryColor *string   `json:"branding_primary_color,omitempty"`
+}
+
+type ProfilesService struct {
+	client *Client
+}
+
+type PaginatedProfiles struct {
+	Data []Profile
+	Meta PageMeta
+}
+
+func (s *ProfilesService) List(ctx context.Context) (*PaginatedProfiles, error) {
+	var envelope apiEnvelope[[]Profile]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/profiles", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &PaginatedProfiles{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
+}
+
+func (s *ProfilesService) Get(ctx context.Context, profileID string) (*Profile, error) {
+	var envelope apiEnvelope[Profile]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/profiles/"+profileID, nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+type UpdateProfileParams struct {
+	Name                 *string `json:"name,omitempty"`
+	BrandingLogoURL      *string `json:"branding_logo_url,omitempty"`
+	BrandingDisplayName  *string `json:"branding_display_name,omitempty"`
+	BrandingPrimaryColor *string `json:"branding_primary_color,omitempty"`
+}
+
+func (s *ProfilesService) Update(ctx context.Context, profileID string, params *UpdateProfileParams) (*Profile, error) {
+	body := map[string]any{}
+	if params != nil {
+		if params.Name != nil {
+			body["name"] = *params.Name
+		}
+		if params.BrandingLogoURL != nil {
+			body["branding_logo_url"] = *params.BrandingLogoURL
+		}
+		if params.BrandingDisplayName != nil {
+			body["branding_display_name"] = *params.BrandingDisplayName
+		}
+		if params.BrandingPrimaryColor != nil {
+			body["branding_primary_color"] = *params.BrandingPrimaryColor
+		}
+	}
+	var envelope apiEnvelope[Profile]
+	if err := s.client.do(ctx, http.MethodPatch, "/v1/profiles/"+profileID, nil, body, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
 type SocialAccount struct {
 	ID                string `json:"id"`
+	ProfileID         string `json:"profile_id,omitempty"`
+	ProfileName       string `json:"profile_name,omitempty"`
 	Platform          string `json:"platform"`
-	AccountName       string `json:"account_name"`
+	AccountName       string `json:"account_name,omitempty"`
 	ExternalUserID    string `json:"external_user_id,omitempty"`
 	ExternalUserEmail string `json:"external_user_email,omitempty"`
 	Status            string `json:"status"`
 	ConnectionType    string `json:"connection_type,omitempty"`
+}
+
+type AccountHealth struct {
+	SocialAccountID      string     `json:"social_account_id"`
+	Platform             string     `json:"platform"`
+	Status               string     `json:"status"`
+	LastSuccessfulPostAt *time.Time `json:"last_successful_post_at,omitempty"`
+	TokenExpiresAt       *time.Time `json:"token_expires_at,omitempty"`
+	LastError            *JSONMap   `json:"last_error,omitempty"`
+}
+
+type ConnectAccountParams struct {
+	Platform    string            `json:"platform"`
+	Credentials map[string]string `json:"credentials"`
 }
 
 type ListAccountsParams struct {
@@ -214,17 +386,17 @@ type AccountsService struct {
 	client *Client
 }
 
+type PaginatedAccounts struct {
+	Data []SocialAccount
+	Meta PageMeta
+}
+
 func (s *AccountsService) List(ctx context.Context, params *ListAccountsParams) ([]SocialAccount, error) {
 	page, err := s.ListPage(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 	return page.Data, nil
-}
-
-type PaginatedAccounts struct {
-	Data []SocialAccount
-	Meta PageMeta
 }
 
 func (s *AccountsService) ListPage(ctx context.Context, params *ListAccountsParams) (*PaginatedAccounts, error) {
@@ -239,15 +411,141 @@ func (s *AccountsService) ListPage(ctx context.Context, params *ListAccountsPara
 	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts", query, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
-	return &PaginatedAccounts{
-		Data: envelope.Data,
-		Meta: PageMeta{
-			Total:      envelope.Meta.Total,
-			Limit:      envelope.Meta.Limit,
-			HasMore:    envelope.Meta.HasMore,
-			NextCursor: envelope.Meta.NextCursor,
-		},
-	}, nil
+	return &PaginatedAccounts{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
+}
+
+func (s *AccountsService) Get(ctx context.Context, accountID string) (*SocialAccount, error) {
+	accounts, err := s.List(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, account := range accounts {
+		if account.ID == accountID {
+			copy := account
+			return &copy, nil
+		}
+	}
+	return nil, &APIError{Status: http.StatusNotFound, Code: "not_found", Message: "account not found"}
+}
+
+func (s *AccountsService) Connect(ctx context.Context, params *ConnectAccountParams) (*SocialAccount, error) {
+	var envelope apiEnvelope[SocialAccount]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/social-accounts/connect", nil, params, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *AccountsService) Disconnect(ctx context.Context, accountID string) (JSONMap, error) {
+	var envelope apiEnvelope[JSONMap]
+	if err := s.client.do(ctx, http.MethodDelete, "/v1/social-accounts/"+accountID, nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+func (s *AccountsService) Capabilities(ctx context.Context, accountID string) (JSONMap, error) {
+	var envelope apiEnvelope[JSONMap]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts/"+accountID+"/capabilities", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+func (s *AccountsService) Health(ctx context.Context, accountID string) (*AccountHealth, error) {
+	var envelope apiEnvelope[AccountHealth]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts/"+accountID+"/health", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *AccountsService) TikTokCreatorInfo(ctx context.Context, accountID string) (JSONMap, error) {
+	var envelope apiEnvelope[JSONMap]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts/"+accountID+"/tiktok/creator-info", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+func (s *AccountsService) FacebookPageInsights(ctx context.Context, accountID string) (JSONMap, error) {
+	var envelope apiEnvelope[JSONMap]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts/"+accountID+"/facebook/page-insights", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+type PlatformsService struct {
+	client *Client
+}
+
+func (s *PlatformsService) Capabilities(ctx context.Context) (JSONMap, error) {
+	var envelope apiEnvelope[JSONMap]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/platforms/capabilities", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+type Plan struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	PriceCents int32  `json:"price_cents"`
+	PostLimit  int32  `json:"post_limit"`
+}
+
+type PlansService struct {
+	client *Client
+}
+
+func (s *PlansService) List(ctx context.Context) ([]Plan, error) {
+	var envelope apiEnvelope[[]Plan]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/plans", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+type PlatformCredential struct {
+	Platform  string    `json:"platform"`
+	ClientID  string    `json:"client_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreatePlatformCredentialParams struct {
+	Platform     string `json:"platform"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+type PlatformCredentialsService struct {
+	client *Client
+}
+
+type PaginatedPlatformCredentials struct {
+	Data []PlatformCredential
+	Meta PageMeta
+}
+
+func (s *PlatformCredentialsService) Create(ctx context.Context, workspaceID string, params *CreatePlatformCredentialParams) (*PlatformCredential, error) {
+	var envelope apiEnvelope[PlatformCredential]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/workspaces/"+workspaceID+"/platform-credentials", nil, params, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *PlatformCredentialsService) List(ctx context.Context, workspaceID string) (*PaginatedPlatformCredentials, error) {
+	var envelope apiEnvelope[[]PlatformCredential]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/workspaces/"+workspaceID+"/platform-credentials", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &PaginatedPlatformCredentials{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
+}
+
+func (s *PlatformCredentialsService) Delete(ctx context.Context, workspaceID, platform string) error {
+	return s.client.do(ctx, http.MethodDelete, "/v1/workspaces/"+workspaceID+"/platform-credentials/"+platform, nil, nil, nil, nil)
 }
 
 type PlatformResult struct {
@@ -313,6 +611,33 @@ type CreatePostParams struct {
 	PlatformPosts  []CreatePostPlatform
 }
 
+type UpdatePostParams struct {
+	Caption       *string
+	AccountIDs    []string
+	MediaURLs     []string
+	MediaIDs      []string
+	ScheduledAt   *string
+	Status        *string
+	Archived      *bool
+	PlatformPosts []CreatePostPlatform
+}
+
+type ValidationIssue struct {
+	PlatformPostIndex int    `json:"platform_post_index"`
+	AccountID         string `json:"account_id,omitempty"`
+	Platform          string `json:"platform,omitempty"`
+	Field             string `json:"field"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	Severity          string `json:"severity"`
+}
+
+type ValidationResult struct {
+	Valid    bool              `json:"valid"`
+	Errors   []ValidationIssue `json:"errors"`
+	Warnings []ValidationIssue `json:"warnings"`
+}
+
 type ListPostsParams struct {
 	Status   string
 	Platform string
@@ -347,6 +672,42 @@ type PostQueueSnapshot struct {
 	Jobs []DeliveryJob `json:"jobs"`
 }
 
+type PostAnalyticsItem struct {
+	PostID              string  `json:"post_id"`
+	SocialAccountID     string  `json:"social_account_id"`
+	Platform            string  `json:"platform"`
+	ExternalID          string  `json:"external_id"`
+	Impressions         int64   `json:"impressions"`
+	Reach               int64   `json:"reach"`
+	Likes               int64   `json:"likes"`
+	Comments            int64   `json:"comments"`
+	Shares              int64   `json:"shares"`
+	Saves               int64   `json:"saves"`
+	Clicks              int64   `json:"clicks"`
+	VideoViews          int64   `json:"video_views"`
+	Views               int64   `json:"views"`
+	EngagementRate      float64 `json:"engagement_rate"`
+	ConsecutiveFailures int32   `json:"consecutive_failures"`
+	LastFailureReason   string  `json:"last_failure_reason,omitempty"`
+}
+
+type PostPreviewLink struct {
+	URL       string    `json:"url"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type BulkError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type BulkPostResult struct {
+	Status int        `json:"status"`
+	Data   *Post      `json:"data,omitempty"`
+	Error  *BulkError `json:"error,omitempty"`
+}
+
 type PostsService struct {
 	client *Client
 }
@@ -373,6 +734,38 @@ func marshalPostBody(params *CreatePostParams) map[string]any {
 	}
 	if params.Status != "" {
 		body["status"] = params.Status
+	}
+	if len(params.PlatformPosts) > 0 {
+		body["platform_posts"] = params.PlatformPosts
+	}
+	return body
+}
+
+func marshalUpdatePostBody(params *UpdatePostParams) map[string]any {
+	body := map[string]any{}
+	if params == nil {
+		return body
+	}
+	if params.Caption != nil {
+		body["caption"] = *params.Caption
+	}
+	if len(params.AccountIDs) > 0 {
+		body["account_ids"] = params.AccountIDs
+	}
+	if len(params.MediaURLs) > 0 {
+		body["media_urls"] = params.MediaURLs
+	}
+	if len(params.MediaIDs) > 0 {
+		body["media_ids"] = params.MediaIDs
+	}
+	if params.ScheduledAt != nil {
+		body["scheduled_at"] = *params.ScheduledAt
+	}
+	if params.Status != nil {
+		body["status"] = *params.Status
+	}
+	if params.Archived != nil {
+		body["archived"] = *params.Archived
 	}
 	if len(params.PlatformPosts) > 0 {
 		body["platform_posts"] = params.PlatformPosts
@@ -421,6 +814,18 @@ func (s *PostsService) GetQueue(ctx context.Context, postID string) (*PostQueueS
 	return &envelope.Data, nil
 }
 
+func (s *PostsService) Analytics(ctx context.Context, postID string, refresh bool) ([]PostAnalyticsItem, error) {
+	query := map[string]string{}
+	if refresh {
+		query["refresh"] = "true"
+	}
+	var envelope apiEnvelope[[]PostAnalyticsItem]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/social-posts/"+postID+"/analytics", query, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
 func (s *PostsService) Create(ctx context.Context, params *CreatePostParams) (*Post, error) {
 	headers := map[string]string{}
 	if params != nil && params.IdempotencyKey != "" {
@@ -428,6 +833,46 @@ func (s *PostsService) Create(ctx context.Context, params *CreatePostParams) (*P
 	}
 	var envelope apiEnvelope[Post]
 	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts", nil, marshalPostBody(params), &envelope, headers); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *PostsService) Validate(ctx context.Context, params *CreatePostParams) (*ValidationResult, error) {
+	var envelope apiEnvelope[ValidationResult]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/validate", nil, marshalPostBody(params), &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *PostsService) Publish(ctx context.Context, postID string) (*Post, error) {
+	var envelope apiEnvelope[Post]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/publish", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *PostsService) Update(ctx context.Context, postID string, params *UpdatePostParams) (*Post, error) {
+	var envelope apiEnvelope[Post]
+	if err := s.client.do(ctx, http.MethodPatch, "/v1/social-posts/"+postID, nil, marshalUpdatePostBody(params), &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *PostsService) Archive(ctx context.Context, postID string) (*Post, error) {
+	var envelope apiEnvelope[Post]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/archive", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *PostsService) Restore(ctx context.Context, postID string) (*Post, error) {
+	var envelope apiEnvelope[Post]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/restore", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -441,14 +886,151 @@ func (s *PostsService) Cancel(ctx context.Context, postID string) (*Post, error)
 	return &envelope.Data, nil
 }
 
-type PostAnalytics struct {
-	PostID      string `json:"post_id"`
-	Impressions int    `json:"impressions"`
-	Engagements int    `json:"engagements"`
-	Likes       int    `json:"likes"`
-	Comments    int    `json:"comments"`
-	Shares      int    `json:"shares"`
-	Clicks      int    `json:"clicks"`
+func (s *PostsService) Delete(ctx context.Context, postID string) error {
+	return s.client.do(ctx, http.MethodDelete, "/v1/social-posts/"+postID, nil, nil, nil, nil)
+}
+
+func (s *PostsService) PreviewLink(ctx context.Context, postID string) (*PostPreviewLink, error) {
+	var envelope apiEnvelope[PostPreviewLink]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/preview-link", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *PostsService) RetryResult(ctx context.Context, postID, resultID string) (*PlatformResult, error) {
+	var envelope apiEnvelope[PlatformResult]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/results/"+resultID+"/retry", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *PostsService) BulkCreate(ctx context.Context, posts []*CreatePostParams) ([]BulkPostResult, error) {
+	body := make([]map[string]any, 0, len(posts))
+	for _, post := range posts {
+		body = append(body, marshalPostBody(post))
+	}
+	payload := map[string]any{"posts": body}
+	var envelope apiEnvelope[[]BulkPostResult]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/bulk", nil, payload, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+type ListDeliveryJobsParams struct {
+	Limit  int
+	Offset int
+	States string
+}
+
+type DeliveryJobsService struct {
+	client *Client
+}
+
+func (s *DeliveryJobsService) List(ctx context.Context, params *ListDeliveryJobsParams) ([]DeliveryJob, error) {
+	query := map[string]string{}
+	if params != nil {
+		if params.Limit > 0 {
+			query["limit"] = strconv.Itoa(params.Limit)
+		}
+		if params.Offset > 0 {
+			query["offset"] = strconv.Itoa(params.Offset)
+		}
+		query["states"] = params.States
+	}
+	var envelope apiEnvelope[[]DeliveryJob]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/post-delivery-jobs", query, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+func (s *DeliveryJobsService) Summary(ctx context.Context) (JSONMap, error) {
+	var envelope apiEnvelope[JSONMap]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/post-delivery-jobs/summary", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+func (s *DeliveryJobsService) Retry(ctx context.Context, jobID string) (*DeliveryJob, error) {
+	var envelope apiEnvelope[DeliveryJob]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/post-delivery-jobs/"+jobID+"/retry", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *DeliveryJobsService) Cancel(ctx context.Context, jobID string) (*DeliveryJob, error) {
+	var envelope apiEnvelope[DeliveryJob]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/post-delivery-jobs/"+jobID+"/cancel", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+type MediaUploadRequest struct {
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+	ContentHash string
+}
+
+type MediaUploadResponse struct {
+	ID          string    `json:"id,omitempty"`
+	MediaID     string    `json:"media_id,omitempty"`
+	Status      string    `json:"status"`
+	ContentType string    `json:"content_type"`
+	SizeBytes   int64     `json:"size_bytes"`
+	UploadURL   string    `json:"upload_url,omitempty"`
+	DownloadURL string    `json:"download_url,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type MediaService struct {
+	client *Client
+}
+
+func (s *MediaService) Upload(ctx context.Context, params *MediaUploadRequest) (*MediaUploadResponse, error) {
+	body := compactMap(map[string]any{
+		"filename":     params.Filename,
+		"content_type": params.ContentType,
+		"size_bytes":   params.SizeBytes,
+		"content_hash": params.ContentHash,
+	})
+	var envelope apiEnvelope[MediaUploadResponse]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/media", nil, body, &envelope, nil); err != nil {
+		return nil, err
+	}
+	if envelope.Data.MediaID == "" {
+		envelope.Data.MediaID = envelope.Data.ID
+	}
+	return &envelope.Data, nil
+}
+
+func (s *MediaService) Get(ctx context.Context, mediaID string) (*MediaUploadResponse, error) {
+	var envelope apiEnvelope[MediaUploadResponse]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/media/"+mediaID, nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	if envelope.Data.MediaID == "" {
+		envelope.Data.MediaID = envelope.Data.ID
+	}
+	return &envelope.Data, nil
+}
+
+func (s *MediaService) Delete(ctx context.Context, mediaID string) error {
+	return s.client.do(ctx, http.MethodDelete, "/v1/media/"+mediaID, nil, nil, nil, nil)
+}
+
+type AnalyticsQueryParams struct {
+	From     string
+	To       string
+	Platform string
+	Status   string
 }
 
 type AnalyticsRollupParams struct {
@@ -458,25 +1040,38 @@ type AnalyticsRollupParams struct {
 	GroupBy     string
 }
 
-type AnalyticsBucket struct {
-	Key         string `json:"key"`
-	Impressions int    `json:"impressions"`
-	Engagements int    `json:"engagements"`
-	Likes       int    `json:"likes"`
-	Comments    int    `json:"comments"`
-	Shares      int    `json:"shares"`
-	Clicks      int    `json:"clicks"`
-}
-
 type AnalyticsRollup struct {
-	From        string            `json:"from"`
-	To          string            `json:"to"`
-	Granularity string            `json:"granularity"`
-	Buckets     []AnalyticsBucket `json:"buckets"`
+	Granularity string    `json:"granularity"`
+	GroupBy     []string  `json:"group_by"`
+	Series      []JSONMap `json:"series"`
 }
 
 type AnalyticsService struct {
 	client *Client
+}
+
+func (s *AnalyticsService) Summary(ctx context.Context, params *AnalyticsQueryParams) (JSONMap, error) {
+	var envelope apiEnvelope[JSONMap]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/analytics/summary", queryFromAnalytics(params), nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+func (s *AnalyticsService) Trend(ctx context.Context, params *AnalyticsQueryParams) (JSONMap, error) {
+	var envelope apiEnvelope[JSONMap]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/analytics/trend", queryFromAnalytics(params), nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
+}
+
+func (s *AnalyticsService) ByPlatform(ctx context.Context, params *AnalyticsQueryParams) ([]JSONMap, error) {
+	var envelope apiEnvelope[[]JSONMap]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/analytics/by-platform", queryFromAnalytics(params), nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
 }
 
 func (s *AnalyticsService) Rollup(ctx context.Context, params *AnalyticsRollupParams) (*AnalyticsRollup, error) {
@@ -503,12 +1098,17 @@ type CreateConnectSessionParams struct {
 }
 
 type ConnectSession struct {
-	ID             string    `json:"id"`
-	URL            string    `json:"url"`
-	Status         string    `json:"status"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	Platform       string    `json:"platform"`
-	ExternalUserID string    `json:"external_user_id"`
+	ID                       string     `json:"id"`
+	URL                      string     `json:"url"`
+	Status                   string     `json:"status"`
+	ExpiresAt                time.Time  `json:"expires_at"`
+	Platform                 string     `json:"platform"`
+	ExternalUserID           string     `json:"external_user_id"`
+	ExternalUserEmail        string     `json:"external_user_email,omitempty"`
+	ReturnURL                string     `json:"return_url,omitempty"`
+	CreatedAt                time.Time  `json:"created_at"`
+	CompletedAt              *time.Time `json:"completed_at,omitempty"`
+	CompletedSocialAccountID string     `json:"completed_social_account_id,omitempty"`
 }
 
 type ConnectService struct {
@@ -543,6 +1143,11 @@ type UsersService struct {
 	client *Client
 }
 
+type PaginatedManagedUsers struct {
+	Data []ManagedUser
+	Meta PageMeta
+}
+
 func (s *UsersService) List(ctx context.Context) ([]ManagedUser, error) {
 	page, err := s.ListPage(ctx)
 	if err != nil {
@@ -551,25 +1156,12 @@ func (s *UsersService) List(ctx context.Context) ([]ManagedUser, error) {
 	return page.Data, nil
 }
 
-type PaginatedManagedUsers struct {
-	Data []ManagedUser
-	Meta PageMeta
-}
-
 func (s *UsersService) ListPage(ctx context.Context) (*PaginatedManagedUsers, error) {
 	var envelope apiEnvelope[[]ManagedUser]
 	if err := s.client.do(ctx, http.MethodGet, "/v1/users", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
-	return &PaginatedManagedUsers{
-		Data: envelope.Data,
-		Meta: PageMeta{
-			Total:      envelope.Meta.Total,
-			Limit:      envelope.Meta.Limit,
-			HasMore:    envelope.Meta.HasMore,
-			NextCursor: envelope.Meta.NextCursor,
-		},
-	}, nil
+	return &PaginatedManagedUsers{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
 }
 
 func (s *UsersService) Get(ctx context.Context, externalUserID string) (*ManagedUser, error) {
@@ -631,15 +1223,7 @@ func (s *WebhooksService) ListPage(ctx context.Context) (*PaginatedWebhookSubscr
 	if err := s.client.do(ctx, http.MethodGet, "/v1/webhooks", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
-	return &PaginatedWebhookSubscriptions{
-		Data: envelope.Data,
-		Meta: PageMeta{
-			Total:      envelope.Meta.Total,
-			Limit:      envelope.Meta.Limit,
-			HasMore:    envelope.Meta.HasMore,
-			NextCursor: envelope.Meta.NextCursor,
-		},
-	}, nil
+	return &PaginatedWebhookSubscriptions{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
 }
 
 func (s *WebhooksService) Get(ctx context.Context, webhookID string) (*WebhookSubscription, error) {
@@ -668,6 +1252,47 @@ func (s *WebhooksService) Rotate(ctx context.Context, webhookID string) (*Webhoo
 
 func (s *WebhooksService) Delete(ctx context.Context, webhookID string) error {
 	return s.client.do(ctx, http.MethodDelete, "/v1/webhooks/"+webhookID, nil, nil, nil, nil)
+}
+
+type OAuthConnectResponse struct {
+	AuthURL string `json:"auth_url"`
+}
+
+type OAuthService struct {
+	client *Client
+}
+
+func (s *OAuthService) Connect(ctx context.Context, platform, redirectURL string) (*OAuthConnectResponse, error) {
+	query := map[string]string{}
+	if redirectURL != "" {
+		query["redirect_url"] = redirectURL
+	}
+	var envelope apiEnvelope[OAuthConnectResponse]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/oauth/connect/"+platform, query, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+type Usage struct {
+	Period     string  `json:"period"`
+	PostCount  int     `json:"post_count"`
+	PostLimit  int     `json:"post_limit"`
+	Plan       string  `json:"plan"`
+	Percentage float64 `json:"percentage"`
+	Warning    string  `json:"warning,omitempty"`
+}
+
+type UsageService struct {
+	client *Client
+}
+
+func (s *UsageService) Get(ctx context.Context) (*Usage, error) {
+	var envelope apiEnvelope[Usage]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/usage", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
 }
 
 func VerifyWebhookSignature(payload []byte, signature, secret string) bool {

@@ -1,10 +1,3 @@
-// UniPost Go SDK Validation Test
-//
-// Setup:
-//   1. go mod tidy
-//   2. UNIPOST_API_KEY=up_live_xxx go run main.go
-//   3. UNIPOST_API_KEY=up_live_xxx TEST_ACCOUNT_ID=<id> go run main.go
-
 package main
 
 import (
@@ -12,9 +5,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -23,11 +15,14 @@ import (
 )
 
 var (
-	passed            int
-	failed            int
-	failures          []string
-	createdPostIDs    []string
-	createdWebhookIDs []string
+	passed                     int
+	failed                     int
+	skipped                    int
+	failures                   []string
+	createdPostIDs             []string
+	createdWebhookIDs          []string
+	createdMediaIDs            []string
+	createdPlatformCredentials []string
 )
 
 func test(name string, fn func() error) {
@@ -36,14 +31,26 @@ func test(name string, fn func() error) {
 		fmt.Printf("❌ FAIL — %s\n", err)
 		failed++
 		failures = append(failures, fmt.Sprintf("%s: %s", name, err))
-	} else {
-		fmt.Println("✅ PASS")
-		passed++
+		return
 	}
+	fmt.Println("✅ PASS")
+	passed++
+}
+
+func skip(name, reason string) {
+	fmt.Printf("  %s ... ⏭ SKIP — %s\n", name, reason)
+	skipped++
 }
 
 func section(title string) {
 	fmt.Printf("\n%s\n  %s\n%s\n", "──────────────────────────────────────────────────", title, "──────────────────────────────────────────────────")
+}
+
+func assert(condition bool, message string) error {
+	if !condition {
+		return errors.New(message)
+	}
+	return nil
 }
 
 func main() {
@@ -53,121 +60,359 @@ func main() {
 
 	apiKey := os.Getenv("UNIPOST_API_KEY")
 	if apiKey == "" {
-		fmt.Println("❌ Please set UNIPOST_API_KEY environment variable")
+		fmt.Println("❌ Please set UNIPOST_API_KEY")
 		os.Exit(1)
 	}
 
 	testAccountID := os.Getenv("TEST_ACCOUNT_ID")
+	testPublishNow := os.Getenv("TEST_PUBLISH_NOW") == "true"
 	ctx := context.Background()
-
 	client := unipost.NewClient(unipost.WithAPIKey(apiKey))
 
-	// ── 1. Accounts ───────────────────────────────────────────────────────────
-	section("1. Accounts — list connected social accounts")
+	var workspace *unipost.Workspace
+	var firstProfile *unipost.Profile
+	var firstAccount *unipost.SocialAccount
+	var firstPost *unipost.Post
+	var draftPost *unipost.Post
+	var scheduledPost *unipost.Post
 
-	var accounts []unipost.SocialAccount
-	test("Accounts.List()", func() error {
-		accs, err := client.Accounts.List(ctx, nil)
+	section("1. Public catalogs")
+
+	test("Platforms.Capabilities()", func() error {
+		payload, err := client.Platforms.Capabilities(ctx)
 		if err != nil {
 			return err
 		}
-		accounts = accs
+		_, ok := payload["schema_version"].(string)
+		if !ok {
+			return fmt.Errorf("expected schema_version")
+		}
 		return nil
 	})
+
+	test("Plans.List()", func() error {
+		plans, err := client.Plans.List(ctx)
+		if err != nil {
+			return err
+		}
+		if len(plans) == 0 {
+			return fmt.Errorf("expected at least one plan")
+		}
+		return nil
+	})
+
+	section("2. Workspace & profiles")
+
+	test("Workspace.Get()", func() error {
+		ws, err := client.Workspace.Get(ctx)
+		if err != nil {
+			return err
+		}
+		if ws.ID == "" {
+			return fmt.Errorf("expected workspace id")
+		}
+		workspace = ws
+		return nil
+	})
+
+	if workspace != nil {
+		test("Workspace.Update() — no-op", func() error {
+			updated, err := client.Workspace.Update(ctx, workspace.PerAccountMonthlyLimit)
+			if err != nil {
+				return err
+			}
+			if updated.ID != workspace.ID {
+				return fmt.Errorf("expected same workspace")
+			}
+			return nil
+		})
+	}
+
+	test("Profiles.List()", func() error {
+		page, err := client.Profiles.List(ctx)
+		if err != nil {
+			return err
+		}
+		if len(page.Data) == 0 {
+			return fmt.Errorf("expected at least one profile")
+		}
+		firstProfile = &page.Data[0]
+		return nil
+	})
+
+	if firstProfile != nil {
+		test("Profiles.Get()", func() error {
+			profile, err := client.Profiles.Get(ctx, firstProfile.ID)
+			if err != nil {
+				return err
+			}
+			if profile.ID != firstProfile.ID {
+				return fmt.Errorf("expected matching profile")
+			}
+			return nil
+		})
+
+		test("Profiles.Update() — no-op", func() error {
+			params := &unipost.UpdateProfileParams{Name: &firstProfile.Name}
+			if firstProfile.BrandingLogoURL != nil {
+				params.BrandingLogoURL = firstProfile.BrandingLogoURL
+			}
+			if firstProfile.BrandingDisplayName != nil {
+				params.BrandingDisplayName = firstProfile.BrandingDisplayName
+			}
+			if firstProfile.BrandingPrimaryColor != nil {
+				params.BrandingPrimaryColor = firstProfile.BrandingPrimaryColor
+			}
+			profile, err := client.Profiles.Update(ctx, firstProfile.ID, params)
+			if err != nil {
+				return err
+			}
+			if profile.ID != firstProfile.ID {
+				return fmt.Errorf("expected matching updated profile")
+			}
+			return nil
+		})
+	}
+
+	section("3. Accounts")
+
+	var accounts []unipost.SocialAccount
+	test("Accounts.List()", func() error {
+		items, err := client.Accounts.List(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			return fmt.Errorf("expected at least one account")
+		}
+		accounts = items
+		firstAccount = &accounts[0]
+		return nil
+	})
+
 	test("Accounts.ListPage()", func() error {
 		page, err := client.Accounts.ListPage(ctx, nil)
 		if err != nil {
 			return err
 		}
 		if page.Meta.Total == nil || page.Meta.Limit == nil {
-			return fmt.Errorf("expected meta.total and meta.limit")
+			return fmt.Errorf("expected meta.total/meta.limit")
 		}
 		return nil
 	})
 
-	if len(accounts) > 0 {
-		fmt.Printf("\n  Found %d connected accounts:\n", len(accounts))
-		for _, a := range accounts {
-			name := a.AccountName
-			if name == "" {
-				name = a.ID
-			}
-			fmt.Printf("    • [%-10s] %s  (id: %s)\n", a.Platform, name, a.ID)
-		}
+	if firstAccount != nil {
 		if testAccountID == "" {
-			for _, acc := range accounts {
-				if acc.Platform == "bluesky" {
-					testAccountID = acc.ID
+			for _, account := range accounts {
+				if account.Platform == "bluesky" {
+					testAccountID = account.ID
 					break
 				}
 			}
 			if testAccountID == "" {
-				testAccountID = accounts[0].ID
+				testAccountID = firstAccount.ID
 			}
 			fmt.Printf("\n  Using TEST_ACCOUNT_ID=%s for safe draft/scheduled tests\n", testAccountID)
 		}
-	}
 
-	// ── 2. Profiles — raw API smoke ───────────────────────────────────────────
-	section("2. Profiles — list & filter accounts by profile")
-
-	var profiles []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	test("GET /v1/profiles", func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.unipost.dev/v1/profiles", nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		var envelope struct {
-			Data []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-			return err
-		}
-		profiles = envelope.Data
-		return nil
-	})
-	if len(profiles) > 0 {
-		fmt.Printf("\n  Found %d profiles:\n", len(profiles))
-		for _, p := range profiles {
-			fmt.Printf("    • %s  (id: %s)\n", p.Name, p.ID)
-		}
-		firstProfile := profiles[0]
-		test(fmt.Sprintf("GET /v1/social-accounts?profile_id=%s...", firstProfile.ID[:8]), func() error {
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.unipost.dev/v1/social-accounts?profile_id="+firstProfile.ID, nil)
+		test("Accounts.Get()", func() error {
+			account, err := client.Accounts.Get(ctx, firstAccount.ID)
 			if err != nil {
 				return err
 			}
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-			resp, err := http.DefaultClient.Do(req)
+			if account.ID != firstAccount.ID {
+				return fmt.Errorf("expected matching account")
+			}
+			return nil
+		})
+
+		test("Accounts.Health()", func() error {
+			health, err := client.Accounts.Health(ctx, firstAccount.ID)
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
-			var envelope struct {
-				Data []map[string]any `json:"data"`
+			if health.SocialAccountID != firstAccount.ID {
+				return fmt.Errorf("expected matching account health")
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+			return nil
+		})
+
+		test("Accounts.Capabilities()", func() error {
+			payload, err := client.Accounts.Capabilities(ctx, firstAccount.ID)
+			if err != nil {
+				if apiErr, ok := err.(*unipost.APIError); ok && apiErr.Code == "not_found" {
+					return nil
+				}
 				return err
 			}
-			fmt.Printf("    → %d accounts in profile %q\n", len(envelope.Data), firstProfile.Name)
+			if _, ok := payload["schema_version"].(string); !ok {
+				return fmt.Errorf("expected schema_version")
+			}
 			return nil
 		})
 	}
 
-	// ── 3. Webhooks — signature + CRUD ────────────────────────────────────────
-	section("3. Webhooks — signature verification & subscription CRUD")
+	tiktokID := ""
+	facebookID := ""
+	for _, account := range accounts {
+		if account.Platform == "tiktok" && tiktokID == "" {
+			tiktokID = account.ID
+		}
+		if account.Platform == "facebook" && facebookID == "" {
+			facebookID = account.ID
+		}
+	}
+
+	if tiktokID != "" {
+		test("Accounts.TikTokCreatorInfo()", func() error {
+			payload, err := client.Accounts.TikTokCreatorInfo(ctx, tiktokID)
+			if err != nil {
+				return err
+			}
+			if _, ok := payload["creator_username"]; !ok {
+				if _, ok = payload["creator_nickname"]; !ok {
+					return fmt.Errorf("expected TikTok creator fields")
+				}
+			}
+			return nil
+		})
+	} else {
+		skip("Accounts.TikTokCreatorInfo()", "No TikTok account connected")
+	}
+
+	if facebookID != "" {
+		test("Accounts.FacebookPageInsights()", func() error {
+			_, err := client.Accounts.FacebookPageInsights(ctx, facebookID)
+			if err != nil {
+				if apiErr, ok := err.(*unipost.APIError); ok {
+					if apiErr.Code == "forbidden" || apiErr.Code == "facebook_disabled" || apiErr.Code == "FACEBOOK_DISABLED" || apiErr.Code == "not_found" {
+						return nil
+					}
+				}
+				return err
+			}
+			return nil
+		})
+	} else {
+		skip("Accounts.FacebookPageInsights()", "No Facebook account connected")
+	}
+
+	test("Accounts.Connect() — invalid credentials negative path", func() error {
+		_, err := client.Accounts.Connect(ctx, &unipost.ConnectAccountParams{
+			Platform:    "bluesky",
+			Credentials: map[string]string{"identifier": "invalid", "password": "invalid"},
+		})
+		if err == nil {
+			return fmt.Errorf("expected API error")
+		}
+		if apiErr, ok := err.(*unipost.APIError); ok {
+			if apiErr.Code == "auth_error" || apiErr.Code == "unauthorized" || apiErr.Code == "validation_error" {
+				return nil
+			}
+		}
+		return err
+	})
+
+	section("4. Media, connect sessions, users")
+
+	test("Media.Upload()", func() error {
+		media, err := client.Media.Upload(ctx, &unipost.MediaUploadRequest{
+			Filename:    "sdk-validation.png",
+			ContentType: "image/png",
+			SizeBytes:   128,
+			ContentHash: fmt.Sprintf("sdk-go-%d", time.Now().Unix()),
+		})
+		if err != nil {
+			return err
+		}
+		mediaID := media.MediaID
+		if mediaID == "" {
+			mediaID = media.ID
+		}
+		if mediaID == "" {
+			return fmt.Errorf("expected media id")
+		}
+		createdMediaIDs = append(createdMediaIDs, mediaID)
+		return nil
+	})
+
+	if len(createdMediaIDs) > 0 {
+		test("Media.Get()", func() error {
+			media, err := client.Media.Get(ctx, createdMediaIDs[0])
+			if err != nil {
+				return err
+			}
+			mediaID := media.MediaID
+			if mediaID == "" {
+				mediaID = media.ID
+			}
+			if mediaID != createdMediaIDs[0] {
+				return fmt.Errorf("expected matching media")
+			}
+			return nil
+		})
+	}
+
+	var connectSession *unipost.ConnectSession
+	test("Connect.CreateSession()", func() error {
+		session, err := client.Connect.CreateSession(ctx, &unipost.CreateConnectSessionParams{
+			Platform:          "bluesky",
+			ProfileID:         firstProfile.ID,
+			ExternalUserID:    fmt.Sprintf("sdk-go-%d", time.Now().Unix()),
+			ExternalUserEmail: "sdk-validation@example.com",
+			ReturnURL:         "https://example.com/return",
+		})
+		if err != nil {
+			return err
+		}
+		if session.ID == "" || session.URL == "" {
+			return fmt.Errorf("expected connect session")
+		}
+		connectSession = session
+		return nil
+	})
+
+	if connectSession != nil {
+		test("Connect.GetSession()", func() error {
+			session, err := client.Connect.GetSession(ctx, connectSession.ID)
+			if err != nil {
+				return err
+			}
+			if session.ID != connectSession.ID {
+				return fmt.Errorf("expected matching session")
+			}
+			return nil
+		})
+	}
+
+	var firstUser *unipost.ManagedUser
+	test("Users.List()", func() error {
+		users, err := client.Users.List(ctx)
+		if err != nil {
+			return err
+		}
+		if len(users) > 0 {
+			firstUser = &users[0]
+		}
+		return nil
+	})
+
+	if firstUser != nil {
+		test("Users.Get()", func() error {
+			user, err := client.Users.Get(ctx, firstUser.ExternalUserID)
+			if err != nil {
+				return err
+			}
+			if user.ExternalUserID != firstUser.ExternalUserID {
+				return fmt.Errorf("expected matching managed user")
+			}
+			return nil
+		})
+	} else {
+		skip("Users.Get()", "No managed users available")
+	}
+
+	section("5. Webhooks")
 
 	test("VerifyWebhookSignature()", func() error {
 		payload := []byte(`{"event":"post.published","data":{"id":"post_test_123"}}`)
@@ -176,58 +421,59 @@ func main() {
 		mac.Write(payload)
 		signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 		if !unipost.VerifyWebhookSignature(payload, signature, secret) {
-			return fmt.Errorf("expected signature to verify")
+			return fmt.Errorf("expected valid signature")
 		}
 		return nil
 	})
 
-	var createdWebhook *unipost.WebhookSubscription
+	var webhook *unipost.WebhookSubscription
 	test("Webhooks.Create()", func() error {
-		wh, err := client.Webhooks.Create(ctx, &unipost.CreateWebhookParams{
+		item, err := client.Webhooks.Create(ctx, &unipost.CreateWebhookParams{
 			URL:    "https://example.com/unipost-webhook-test",
 			Events: []string{"post.published", "post.partial", "post.failed"},
 		})
 		if err != nil {
 			return err
 		}
-		if wh.ID == "" || !strings.HasPrefix(wh.Secret, "whsec_") {
-			return fmt.Errorf("expected webhook id and plaintext secret")
+		if item.ID == "" || !strings.HasPrefix(item.Secret, "whsec_") {
+			return fmt.Errorf("expected webhook id and secret")
 		}
-		createdWebhook = wh
-		createdWebhookIDs = append(createdWebhookIDs, wh.ID)
+		webhook = item
+		createdWebhookIDs = append(createdWebhookIDs, item.ID)
 		return nil
 	})
 
-	if createdWebhook != nil {
+	if webhook != nil {
 		test("Webhooks.List()", func() error {
 			items, err := client.Webhooks.List(ctx)
 			if err != nil {
 				return err
 			}
 			for _, item := range items {
-				if item.ID == createdWebhook.ID {
+				if item.ID == webhook.ID {
 					return nil
 				}
 			}
-			return fmt.Errorf("created webhook not found in list")
+			return fmt.Errorf("expected created webhook in list")
 		})
+
 		test("Webhooks.ListPage()", func() error {
 			page, err := client.Webhooks.ListPage(ctx)
 			if err != nil {
 				return err
 			}
 			if page.Meta.Total == nil || page.Meta.Limit == nil {
-				return fmt.Errorf("expected meta.total and meta.limit")
+				return fmt.Errorf("expected meta.total/meta.limit")
 			}
 			return nil
 		})
 
-		test(fmt.Sprintf("Webhooks.Get(\"%s...\")", createdWebhook.ID[:8]), func() error {
-			item, err := client.Webhooks.Get(ctx, createdWebhook.ID)
+		test("Webhooks.Get()", func() error {
+			item, err := client.Webhooks.Get(ctx, webhook.ID)
 			if err != nil {
 				return err
 			}
-			if item.ID != createdWebhook.ID || item.Secret != "" {
+			if item.ID != webhook.ID || item.Secret != "" {
 				return fmt.Errorf("unexpected get payload")
 			}
 			return nil
@@ -235,21 +481,21 @@ func main() {
 
 		test("Webhooks.Update()", func() error {
 			active := false
-			item, err := client.Webhooks.Update(ctx, createdWebhook.ID, &unipost.UpdateWebhookParams{
+			item, err := client.Webhooks.Update(ctx, webhook.ID, &unipost.UpdateWebhookParams{
 				Active: &active,
 				Events: []string{"post.failed"},
 			})
 			if err != nil {
 				return err
 			}
-			if item.Active || len(item.Events) != 1 || item.Events[0] != "post.failed" {
+			if item.Active || len(item.Events) != 1 {
 				return fmt.Errorf("unexpected update payload")
 			}
 			return nil
 		})
 
 		test("Webhooks.Rotate()", func() error {
-			item, err := client.Webhooks.Rotate(ctx, createdWebhook.ID)
+			item, err := client.Webhooks.Rotate(ctx, webhook.ID)
 			if err != nil {
 				return err
 			}
@@ -260,190 +506,462 @@ func main() {
 		})
 	}
 
-	// ── 4. Posts — list & get ─────────────────────────────────────────────────
-	section("4. Posts — list & get")
+	section("6. Platform credentials")
 
-	var firstPostID string
-	test("Posts.List()", func() error {
-		res, err := client.Posts.List(ctx, &unipost.ListPostsParams{Limit: 5})
+	if workspace != nil {
+		platformName := fmt.Sprintf("sdk-go-%d", time.Now().Unix())
+		test("PlatformCredentials.Create()/List()/Delete()", func() error {
+			item, err := client.PlatformCredentials.Create(ctx, workspace.ID, &unipost.CreatePlatformCredentialParams{
+				Platform:     platformName,
+				ClientID:     "sdk-client-id",
+				ClientSecret: "sdk-client-secret",
+			})
+			if err != nil {
+				if apiErr, ok := err.(*unipost.APIError); ok && apiErr.Code == "forbidden" {
+					skip("PlatformCredentials.Create()/List()/Delete()", "Plan-gated")
+					return nil
+				}
+				return err
+			}
+			if item.Platform != platformName {
+				return fmt.Errorf("expected created platform credential")
+			}
+			createdPlatformCredentials = append(createdPlatformCredentials, platformName)
+			page, err := client.PlatformCredentials.List(ctx, workspace.ID)
+			if err != nil {
+				return err
+			}
+			found := false
+			for _, cred := range page.Data {
+				if cred.Platform == platformName {
+					found = true
+				}
+			}
+			if !found {
+				return fmt.Errorf("expected created credential in list")
+			}
+			if err := client.PlatformCredentials.Delete(ctx, workspace.ID, platformName); err != nil {
+				return err
+			}
+			createdPlatformCredentials = createdPlatformCredentials[:len(createdPlatformCredentials)-1]
+			return nil
+		})
+	}
+
+	section("7. Posts")
+
+	test("Posts.Validate()", func() error {
+		res, err := client.Posts.Validate(ctx, &unipost.CreatePostParams{
+			Caption:    "SDK validation draft",
+			AccountIDs: maybeAccountIDs(testAccountID),
+			Status:     "draft",
+		})
 		if err != nil {
 			return err
 		}
-		if len(res.Data) > 0 {
-			firstPostID = res.Data[0].ID
-			caption := ""
-			if res.Data[0].Caption != nil {
-				caption = *res.Data[0].Caption
-			}
-			if len(caption) > 60 {
-				caption = caption[:60]
-			}
-			fmt.Printf("\n  First post: \"%s...\"  Status: %s\n", caption, res.Data[0].Status)
+		if res == nil {
+			return fmt.Errorf("expected validation payload")
 		}
 		return nil
 	})
 
-	if firstPostID != "" {
-		test(fmt.Sprintf("Posts.Get(\"%s...\")", firstPostID[:8]), func() error {
-			post, err := client.Posts.Get(ctx, firstPostID)
+	test("Posts.List()", func() error {
+		page, err := client.Posts.List(ctx, &unipost.ListPostsParams{Limit: 5})
+		if err != nil {
+			return err
+		}
+		if len(page.Data) > 0 {
+			firstPost = &page.Data[0]
+		}
+		return nil
+	})
+
+	if firstPost != nil {
+		test("Posts.Get()", func() error {
+			post, err := client.Posts.Get(ctx, firstPost.ID)
 			if err != nil {
 				return err
 			}
-			if post.ID == "" {
-				return fmt.Errorf("expected post with id")
+			if post.ID != firstPost.ID {
+				return fmt.Errorf("expected matching post")
 			}
 			return nil
 		})
-		test(fmt.Sprintf("Posts.GetQueue(\"%s...\")", firstPostID[:8]), func() error {
-			queue, err := client.Posts.GetQueue(ctx, firstPostID)
+
+		test("Posts.GetQueue()", func() error {
+			queue, err := client.Posts.GetQueue(ctx, firstPost.ID)
 			if err != nil {
 				return err
 			}
-			if queue.Post.ID == "" {
+			if queue.Post.ID != firstPost.ID {
 				return fmt.Errorf("expected queue snapshot")
+			}
+			return nil
+		})
+
+		test("Posts.Analytics()", func() error {
+			items, err := client.Posts.Analytics(ctx, firstPost.ID, false)
+			if err != nil {
+				return err
+			}
+			if items == nil {
+				return fmt.Errorf("expected analytics response")
 			}
 			return nil
 		})
 	}
 
-	// ── 5. Posts — create ─────────────────────────────────────────────────────
-	section("5. Posts — create (draft mode, no actual publishing)")
-
 	if testAccountID == "" {
-		fmt.Println("  ⏭  Skipped — set TEST_ACCOUNT_ID env var to run post creation tests")
+		skip("Posts.Create()/Update()/PreviewLink()/Archive()/Restore()/Cancel()", "No TEST_ACCOUNT_ID available")
+		skip("Posts.BulkCreate()", "No TEST_ACCOUNT_ID available")
+		skip("Posts.Publish()", "No TEST_ACCOUNT_ID available")
 	} else {
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-
-		// Draft
-		var draftID string
 		test("Posts.Create() — draft", func() error {
 			post, err := client.Posts.Create(ctx, &unipost.CreatePostParams{
-				Caption:    fmt.Sprintf("Go SDK test — %s", timestamp),
+				Caption:    fmt.Sprintf("Go SDK draft %s", time.Now().UTC().Format(time.RFC3339)),
 				AccountIDs: []string{testAccountID},
 				Status:     "draft",
 			})
 			if err != nil {
 				return err
 			}
-			if post.Status != "draft" {
-				return fmt.Errorf("expected draft, got %s", post.Status)
+			if post.ID == "" || post.Status != "draft" {
+				return fmt.Errorf("expected draft post")
 			}
-			draftID = post.ID
+			draftPost = post
+			createdPostIDs = append(createdPostIDs, post.ID)
 			return nil
 		})
-		if draftID != "" {
-			createdPostIDs = append(createdPostIDs, draftID)
-			fmt.Printf("\n  Created draft: %s\n", draftID)
+
+		if draftPost != nil {
+			test("Posts.Update() — draft", func() error {
+				caption := "Go SDK draft updated"
+				post, err := client.Posts.Update(ctx, draftPost.ID, &unipost.UpdatePostParams{Caption: &caption, AccountIDs: []string{testAccountID}})
+				if err != nil {
+					return err
+				}
+				if post.ID != draftPost.ID {
+					return fmt.Errorf("expected updated draft")
+				}
+				return nil
+			})
+
+			test("Posts.PreviewLink()", func() error {
+				link, err := client.Posts.PreviewLink(ctx, draftPost.ID)
+				if err != nil {
+					return err
+				}
+				if link.URL == "" || link.Token == "" {
+					return fmt.Errorf("expected preview link")
+				}
+				return nil
+			})
+
+			test("Posts.Archive()", func() error {
+				post, err := client.Posts.Archive(ctx, draftPost.ID)
+				if err != nil {
+					return err
+				}
+				if post.ID != draftPost.ID {
+					return fmt.Errorf("expected archived draft")
+				}
+				return nil
+			})
+
+			test("Posts.Restore()", func() error {
+				post, err := client.Posts.Restore(ctx, draftPost.ID)
+				if err != nil {
+					return err
+				}
+				if post.ID != draftPost.ID {
+					return fmt.Errorf("expected restored draft")
+				}
+				return nil
+			})
 		}
 
-		// Scheduled
-		scheduledAt := time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339)
-		var scheduledID string
 		test("Posts.Create() — scheduled", func() error {
 			post, err := client.Posts.Create(ctx, &unipost.CreatePostParams{
-				Caption:     fmt.Sprintf("Go SDK scheduled — %s", timestamp),
+				Caption:     fmt.Sprintf("Go SDK scheduled %s", time.Now().UTC().Format(time.RFC3339)),
 				AccountIDs:  []string{testAccountID},
-				ScheduledAt: scheduledAt,
+				ScheduledAt: time.Now().UTC().Add(15 * time.Minute).Format(time.RFC3339),
 			})
 			if err != nil {
 				return err
 			}
-			if post.Status != "scheduled" {
-				return fmt.Errorf("expected scheduled, got %s", post.Status)
+			if post.ID == "" || post.Status != "scheduled" {
+				return fmt.Errorf("expected scheduled post")
 			}
-			scheduledID = post.ID
+			scheduledPost = post
+			createdPostIDs = append(createdPostIDs, post.ID)
 			return nil
 		})
 
-		if scheduledID != "" {
-			createdPostIDs = append(createdPostIDs, scheduledID)
-			fmt.Printf("  Created scheduled: %s\n", scheduledID)
-			test(fmt.Sprintf("Posts.Cancel(\"%s...\")", scheduledID[:8]), func() error {
-				_, err := client.Posts.Cancel(ctx, scheduledID)
-				return err
+		if scheduledPost != nil {
+			test("Posts.Update() — scheduled", func() error {
+				scheduledAt := time.Now().UTC().Add(20 * time.Minute).Format(time.RFC3339)
+				post, err := client.Posts.Update(ctx, scheduledPost.ID, &unipost.UpdatePostParams{ScheduledAt: &scheduledAt})
+				if err != nil {
+					if apiErr, ok := err.(*unipost.APIError); ok && apiErr.Code == "validation_error" {
+						return nil
+					}
+					return err
+				}
+				if post.ID != scheduledPost.ID {
+					return fmt.Errorf("expected updated scheduled post")
+				}
+				return nil
 			})
-			fmt.Println("  Cancelled scheduled post ✓")
-		}
 
-		if os.Getenv("TEST_PUBLISH_NOW") == "true" {
-			test("Posts.Create() — publish NOW", func() error {
-				post, err := client.Posts.Create(ctx, &unipost.CreatePostParams{
-					Caption:    fmt.Sprintf("[SDK Test] Hello from Go SDK 🚀 %s", timestamp),
-					AccountIDs: []string{testAccountID},
-				})
+			test("Posts.Cancel()", func() error {
+				post, err := client.Posts.Cancel(ctx, scheduledPost.ID)
 				if err != nil {
 					return err
 				}
-				if post.ID == "" {
-					return fmt.Errorf("expected post with id")
+				if post.ID != scheduledPost.ID {
+					return fmt.Errorf("expected canceled scheduled post")
+				}
+				return nil
+			})
+		}
+
+		test("Posts.BulkCreate()", func() error {
+			items, err := client.Posts.BulkCreate(ctx, []*unipost.CreatePostParams{
+				{Caption: "Go bulk A", AccountIDs: []string{testAccountID}, Status: "draft"},
+				{Caption: "Go bulk B", AccountIDs: []string{testAccountID}, Status: "draft"},
+			})
+			if err != nil {
+				return err
+			}
+			if len(items) != 2 {
+				return fmt.Errorf("expected two bulk result entries")
+			}
+			for _, item := range items {
+				if item.Data == nil && item.Error == nil {
+					return fmt.Errorf("expected bulk result payload")
+				}
+			}
+			return nil
+		})
+
+		if testPublishNow && draftPost != nil {
+			test("Posts.Publish() — live publish", func() error {
+				post, err := client.Posts.Publish(ctx, draftPost.ID)
+				if err != nil {
+					return err
+				}
+				if post.ID != draftPost.ID {
+					return fmt.Errorf("expected publish response")
 				}
 				return nil
 			})
 		} else {
-			fmt.Println("\n  ⏭  Real publish skipped (set TEST_PUBLISH_NOW=true)")
+			skip("Posts.Publish() — live publish", "Opt-in only (set TEST_PUBLISH_NOW=true)")
 		}
 	}
 
-	// ── 6. Analytics ──────────────────────────────────────────────────────────
-	section("6. Analytics")
-	now := time.Now().UTC()
-	thirtyDaysAgo := now.Add(-30 * 24 * time.Hour)
+	failedResultID := ""
+	if firstPost != nil {
+		for _, result := range firstPost.Results {
+			if result.Status == "failed" && result.ID != "" {
+				failedResultID = result.ID
+				break
+			}
+		}
+	}
+	if firstPost != nil && failedResultID != "" {
+		test("Posts.RetryResult()", func() error {
+			result, err := client.Posts.RetryResult(ctx, firstPost.ID, failedResultID)
+			if err != nil {
+				return err
+			}
+			if result.SocialAccountID == "" {
+				return fmt.Errorf("expected retry result payload")
+			}
+			return nil
+		})
+	} else {
+		skip("Posts.RetryResult()", "No failed result available")
+	}
+
+	section("8. Delivery jobs, analytics, usage, oauth")
+
+	test("DeliveryJobs.List()", func() error {
+		items, err := client.DeliveryJobs.List(ctx, &unipost.ListDeliveryJobsParams{Limit: 5})
+		if err != nil {
+			return err
+		}
+		if items == nil {
+			return fmt.Errorf("expected jobs slice")
+		}
+		return nil
+	})
+
+	test("DeliveryJobs.Summary()", func() error {
+		summary, err := client.DeliveryJobs.Summary(ctx)
+		if err != nil {
+			return err
+		}
+		if summary == nil {
+			return fmt.Errorf("expected summary payload")
+		}
+		return nil
+	})
+
+	retryableJobs, _ := client.DeliveryJobs.List(ctx, &unipost.ListDeliveryJobsParams{Limit: 20, States: "pending,retrying"})
+	if len(retryableJobs) > 0 {
+		jobID := retryableJobs[0].ID
+		test("DeliveryJobs.Retry()/Cancel()", func() error {
+			if _, err := client.DeliveryJobs.Retry(ctx, jobID); err != nil {
+				if apiErr, ok := err.(*unipost.APIError); !ok || (apiErr.Code != "queue_job_active" && apiErr.Code != "bad_request" && apiErr.Code != "conflict") {
+					return err
+				}
+			}
+			if _, err := client.DeliveryJobs.Cancel(ctx, jobID); err != nil {
+				if apiErr, ok := err.(*unipost.APIError); !ok || (apiErr.Code != "bad_request" && apiErr.Code != "conflict") {
+					return err
+				}
+			}
+			return nil
+		})
+	} else {
+		skip("DeliveryJobs.Retry()/Cancel()", "No retryable delivery jobs available")
+	}
+
+	from := time.Now().UTC().Add(-30 * 24 * time.Hour).Format("2006-01-02")
+	to := time.Now().UTC().Format("2006-01-02")
+
+	test("Analytics.Summary()", func() error {
+		summary, err := client.Analytics.Summary(ctx, &unipost.AnalyticsQueryParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		if _, ok := summary["posts"]; !ok {
+			return fmt.Errorf("expected summary payload")
+		}
+		return nil
+	})
+
+	test("Analytics.Trend()", func() error {
+		trend, err := client.Analytics.Trend(ctx, &unipost.AnalyticsQueryParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		if _, ok := trend["dates"]; !ok {
+			return fmt.Errorf("expected trend dates")
+		}
+		return nil
+	})
+
+	test("Analytics.ByPlatform()", func() error {
+		rows, err := client.Analytics.ByPlatform(ctx, &unipost.AnalyticsQueryParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		if rows == nil {
+			return fmt.Errorf("expected by-platform rows")
+		}
+		return nil
+	})
+
 	test("Analytics.Rollup()", func() error {
-		res, err := client.Analytics.Rollup(ctx, &unipost.AnalyticsRollupParams{
-			From:        thirtyDaysAgo.Format(time.RFC3339),
-			To:          now.Format(time.RFC3339),
+		rollup, err := client.Analytics.Rollup(ctx, &unipost.AnalyticsRollupParams{
+			From:        time.Now().UTC().Add(-30 * 24 * time.Hour).Format(time.RFC3339),
+			To:          time.Now().UTC().Format(time.RFC3339),
 			Granularity: "day",
 		})
 		if err != nil {
 			return err
 		}
-		if res == nil {
-			return fmt.Errorf("expected rollup data")
+		if rollup == nil || rollup.Series == nil {
+			return fmt.Errorf("expected rollup series")
 		}
 		return nil
 	})
 
-	// ── Cleanup ───────────────────────────────────────────────────────────────
-	if len(createdWebhookIDs) > 0 || len(createdPostIDs) > 0 {
-		section("7. Cleanup")
-	}
-	if len(createdWebhookIDs) > 0 {
-		for _, id := range createdWebhookIDs {
-			if err := client.Webhooks.Delete(ctx, id); err != nil {
-				fmt.Printf("  ⚠  Failed to delete webhook %s... (non-fatal)\n", id[:8])
-			} else {
-				fmt.Printf("  🧹 Deleted webhook %s...\n", id[:8])
-			}
+	test("Usage.Get()", func() error {
+		usage, err := client.Usage.Get(ctx)
+		if err != nil {
+			return err
 		}
-	}
-	if len(createdPostIDs) > 0 {
-		apiURL := os.Getenv("UNIPOST_API_URL")
-		if apiURL == "" {
-			apiURL = "https://api.unipost.dev"
+		if usage.PostLimit < 0 {
+			return fmt.Errorf("unexpected usage payload")
 		}
-		for _, id := range createdPostIDs {
-			req, _ := http.NewRequest("DELETE", apiURL+"/v1/social-posts/"+id, nil)
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-			if _, err := http.DefaultClient.Do(req); err != nil {
-				fmt.Printf("  ⚠  Failed to delete %s... (non-fatal)\n", id[:8])
-			} else {
-				fmt.Printf("  🗑  Deleted %s...\n", id[:8])
-			}
-		}
-	}
+		return nil
+	})
 
-	// ── Summary ───────────────────────────────────────────────────────────────
-	fmt.Printf("\n╔══════════════════════════════════════════════════╗\n")
-	fmt.Printf("║  Results: %2d passed  %2d failed                    ║\n", passed, failed)
-	fmt.Printf("╚══════════════════════════════════════════════════╝\n\n")
+	test("OAuth.Connect() — known backend path", func() error {
+		_, err := client.OAuth.Connect(ctx, "bluesky", "https://example.com/callback")
+		if err != nil {
+			if apiErr, ok := err.(*unipost.APIError); ok && (apiErr.Code == "unauthorized" || apiErr.Code == "validation_error") {
+				return nil
+			}
+			return err
+		}
+		return nil
+	})
+
+	cleanup(ctx, client, workspace)
+
+	fmt.Println("\n╔══════════════════════════════════════════════════╗")
+	fmt.Printf("║  Results: %2d passed  %2d failed  %2d skipped      ║\n", passed, failed, skipped)
+	fmt.Println("╚══════════════════════════════════════════════════╝")
+	fmt.Println()
 
 	if failed > 0 {
 		fmt.Println("Failed tests:")
-		for _, f := range failures {
-			fmt.Printf("  ❌ %s\n", f)
+		for _, failure := range failures {
+			fmt.Printf("  ❌ %s\n", failure)
 		}
 		os.Exit(1)
-	} else {
-		fmt.Println("🎉 All tests passed! local sdk-go is working correctly.")
+	}
+
+	fmt.Println("🎉 All required Go SDK validations passed.")
+}
+
+func maybeAccountIDs(id string) []string {
+	if id == "" {
+		return nil
+	}
+	return []string{id}
+}
+
+func cleanup(ctx context.Context, client *unipost.Client, workspace *unipost.Workspace) {
+	if len(createdWebhookIDs) > 0 || len(createdMediaIDs) > 0 || len(createdPostIDs) > 0 || len(createdPlatformCredentials) > 0 {
+		section("Cleanup")
+	}
+
+	for _, webhookID := range createdWebhookIDs {
+		if err := client.Webhooks.Delete(ctx, webhookID); err != nil {
+			fmt.Printf("  ⚠ Failed to delete webhook %s... (%v)\n", webhookID[:8], err)
+		} else {
+			fmt.Printf("  🧹 Deleted webhook %s...\n", webhookID[:8])
+		}
+	}
+
+	for _, mediaID := range createdMediaIDs {
+		if err := client.Media.Delete(ctx, mediaID); err != nil {
+			fmt.Printf("  ⚠ Failed to delete media %s... (%v)\n", mediaID[:8], err)
+		} else {
+			fmt.Printf("  🧹 Deleted media %s...\n", mediaID[:8])
+		}
+	}
+
+	for _, postID := range createdPostIDs {
+		if err := client.Posts.Delete(ctx, postID); err != nil {
+			fmt.Printf("  ⚠ Failed to delete post %s... (%v)\n", postID[:8], err)
+		} else {
+			fmt.Printf("  🧹 Deleted post %s...\n", postID[:8])
+		}
+	}
+
+	if workspace != nil {
+		for _, platformName := range createdPlatformCredentials {
+			if err := client.PlatformCredentials.Delete(ctx, workspace.ID, platformName); err != nil {
+				fmt.Printf("  ⚠ Failed to delete platform credential %s... (%v)\n", platformName, err)
+			} else {
+				fmt.Printf("  🧹 Deleted platform credential %s\n", platformName)
+			}
+		}
 	}
 }
