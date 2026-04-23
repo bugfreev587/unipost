@@ -1,24 +1,65 @@
-import { DocsPage, DocsTable } from "../../_components/docs-shell";
+"use client";
+
+import {
+  ApiReferencePage,
+  ApiEndpointCard,
+  ApiFieldList,
+  type ApiFieldItem,
+} from "../_components/doc-components";
+
+const CONCEPT_FIELDS: ApiFieldItem[] = [
+  {
+    name: "Plan",
+    type: "workspace",
+    description: "Understand which features or limits apply to the current workspace.",
+  },
+  {
+    name: "Usage",
+    type: "metering",
+    description: "Track how much of the current billing period has been consumed.",
+  },
+  {
+    name: "Warnings",
+    type: "limits",
+    description: "Surface approaching-limit or over-limit states in your own UI.",
+  },
+];
+
+const HEADER_FIELDS: ApiFieldItem[] = [
+  {
+    name: "X-UniPost-Usage",
+    type: "response header",
+    description: "Current workspace usage information on publish-related responses.",
+  },
+  {
+    name: "X-UniPost-Warning",
+    type: "response header",
+    description: "Near-limit or policy warnings your app can surface directly.",
+  },
+];
 
 export default function BillingPage() {
   return (
-    <DocsPage
-      eyebrow="API Reference"
-      title="Billing and Usage"
-      lead="Billing and usage endpoints help your app understand plan state, publish usage, and workspace limits. This matters most when you are building a SaaS on top of UniPost and need to make plan-aware decisions in your own UI."
+    <ApiReferencePage
+      section="insights"
+      title="Billing and usage"
+      description="Billing and usage endpoints help your app understand plan state, publish usage, and workspace limits. This matters most when you are building a SaaS on top of UniPost."
     >
-      <h2 id="what-it-covers">What it covers</h2>
-      <DocsTable
-        columns={["Concept", "Why you need it"]}
-        rows={[
-          ["Plan", "Understand which features or limits apply to the workspace"],
-          ["Usage", "Track how much of the current billing period has been consumed"],
-          ["Warnings", "Surface approaching-limit or over-limit states in your product"],
-        ]}
-      />
+      <div style={{ display: "grid", gap: 18 }}>
+        <ApiEndpointCard method="GET" path="billing">
+          <div style={{ padding: "18px" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>What it covers</div>
+            <ApiFieldList items={CONCEPT_FIELDS} />
+          </div>
+        </ApiEndpointCard>
 
-      <h2 id="where-it-shows-up">Where billing shows up</h2>
-      <p>Billing state appears both in dedicated billing endpoints and in response headers such as <code>X-UniPost-Usage</code> and <code>X-UniPost-Warning</code> on publish-related responses.</p>
-    </DocsPage>
+        <ApiEndpointCard method="GET" path="billing">
+          <div style={{ padding: "18px" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Where billing shows up</div>
+            <ApiFieldList items={HEADER_FIELDS} />
+          </div>
+        </ApiEndpointCard>
+      </div>
+    </ApiReferencePage>
   );
 }
