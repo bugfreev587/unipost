@@ -6,6 +6,7 @@ import {
   ApiEndpointCard,
   ApiAccordion,
   ApiFieldList,
+  ApiRequestConfigCard,
   CodeTabs,
   type ApiFieldItem,
 } from "./doc-components";
@@ -36,6 +37,21 @@ const METHOD_COLORS: Record<Method, string> = {
   DELETE: "#ef4444",
 };
 
+function normalizeSectionTitle(title: string) {
+  return title.trim().toLowerCase();
+}
+
+function queryTemplateFromFields(fields: ApiFieldItem[]) {
+  if (fields.length === 0) {
+    return "";
+  }
+
+  return `?${fields
+    .map((field) => field.name.replace(/\?$/, ""))
+    .map((name) => `{${name}}`)
+    .join("&")}`;
+}
+
 export function SingleEndpointReferencePage({
   section,
   title,
@@ -59,11 +75,35 @@ export function SingleEndpointReferencePage({
   responseSnippets: Snippet[];
   children?: React.ReactNode;
 }) {
+  const authSection = requestSections.find((section) => normalizeSectionTitle(section.title) === "authorization");
+  const pathSection = requestSections.find((section) => normalizeSectionTitle(section.title).startsWith("path"));
+  const querySection = requestSections.find((section) => normalizeSectionTitle(section.title).startsWith("query"));
+  const unsupportedSections = requestSections.filter((section) => {
+    const title = normalizeSectionTitle(section.title);
+    return title !== "authorization" && !title.startsWith("path") && !title.startsWith("query");
+  });
+  const shouldRenderPlayground =
+    unsupportedSections.length === 0 &&
+    Boolean(authSection || pathSection || querySection);
+
   return (
     <ApiReferencePage section={section} title={title} description={description}>
       <ApiReferenceGrid
         left={
           <div style={{ display: "grid", gap: 16 }}>
+            {shouldRenderPlayground ? (
+              <ApiRequestConfigCard
+                method={method}
+                path={path}
+                requestPathTemplate={`${path}${queryTemplateFromFields(querySection?.items || [])}`}
+                baseUrl="https://api.unipost.dev"
+                authFields={authSection?.items || []}
+                pathFields={pathSection?.items || []}
+                queryFields={querySection?.items || []}
+                useMonacoForJsonResponse
+              />
+            ) : null}
+
             <ApiEndpointCard method={method} path={path}>
               <div style={{ padding: "16px 18px" }}>
                 <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: METHOD_COLORS[method], marginRight: 12 }}>{method}</span>

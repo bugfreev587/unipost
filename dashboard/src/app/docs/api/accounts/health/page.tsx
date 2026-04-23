@@ -6,6 +6,7 @@ import {
   ApiEndpointCard,
   ApiAccordion,
   ApiFieldList,
+  ApiRequestConfigCard,
   CodeTabs,
   type ApiFieldItem,
 } from "../../_components/doc-components";
@@ -148,6 +149,16 @@ export default function AccountHealthPage() {
       <ApiReferenceGrid
         left={
           <div style={{ display: "grid", gap: 16 }}>
+            <ApiRequestConfigCard
+              method="GET"
+              path="/v1/social-accounts/:account_id/health"
+              requestPathTemplate="/v1/social-accounts/:account_id/health"
+              baseUrl="https://api.unipost.dev"
+              authFields={AUTH_FIELDS}
+              pathFields={PATH_FIELDS}
+              useMonacoForJsonResponse
+            />
+
             <ApiEndpointCard method="GET" path="/v1/social-accounts/:account_id/health">
               <div style={{ padding: "16px 18px" }}>
                 <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
