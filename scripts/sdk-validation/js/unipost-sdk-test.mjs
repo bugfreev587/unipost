@@ -4,14 +4,15 @@
  * Tests all supported API operations against the live UniPost API.
  *
  * Setup:
- *   1. npm install @unipost/sdk
+ *   1. npm install
  *   2. Get an API key from https://app.unipost.dev → API Keys
  *   3. UNIPOST_API_KEY=up_live_xxx node unipost-sdk-test.mjs
  *
  * Or set directly below:
  */
 
-import { UniPost } from '@unipost/sdk';
+import crypto from 'node:crypto';
+import { UniPost, verifyWebhookSignature } from '../../../sdk/javascript/dist/index.mjs';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -20,10 +21,11 @@ const API_URL = process.env.UNIPOST_API_URL || 'https://api.unipost.dev';
 
 // After running listAccounts(), paste one account_id here for post tests.
 // Leave empty to skip post creation tests (safe for first run).
-const TEST_ACCOUNT_ID = process.env.TEST_ACCOUNT_ID || '';
+let TEST_ACCOUNT_ID = process.env.TEST_ACCOUNT_ID || '';
 
 // Track post IDs created during the test run for cleanup.
 const createdPostIds = [];
+const createdWebhookIds = [];
 
 // ─── Test runner ──────────────────────────────────────────────────────────────
 
@@ -91,6 +93,12 @@ async function main() {
     }
   }
 
+  if (!TEST_ACCOUNT_ID && accounts?.length) {
+    const safestAccount = accounts.find(a => a.platform === 'bluesky') || accounts[0];
+    TEST_ACCOUNT_ID = safestAccount.id;
+    console.log(`\n  Using TEST_ACCOUNT_ID=${TEST_ACCOUNT_ID} for safe draft/scheduled tests`);
+  }
+
   // ── 2. Profiles — list (raw API, pending SDK v0.2.0) ──────────────────────
   section('2. Profiles — list & filter accounts by profile');
 
@@ -122,8 +130,70 @@ async function main() {
     });
   }
 
-  // ── 3. Posts — list ─────────────────────────────────────────────────────────
-  section('3. Posts — list & get');
+  // ── 3. Webhooks — signature + CRUD ─────────────────────────────────────────
+  section('3. Webhooks — signature verification & subscription CRUD');
+
+  await test('verifyWebhookSignature()', async () => {
+    const payload = JSON.stringify({
+      event: 'post.published',
+      timestamp: new Date().toISOString(),
+      data: { id: 'post_test_123' },
+    });
+    const secret = 'whsec_test_local';
+    const signature = `sha256=${crypto.createHmac('sha256', secret).update(payload).digest('hex')}`;
+    const valid = await verifyWebhookSignature({ payload, signature, secret });
+    if (!valid) throw new Error('Expected signature to verify');
+    return true;
+  });
+
+  const webhook = await test('webhooks.create()', async () => {
+    const res = await client.webhooks.create({
+      url: 'https://example.com/unipost-webhook-test',
+      events: ['post.published', 'post.partial', 'post.failed'],
+    });
+    if (!res?.id) throw new Error('Expected webhook id');
+    if (!res.secret || !res.secret.startsWith('whsec_')) throw new Error('Expected generated signing secret');
+    return res;
+  });
+
+  if (webhook?.id) {
+    createdWebhookIds.push(webhook.id);
+
+    await test('webhooks.list()', async () => {
+      const res = await client.webhooks.list();
+      if (!Array.isArray(res?.data)) throw new Error('Expected data array');
+      if (!res.data.find((item) => item.id === webhook.id)) throw new Error('Created webhook not found in list');
+      return res.data;
+    });
+
+    await test(`webhooks.get("${webhook.id.slice(0, 8)}...")`, async () => {
+      const res = await client.webhooks.get(webhook.id);
+      if (res.id !== webhook.id) throw new Error('Wrong webhook returned');
+      if ('secret' in res) throw new Error('Read response should not contain plaintext secret');
+      return res;
+    });
+
+    await test('webhooks.update()', async () => {
+      const res = await client.webhooks.update(webhook.id, {
+        active: false,
+        events: ['post.failed'],
+      });
+      if (res.active !== false) throw new Error('Expected active=false');
+      if (!Array.isArray(res.events) || res.events.length !== 1 || res.events[0] !== 'post.failed') {
+        throw new Error('Expected updated events');
+      }
+      return res;
+    });
+
+    await test('webhooks.rotate()', async () => {
+      const res = await client.webhooks.rotate(webhook.id);
+      if (!res.secret || !res.secret.startsWith('whsec_')) throw new Error('Expected rotated secret');
+      return res;
+    });
+  }
+
+  // ── 4. Posts — list ─────────────────────────────────────────────────────────
+  section('4. Posts — list & get');
 
   const posts = await test('posts.list()', async () => {
     const res = await client.posts.list({ limit: 5 });
@@ -141,12 +211,19 @@ async function main() {
       if (!res?.id) throw new Error('Expected post object with id');
       return res;
     });
+
+    await test(`posts.getQueue("${firstPost.id.slice(0, 8)}...")`, async () => {
+      const res = await client.posts.getQueue(firstPost.id);
+      if (!res?.post?.id) throw new Error('Expected queue snapshot with post');
+      if (!Array.isArray(res.jobs)) throw new Error('Expected jobs array');
+      return res;
+    });
   } else {
-    console.log('\n  No posts yet — skipping posts.get() test');
+    console.log('\n  No posts yet — skipping posts.get() and posts.getQueue() tests');
   }
 
-  // ── 3. Posts — create (only if TEST_ACCOUNT_ID is set) ──────────────────────
-  section('4. Posts — create (draft mode, no actual publishing)');
+  // ── 5. Posts — create (only if TEST_ACCOUNT_ID is set) ──────────────────────
+  section('5. Posts — create (draft mode, no actual publishing)');
 
   if (!TEST_ACCOUNT_ID) {
     console.log('  ⏭  Skipped — set TEST_ACCOUNT_ID env var to run post creation tests');
@@ -210,7 +287,7 @@ async function main() {
     if (publishNow) {
       await test('posts.create() — publish NOW (real post)', async () => {
         const res = await client.posts.create({
-          caption: `[SDK Test] Hello from @unipost/sdk v0.1.0 🚀 ${timestamp}`,
+          caption: `[SDK Test] Hello from local @unipost/sdk 🚀 ${timestamp}`,
           accountIds: [TEST_ACCOUNT_ID],
         });
         if (!res?.id) throw new Error('Expected post object with id');
@@ -221,8 +298,8 @@ async function main() {
     }
   }
 
-  // ── 4. Analytics ────────────────────────────────────────────────────────────
-  section('5. Analytics');
+  // ── 6. Analytics ────────────────────────────────────────────────────────────
+  section('6. Analytics');
 
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -238,8 +315,22 @@ async function main() {
   });
 
   // ── Cleanup ─────────────────────────────────────────────────────────────────
+  if (createdWebhookIds.length > 0 || createdPostIds.length > 0) {
+    section('7. Cleanup');
+  }
+
+  if (createdWebhookIds.length > 0) {
+    for (const id of createdWebhookIds) {
+      try {
+        await client.webhooks.delete(id);
+        console.log(`  🧹 Deleted webhook ${id.slice(0, 8)}...`);
+      } catch {
+        console.log(`  ⚠  Failed to delete webhook ${id.slice(0, 8)}... (non-fatal)`);
+      }
+    }
+  }
+
   if (createdPostIds.length > 0) {
-    section('6. Cleanup — deleting test posts');
     for (const id of createdPostIds) {
       try {
         await fetch(`${API_URL}/v1/social-posts/${id}`, {
@@ -265,7 +356,7 @@ async function main() {
       .forEach(r => console.log(`  ❌ ${r.name}: ${r.error}`));
     process.exit(1);
   } else {
-    console.log('🎉 All tests passed! @unipost/sdk is working correctly.\n');
+    console.log('🎉 All tests passed! local @unipost/sdk is working correctly.\n');
   }
 }
 

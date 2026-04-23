@@ -1,7 +1,7 @@
 // UniPost Go SDK Validation Test
 //
 // Setup:
-//   1. go mod init unipost-sdk-test && go get github.com/unipost-dev/sdk-go
+//   1. go mod tidy
 //   2. UNIPOST_API_KEY=up_live_xxx go run main.go
 //   3. UNIPOST_API_KEY=up_live_xxx TEST_ACCOUNT_ID=<id> go run main.go
 
@@ -9,19 +9,25 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/unipost-dev/sdk-go/unipost"
 )
 
 var (
-	passed         int
-	failed         int
-	failures       []string
-	createdPostIDs []string
+	passed            int
+	failed            int
+	failures          []string
+	createdPostIDs    []string
+	createdWebhookIDs []string
 )
 
 func test(name string, fn func() error) {
@@ -78,10 +84,164 @@ func main() {
 			}
 			fmt.Printf("    • [%-10s] %s  (id: %s)\n", a.Platform, name, a.ID)
 		}
+		if testAccountID == "" {
+			for _, acc := range accounts {
+				if acc.Platform == "bluesky" {
+					testAccountID = acc.ID
+					break
+				}
+			}
+			if testAccountID == "" {
+				testAccountID = accounts[0].ID
+			}
+			fmt.Printf("\n  Using TEST_ACCOUNT_ID=%s for safe draft/scheduled tests\n", testAccountID)
+		}
 	}
 
-	// ── 2. Posts — list & get ─────────────────────────────────────────────────
-	section("2. Posts — list & get")
+	// ── 2. Profiles — raw API smoke ───────────────────────────────────────────
+	section("2. Profiles — list & filter accounts by profile")
+
+	var profiles []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	test("GET /v1/profiles", func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.unipost.dev/v1/profiles", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		var envelope struct {
+			Data []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+			return err
+		}
+		profiles = envelope.Data
+		return nil
+	})
+	if len(profiles) > 0 {
+		fmt.Printf("\n  Found %d profiles:\n", len(profiles))
+		for _, p := range profiles {
+			fmt.Printf("    • %s  (id: %s)\n", p.Name, p.ID)
+		}
+		firstProfile := profiles[0]
+		test(fmt.Sprintf("GET /v1/social-accounts?profile_id=%s...", firstProfile.ID[:8]), func() error {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.unipost.dev/v1/social-accounts?profile_id="+firstProfile.ID, nil)
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			var envelope struct {
+				Data []map[string]any `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+				return err
+			}
+			fmt.Printf("    → %d accounts in profile %q\n", len(envelope.Data), firstProfile.Name)
+			return nil
+		})
+	}
+
+	// ── 3. Webhooks — signature + CRUD ────────────────────────────────────────
+	section("3. Webhooks — signature verification & subscription CRUD")
+
+	test("VerifyWebhookSignature()", func() error {
+		payload := []byte(`{"event":"post.published","data":{"id":"post_test_123"}}`)
+		secret := "whsec_test_local"
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(payload)
+		signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		if !unipost.VerifyWebhookSignature(payload, signature, secret) {
+			return fmt.Errorf("expected signature to verify")
+		}
+		return nil
+	})
+
+	var createdWebhook *unipost.WebhookSubscription
+	test("Webhooks.Create()", func() error {
+		wh, err := client.Webhooks.Create(ctx, &unipost.CreateWebhookParams{
+			URL:    "https://example.com/unipost-webhook-test",
+			Events: []string{"post.published", "post.partial", "post.failed"},
+		})
+		if err != nil {
+			return err
+		}
+		if wh.ID == "" || !strings.HasPrefix(wh.Secret, "whsec_") {
+			return fmt.Errorf("expected webhook id and plaintext secret")
+		}
+		createdWebhook = wh
+		createdWebhookIDs = append(createdWebhookIDs, wh.ID)
+		return nil
+	})
+
+	if createdWebhook != nil {
+		test("Webhooks.List()", func() error {
+			items, err := client.Webhooks.List(ctx)
+			if err != nil {
+				return err
+			}
+			for _, item := range items {
+				if item.ID == createdWebhook.ID {
+					return nil
+				}
+			}
+			return fmt.Errorf("created webhook not found in list")
+		})
+
+		test(fmt.Sprintf("Webhooks.Get(\"%s...\")", createdWebhook.ID[:8]), func() error {
+			item, err := client.Webhooks.Get(ctx, createdWebhook.ID)
+			if err != nil {
+				return err
+			}
+			if item.ID != createdWebhook.ID || item.Secret != "" {
+				return fmt.Errorf("unexpected get payload")
+			}
+			return nil
+		})
+
+		test("Webhooks.Update()", func() error {
+			active := false
+			item, err := client.Webhooks.Update(ctx, createdWebhook.ID, &unipost.UpdateWebhookParams{
+				Active: &active,
+				Events: []string{"post.failed"},
+			})
+			if err != nil {
+				return err
+			}
+			if item.Active || len(item.Events) != 1 || item.Events[0] != "post.failed" {
+				return fmt.Errorf("unexpected update payload")
+			}
+			return nil
+		})
+
+		test("Webhooks.Rotate()", func() error {
+			item, err := client.Webhooks.Rotate(ctx, createdWebhook.ID)
+			if err != nil {
+				return err
+			}
+			if !strings.HasPrefix(item.Secret, "whsec_") {
+				return fmt.Errorf("expected rotated secret")
+			}
+			return nil
+		})
+	}
+
+	// ── 4. Posts — list & get ─────────────────────────────────────────────────
+	section("4. Posts — list & get")
 
 	var firstPostID string
 	test("Posts.List()", func() error {
@@ -91,7 +251,10 @@ func main() {
 		}
 		if len(res.Data) > 0 {
 			firstPostID = res.Data[0].ID
-			caption := res.Data[0].Caption
+			caption := ""
+			if res.Data[0].Caption != nil {
+				caption = *res.Data[0].Caption
+			}
 			if len(caption) > 60 {
 				caption = caption[:60]
 			}
@@ -111,10 +274,20 @@ func main() {
 			}
 			return nil
 		})
+		test(fmt.Sprintf("Posts.GetQueue(\"%s...\")", firstPostID[:8]), func() error {
+			queue, err := client.Posts.GetQueue(ctx, firstPostID)
+			if err != nil {
+				return err
+			}
+			if queue.Post.ID == "" {
+				return fmt.Errorf("expected queue snapshot")
+			}
+			return nil
+		})
 	}
 
-	// ── 3. Posts — create ─────────────────────────────────────────────────────
-	section("3. Posts — create (draft mode, no actual publishing)")
+	// ── 5. Posts — create ─────────────────────────────────────────────────────
+	section("5. Posts — create (draft mode, no actual publishing)")
 
 	if testAccountID == "" {
 		fmt.Println("  ⏭  Skipped — set TEST_ACCOUNT_ID env var to run post creation tests")
@@ -191,9 +364,39 @@ func main() {
 		}
 	}
 
+	// ── 6. Analytics ──────────────────────────────────────────────────────────
+	section("6. Analytics")
+	now := time.Now().UTC()
+	thirtyDaysAgo := now.Add(-30 * 24 * time.Hour)
+	test("Analytics.Rollup()", func() error {
+		res, err := client.Analytics.Rollup(ctx, &unipost.AnalyticsRollupParams{
+			From:        thirtyDaysAgo.Format(time.RFC3339),
+			To:          now.Format(time.RFC3339),
+			Granularity: "day",
+		})
+		if err != nil {
+			return err
+		}
+		if res == nil {
+			return fmt.Errorf("expected rollup data")
+		}
+		return nil
+	})
+
 	// ── Cleanup ───────────────────────────────────────────────────────────────
+	if len(createdWebhookIDs) > 0 || len(createdPostIDs) > 0 {
+		section("7. Cleanup")
+	}
+	if len(createdWebhookIDs) > 0 {
+		for _, id := range createdWebhookIDs {
+			if err := client.Webhooks.Delete(ctx, id); err != nil {
+				fmt.Printf("  ⚠  Failed to delete webhook %s... (non-fatal)\n", id[:8])
+			} else {
+				fmt.Printf("  🧹 Deleted webhook %s...\n", id[:8])
+			}
+		}
+	}
 	if len(createdPostIDs) > 0 {
-		section("5. Cleanup — deleting test posts")
 		apiURL := os.Getenv("UNIPOST_API_URL")
 		if apiURL == "" {
 			apiURL = "https://api.unipost.dev"
@@ -221,6 +424,6 @@ func main() {
 		}
 		os.Exit(1)
 	} else {
-		fmt.Println("🎉 All tests passed! sdk-go is working correctly.")
+		fmt.Println("🎉 All tests passed! local sdk-go is working correctly.")
 	}
 }

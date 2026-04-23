@@ -262,12 +262,24 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       ],
     },
     {
-      title: "Insights",
+      title: "Developer Webhooks",
+      description: "Push delivery for post lifecycle and account events.",
+      items: [
+        { label: "Overview", href: "/docs/api/webhooks" },
+        { label: "Create webhook", href: "/docs/api/webhooks/create", method: "POST" },
+        { label: "List webhooks", href: "/docs/api/webhooks/list", method: "GET" },
+        { label: "Get webhook", href: "/docs/api/webhooks/get", method: "GET" },
+        { label: "Update webhook", href: "/docs/api/webhooks/update", method: "PATCH" },
+        { label: "Rotate secret", href: "/docs/api/webhooks/rotate", method: "POST" },
+      ],
+    },
+    {
+      title: "Notifications",
+      description: "Human-facing alert channels and billing-related notifications.",
       items: [
         { label: "Notifications", href: "/docs/api/notifications" },
         { label: "Slack Webhook URL", href: "/docs/api/slack-webhook" },
         { label: "Discord Webhook URL", href: "/docs/api/discord-webhook" },
-        { label: "Webhooks", href: "/docs/api/webhooks", method: "POST" },
         { label: "Billing", href: "/docs/api/billing", method: "GET" },
       ],
     },

@@ -46,7 +46,7 @@ export default function ApiReferenceLandingPage() {
       <p>Analytics includes both per-post performance and workspace rollups, so you can power dashboards, summaries, and agent workflows from one layer.</p>
 
       <h2 id="notifications">Notifications</h2>
-      <p>Notifications are the user-facing alerting system inside UniPost. Use them when a human should be informed in email, Slack, or Discord from the dashboard settings page instead of wiring a developer webhook receiver.</p>
+      <p>Developer webhooks are the machine-facing push layer for post lifecycle and account events. Notifications are the separate human-facing alerting system for email, Slack, and Discord from the dashboard settings page.</p>
 
       <h2 id="account-health">Account health</h2>
       <p>Account health gives you a fast signal when a connected account is healthy, degraded, or disconnected.</p>
@@ -74,8 +74,13 @@ export default function ApiReferenceLandingPage() {
           <p><Link href="/docs/api/accounts/list">Open Social Accounts</Link></p>
         </div>
         <div className="docs-card">
+          <div className="docs-card-title">Developer webhooks</div>
+          <p>Subscribe your own backend to post.published, post.partial, post.failed, and account lifecycle events.</p>
+          <p><Link href="/docs/api/webhooks">Open Webhooks</Link></p>
+        </div>
+        <div className="docs-card">
           <div className="docs-card-title">Notifications guide</div>
-          <p>See supported channel types, current events, and how subscriptions work in Settings.</p>
+          <p>See supported human notification channels, current events, and how subscriptions work in Settings.</p>
           <p><Link href="/docs/api/notifications">Open Notifications</Link></p>
         </div>
         <div className="docs-card">
@@ -87,11 +92,6 @@ export default function ApiReferenceLandingPage() {
           <div className="docs-card-title">Discord webhook guide</div>
           <p>Follow the exact Discord UI flow to create a webhook URL and paste it into UniPost.</p>
           <p><Link href="/docs/api/discord-webhook">Open Discord Webhook Guide</Link></p>
-        </div>
-        <div className="docs-card">
-          <div className="docs-card-title">Events reference</div>
-          <p>Webhooks are where most production integrations become observable and debuggable.</p>
-          <p><Link href="/docs/api/webhooks">Open Webhooks</Link></p>
         </div>
       </div>
     </DocsPage>

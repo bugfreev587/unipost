@@ -13,8 +13,12 @@ export default function NotificationsPage() {
     <DocsPage
       eyebrow="API Reference"
       title="Set up Notifications"
-      lead="Use Notifications when you want UniPost to send alerts to email, Slack, or Discord from the dashboard. This page focuses on the fastest setup path."
+      lead="Use Notifications when you want UniPost to send human-facing alerts to email, Slack, or Discord from the dashboard. This is separate from developer webhooks for your own backend receivers."
     >
+      <div className="docs-callout">
+        <strong>Not the same as developer webhooks:</strong> if you need machine-to-machine delivery for post status or account events, use <Link href="/docs/api/webhooks">Webhooks</Link>. Notifications are dashboard-managed channels for people.
+      </div>
+
       <h2 id="quick-start">Quick start</h2>
       <p>
         Open <Link href="/settings/notifications">Settings &gt; Notifications</Link>. Setup always works like this:

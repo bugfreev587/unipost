@@ -1,0 +1,11 @@
+{
+  "name": "@unipost/sdk",
+  "version": "0.2.0-local",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  }
+}
