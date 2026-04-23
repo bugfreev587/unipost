@@ -199,11 +199,13 @@ export function CodeTabs({ snippets }: { snippets: { lang: string; label: string
           __html: `
             .docs-api-code-tabs .docs-code-tabs{
               margin:0;
+              width:100%;
+              min-width:0;
             }
           `,
         }}
       />
-      <div className="docs-api-code-tabs">
+      <div className="docs-api-code-tabs" style={{ minWidth: 0 }}>
         <SharedCodeTabs snippets={snippets} />
       </div>
     </>
@@ -337,8 +339,8 @@ export function ApiReferenceGrid({
       className="api-reference-grid"
     >
       <style dangerouslySetInnerHTML={{ __html: "@media (max-width: 1080px){.api-reference-grid{grid-template-columns:1fr!important;}}" }} />
-      <div>{left}</div>
-      <div>{right}</div>
+      <div style={{ minWidth: 0 }}>{left}</div>
+      <div style={{ minWidth: 0 }}>{right}</div>
     </div>
   );
 }
