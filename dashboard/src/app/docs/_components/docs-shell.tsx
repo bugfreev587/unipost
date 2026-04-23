@@ -13,6 +13,7 @@ type NavLeaf = {
   label: string;
   href: string;
   badge?: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 };
 
 type DocsPrimaryKey = "overview" | "platforms" | "api-reference";
@@ -182,19 +183,19 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Accounts",
       items: [
-        { label: "Social Accounts", href: "/docs/api/accounts/list" },
-        { label: "Connect Sessions", href: "/docs/api/connect/sessions" },
-        { label: "Managed Users", href: "/docs/api/users" },
-        { label: "Account Health", href: "/docs/api/accounts/health" },
+        { label: "Social Accounts", href: "/docs/api/accounts/list", method: "GET" },
+        { label: "Connect Sessions", href: "/docs/api/connect/sessions", method: "POST" },
+        { label: "Managed Users", href: "/docs/api/users", method: "GET" },
+        { label: "Account Health", href: "/docs/api/accounts/health", method: "GET" },
       ],
     },
     {
       title: "Publishing",
       items: [
-        { label: "Create Post", href: "/docs/api/posts/create" },
-        { label: "Validate", href: "/docs/api/posts/validate" },
-        { label: "Drafts", href: "/docs/api/posts/drafts" },
-        { label: "Media", href: "/docs/api/media" },
+        { label: "Create Post", href: "/docs/api/posts/create", method: "POST" },
+        { label: "Validate", href: "/docs/api/posts/validate", method: "POST" },
+        { label: "Drafts", href: "/docs/api/posts/drafts", method: "POST" },
+        { label: "Media", href: "/docs/api/media", method: "POST" },
       ],
     },
     {
@@ -206,7 +207,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Analytics",
       items: [
-        { label: "Analytics", href: "/docs/api/analytics" },
+        { label: "Analytics", href: "/docs/api/analytics", method: "GET" },
       ],
     },
     {
@@ -215,11 +216,19 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
         { label: "Notifications", href: "/docs/api/notifications" },
         { label: "Slack Webhook URL", href: "/docs/api/slack-webhook" },
         { label: "Discord Webhook URL", href: "/docs/api/discord-webhook" },
-        { label: "Webhooks", href: "/docs/api/webhooks" },
-        { label: "Billing", href: "/docs/api/billing" },
+        { label: "Webhooks", href: "/docs/api/webhooks", method: "POST" },
+        { label: "Billing", href: "/docs/api/billing", method: "GET" },
       ],
     },
   ],
+};
+
+const DOCS_METHOD_COLORS: Record<NonNullable<NavLeaf["method"]>, string> = {
+  GET: "#16a34a",
+  POST: "#2563eb",
+  PUT: "#d97706",
+  PATCH: "#a855f7",
+  DELETE: "#dc2626",
 };
 
 const CSS = `
@@ -589,7 +598,20 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                     className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
                   >
                     <span>{item.label}</span>
-                    {item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
+                    {item.method ? (
+                      <span
+                        style={{
+                          fontFamily: "var(--docs-mono)",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          letterSpacing: ".04em",
+                          color: DOCS_METHOD_COLORS[item.method],
+                          flexShrink: 0,
+                        }}
+                      >
+                        {item.method}
+                      </span>
+                    ) : item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
                   </Link>
                 ))}
               </section>

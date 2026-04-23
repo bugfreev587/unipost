@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { Check, Copy } from "lucide-react";
 
 export type CodeLanguage =
   | "javascript"
@@ -249,7 +250,7 @@ function CopyButton({ code }: { code: string }) {
       className="docs-copy-button"
       aria-label="Copy code to clipboard"
     >
-      {copied ? "Copied" : "Copy"}
+      {copied ? <Check size={16} /> : <Copy size={16} />}
     </button>
   );
 }
@@ -331,18 +332,20 @@ export function CodeTabs({ snippets }: { snippets: CodeSnippet[] }) {
 
 export function codeBlockStyles() {
   return `
-.docs-code-block,.docs-code-tabs{margin:20px 0;border:1px solid var(--docs-tech-border);border-radius:18px;background:var(--docs-tech-bg);overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.02)}
+.docs-code-block,.docs-code-tabs{margin:20px 0;border:1px solid var(--docs-border);border-radius:18px;background:var(--docs-bg-elevated);overflow:hidden;box-shadow:var(--docs-card-shadow)}
 .docs-code-block.compact{margin:0}
-.docs-code-toolbar,.docs-code-tabs-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--docs-tech-border);background:var(--docs-tech-bg-2)}
+.docs-code-toolbar,.docs-code-tabs-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:var(--docs-bg-elevated)}
 .docs-code-meta{display:flex;align-items:center;gap:8px;min-width:0}
-.docs-code-lang{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-tech-muted);font-family:var(--docs-mono, var(--mono), monospace)}
-.docs-copy-button{padding:6px 10px;border-radius:9px;border:1px solid rgba(255,255,255,.08);background:var(--docs-tech-chip);color:var(--docs-tech-text-soft);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
-.docs-copy-button:hover{color:var(--docs-tech-text);background:rgba(255,255,255,.1)}
-.docs-code-surface{margin:0;padding:18px 20px;background:var(--docs-tech-bg);overflow:auto}
-.docs-code-surface.tabs{border-radius:0}
+.docs-code-lang{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-text-faint);font-family:var(--docs-mono, var(--mono), monospace)}
+.docs-copy-button{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);color:var(--docs-text-muted);cursor:pointer;transition:all .12s;flex-shrink:0}
+.docs-copy-button:hover{color:var(--docs-text);border-color:var(--docs-border-strong);background:var(--docs-bg-muted)}
+.docs-copy-button svg{width:16px;height:16px}
+.docs-code-surface{margin:0 14px 14px;padding:18px 20px;background:var(--docs-tech-bg);overflow:auto;border-radius:16px}
+.docs-code-surface.tabs{border-radius:16px}
 .docs-code-content{display:block;white-space:pre;font-family:var(--docs-mono, var(--mono), monospace);font-size:13px;line-height:1.75;color:var(--docs-tech-text-soft)}
 .docs-code-tab-list{display:flex;gap:6px;flex-wrap:wrap}
-.docs-code-tab{padding:7px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:var(--docs-tech-chip);color:var(--docs-tech-muted);font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
-.docs-code-tab.active{color:var(--docs-tech-text);border-color:rgba(255,255,255,.12);background:rgba(255,255,255,.1)}
+.docs-code-tab{padding:8px 12px;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);color:var(--docs-text-muted);font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
+.docs-code-tab:hover{color:var(--docs-text);background:var(--docs-bg-muted)}
+.docs-code-tab.active{color:#0f56b8;border-color:color-mix(in srgb, var(--docs-link) 24%, var(--docs-border));background:color-mix(in srgb, var(--docs-link) 10%, var(--docs-bg-elevated));box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--docs-link) 16%, transparent)}
 `;
 }
