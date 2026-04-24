@@ -22,13 +22,13 @@ function tryFormatJson(value: string) {
   }
 }
 
-function estimateHeight(text: string, opts?: { min?: number; max?: number; lineHeight?: number; padding?: number }) {
+function estimateHeight(text: string, opts?: { min?: number; max?: number; lineHeight?: number; extraLines?: number; padding?: number }) {
   const lines = text.split("\n").length;
-  const min = opts?.min ?? 160;
   const max = opts?.max ?? 460;
   const lineHeight = opts?.lineHeight ?? 20;
+  const extraLines = opts?.extraLines ?? 1;
   const padding = opts?.padding ?? 18;
-  return Math.min(Math.max(lines * lineHeight + padding, min), max);
+  return Math.min((lines + extraLines) * lineHeight + padding, max);
 }
 
 function normalizeMonacoLanguage(value?: string, code?: string): MonacoLanguage {
@@ -147,7 +147,7 @@ export function JsonMonacoViewer({
       }}
     >
       <MonacoEditor
-        height={height ?? estimateHeight(formatted, { min: 168, max: 468, lineHeight: 20, padding: 28 })}
+        height={height ?? estimateHeight(formatted, { max: 468, lineHeight: 20, extraLines: 1, padding: 28 })}
         defaultLanguage="json"
         theme={themeName}
         value={formatted}
@@ -264,7 +264,7 @@ export function MonacoCodeViewer({
       }}
     >
       <MonacoEditor
-        height={height ?? estimateHeight(value, { min: 168, max: 468, lineHeight: 20, padding: 28 })}
+        height={height ?? estimateHeight(value, { max: 468, lineHeight: 20, extraLines: 1, padding: 28 })}
         defaultLanguage={normalizedLanguage}
         theme={themeName}
         value={value}
