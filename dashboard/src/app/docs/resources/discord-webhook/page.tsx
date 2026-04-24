@@ -93,7 +93,7 @@ export default function DiscordWebhookPage() {
       </ol>
 
       <h2 id="paste-into-unipost">Paste the URL into UniPost</h2>
-      <ul className="dw-checklist">
+      <ul className="docs-checklist">
         <li>Open <Link href="/settings/notifications">Settings → Notifications</Link></li>
         <li>Click <strong>Add channel → Discord Webhook</strong></li>
         <li>Paste the webhook URL from Discord</li>
@@ -153,10 +153,6 @@ const styles = `
 .dw-step-body code{font-family:var(--docs-mono);font-size:12.5px}
 .dw-step-img{border:1px solid var(--docs-border);border-radius:14px;overflow:hidden;background:var(--docs-bg-muted)}
 .dw-step-img img{display:block;width:100%;height:auto}
-.dw-checklist{list-style:none;padding:0;margin:10px 0 14px;display:grid;grid-template-columns:1fr;gap:4px}
-.dw-checklist li{position:relative;padding-left:22px;font-size:14px;line-height:1.7;color:var(--docs-text-soft)}
-.dw-checklist li::before{content:"";position:absolute;left:0;top:9px;width:12px;height:12px;border-radius:4px;border:1.5px solid color-mix(in srgb, var(--docs-link) 45%, var(--docs-border-strong));background:color-mix(in srgb, var(--docs-link) 14%, transparent)}
-.dw-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
 .dw-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .dw-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .dw-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}

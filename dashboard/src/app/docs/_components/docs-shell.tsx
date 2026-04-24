@@ -542,6 +542,12 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-mini-card p{font-size:14.5px;line-height:1.68;color:var(--docs-text-soft);margin-bottom:8px}
 .docs-step-list{margin:18px 0 20px;padding-left:20px;max-width:66ch}
 .docs-step-list li{padding-left:4px;margin-bottom:10px;font-size:16px;line-height:1.72;color:var(--docs-text-soft)}
+.docs-checklist{list-style:none;padding:0;margin:10px 0 14px;display:grid;grid-template-columns:1fr;gap:4px}
+.docs-checklist li{display:flex;align-items:baseline;gap:12px;font-size:14px;line-height:1.7;color:var(--docs-text-soft)}
+.docs-checklist li::before{content:"";flex:none;width:6px;height:6px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 70%, var(--docs-border-strong));transform:translateY(-2px)}
+.docs-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
+.docs-checklist.docs-checklist-2col{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 22px}
+@media (max-width:960px){.docs-checklist.docs-checklist-2col{grid-template-columns:1fr}}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
 @media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,1fr);gap:26px}.docs-toc{display:none}.docs-layout-api{grid-template-columns:var(--docs-api-sidebar-width, 312px) 14px minmax(0,1fr)}.docs-layout-platforms{grid-template-columns:220px minmax(0,1fr)}}

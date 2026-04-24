@@ -106,7 +106,7 @@ export default function NotificationsOverviewPage() {
 
       <h2 id="email-setup">Email</h2>
       <p className="nt-note">Email is the default channel. UniPost creates it from your signup email automatically — there is nothing to add.</p>
-      <ul className="nt-checklist">
+      <ul className="docs-checklist">
         <li>Open <Link href="/settings/notifications">Settings → Notifications</Link></li>
         <li>Find the built-in <strong>Email</strong> channel showing your signup email</li>
         <li>Use <strong>Test</strong> if you want to confirm delivery</li>
@@ -117,7 +117,7 @@ export default function NotificationsOverviewPage() {
       </div>
 
       <h2 id="subscribe-events">Subscribe to events</h2>
-      <ul className="nt-checklist">
+      <ul className="docs-checklist">
         <li>Make sure the channel shows as <strong>Verified</strong></li>
         <li>Scroll to the <strong>Subscriptions</strong> table</li>
         <li>Find the event — e.g. <code>post.failed</code></li>
@@ -177,10 +177,6 @@ const styles = `
 .nt-flow-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));color:var(--docs-link);font-size:13px;font-weight:700;border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border))}
 .nt-flow-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:3px}
 .nt-flow-sub{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
-.nt-checklist{list-style:none;padding:0;margin:10px 0 14px;display:grid;grid-template-columns:1fr;gap:4px}
-.nt-checklist li{position:relative;padding-left:22px;font-size:14px;line-height:1.7;color:var(--docs-text-soft)}
-.nt-checklist li::before{content:"";position:absolute;left:0;top:9px;width:12px;height:12px;border-radius:4px;border:1.5px solid color-mix(in srgb, var(--docs-link) 45%, var(--docs-border-strong));background:color-mix(in srgb, var(--docs-link) 14%, transparent)}
-.nt-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
 .nt-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .nt-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .nt-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}

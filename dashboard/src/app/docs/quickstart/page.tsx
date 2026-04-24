@@ -356,7 +356,7 @@ export default function QuickstartPage() {
 
       <h2 id="authentication">2. Get your API key</h2>
       <p className="qs-note">Every request uses a Bearer API key. Each SDK reads <code>UNIPOST_API_KEY</code> by default.</p>
-      <ul className="qs-checklist">
+      <ul className="docs-checklist">
         <li>Open Dashboard → API Keys</li>
         <li>Click <strong>Create API Key</strong></li>
         <li>Copy the key and store it as <code>UNIPOST_API_KEY</code> in your environment</li>
@@ -456,10 +456,6 @@ const styles = `
 .qs-flow-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:3px}
 .qs-flow-sub{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
 .qs-flow-sub code{font-family:var(--docs-mono);font-size:12px}
-.qs-checklist{list-style:none;padding:0;margin:10px 0 14px;display:grid;grid-template-columns:1fr;gap:4px}
-.qs-checklist li{position:relative;padding-left:22px;font-size:14px;line-height:1.7;color:var(--docs-text-soft)}
-.qs-checklist li::before{content:"";position:absolute;left:0;top:9px;width:12px;height:12px;border-radius:4px;border:1.5px solid color-mix(in srgb, var(--docs-link) 45%, var(--docs-border-strong));background:color-mix(in srgb, var(--docs-link) 14%, transparent)}
-.qs-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
 .qs-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .qs-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .qs-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}

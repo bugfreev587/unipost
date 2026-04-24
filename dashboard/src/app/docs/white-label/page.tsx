@@ -225,7 +225,7 @@ export default function WhiteLabelPage() {
 
       <h2 id="setup-checklist">Setup checklist</h2>
       <p className="wl-note">Gather these before you start — it avoids round-trips during setup.</p>
-      <ul className="wl-checklist">
+      <ul className="docs-checklist docs-checklist-2col">
         <li>Developer accounts on each platform you plan to support</li>
         <li>OAuth <code>client_id</code> + <code>client_secret</code> per platform</li>
         <li>UniPost's callback URL allow-listed on each platform app</li>
@@ -316,10 +316,6 @@ const styles = `
 .wl-flow-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:3px}
 .wl-flow-sub{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
 .wl-flow-sub code{font-family:var(--docs-mono);font-size:12px}
-.wl-checklist{list-style:none;padding:0;margin:10px 0 4px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px}
-.wl-checklist li{position:relative;padding-left:22px;font-size:14px;line-height:1.7;color:var(--docs-text-soft)}
-.wl-checklist li::before{content:"";position:absolute;left:0;top:9px;width:12px;height:12px;border-radius:4px;border:1.5px solid color-mix(in srgb, var(--docs-link) 45%, var(--docs-border-strong));background:color-mix(in srgb, var(--docs-link) 14%, transparent)}
-.wl-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
 .wl-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .wl-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .wl-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
@@ -329,7 +325,6 @@ const styles = `
 .wl-next-body code{font-family:var(--docs-mono);font-size:12px}
 @media (max-width:960px){
   .wl-pick{grid-template-columns:1fr}
-  .wl-checklist{grid-template-columns:1fr}
   .wl-next{grid-template-columns:1fr}
 }
 `;
