@@ -11,13 +11,13 @@ export default function DocsHomePage() {
       <section id="start-here" className="docs-home-section">
         <div className="docs-kicker">Start by task</div>
         <div className="docs-task-list">
-          <Link href="/docs/api/authentication" className="docs-task-item">
+          <Link href="/docs/api/api-keys/list" className="docs-task-item">
             <div className="docs-task-copy">
               <div className="docs-task-title">Authenticate your integration</div>
               <div className="docs-task-body">Start with Bearer auth, understand live vs test API keys, and see the common auth failures before wiring any client code.</div>
             </div>
             <div className="docs-task-links">
-              <span className="docs-task-link">Authentication</span>
+              <span className="docs-task-link">API Keys</span>
             </div>
           </Link>
 
@@ -89,7 +89,7 @@ export default function DocsHomePage() {
           <div className="docs-mini-card">
             <div className="docs-mini-title">API-key setup</div>
             <p>Start with authentication when you need to wire a server, script, SDK client, or internal tool against UniPost.</p>
-            <p><Link href="/docs/api/authentication">Open Authentication</Link></p>
+            <p><Link href="/docs/api/api-keys/list">Open API Keys</Link></p>
           </div>
           <div className="docs-mini-card">
             <div className="docs-mini-title">Team-owned accounts</div>
@@ -123,7 +123,7 @@ export default function DocsHomePage() {
       <DocsTable
         columns={["Layer", "What UniPost does", "Why it matters"]}
         rows={[
-          ["Authentication", "Authenticate every public API request with Bearer API keys", "Ship server-side integrations with clear live vs test environments and predictable auth failures"],
+          ["API Keys", "Manage workspace keys and authenticate every server-side request", "Ship integrations with clear live vs test environments and predictable auth boundaries"],
           ["Accounts", "Connect workspace-owned or end-user-owned social accounts and group them under managed users", "Build for your team, your customers, or both without losing account ownership context"],
           ["Publishing", "Publish one request across platforms with platform-specific captions, drafts, validation, and media uploads", "One integration, without flattening each platform's quirks or skipping review steps"],
           ["Operations", "Track analytics, account health, notifications, webhooks, errors, and billing usage", "Run social publishing as infrastructure instead of treating it like a single fire-and-forget API call"],
@@ -134,10 +134,10 @@ export default function DocsHomePage() {
       <h2 id="reference-map">Reference Map</h2>
       <ul className="docs-list">
         <li>Start in <Link href="/docs/quickstart">Quickstart</Link> if you want the shortest path from API key to first successful publish.</li>
-        <li>Open <Link href="/docs/api/authentication">Authentication</Link> first when you are wiring a new backend, SDK client, or environment setup.</li>
+        <li>Open <Link href="/docs/api/api-keys/list">API Keys</Link> first when you are wiring a new backend, SDK client, or environment setup.</li>
         <li>Read <Link href="/docs/api/connect/sessions">Connect Sessions</Link> and <Link href="/docs/api/users">Managed Users</Link> when your product needs customer-owned account onboarding.</li>
         <li>Use <Link href="/docs/api/media">Media</Link>, <Link href="/docs/api/posts/validate">Validate</Link>, and <Link href="/docs/api/posts/drafts">Drafts</Link> for safer media-heavy or human-reviewed publish flows.</li>
-        <li>Open <Link href="/docs/api/analytics">Analytics</Link>, <Link href="/docs/api/notifications">Notifications</Link>, <Link href="/docs/api/billing">Billing</Link>, and <Link href="/docs/api/errors">Errors</Link> when you are building operational tooling around the core publish path.</li>
+        <li>Open <Link href="/docs/api/analytics">Analytics</Link>, <Link href="/docs/api/notifications">Notifications</Link>, and <Link href="/docs/api/billing">Billing</Link> when you are building operational tooling around the core publish path.</li>
         <li>Open <Link href="/docs/platforms">Platforms</Link> when you need per-network constraints, media rules, or content examples.</li>
         <li>Use <Link href="/docs/api">API Reference</Link> when you already know the capability you want and need exact request and response details.</li>
         <li>Read <Link href="/docs/sdk">SDK</Link> and <Link href="/docs/mcp">MCP</Link> when UniPost is being consumed by agents, scripts, or internal developer tooling.</li>

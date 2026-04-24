@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function AuthenticationPage() {
+export default function ApiKeysPage() {
   redirect("/docs/api/api-keys/list");
 }

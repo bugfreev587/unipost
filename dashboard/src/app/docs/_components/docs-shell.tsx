@@ -192,14 +192,6 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Core",
       items: [
-        { label: "Overview", href: "/docs/api" },
-        { label: "Authentication", href: "/docs/api/authentication" },
-        { label: "Errors", href: "/docs/api/errors" },
-      ],
-    },
-    {
-      title: "Accounts",
-      items: [
         {
           label: "profiles",
           children: [
@@ -233,6 +225,14 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           children: [
             { label: "List users", href: "/docs/api/users/list", method: "GET" },
             { label: "Get user", href: "/docs/api/users/get", method: "GET" },
+          ],
+        },
+        {
+          label: "api keys",
+          children: [
+            { label: "List API keys", href: "/docs/api/api-keys/list", method: "GET" },
+            { label: "Create API key", href: "/docs/api/api-keys/create", method: "POST" },
+            { label: "Delete API key", href: "/docs/api/api-keys/delete", method: "DELETE" },
           ],
         },
       ],
