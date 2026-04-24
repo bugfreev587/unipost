@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { DocsCode, DocsPage, DocsRichText, DocsTable } from "../../_components/docs-shell";
+import { DocsCodeTabs, DocsPage, DocsRichText, DocsTable } from "../../_components/docs-shell";
 import { ApiInlineLink } from "../../api/_components/doc-components";
 import { PLATFORMS, type PlatformSummary } from "./_data";
+import { toExampleSnippets } from "./_snippets";
 
 const SUMMARY_LABELS: Record<keyof Omit<PlatformSummary, "connection">, string> = {
   publishing: "Publishing",
@@ -137,8 +138,9 @@ export default async function PlatformDetailPage({
 
       <h2 id="api-examples">API examples</h2>
       <p className="plat-note">
-        These are request bodies for <ApiInlineLink endpoint="POST /v1/posts" /> using
-        Bearer auth. Copy-paste and swap the <code>account_ids</code> for your own.
+        Each example calls <ApiInlineLink endpoint="POST /v1/posts" /> with Bearer
+        auth. Swap the <code>account_ids</code> for your own, then copy the snippet
+        for your language.
       </p>
       {data.examples.map((example) => (
         <div key={example.title}>
@@ -153,7 +155,7 @@ export default async function PlatformDetailPage({
               <DocsRichText text={example.note} />
             </p>
           ) : null}
-          <DocsCode code={example.body} language="json" />
+          <DocsCodeTabs snippets={toExampleSnippets(example.body)} />
         </div>
       ))}
 
