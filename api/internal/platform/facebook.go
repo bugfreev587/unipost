@@ -743,7 +743,11 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 	// Poll status the same way the Feed path does — a Reel that
 	// finishes inside 60s returns a clean "published" result, and
 	// longer uploads return "processing" for the status worker to
-	// flip once Meta is done.
+	// flip once Meta is done. lastStatus is tracked outside the loop
+	// so we can inspect the terminal state after polling times out:
+	// specifically, to detect the Meta-app-review gate where Meta
+	// accepts the upload but never actually starts processing.
+	var lastStatus *FacebookVideoStatus
 	for i := 0; i < 12; i++ {
 		select {
 		case <-ctx.Done():
@@ -755,6 +759,7 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 			slog.Warn("facebook reel: video status poll failed", "video_id", videoID, "error", err)
 			continue
 		}
+		lastStatus = st
 		switch st.VideoStatus {
 		case "ready":
 			if st.PostID != "" {
@@ -786,6 +791,28 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 			return nil, fmt.Errorf("%s", msg)
 		}
 		// Still transient — keep polling.
+	}
+
+	// 60s elapsed without hitting a terminal state. Distinguish:
+	//  (1) Meta is genuinely still transcoding (uploading_phase done,
+	//      processing_phase in_progress) → return "processing" so the
+	//      worker can flip it later.
+	//  (2) Meta accepted the upload but never started processing
+	//      (uploading_phase complete but processing_phase still
+	//      not_started) → fail fast. This is the app-review gate:
+	//      Standard Access on pages_manage_posts lets the API calls
+	//      return success envelopes, but Meta silently refuses to
+	//      run the actual Reel pipeline until the app has been
+	//      submitted for Advanced Access / Reels Publishing API
+	//      review. Sitting at "processing" for 12h and then failing
+	//      with a generic stale-cap message would be much worse UX
+	//      than surfacing the real cause here.
+	if lastStatus != nil &&
+		lastStatus.VideoStatus == "upload_complete" &&
+		strings.EqualFold(lastStatus.UploadingStatus, "complete") &&
+		(lastStatus.ProcessingStatus == "" || strings.EqualFold(lastStatus.ProcessingStatus, "not_started")) {
+		_ = a.tryDeleteVideo(ctx, accessToken, videoID)
+		return nil, fmt.Errorf("facebook reel: Meta accepted the upload (video_id=%s) but did not start processing within 60s. This usually means the Facebook app still has Standard Access on pages_manage_posts or the Reels Publishing API — submit the app for Advanced Access / App Review in the Meta developer dashboard, then retry", videoID)
 	}
 
 	slog.Info("facebook reel: still processing after 60s; returning processing state", "video_id", videoID)
