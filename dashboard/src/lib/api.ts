@@ -36,6 +36,7 @@ export interface ApiKeyCreateResponse {
 
 export interface WebhookSubscription {
   id: string;
+  name: string;
   url: string;
   events: string[];
   active: boolean;
@@ -327,7 +328,7 @@ export async function listWebhooks(
 export async function createWebhook(
   token: string,
   workspaceId: string,
-  data: { url: string; events: string[] }
+  data: { name: string; url: string; events: string[]; active?: boolean; secret?: string }
 ): Promise<ApiResponse<WebhookCreateResponse>> {
   return request(`/v1/workspaces/${workspaceId}/webhooks`, token, {
     method: "POST",
@@ -339,7 +340,7 @@ export async function updateWebhook(
   token: string,
   workspaceId: string,
   webhookId: string,
-  data: { url?: string; events?: string[]; active?: boolean }
+  data: { name?: string; url?: string; events?: string[]; active?: boolean }
 ): Promise<ApiResponse<WebhookSubscription>> {
   return request(`/v1/workspaces/${workspaceId}/webhooks/${webhookId}`, token, {
     method: "PATCH",

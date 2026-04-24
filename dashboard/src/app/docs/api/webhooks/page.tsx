@@ -77,7 +77,7 @@ export default function WebhooksPage() {
     <ApiReferencePage
       section="developer-webhooks"
       title="Developer webhooks"
-      description="Use developer webhooks when your own backend needs push delivery for async post results or account lifecycle events. This is the machine-facing surface for product integrations, not the dashboard notifications channel."
+      description="Use developer webhooks when your own backend needs push delivery for async post results or account lifecycle events. Create each subscription with a name, a destination URL, and an event set. This is the machine-facing surface for product integrations, not the dashboard notifications channel."
     >
       <Breadcrumbs items={[
         { label: "Docs", href: "/docs" },

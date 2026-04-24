@@ -452,15 +452,22 @@ func main() {
 
 	var webhook *unipost.WebhookSubscription
 	test("Webhooks.Create()", func() error {
+		active := false
 		item, err := client.Webhooks.Create(ctx, &unipost.CreateWebhookParams{
+			Name:   "SDK validation webhook",
 			URL:    "https://example.com/unipost-webhook-test",
 			Events: []string{"post.published", "post.partial", "post.failed"},
+			Active: &active,
+			Secret: "sdk-validation-secret",
 		})
 		if err != nil {
 			return err
 		}
-		if item.ID == "" || !strings.HasPrefix(item.Secret, "whsec_") {
-			return fmt.Errorf("expected webhook id and secret")
+		if item.ID == "" || item.Secret != "sdk-validation-secret" {
+			return fmt.Errorf("expected webhook id and custom secret")
+		}
+		if item.Name != "SDK validation webhook" || item.Active {
+			return fmt.Errorf("unexpected created webhook fields")
 		}
 		webhook = item
 		createdWebhookIDs = append(createdWebhookIDs, item.ID)
@@ -497,22 +504,24 @@ func main() {
 			if err != nil {
 				return err
 			}
-			if item.ID != webhook.ID || item.Secret != "" {
+			if item.ID != webhook.ID || item.Secret != "" || item.Name != "SDK validation webhook" {
 				return fmt.Errorf("unexpected get payload")
 			}
 			return nil
 		})
 
 		test("Webhooks.Update()", func() error {
-			active := false
+			name := "Failure-only webhook"
+			active := true
 			item, err := client.Webhooks.Update(ctx, webhook.ID, &unipost.UpdateWebhookParams{
+				Name:   &name,
 				Active: &active,
 				Events: []string{"post.failed"},
 			})
 			if err != nil {
 				return err
 			}
-			if item.Active || len(item.Events) != 1 {
+			if !item.Active || len(item.Events) != 1 || item.Name != name {
 				return fmt.Errorf("unexpected update payload")
 			}
 			return nil

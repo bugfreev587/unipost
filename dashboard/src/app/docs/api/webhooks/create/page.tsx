@@ -8,12 +8,16 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
-  { name: "url", type: "string", description: "HTTPS endpoint that should receive UniPost events." },
+  { name: "name", type: "string", description: "Human-readable label for this webhook subscription." },
+  { name: "url", type: "string", description: "HTTPS endpoint that should receive UniPost events. Leading and trailing whitespace is trimmed." },
   { name: "events", type: "string[]", description: "Event names to subscribe to, such as post.published or post.failed." },
+  { name: "active?", type: "boolean", description: "Whether delivery should start immediately. Defaults to true." },
+  { name: "secret?", type: "string", description: "Optional custom HMAC signing secret. If omitted, UniPost generates one and returns it once." },
 ];
 
 const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Webhook subscription ID." },
+  { name: "name", type: "string", description: "Human-readable webhook label." },
   { name: "url", type: "string", description: "Stored destination URL." },
   { name: "events", type: "string[]", description: "Subscribed event names." },
   { name: "active", type: "boolean", description: "Whether this subscription is currently enabled." },
@@ -37,8 +41,10 @@ const SNIPPETS = [
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
+    "name": "Publishing status webhook",
     "url": "https://api.example.com/unipost/webhooks",
-    "events": ["post.published", "post.partial", "post.failed"]
+    "events": ["post.published", "post.partial", "post.failed"],
+    "active": true
   }'`,
   },
   {
@@ -51,6 +57,7 @@ const client = new UniPost({
 });
 
 const webhook = await client.webhooks.create({
+  name: "Publishing status webhook",
   url: "https://api.example.com/unipost/webhooks",
   events: ["post.published", "post.partial", "post.failed"],
 });
@@ -66,6 +73,7 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "id": "wh_abc123",
+    "name": "Publishing status webhook",
     "url": "https://api.example.com/unipost/webhooks",
     "events": ["post.published", "post.partial", "post.failed"],
     "active": true,
@@ -94,7 +102,7 @@ export default function CreateWebhookPage() {
     <SingleEndpointReferencePage
       section="developer-webhooks"
       title="Create webhook"
-      description="Creates a developer webhook subscription for your workspace. UniPost generates the signing secret server-side and returns it exactly once in this response."
+      description="Creates a developer webhook subscription for your workspace. You can provide your own signing secret or let UniPost generate one and return it exactly once in this response."
       method="POST"
       path="/v1/webhooks"
       requestSections={[

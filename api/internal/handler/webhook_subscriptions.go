@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -72,6 +74,7 @@ func (h *WebhookSubscriptionHandler) requireWorkspace(r *http.Request, w http.Re
 // plaintext. Returned by GET / Update endpoints.
 type webhookResponse struct {
 	ID            string    `json:"id"`
+	Name          string    `json:"name"`
 	URL           string    `json:"url"`
 	Events        []string  `json:"events"`
 	Active        bool      `json:"active"`
@@ -90,6 +93,7 @@ type webhookCreateResponse struct {
 func toWebhookResponse(wh db.Webhook) webhookResponse {
 	return webhookResponse{
 		ID:            wh.ID,
+		Name:          wh.Name,
 		URL:           wh.Url,
 		Events:        wh.Events,
 		Active:        wh.Active,
@@ -119,11 +123,52 @@ func generateWebhookSecret() (string, error) {
 	return "whsec_" + hex.EncodeToString(buf), nil
 }
 
+func normalizeWebhookURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("url is required")
+	}
+	parsed, err := neturl.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("url must be a valid absolute URL")
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return "", fmt.Errorf("url must use https")
+	}
+	return trimmed, nil
+}
+
+func normalizeWebhookName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if len(name) > 80 {
+		return "", fmt.Errorf("name must be 80 characters or fewer")
+	}
+	return name, nil
+}
+
+func normalizeOptionalWebhookSecret(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return generateWebhookSecret()
+	}
+	if len(trimmed) < 8 {
+		return "", fmt.Errorf("secret must be at least 8 characters")
+	}
+	if len(trimmed) > 255 {
+		return "", fmt.Errorf("secret must be 255 characters or fewer")
+	}
+	return trimmed, nil
+}
+
 // Create handles POST /v1/webhooks.
 //
-// BREAKING (Sprint 1): the request body must NOT include `secret` —
-// it's generated server-side and returned in the response exactly
-// once. Pass {url, events} only.
+// The caller must provide a human-readable name, a destination URL,
+// and at least one event. `active` is optional and defaults to true.
+// `secret` is also optional: when omitted, UniPost generates a
+// signing secret server-side and returns it exactly once.
 func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.requireWorkspace(r, w)
 	if !ok {
@@ -131,25 +176,25 @@ func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Reque
 	}
 
 	var body struct {
+		Name   string   `json:"name"`
 		URL    string   `json:"url"`
 		Events []string `json:"events"`
-		// Reject this field if present so callers learn about the
-		// behavior change immediately rather than silently dropping
-		// their secret.
-		Secret string `json:"secret"`
+		Active *bool    `json:"active"`
+		Secret string   `json:"secret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
 		return
 	}
 
-	if body.URL == "" {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "url is required")
+	name, err := normalizeWebhookName(body.Name)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
 		return
 	}
-	if body.Secret != "" {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
-			"secret is generated server-side; do not provide one (BREAKING CHANGE in Sprint 1 — see CHANGELOG)")
+	urlValue, err := normalizeWebhookURL(body.URL)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
 		return
 	}
 	if len(body.Events) == 0 {
@@ -157,17 +202,23 @@ func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	secret, err := generateWebhookSecret()
+	secret, err := normalizeOptionalWebhookSecret(body.Secret)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate signing secret")
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
 		return
+	}
+	active := true
+	if body.Active != nil {
+		active = *body.Active
 	}
 
 	wh, err := h.queries.CreateWebhook(r.Context(), db.CreateWebhookParams{
 		WorkspaceID: workspaceID,
-		Url:         body.URL,
+		Name:        name,
+		Url:         urlValue,
 		Secret:      secret,
 		Events:      body.Events,
+		Active:      active,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create webhook")
@@ -260,6 +311,7 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 	}
 
 	var body struct {
+		Name   *string  `json:"name"`
 		URL    *string  `json:"url"`
 		Events []string `json:"events"`
 		Active *bool    `json:"active"`
@@ -275,12 +327,30 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	name := existing.Name
+	if body.Name != nil {
+		nextName, err := normalizeWebhookName(*body.Name)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		name = nextName
+	}
 	url := existing.Url
 	if body.URL != nil {
-		url = *body.URL
+		nextURL, err := normalizeWebhookURL(*body.URL)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		url = nextURL
 	}
 	evs := existing.Events
 	if body.Events != nil {
+		if len(body.Events) == 0 {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "at least one event is required")
+			return
+		}
 		evs = body.Events
 	}
 	active := existing.Active
@@ -291,6 +361,7 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 	updated, err := h.queries.UpdateWebhookURLEventsActive(r.Context(), db.UpdateWebhookURLEventsActiveParams{
 		ID:          id,
 		WorkspaceID: workspaceID,
+		Name:        name,
 		Url:         url,
 		Events:      evs,
 		Active:      active,

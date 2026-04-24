@@ -12,6 +12,7 @@ const PATH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
+  { name: "name?", type: "string", description: "Update the human-readable webhook label." },
   { name: "url?", type: "string", description: "Replace the destination URL." },
   { name: "events?", type: "string[]", description: "Replace the subscribed event list." },
   { name: "active?", type: "boolean", description: "Enable or disable delivery without deleting the webhook." },
@@ -40,6 +41,7 @@ const SNIPPETS = [
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
+    "name": "Failure-only webhook",
     "active": false,
     "events": ["post.failed"]
   }'`,
@@ -54,6 +56,7 @@ const client = new UniPost({
 });
 
 const webhook = await client.webhooks.update("wh_abc123", {
+  name: "Failure-only webhook",
   active: false,
   events: ["post.failed"],
 });
@@ -69,6 +72,7 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "id": "wh_abc123",
+    "name": "Failure-only webhook",
     "url": "https://api.example.com/unipost/webhooks",
     "events": ["post.failed"],
     "active": false,
@@ -84,7 +88,7 @@ export default function UpdateWebhookPage() {
     <SingleEndpointReferencePage
       section="developer-webhooks"
       title="Update webhook"
-      description="Updates the destination URL, event list, or active state for an existing webhook subscription. This endpoint cannot change the signing secret."
+      description="Updates the webhook name, destination URL, event list, or active state for an existing subscription. This endpoint cannot change the signing secret."
       method="PATCH"
       path="/v1/webhooks/:id"
       requestSections={[

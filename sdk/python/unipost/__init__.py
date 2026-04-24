@@ -522,8 +522,12 @@ class WebhooksAPI:
     def __init__(self, http: _HttpClient):
         self._http = http
 
-    def create(self, *, url: str, events: List[str]):
-        payload = self._http.request("POST", "/v1/webhooks", json_body={"url": url, "events": events})
+    def create(self, *, name: str, url: str, events: List[str], active: Optional[bool] = None, secret: Optional[str] = None):
+        payload = self._http.request(
+            "POST",
+            "/v1/webhooks",
+            json_body=_compact({"name": name, "url": url, "events": events, "active": active, "secret": secret}),
+        )
         return _wrap(payload["data"])
 
     def list(self):
@@ -544,6 +548,7 @@ class WebhooksAPI:
                     "url": kwargs.get("url"),
                     "events": kwargs.get("events"),
                     "active": kwargs.get("active"),
+                    "name": kwargs.get("name"),
                 }
             ),
         )

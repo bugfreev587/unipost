@@ -13,6 +13,7 @@ const QUERY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data[]", type: "array", description: "Webhook subscriptions for the current workspace." },
   { name: "data[].id", type: "string", description: "Webhook subscription ID." },
+  { name: "data[].name", type: "string", description: "Human-readable webhook label." },
   { name: "data[].url", type: "string", description: "Destination URL." },
   { name: "data[].events", type: "string[]", description: "Subscribed event names." },
   { name: "data[].active", type: "boolean", description: "Whether delivery is enabled." },
@@ -58,6 +59,7 @@ const RESPONSE_SNIPPETS = [
   "data": [
     {
       "id": "wh_abc123",
+      "name": "Publishing status webhook",
       "url": "https://api.example.com/unipost/webhooks",
       "events": ["post.published", "post.failed"],
       "active": true,

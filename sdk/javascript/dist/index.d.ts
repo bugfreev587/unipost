@@ -261,6 +261,7 @@ export interface VerifyWebhookOptions {
 
 export interface WebhookSubscription {
   id: string;
+  name: string;
   url: string;
   events: string[];
   active: boolean;
@@ -273,11 +274,15 @@ export interface WebhookSubscriptionSecret extends WebhookSubscription {
 }
 
 export interface CreateWebhookParams {
+  name: string;
   url: string;
   events: string[];
+  active?: boolean;
+  secret?: string;
 }
 
 export interface UpdateWebhookParams {
+  name?: string;
   url?: string;
   events?: string[];
   active?: boolean;

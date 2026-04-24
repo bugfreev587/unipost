@@ -363,6 +363,7 @@ type UserTutorial struct {
 
 type Webhook struct {
 	ID          string             `json:"id"`
+	Name        string             `json:"name"`
 	Url         string             `json:"url"`
 	Secret      string             `json:"secret"`
 	Events      []string           `json:"events"`

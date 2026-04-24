@@ -663,8 +663,11 @@ class Webhooks {
 
   async create(params) {
     const response = await this.http.post("/v1/webhooks", {
+      name: params.name,
       url: params.url,
       events: params.events,
+      active: params.active,
+      secret: params.secret,
     });
     return response.data;
   }
@@ -680,6 +683,7 @@ class Webhooks {
 
   async update(webhookId, params) {
     const response = await this.http.patch(`/v1/webhooks/${webhookId}`, compactObject({
+      name: params.name,
       url: params.url,
       events: params.events,
       active: params.active,

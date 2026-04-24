@@ -460,10 +460,15 @@ def _test_verify_signature():
 
 def _test_webhook_create(client):
     payload = client.webhooks.create(
+        name="SDK validation webhook",
         url="https://example.com/unipost-webhook-test",
         events=["post.published", "post.partial", "post.failed"],
+        active=False,
+        secret="sdk-validation-secret",
     )
-    assert_true(payload.id and payload.secret.startswith("whsec_"), "Expected webhook id and secret")
+    assert_true(payload.id and payload.secret == "sdk-validation-secret", "Expected webhook id and custom secret")
+    assert_true(payload.name == "SDK validation webhook", "Expected webhook name")
+    assert_true(payload.active is False, "Expected webhook created inactive")
     return payload
 
 
@@ -476,12 +481,14 @@ def _test_webhook_list(client, webhook_id):
 def _test_webhook_get(client, webhook_id):
     payload = client.webhooks.get(webhook_id)
     assert_true(payload.id == webhook_id, "Expected matching webhook")
+    assert_true(payload.name == "SDK validation webhook", "Expected webhook name")
     return payload
 
 
 def _test_webhook_update(client, webhook_id):
-    payload = client.webhooks.update(webhook_id, active=False, events=["post.failed"])
-    assert_true(payload.active is False, "Expected inactive webhook")
+    payload = client.webhooks.update(webhook_id, name="Failure-only webhook", active=True, events=["post.failed"])
+    assert_true(payload.active is True, "Expected active webhook")
+    assert_true(payload.name == "Failure-only webhook", "Expected updated name")
     return payload
 
 

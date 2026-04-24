@@ -13,6 +13,7 @@ const PATH_FIELDS: ApiFieldItem[] = [
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Webhook subscription ID." },
+  { name: "name", type: "string", description: "Human-readable webhook label." },
   { name: "secret", type: "string", description: "New plaintext signing secret. Returned only in this rotate response." },
   { name: "secret_preview", type: "string", description: "Short preview of the new secret." },
   { name: "events", type: "string[]", description: "Current subscribed events." },
@@ -54,6 +55,7 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "id": "wh_abc123",
+    "name": "Publishing status webhook",
     "url": "https://api.example.com/unipost/webhooks",
     "events": ["post.published", "post.failed"],
     "active": true,

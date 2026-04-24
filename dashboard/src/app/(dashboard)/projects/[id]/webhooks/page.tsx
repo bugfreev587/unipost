@@ -118,12 +118,15 @@ export default function ProjectWebhooksPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<WebhookSubscription | null>(null);
   const [saving, setSaving] = useState(false);
+  const [name, setName] = useState("");
   const [url, setURL] = useState("");
   const [events, setEvents] = useState<string[]>([
     "post.published",
     "post.partial",
     "post.failed",
   ]);
+  const [createActive, setCreateActive] = useState(true);
+  const [customSecret, setCustomSecret] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<WebhookSubscription | null>(null);
   const [rotateTarget, setRotateTarget] = useState<WebhookSubscription | null>(null);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
@@ -166,8 +169,11 @@ export default function ProjectWebhooksPage() {
 
   function resetForm() {
     setEditing(null);
+    setName("");
     setURL("");
     setEvents(["post.published", "post.partial", "post.failed"]);
+    setCreateActive(true);
+    setCustomSecret("");
   }
 
   function openCreate() {
@@ -177,8 +183,11 @@ export default function ProjectWebhooksPage() {
 
   function openEdit(webhook: WebhookSubscription) {
     setEditing(webhook);
+    setName(webhook.name);
     setURL(webhook.url);
     setEvents(webhook.events);
+    setCreateActive(webhook.active);
+    setCustomSecret("");
     setDialogOpen(true);
   }
 
@@ -191,7 +200,12 @@ export default function ProjectWebhooksPage() {
   }
 
   async function handleSave() {
+    const trimmedName = name.trim();
     const trimmedURL = url.trim();
+    if (!trimmedName) {
+      setError("Webhook name is required.");
+      return;
+    }
     if (!trimmedURL || !trimmedURL.startsWith("https://")) {
       setError("Webhook URLs must start with https://");
       return;
@@ -209,13 +223,17 @@ export default function ProjectWebhooksPage() {
 
       if (editing) {
         await updateWebhook(token, workspaceId, editing.id, {
+          name: trimmedName,
           url: trimmedURL,
           events,
         });
       } else {
         const res = await createWebhook(token, workspaceId, {
+          name: trimmedName,
           url: trimmedURL,
           events,
+          active: createActive,
+          secret: customSecret.trim() || undefined,
         });
         setSecretReveal({
           secret: res.data.secret,
@@ -382,13 +400,23 @@ export default function ProjectWebhooksPage() {
 
                   <div style={{ padding: "8px 0", display: "grid", gap: 18 }}>
                     <div>
+                      <label className="dform-label">Name</label>
+                      <input
+                        className="dform-input"
+                        placeholder="Publishing status webhook"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        autoFocus
+                      />
+                    </div>
+
+                    <div>
                       <label className="dform-label">Destination URL</label>
                       <input
                         className="dform-input"
                         placeholder="https://api.example.com/unipost/webhooks"
                         value={url}
                         onChange={(e) => setURL(e.target.value)}
-                        autoFocus
                       />
                       <div className="dt-micro" style={{ marginTop: 8, color: "var(--dmuted)" }}>
                         Use an HTTPS endpoint you control. UniPost signs every request with
@@ -397,6 +425,49 @@ export default function ProjectWebhooksPage() {
                         </code>.
                       </div>
                     </div>
+
+                    {!editing && (
+                      <div style={{ display: "grid", gap: 14 }}>
+                        <div>
+                          <label className="dform-label">Secret (optional)</label>
+                          <input
+                            className="dform-input"
+                            placeholder="Leave blank to let UniPost generate one"
+                            value={customSecret}
+                            onChange={(e) => setCustomSecret(e.target.value)}
+                          />
+                          <div className="dt-micro" style={{ marginTop: 8, color: "var(--dmuted)" }}>
+                            If omitted, UniPost generates a signing secret and returns it once in the create response.
+                          </div>
+                        </div>
+
+                        <label
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: 10,
+                            padding: "12px 14px",
+                            borderRadius: 12,
+                            border: "1px solid var(--dborder)",
+                            background: "var(--surface2)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={createActive}
+                            onChange={(e) => setCreateActive(e.target.checked)}
+                            style={{ marginTop: 2 }}
+                          />
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--dtext)" }}>Activate immediately</div>
+                            <div style={{ fontSize: 12.5, color: "var(--dmuted)", lineHeight: 1.55, marginTop: 4 }}>
+                              Clear this if you want to save the webhook now but enable deliveries later.
+                            </div>
+                          </div>
+                        </label>
+                      </div>
+                    )}
 
                     <div>
                       <label className="dform-label">Events</label>
@@ -485,7 +556,7 @@ export default function ProjectWebhooksPage() {
                     <button
                       className="dbtn dbtn-primary"
                       onClick={handleSave}
-                      disabled={saving || !url.trim() || events.length === 0}
+                      disabled={saving || !name.trim() || !url.trim() || events.length === 0}
                     >
                       {saving ? (editing ? "Saving..." : "Creating...") : editing ? "Save changes" : "Create webhook"}
                     </button>
@@ -705,9 +776,21 @@ export default function ProjectWebhooksPage() {
 
                     <div
                       style={{
-                        fontSize: 16,
+                        fontSize: 18,
                         fontWeight: 650,
                         color: "var(--dtext)",
+                        lineHeight: 1.5,
+                        marginBottom: 6,
+                      }}
+                    >
+                      {webhook.name}
+                    </div>
+
+                    <div
+                      style={{
+                        fontSize: 15,
+                        fontWeight: 560,
+                        color: "var(--dmuted)",
                         lineHeight: 1.5,
                         wordBreak: "break-word",
                       }}

@@ -1213,6 +1213,7 @@ func (s *UsersService) Get(ctx context.Context, externalUserID string) (*Managed
 
 type WebhookSubscription struct {
 	ID            string    `json:"id"`
+	Name          string    `json:"name"`
 	URL           string    `json:"url"`
 	Events        []string  `json:"events"`
 	Active        bool      `json:"active"`
@@ -1222,11 +1223,15 @@ type WebhookSubscription struct {
 }
 
 type CreateWebhookParams struct {
+	Name   string   `json:"name"`
 	URL    string   `json:"url"`
 	Events []string `json:"events"`
+	Active *bool    `json:"active,omitempty"`
+	Secret string   `json:"secret,omitempty"`
 }
 
 type UpdateWebhookParams struct {
+	Name   *string  `json:"name,omitempty"`
 	URL    *string  `json:"url,omitempty"`
 	Events []string `json:"events,omitempty"`
 	Active *bool    `json:"active,omitempty"`

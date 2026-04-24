@@ -348,10 +348,15 @@ async function main() {
 
   createdWebhook = await test('webhooks.create()', async () => {
     const res = await client.webhooks.create({
+      name: 'SDK validation webhook',
       url: 'https://example.com/unipost-webhook-test',
       events: ['post.published', 'post.partial', 'post.failed'],
+      active: false,
+      secret: 'sdk-validation-secret',
     });
-    assert(res.id && res.secret?.startsWith('whsec_'), 'Expected webhook id and secret');
+    assert(res.id && res.secret === 'sdk-validation-secret', 'Expected webhook id and custom secret');
+    assert(res.name === 'SDK validation webhook', 'Expected webhook name');
+    assert(res.active === false, 'Expected webhook to be created inactive');
     createdWebhookIds.push(res.id);
     return res;
   });
@@ -368,15 +373,18 @@ async function main() {
     await test('webhooks.get()', async () => {
       const res = await client.webhooks.get(createdWebhook.id);
       assert(res.id === createdWebhook.id, 'Expected matching webhook');
+      assert(res.name === 'SDK validation webhook', 'Expected webhook name');
       assert(!('secret' in res), 'Read payload should not expose secret');
     });
 
     await test('webhooks.update()', async () => {
       const res = await client.webhooks.update(createdWebhook.id, {
-        active: false,
+        name: 'Failure-only webhook',
+        active: true,
         events: ['post.failed'],
       });
-      assert(res.active === false, 'Expected inactive webhook');
+      assert(res.active === true, 'Expected active webhook');
+      assert(res.name === 'Failure-only webhook', 'Expected updated name');
     });
 
     await test('webhooks.rotate()', async () => {

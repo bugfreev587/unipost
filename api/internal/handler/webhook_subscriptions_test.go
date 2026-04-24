@@ -72,3 +72,49 @@ func TestEventForStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeWebhookName(t *testing.T) {
+	got, err := normalizeWebhookName("  Ops webhook  ")
+	if err != nil {
+		t.Fatalf("normalizeWebhookName returned error: %v", err)
+	}
+	if got != "Ops webhook" {
+		t.Fatalf("expected trimmed name, got %q", got)
+	}
+	if _, err := normalizeWebhookName("   "); err == nil {
+		t.Fatalf("expected empty name to fail")
+	}
+}
+
+func TestNormalizeWebhookURL(t *testing.T) {
+	got, err := normalizeWebhookURL(" https://example.com/hooks ")
+	if err != nil {
+		t.Fatalf("normalizeWebhookURL returned error: %v", err)
+	}
+	if got != "https://example.com/hooks" {
+		t.Fatalf("expected trimmed https url, got %q", got)
+	}
+	if _, err := normalizeWebhookURL("http://example.com/hooks"); err == nil {
+		t.Fatalf("expected non-https url to fail")
+	}
+}
+
+func TestNormalizeOptionalWebhookSecret(t *testing.T) {
+	got, err := normalizeOptionalWebhookSecret("  custom-secret  ")
+	if err != nil {
+		t.Fatalf("normalizeOptionalWebhookSecret returned error: %v", err)
+	}
+	if got != "custom-secret" {
+		t.Fatalf("expected trimmed custom secret, got %q", got)
+	}
+	generated, err := normalizeOptionalWebhookSecret("")
+	if err != nil {
+		t.Fatalf("expected generated secret, got error: %v", err)
+	}
+	if !strings.HasPrefix(generated, "whsec_") {
+		t.Fatalf("expected generated whsec_ secret, got %q", generated)
+	}
+	if _, err := normalizeOptionalWebhookSecret("short"); err == nil {
+		t.Fatalf("expected too-short custom secret to fail")
+	}
+}

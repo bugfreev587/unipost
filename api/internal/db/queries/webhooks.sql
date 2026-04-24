@@ -1,10 +1,10 @@
 -- name: CreateWebhook :one
-INSERT INTO webhooks (workspace_id, url, secret, events)
-VALUES ($1, $2, $3, $4)
+INSERT INTO webhooks (workspace_id, name, url, secret, events, active)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: ListWebhooksByWorkspace :many
-SELECT * FROM webhooks WHERE workspace_id = $1 AND active = true;
+SELECT * FROM webhooks WHERE workspace_id = $1 ORDER BY created_at DESC;
 
 -- name: GetWebhook :one
 SELECT * FROM webhooks WHERE id = $1;
@@ -20,9 +20,10 @@ DELETE FROM webhooks WHERE id = $1 AND workspace_id = $2;
 
 -- name: UpdateWebhookURLEventsActive :one
 UPDATE webhooks
-SET url    = $3,
-    events = $4,
-    active = $5
+SET name   = $3,
+    url    = $4,
+    events = $5,
+    active = $6
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;
 
