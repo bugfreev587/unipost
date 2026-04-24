@@ -12,43 +12,17 @@ const INIT_SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});`,
+const client = new UniPost();`,
   },
   {
     label: "Python",
     code: `from unipost import UniPost
-import os
 
-client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])`,
+client = UniPost()`,
   },
   {
     label: "Go",
-    code: `client := unipost.NewClient(
-  unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
-)`,
-  },
-];
-
-const CREATE_PROFILE_SNIPPETS = [
-  {
-    label: "Node.js",
-    code: `const profile = await client.profiles.create({
-  name: "My First Profile",
-});`,
-  },
-  {
-    label: "Python",
-    code: `profile = client.profiles.create(
-  name="My First Profile",
-)`,
-  },
-  {
-    label: "Go",
-    code: `profile, err := client.Profiles.Create(ctx, &unipost.CreateProfileParams{
-  Name: "My First Profile",
-})`,
+    code: `client := unipost.NewClient()`,
   },
 ];
 
@@ -57,9 +31,7 @@ const CONNECT_SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const session = await client.connect.createSession({
   platform: "bluesky",
@@ -76,9 +48,7 @@ const LIST_SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const { data: accounts } = await client.accounts.list();
 const accountId = accounts[0]?.id;`,
@@ -86,9 +56,8 @@ const accountId = accounts[0]?.id;`,
   {
     label: "Python",
     code: `from unipost import UniPost
-import os
 
-client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+client = UniPost()
 
 accounts = client.accounts.list()
 account_id = accounts["data"][0]["id"]`,
@@ -126,9 +95,7 @@ const CREATE_POST_SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const post = await client.posts.create({
   platformPosts: [
@@ -149,9 +116,8 @@ console.log(post.id);`,
   {
     label: "Python",
     code: `from unipost import UniPost
-import os
 
-client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+client = UniPost()
 
 post = client.posts.create(
   platform_posts=[
@@ -211,9 +177,7 @@ const VALIDATE_SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const result = await client.posts.validate({
   platformPosts: [
@@ -229,9 +193,8 @@ console.log(result);`,
   {
     label: "Python",
     code: `from unipost import UniPost
-import os
 
-client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+client = UniPost()
 
 result = client.posts.validate(
   platform_posts=[
@@ -331,30 +294,34 @@ export default function QuickstartPage() {
         <li>Every request uses a Bearer API key.</li>
         <li>Production keys start with <code>up_live_</code>.</li>
         <li>Test keys start with <code>up_test_</code>.</li>
+        <li>The SDKs read <code>UNIPOST_API_KEY</code> by default.</li>
       </ul>
 
       <h3 id="get-api-key">Get your API key</h3>
-      <p>Create a workspace, then generate an API key from the dashboard.</p>
+      <ul className="docs-step-list">
+        <li>Sign up or sign in to UniPost.</li>
+        <li>UniPost automatically creates one workspace and one Default profile for you.</li>
+        <li>Open Dashboard → API Keys.</li>
+        <li>Click Create API Key.</li>
+        <li>Copy the key and store it as <code>UNIPOST_API_KEY</code>.</li>
+      </ul>
 
       <h3 id="set-up-client">Set up the client</h3>
+      <p>Once <code>UNIPOST_API_KEY</code> is set, the SDK clients load it automatically.</p>
       <DocsCodeTabs snippets={INIT_SNIPPETS} />
 
       <h2 id="key-concepts">Key concepts</h2>
       <DocsTable
         columns={["Object", "What it means"]}
         rows={[
-          ["Profiles", "Containers for accounts and branding"],
+          ["Profiles", "Containers for accounts and branding. Every new workspace starts with one Default profile."],
           ["Accounts", "Connected social accounts you can publish to"],
           ["Posts", "One publish request, with one or more platform payloads"],
           ["Webhooks", "Async status updates for publish and account events"],
         ]}
       />
 
-      <h2 id="step-1-create-profile">Step 1: Create a profile</h2>
-      <p>Create one profile for the brand or workspace you want to publish under.</p>
-      <DocsCodeTabs snippets={CREATE_PROFILE_SNIPPETS} />
-
-      <h2 id="step-2-connect-account">Step 2: Connect an account</h2>
+      <h2 id="step-1-connect-account">Step 1: Connect an account</h2>
       <p>For customer-owned accounts, create a Connect session. For workspace-owned accounts, connect once from the dashboard.</p>
       <DocsCodeTabs snippets={CONNECT_SNIPPETS} />
 
@@ -371,11 +338,11 @@ export default function QuickstartPage() {
         ]}
       />
 
-      <h2 id="step-3-get-connected-accounts">Step 3: Get your connected accounts</h2>
+      <h2 id="step-2-get-connected-accounts">Step 2: Get your connected accounts</h2>
       <p>List accounts and capture the UniPost account ID you want to publish to.</p>
       <DocsCodeTabs snippets={LIST_SNIPPETS} />
 
-      <h2 id="step-4-publish-first-post">Step 4: Publish your first post</h2>
+      <h2 id="step-3-publish-first-post">Step 3: Publish your first post</h2>
       <p>Use <code>platform_posts[]</code> for new integrations.</p>
       <DocsCodeTabs snippets={CREATE_POST_SNIPPETS} />
 

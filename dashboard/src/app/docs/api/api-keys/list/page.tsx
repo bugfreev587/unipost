@@ -71,7 +71,7 @@ export default function ListApiKeysPage() {
     <SingleEndpointReferencePage
       section="core"
       title="List API keys"
-      description="Lists the API keys owned by one workspace in the dashboard. This is a Clerk session route used by the UniPost app, not a Bearer API key route."
+      description="Lists the API keys owned by one workspace in the dashboard. This is a Clerk session route used by the UniPost app, not a Bearer API key route. After creating one, set `UNIPOST_API_KEY` in your environment — the UniPost SDK clients read it automatically by default."
       method="GET"
       path="/v1/workspaces/:workspace_id/api-keys"
       requestSections={[
