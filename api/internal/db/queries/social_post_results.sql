@@ -61,6 +61,34 @@ WHERE social_account_id = $1
 ORDER BY published_at DESC NULLS LAST
 LIMIT $2;
 
+-- name: ListFacebookVideosAwaitingStatus :many
+-- Lists Facebook video results still in 'processing' state so the
+-- facebook_video_status worker can re-check them without waiting for
+-- a dashboard Get to trigger the existing on-demand re-poll. Joined
+-- to the account so the worker has the page id and encrypted token in
+-- one round-trip. Scheduled/dispatched posts are included; deleted
+-- and disconnected rows are excluded. post_created_at is surfaced so
+-- the worker can apply a staleness cap and fail rows that have been
+-- processing for absurdly long.
+SELECT
+  spr.id                     AS social_post_result_id,
+  spr.external_id,
+  spr.url,
+  sa.id                      AS social_account_id,
+  sa.external_account_id     AS page_id,
+  sa.access_token,
+  sp.created_at              AS post_created_at
+FROM social_post_results spr
+JOIN social_posts sp    ON sp.id = spr.post_id
+JOIN social_accounts sa ON sa.id = spr.social_account_id
+WHERE spr.status = 'processing'
+  AND spr.external_id IS NOT NULL
+  AND sa.platform = 'facebook'
+  AND sa.disconnected_at IS NULL
+  AND sp.deleted_at IS NULL
+ORDER BY sp.created_at ASC
+LIMIT 100;
+
 -- name: ListPublishedExternalIDsForInboxSync :many
 -- Returns platform post external ids for an account that were
 -- successfully published via UniPost and whose published_at falls

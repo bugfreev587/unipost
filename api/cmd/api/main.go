@@ -302,6 +302,14 @@ func main() {
 	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
 	go analyticsRefreshWorker.Start(workerCtx)
 
+	// Facebook's /videos endpoint returns a video_id immediately and
+	// finishes asynchronously. The initial publish poll waits 60s;
+	// beyond that the row sits in `processing` until someone opens the
+	// post in the dashboard. This worker picks up the slack so the
+	// flip to published/failed happens on its own.
+	facebookVideoStatusWorker := worker.NewFacebookVideoStatusWorker(queries, encryptor)
+	go facebookVideoStatusWorker.Start(workerCtx)
+
 	inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor, pool)
 	go inboxSyncWorker.Start(workerCtx)
 

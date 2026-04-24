@@ -708,6 +708,18 @@ func feedStoryURL(pageID, storyID string) string {
 	return "https://www.facebook.com/" + storyID
 }
 
+// FeedStoryURL is the exported, empty-safe variant used by callers
+// outside the platform package (handler Get-time refresh, video status
+// worker). Returns "" on empty storyID so callers can decide whether
+// to keep the prior URL instead of overwriting it with a Facebook
+// homepage link.
+func FeedStoryURL(pageID, storyID string) string {
+	if storyID == "" {
+		return ""
+	}
+	return feedStoryURL(pageID, storyID)
+}
+
 // wrapFacebookPublishError turns Graph API error responses into
 // something the UI can act on. Auth-shaped errors (190 / 102 / 200)
 // route to a "needs reconnect" message that the Posts Overview's

@@ -117,6 +117,73 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 	return i, err
 }
 
+const listFacebookVideosAwaitingStatus = `-- name: ListFacebookVideosAwaitingStatus :many
+SELECT
+  spr.id                     AS social_post_result_id,
+  spr.external_id,
+  spr.url,
+  sa.id                      AS social_account_id,
+  sa.external_account_id     AS page_id,
+  sa.access_token,
+  sp.created_at              AS post_created_at
+FROM social_post_results spr
+JOIN social_posts sp    ON sp.id = spr.post_id
+JOIN social_accounts sa ON sa.id = spr.social_account_id
+WHERE spr.status = 'processing'
+  AND spr.external_id IS NOT NULL
+  AND sa.platform = 'facebook'
+  AND sa.disconnected_at IS NULL
+  AND sp.deleted_at IS NULL
+ORDER BY sp.created_at ASC
+LIMIT 100
+`
+
+type ListFacebookVideosAwaitingStatusRow struct {
+	SocialPostResultID string             `json:"social_post_result_id"`
+	ExternalID         pgtype.Text        `json:"external_id"`
+	Url                pgtype.Text        `json:"url"`
+	SocialAccountID    string             `json:"social_account_id"`
+	PageID             string             `json:"page_id"`
+	AccessToken        string             `json:"access_token"`
+	PostCreatedAt      pgtype.Timestamptz `json:"post_created_at"`
+}
+
+// Lists Facebook video results still in 'processing' state so the
+// facebook_video_status worker can re-check them without waiting for
+// a dashboard Get to trigger the existing on-demand re-poll. Joined
+// to the account so the worker has the page id and encrypted token in
+// one round-trip. Scheduled/dispatched posts are included; deleted
+// and disconnected rows are excluded. post_created_at is surfaced so
+// the worker can apply a staleness cap and fail rows that have been
+// processing for absurdly long.
+func (q *Queries) ListFacebookVideosAwaitingStatus(ctx context.Context) ([]ListFacebookVideosAwaitingStatusRow, error) {
+	rows, err := q.db.Query(ctx, listFacebookVideosAwaitingStatus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFacebookVideosAwaitingStatusRow{}
+	for rows.Next() {
+		var i ListFacebookVideosAwaitingStatusRow
+		if err := rows.Scan(
+			&i.SocialPostResultID,
+			&i.ExternalID,
+			&i.Url,
+			&i.SocialAccountID,
+			&i.PageID,
+			&i.AccessToken,
+			&i.PostCreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublishedExternalIDsForInboxSync = `-- name: ListPublishedExternalIDsForInboxSync :many
 SELECT external_id
 FROM social_post_results
