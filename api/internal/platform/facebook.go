@@ -544,11 +544,16 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 		case "ready":
 			// Prefer the feed-story id so the public URL lands on
 			// the Page timeline rather than the raw video watch
-			// page. post_id only becomes available after processing
-			// completes.
+			// page, and so downstream Graph calls (/comments,
+			// /insights, DELETE) target the canonical Page post
+			// rather than the raw video object — Graph rejects
+			// /{video_id}/comments with "Object does not exist"
+			// when the token scope is the Page rather than the
+			// video itself. post_id only becomes available after
+			// processing completes.
 			if st.PostID != "" {
 				return &PostResult{
-					ExternalID: videoID,
+					ExternalID: st.PostID,
 					URL:        feedStoryURL(pageID, st.PostID),
 				}, nil
 			}

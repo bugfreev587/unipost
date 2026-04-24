@@ -1491,17 +1491,24 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 								"publishing_phase_status": st.PublishingStatus,
 								"post_id":                 st.PostID,
 							}
-							// Promote to published when FB finishes.
+							// Promote to published when FB finishes. Swap
+							// external_id to the canonical feed-story id so
+							// downstream Graph calls (comments, insights,
+							// delete) target the Page post rather than the
+							// raw video object — Graph rejects
+							// /{video_id}/comments under Page-scoped tokens.
 							if st.VideoStatus == "ready" {
 								pageID := acc.ExternalAccountID
 								newURL := res.Url.String
+								newExternalID := res.ExternalID
 								if st.PostID != "" {
 									newURL = facebookFeedStoryURL(pageID, st.PostID)
+									newExternalID = pgtype.Text{String: st.PostID, Valid: true}
 								}
 								_, _ = h.queries.UpdateSocialPostResultAfterRetry(r.Context(), db.UpdateSocialPostResultAfterRetryParams{
 									ID:           res.ID,
 									Status:       "published",
-									ExternalID:   res.ExternalID,
+									ExternalID:   newExternalID,
 									ErrorMessage: pgtype.Text{Valid: false},
 									PublishedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
 									Url:          pgtype.Text{String: newURL, Valid: newURL != ""},

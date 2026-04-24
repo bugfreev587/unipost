@@ -143,16 +143,23 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 
 	switch st.VideoStatus {
 	case "ready":
+		// Swap external_id to the feed-story id once FB hands it
+		// back. Downstream Graph calls (/comments for inbox sync,
+		// /insights for analytics, DELETE) only accept the Page post
+		// id under a Page-scoped token — hitting them with the raw
+		// video_id returns `Object with ID 'X' does not exist`.
 		newURL := r.Url.String
+		newExternalID := r.ExternalID
 		if st.PostID != "" {
 			if u := platform.FeedStoryURL(r.PageID, st.PostID); u != "" {
 				newURL = u
 			}
+			newExternalID = pgtype.Text{String: st.PostID, Valid: true}
 		}
 		if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
 			ID:           r.SocialPostResultID,
 			Status:       "published",
-			ExternalID:   r.ExternalID,
+			ExternalID:   newExternalID,
 			ErrorMessage: pgtype.Text{Valid: false},
 			PublishedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			Url:          pgtype.Text{String: newURL, Valid: newURL != ""},
