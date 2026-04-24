@@ -44,6 +44,15 @@ type HeadingItem = {
   level: "h2" | "h3";
 };
 
+const API_SIDEBAR_DEFAULT_WIDTH = 336;
+const API_SIDEBAR_MIN_WIDTH = 280;
+const API_SIDEBAR_MAX_WIDTH = 520;
+const API_SIDEBAR_STORAGE_KEY = "unipost-docs-api-sidebar-width";
+
+function clampApiSidebarWidth(value: number) {
+  return Math.min(API_SIDEBAR_MAX_WIDTH, Math.max(API_SIDEBAR_MIN_WIDTH, Math.round(value)));
+}
+
 function renderDocsTableCell(cell: React.ReactNode) {
   if (typeof cell !== "string") {
     return cell;
@@ -429,9 +438,15 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-auth-btn.primary{background:var(--docs-accent);color:#07140d;box-shadow:0 10px 22px rgba(16,185,129,.18)}
 .docs-auth-btn.primary:hover{filter:brightness(1.04)}
 .docs-layout{max-width:1540px;margin:0 auto;padding:28px 28px 88px;display:grid;grid-template-columns:264px minmax(0,1fr) 224px;gap:30px}
-.docs-layout-api{grid-template-columns:264px minmax(0,1fr)}
+.docs-layout-api{grid-template-columns:var(--docs-api-sidebar-width, 336px) 14px minmax(0,1fr);column-gap:0}
 .docs-sidebar,.docs-toc{position:sticky;top:96px;align-self:start;max-height:calc(100vh - 118px);overflow:auto;padding-bottom:16px}
 .docs-sidebar-card,.docs-toc-card{background:var(--docs-nav-surface);border:1px solid var(--docs-border);border-radius:18px;padding:15px 14px;box-shadow:var(--docs-card-shadow)}
+.docs-sidebar-resizer{position:sticky;top:96px;align-self:start;height:calc(100vh - 118px);display:flex;align-items:stretch;justify-content:center}
+.docs-sidebar-resizer::before{content:"";width:1px;background:color-mix(in srgb, var(--docs-border) 84%, transparent);border-radius:999px}
+.docs-sidebar-resizer-handle{position:absolute;top:0;left:50%;transform:translateX(-50%);width:14px;height:100%;border:none;background:transparent;cursor:col-resize}
+.docs-sidebar-resizer-handle::before{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:5px;height:54px;border-radius:999px;background:color-mix(in srgb, var(--docs-border-strong) 82%, transparent);transition:background .14s ease, box-shadow .14s ease, width .14s ease}
+.docs-sidebar-resizer-handle:hover::before{background:color-mix(in srgb, var(--docs-link) 42%, var(--docs-border-strong));box-shadow:0 0 0 4px color-mix(in srgb, var(--docs-link) 10%, transparent)}
+.docs-sidebar-resizer.dragging .docs-sidebar-resizer-handle::before{width:6px;background:color-mix(in srgb, var(--docs-link) 58%, var(--docs-border-strong));box-shadow:0 0 0 6px color-mix(in srgb, var(--docs-link) 12%, transparent)}
 .docs-sidebar-section{padding:10px 0 2px;margin-bottom:14px}
 .docs-sidebar-section:last-child{margin-bottom:0}
 .docs-sidebar-section-header{padding:0 8px 10px;margin-bottom:4px;border-bottom:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent)}
@@ -518,8 +533,8 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-step-list li{padding-left:4px;margin-bottom:10px;font-size:16px;line-height:1.72;color:var(--docs-text-soft)}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
-@media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,1fr);gap:26px}.docs-toc{display:none}.docs-layout-api{grid-template-columns:252px minmax(0,1fr)}}
-@media (max-width:960px){.docs-topbar-inner{padding:12px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-left,.docs-topbar-right{width:100%}.docs-topbar-left{gap:14px}.docs-primary-nav{gap:14px;overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.docs-topbar-right{align-items:flex-start;justify-content:flex-start;flex-direction:row}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page-api{padding:32px 24px 38px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}}
+@media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,1fr);gap:26px}.docs-toc{display:none}.docs-layout-api{grid-template-columns:var(--docs-api-sidebar-width, 312px) 14px minmax(0,1fr)}}
+@media (max-width:960px){.docs-topbar-inner{padding:12px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-left,.docs-topbar-right{width:100%}.docs-topbar-left{gap:14px}.docs-primary-nav{gap:14px;overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.docs-topbar-right{align-items:flex-start;justify-content:flex-start;flex-direction:row}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar,.docs-sidebar-resizer{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page-api{padding:32px 24px 38px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}}
 `;
 
 function isLeafActive(current: string, href: string) {
@@ -600,9 +615,21 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn } = useAuth();
   const [headings, setHeadings] = useState<HeadingItem[]>([]);
   const [activeHeading, setActiveHeading] = useState("");
+  const [apiSidebarWidth, setApiSidebarWidth] = useState(API_SIDEBAR_DEFAULT_WIDTH);
+  const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
   const activePrimaryNav = getActivePrimaryNav(pathname);
   const sidebarSections = DOCS_SIDEBAR_NAV[activePrimaryNav];
   const isApiPage = pathname.startsWith("/docs/api");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedWidth = window.localStorage.getItem(API_SIDEBAR_STORAGE_KEY);
+    if (!storedWidth) return;
+    const parsed = Number.parseInt(storedWidth, 10);
+    if (Number.isFinite(parsed)) {
+      setApiSidebarWidth(clampApiSidebarWidth(parsed));
+    }
+  }, []);
 
   useEffect(() => {
     let frame = 0;
@@ -635,6 +662,38 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     headingNodes.forEach((node) => observer.observe(node));
     return () => observer.disconnect();
   }, [pathname, headings]);
+
+  useEffect(() => {
+    if (!isDraggingSidebar) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const nextWidth = clampApiSidebarWidth(event.clientX - 28);
+      setApiSidebarWidth(nextWidth);
+    };
+
+    const stopDragging = () => {
+      setIsDraggingSidebar(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopDragging);
+
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDragging);
+    };
+  }, [isDraggingSidebar]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(API_SIDEBAR_STORAGE_KEY, String(apiSidebarWidth));
+  }, [apiSidebarWidth]);
 
   const topLinks = useMemo(() => DOCS_PRIMARY_NAV, []);
 
@@ -691,7 +750,10 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <div className={`docs-layout${isApiPage ? " docs-layout-api" : ""}`}>
+      <div
+        className={`docs-layout${isApiPage ? " docs-layout-api" : ""}`}
+        style={isApiPage ? { ["--docs-api-sidebar-width" as any]: `${apiSidebarWidth}px` } : undefined}
+      >
         <aside className="docs-sidebar">
           <div className="docs-sidebar-card">
             {sidebarSections.map((section) => (
@@ -765,6 +827,22 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
             ))}
           </div>
         </aside>
+
+        {isApiPage ? (
+          <div className={`docs-sidebar-resizer${isDraggingSidebar ? " dragging" : ""}`} aria-hidden="true">
+            <button
+              type="button"
+              className="docs-sidebar-resizer-handle"
+              aria-label="Resize API reference sidebar"
+              onPointerDown={(event) => {
+                if (event.pointerType === "mouse" || event.pointerType === "pen") {
+                  event.preventDefault();
+                }
+                setIsDraggingSidebar(true);
+              }}
+            />
+          </div>
+        ) : null}
 
         <main className={`docs-main${isApiPage ? " docs-main-api" : ""}`}>{children}</main>
 
