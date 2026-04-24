@@ -686,9 +686,16 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 		return nil, fmt.Errorf("facebook reel: start response missing video_id or upload_url")
 	}
 
-	// Phase 2: transfer. Meta expects Authorization: OAuth <token> on
-	// the transfer request against upload.facebook.com, and a
-	// file_url query param telling it where to pull from.
+	// Phase 2: transfer. Meta's rupload.facebook.com endpoint requires
+	// - Authorization: OAuth <token> for the Page access credential
+	// - offset: 0 header (parsed as unsigned long) — even when
+	//   we're using the hosted-file (file_url) variant, rupload runs
+	//   the same request-shape check it uses for the chunked-upload
+	//   path and returns
+	//   "HeaderValuePredicate: Header Offset not convertable to
+	//   unsigned long" when offset is absent or empty.
+	// - file_url query param so Meta knows where to pull from
+	//   asynchronously (we also send upload_phase=transfer here).
 	transferURL := uploadURL
 	if strings.Contains(transferURL, "?") {
 		transferURL += "&"
@@ -701,6 +708,7 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 		return nil, fmt.Errorf("facebook reel: build transfer request: %w", err)
 	}
 	req.Header.Set("Authorization", "OAuth "+accessToken)
+	req.Header.Set("offset", "0")
 	transferResp, err := a.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("facebook reel: transfer: %w", err)
