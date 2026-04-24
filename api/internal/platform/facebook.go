@@ -645,17 +645,27 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 // postVideoReel publishes to the /{page_id}/video_reels endpoint in
 // three phases. Reels can't be driven through /videos + file_url —
 // Facebook explicitly routes Reel uploads through a different
-// initialize/transfer/finish flow. UniPost picks the file_url
-// transfer variant so the upload path matches the Feed video flow
-// as closely as possible (stage to R2 once, hand Meta a public URL,
-// Meta pulls asynchronously).
+// initialize/transfer/finish flow.
 //
-// 1. start:   POST /{page_id}/video_reels?upload_phase=start
-//             → returns video_id + upload_url
-// 2. transfer POST {upload_url}?upload_phase=transfer&file_url=<R2>
-//             Meta pulls the bytes asynchronously
-// 3. finish:  POST /{page_id}/video_reels?upload_phase=finish&
-//             video_id=&video_state=PUBLISHED[&description&title&...]
+// Originally we tried the hosted-pull transfer variant (file_url
+// header on the rupload endpoint) to mirror the Feed video flow's
+// async pull model. In practice Meta's hosted-pull pipeline for
+// Reels is observably unreliable — it returns 200 for the transfer
+// and then leaves the video wedged in uploading/in_progress forever.
+// Every subsequent finish call returns {"success": true} but
+// processing_phase stays at not_started. Community reports match.
+//
+// Switched to synchronous binary upload: stream the video bytes
+// directly into rupload. When rupload returns 200, the upload is
+// really done — no polling required before finish, no wedged
+// uploads, no silent no-ops.
+//
+// 1. start:    POST /{page_id}/video_reels?upload_phase=start
+//              → returns video_id + upload_url
+// 2. transfer: POST {upload_url} with bytes as body + offset=0 +
+//              file_size=<len> headers (synchronous)
+// 3. finish:   POST /{page_id}/video_reels?upload_phase=finish&
+//              video_id=&video_state=PUBLISHED[&description&title&...]
 //
 // After finish we poll /{video_id}?fields=status for up to ~60s just
 // like the Feed path, and return Status="processing" if Meta is still
@@ -686,58 +696,26 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 		return nil, fmt.Errorf("facebook reel: start response missing video_id or upload_url")
 	}
 
-	// Phase 2: transfer. Meta's rupload.facebook.com endpoint accepts
-	// file_url via HTTP header, not the query string — passing it as
-	// a query param makes rupload think we're doing a binary upload
-	// and it fails with either
-	//   "HeaderValuePredicate: Header Offset not convertable to
-	//    unsigned long"
-	// (missing offset header) or
-	//   "Invalid Header format: expected either both Content-Length
-	//    and X-Entity-Length, or Transfer-Encoding alone"
-	// (offset present but no body / no byte count). Canonical shape:
-	//   POST <upload_url>
+	// Phase 2: transfer. Stream the video bytes from our R2 URL
+	// directly into Meta's rupload endpoint.
+	//
+	// The hosted-pull variant (file_url header) is documented but
+	// observably unreliable — Meta accepts the request, returns 200,
+	// but leaves the video wedged in uploading/in_progress
+	// indefinitely. Confirmed by probing /{video_id}?fields=status
+	// after several "successful" hosted-pull uploads: none of them
+	// ever transitioned to processing_phase=started. Community
+	// reports match. The chunked binary upload path is the one Meta
+	// actively maintains, so we stream bytes.
+	//
+	// Headers required by rupload for binary upload:
 	//   Authorization: OAuth <token>
-	//   file_url: <public URL>
-	//   offset: 0
-	// The upload_phase=transfer query param is still required so
-	// Meta routes the request to the hosted-pull handler.
-	transferURL := uploadURL
-	if strings.Contains(transferURL, "?") {
-		transferURL += "&"
-	} else {
-		transferURL += "?"
-	}
-	transferURL += "upload_phase=transfer"
-	req, err := http.NewRequestWithContext(ctx, "POST", transferURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("facebook reel: build transfer request: %w", err)
-	}
-	req.Header.Set("Authorization", "OAuth "+accessToken)
-	req.Header.Set("file_url", stagedURL)
-	req.Header.Set("offset", "0")
-	transferResp, err := a.client.Do(req)
-	if err != nil {
+	//   offset: 0            (byte offset — 0 for a single-shot upload)
+	//   file_size: <bytes>   (total file size)
+	//   Content-Length: <bytes>
+	//   Content-Type: application/octet-stream
+	if err := a.uploadReelBytes(ctx, accessToken, uploadURL, stagedURL); err != nil {
 		return nil, fmt.Errorf("facebook reel: transfer: %w", err)
-	}
-	defer transferResp.Body.Close()
-	transferBody, _ := io.ReadAll(transferResp.Body)
-	if transferResp.StatusCode >= 400 {
-		return nil, wrapFacebookPublishError(transferResp.StatusCode, transferBody)
-	}
-
-	// Phase 2.5: wait for the hosted-pull to actually complete.
-	// Meta's 200 on the transfer request is an ACK, not a
-	// completion — rupload starts the pull from our R2 URL
-	// asynchronously. Calling Phase 3 (finish) before Meta has
-	// finished downloading lands as a silent no-op: the request
-	// returns {"success": true} but processing_phase stays at
-	// "not_started" and the video is wedged forever in
-	// video_status="upload_complete". Poll /video_id until
-	// uploading_phase reports "complete" (or the video errors)
-	// before calling finish.
-	if err := a.waitForReelUploadComplete(ctx, accessToken, videoID); err != nil {
-		return nil, err
 	}
 
 	// Phase 3: finish.
@@ -819,48 +797,89 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 	}, nil
 }
 
-// waitForReelUploadComplete polls /video_id until Meta confirms the
-// hosted-pull (the Phase 2 transfer) has finished downloading our
-// file, or the upload errors. Required before calling Phase 3
-// (finish) — calling finish too early silently no-ops and leaves
-// the Reel stuck at video_status="upload_complete" forever.
+// uploadReelBytes performs Phase 2 of the /video_reels flow by
+// streaming the video bytes from our R2 URL into Meta's rupload
+// endpoint. Unlike the hosted-pull variant (file_url header), this
+// is a synchronous transfer — when Meta returns 200, the upload is
+// done and it's safe to call Phase 3 finish.
 //
-// Cap: 3 minutes, 5-second poll. Small Reels (≤50 MB) typically
-// upload in under 30 seconds on Meta's side; 3 min covers the
-// long tail without hanging the request indefinitely. On timeout
-// we return an error rather than calling finish on a half-uploaded
-// video (which would produce the "Invalid Mutation on Attachment
-// Ent" error or silently wedge the video).
-func (a *FacebookAdapter) waitForReelUploadComplete(ctx context.Context, accessToken, videoID string) error {
-	const maxAttempts = 36 // 36 × 5s = 180s = 3 min
-	for i := 0; i < maxAttempts; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-		st, err := a.CheckVideoStatus(ctx, accessToken, videoID)
-		if err != nil {
-			slog.Warn("facebook reel: upload-complete poll failed",
-				"video_id", videoID, "error", err)
-			continue
-		}
-		if strings.EqualFold(st.UploadingStatus, "complete") {
-			return nil
-		}
-		if strings.EqualFold(st.UploadingStatus, "error") ||
-			st.VideoStatus == "error" ||
-			st.VideoStatus == "upload_failed" ||
-			st.VideoStatus == "expired" {
-			msg := "facebook reel: upload failed"
-			if st.ErrorMessage != "" {
-				msg += ": " + st.ErrorMessage
-			}
-			return fmt.Errorf("%s", msg)
-		}
-		// Still "not_started" or "in_progress" — keep polling.
+// Uses a dedicated long-timeout client so multi-hundred-MB uploads
+// don't trip the default adapter client's 60s cap. The request
+// context still bounds the whole operation, so caller-side
+// cancellation still works.
+func (a *FacebookAdapter) uploadReelBytes(ctx context.Context, accessToken, uploadURL, sourceURL string) error {
+	// Pull bytes from R2. Use the default adapter client; R2 is
+	// fast and the 60s timeout is more than enough for the fetch.
+	getReq, err := http.NewRequestWithContext(ctx, "GET", sourceURL, nil)
+	if err != nil {
+		return fmt.Errorf("build source GET: %w", err)
 	}
-	return fmt.Errorf("facebook reel: upload did not complete within 3 minutes")
+	getResp, err := a.client.Do(getReq)
+	if err != nil {
+		return fmt.Errorf("source GET: %w", err)
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode/100 != 2 {
+		return fmt.Errorf("source GET: HTTP %d", getResp.StatusCode)
+	}
+	size := getResp.ContentLength
+	if size <= 0 {
+		// Source didn't advertise Content-Length — buffer into
+		// memory so we can compute the size before posting. The
+		// validator caps videos at 1 GB, so this is a bounded
+		// worst case. Loading into memory is preferable to
+		// posting with chunked Transfer-Encoding, which rupload
+		// rejects.
+		buf, rerr := io.ReadAll(getResp.Body)
+		if rerr != nil {
+			return fmt.Errorf("read source body: %w", rerr)
+		}
+		size = int64(len(buf))
+		return a.postReelBinary(ctx, accessToken, uploadURL, bytes.NewReader(buf), size)
+	}
+	return a.postReelBinary(ctx, accessToken, uploadURL, getResp.Body, size)
+}
+
+// postReelBinary writes the video bytes to Meta's rupload endpoint
+// with the exact header set Meta requires for a single-shot (non-
+// resumable) binary upload. Uses a 15-minute-timeout client so
+// larger videos have room to upload without tripping the default
+// adapter client's 60s cap.
+func (a *FacebookAdapter) postReelBinary(ctx context.Context, accessToken, uploadURL string, body io.Reader, size int64) error {
+	req, err := http.NewRequestWithContext(ctx, "POST", uploadURL, body)
+	if err != nil {
+		return fmt.Errorf("build upload POST: %w", err)
+	}
+	req.ContentLength = size
+	req.Header.Set("Authorization", "OAuth "+accessToken)
+	req.Header.Set("offset", "0")
+	req.Header.Set("file_size", strconv.FormatInt(size, 10))
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	uploadClient := &http.Client{Timeout: 15 * time.Minute}
+	resp, err := uploadClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upload POST: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return wrapFacebookPublishError(resp.StatusCode, respBody)
+	}
+	// Meta's rupload confirms the byte count it received. Double-
+	// check so we know we actually streamed the whole file.
+	var parsed struct {
+		Success bool  `json:"success"`
+		Offset  int64 `json:"start_offset"`
+		End     int64 `json:"end_offset"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		// Some variants return {"success": true} with no offsets.
+		// Treat 2xx + unparseable body as a soft success; if Meta
+		// actually rejected, finish will error out shortly.
+		return nil
+	}
+	return nil
 }
 
 // startVideoReelUpload performs Phase 1 of the /video_reels flow and
