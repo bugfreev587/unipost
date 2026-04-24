@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 import { ApiInlineLink } from "../api/_components/doc-components";
 
@@ -321,14 +322,14 @@ export default function QuickstartPage() {
 
       <h3 id="available-platforms">Available platforms</h3>
       <DocsTable
-        columns={["Platform", "API Value"]}
+        columns={["Platform", "API Value", "Guide"]}
         rows={[
-          ["X / Twitter", "`twitter`"],
-          ["LinkedIn", "`linkedin`"],
-          ["Instagram", "`instagram`"],
-          ["TikTok", "`tiktok`"],
-          ["YouTube", "`youtube`"],
-          ["Bluesky", "`bluesky`"],
+          ["X / Twitter", "`twitter`", <Link key="twitter-guide" href="/docs/platforms/twitter">Twitter/X Guide</Link>],
+          ["LinkedIn", "`linkedin`", <Link key="linkedin-guide" href="/docs/platforms/linkedin">LinkedIn Guide</Link>],
+          ["Instagram", "`instagram`", <Link key="instagram-guide" href="/docs/platforms/instagram">Instagram Guide</Link>],
+          ["TikTok", "`tiktok`", <Link key="tiktok-guide" href="/docs/platforms/tiktok">TikTok Guide</Link>],
+          ["YouTube", "`youtube`", <Link key="youtube-guide" href="/docs/platforms/youtube">YouTube Guide</Link>],
+          ["Bluesky", "`bluesky`", <Link key="bluesky-guide" href="/docs/platforms/bluesky">Bluesky Guide</Link>],
         ]}
       />
 
@@ -347,7 +348,7 @@ export default function QuickstartPage() {
       <p>Add <code>idempotency_key</code> from day one. Retries inside the 24-hour window return the original response instead of posting twice.</p>
 
       <h3 id="creating-draft">Creating a draft</h3>
-      <p>Set <code>status: "draft"</code> when a human should review before publish.</p>
+      <p>Set <code>status: &quot;draft&quot;</code> when a human should review before publish.</p>
       <DocsCodeTabs snippets={DRAFT_SNIPPETS} />
 
       <h2 id="validate-before-publish">Validate before publish</h2>
