@@ -22,9 +22,13 @@ function tryFormatJson(value: string) {
   }
 }
 
-function estimateHeight(text: string) {
+function estimateHeight(text: string, opts?: { min?: number; max?: number; lineHeight?: number; padding?: number }) {
   const lines = text.split("\n").length;
-  return Math.min(Math.max(lines * 20 + 18, 160), 460);
+  const min = opts?.min ?? 160;
+  const max = opts?.max ?? 460;
+  const lineHeight = opts?.lineHeight ?? 20;
+  const padding = opts?.padding ?? 18;
+  return Math.min(Math.max(lines * lineHeight + padding, min), max);
 }
 
 function normalizeMonacoLanguage(value?: string, code?: string): MonacoLanguage {
@@ -143,7 +147,7 @@ export function JsonMonacoViewer({
       }}
     >
       <MonacoEditor
-        height={height ?? estimateHeight(formatted)}
+        height={height ?? estimateHeight(formatted, { min: 168, max: 468, lineHeight: 20, padding: 28 })}
         defaultLanguage="json"
         theme={themeName}
         value={formatted}
@@ -166,10 +170,11 @@ export function JsonMonacoViewer({
           glyphMargin: false,
           overviewRulerBorder: false,
           overviewRulerLanes: 0,
-          padding: { top: 12, bottom: 12 },
+          padding: { top: 14, bottom: 14 },
           fontSize: 13,
           lineHeight: 21,
           fontFamily: "var(--docs-mono, var(--mono), monospace)",
+          wordWrapColumn: 96,
           scrollbar: {
             verticalScrollbarSize: 10,
             horizontalScrollbarSize: 10,
@@ -256,7 +261,7 @@ export function MonacoCodeViewer({
       }}
     >
       <MonacoEditor
-        height={height ?? estimateHeight(value)}
+        height={height ?? estimateHeight(value, { min: 88, max: 436, lineHeight: 21, padding: 30 })}
         defaultLanguage={normalizedLanguage}
         theme={themeName}
         value={value}
@@ -283,10 +288,11 @@ export function MonacoCodeViewer({
           overviewRulerLanes: 0,
           hideCursorInOverviewRuler: true,
           guides: { indentation: false },
-          padding: { top: 10, bottom: 10 },
-          fontSize: 12.5,
-          lineHeight: 19,
+          padding: { top: 14, bottom: 14 },
+          fontSize: 12.75,
+          lineHeight: 21,
           fontFamily: "var(--docs-mono, var(--mono), monospace)",
+          wordWrapColumn: 96,
           scrollbar: {
             verticalScrollbarSize: 8,
             horizontalScrollbarSize: 8,
