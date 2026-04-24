@@ -359,7 +359,7 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 	writeSuccess(w, socialPostResponseFromRow(updated))
 }
 
-// CancelPost handles POST /v1/social-posts/{id}/cancel. Allowed for
+// CancelPost handles POST /v1/posts/{id}/cancel. Allowed for
 // drafts and scheduled posts. Optimistic-locked the same way as
 // reschedule. Cancelled rows are filtered out by the scheduler's
 // WHERE status='scheduled' clause on the next tick — no further
@@ -374,11 +374,11 @@ func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
 	postID := chi.URLParam(r, "id")
 	w.Header().Set("Deprecation", "true")
 	w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
-	w.Header().Set("Link", `</v1/social-posts/`+postID+`>; rel="successor-version"`)
+	w.Header().Set("Link", `</v1/posts/`+postID+`>; rel="successor-version"`)
 	h.cancelSocialPost(w, r, workspaceID, postID)
 }
 
-// UpdateDraft handles PATCH /v1/social-posts/{id} for both drafts and
+// UpdateDraft handles PATCH /v1/posts/{id} for both drafts and
 // scheduled posts. The state machine:
 //
 //   - status='draft'     → caption / media / metadata / scheduled_at all editable

@@ -443,7 +443,7 @@ func (s *AccountsService) ListPage(ctx context.Context, params *ListAccountsPara
 		query["profile_id"] = params.ProfileID
 	}
 	var envelope apiEnvelope[[]SocialAccount]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts", query, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/accounts", query, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &PaginatedAccounts{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
@@ -465,7 +465,7 @@ func (s *AccountsService) Get(ctx context.Context, accountID string) (*SocialAcc
 
 func (s *AccountsService) Connect(ctx context.Context, params *ConnectAccountParams) (*SocialAccount, error) {
 	var envelope apiEnvelope[SocialAccount]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-accounts/connect", nil, params, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/accounts/connect", nil, params, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -473,7 +473,7 @@ func (s *AccountsService) Connect(ctx context.Context, params *ConnectAccountPar
 
 func (s *AccountsService) Disconnect(ctx context.Context, accountID string) (JSONMap, error) {
 	var envelope apiEnvelope[JSONMap]
-	if err := s.client.do(ctx, http.MethodDelete, "/v1/social-accounts/"+accountID, nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodDelete, "/v1/accounts/"+accountID, nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return envelope.Data, nil
@@ -481,7 +481,7 @@ func (s *AccountsService) Disconnect(ctx context.Context, accountID string) (JSO
 
 func (s *AccountsService) Capabilities(ctx context.Context, accountID string) (JSONMap, error) {
 	var envelope apiEnvelope[JSONMap]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts/"+accountID+"/capabilities", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/accounts/"+accountID+"/capabilities", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return envelope.Data, nil
@@ -489,7 +489,7 @@ func (s *AccountsService) Capabilities(ctx context.Context, accountID string) (J
 
 func (s *AccountsService) Health(ctx context.Context, accountID string) (*AccountHealth, error) {
 	var envelope apiEnvelope[AccountHealth]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts/"+accountID+"/health", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/accounts/"+accountID+"/health", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -497,7 +497,7 @@ func (s *AccountsService) Health(ctx context.Context, accountID string) (*Accoun
 
 func (s *AccountsService) TikTokCreatorInfo(ctx context.Context, accountID string) (JSONMap, error) {
 	var envelope apiEnvelope[JSONMap]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts/"+accountID+"/tiktok/creator-info", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/accounts/"+accountID+"/tiktok/creator-info", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return envelope.Data, nil
@@ -505,7 +505,7 @@ func (s *AccountsService) TikTokCreatorInfo(ctx context.Context, accountID strin
 
 func (s *AccountsService) FacebookPageInsights(ctx context.Context, accountID string) (JSONMap, error) {
 	var envelope apiEnvelope[JSONMap]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-accounts/"+accountID+"/facebook/page-insights", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/accounts/"+accountID+"/facebook/page-insights", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return envelope.Data, nil
@@ -821,7 +821,7 @@ func (s *PostsService) List(ctx context.Context, params *ListPostsParams) (*Pagi
 		}
 	}
 	var envelope apiEnvelope[[]Post]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-posts", query, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/posts", query, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	resp := &PaginatedPosts{Data: envelope.Data, Meta: envelope.Meta}
@@ -835,7 +835,7 @@ func (s *PostsService) List(ctx context.Context, params *ListPostsParams) (*Pagi
 
 func (s *PostsService) Get(ctx context.Context, postID string) (*Post, error) {
 	var envelope apiEnvelope[Post]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-posts/"+postID, nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/posts/"+postID, nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -843,7 +843,7 @@ func (s *PostsService) Get(ctx context.Context, postID string) (*Post, error) {
 
 func (s *PostsService) GetQueue(ctx context.Context, postID string) (*PostQueueSnapshot, error) {
 	var envelope apiEnvelope[PostQueueSnapshot]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-posts/"+postID+"/queue", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/posts/"+postID+"/queue", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -855,7 +855,7 @@ func (s *PostsService) Analytics(ctx context.Context, postID string, refresh boo
 		query["refresh"] = "true"
 	}
 	var envelope apiEnvelope[[]PostAnalyticsItem]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/social-posts/"+postID+"/analytics", query, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/posts/"+postID+"/analytics", query, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	if envelope.Data == nil {
@@ -870,7 +870,7 @@ func (s *PostsService) Create(ctx context.Context, params *CreatePostParams) (*P
 		headers["Idempotency-Key"] = params.IdempotencyKey
 	}
 	var envelope apiEnvelope[Post]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts", nil, marshalPostBody(params), &envelope, headers); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts", nil, marshalPostBody(params), &envelope, headers); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -878,7 +878,7 @@ func (s *PostsService) Create(ctx context.Context, params *CreatePostParams) (*P
 
 func (s *PostsService) Validate(ctx context.Context, params *CreatePostParams) (*ValidationResult, error) {
 	var envelope apiEnvelope[ValidationResult]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/validate", nil, marshalPostBody(params), &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts/validate", nil, marshalPostBody(params), &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -886,7 +886,7 @@ func (s *PostsService) Validate(ctx context.Context, params *CreatePostParams) (
 
 func (s *PostsService) Publish(ctx context.Context, postID string) (*Post, error) {
 	var envelope apiEnvelope[Post]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/publish", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts/"+postID+"/publish", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -894,7 +894,7 @@ func (s *PostsService) Publish(ctx context.Context, postID string) (*Post, error
 
 func (s *PostsService) Update(ctx context.Context, postID string, params *UpdatePostParams) (*Post, error) {
 	var envelope apiEnvelope[Post]
-	if err := s.client.do(ctx, http.MethodPatch, "/v1/social-posts/"+postID, nil, marshalUpdatePostBody(params), &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPatch, "/v1/posts/"+postID, nil, marshalUpdatePostBody(params), &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -902,7 +902,7 @@ func (s *PostsService) Update(ctx context.Context, postID string, params *Update
 
 func (s *PostsService) Archive(ctx context.Context, postID string) (*Post, error) {
 	var envelope apiEnvelope[Post]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/archive", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts/"+postID+"/archive", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -910,7 +910,7 @@ func (s *PostsService) Archive(ctx context.Context, postID string) (*Post, error
 
 func (s *PostsService) Restore(ctx context.Context, postID string) (*Post, error) {
 	var envelope apiEnvelope[Post]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/restore", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts/"+postID+"/restore", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -918,19 +918,19 @@ func (s *PostsService) Restore(ctx context.Context, postID string) (*Post, error
 
 func (s *PostsService) Cancel(ctx context.Context, postID string) (*Post, error) {
 	var envelope apiEnvelope[Post]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/cancel", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts/"+postID+"/cancel", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
 }
 
 func (s *PostsService) Delete(ctx context.Context, postID string) error {
-	return s.client.do(ctx, http.MethodDelete, "/v1/social-posts/"+postID, nil, nil, nil, nil)
+	return s.client.do(ctx, http.MethodDelete, "/v1/posts/"+postID, nil, nil, nil, nil)
 }
 
 func (s *PostsService) PreviewLink(ctx context.Context, postID string) (*PostPreviewLink, error) {
 	var envelope apiEnvelope[PostPreviewLink]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/preview-link", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts/"+postID+"/preview-link", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -938,7 +938,7 @@ func (s *PostsService) PreviewLink(ctx context.Context, postID string) (*PostPre
 
 func (s *PostsService) RetryResult(ctx context.Context, postID, resultID string) (*PlatformResult, error) {
 	var envelope apiEnvelope[PlatformResult]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/"+postID+"/results/"+resultID+"/retry", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts/"+postID+"/results/"+resultID+"/retry", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -951,7 +951,7 @@ func (s *PostsService) BulkCreate(ctx context.Context, posts []*CreatePostParams
 	}
 	payload := map[string]any{"posts": body}
 	var envelope apiEnvelope[[]BulkPostResult]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/social-posts/bulk", nil, payload, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/posts/bulk", nil, payload, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return envelope.Data, nil

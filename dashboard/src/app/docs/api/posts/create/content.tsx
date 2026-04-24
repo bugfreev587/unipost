@@ -67,7 +67,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "status?",
     type: '"draft"',
-    description: <>Set to <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code> to save without dispatching any platform jobs. Drafts are published later via <ApiInlineLink endpoint="POST /v1/social-posts/:post_id/publish" />.</>,
+    description: <>Set to <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code> to save without dispatching any platform jobs. Drafts are published later via <ApiInlineLink endpoint="POST /v1/posts/:post_id/publish" />.</>,
   },
 ];
 
@@ -231,7 +231,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl -X POST "https://api.unipost.dev/v1/social-posts" \\
+    code: `curl -X POST "https://api.unipost.dev/v1/posts" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -H "Idempotency-Key: launch-day-2026-04-22" \\
@@ -420,9 +420,9 @@ export function CreatePostContent() {
     <SingleEndpointReferencePage
       section="publishing"
       title="Create post"
-      description={<>Creates a UniPost post resource using the same payload shape as <ApiInlineLink endpoint="POST /v1/social-posts/validate" />. Immediate publish requests are accepted and queued asynchronously; background workers perform the actual platform delivery. Use scheduling or draft mode when you want creation without immediate dispatch.</>}
+      description={<>Creates a UniPost post resource using the same payload shape as <ApiInlineLink endpoint="POST /v1/posts/validate" />. Immediate publish requests are accepted and queued asynchronously; background workers perform the actual platform delivery. Use scheduling or draft mode when you want creation without immediate dispatch.</>}
       method="POST"
-      path="/v1/social-posts"
+      path="/v1/posts"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Request Body", items: BODY_FIELDS },
@@ -445,19 +445,19 @@ export function CreatePostContent() {
           Immediate publish is asynchronous. A successful create response means UniPost accepted the request, created per-account result rows, and enqueued delivery jobs. It does not guarantee every destination already published.
         </p>
         <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: "0 0 18px" }}>
-          To observe final outcome, poll <ApiInlineLink endpoint="GET /v1/social-posts/:post_id" />. If you need queue-level progress, use <ApiInlineLink endpoint="GET /v1/social-posts/:post_id/queue" />. For push delivery, subscribe to webhook events such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.partial</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.failed</code>.
+          To observe final outcome, poll <ApiInlineLink endpoint="GET /v1/posts/:post_id" />. If you need queue-level progress, use <ApiInlineLink endpoint="GET /v1/posts/:post_id/queue" />. For push delivery, subscribe to webhook events such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.partial</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.failed</code>.
         </p>
         <RelatedEndpoints
           items={[
-            { method: "POST", path: "/v1/social-posts/validate", label: "Validate post", href: "/docs/api/posts/validate" },
-            { method: "GET", path: "/v1/social-posts", label: "List posts", href: "/docs/api/posts/list" },
-            { method: "GET", path: "/v1/social-posts/:post_id", label: "Get post", href: "/docs/api/posts/get" },
-            { method: "POST", path: "/v1/social-posts/bulk", label: "Bulk publish", href: "/docs/api/posts/bulk" },
-            { method: "GET", path: "/v1/social-posts/:post_id/analytics", label: "Post analytics", href: "/docs/api/analytics/posts" },
+            { method: "POST", path: "/v1/posts/validate", label: "Validate post", href: "/docs/api/posts/validate" },
+            { method: "GET", path: "/v1/posts", label: "List posts", href: "/docs/api/posts/list" },
+            { method: "GET", path: "/v1/posts/:post_id", label: "Get post", href: "/docs/api/posts/get" },
+            { method: "POST", path: "/v1/posts/bulk", label: "Bulk publish", href: "/docs/api/posts/bulk" },
+            { method: "GET", path: "/v1/posts/:post_id/analytics", label: "Post analytics", href: "/docs/api/analytics/posts" },
             { method: "GET", path: "/v1/webhooks", label: "List webhooks", href: "/docs/api/webhooks" },
             { method: "POST", path: "/v1/media", label: "Reserve media upload", href: "/docs/api/media/reserve" },
             { method: "GET", path: "/v1/media/:media_id", label: "Get media", href: "/docs/api/media/get" },
-            { method: "GET", path: "/v1/social-accounts", label: "List accounts", href: "/docs/api/accounts/list" },
+            { method: "GET", path: "/v1/accounts", label: "List accounts", href: "/docs/api/accounts/list" },
           ]}
         />
       </div>

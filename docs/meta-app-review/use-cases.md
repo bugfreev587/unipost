@@ -30,7 +30,7 @@ the only data we touch and it's stored as a string in our
 
 **Data flow:** Instagram → UniPost API → Customer dashboard. No
 third party. No advertising. Account data is encrypted at rest
-and deleted on disconnect via our standard `DELETE /v1/social-accounts/{id}`
+and deleted on disconnect via our standard `DELETE /v1/accounts/{id}`
 endpoint OR via Meta's data deletion callback at
 `POST /v1/meta/data-deletion`.
 
@@ -42,7 +42,7 @@ UniPost's customers use the Content Publishing API to publish
 content their end users have composed in the customer's own
 product. The end user authorizes UniPost to publish on their
 behalf via Meta's standard OAuth flow; the customer's product
-calls UniPost's `POST /v1/social-posts` endpoint with the
+calls UniPost's `POST /v1/posts` endpoint with the
 caption + media URLs; UniPost in turn calls
 `POST /{ig-user-id}/media` and `POST /{ig-user-id}/media_publish`
 on the user's behalf.
@@ -87,7 +87,7 @@ that apply to Instagram apply to Threads.
 
 Identical use case to `instagram_content_publish`. End users
 authorize UniPost via Threads' OAuth flow; the customer's product
-calls `POST /v1/social-posts` with caption + optional media; UniPost
+calls `POST /v1/posts` with caption + optional media; UniPost
 calls Threads' Graph API on the user's behalf using the user's
 access token.
 

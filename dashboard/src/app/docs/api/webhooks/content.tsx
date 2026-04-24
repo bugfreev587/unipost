@@ -211,9 +211,9 @@ export function WebhooksContent() {
       {/* Related */}
       <DocSection id="related" title="Related">
         <RelatedEndpoints items={[
-          { method: "POST", path: "/v1/social-posts", label: "Create post (triggers post.published)", href: "/docs/api/posts/create" },
+          { method: "POST", path: "/v1/posts", label: "Create post (triggers post.published)", href: "/docs/api/posts/create" },
           { method: "POST", path: "/v1/connect/sessions", label: "Connect session (triggers account.connected)", href: "/docs/api/connect/sessions" },
-          { method: "GET", path: "/v1/social-accounts", label: "List accounts", href: "/docs/api/accounts/list" },
+          { method: "GET", path: "/v1/accounts", label: "List accounts", href: "/docs/api/accounts/list" },
         ]} />
       </DocSection>
 

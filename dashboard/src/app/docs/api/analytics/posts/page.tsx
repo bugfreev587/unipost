@@ -30,7 +30,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-posts/post_abc123/analytics" \\
+    code: `curl "https://api.unipost.dev/v1/posts/post_abc123/analytics" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -82,7 +82,7 @@ export default function PostAnalyticsPage() {
       title="Post analytics"
       description="Returns normalized analytics metrics for one social post. Use it when your UI needs a detailed post-level performance view."
       method="GET"
-      path="/v1/social-posts/:post_id/analytics"
+      path="/v1/posts/:post_id/analytics"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },

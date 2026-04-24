@@ -36,7 +36,7 @@ This is still fixable with low risk because UniPost does not yet have external A
 Observed patterns in [main.go](/Users/xiaoboyu/unipost/api/cmd/api/main.go):
 
 - public API-style routes:
-  - `/v1/social-posts`
+  - `/v1/posts`
   - `/v1/media`
   - `/v1/webhooks`
 - dashboard/session routes:
@@ -63,7 +63,7 @@ Recommendation:
 
 Examples:
 
-- `/v1/social-posts`
+- `/v1/posts`
 - `/v1/workspaces/{workspaceID}/social-posts`
 
 - `/v1/media`
@@ -167,10 +167,10 @@ Examples:
 
 - `/v1/workspace`
 - `/v1/profiles`
-- `/v1/social-accounts`
+- `/v1/accounts`
 - `/v1/media`
 - `/v1/connect/sessions`
-- `/v1/social-posts`
+- `/v1/posts`
 - `/v1/users`
 - `/v1/analytics/*`
 - `/v1/webhooks`
@@ -236,17 +236,17 @@ Canonical public routes:
 - `/v1/workspace`
 - `/v1/profiles`
 - `/v1/profiles/{id}`
-- `/v1/social-accounts`
-- `/v1/social-accounts/{id}`
+- `/v1/accounts`
+- `/v1/accounts/{id}`
 - `/v1/media`
 - `/v1/media/{id}`
-- `/v1/social-posts`
-- `/v1/social-posts/{id}`
-- `/v1/social-posts/{id}/queue`
-- `/v1/social-posts/{id}/results/{result_id}/retry`
-- `/v1/social-posts/{id}/publish`
-- `/v1/social-posts/{id}/cancel`
-- `/v1/social-posts/bulk`
+- `/v1/posts`
+- `/v1/posts/{id}`
+- `/v1/posts/{id}/queue`
+- `/v1/posts/{id}/results/{result_id}/retry`
+- `/v1/posts/{id}/publish`
+- `/v1/posts/{id}/cancel`
+- `/v1/posts/bulk`
 - `/v1/connect/sessions`
 - `/v1/connect/sessions/{id}`
 - `/v1/users`
@@ -415,8 +415,8 @@ UniPost's biggest product strength is async publish. It should also become one o
 For async publish:
 
 - create post returns queued or publishing state
-- `GET /v1/social-posts/{id}` returns aggregate state
-- `GET /v1/social-posts/{id}/queue` returns execution detail
+- `GET /v1/posts/{id}` returns aggregate state
+- `GET /v1/posts/{id}/queue` returns execution detail
 - webhook emits terminal aggregate outcome
 
 This is already close in implementation and mostly needs formal standardization.
@@ -469,7 +469,7 @@ Repository state:
 
 Live validation against `https://api.unipost.dev` on April 23, 2026 found that some deployed endpoints still do not return the new list metadata shape:
 
-- `GET /v1/social-accounts`
+- `GET /v1/accounts`
 - `GET /v1/webhooks`
 
 Observed SDK validation failures:

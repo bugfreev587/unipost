@@ -302,7 +302,7 @@ class Accounts {
     if (params?.externalUserId) query.external_user_id = params.externalUserId;
     if (params?.status) query.status = params.status;
     if (params?.profileId) query.profile_id = params.profileId;
-    return this.http.get("/v1/social-accounts", query);
+    return this.http.get("/v1/accounts", query);
   }
 
   async get(accountId) {
@@ -315,7 +315,7 @@ class Accounts {
   }
 
   async connect(params = {}) {
-    const response = await this.http.post("/v1/social-accounts/connect", {
+    const response = await this.http.post("/v1/accounts/connect", {
       profile_id: params.profileId,
       platform: params.platform,
       credentials: params.credentials,
@@ -324,27 +324,27 @@ class Accounts {
   }
 
   async disconnect(accountId) {
-    const response = await this.http.delete(`/v1/social-accounts/${accountId}`);
+    const response = await this.http.delete(`/v1/accounts/${accountId}`);
     return response?.data ?? response;
   }
 
   async capabilities(accountId) {
-    const response = await this.http.get(`/v1/social-accounts/${accountId}/capabilities`);
+    const response = await this.http.get(`/v1/accounts/${accountId}/capabilities`);
     return response.data;
   }
 
   async health(accountId) {
-    const response = await this.http.get(`/v1/social-accounts/${accountId}/health`);
+    const response = await this.http.get(`/v1/accounts/${accountId}/health`);
     return response.data;
   }
 
   async tikTokCreatorInfo(accountId) {
-    const response = await this.http.get(`/v1/social-accounts/${accountId}/tiktok/creator-info`);
+    const response = await this.http.get(`/v1/accounts/${accountId}/tiktok/creator-info`);
     return response.data;
   }
 
   async facebookPageInsights(accountId) {
-    const response = await this.http.get(`/v1/social-accounts/${accountId}/facebook/page-insights`);
+    const response = await this.http.get(`/v1/accounts/${accountId}/facebook/page-insights`);
     return response.data;
   }
 }
@@ -405,12 +405,12 @@ class Posts {
     if (params.idempotencyKey) {
       headers["Idempotency-Key"] = params.idempotencyKey;
     }
-    const response = await this.http.post("/v1/social-posts", toSnakeCase(params), headers);
+    const response = await this.http.post("/v1/posts", toSnakeCase(params), headers);
     return response.data;
   }
 
   async validate(params) {
-    const response = await this.http.post("/v1/social-posts/validate", toSnakeCase(params));
+    const response = await this.http.post("/v1/posts/validate", toSnakeCase(params));
     return response.data;
   }
 
@@ -422,7 +422,7 @@ class Posts {
     if (params?.to) query.to = params.to;
     if (params?.limit) query.limit = params.limit;
     if (params?.cursor) query.cursor = params.cursor;
-    const response = await this.http.get("/v1/social-posts", query);
+    const response = await this.http.get("/v1/posts", query);
     const nextCursor = response?.meta?.next_cursor ?? response?.next_cursor;
     return {
       ...response,
@@ -442,59 +442,59 @@ class Posts {
   }
 
   async get(postId) {
-    const response = await this.http.get(`/v1/social-posts/${postId}`);
+    const response = await this.http.get(`/v1/posts/${postId}`);
     return response.data;
   }
 
   async getQueue(postId) {
-    const response = await this.http.get(`/v1/social-posts/${postId}/queue`);
+    const response = await this.http.get(`/v1/posts/${postId}/queue`);
     return response.data;
   }
 
   async analytics(postId, params = {}) {
-    const response = await this.http.get(`/v1/social-posts/${postId}/analytics`, compactObject({
+    const response = await this.http.get(`/v1/posts/${postId}/analytics`, compactObject({
       refresh: params.refresh,
     }));
     return response.data;
   }
 
   async publish(postId) {
-    const response = await this.http.post(`/v1/social-posts/${postId}/publish`);
+    const response = await this.http.post(`/v1/posts/${postId}/publish`);
     return response.data;
   }
 
   async update(postId, params = {}) {
-    const response = await this.http.patch(`/v1/social-posts/${postId}`, toSnakeCase(params));
+    const response = await this.http.patch(`/v1/posts/${postId}`, toSnakeCase(params));
     return response.data;
   }
 
   async archive(postId) {
-    const response = await this.http.post(`/v1/social-posts/${postId}/archive`);
+    const response = await this.http.post(`/v1/posts/${postId}/archive`);
     return response.data;
   }
 
   async restore(postId) {
-    const response = await this.http.post(`/v1/social-posts/${postId}/restore`);
+    const response = await this.http.post(`/v1/posts/${postId}/restore`);
     return response.data;
   }
 
   async cancel(postId) {
-    const response = await this.http.post(`/v1/social-posts/${postId}/cancel`);
+    const response = await this.http.post(`/v1/posts/${postId}/cancel`);
     return response.data;
   }
 
   async delete(postId) {
-    const response = await this.http.delete(`/v1/social-posts/${postId}`);
+    const response = await this.http.delete(`/v1/posts/${postId}`);
     return response?.data ?? response;
   }
 
   async previewLink(postId) {
-    const response = await this.http.post(`/v1/social-posts/${postId}/preview-link`);
+    const response = await this.http.post(`/v1/posts/${postId}/preview-link`);
     return response.data;
   }
 
   async retryResult(postId, resultId) {
-    const response = await this.http.post(`/v1/social-posts/${postId}/results/${resultId}/retry`);
+    const response = await this.http.post(`/v1/posts/${postId}/results/${resultId}/retry`);
     return response.data;
   }
 
@@ -502,7 +502,7 @@ class Posts {
     const body = {
       posts: posts.map((post) => toSnakeCase(post)),
     };
-    const response = await this.http.post("/v1/social-posts/bulk", body);
+    const response = await this.http.post("/v1/posts/bulk", body);
     return response.data;
   }
 }

@@ -288,7 +288,7 @@ GET /v1/accounts?profile_id=  → Filter by Profile
 ### 5.4 Social Posts API Changes
 
 ```
-POST /v1/social-posts
+POST /v1/posts
   body: {
     caption: "...",
     account_ids: ["sa_xxx", "sa_yyy"],  // Can span Profiles within same Workspace
@@ -310,11 +310,11 @@ Note: No project_id / profile_id parameter needed.
 ```
 Removed:
   - All project_id parameters across all APIs
-  - POST /v1/social-posts profile_id parameter (if any)
+  - POST /v1/posts profile_id parameter (if any)
 
 Added:
   - GET /v1/accounts?profile_id= (filter accounts by Profile)
-  - GET /v1/social-posts?profile_id= (filter posts by Profile, via account JOIN)
+  - GET /v1/posts?profile_id= (filter posts by Profile, via account JOIN)
 ```
 
 Note on `?profile_id=` post filtering: Since posts belong to Workspace (not Profile),
@@ -537,7 +537,7 @@ Total: ~6.5 working days
 **API layer:**
 ```
 □ GET /v1/profiles returns Profiles under current Workspace
-□ POST /v1/social-posts account_ids can span Profiles
+□ POST /v1/posts account_ids can span Profiles
 □ Cross-Profile account_ids allowed within same Workspace
 □ Mixed-Workspace account_ids returns 403
 □ API Key effective at Workspace level (not bound to single Profile)

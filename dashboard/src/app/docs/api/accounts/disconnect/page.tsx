@@ -27,7 +27,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl -X DELETE "https://api.unipost.dev/v1/social-accounts/sa_twitter_123" \\
+    code: `curl -X DELETE "https://api.unipost.dev/v1/accounts/sa_twitter_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -75,7 +75,7 @@ export default function DisconnectAccountPage() {
       title="Disconnect account"
       description="Disconnects one social account from your workspace. UniPost also emits the account.disconnected developer webhook event when this succeeds."
       method="DELETE"
-      path="/v1/social-accounts/:account_id"
+      path="/v1/accounts/:account_id"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },

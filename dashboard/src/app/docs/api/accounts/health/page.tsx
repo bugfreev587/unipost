@@ -106,7 +106,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-accounts/sa_twitter_1/health" \\
+    code: `curl "https://api.unipost.dev/v1/accounts/sa_twitter_1/health" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -175,22 +175,22 @@ export default function AccountHealthPage() {
           <div style={{ display: "grid", gap: 16 }}>
             <ApiRequestConfigCard
               method="GET"
-              path="/v1/social-accounts/:account_id/health"
-              requestPathTemplate="/v1/social-accounts/:account_id/health"
+              path="/v1/accounts/:account_id/health"
+              requestPathTemplate="/v1/accounts/:account_id/health"
               baseUrl="https://api.unipost.dev"
               authFields={AUTH_FIELDS}
               pathFields={PATH_FIELDS}
               useMonacoForJsonResponse
             />
 
-            <ApiEndpointCard method="GET" path="/v1/social-accounts/:account_id/health">
+            <ApiEndpointCard method="GET" path="/v1/accounts/:account_id/health">
               <div style={{ padding: "16px 18px" }}>
                 <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
-                <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/social-accounts/:account_id/health</code>
+                <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/accounts/:account_id/health</code>
               </div>
             </ApiEndpointCard>
 
-            <ApiEndpointCard method="GET" path="/v1/social-accounts/:account_id/health">
+            <ApiEndpointCard method="GET" path="/v1/accounts/:account_id/health">
               <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
                 <ApiFieldList items={AUTH_FIELDS} />
@@ -201,7 +201,7 @@ export default function AccountHealthPage() {
               </div>
             </ApiEndpointCard>
 
-            <ApiEndpointCard method="GET" path="/v1/social-accounts/:account_id/health">
+            <ApiEndpointCard method="GET" path="/v1/accounts/:account_id/health">
               <div style={{ padding: "18px 18px 4px" }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
               </div>

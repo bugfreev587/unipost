@@ -113,7 +113,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-accounts?platform=instagram" \\
+    code: `curl "https://api.unipost.dev/v1/accounts?platform=instagram" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -221,7 +221,7 @@ export function ListAccountsContent() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "TechArticle",
-            name: "UniPost API — GET /v1/social-accounts",
+            name: "UniPost API — GET /v1/accounts",
             description: "List connected social media accounts",
             url: "https://unipost.dev/docs/api/accounts/list",
             author: { "@type": "Organization", name: "UniPost" },
@@ -241,22 +241,22 @@ export function ListAccountsContent() {
               <div style={{ display: "grid", gap: 16 }}>
                 <ApiRequestConfigCard
                   method="GET"
-                  path="/v1/social-accounts"
-                  requestPathTemplate="/v1/social-accounts?{platform}&{external_user_id}"
+                  path="/v1/accounts"
+                  requestPathTemplate="/v1/accounts?{platform}&{external_user_id}"
                   baseUrl="https://api.unipost.dev"
                   authFields={AUTH_FIELDS}
                   queryFields={QUERY_FIELDS}
                   useMonacoForJsonResponse
                 />
 
-                <ApiEndpointCard method="GET" path="/v1/social-accounts">
+                <ApiEndpointCard method="GET" path="/v1/accounts">
                   <div style={{ padding: "16px 18px" }}>
                     <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
-                    <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/social-accounts</code>
+                    <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/accounts</code>
                   </div>
                 </ApiEndpointCard>
 
-                <ApiEndpointCard method="GET" path="/v1/social-accounts">
+                <ApiEndpointCard method="GET" path="/v1/accounts">
                   <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
                     <ApiFieldList items={AUTH_FIELDS} />
@@ -267,7 +267,7 @@ export function ListAccountsContent() {
                   </div>
                 </ApiEndpointCard>
 
-                <ApiEndpointCard method="GET" path="/v1/social-accounts">
+                <ApiEndpointCard method="GET" path="/v1/accounts">
                   <div style={{ padding: "18px 18px 4px" }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
                   </div>

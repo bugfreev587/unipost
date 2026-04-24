@@ -150,7 +150,7 @@ function buildSnippet(
 
   switch (lang) {
     case "curl":
-      return `curl -X POST "${apiBase}/v1/social-posts" \\
+      return `curl -X POST "${apiBase}/v1/posts" \\
   -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{

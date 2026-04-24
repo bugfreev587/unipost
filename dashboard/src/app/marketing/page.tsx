@@ -33,7 +33,7 @@ const PLATFORMS = [
 ];
 const FEATURES = [
   { number: "01", title: "Connect end users, not just your own accounts", desc: "UniPost is built for products that onboard customer social accounts. Create branded Connect flows, map accounts to your own external_user_id, and keep the OAuth surface out of your app.", code: `POST /v1/connect/sessions\n{\n  "platform": "linkedin",\n  "external_user_id": "user_123",\n  "return_url": "https://app.example.com/settings"\n}` },
-  { number: "02", title: "Validate, preview, then publish", desc: "Catch bad payloads before publish time, generate read-only preview links for review, and ship with more confidence when you are posting across multiple platforms and users.", code: `POST /v1/social-posts/validate\nPOST /v1/drafts\nGET  /v1/public/drafts/{id}?token=...` },
+  { number: "02", title: "Validate, preview, then publish", desc: "Catch bad payloads before publish time, generate read-only preview links for review, and ship with more confidence when you are posting across multiple platforms and users.", code: `POST /v1/posts/validate\nPOST /v1/drafts\nGET  /v1/public/drafts/{id}?token=...` },
   { number: "03", title: "AI and automation ready by default", desc: "Per-platform captions, managed uploads, idempotency keys, MCP support, and bulk publish are already in the product. UniPost fits AI agents and workflow systems without forcing them into a single-caption model.", code: `POST /v1/media\nPUT  {upload_url}\n{\n  "platform_posts": [\n    { "account_id": "sa_x", "media_ids": ["med_image_1"] },\n    { "account_id": "sa_yt", "media_ids": ["med_video_1"] }\n  ]\n}` },
 ];
 const CAPABILITIES = [

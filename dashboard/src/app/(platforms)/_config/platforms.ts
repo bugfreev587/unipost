@@ -76,7 +76,7 @@ export const instagram: PlatformConfig = {
 
   codeExample: {
     js: `const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
+  'https://api.unipost.dev/v1/posts',
   {
     method: 'POST',
     headers: {
@@ -105,7 +105,7 @@ export const instagram: PlatformConfig = {
     python: `import requests
 
 response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
+    'https://api.unipost.dev/v1/posts',
     headers={
         'Authorization': 'Bearer up_live_xxx',
         'Content-Type': 'application/json',
@@ -119,7 +119,7 @@ response = requests.post(
 
 data = response.json()['data']
 print(data['id'])  # post_abc123`,
-    curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+    curl: `curl -X POST https://api.unipost.dev/v1/posts \\
   -H "Authorization: Bearer up_live_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -220,7 +220,7 @@ export const linkedin: PlatformConfig = {
 
   codeExample: {
     js: `const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
+  'https://api.unipost.dev/v1/posts',
   {
     method: 'POST',
     headers: {
@@ -237,7 +237,7 @@ export const linkedin: PlatformConfig = {
     python: `import requests
 
 response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
+    'https://api.unipost.dev/v1/posts',
     headers={
         'Authorization': 'Bearer up_live_xxx',
         'Content-Type': 'application/json',
@@ -248,7 +248,7 @@ response = requests.post(
         'media_urls': ['https://example.com/banner.jpg'],
     }
 )`,
-    curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+    curl: `curl -X POST https://api.unipost.dev/v1/posts \\
   -H "Authorization: Bearer up_live_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -314,7 +314,7 @@ response = requests.post(
 
   faq: [
     { q: "Can I post to LinkedIn Company Pages?", a: "Yes, if your account has admin access to the page. Connect the page via OAuth and use its account_id in API calls." },
-    { q: "Does LinkedIn support video posts?", a: "Yes. UniPost supports LinkedIn text, image, and single-video posts through the same POST /v1/social-posts endpoint." },
+    { q: "Does LinkedIn support video posts?", a: "Yes. UniPost supports LinkedIn text, image, and single-video posts through the same POST /v1/posts endpoint." },
     { q: "How do I publish a local image or video file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "Do I need LinkedIn developer access?", a: "In Quickstart mode, no — UniPost's credentials handle everything. In White-label mode, you'll need your own LinkedIn app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your LinkedIn account via OAuth and start posting immediately." },
@@ -350,7 +350,7 @@ export const twitter: PlatformConfig = {
 
   codeExample: {
     js: `const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
+  'https://api.unipost.dev/v1/posts',
   {
     method: 'POST',
     headers: {
@@ -367,7 +367,7 @@ export const twitter: PlatformConfig = {
     python: `import requests
 
 response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
+    'https://api.unipost.dev/v1/posts',
     headers={
         'Authorization': 'Bearer up_live_xxx',
         'Content-Type': 'application/json',
@@ -378,7 +378,7 @@ response = requests.post(
         'media_urls': ['https://example.com/screenshot.png'],
     }
 )`,
-    curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+    curl: `curl -X POST https://api.unipost.dev/v1/posts \\
   -H "Authorization: Bearer up_live_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -478,7 +478,7 @@ export const tiktok: PlatformConfig = {
 
   codeExample: {
     js: `const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
+  'https://api.unipost.dev/v1/posts',
   {
     method: 'POST',
     headers: {
@@ -495,7 +495,7 @@ export const tiktok: PlatformConfig = {
     python: `import requests
 
 response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
+    'https://api.unipost.dev/v1/posts',
     headers={
         'Authorization': 'Bearer up_live_xxx',
         'Content-Type': 'application/json',
@@ -506,7 +506,7 @@ response = requests.post(
         'media_urls': ['https://example.com/demo.mp4'],
     }
 )`,
-    curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+    curl: `curl -X POST https://api.unipost.dev/v1/posts \\
   -H "Authorization: Bearer up_live_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -606,7 +606,7 @@ export const youtube: PlatformConfig = {
 
   codeExample: {
     js: `const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
+  'https://api.unipost.dev/v1/posts',
   {
     method: 'POST',
     headers: {
@@ -623,7 +623,7 @@ export const youtube: PlatformConfig = {
     python: `import requests
 
 response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
+    'https://api.unipost.dev/v1/posts',
     headers={
         'Authorization': 'Bearer up_live_xxx',
         'Content-Type': 'application/json',
@@ -634,7 +634,7 @@ response = requests.post(
         'media_urls': ['https://example.com/tutorial.mp4'],
     }
 )`,
-    curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+    curl: `curl -X POST https://api.unipost.dev/v1/posts \\
   -H "Authorization: Bearer up_live_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -733,7 +733,7 @@ export const bluesky: PlatformConfig = {
 
   codeExample: {
     js: `const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
+  'https://api.unipost.dev/v1/posts',
   {
     method: 'POST',
     headers: {
@@ -749,7 +749,7 @@ export const bluesky: PlatformConfig = {
     python: `import requests
 
 response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
+    'https://api.unipost.dev/v1/posts',
     headers={
         'Authorization': 'Bearer up_live_xxx',
         'Content-Type': 'application/json',
@@ -759,7 +759,7 @@ response = requests.post(
         'account_ids': ['sa_bluesky_101'],
     }
 )`,
-    curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+    curl: `curl -X POST https://api.unipost.dev/v1/posts \\
   -H "Authorization: Bearer up_live_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -863,7 +863,7 @@ export const threads: PlatformConfig = {
 
   codeExample: {
     js: `const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
+  'https://api.unipost.dev/v1/posts',
   {
     method: 'POST',
     headers: {
@@ -879,7 +879,7 @@ export const threads: PlatformConfig = {
     python: `import requests
 
 response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
+    'https://api.unipost.dev/v1/posts',
     headers={
         'Authorization': 'Bearer up_live_xxx',
         'Content-Type': 'application/json',
@@ -889,7 +889,7 @@ response = requests.post(
         'account_ids': ['sa_threads_202'],
     }
 )`,
-    curl: `curl -X POST https://api.unipost.dev/v1/social-posts \\
+    curl: `curl -X POST https://api.unipost.dev/v1/posts \\
   -H "Authorization: Bearer up_live_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{

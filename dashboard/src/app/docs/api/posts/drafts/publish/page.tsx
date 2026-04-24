@@ -79,7 +79,7 @@ export default function PublishDraftPage() {
       title="Publish draft"
       description="Accepts an existing draft for publication. UniPost flips the draft into a publishable state, creates result rows, and enqueues background delivery jobs."
       method="POST"
-      path="/v1/social-posts/:post_id/publish"
+      path="/v1/posts/:post_id/publish"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },

@@ -52,7 +52,7 @@ const AUTH_SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-accounts" \\
+    code: `curl "https://api.unipost.dev/v1/accounts" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {

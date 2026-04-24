@@ -71,7 +71,7 @@ export const AYRSHARE = {
   },
   migrationEndpoint: {
     from: "api.ayrshare.com/api/post",
-    to: "api.unipost.dev/v1/social-posts",
+    to: "api.unipost.dev/v1/posts",
   },
   migrationFields: {
     from: 'platforms: ["instagram"]',

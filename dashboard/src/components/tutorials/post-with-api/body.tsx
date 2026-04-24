@@ -140,7 +140,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
     if (keyState.kind !== "ready" || !account) return;
     setSendState({ kind: "sending" });
     try {
-      const res = await fetch(`${API_BASE}/v1/social-posts`, {
+      const res = await fetch(`${API_BASE}/v1/posts`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

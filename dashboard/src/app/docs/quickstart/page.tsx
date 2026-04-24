@@ -269,7 +269,7 @@ export default function QuickstartPage() {
       <p>Add <code>idempotency_key</code> from day one. If you retry the same request within 24 hours, UniPost returns the original response instead of double-posting.</p>
 
       <h2 id="step-5">5. Validate before publish</h2>
-      <p>Before any automated publish path, call Validate with the same body you plan to send to <ApiInlineLink endpoint="POST /v1/social-posts" />. UniPost catches caption overages, unsupported media combinations, and platform-specific field conflicts before the request writes anything.</p>
+      <p>Before any automated publish path, call Validate with the same body you plan to send to <ApiInlineLink endpoint="POST /v1/posts" />. UniPost catches caption overages, unsupported media combinations, and platform-specific field conflicts before the request writes anything.</p>
       <DocsCodeTabs snippets={VALIDATE_SNIPPETS} />
 
       <h2 id="what-next">What to add next</h2>

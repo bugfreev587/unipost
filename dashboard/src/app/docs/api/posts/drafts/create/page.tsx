@@ -75,7 +75,7 @@ export default function CreateDraftPage() {
       title="Create draft"
       description="Creates a saved draft post. Use it when content should be reviewed or approved before it is published."
       method="POST"
-      path="/v1/social-posts"
+      path="/v1/posts"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Request Body", items: BODY_FIELDS },

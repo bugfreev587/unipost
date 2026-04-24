@@ -459,7 +459,7 @@ const PLATFORMS: Record<string, PlatformDoc> = {
     }
   }
 }`,
-        note: "`med_uploaded_video_1` is a placeholder for the media ID returned by `POST /v1/media` after you reserve the upload and PUT the video bytes to UniPost storage. See the Media API reference for the upload step before calling `POST /v1/social-posts`.",
+        note: "`med_uploaded_video_1` is a placeholder for the media ID returned by `POST /v1/media` after you reserve the upload and PUT the video bytes to UniPost storage. See the Media API reference for the upload step before calling `POST /v1/posts`.",
       },
       {
         title: "Scheduled private upload with playlist insertion",
@@ -532,7 +532,7 @@ export default async function PlatformDetailPage({
       ) : null}
 
       <h2 id="examples">Example requests</h2>
-      <p>The examples below are intentionally small and copyable. They show the request body only, assuming a standard <ApiInlineLink endpoint="POST /v1/social-posts" /> call with Bearer auth.</p>
+      <p>The examples below are intentionally small and copyable. They show the request body only, assuming a standard <ApiInlineLink endpoint="POST /v1/posts" /> call with Bearer auth.</p>
           {data.examples.map((example) => (
         <div key={example.title}>
           <h3 id={example.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}>{example.title}</h3>

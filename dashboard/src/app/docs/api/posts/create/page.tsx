@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { CreatePostContent } from "./content";
 
 export const metadata: Metadata = {
-  title: "POST /v1/social-posts — Create Social Post | UniPost API Docs",
+  title: "POST /v1/posts — Create Social Post | UniPost API Docs",
   description: "Publish content to Instagram, LinkedIn, Twitter, TikTok, YouTube, Bluesky, and Threads with a single API call. Full reference with code examples in JavaScript, Python, Go, and cURL.",
   keywords: [
     "unipost api post",

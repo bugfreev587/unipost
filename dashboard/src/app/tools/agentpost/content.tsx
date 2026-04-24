@@ -71,7 +71,7 @@ interface PublishResult { social_account_id: string; platform: string; account_n
 
 // ── API helpers ──
 async function fetchAccounts(apiKey: string): Promise<Account[]> {
-  const res = await fetch("https://api.unipost.dev/v1/social-accounts", {
+  const res = await fetch("https://api.unipost.dev/v1/accounts", {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (!res.ok) throw new Error(`Failed to load accounts (${res.status})`);
@@ -119,7 +119,7 @@ async function generateDrafts(message: string, accounts: Account[], anthropicKey
 }
 
 async function publishDrafts(drafts: Draft[], apiKey: string): Promise<{ status: string; results: PublishResult[] }> {
-  const res = await fetch("https://api.unipost.dev/v1/social-posts", {
+  const res = await fetch("https://api.unipost.dev/v1/posts", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({

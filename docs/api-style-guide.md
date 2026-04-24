@@ -124,9 +124,9 @@ Recommended public model:
 
 - `/v1/workspace`
 - `/v1/profiles`
-- `/v1/social-accounts`
+- `/v1/accounts`
 - `/v1/media`
-- `/v1/social-posts`
+- `/v1/posts`
 - `/v1/connect/sessions`
 - `/v1/users`
 - `/v1/analytics/...`
@@ -148,14 +148,14 @@ Do not keep both styles for the same public capability long-term.
 Path segments should represent resources, not internal functions.
 
 Good:
-- `/v1/social-posts`
-- `/v1/social-posts/{id}`
-- `/v1/social-posts/{id}/queue`
+- `/v1/posts`
+- `/v1/posts/{id}`
+- `/v1/posts/{id}/queue`
 - `/v1/webhooks/{id}`
 
 Allowed when there is a real command:
-- `/v1/social-posts/{id}/publish`
-- `/v1/social-posts/{id}/cancel`
+- `/v1/posts/{id}/publish`
+- `/v1/posts/{id}/cancel`
 - `/v1/webhooks/{id}/rotate`
 
 Avoid:
@@ -167,9 +167,9 @@ Avoid:
 Use plural nouns for collections and singular path params for identifiers.
 
 Examples:
-- `/v1/social-posts`
-- `/v1/social-posts/{post_id}`
-- `/v1/social-posts/{post_id}/results/{result_id}`
+- `/v1/posts`
+- `/v1/posts/{post_id}`
+- `/v1/posts/{post_id}/results/{result_id}`
 
 Prefer stable path parameter names:
 - `workspace_id`
@@ -219,7 +219,7 @@ Rule:
 Bulk operations should be explicit.
 
 Preferred shape:
-- `POST /v1/social-posts/bulk`
+- `POST /v1/posts/bulk`
 
 Bulk endpoints must document:
 - per-item success semantics
@@ -530,8 +530,8 @@ If replayed with a different request body:
 ### 9.4 Where required
 
 Strongly recommended for:
-- `POST /v1/social-posts`
-- `POST /v1/social-posts/bulk`
+- `POST /v1/posts`
+- `POST /v1/posts/bulk`
 - `POST /v1/media`
 - `POST /v1/connect/sessions`
 - `POST /v1/webhooks`

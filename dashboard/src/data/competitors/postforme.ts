@@ -75,7 +75,7 @@ export const POSTFORME = {
   },
   migrationEndpoint: {
     from: "api.postforme.dev/v1/publish",
-    to: "api.unipost.dev/v1/social-posts",
+    to: "api.unipost.dev/v1/posts",
   },
   migrationFields: {
     from: 'networks: ["instagram"]',

@@ -159,6 +159,18 @@ func main() {
 
 	queries := db.New(pool)
 
+	withDeprecation := func(successor func(*http.Request) string, next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Deprecation", "true")
+			w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
+			w.Header().Set("Link", `<`+successor(r)+`>; rel="successor-version"`)
+			next(w, r)
+		}
+	}
+	withStaticDeprecation := func(successor string, next http.HandlerFunc) http.HandlerFunc {
+		return withDeprecation(func(*http.Request) string { return successor }, next)
+	}
+
 	// Build the Stripe billing manager now that the DB is ready. The
 	// SUPER_ADMINS list may contain email addresses, which the manager
 	// resolves to Clerk user IDs lazily via a closure over queries.GetUser.
@@ -493,18 +505,34 @@ func main() {
 		r.Post("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.Create)
 		r.Delete("/v1/workspaces/{workspaceID}/api-keys/{keyID}", apiKeyHandler.Revoke)
 
-		// Social accounts (dashboard, profile-scoped)
-		r.Get("/v1/profiles/{profileID}/social-accounts", socialAccountHandler.List)
-		r.Post("/v1/profiles/{profileID}/social-accounts/connect", socialAccountHandler.Connect)
-		r.Delete("/v1/profiles/{profileID}/social-accounts/{accountID}", socialAccountHandler.Disconnect)
+		// Accounts (dashboard, profile-scoped)
+		r.Get("/v1/profiles/{profileID}/accounts", socialAccountHandler.List)
+		r.Post("/v1/profiles/{profileID}/accounts/connect", socialAccountHandler.Connect)
+		r.Delete("/v1/profiles/{profileID}/accounts/{accountID}", socialAccountHandler.Disconnect)
+		r.Get("/v1/profiles/{profileID}/social-accounts", withDeprecation(func(r *http.Request) string {
+			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts"
+		}, socialAccountHandler.List))
+		r.Post("/v1/profiles/{profileID}/social-accounts/connect", withDeprecation(func(r *http.Request) string {
+			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/connect"
+		}, socialAccountHandler.Connect))
+		r.Delete("/v1/profiles/{profileID}/social-accounts/{accountID}", withDeprecation(func(r *http.Request) string {
+			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID")
+		}, socialAccountHandler.Disconnect))
 		// TikTok creator_info — required for the Content Posting API audit
 		// UI (see internal/handler/tiktok_creator_info.go).
-		r.Get("/v1/profiles/{profileID}/social-accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/profiles/{profileID}/social-accounts/{accountID}/tiktok/creator-info", withDeprecation(func(r *http.Request) string {
+			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID") + "/tiktok/creator-info"
+		}, socialAccountHandler.TikTokCreatorInfo))
 		// Facebook Page Insights — still super-admin gated while
 		// Facebook Pages is in development. Drop the middleware when
 		// the feature ships to all users.
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
-			Get("/v1/profiles/{profileID}/social-accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
+			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
+		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
+			Get("/v1/profiles/{profileID}/social-accounts/{accountID}/facebook/page-insights", withDeprecation(func(r *http.Request) string {
+				return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID") + "/facebook/page-insights"
+			}, socialAccountHandler.FacebookPageInsights))
 
 		// Managed Users view (dashboard, profile-scoped).
 		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
@@ -521,23 +549,53 @@ func main() {
 			mediaHandler.Get(w, r.WithContext(ctx))
 		})
 
-		// Social posts (dashboard, workspace-scoped)
-		r.Get("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.List)
-		r.Get("/v1/workspaces/{workspaceID}/social-posts/summaries", socialPostHandler.ListSummaries)
-		r.Post("/v1/workspaces/{workspaceID}/social-posts", socialPostHandler.Create)
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/validate", func(w http.ResponseWriter, r *http.Request) {
+		// Posts (dashboard, workspace-scoped)
+		r.Get("/v1/workspaces/{workspaceID}/posts", socialPostHandler.List)
+		r.Get("/v1/workspaces/{workspaceID}/posts/summaries", socialPostHandler.ListSummaries)
+		r.Post("/v1/workspaces/{workspaceID}/posts", socialPostHandler.Create)
+		r.Post("/v1/workspaces/{workspaceID}/posts/validate", func(w http.ResponseWriter, r *http.Request) {
 			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
 			socialPostHandler.Validate(w, r.WithContext(ctx))
 		})
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", socialPostHandler.Archive)
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", socialPostHandler.Restore)
-		r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", socialPostHandler.Delete)
+		r.Get("/v1/workspaces/{workspaceID}/social-posts", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts"
+		}, socialPostHandler.List))
+		r.Get("/v1/workspaces/{workspaceID}/social-posts/summaries", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/summaries"
+		}, socialPostHandler.ListSummaries))
+		r.Post("/v1/workspaces/{workspaceID}/social-posts", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts"
+		}, socialPostHandler.Create))
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/validate", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/validate"
+		}, func(w http.ResponseWriter, r *http.Request) {
+			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
+			socialPostHandler.Validate(w, r.WithContext(ctx))
+		}))
+		r.Post("/v1/workspaces/{workspaceID}/posts/{id}/archive", socialPostHandler.Archive)
+		r.Post("/v1/workspaces/{workspaceID}/posts/{id}/restore", socialPostHandler.Restore)
+		r.Delete("/v1/workspaces/{workspaceID}/posts/{id}", socialPostHandler.Delete)
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/archive"
+		}, socialPostHandler.Archive))
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/restore"
+		}, socialPostHandler.Restore))
+		r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id")
+		}, socialPostHandler.Delete))
 		// Per-platform retry for a failed social_post_result row.
 		// Only rows with status='failed' are retryable; see
 		// social_post_retry.go for the safety gates + parent-status
 		// recomputation logic.
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
-		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/queue", socialPostHandler.GetPostQueue)
+		r.Post("/v1/workspaces/{workspaceID}/posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
+		r.Get("/v1/workspaces/{workspaceID}/posts/{id}/queue", socialPostHandler.GetPostQueue)
+		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/results/{resultID}/retry", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/results/" + chi.URLParam(r, "resultID") + "/retry"
+		}, socialPostHandler.RetryResult))
+		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/queue", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/queue"
+		}, socialPostHandler.GetPostQueue))
 		r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
 		r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
 		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry", socialPostHandler.RetryDeliveryJob)
@@ -577,7 +635,10 @@ func main() {
 		r.Get("/v1/workspaces/{workspaceID}/analytics/trend", analyticsHandler.GetTrend)
 		r.Get("/v1/workspaces/{workspaceID}/analytics/by-platform", analyticsHandler.GetByPlatform)
 		// Per-post analytics (workspace-scoped). Mirrors the API-key route below.
-		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
+		r.Get("/v1/workspaces/{workspaceID}/posts/{id}/analytics", analyticsHandler.GetAnalytics)
+		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/analytics", withDeprecation(func(r *http.Request) string {
+			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/analytics"
+		}, analyticsHandler.GetAnalytics))
 
 		// API metrics (dashboard, workspace-scoped)
 		r.Get("/v1/workspaces/{workspaceID}/api-metrics/summary", apiMetricsHandler.Summary)
@@ -634,25 +695,43 @@ func main() {
 		r.Patch("/v1/profiles/{id}", profileHandler.APIUpdate)
 		r.Delete("/v1/profiles/{id}", profileHandler.APIDelete)
 
-		r.Get("/v1/social-accounts", socialAccountHandler.List)
-		r.Post("/v1/social-accounts/connect", socialAccountHandler.Connect)
-		r.Delete("/v1/social-accounts/{id}", socialAccountHandler.Disconnect)
+		r.Get("/v1/accounts", socialAccountHandler.List)
+		r.Post("/v1/accounts/connect", socialAccountHandler.Connect)
+		r.Delete("/v1/accounts/{id}", socialAccountHandler.Disconnect)
+		r.Get("/v1/social-accounts", withStaticDeprecation("/v1/accounts", socialAccountHandler.List))
+		r.Post("/v1/social-accounts/connect", withStaticDeprecation("/v1/accounts/connect", socialAccountHandler.Connect))
+		r.Delete("/v1/social-accounts/{id}", withDeprecation(func(r *http.Request) string {
+			return "/v1/accounts/" + chi.URLParam(r, "id")
+		}, socialAccountHandler.Disconnect))
 		// Per-account capability lookup. Returns the platform's
 		// capability scoped to one account; falls back to platform
 		// defaults until Sprint 2 adds account-specific overrides.
-		r.Get("/v1/social-accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
+		r.Get("/v1/accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
+		r.Get("/v1/social-accounts/{id}/capabilities", withDeprecation(func(r *http.Request) string {
+			return "/v1/accounts/" + chi.URLParam(r, "id") + "/capabilities"
+		}, platformHandler.GetAccountCapabilities))
 		// Account health (Sprint 2 PR7) — derived from the last 10
 		// social_post_results rows. ok / degraded / disconnected.
-		r.Get("/v1/social-accounts/{id}/health", socialAccountHandler.AccountHealth)
+		r.Get("/v1/accounts/{id}/health", socialAccountHandler.AccountHealth)
+		r.Get("/v1/social-accounts/{id}/health", withDeprecation(func(r *http.Request) string {
+			return "/v1/accounts/" + chi.URLParam(r, "id") + "/health"
+		}, socialAccountHandler.AccountHealth))
 		// TikTok creator_info — required for the Content Posting API audit
 		// UI (see internal/handler/tiktok_creator_info.go).
-		r.Get("/v1/social-accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/social-accounts/{id}/tiktok/creator-info", withDeprecation(func(r *http.Request) string {
+			return "/v1/accounts/" + chi.URLParam(r, "id") + "/tiktok/creator-info"
+		}, socialAccountHandler.TikTokCreatorInfo))
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
-			Get("/v1/social-accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
+			Get("/v1/accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
+		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
+			Get("/v1/social-accounts/{id}/facebook/page-insights", withDeprecation(func(r *http.Request) string {
+				return "/v1/accounts/" + chi.URLParam(r, "id") + "/facebook/page-insights"
+			}, socialAccountHandler.FacebookPageInsights))
 
 		// Media library — two-step upload (POST returns presigned URL,
 		// client PUTs to R2 directly), then reference the media_id in
-		// platform_posts[].media_ids on subsequent /v1/social-posts.
+		// platform_posts[].media_ids on subsequent /v1/posts.
 		r.Post("/v1/media", mediaHandler.Create)
 		r.Get("/v1/media/{id}", mediaHandler.Get)
 		r.Delete("/v1/media/{id}", mediaHandler.Delete)
@@ -673,19 +752,43 @@ func main() {
 		r.Get("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.List)
 		r.Delete("/v1/workspaces/{workspaceID}/platform-credentials/{platform}", platformCredHandler.Delete)
 
-		r.Get("/v1/social-posts", socialPostHandler.List)
-		r.Post("/v1/social-posts", socialPostHandler.Create)
+		r.Get("/v1/posts", socialPostHandler.List)
+		r.Post("/v1/posts", socialPostHandler.Create)
+		r.Get("/v1/social-posts", withStaticDeprecation("/v1/posts", socialPostHandler.List))
+		r.Post("/v1/social-posts", withStaticDeprecation("/v1/posts", socialPostHandler.Create))
 		// Pure preflight — runs the same checks Create() will run, but
 		// without writing rows or hitting platform APIs. LLM clients
 		// call this BEFORE publish to self-correct draft errors.
-		r.Post("/v1/social-posts/validate", socialPostHandler.Validate)
-		r.Get("/v1/social-posts/{id}", socialPostHandler.Get)
-		r.Get("/v1/social-posts/{id}/analytics", analyticsHandler.GetAnalytics)
-		r.Post("/v1/social-posts/{id}/archive", socialPostHandler.Archive)
-		r.Post("/v1/social-posts/{id}/restore", socialPostHandler.Restore)
-		r.Delete("/v1/social-posts/{id}", socialPostHandler.Delete)
-		r.Post("/v1/social-posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
-		r.Get("/v1/social-posts/{id}/queue", socialPostHandler.GetPostQueue)
+		r.Post("/v1/posts/validate", socialPostHandler.Validate)
+		r.Get("/v1/posts/{id}", socialPostHandler.Get)
+		r.Get("/v1/posts/{id}/analytics", analyticsHandler.GetAnalytics)
+		r.Post("/v1/posts/{id}/archive", socialPostHandler.Archive)
+		r.Post("/v1/posts/{id}/restore", socialPostHandler.Restore)
+		r.Delete("/v1/posts/{id}", socialPostHandler.Delete)
+		r.Post("/v1/posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
+		r.Get("/v1/posts/{id}/queue", socialPostHandler.GetPostQueue)
+		r.Post("/v1/social-posts/validate", withStaticDeprecation("/v1/posts/validate", socialPostHandler.Validate))
+		r.Get("/v1/social-posts/{id}", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id")
+		}, socialPostHandler.Get))
+		r.Get("/v1/social-posts/{id}/analytics", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id") + "/analytics"
+		}, analyticsHandler.GetAnalytics))
+		r.Post("/v1/social-posts/{id}/archive", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id") + "/archive"
+		}, socialPostHandler.Archive))
+		r.Post("/v1/social-posts/{id}/restore", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id") + "/restore"
+		}, socialPostHandler.Restore))
+		r.Delete("/v1/social-posts/{id}", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id")
+		}, socialPostHandler.Delete))
+		r.Post("/v1/social-posts/{id}/results/{resultID}/retry", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id") + "/results/" + chi.URLParam(r, "resultID") + "/retry"
+		}, socialPostHandler.RetryResult))
+		r.Get("/v1/social-posts/{id}/queue", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id") + "/queue"
+		}, socialPostHandler.GetPostQueue))
 		r.Get("/v1/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
 		r.Get("/v1/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
 		r.Post("/v1/post-delivery-jobs/{jobID}/retry", socialPostHandler.RetryDeliveryJob)
@@ -696,14 +799,24 @@ func main() {
 		// no webhook fired. Publish flips them via optimistic lock
 		// then routes through the same publish loop the immediate
 		// path uses.
-		r.Post("/v1/social-posts/{id}/publish", socialPostHandler.PublishDraft)
-		r.Patch("/v1/social-posts/{id}", socialPostHandler.UpdateDraft)
+		r.Post("/v1/posts/{id}/publish", socialPostHandler.PublishDraft)
+		r.Patch("/v1/posts/{id}", socialPostHandler.UpdateDraft)
+		r.Post("/v1/social-posts/{id}/publish", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id") + "/publish"
+		}, socialPostHandler.PublishDraft))
+		r.Patch("/v1/social-posts/{id}", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id")
+		}, socialPostHandler.UpdateDraft))
 		// Sprint 3 PR8: cancel a draft or scheduled post. Optimistic-locked
 		// to lose cleanly against a concurrent publish flip.
-		r.Post("/v1/social-posts/{id}/cancel", socialPostHandler.CancelPost)
+		r.Post("/v1/posts/{id}/cancel", socialPostHandler.CancelPost)
+		r.Post("/v1/social-posts/{id}/cancel", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id") + "/cancel"
+		}, socialPostHandler.CancelPost))
 		// Sprint 4 PR2: bulk publish — up to 50 posts in one request,
 		// per-post idempotency, partial-success semantics.
-		r.Post("/v1/social-posts/bulk", socialPostHandler.CreateBulk)
+		r.Post("/v1/posts/bulk", socialPostHandler.CreateBulk)
+		r.Post("/v1/social-posts/bulk", withStaticDeprecation("/v1/posts/bulk", socialPostHandler.CreateBulk))
 
 		// Sprint 4 PR5: Managed Users view — list / detail of end
 		// users onboarded via Connect, grouped by external_user_id.
@@ -711,7 +824,10 @@ func main() {
 		r.Get("/v1/users/{external_user_id}", managedUsersHandler.Get)
 		// Hosted preview link (Sprint 2). Returns a 24h JWT-signed
 		// URL the caller can share without exposing the API key.
-		r.Post("/v1/social-posts/{id}/preview-link", previewHandler.CreateLink)
+		r.Post("/v1/posts/{id}/preview-link", previewHandler.CreateLink)
+		r.Post("/v1/social-posts/{id}/preview-link", withDeprecation(func(r *http.Request) string {
+			return "/v1/posts/" + chi.URLParam(r, "id") + "/preview-link"
+		}, previewHandler.CreateLink))
 
 		// Analytics aggregations (API key)
 		r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)

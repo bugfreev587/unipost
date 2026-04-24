@@ -169,7 +169,7 @@ class AccountsAPI:
     def list(self, **kwargs):
         payload = self._http.request(
             "GET",
-            "/v1/social-accounts",
+            "/v1/accounts",
             params=_compact(
                 {
                     "platform": kwargs.get("platform"),
@@ -192,29 +192,29 @@ class AccountsAPI:
     def connect(self, *, platform: str, credentials: Dict[str, str], profile_id: Optional[str] = None):
         payload = self._http.request(
             "POST",
-            "/v1/social-accounts/connect",
+            "/v1/accounts/connect",
             json_body=_compact({"platform": platform, "credentials": credentials, "profile_id": profile_id}),
         )
         return _wrap(payload["data"])
 
     def disconnect(self, account_id: str):
-        payload = self._http.request("DELETE", f"/v1/social-accounts/{account_id}")
+        payload = self._http.request("DELETE", f"/v1/accounts/{account_id}")
         return _wrap(payload.get("data", payload))
 
     def capabilities(self, account_id: str):
-        payload = self._http.request("GET", f"/v1/social-accounts/{account_id}/capabilities")
+        payload = self._http.request("GET", f"/v1/accounts/{account_id}/capabilities")
         return _wrap(payload["data"])
 
     def health(self, account_id: str):
-        payload = self._http.request("GET", f"/v1/social-accounts/{account_id}/health")
+        payload = self._http.request("GET", f"/v1/accounts/{account_id}/health")
         return _wrap(payload["data"])
 
     def tiktok_creator_info(self, account_id: str):
-        payload = self._http.request("GET", f"/v1/social-accounts/{account_id}/tiktok/creator-info")
+        payload = self._http.request("GET", f"/v1/accounts/{account_id}/tiktok/creator-info")
         return _wrap(payload["data"])
 
     def facebook_page_insights(self, account_id: str):
-        payload = self._http.request("GET", f"/v1/social-accounts/{account_id}/facebook/page-insights")
+        payload = self._http.request("GET", f"/v1/accounts/{account_id}/facebook/page-insights")
         return _wrap(payload["data"])
 
 
@@ -267,24 +267,24 @@ class PostsAPI:
         self._http = http
 
     def list(self, **kwargs):
-        payload = self._http.request("GET", "/v1/social-posts", params=_compact(kwargs))
+        payload = self._http.request("GET", "/v1/posts", params=_compact(kwargs))
         payload["data"] = [_wrap(item) for item in payload.get("data", [])]
         meta = payload.get("meta") or {}
         payload["next_cursor"] = meta.get("next_cursor") or payload.get("next_cursor")
         return payload
 
     def get(self, post_id: str):
-        payload = self._http.request("GET", f"/v1/social-posts/{post_id}")
+        payload = self._http.request("GET", f"/v1/posts/{post_id}")
         return _wrap(payload["data"])
 
     def get_queue(self, post_id: str):
-        payload = self._http.request("GET", f"/v1/social-posts/{post_id}/queue")
+        payload = self._http.request("GET", f"/v1/posts/{post_id}/queue")
         return _wrap(payload["data"])
 
     def analytics(self, post_id: str, *, refresh: Optional[bool] = None):
         payload = self._http.request(
             "GET",
-            f"/v1/social-posts/{post_id}/analytics",
+            f"/v1/posts/{post_id}/analytics",
             params=_compact({"refresh": refresh}),
         )
         return _wrap(payload["data"])
@@ -295,52 +295,52 @@ class PostsAPI:
             headers["Idempotency-Key"] = kwargs["idempotency_key"]
         payload = self._http.request(
             "POST",
-            "/v1/social-posts",
+            "/v1/posts",
             json_body=_snake_post_body(kwargs),
             headers=headers,
         )
         return _wrap(payload["data"])
 
     def validate(self, **kwargs):
-        payload = self._http.request("POST", "/v1/social-posts/validate", json_body=_snake_post_body(kwargs))
+        payload = self._http.request("POST", "/v1/posts/validate", json_body=_snake_post_body(kwargs))
         return _wrap(payload["data"])
 
     def publish(self, post_id: str):
-        payload = self._http.request("POST", f"/v1/social-posts/{post_id}/publish")
+        payload = self._http.request("POST", f"/v1/posts/{post_id}/publish")
         return _wrap(payload["data"])
 
     def update(self, post_id: str, **kwargs):
-        payload = self._http.request("PATCH", f"/v1/social-posts/{post_id}", json_body=_snake_post_body(kwargs))
+        payload = self._http.request("PATCH", f"/v1/posts/{post_id}", json_body=_snake_post_body(kwargs))
         return _wrap(payload["data"])
 
     def archive(self, post_id: str):
-        payload = self._http.request("POST", f"/v1/social-posts/{post_id}/archive")
+        payload = self._http.request("POST", f"/v1/posts/{post_id}/archive")
         return _wrap(payload["data"])
 
     def restore(self, post_id: str):
-        payload = self._http.request("POST", f"/v1/social-posts/{post_id}/restore")
+        payload = self._http.request("POST", f"/v1/posts/{post_id}/restore")
         return _wrap(payload["data"])
 
     def cancel(self, post_id: str):
-        payload = self._http.request("POST", f"/v1/social-posts/{post_id}/cancel")
+        payload = self._http.request("POST", f"/v1/posts/{post_id}/cancel")
         return _wrap(payload["data"])
 
     def delete(self, post_id: str):
-        payload = self._http.request("DELETE", f"/v1/social-posts/{post_id}")
+        payload = self._http.request("DELETE", f"/v1/posts/{post_id}")
         return _wrap(payload.get("data", payload))
 
     def preview_link(self, post_id: str):
-        payload = self._http.request("POST", f"/v1/social-posts/{post_id}/preview-link")
+        payload = self._http.request("POST", f"/v1/posts/{post_id}/preview-link")
         return _wrap(payload["data"])
 
     def retry_result(self, post_id: str, result_id: str):
-        payload = self._http.request("POST", f"/v1/social-posts/{post_id}/results/{result_id}/retry")
+        payload = self._http.request("POST", f"/v1/posts/{post_id}/results/{result_id}/retry")
         return _wrap(payload["data"])
 
     def bulk_create(self, posts: List[Dict[str, Any]]):
         payload = self._http.request(
             "POST",
-            "/v1/social-posts/bulk",
+            "/v1/posts/bulk",
             json_body={"posts": [_snake_post_body(post) for post in posts]},
         )
         return _wrap(payload["data"])

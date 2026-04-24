@@ -11,7 +11,7 @@
 #   BASE_URL   — API base URL. Defaults to https://api.unipost.dev.
 #   ACCOUNT_ID — A real social account ID to use for media / draft tests.
 #                If unset, the script auto-picks the first account from
-#                /v1/social-accounts. Tests that need a specific account
+#                /v1/accounts. Tests that need a specific account
 #                will skip when the auto-pick fails.
 #
 # What this script does NOT do:
@@ -186,8 +186,8 @@ section "Sprint 1 PR3 — Validate endpoint"
 # validate test so a missing-media-required platform like TikTok or
 # Instagram doesn't dominate the auto-pick. ANY_ID is the catch-all
 # for tests that don't care about media requirements.
-api GET "/v1/social-accounts"
-assert_status "200" "GET /v1/social-accounts"
+api GET "/v1/accounts"
+assert_status "200" "GET /v1/accounts"
 TWITTER_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.platform == "twitter")][0].id // empty')
 IG_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.platform == "instagram")][0].id // empty')
 TEXT_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.platform == "twitter" or .platform == "linkedin" or .platform == "bluesky" or .platform == "threads")][0].id // empty')
@@ -200,13 +200,13 @@ fi
 # Happy-path validate. Use a text-friendly platform so the test
 # isn't tripped by a TikTok/IG missing-media error.
 if [[ -n "$TEXT_ID" ]]; then
-  api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$TEXT_ID" \
+  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TEXT_ID" \
     '{platform_posts: [{account_id: $id, caption: "smoke test"}]}')"
   assert_status "200" "POST /validate happy path (text-friendly account)"
   assert_jq '.data.valid' 'true' 'validate returns valid=true'
 elif [[ -n "$ANY_ID" ]]; then
   # Fall back: use any account but allow missing-media to be a soft pass.
-  api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$ANY_ID" \
+  api POST "/v1/posts/validate" "$(jq -nc --arg id "$ANY_ID" \
     '{platform_posts: [{account_id: $id, caption: "smoke test", media_urls: ["https://x/y.jpg"]}]}')"
   assert_status "200" "POST /validate happy path (with stub media)"
   assert_jq '.data.valid' 'true' 'validate returns valid=true'
@@ -217,7 +217,7 @@ fi
 # Caption too long on Twitter — must surface exceeds_max_length.
 if [[ -n "$TWITTER_ID" ]]; then
   LONG=$(printf 'a%.0s' $(seq 1 300))
-  api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$TWITTER_ID" --arg c "$LONG" \
+  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" --arg c "$LONG" \
     '{platform_posts: [{account_id: $id, caption: $c}]}')"
   assert_status "200" "POST /validate (long caption)"
   assert_jq '.data.valid' 'false' 'long caption invalid'
@@ -227,12 +227,12 @@ else
 fi
 
 # Mutually exclusive shapes — both account_ids and platform_posts.
-api POST "/v1/social-posts/validate" \
+api POST "/v1/posts/validate" \
   '{"account_ids":["a"],"caption":"x","platform_posts":[{"account_id":"a","caption":"x"}]}'
 assert_status "422" "POST /validate rejects mutually-exclusive shapes"
 
 # Missing both shapes.
-api POST "/v1/social-posts/validate" '{}'
+api POST "/v1/posts/validate" '{}'
 assert_status "422" "POST /validate rejects empty body"
 
 # ── Sprint 2 PR3 — thread_position validation ─────────────────────────
@@ -241,7 +241,7 @@ section "Sprint 2 PR3 — Thread validation"
 
 if [[ -n "$TWITTER_ID" ]]; then
   # Happy path thread.
-  api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
+  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
     '{platform_posts: [
       {account_id: $id, caption: "1/", thread_position: 1},
       {account_id: $id, caption: "2/", thread_position: 2},
@@ -250,7 +250,7 @@ if [[ -n "$TWITTER_ID" ]]; then
   assert_jq '.data.valid' 'true' '3-tweet thread valid'
 
   # Missing position 1.
-  api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
+  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
     '{platform_posts: [
       {account_id: $id, caption: "x", thread_position: 2},
       {account_id: $id, caption: "y", thread_position: 3}
@@ -258,7 +258,7 @@ if [[ -n "$TWITTER_ID" ]]; then
   assert_jq '.data.errors[0].code' 'thread_positions_not_contiguous' 'positions not contiguous'
 
   # Mixed thread + standalone.
-  api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
+  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
     '{platform_posts: [
       {account_id: $id, caption: "thread 1", thread_position: 1},
       {account_id: $id, caption: "thread 2", thread_position: 2},
@@ -271,7 +271,7 @@ fi
 
 if [[ -n "$IG_ID" ]]; then
   # Threads on a platform that doesn't support them.
-  api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$IG_ID" \
+  api POST "/v1/posts/validate" "$(jq -nc --arg id "$IG_ID" \
     '{platform_posts: [{account_id: $id, caption: "x", media_urls: ["https://x/y.jpg"], thread_position: 1}]}')"
   assert_jq '.data.errors | map(.code) | index("threads_unsupported") != null' 'true' 'threads_unsupported on instagram'
 else
@@ -333,7 +333,7 @@ fi
 
 # media_id ownership check via validate.
 if [[ -n "$ANY_ID" ]]; then
-  api POST "/v1/social-posts/validate" "$(jq -nc --arg id "$ANY_ID" \
+  api POST "/v1/posts/validate" "$(jq -nc --arg id "$ANY_ID" \
     '{platform_posts: [{account_id: $id, caption: "x", media_ids: ["med_does_not_exist"]}]}')"
   assert_jq '.data.errors | map(.code) | index("media_id_not_in_workspace") != null' 'true' 'unknown media_id rejected'
 else
@@ -346,23 +346,23 @@ section "Sprint 2 PR4 — Drafts API"
 
 DRAFT_ID=""
 if [[ -n "$ANY_ID" ]]; then
-  api POST "/v1/social-posts" "$(jq -nc --arg id "$ANY_ID" \
+  api POST "/v1/posts" "$(jq -nc --arg id "$ANY_ID" \
     '{status: "draft", platform_posts: [{account_id: $id, caption: "draft me"}]}')"
-  assert_status "201" "POST /v1/social-posts (draft)"
+  assert_status "201" "POST /v1/posts (draft)"
   DRAFT_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
   assert_jq '.data.status' 'draft' 'draft status correct'
   assert_jq_truthy '.data.validation' 'validation embedded in draft response'
 
   if [[ -n "$DRAFT_ID" ]]; then
     # PATCH the draft.
-    api PATCH "/v1/social-posts/${DRAFT_ID}" "$(jq -nc --arg id "$ANY_ID" \
+    api PATCH "/v1/posts/${DRAFT_ID}" "$(jq -nc --arg id "$ANY_ID" \
       '{platform_posts: [{account_id: $id, caption: "draft me v2"}]}')"
     assert_status "200" "PATCH draft"
     assert_jq '.data.caption' 'draft me v2' 'PATCH replaced caption'
 
     # PATCH a non-draft (we don't have one handy without publishing,
     # so test the inverse: PATCH a deleted/missing post).
-    api PATCH "/v1/social-posts/post_does_not_exist_at_all" '{"platform_posts":[{"account_id":"x","caption":"y"}]}'
+    api PATCH "/v1/posts/post_does_not_exist_at_all" '{"platform_posts":[{"account_id":"x","caption":"y"}]}'
     if [[ "$RESP_STATUS" == "409" || "$RESP_STATUS" == "404" || "$RESP_STATUS" == "500" ]]; then
       pass "PATCH on missing post rejected (HTTP $RESP_STATUS)"
     else
@@ -370,7 +370,7 @@ if [[ -n "$ANY_ID" ]]; then
     fi
 
     # DELETE the draft.
-    api DELETE "/v1/social-posts/${DRAFT_ID}"
+    api DELETE "/v1/posts/${DRAFT_ID}"
     assert_status "200" "DELETE draft"
     DRAFT_ID="" # consumed
   fi
@@ -384,12 +384,12 @@ section "Sprint 2 PR5 — Hosted preview"
 
 if [[ -n "$ANY_ID" ]]; then
   # Mint a fresh draft just for the preview test.
-  api POST "/v1/social-posts" "$(jq -nc --arg id "$ANY_ID" \
+  api POST "/v1/posts" "$(jq -nc --arg id "$ANY_ID" \
     '{status: "draft", platform_posts: [{account_id: $id, caption: "preview me"}]}')"
   PREVIEW_DRAFT=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
 
   if [[ -n "$PREVIEW_DRAFT" ]]; then
-    api POST "/v1/social-posts/${PREVIEW_DRAFT}/preview-link" ""
+    api POST "/v1/posts/${PREVIEW_DRAFT}/preview-link" ""
     assert_status "200" "POST /preview-link on a draft"
     PREVIEW_URL=$(echo "$RESP_BODY" | jq -r '.data.url // empty')
     PREVIEW_TOKEN=$(echo "$RESP_BODY" | jq -r '.data.token // empty')
@@ -414,7 +414,7 @@ if [[ -n "$ANY_ID" ]]; then
     assert_status "401" "Public endpoint rejects token/post mismatch"
 
     # Cleanup.
-    api DELETE "/v1/social-posts/${PREVIEW_DRAFT}"
+    api DELETE "/v1/posts/${PREVIEW_DRAFT}"
   else
     skip "preview link tests" "could not create preview draft"
   fi
@@ -426,36 +426,36 @@ fi
 
 section "Sprint 2 PR7 — list_posts filters + cursor"
 
-api GET "/v1/social-posts?limit=2"
-assert_status "200" "GET /v1/social-posts?limit=2"
+api GET "/v1/posts?limit=2"
+assert_status "200" "GET /v1/posts?limit=2"
 assert_jq_truthy '.data' 'data array present'
 
 NEXT_CURSOR=$(echo "$RESP_BODY" | jq -r '.meta.next_cursor // .next_cursor // empty')
 if [[ -n "$NEXT_CURSOR" ]]; then
   pass "next_cursor returned for paginated list"
-  api GET "/v1/social-posts?limit=2&cursor=${NEXT_CURSOR}"
-  assert_status "200" "GET /v1/social-posts?cursor=..."
+  api GET "/v1/posts?limit=2&cursor=${NEXT_CURSOR}"
+  assert_status "200" "GET /v1/posts?cursor=..."
 else
   echo -e "    ${DIM}note: workspace has ≤2 posts, no next_cursor expected${NC}"
 fi
 
 # Status filter.
-api GET "/v1/social-posts?status=draft&limit=5"
-assert_status "200" "GET /v1/social-posts?status=draft"
+api GET "/v1/posts?status=draft&limit=5"
+assert_status "200" "GET /v1/posts?status=draft"
 
 # Date range filter (last hour).
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 HOUR_AGO=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
-api GET "/v1/social-posts?from=${HOUR_AGO}&to=${NOW}"
-assert_status "200" "GET /v1/social-posts?from=&to="
+api GET "/v1/posts?from=${HOUR_AGO}&to=${NOW}"
+assert_status "200" "GET /v1/posts?from=&to="
 
 # ── Sprint 2 PR7 — Account health ─────────────────────────────────────
 
 section "Sprint 2 PR7 — Account health"
 
 if [[ -n "$ANY_ID" ]]; then
-  api GET "/v1/social-accounts/${ANY_ID}/health"
-  assert_status "200" "GET /v1/social-accounts/{id}/health"
+  api GET "/v1/accounts/${ANY_ID}/health"
+  assert_status "200" "GET /v1/accounts/{id}/health"
   assert_jq_truthy '.data.status' 'health.status present'
   STATUS=$(echo "$RESP_BODY" | jq -r '.data.status')
   if [[ "$STATUS" == "ok" || "$STATUS" == "degraded" || "$STATUS" == "disconnected" ]]; then
@@ -465,7 +465,7 @@ if [[ -n "$ANY_ID" ]]; then
   fi
 
   # 404 for an account in another workspace.
-  api GET "/v1/social-accounts/account_does_not_exist/health"
+  api GET "/v1/accounts/account_does_not_exist/health"
   assert_status "404" "GET /health for unknown account → 404"
 else
   skip "account health" "no account_id"
@@ -475,8 +475,8 @@ fi
 
 if [[ -n "$ANY_ID" ]]; then
   section "Sprint 1 PR1 — Per-account capabilities"
-  api GET "/v1/social-accounts/${ANY_ID}/capabilities"
-  assert_status "200" "GET /v1/social-accounts/{id}/capabilities"
+  api GET "/v1/accounts/${ANY_ID}/capabilities"
+  assert_status "200" "GET /v1/accounts/{id}/capabilities"
   assert_jq '.data.schema_version' '1.1' 'schema 1.1'
   assert_jq_truthy '.data.platform' 'platform present'
 fi

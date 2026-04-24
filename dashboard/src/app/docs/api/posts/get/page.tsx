@@ -38,7 +38,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-posts/post_abc123" \\
+    code: `curl "https://api.unipost.dev/v1/posts/post_abc123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -101,7 +101,7 @@ export default function GetPostPage() {
       title="Get post"
       description="Returns one social post with per-account results, diagnostics, and resolved destination metadata."
       method="GET"
-      path="/v1/social-posts/:post_id"
+      path="/v1/posts/:post_id"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },

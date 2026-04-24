@@ -10,7 +10,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "posts", type: "array", description: "Required batch of publish requests. Minimum 1, maximum 50." },
-  { name: "posts[]", type: "object", description: "Each entry uses the same request shape as POST /v1/social-posts." },
+  { name: "posts[]", type: "object", description: "Each entry uses the same request shape as POST /v1/posts." },
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
@@ -37,7 +37,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl -X POST "https://api.unipost.dev/v1/social-posts/bulk" \\
+    code: `curl -X POST "https://api.unipost.dev/v1/posts/bulk" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -112,7 +112,7 @@ const RESPONSE_SNIPPETS = [
       "error": {
         "code": "VALIDATION_ERROR",
         "normalized_code": "validation_error",
-        "message": "drafts are not supported in bulk publish — use POST /v1/social-posts"
+        "message": "drafts are not supported in bulk publish — use POST /v1/posts"
       }
     }
   ]
@@ -139,7 +139,7 @@ export default function BulkPostsPage() {
       title="Bulk publish"
       description="Accepts up to 50 immediate publish requests in one call. Each slot is validated and enqueued independently, so successful slots return async post resources while invalid slots return per-slot errors."
       method="POST"
-      path="/v1/social-posts/bulk"
+      path="/v1/posts/bulk"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Request Body", items: BODY_FIELDS },

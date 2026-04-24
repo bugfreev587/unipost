@@ -1863,7 +1863,7 @@ func decodeListCursor(raw string) (time.Time, string, error) {
 	return time.Unix(0, nanos), parts[1], nil
 }
 
-// Archive handles POST /v1/social-posts/{id}/archive.
+// Archive handles POST /v1/posts/{id}/archive.
 func (h *SocialPostHandler) Archive(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
@@ -1872,11 +1872,11 @@ func (h *SocialPostHandler) Archive(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Deprecation", "true")
 	w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
-	w.Header().Set("Link", `</v1/social-posts/`+postID+`>; rel="successor-version"`)
+	w.Header().Set("Link", `</v1/posts/`+postID+`>; rel="successor-version"`)
 	h.archiveSocialPost(w, r, workspaceID, postID)
 }
 
-// Restore handles POST /v1/social-posts/{id}/restore.
+// Restore handles POST /v1/posts/{id}/restore.
 func (h *SocialPostHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")
@@ -1885,11 +1885,11 @@ func (h *SocialPostHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Deprecation", "true")
 	w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
-	w.Header().Set("Link", `</v1/social-posts/`+postID+`>; rel="successor-version"`)
+	w.Header().Set("Link", `</v1/posts/`+postID+`>; rel="successor-version"`)
 	h.restoreSocialPost(w, r, workspaceID, postID)
 }
 
-// Delete handles DELETE /v1/social-posts/{id}
+// Delete handles DELETE /v1/posts/{id}
 func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.getWorkspaceID(r)
 	postID := chi.URLParam(r, "id")

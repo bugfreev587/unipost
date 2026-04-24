@@ -12,7 +12,7 @@ const LANGS = [
 const CODE_SNIPPETS: Record<(typeof LANGS)[number]["id"], string> = {
   js: `// First reserve a local upload with POST /v1/media, then PUT the file to upload_url.
 const response = await fetch(
-  'https://api.unipost.dev/v1/social-posts',
+  'https://api.unipost.dev/v1/posts',
   {
     method: 'POST',
     headers: {
@@ -44,7 +44,7 @@ console.log(data.id); // post_abc123`,
 # First reserve a local upload with POST /v1/media, then PUT the file to upload_url.
 
 response = requests.post(
-    'https://api.unipost.dev/v1/social-posts',
+    'https://api.unipost.dev/v1/posts',
     headers={
         'Authorization': 'Bearer up_live_xxxx',
         'Content-Type':  'application/json',
@@ -70,7 +70,7 @@ data = response.json()['data']
 print(data['id'])  # post_abc123`,
   go: `// First reserve a local upload with POST /v1/media, then PUT the file to upload_url.
 req, _ := http.NewRequest("POST",
-    "https://api.unipost.dev/v1/social-posts",
+    "https://api.unipost.dev/v1/posts",
     strings.NewReader(\`{
       "platform_posts": [
         {
@@ -94,7 +94,7 @@ req.Header.Set("Content-Type",  "application/json")
 resp, _ := http.DefaultClient.Do(req)
 // resp.StatusCode == 200 ✓`,
   curl: `# First reserve a local upload with POST /v1/media, then PUT the file to upload_url.
-curl -X POST https://api.unipost.dev/v1/social-posts \\
+curl -X POST https://api.unipost.dev/v1/posts \\
   -H "Authorization: Bearer up_live_xxxx" \\
   -H "Content-Type: application/json" \\
   -d '{

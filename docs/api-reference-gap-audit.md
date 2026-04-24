@@ -11,10 +11,10 @@ This audit compares the public API routes registered in [api/cmd/api/main.go](/U
 - `GET /v1/profiles/{id}`
 - `PATCH /v1/profiles/{id}`
 - `DELETE /v1/profiles/{id}`
-- `POST /v1/social-accounts/connect`
-- `DELETE /v1/social-accounts/{id}`
-- `GET /v1/social-accounts/{id}/capabilities`
-- `GET /v1/social-accounts/{id}/tiktok/creator-info`
+- `POST /v1/accounts/connect`
+- `DELETE /v1/accounts/{id}`
+- `GET /v1/accounts/{id}/capabilities`
+- `GET /v1/accounts/{id}/tiktok/creator-info`
 
 ## Still missing dedicated API Reference pages
 
@@ -32,10 +32,10 @@ This audit compares the public API routes registered in [api/cmd/api/main.go](/U
 
 ### Publishing
 
-- `DELETE /v1/social-posts/{id}`
-- `POST /v1/social-posts/{id}/results/{resultID}/retry`
-- `GET /v1/social-posts/{id}/queue`
-- `POST /v1/social-posts/{id}/preview-link`
+- `DELETE /v1/posts/{id}`
+- `POST /v1/posts/{id}/results/{resultID}/retry`
+- `GET /v1/posts/{id}/queue`
+- `POST /v1/posts/{id}/preview-link`
 
 ### Delivery jobs
 
@@ -56,5 +56,5 @@ This audit compares the public API routes registered in [api/cmd/api/main.go](/U
 
 ## Intentional exclusions
 
-- Legacy aliases such as `POST /v1/social-posts/{id}/archive`, `POST /v1/social-posts/{id}/restore`, `POST /v1/social-posts/{id}/cancel`, and `POST /v1/post-delivery-jobs/{jobID}/retry-now` are intentionally excluded from the missing-pages list because the canonical docs now point users to `PATCH /v1/social-posts/{id}` and `POST /v1/post-delivery-jobs/{jobID}/retry`.
+- Legacy aliases such as `POST /v1/posts/{id}/archive`, `POST /v1/posts/{id}/restore`, `POST /v1/posts/{id}/cancel`, and `POST /v1/post-delivery-jobs/{jobID}/retry-now` are intentionally excluded from the missing-pages list because the canonical docs now point users to `PATCH /v1/posts/{id}` and `POST /v1/post-delivery-jobs/{jobID}/retry`.
 - Dashboard-only routes such as `/v1/dashboard/profiles`, `/v1/profiles/{profileID}/social-accounts`, and `/v1/workspaces/{workspaceID}/...` are also excluded because the API Reference targets the public API-key surface, not the internal dashboard session API.

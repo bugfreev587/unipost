@@ -54,7 +54,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-accounts/sa_tiktok_123/tiktok/creator-info" \\
+    code: `curl "https://api.unipost.dev/v1/accounts/sa_tiktok_123/tiktok/creator-info" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -157,7 +157,7 @@ export default function TikTokCreatorInfoPage() {
       title="Get TikTok creator info"
       description="Returns the TikTok creator_info payload for one connected TikTok account. Use it to populate privacy options, interaction toggles, and upload-length validation before publish."
       method="GET"
-      path="/v1/social-accounts/:account_id/tiktok/creator-info"
+      path="/v1/accounts/:account_id/tiktok/creator-info"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },

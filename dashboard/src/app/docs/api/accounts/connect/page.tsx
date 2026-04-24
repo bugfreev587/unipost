@@ -34,7 +34,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl -X POST "https://api.unipost.dev/v1/social-accounts/connect" \\
+    code: `curl -X POST "https://api.unipost.dev/v1/accounts/connect" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -105,7 +105,7 @@ export default function ConnectAccountPage() {
       title="Connect account"
       description="Directly connects one social account to a profile in your workspace. When the workspace has multiple profiles, pass profile_id explicitly instead of relying on an implicit default."
       method="POST"
-      path="/v1/social-accounts/connect"
+      path="/v1/accounts/connect"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Request Body", items: BODY_FIELDS },

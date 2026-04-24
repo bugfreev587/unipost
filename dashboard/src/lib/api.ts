@@ -325,7 +325,7 @@ export async function listSocialAccounts(
   if (filters?.external_user_id) qs.set("external_user_id", filters.external_user_id);
   if (filters?.platform) qs.set("platform", filters.platform);
   const suffix = qs.toString() ? `?${qs}` : "";
-  return request(`/v1/profiles/${profileId}/social-accounts${suffix}`, token);
+  return request(`/v1/profiles/${profileId}/accounts${suffix}`, token);
 }
 
 export async function connectSocialAccount(
@@ -333,7 +333,7 @@ export async function connectSocialAccount(
   profileId: string,
   data: { platform: string; credentials: Record<string, string> }
 ): Promise<ApiResponse<SocialAccount>> {
-  return request(`/v1/profiles/${profileId}/social-accounts/connect`, token, {
+  return request(`/v1/profiles/${profileId}/accounts/connect`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -396,7 +396,7 @@ export async function disconnectSocialAccount(
   accountId: string
 ): Promise<void> {
   return request(
-    `/v1/profiles/${profileId}/social-accounts/${accountId}`,
+    `/v1/profiles/${profileId}/accounts/${accountId}`,
     token,
     { method: "DELETE" }
   );
@@ -423,7 +423,7 @@ export async function getTikTokCreatorInfo(
   accountId: string
 ): Promise<ApiResponse<TikTokCreatorInfo>> {
   return request(
-    `/v1/profiles/${profileId}/social-accounts/${accountId}/tiktok/creator-info`,
+    `/v1/profiles/${profileId}/accounts/${accountId}/tiktok/creator-info`,
     token
   );
 }
@@ -562,14 +562,14 @@ export async function listSocialPosts(
   token: string,
   workspaceId: string
 ): Promise<ApiResponse<SocialPost[]>> {
-  return request(`/v1/workspaces/${workspaceId}/social-posts`, token);
+  return request(`/v1/workspaces/${workspaceId}/posts`, token);
 }
 
 export async function listSocialPostSummaries(
   token: string,
   workspaceId: string
 ): Promise<ApiResponse<SocialPostSummary[]>> {
-  return request(`/v1/workspaces/${workspaceId}/social-posts/summaries`, token);
+  return request(`/v1/workspaces/${workspaceId}/posts/summaries`, token);
 }
 
 export async function archiveSocialPost(
@@ -577,7 +577,7 @@ export async function archiveSocialPost(
   _workspaceId: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/social-posts/${postId}`, token, {
+  return request(`/v1/posts/${postId}`, token, {
     method: "PATCH",
     body: JSON.stringify({ archived: true }),
   });
@@ -588,7 +588,7 @@ export async function restoreSocialPost(
   _workspaceId: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/social-posts/${postId}`, token, {
+  return request(`/v1/posts/${postId}`, token, {
     method: "PATCH",
     body: JSON.stringify({ archived: false }),
   });
@@ -606,7 +606,7 @@ export async function retrySocialPostResult(
   resultId: string
 ): Promise<ApiResponse<SocialPostResult>> {
   return request(
-    `/v1/workspaces/${workspaceId}/social-posts/${postId}/results/${resultId}/retry`,
+    `/v1/workspaces/${workspaceId}/posts/${postId}/results/${resultId}/retry`,
     token,
     { method: "POST" }
   );
@@ -617,7 +617,7 @@ export async function deleteSocialPost(
   workspaceId: string,
   postId: string
 ): Promise<ApiResponse<{ deleted: boolean }>> {
-  return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}`, token, {
+  return request(`/v1/workspaces/${workspaceId}/posts/${postId}`, token, {
     method: "DELETE",
   });
 }
@@ -715,7 +715,7 @@ export async function createSocialPost(
   workspaceId: string,
   data: CreateSocialPostPayload
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/workspaces/${workspaceId}/social-posts`, token, {
+  return request(`/v1/workspaces/${workspaceId}/posts`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -726,7 +726,7 @@ export async function validateSocialPost(
   workspaceId: string,
   data: CreateSocialPostPayload
 ): Promise<ApiResponse<SocialPostValidationResult>> {
-  return request(`/v1/workspaces/${workspaceId}/social-posts/validate`, token, {
+  return request(`/v1/workspaces/${workspaceId}/posts/validate`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -768,7 +768,7 @@ export async function rescheduleSocialPost(
   postId: string,
   scheduledAt: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/social-posts/${postId}`, token, {
+  return request(`/v1/posts/${postId}`, token, {
     method: "PATCH",
     body: JSON.stringify({ scheduled_at: scheduledAt }),
   });
@@ -779,7 +779,7 @@ export async function cancelSocialPost(
   token: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/social-posts/${postId}`, token, {
+  return request(`/v1/posts/${postId}`, token, {
     method: "PATCH",
     body: JSON.stringify({ status: "canceled" }),
   });
@@ -812,7 +812,7 @@ export async function bulkCreateSocialPosts(
     idempotency_key?: string;
   }>
 ): Promise<ApiResponse<BulkPostResultEntry[]>> {
-  return request(`/v1/social-posts/bulk`, token, {
+  return request(`/v1/posts/bulk`, token, {
     method: "POST",
     body: JSON.stringify({ posts }),
   });
@@ -932,7 +932,7 @@ export async function getPostAnalytics(
   opts?: { refresh?: boolean }
 ): Promise<ApiResponse<PostAnalytics[]>> {
   const qs = opts?.refresh ? "?refresh=true" : "";
-  return request(`/v1/workspaces/${workspaceId}/social-posts/${postId}/analytics${qs}`, token);
+  return request(`/v1/workspaces/${workspaceId}/posts/${postId}/analytics${qs}`, token);
 }
 
 // Aggregated analytics (powers the analytics page)

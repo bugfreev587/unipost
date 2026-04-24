@@ -38,7 +38,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "Archive",
-    code: `curl -X PATCH "https://api.unipost.dev/v1/social-posts/post_abc123" \\
+    code: `curl -X PATCH "https://api.unipost.dev/v1/posts/post_abc123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"archived": true}'`,
@@ -46,7 +46,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "Cancel",
-    code: `curl -X PATCH "https://api.unipost.dev/v1/social-posts/post_sched_123" \\
+    code: `curl -X PATCH "https://api.unipost.dev/v1/posts/post_sched_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"status": "canceled"}'`,
@@ -54,7 +54,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "Reschedule",
-    code: `curl -X PATCH "https://api.unipost.dev/v1/social-posts/post_sched_123" \\
+    code: `curl -X PATCH "https://api.unipost.dev/v1/posts/post_sched_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"scheduled_at": "2026-04-24T18:00:00Z"}'`,
@@ -95,7 +95,7 @@ export default function UpdatePostPage() {
       title="Update post"
       description="Canonical update endpoint for draft edits, scheduled-post rescheduling, and lifecycle transitions such as archive, restore, and cancel."
       method="PATCH"
-      path="/v1/social-posts/:post_id"
+      path="/v1/posts/:post_id"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },
@@ -113,13 +113,13 @@ export default function UpdatePostPage() {
     >
       <div style={{ borderTop: "1px solid var(--docs-border)", paddingTop: 20 }}>
         <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: "0 0 14px" }}>
-          Use PATCH for direct resource state changes. Legacy command routes such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>POST /v1/social-posts/:post_id/archive</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>/restore</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>/cancel</code> still work during the migration window, but PATCH is now the canonical route.
+          Use PATCH for direct resource state changes. Legacy command routes such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>POST /v1/posts/:post_id/archive</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>/restore</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>/cancel</code> still work during the migration window, but PATCH is now the canonical route.
         </p>
         <RelatedEndpoints
           items={[
-            { method: "GET", path: "/v1/social-posts/:post_id", label: "Get post", href: "/docs/api/posts/get" },
-            { method: "POST", path: "/v1/social-posts/:post_id/publish", label: "Publish draft", href: "/docs/api/posts/drafts/publish" },
-            { method: "POST", path: "/v1/social-posts", label: "Create post", href: "/docs/api/posts/create" },
+            { method: "GET", path: "/v1/posts/:post_id", label: "Get post", href: "/docs/api/posts/get" },
+            { method: "POST", path: "/v1/posts/:post_id/publish", label: "Publish draft", href: "/docs/api/posts/drafts/publish" },
+            { method: "POST", path: "/v1/posts", label: "Create post", href: "/docs/api/posts/create" },
           ]}
         />
       </div>

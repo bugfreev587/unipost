@@ -41,7 +41,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-posts?status=published,partial&limit=25" \\
+    code: `curl "https://api.unipost.dev/v1/posts?status=published,partial&limit=25" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -107,7 +107,7 @@ export default function ListPostsPage() {
       title="List posts"
       description="Returns social posts in reverse chronological order with cursor pagination. Use it for feeds, history views, and sync jobs."
       method="GET"
-      path="/v1/social-posts"
+      path="/v1/posts"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Query Params", items: QUERY_FIELDS },

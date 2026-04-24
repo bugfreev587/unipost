@@ -90,7 +90,7 @@ export default function WebhooksPage() {
           <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 12 }}>How it fits into async publishing</div>
             <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
-              <ApiInlineLink endpoint="POST /v1/social-posts" /> accepts the request, creates result rows, and queues background delivery jobs. Final outcome is then available by polling <ApiInlineLink endpoint="GET /v1/social-posts/:post_id" /> or by subscribing to these webhooks.
+              <ApiInlineLink endpoint="POST /v1/posts" /> accepts the request, creates result rows, and queues background delivery jobs. Final outcome is then available by polling <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> or by subscribing to these webhooks.
             </p>
           </div>
           <div style={{ padding: "18px" }}>
@@ -145,7 +145,7 @@ export default function WebhooksPage() {
               { method: "GET", path: "/v1/webhooks/:id", label: "Get webhook", href: "/docs/api/webhooks/get" },
               { method: "PATCH", path: "/v1/webhooks/:id", label: "Update webhook", href: "/docs/api/webhooks/update" },
               { method: "POST", path: "/v1/webhooks/:id/rotate", label: "Rotate secret", href: "/docs/api/webhooks/rotate" },
-              { method: "GET", path: "/v1/social-posts/:post_id/queue", label: "Inspect queue state", href: "/docs/api/posts/get" },
+              { method: "GET", path: "/v1/posts/:post_id/queue", label: "Inspect queue state", href: "/docs/api/posts/get" },
             ]} />
           </div>
         </ApiEndpointCard>

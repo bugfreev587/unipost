@@ -27,7 +27,7 @@ Opt-in extras (via flags):
 
   --cleanup
       At the end, archive the published post via
-      POST /v1/social-posts/<id>/archive. The account stays connected
+      POST /v1/posts/<id>/archive. The account stays connected
       regardless — delete it from Dashboard if you want a clean slate.
 
 Usage:
@@ -237,7 +237,7 @@ def publish_post(account_id: str) -> dict:
         "idempotency_key": f"wl-test-{uuid.uuid4()}",
     }
     print(f"  caption: {POST_TEXT!r}")
-    resp = _request("POST", "/v1/social-posts", body)
+    resp = _request("POST", "/v1/posts", body)
     data = resp.get("data") if isinstance(resp, dict) else None
     dump("post", data)
     if not data or not data.get("id"):
@@ -250,7 +250,7 @@ def wait_for_post_terminal(post_id: str) -> dict:
     deadline = time.time() + POST_TIMEOUT
     last_status = None
     while time.time() < deadline:
-        resp = _request("GET", f"/v1/social-posts/{post_id}")
+        resp = _request("GET", f"/v1/posts/{post_id}")
         data = resp.get("data") if isinstance(resp, dict) else None
         status = (data or {}).get("status")
         if status != last_status:
@@ -266,7 +266,7 @@ def wait_for_post_terminal(post_id: str) -> dict:
 def fetch_analytics(post_id: str, label: str) -> Any:
     step(7, f"Fetch analytics snapshot ({label})")
     try:
-        resp = _request("GET", f"/v1/social-posts/{post_id}/analytics")
+        resp = _request("GET", f"/v1/posts/{post_id}/analytics")
         data = resp.get("data") if isinstance(resp, dict) else resp
         dump("analytics", data)
         return data
@@ -291,7 +291,7 @@ def wait_and_refetch_analytics(post_id: str, seconds: int) -> None:
 def archive_post(post_id: str) -> None:
     step(9, "Archive the published post (cleanup)")
     try:
-        _ = _request("POST", f"/v1/social-posts/{post_id}/archive")
+        _ = _request("POST", f"/v1/posts/{post_id}/archive")
         print(f"  archived {post_id}")
     except APIError as e:
         print(f"  warning: archive failed (API {e.status}): {e.body}")

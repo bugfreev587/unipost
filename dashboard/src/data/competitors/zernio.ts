@@ -71,7 +71,7 @@ export const ZERNIO = {
   },
   migrationEndpoint: {
     from: "api.zernio.com/v1/posts",
-    to: "api.unipost.dev/v1/social-posts",
+    to: "api.unipost.dev/v1/posts",
   },
   migrationFields: {
     from: 'channels: ["instagram"]',

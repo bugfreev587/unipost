@@ -125,7 +125,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl -X POST "https://api.unipost.dev/v1/social-posts/validate" \\
+    code: `curl -X POST "https://api.unipost.dev/v1/posts/validate" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -256,14 +256,14 @@ export default function ValidatePage() {
       <ApiReferenceGrid
         left={
           <div style={{ display: "grid", gap: 16 }}>
-            <ApiEndpointCard method="POST" path="/v1/social-posts/validate">
+            <ApiEndpointCard method="POST" path="/v1/posts/validate">
               <div style={{ padding: "16px 18px" }}>
                 <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#3b82f6", marginRight: 12 }}>POST</span>
-                <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/social-posts/validate</code>
+                <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/posts/validate</code>
               </div>
             </ApiEndpointCard>
 
-            <ApiEndpointCard method="POST" path="/v1/social-posts/validate">
+            <ApiEndpointCard method="POST" path="/v1/posts/validate">
               <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
                 <ApiFieldList items={AUTH_FIELDS} />
@@ -274,7 +274,7 @@ export default function ValidatePage() {
               </div>
             </ApiEndpointCard>
 
-            <ApiEndpointCard method="POST" path="/v1/social-posts/validate">
+            <ApiEndpointCard method="POST" path="/v1/posts/validate">
               <div style={{ padding: "18px 18px 4px" }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
               </div>

@@ -34,7 +34,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/social-accounts/sa_instagram_123/capabilities" \\
+    code: `curl "https://api.unipost.dev/v1/accounts/sa_instagram_123/capabilities" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -100,7 +100,7 @@ export default function AccountCapabilitiesPage() {
       title="Get account capabilities"
       description="Returns the publishing capability map for the platform behind one connected account. Use it to drive client-side validation or UI affordances before you call create post."
       method="GET"
-      path="/v1/social-accounts/:account_id/capabilities"
+      path="/v1/accounts/:account_id/capabilities"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },
