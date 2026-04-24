@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { JsonMonacoTabs, JsonMonacoViewer } from "../api/_components/json-monaco-viewer";
+import { JsonMonacoTabs, JsonMonacoViewer, MonacoTabs } from "../api/_components/json-monaco-viewer";
 
 export type CodeLanguage =
   | "javascript"
@@ -339,45 +339,12 @@ export function CodeBlock({
 }
 
 export function CodeTabs({ snippets }: { snippets: CodeSnippet[] }) {
-  const [active, setActive] = useState(0);
-  const current = snippets[active];
   const allJson = snippets.length > 0 && snippets.every((snippet) => normalizeLanguage(snippet.lang || snippet.label, snippet.code) === "json");
 
   if (allJson) {
     return <JsonMonacoTabs snippets={snippets} />;
   }
-
-  return (
-    <div className="docs-code-tabs">
-      <div className="docs-code-tabs-header">
-        <div className="docs-code-tab-list">
-          {snippets.map((snippet, index) => (
-            <button
-              key={`${snippet.label}-${index}`}
-              type="button"
-              onClick={() => setActive(index)}
-              className={`docs-code-tab${index === active ? " active" : ""}`}
-            >
-              {snippet.label}
-            </button>
-          ))}
-        </div>
-        <CopyButton code={current.code} />
-      </div>
-      <pre className="docs-code-surface tabs">
-        <code className={`docs-code-content language-${normalizeLanguage(current.lang || current.label, current.code)}`}>
-          {tokenize(current.code, normalizeLanguage(current.lang || current.label, current.code)).map((token, index) => (
-            <span
-              key={`${token.kind}-${index}`}
-              style={{ color: TOKEN_COLORS[token.kind] }}
-            >
-              {token.value}
-            </span>
-          ))}
-        </code>
-      </pre>
-    </div>
-  );
+  return <MonacoTabs snippets={snippets} />;
 }
 
 export function codeBlockStyles() {

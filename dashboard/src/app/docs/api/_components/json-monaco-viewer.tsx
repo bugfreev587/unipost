@@ -12,6 +12,8 @@ export type JsonViewerSnippet = {
   lang?: string;
 };
 
+type MonacoLanguage = "javascript" | "python" | "go" | "json" | "shell" | "plaintext";
+
 function tryFormatJson(value: string) {
   try {
     return JSON.stringify(JSON.parse(value), null, 2);
@@ -22,7 +24,32 @@ function tryFormatJson(value: string) {
 
 function estimateHeight(text: string) {
   const lines = text.split("\n").length;
-  return Math.min(Math.max(lines * 22 + 20, 180), 520);
+  return Math.min(Math.max(lines * 20 + 18, 160), 460);
+}
+
+function normalizeMonacoLanguage(value?: string, code?: string): MonacoLanguage {
+  const lower = (value || "").toLowerCase();
+
+  if (lower.includes("javascript") || lower === "js" || lower === "node.js") return "javascript";
+  if (lower.includes("python") || lower === "py") return "python";
+  if (lower === "go" || lower.includes("golang")) return "go";
+  if (lower === "json") return "json";
+  if (lower === "bash" || lower === "shell" || lower === "sh" || lower === "curl") return "shell";
+
+  const sample = code || "";
+  if (/^\s*[{[]/.test(sample)) return "json";
+  if (/^\s*(curl\b|npm\b|pnpm\b|yarn\b|pip\b|go get\b|export\b)/m.test(sample)) return "shell";
+  if (/\bpackage main\b|\bfunc\s+\w+\s*\(/.test(sample)) return "go";
+  if (/\bfrom\s+\w+\s+import\b|\bdef\s+\w+\s*\(|\bprint\s*\(/.test(sample)) return "python";
+  if (/\bconst\b|\blet\b|\bawait\b|\bimport\s+[{*]/.test(sample)) return "javascript";
+  return "plaintext";
+}
+
+function getViewerValue(code: string, language: MonacoLanguage) {
+  if (language === "json") {
+    return tryFormatJson(code) || code;
+  }
+  return code;
 }
 
 function CopyButton({ code }: { code: string }) {
@@ -153,6 +180,123 @@ export function JsonMonacoViewer({
   );
 }
 
+export function MonacoCodeViewer({
+  code,
+  language,
+  height,
+}: {
+  code: string;
+  language?: string;
+  height?: number;
+}) {
+  const normalizedLanguage = useMemo(() => normalizeMonacoLanguage(language, code), [code, language]);
+  const value = useMemo(() => getViewerValue(code, normalizedLanguage), [code, normalizedLanguage]);
+  const [themeName, setThemeName] = useState("unipost-snippet-dark");
+
+  function applyTheme(monaco: typeof import("monaco-editor")) {
+    const styles = getComputedStyle(document.documentElement);
+    const editorBackground = styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
+    const editorForeground = styles.getPropertyValue("--docs-tech-text-soft").trim() || "#d6d9e5";
+    const borderColor = styles.getPropertyValue("--docs-tech-border").trim() || "#3a3d4f";
+    const stringColor = styles.getPropertyValue("--docs-code-string").trim() || "#7dc7ff";
+    const numberColor = styles.getPropertyValue("--docs-code-number").trim() || "#f9b44d";
+    const keywordColor = styles.getPropertyValue("--docs-code-keyword").trim() || "#d1a8ff";
+    const constantColor = styles.getPropertyValue("--docs-code-constant").trim() || "#f08ab1";
+    const functionColor = styles.getPropertyValue("--docs-code-function").trim() || "#ff9857";
+    const typeColor = styles.getPropertyValue("--docs-code-type").trim() || "#6dd39a";
+    const commentColor = styles.getPropertyValue("--docs-code-comment").trim() || "#7c8aa0";
+
+    monaco.editor.defineTheme("unipost-snippet-dark", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: commentColor.replace("#", "") },
+        { token: "string", foreground: stringColor.replace("#", "") },
+        { token: "string.key.json", foreground: stringColor.replace("#", "") },
+        { token: "string.value.json", foreground: constantColor.replace("#", "") },
+        { token: "number", foreground: numberColor.replace("#", "") },
+        { token: "keyword", foreground: keywordColor.replace("#", "") },
+        { token: "keyword.json", foreground: keywordColor.replace("#", "") },
+        { token: "identifier.function", foreground: functionColor.replace("#", "") },
+        { token: "function", foreground: functionColor.replace("#", "") },
+        { token: "type.identifier", foreground: typeColor.replace("#", "") },
+      ],
+      colors: {
+        "editor.background": editorBackground,
+        "editor.foreground": editorForeground,
+        "editorGutter.background": editorBackground,
+        "editorIndentGuide.background1": borderColor,
+        "editorIndentGuide.activeBackground1": borderColor,
+        "editor.selectionBackground": "rgba(124,178,255,0.14)",
+        "editor.inactiveSelectionBackground": "rgba(124,178,255,0.08)",
+        "editor.lineHighlightBackground": "transparent",
+      },
+    });
+    setThemeName("unipost-snippet-dark");
+  }
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const monaco = (window as typeof window & { monaco?: typeof import("monaco-editor") }).monaco;
+      if (monaco) {
+        applyTheme(monaco);
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--docs-border)",
+        borderRadius: 16,
+        overflow: "hidden",
+        background: "var(--docs-tech-bg)",
+      }}
+    >
+      <MonacoEditor
+        height={height ?? estimateHeight(value)}
+        defaultLanguage={normalizedLanguage}
+        theme={themeName}
+        value={value}
+        beforeMount={(monaco) => {
+          applyTheme(monaco);
+        }}
+        onMount={(_, monaco) => {
+          (window as typeof window & { monaco?: typeof import("monaco-editor") }).monaco = monaco;
+          applyTheme(monaco);
+        }}
+        options={{
+          readOnly: true,
+          domReadOnly: true,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          wordWrap: "on",
+          folding: false,
+          lineNumbers: "off",
+          lineDecorationsWidth: 0,
+          lineNumbersMinChars: 0,
+          glyphMargin: false,
+          renderLineHighlight: "none",
+          overviewRulerBorder: false,
+          overviewRulerLanes: 0,
+          hideCursorInOverviewRuler: true,
+          guides: { indentation: false },
+          padding: { top: 10, bottom: 10 },
+          fontSize: 12.5,
+          lineHeight: 19,
+          fontFamily: "var(--docs-mono, var(--mono), monospace)",
+          scrollbar: {
+            verticalScrollbarSize: 8,
+            horizontalScrollbarSize: 8,
+          },
+        }}
+      />
+    </div>
+  );
+}
+
 export function JsonMonacoTabs({ snippets }: { snippets: JsonViewerSnippet[] }) {
   const validSnippets = useMemo(
     () => snippets.filter((snippet) => tryFormatJson(snippet.code)),
@@ -188,6 +332,33 @@ export function JsonMonacoTabs({ snippets }: { snippets: JsonViewerSnippet[] }) 
         <CopyButton code={formatted} />
       </div>
       <JsonMonacoViewer code={formatted} />
+    </div>
+  );
+}
+
+export function MonacoTabs({ snippets }: { snippets: JsonViewerSnippet[] }) {
+  const [active, setActive] = useState(0);
+  const current = snippets[Math.min(active, snippets.length - 1)];
+  const copyValue = getViewerValue(current.code, normalizeMonacoLanguage(current.lang || current.label, current.code));
+
+  return (
+    <div className="docs-code-tabs" style={{ margin: 0 }}>
+      <div className="docs-code-tabs-header">
+        <div className="docs-code-tab-list">
+          {snippets.map((snippet, index) => (
+            <button
+              key={`${snippet.label}-${index}`}
+              type="button"
+              onClick={() => setActive(index)}
+              className={`docs-code-tab${index === active ? " active" : ""}`}
+            >
+              {snippet.label}
+            </button>
+          ))}
+        </div>
+        <CopyButton code={copyValue} />
+      </div>
+      <MonacoCodeViewer code={current.code} language={current.lang || current.label} />
     </div>
   );
 }
