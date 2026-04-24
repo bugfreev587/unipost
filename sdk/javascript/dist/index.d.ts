@@ -40,6 +40,7 @@ export interface ListAccountsParams {
 }
 
 export interface ConnectAccountParams {
+  profileId?: string;
   platform: Platform;
   credentials: Record<string, string>;
 }
@@ -61,11 +62,19 @@ export interface Profile {
   id: string;
   workspace_id: string;
   name: string;
+  account_count?: number;
   created_at: string;
   updated_at: string;
   branding_logo_url?: string | null;
   branding_display_name?: string | null;
   branding_primary_color?: string | null;
+}
+
+export interface CreateProfileParams {
+  name: string;
+  brandingLogoUrl?: string | null;
+  brandingDisplayName?: string | null;
+  brandingPrimaryColor?: string | null;
 }
 
 export interface UpdateProfileParams {
@@ -350,6 +359,7 @@ export interface AnalyticsRollupParams {
 export interface AnalyticsQueryParams {
   from?: string;
   to?: string;
+  profileId?: string;
   platform?: string;
   status?: string;
 }
@@ -399,8 +409,10 @@ declare class WorkspaceApi {
 declare class Profiles {
   constructor(http: unknown);
   list(): Promise<PaginatedResponse<Profile>>;
+  create(params: CreateProfileParams): Promise<Profile>;
   get(profileId: string): Promise<Profile>;
   update(profileId: string, params?: UpdateProfileParams): Promise<Profile>;
+  delete(profileId: string): Promise<Record<string, unknown> | undefined>;
 }
 
 declare class Accounts {

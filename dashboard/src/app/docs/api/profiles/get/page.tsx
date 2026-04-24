@@ -15,6 +15,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Profile ID." },
   { name: "workspace_id", type: "string", description: "Owning workspace ID." },
   { name: "name", type: "string", description: "Profile name." },
+  { name: "account_count", type: "number", description: "Connected account count for that profile." },
   { name: "branding_logo_url", type: "string | null", description: "Optional hosted Connect logo URL." },
   { name: "branding_display_name", type: "string | null", description: "Optional hosted Connect display name." },
   { name: "branding_primary_color", type: "string | null", description: "Optional hosted Connect primary brand color." },
@@ -63,6 +64,7 @@ const RESPONSE_SNIPPETS = [
     "branding_logo_url": "https://cdn.example.com/logo.png",
     "branding_display_name": "Brand US",
     "branding_primary_color": "#10b981",
+    "account_count": 2,
     "created_at": "2026-04-01T10:00:00Z",
     "updated_at": "2026-04-21T18:40:00Z"
   },

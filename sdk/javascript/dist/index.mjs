@@ -260,6 +260,16 @@ class Profiles {
     return this.http.get("/v1/profiles");
   }
 
+  async create(params = {}) {
+    const response = await this.http.post("/v1/profiles", compactObject({
+      name: params.name,
+      branding_logo_url: params.brandingLogoUrl,
+      branding_display_name: params.brandingDisplayName,
+      branding_primary_color: params.brandingPrimaryColor,
+    }));
+    return response.data;
+  }
+
   async get(profileId) {
     const response = await this.http.get(`/v1/profiles/${profileId}`);
     return response.data;
@@ -273,6 +283,11 @@ class Profiles {
       branding_primary_color: params.brandingPrimaryColor,
     }));
     return response.data;
+  }
+
+  async delete(profileId) {
+    const response = await this.http.delete(`/v1/profiles/${profileId}`);
+    return response?.data ?? response;
   }
 }
 
@@ -301,6 +316,7 @@ class Accounts {
 
   async connect(params = {}) {
     const response = await this.http.post("/v1/social-accounts/connect", {
+      profile_id: params.profileId,
       platform: params.platform,
       credentials: params.credentials,
     });

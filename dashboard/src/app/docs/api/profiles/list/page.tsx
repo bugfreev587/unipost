@@ -15,6 +15,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data[].branding_logo_url", type: "string | null", description: "Optional hosted Connect logo URL." },
   { name: "data[].branding_display_name", type: "string | null", description: "Optional hosted Connect display name." },
   { name: "data[].branding_primary_color", type: "string | null", description: "Optional hosted Connect primary brand color." },
+  { name: "data[].account_count", type: "number", description: "Connected account count for that profile." },
   { name: "meta.total", type: "number", description: "Total number of profiles in the workspace." },
   { name: "meta.limit", type: "number", description: "Applied list size for this response." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
@@ -61,6 +62,7 @@ const RESPONSE_SNIPPETS = [
       "branding_logo_url": "https://cdn.example.com/logo.png",
       "branding_display_name": "Brand US",
       "branding_primary_color": "#10b981",
+      "account_count": 2,
       "created_at": "2026-04-01T10:00:00Z",
       "updated_at": "2026-04-21T18:40:00Z"
     }
@@ -91,7 +93,7 @@ export default function ListProfilesPage() {
     <SingleEndpointReferencePage
       section="profiles"
       title="List profiles"
-      description="Returns the profiles that belong to your workspace. Profiles are the brand containers that sit under one workspace and drive hosted Connect branding. Public API access currently supports list, get, and branding updates; profile creation and deletion remain dashboard-only."
+      description="Returns the profiles that belong to your workspace. Profiles are the brand containers that sit under one workspace and drive hosted Connect branding."
       method="GET"
       path="/v1/profiles"
       requestSections={[{ title: "Authorization", items: AUTH_FIELDS }]}

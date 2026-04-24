@@ -195,8 +195,10 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           label: "profiles",
           children: [
             { label: "List profiles", href: "/docs/api/profiles/list", method: "GET" },
+            { label: "Create profile", href: "/docs/api/profiles/create", method: "POST" },
             { label: "Get profile", href: "/docs/api/profiles/get", method: "GET" },
             { label: "Update profile", href: "/docs/api/profiles/update", method: "PATCH" },
+            { label: "Delete profile", href: "/docs/api/profiles/delete", method: "DELETE" },
           ],
         },
         {

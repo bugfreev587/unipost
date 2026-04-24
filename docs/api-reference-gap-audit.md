@@ -7,8 +7,10 @@ This audit compares the public API routes registered in [api/cmd/api/main.go](/U
 ## Newly covered in this pass
 
 - `GET /v1/profiles`
+- `POST /v1/profiles`
 - `GET /v1/profiles/{id}`
 - `PATCH /v1/profiles/{id}`
+- `DELETE /v1/profiles/{id}`
 - `POST /v1/social-accounts/connect`
 - `DELETE /v1/social-accounts/{id}`
 - `GET /v1/social-accounts/{id}/capabilities`

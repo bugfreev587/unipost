@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
@@ -170,6 +171,7 @@ const TREND_METRICS: { key: "posts" | "impressions" | "likes" | "comments" | "sh
 type SortField = "published_at" | "impressions" | "likes" | "engagement";
 
 export default function AnalyticsPage() {
+  const { id: profileId } = useParams<{ id: string }>();
   const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
 
@@ -207,12 +209,13 @@ export default function AnalyticsPage() {
   // backend aggregation queries honor (empty / "all" disables them).
   const apiRange = useMemo(
     () => ({
-      start_date: dateRange.start,
-      end_date: dateRange.end,
+      from: dateRange.start,
+      to: dateRange.end,
+      profile_id: profileId,
       platform: platformFilter,
       status: statusFilter,
     }),
-    [dateRange, platformFilter, statusFilter]
+    [dateRange, profileId, platformFilter, statusFilter]
   );
 
   const reloadAll = useCallback(

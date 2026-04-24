@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { getProfile, updateProfile, deleteProfile, type Profile } from "@/lib/api";
+import { getProfile, updateProfile, deleteProfile, getBootstrap, type Profile } from "@/lib/api";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function SettingsPage() {
@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [defaultProfileId, setDefaultProfileId] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -23,6 +24,8 @@ export default function SettingsPage() {
         if (!token) return;
         const res = await getProfile(token, profileId);
         setProfile(res.data); setName(res.data.name);
+        const bootstrap = await getBootstrap(token);
+        setDefaultProfileId(bootstrap.data.default_profile_id);
       } catch (err) { console.error("Failed:", err); }
     }
     load();
@@ -51,6 +54,14 @@ export default function SettingsPage() {
   }
 
   if (!profile) return <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>;
+  const isDefaultProfile = profile.id === defaultProfileId;
+  const hasAccounts = (profile.account_count || 0) > 0;
+  const deleteDisabled = isDefaultProfile || hasAccounts;
+  const deleteHelp = isDefaultProfile
+    ? "Default profiles cannot be deleted."
+    : hasAccounts
+      ? "Disconnect all accounts from this profile before deleting it."
+      : "Permanently delete this empty profile.";
 
   return (
     <>
@@ -84,6 +95,10 @@ export default function SettingsPage() {
               {new Date(profile.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
             </span>
           </div>
+          <div className="settings-row">
+            <span style={{ fontSize: 12, lineHeight: "16px", fontWeight: 600, color: "var(--dmuted)" }}>Connected Accounts</span>
+            <span style={{ fontSize: 13, lineHeight: "18px", color: "var(--dtext)" }}>{profile.account_count || 0}</span>
+          </div>
         </div>
       </div>
 
@@ -94,9 +109,9 @@ export default function SettingsPage() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, color: "var(--dtext)" }}>Delete Profile</div>
-              <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--dmuted)" }}>Permanently delete this profile and all associated data.</div>
+              <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--dmuted)" }}>{deleteHelp}</div>
             </div>
-            <button className="dbtn dbtn-danger" onClick={() => setShowDeleteConfirm(true)} disabled={deleting}>
+            <button className="dbtn dbtn-danger" onClick={() => setShowDeleteConfirm(true)} disabled={deleting || deleteDisabled}>
               {deleting ? "Deleting..." : "Delete Profile"}
             </button>
           </div>
@@ -106,7 +121,7 @@ export default function SettingsPage() {
       <ConfirmModal
         open={showDeleteConfirm}
         title="Delete Profile"
-        message="Are you sure you want to delete this profile? All API keys, connected accounts, and associated data will be permanently removed. This action cannot be undone."
+        message="Are you sure you want to delete this empty profile? This action cannot be undone."
         confirmLabel="Delete Profile"
         variant="danger"
         onConfirm={handleDelete}

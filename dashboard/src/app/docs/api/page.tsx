@@ -26,7 +26,7 @@ export default function ApiReferenceLandingPage() {
       />
 
       <h2 id="profiles">Profiles</h2>
-      <p>Profiles are the brand or tenant containers that sit underneath one workspace. In the public API today you can list profiles, fetch one profile, and update branding fields for hosted Connect. Profile creation and deletion still live on the dashboard-authenticated surface.</p>
+      <p>Profiles are the brand or tenant containers that sit underneath one workspace. Public API callers can now create, list, fetch, update, and delete profiles, with the deletion rule that only empty non-default profiles can be removed.</p>
 
       <h2 id="connect-sessions">Connect sessions</h2>
       <p>Use Connect sessions when your customers need to connect their own social accounts inside your product. This is where UniPost stops being just a posting API and becomes account-onboarding infrastructure.</p>

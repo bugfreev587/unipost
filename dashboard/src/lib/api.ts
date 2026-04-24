@@ -6,6 +6,7 @@ export interface Profile {
   id: string;
   workspace_id: string;
   name: string;
+  account_count?: number;
   created_at: string;
   updated_at: string;
   // Sprint 4 PR4: white-label Connect branding
@@ -197,7 +198,12 @@ export async function getProfile(
 
 export async function createProfile(
   token: string,
-  data: { name: string }
+  data: {
+    name: string;
+    branding_logo_url?: string;
+    branding_display_name?: string;
+    branding_primary_color?: string;
+  }
 ): Promise<ApiResponse<Profile>> {
   return request("/v1/dashboard/profiles", token, {
     method: "POST",
@@ -861,6 +867,7 @@ export async function getManagedUser(
 export interface ConnectSession {
   id: string;
   platform: "twitter" | "linkedin" | "bluesky";
+  profile_id?: string;
   external_user_id: string;
   external_user_email?: string;
   return_url?: string;
@@ -876,6 +883,7 @@ export async function createConnectSession(
   token: string,
   data: {
     platform: "twitter" | "linkedin" | "bluesky";
+    profile_id?: string;
     external_user_id: string;
     external_user_email?: string;
     return_url?: string;
@@ -981,6 +989,7 @@ export interface AnalyticsRangeParams {
   to?: string;         // YYYY-MM-DD
   start_date?: string; // YYYY-MM-DD
   end_date?: string;   // YYYY-MM-DD
+  profile_id?: string;
   platform?: string;   // platform key, omit or "all" to disable
   status?: string;     // post status, omit or "all" to disable
 }
@@ -990,6 +999,7 @@ function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string
   const qs = new URLSearchParams();
   if (params.from || params.start_date) qs.set("from", params.from || params.start_date || "");
   if (params.to || params.end_date) qs.set("to", params.to || params.end_date || "");
+  if (params.profile_id && params.profile_id !== "all") qs.set("profile_id", params.profile_id);
   if (params.platform && params.platform !== "all") qs.set("platform", params.platform);
   if (params.status && params.status !== "all") qs.set("status", params.status);
   if (params.metric) qs.set("metric", params.metric);

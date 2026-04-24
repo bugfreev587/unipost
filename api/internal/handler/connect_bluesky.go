@@ -246,7 +246,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 
 	// Mark the session completed and link to the saved account.
 	_, _ = h.queries.MarkConnectSessionCompleted(r.Context(), db.MarkConnectSessionCompletedParams{
-		ID: session.ID,
+		ID:                       session.ID,
 		CompletedSocialAccountID: pgtype.Text{String: savedID, Valid: true},
 	})
 
@@ -258,6 +258,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	}
 	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
 		"social_account_id": savedID,
+		"profile_id":        session.ProfileID,
 		"platform":          "bluesky",
 		"account_name":      connectResult.AccountName,
 		"external_user_id":  session.ExternalUserID,

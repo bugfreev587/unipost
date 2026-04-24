@@ -147,11 +147,12 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 		  AND sp.deleted_at IS NULL
 		  AND sp.created_at >= $2
 		  AND sp.created_at < $3
+		  AND ($4::text = '' OR sa.profile_id = $4)
 		GROUP BY bucket, %s
 		ORDER BY bucket DESC, %s
 	`, allowedGranularity[granularity], groupColsJoined, groupColsJoined, groupColsJoined)
 
-	rows, err := h.pool.Query(r.Context(), query, workspaceID, from, to)
+	rows, err := h.pool.Query(r.Context(), query, workspaceID, from, to, profileFilter(r))
 	if err != nil {
 		slog.Error("analytics rollup query failed", "workspace_id", workspaceID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to query rollup")

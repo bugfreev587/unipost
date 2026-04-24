@@ -229,6 +229,7 @@ func queryFromAnalytics(params *AnalyticsQueryParams) map[string]string {
 	}
 	query["from"] = params.From
 	query["to"] = params.To
+	query["profile_id"] = params.ProfileID
 	query["platform"] = params.Platform
 	query["status"] = params.Status
 	return query
@@ -287,6 +288,7 @@ type Profile struct {
 	ID                   string    `json:"id"`
 	WorkspaceID          string    `json:"workspace_id"`
 	Name                 string    `json:"name"`
+	AccountCount         int       `json:"account_count"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 	BrandingLogoURL      *string   `json:"branding_logo_url,omitempty"`
@@ -303,12 +305,40 @@ type PaginatedProfiles struct {
 	Meta PageMeta
 }
 
+type CreateProfileParams struct {
+	Name                 string  `json:"name"`
+	BrandingLogoURL      *string `json:"branding_logo_url,omitempty"`
+	BrandingDisplayName  *string `json:"branding_display_name,omitempty"`
+	BrandingPrimaryColor *string `json:"branding_primary_color,omitempty"`
+}
+
 func (s *ProfilesService) List(ctx context.Context) (*PaginatedProfiles, error) {
 	var envelope apiEnvelope[[]Profile]
 	if err := s.client.do(ctx, http.MethodGet, "/v1/profiles", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &PaginatedProfiles{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
+}
+
+func (s *ProfilesService) Create(ctx context.Context, params *CreateProfileParams) (*Profile, error) {
+	body := map[string]any{}
+	if params != nil {
+		body["name"] = params.Name
+		if params.BrandingLogoURL != nil {
+			body["branding_logo_url"] = *params.BrandingLogoURL
+		}
+		if params.BrandingDisplayName != nil {
+			body["branding_display_name"] = *params.BrandingDisplayName
+		}
+		if params.BrandingPrimaryColor != nil {
+			body["branding_primary_color"] = *params.BrandingPrimaryColor
+		}
+	}
+	var envelope apiEnvelope[Profile]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/profiles", nil, body, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
 }
 
 func (s *ProfilesService) Get(ctx context.Context, profileID string) (*Profile, error) {
@@ -349,6 +379,10 @@ func (s *ProfilesService) Update(ctx context.Context, profileID string, params *
 	return &envelope.Data, nil
 }
 
+func (s *ProfilesService) Delete(ctx context.Context, profileID string) error {
+	return s.client.do(ctx, http.MethodDelete, "/v1/profiles/"+profileID, nil, nil, nil, nil)
+}
+
 type SocialAccount struct {
 	ID                string `json:"id"`
 	ProfileID         string `json:"profile_id,omitempty"`
@@ -371,6 +405,7 @@ type AccountHealth struct {
 }
 
 type ConnectAccountParams struct {
+	ProfileID   string            `json:"profile_id,omitempty"`
 	Platform    string            `json:"platform"`
 	Credentials map[string]string `json:"credentials"`
 }
@@ -823,6 +858,9 @@ func (s *PostsService) Analytics(ctx context.Context, postID string, refresh boo
 	if err := s.client.do(ctx, http.MethodGet, "/v1/social-posts/"+postID+"/analytics", query, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
+	if envelope.Data == nil {
+		return []PostAnalyticsItem{}, nil
+	}
 	return envelope.Data, nil
 }
 
@@ -1027,10 +1065,11 @@ func (s *MediaService) Delete(ctx context.Context, mediaID string) error {
 }
 
 type AnalyticsQueryParams struct {
-	From     string
-	To       string
-	Platform string
-	Status   string
+	From      string
+	To        string
+	ProfileID string
+	Platform  string
+	Status    string
 }
 
 type AnalyticsRollupParams struct {

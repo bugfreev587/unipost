@@ -34,6 +34,7 @@ WHERE sp.workspace_id = $1
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
   AND ($5::text = '' OR sp.status   = $5)
+  AND ($6::text = '' OR sa.profile_id = $6)
 GROUP BY sa.platform
 ORDER BY sa.platform ASC
 `
@@ -44,6 +45,7 @@ type GetAnalyticsByPlatformByWorkspaceParams struct {
 	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
 	Column4     string             `json:"column_4"`
 	Column5     string             `json:"column_5"`
+	Column6     string             `json:"column_6"`
 }
 
 type GetAnalyticsByPlatformByWorkspaceRow struct {
@@ -67,6 +69,7 @@ func (q *Queries) GetAnalyticsByPlatformByWorkspace(ctx context.Context, arg Get
 		arg.CreatedAt_2,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	if err != nil {
 		return nil, err
@@ -122,6 +125,7 @@ WHERE sp.workspace_id = $1
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
   AND ($5::text = '' OR sp.status   = $5)
+  AND ($6::text = '' OR sa.profile_id = $6)
 `
 
 type GetAnalyticsSummaryByWorkspaceParams struct {
@@ -130,6 +134,7 @@ type GetAnalyticsSummaryByWorkspaceParams struct {
 	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
 	Column4     string             `json:"column_4"`
 	Column5     string             `json:"column_5"`
+	Column6     string             `json:"column_6"`
 }
 
 type GetAnalyticsSummaryByWorkspaceRow struct {
@@ -154,6 +159,7 @@ func (q *Queries) GetAnalyticsSummaryByWorkspace(ctx context.Context, arg GetAna
 		arg.CreatedAt_2,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	var i GetAnalyticsSummaryByWorkspaceRow
 	err := row.Scan(
@@ -191,6 +197,7 @@ WHERE sp.workspace_id = $1
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
   AND ($5::text = '' OR sp.status   = $5)
+  AND ($6::text = '' OR sa.profile_id = $6)
 GROUP BY day
 ORDER BY day ASC
 `
@@ -201,6 +208,7 @@ type GetAnalyticsTrendByWorkspaceParams struct {
 	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
 	Column4     string             `json:"column_4"`
 	Column5     string             `json:"column_5"`
+	Column6     string             `json:"column_6"`
 }
 
 type GetAnalyticsTrendByWorkspaceRow struct {
@@ -219,6 +227,7 @@ func (q *Queries) GetAnalyticsTrendByWorkspace(ctx context.Context, arg GetAnaly
 		arg.CreatedAt_2,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	if err != nil {
 		return nil, err

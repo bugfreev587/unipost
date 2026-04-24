@@ -21,6 +21,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Profile ID." },
   { name: "workspace_id", type: "string", description: "Owning workspace ID." },
   { name: "name", type: "string", description: "Profile name. Name remains dashboard-only editable today." },
+  { name: "account_count", type: "number", description: "Connected account count for that profile." },
   { name: "branding_logo_url", type: "string | null", description: "Updated logo URL." },
   { name: "branding_display_name", type: "string | null", description: "Updated display name." },
   { name: "branding_primary_color", type: "string | null", description: "Updated brand color." },
@@ -78,6 +79,7 @@ const RESPONSE_SNIPPETS = [
     "branding_logo_url": "https://cdn.example.com/logo.png",
     "branding_display_name": "Brand US",
     "branding_primary_color": "#10b981",
+    "account_count": 2,
     "created_at": "2026-04-01T10:00:00Z",
     "updated_at": "2026-04-23T09:12:00Z"
   },
@@ -103,7 +105,7 @@ export default function UpdateProfilePage() {
     <SingleEndpointReferencePage
       section="profiles"
       title="Update profile"
-      description="Updates the hosted Connect branding fields for one profile. Public API updates are intentionally limited to branding today; profile creation, deletion, and renaming remain dashboard-only operations."
+      description="Updates one profile. Public API callers can rename the profile and update the hosted Connect branding fields in the same request."
       method="PATCH"
       path="/v1/profiles/:profile_id"
       requestSections={[

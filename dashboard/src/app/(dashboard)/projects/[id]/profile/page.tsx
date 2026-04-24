@@ -8,6 +8,7 @@ import {
   getProfile,
   createProfile,
   deleteProfile,
+  getBootstrap,
   type Profile,
 } from "@/lib/api";
 import { Plus, Pencil, Trash2, Calendar, ArrowRight } from "lucide-react";
@@ -26,6 +27,7 @@ export default function ProfilePage() {
   const [switchingProfileId, setSwitchingProfileId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [profileError, setProfileError] = useState<{ message: string; topic: string } | null>(null);
+  const [defaultProfileId, setDefaultProfileId] = useState<string | null>(null);
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -34,6 +36,8 @@ export default function ProfilePage() {
       if (!token) return;
       const res = await listProfiles(token);
       setProfiles(res.data);
+      const bootstrap = await getBootstrap(token);
+      setDefaultProfileId(bootstrap.data.default_profile_id);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load profiles";
       console.error("Failed to load profiles:", err);
@@ -255,6 +259,14 @@ export default function ProfilePage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {profiles.map((profile) => {
             const isCurrent = profile.id === currentProfileId;
+            const isDefault = profile.id === defaultProfileId;
+            const hasAccounts = (profile.account_count || 0) > 0;
+            const deleteDisabled = isDefault || hasAccounts;
+            const deleteTitle = isDefault
+              ? "Default profiles cannot be deleted"
+              : hasAccounts
+                ? "Disconnect all accounts from this profile before deleting it"
+                : "Delete";
             return (
               <div
                 key={profile.id}
@@ -300,6 +312,9 @@ export default function ProfilePage() {
                       ? "Switching..."
                       : `Created ${new Date(profile.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
                   </div>
+                  <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>
+                    {profile.account_count || 0} connected account{(profile.account_count || 0) === 1 ? "" : "s"}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
                   <button
@@ -327,11 +342,13 @@ export default function ProfilePage() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (deleteDisabled) return;
                       setDeleteTarget(profile);
                     }}
                     className="dbtn dbtn-ghost"
-                    style={{ padding: 6, color: "#888" }}
-                    title="Delete"
+                    style={{ padding: 6, color: deleteDisabled ? "#555" : "#888", opacity: deleteDisabled ? 0.5 : 1, cursor: deleteDisabled ? "not-allowed" : "pointer" }}
+                    title={deleteTitle}
+                    disabled={deleteDisabled}
                   >
                     <Trash2 style={{ width: 13, height: 13 }} />
                   </button>

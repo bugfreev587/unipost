@@ -8,6 +8,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
+  { name: "profile_id?", type: "string", description: "Profile that should own the connected account. Required when the workspace has multiple profiles." },
   { name: "platform", type: "string", description: "Platform key such as twitter, linkedin, instagram, threads, tiktok, youtube, or bluesky." },
   { name: "credentials", type: "object", description: "Adapter-specific credentials payload used for direct account connection." },
 ];
@@ -37,6 +38,7 @@ const SNIPPETS = [
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
+    "profile_id": "pr_brand_us",
     "platform": "bluesky",
     "credentials": {
       "identifier": "alex.bsky.social",
@@ -54,6 +56,7 @@ const client = new UniPost({
 });
 
 const account = await client.accounts.connect({
+  profileId: "pr_brand_us",
   platform: "bluesky",
   credentials: {
     identifier: "alex.bsky.social",
@@ -100,7 +103,7 @@ export default function ConnectAccountPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Connect account"
-      description="Directly connects one social account to the default profile in the workspace behind your API key. Use this when you already have platform credentials in hand and do not need a hosted Connect session."
+      description="Directly connects one social account to a profile in your workspace. When the workspace has multiple profiles, pass profile_id explicitly instead of relying on an implicit default."
       method="POST"
       path="/v1/social-accounts/connect"
       requestSections={[

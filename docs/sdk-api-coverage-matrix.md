@@ -18,8 +18,10 @@ Legend:
 | `GET /v1/workspace` | Yes | Yes | Yes | Yes |
 | `PATCH /v1/workspace` | Yes | Yes | Yes | Yes |
 | `GET /v1/profiles` | Yes | Yes | Yes | Yes |
+| `POST /v1/profiles` | Yes | Yes | Yes | Yes |
 | `GET /v1/profiles/{id}` | Yes | Yes | Yes | Yes |
 | `PATCH /v1/profiles/{id}` | Yes | Yes | Yes | Yes |
+| `DELETE /v1/profiles/{id}` | Yes | Yes | Yes | Yes |
 | `GET /v1/social-accounts` | Yes | Yes | Yes | Yes |
 | `POST /v1/social-accounts/connect` | Yes | Yes | Yes | Yes, negative path |
 | `DELETE /v1/social-accounts/{id}` | Yes | Yes | Yes | No direct live delete |

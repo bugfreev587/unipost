@@ -267,7 +267,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	}
 
 	_, _ = h.queries.MarkConnectSessionCompleted(r.Context(), db.MarkConnectSessionCompletedParams{
-		ID: session.ID,
+		ID:                       session.ID,
 		CompletedSocialAccountID: pgtype.Text{String: saved.ID, Valid: true},
 	})
 
@@ -278,6 +278,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	}
 	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
 		"social_account_id": saved.ID,
+		"profile_id":        session.ProfileID,
 		"platform":          platformName,
 		"account_name":      profile.Username,
 		"external_user_id":  session.ExternalUserID,

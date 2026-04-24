@@ -53,6 +53,10 @@ func assert(condition bool, message string) error {
 	return nil
 }
 
+func ptrString(value string) *string {
+	return &value
+}
+
 func main() {
 	fmt.Println("\n╔══════════════════════════════════════════════════╗")
 	fmt.Println("║     sdk-go — API Validation Test                 ║")
@@ -150,6 +154,21 @@ func main() {
 				return fmt.Errorf("expected matching profile")
 			}
 			return nil
+		})
+
+		test("Profiles.Create() + Delete()", func() error {
+			name := fmt.Sprintf("SDK GO Temp %d", time.Now().Unix())
+			created, err := client.Profiles.Create(ctx, &unipost.CreateProfileParams{
+				Name:                name,
+				BrandingDisplayName: ptrString("SDK GO Temp"),
+			})
+			if err != nil {
+				return err
+			}
+			if created.ID == "" {
+				return fmt.Errorf("expected created profile id")
+			}
+			return client.Profiles.Delete(ctx, created.ID)
 		})
 
 		test("Profiles.Update() — no-op", func() error {
@@ -298,7 +317,12 @@ func main() {
 	}
 
 	test("Accounts.Connect() — invalid credentials negative path", func() error {
+		profileID := ""
+		if firstProfile != nil {
+			profileID = firstProfile.ID
+		}
 		_, err := client.Accounts.Connect(ctx, &unipost.ConnectAccountParams{
+			ProfileID:   profileID,
 			Platform:    "bluesky",
 			Credentials: map[string]string{"identifier": "invalid", "password": "invalid"},
 		})

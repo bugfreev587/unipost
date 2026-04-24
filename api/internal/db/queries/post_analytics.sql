@@ -61,7 +61,8 @@ WHERE sp.workspace_id = $1
   AND sp.created_at >= $2
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
-  AND ($5::text = '' OR sp.status   = $5);
+  AND ($5::text = '' OR sp.status   = $5)
+  AND ($6::text = '' OR sa.profile_id = $6);
 
 -- name: GetAnalyticsTrendByWorkspace :many
 SELECT
@@ -81,6 +82,7 @@ WHERE sp.workspace_id = $1
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
   AND ($5::text = '' OR sp.status   = $5)
+  AND ($6::text = '' OR sa.profile_id = $6)
 GROUP BY day
 ORDER BY day ASC;
 
@@ -135,5 +137,6 @@ WHERE sp.workspace_id = $1
   AND sp.created_at <  $3
   AND ($4::text = '' OR sa.platform = $4)
   AND ($5::text = '' OR sp.status   = $5)
+  AND ($6::text = '' OR sa.profile_id = $6)
 GROUP BY sa.platform
 ORDER BY sa.platform ASC;

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -86,18 +87,25 @@ func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAc
 // Connect handles POST /v1/social-accounts/connect (API key auth)
 // and POST /v1/profiles/{profileID}/social-accounts/connect (Clerk auth)
 func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
-	profileID := h.resolveProfileID(r)
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
-		return
-	}
-
 	var body struct {
+		ProfileID   string            `json:"profile_id"`
 		Platform    string            `json:"platform"`
 		Credentials map[string]string `json:"credentials"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+
+	profileID := h.resolveProfileID(r, body.ProfileID)
+	if profileID == "" {
+		if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
+			if profileErr := h.resolveAPIProfileError(r.Context(), workspaceID, body.ProfileID); profileErr != nil {
+				writeError(w, profileErr.status, profileErr.code, profileErr.msg)
+				return
+			}
+		}
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
 		return
 	}
 
@@ -170,6 +178,18 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeCreated(w, toSocialAccountResponse(account))
+
+	wsID := profileID
+	if prof, pErr := h.queries.GetProfile(r.Context(), profileID); pErr == nil {
+		wsID = prof.WorkspaceID
+	}
+	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
+		"social_account_id": account.ID,
+		"profile_id":        profileID,
+		"platform":          body.Platform,
+		"account_name":      result.AccountName,
+		"connection_type":   account.ConnectionType,
+	})
 }
 
 // List handles GET /v1/social-accounts (API key) and
@@ -287,6 +307,7 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	}
 	h.bus.Publish(r.Context(), wsID, events.EventAccountDisconnected, map[string]any{
 		"social_account_id": disconnected.ID,
+		"profile_id":        profileID,
 		"platform":          disconnected.Platform,
 		"account_name":      accountName,
 		"disconnected_at":   time.Now().UTC().Format(time.RFC3339),
@@ -316,16 +337,23 @@ func (h *SocialAccountHandler) getProfileID(r *http.Request) string {
 	return profileID
 }
 
+func (h *SocialAccountHandler) resolveAPIProfileError(ctx context.Context, workspaceID, requestedID string) *httpError {
+	if _, profileErr := resolveProfileForWorkspace(ctx, h.queries, workspaceID, requestedID); profileErr != nil {
+		return profileErr
+	}
+	return nil
+}
+
 // resolveProfileID returns a profile ID for creating accounts.
-// API key path: picks the first profile in the workspace.
+// API key path: explicit profile_id or single-profile fallback.
 // Dashboard path: uses the profile ID from the URL.
-func (h *SocialAccountHandler) resolveProfileID(r *http.Request) string {
+func (h *SocialAccountHandler) resolveProfileID(r *http.Request, requestedID string) string {
 	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
-		profiles, err := h.queries.ListProfilesByWorkspace(r.Context(), workspaceID)
-		if err != nil || len(profiles) == 0 {
+		profileID, profileErr := resolveProfileForWorkspace(r.Context(), h.queries, workspaceID, requestedID)
+		if profileErr != nil {
 			return ""
 		}
-		return profiles[0].ID
+		return profileID
 	}
 	return h.getProfileID(r)
 }

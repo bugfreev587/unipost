@@ -9,12 +9,13 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "platform", type: "string", description: "Destination platform for the hosted onboarding flow." },
+  { name: "profile_id?", type: "string", description: "Profile that should own the resulting connected account. Required when the workspace has multiple profiles." },
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
   { name: "return_url?", type: "string", description: "Where UniPost redirects the user after completion." },
 ];
 
-const RESPONSE_200_FIELDS: ApiFieldItem[] = [
+const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Connect session ID." },
   { name: "url", type: "string", description: "Hosted onboarding URL to redirect the user to." },
   { name: "status", type: "string", description: 'Initial status, usually "pending".' },
@@ -37,6 +38,7 @@ const SNIPPETS = [
   -H "Content-Type: application/json" \\
   -d '{
     "platform": "twitter",
+    "profile_id": "pr_brand_us",
     "external_user_id": "user_123",
     "external_user_email": "alex@acme.com",
     "return_url": "https://app.acme.com/integrations/done"
@@ -53,6 +55,7 @@ const client = new UniPost({
 
 const session = await client.connect.createSession({
   platform: "twitter",
+  profileId: "pr_brand_us",
   externalUserId: "user_123",
   externalUserEmail: "alex@acme.com",
   returnUrl: "https://app.acme.com/integrations/done",
@@ -65,7 +68,7 @@ console.log(session.url);`,
 const RESPONSE_SNIPPETS = [
   {
     lang: "json",
-    label: "200",
+    label: "201",
     code: `{
   "data": {
     "id": "cs_abc123",
@@ -94,7 +97,7 @@ export default function CreateConnectSessionPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Create connect session"
-      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow."
+      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow. In a multi-profile workspace, pass profile_id explicitly so the new account lands under the intended brand."
       method="POST"
       path="/v1/connect/sessions"
       requestSections={[
@@ -102,7 +105,7 @@ export default function CreateConnectSessionPage() {
         { title: "Request Body", items: BODY_FIELDS },
       ]}
       responses={[
-        { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "201", fields: RESPONSE_201_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}

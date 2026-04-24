@@ -123,6 +123,22 @@ class ProfilesAPI:
         payload["data"] = [_wrap(item) for item in payload.get("data", [])]
         return payload
 
+    def create(self, *, name: str, branding_logo_url: Optional[str] = None,
+               branding_display_name: Optional[str] = None, branding_primary_color: Optional[str] = None):
+        payload = self._http.request(
+            "POST",
+            "/v1/profiles",
+            json_body=_compact(
+                {
+                    "name": name,
+                    "branding_logo_url": branding_logo_url,
+                    "branding_display_name": branding_display_name,
+                    "branding_primary_color": branding_primary_color,
+                }
+            ),
+        )
+        return _wrap(payload["data"])
+
     def get(self, profile_id: str):
         payload = self._http.request("GET", f"/v1/profiles/{profile_id}")
         return _wrap(payload["data"])
@@ -141,6 +157,9 @@ class ProfilesAPI:
             ),
         )
         return _wrap(payload["data"])
+
+    def delete(self, profile_id: str):
+        return self._http.request("DELETE", f"/v1/profiles/{profile_id}")
 
 
 class AccountsAPI:
@@ -170,11 +189,11 @@ class AccountsAPI:
                 return account
         raise UniPostError("Account not found", 404, "not_found")
 
-    def connect(self, *, platform: str, credentials: Dict[str, str]):
+    def connect(self, *, platform: str, credentials: Dict[str, str], profile_id: Optional[str] = None):
         payload = self._http.request(
             "POST",
             "/v1/social-accounts/connect",
-            json_body={"platform": platform, "credentials": credentials},
+            json_body=_compact({"platform": platform, "credentials": credentials, "profile_id": profile_id}),
         )
         return _wrap(payload["data"])
 
@@ -402,6 +421,7 @@ class AnalyticsAPI:
                 {
                     "from": kwargs.get("from_date") or kwargs.get("from"),
                     "to": kwargs.get("to_date") or kwargs.get("to"),
+                    "profile_id": kwargs.get("profile_id"),
                     "platform": kwargs.get("platform"),
                     "status": kwargs.get("status"),
                 }
@@ -417,6 +437,7 @@ class AnalyticsAPI:
                 {
                     "from": kwargs.get("from_date") or kwargs.get("from"),
                     "to": kwargs.get("to_date") or kwargs.get("to"),
+                    "profile_id": kwargs.get("profile_id"),
                     "platform": kwargs.get("platform"),
                     "status": kwargs.get("status"),
                 }
@@ -432,6 +453,7 @@ class AnalyticsAPI:
                 {
                     "from": kwargs.get("from_date") or kwargs.get("from"),
                     "to": kwargs.get("to_date") or kwargs.get("to"),
+                    "profile_id": kwargs.get("profile_id"),
                     "platform": kwargs.get("platform"),
                     "status": kwargs.get("status"),
                 }
@@ -447,6 +469,7 @@ class AnalyticsAPI:
                 {
                     "from": kwargs.get("from_date") or kwargs.get("from"),
                     "to": kwargs.get("to_date") or kwargs.get("to"),
+                    "profile_id": kwargs.get("profile_id"),
                     "granularity": kwargs.get("granularity"),
                     "group_by": kwargs.get("group_by") or kwargs.get("groupBy"),
                 }

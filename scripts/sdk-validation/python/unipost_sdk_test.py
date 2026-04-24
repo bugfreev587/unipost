@@ -130,9 +130,11 @@ def main():
     first_profile = profiles[0] if profiles else None
     if first_profile:
         test("profiles.get()", lambda: _test_profiles_get(client, first_profile.id))
+        test("profiles.create() + delete()", lambda: _test_profiles_create_delete(client))
         test("profiles.update() — no-op", lambda: _test_profiles_update(client, first_profile))
     else:
         skip("profiles.get()", "No profiles available")
+        skip("profiles.create() + delete()", "No profiles available")
         skip("profiles.update() — no-op", "No profiles available")
 
     section("3. Accounts")
@@ -169,7 +171,7 @@ def main():
 
     expect_api_error(
         "accounts.connect() — invalid credentials negative path",
-        lambda: client.accounts.connect(platform="bluesky", credentials={"identifier": "invalid", "password": "invalid"}),
+        lambda: client.accounts.connect(platform="bluesky", profile_id=getattr(first_profile, "id", None), credentials={"identifier": "invalid", "password": "invalid"}),
         ["auth_error", "unauthorized", "validation_error"],
     )
 
@@ -331,6 +333,16 @@ def _test_profiles_get(client, profile_id):
     profile = client.profiles.get(profile_id)
     assert_true(profile.id == profile_id, "Expected matching profile")
     return profile
+
+
+def _test_profiles_create_delete(client):
+    created = client.profiles.create(
+        name=f"SDK PY Temp {int(datetime.now(timezone.utc).timestamp())}",
+        branding_display_name="SDK PY Temp",
+    )
+    assert_true(bool(created.id), "Expected created profile id")
+    client.profiles.delete(created.id)
+    return created
 
 
 def _test_profiles_update(client, profile):

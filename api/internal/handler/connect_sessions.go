@@ -425,9 +425,13 @@ type httpError struct {
 //
 // Returning (profileID, nil) tells the caller to proceed.
 func (h *ConnectSessionHandler) resolveProfileForWorkspace(ctx context.Context, workspaceID, requestedID string) (string, *httpError) {
+	return resolveProfileForWorkspace(ctx, h.queries, workspaceID, requestedID)
+}
+
+func resolveProfileForWorkspace(ctx context.Context, queries *db.Queries, workspaceID, requestedID string) (string, *httpError) {
 	requestedID = strings.TrimSpace(requestedID)
 	if requestedID != "" {
-		profile, err := h.queries.GetProfile(ctx, requestedID)
+		profile, err := queries.GetProfile(ctx, requestedID)
 		if err != nil || profile.WorkspaceID != workspaceID {
 			return "", &httpError{
 				status: http.StatusUnprocessableEntity,
@@ -437,7 +441,7 @@ func (h *ConnectSessionHandler) resolveProfileForWorkspace(ctx context.Context, 
 		}
 		return profile.ID, nil
 	}
-	profiles, err := h.queries.ListProfilesByWorkspace(ctx, workspaceID)
+	profiles, err := queries.ListProfilesByWorkspace(ctx, workspaceID)
 	if err != nil {
 		return "", &httpError{
 			status: http.StatusInternalServerError,
@@ -461,4 +465,3 @@ func (h *ConnectSessionHandler) resolveProfileForWorkspace(ctx context.Context, 
 	}
 	return profiles[0].ID, nil
 }
-

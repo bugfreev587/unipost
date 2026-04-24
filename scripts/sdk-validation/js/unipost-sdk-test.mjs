@@ -178,6 +178,15 @@ async function main() {
       assert(res.id === firstProfile.id, 'Expected matching profile');
     });
 
+    await test('profiles.create() + delete()', async () => {
+      const created = await client.profiles.create({
+        name: `SDK JS Temp ${Date.now()}`,
+        brandingDisplayName: 'SDK JS Temp',
+      });
+      assert(created.id, 'Expected created profile id');
+      await client.profiles.delete(created.id);
+    });
+
     await test('profiles.update() — no-op', async () => {
       const res = await client.profiles.update(firstProfile.id, {
         name: firstProfile.name,
@@ -189,6 +198,7 @@ async function main() {
     });
   } else {
     skip('profiles.get()/update()', 'No profiles available');
+    skip('profiles.create() + delete()', 'No profiles available');
     skip('profiles.update() — no-op', 'No profiles available');
   }
 
@@ -266,7 +276,7 @@ async function main() {
 
   await expectApiError(
     'accounts.connect() — invalid credentials negative path',
-    () => client.accounts.connect({ platform: 'bluesky', credentials: { identifier: 'invalid', password: 'invalid' } }),
+    () => client.accounts.connect({ profileId: firstProfile?.id, platform: 'bluesky', credentials: { identifier: 'invalid', password: 'invalid' } }),
     ['auth_error', 'unauthorized', 'validation_error']
   );
 
