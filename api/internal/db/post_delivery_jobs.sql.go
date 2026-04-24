@@ -351,17 +351,18 @@ func (q *Queries) GetPostDeliveryJobByIDAndWorkspace(ctx context.Context, arg Ge
 
 const getPostDeliveryJobsSummaryByWorkspace = `-- name: GetPostDeliveryJobsSummaryByWorkspace :one
 SELECT
-  COUNT(*) FILTER (WHERE state = 'pending')::bigint   AS pending_count,
-  COUNT(*) FILTER (WHERE state = 'running')::bigint   AS running_count,
-  COUNT(*) FILTER (WHERE state = 'retrying')::bigint  AS retrying_count,
-  COUNT(*) FILTER (WHERE state = 'dead')::bigint      AS dead_count,
+  COUNT(*) FILTER (WHERE j.state = 'pending')::bigint   AS pending_count,
+  COUNT(*) FILTER (WHERE j.state = 'running')::bigint   AS running_count,
+  COUNT(*) FILTER (WHERE j.state = 'retrying')::bigint  AS retrying_count,
+  COUNT(*) FILTER (WHERE j.state = 'dead' AND COALESCE(r.status, 'failed') = 'failed')::bigint AS dead_count,
   COUNT(*) FILTER (
-    WHERE state = 'succeeded'
-      AND kind = 'retry'
-      AND finished_at >= date_trunc('day', NOW())
+    WHERE j.state = 'succeeded'
+      AND j.kind = 'retry'
+      AND j.finished_at >= date_trunc('day', NOW())
   )::bigint AS recovered_today_count
-FROM post_delivery_jobs
-WHERE workspace_id = $1
+FROM post_delivery_jobs j
+LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
+WHERE j.workspace_id = $1
 `
 
 type GetPostDeliveryJobsSummaryByWorkspaceRow struct {
@@ -372,6 +373,9 @@ type GetPostDeliveryJobsSummaryByWorkspaceRow struct {
 	RecoveredTodayCount int64 `json:"recovered_today_count"`
 }
 
+// dead_count mirrors the ListPostDeliveryJobsByWorkspace filter so the
+// card total and the table agree: a dead dispatch superseded by a
+// succeeded retry shouldn't show up in either surface.
 func (q *Queries) GetPostDeliveryJobsSummaryByWorkspace(ctx context.Context, workspaceID string) (GetPostDeliveryJobsSummaryByWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, getPostDeliveryJobsSummaryByWorkspace, workspaceID)
 	var i GetPostDeliveryJobsSummaryByWorkspaceRow
@@ -527,13 +531,18 @@ func (q *Queries) ListPostDeliveryJobsByResult(ctx context.Context, socialPostRe
 }
 
 const listPostDeliveryJobsByWorkspace = `-- name: ListPostDeliveryJobsByWorkspace :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at FROM post_delivery_jobs
-WHERE workspace_id = $1
+SELECT j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at FROM post_delivery_jobs j
+LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
+WHERE j.workspace_id = $1
   AND (
     $4::text IS NULL
-    OR state = ANY(string_to_array($4::text, ','))
+    OR j.state = ANY(string_to_array($4::text, ','))
   )
-ORDER BY created_at DESC
+  AND (
+    j.state NOT IN ('dead', 'failed')
+    OR COALESCE(r.status, 'failed') = 'failed'
+  )
+ORDER BY j.created_at DESC
 LIMIT $2 OFFSET $3
 `
 
@@ -544,6 +553,10 @@ type ListPostDeliveryJobsByWorkspaceParams struct {
 	States      pgtype.Text `json:"states"`
 }
 
+// Hide dead/failed jobs whose social_post_result has already moved
+// past the failure (published via a later retry, or re-dispatching).
+// A dead dispatch job for a result that's now 'published' is history,
+// not something the queue page should offer "Retry now" on.
 func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListPostDeliveryJobsByWorkspaceParams) ([]PostDeliveryJob, error) {
 	rows, err := q.db.Query(ctx, listPostDeliveryJobsByWorkspace,
 		arg.WorkspaceID,

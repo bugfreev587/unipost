@@ -49,28 +49,41 @@ WHERE state IN ('running', 'retrying')
 ORDER BY last_attempt_at ASC, id ASC;
 
 -- name: ListPostDeliveryJobsByWorkspace :many
-SELECT * FROM post_delivery_jobs
-WHERE workspace_id = $1
+-- Hide dead/failed jobs whose social_post_result has already moved
+-- past the failure (published via a later retry, or re-dispatching).
+-- A dead dispatch job for a result that's now 'published' is history,
+-- not something the queue page should offer "Retry now" on.
+SELECT j.* FROM post_delivery_jobs j
+LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
+WHERE j.workspace_id = $1
   AND (
     sqlc.narg('states')::text IS NULL
-    OR state = ANY(string_to_array(sqlc.narg('states')::text, ','))
+    OR j.state = ANY(string_to_array(sqlc.narg('states')::text, ','))
   )
-ORDER BY created_at DESC
+  AND (
+    j.state NOT IN ('dead', 'failed')
+    OR COALESCE(r.status, 'failed') = 'failed'
+  )
+ORDER BY j.created_at DESC
 LIMIT $2 OFFSET $3;
 
 -- name: GetPostDeliveryJobsSummaryByWorkspace :one
+-- dead_count mirrors the ListPostDeliveryJobsByWorkspace filter so the
+-- card total and the table agree: a dead dispatch superseded by a
+-- succeeded retry shouldn't show up in either surface.
 SELECT
-  COUNT(*) FILTER (WHERE state = 'pending')::bigint   AS pending_count,
-  COUNT(*) FILTER (WHERE state = 'running')::bigint   AS running_count,
-  COUNT(*) FILTER (WHERE state = 'retrying')::bigint  AS retrying_count,
-  COUNT(*) FILTER (WHERE state = 'dead')::bigint      AS dead_count,
+  COUNT(*) FILTER (WHERE j.state = 'pending')::bigint   AS pending_count,
+  COUNT(*) FILTER (WHERE j.state = 'running')::bigint   AS running_count,
+  COUNT(*) FILTER (WHERE j.state = 'retrying')::bigint  AS retrying_count,
+  COUNT(*) FILTER (WHERE j.state = 'dead' AND COALESCE(r.status, 'failed') = 'failed')::bigint AS dead_count,
   COUNT(*) FILTER (
-    WHERE state = 'succeeded'
-      AND kind = 'retry'
-      AND finished_at >= date_trunc('day', NOW())
+    WHERE j.state = 'succeeded'
+      AND j.kind = 'retry'
+      AND j.finished_at >= date_trunc('day', NOW())
   )::bigint AS recovered_today_count
-FROM post_delivery_jobs
-WHERE workspace_id = $1;
+FROM post_delivery_jobs j
+LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
+WHERE j.workspace_id = $1;
 
 -- name: ClaimPostDispatchJobs :many
 WITH eligible AS (
