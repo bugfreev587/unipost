@@ -74,6 +74,15 @@ const PLATFORM_QUICK_REFERENCE = [
     dashCell(),
     <Link key="bluesky-guide" href="/docs/platforms/bluesky">View</Link>,
   ],
+  [
+    "Facebook (Beta)",
+    checkCell(),
+    checkCell(),
+    checkCell(),
+    dashCell(),
+    dashCell(),
+    <Link key="facebook-guide" href="/docs/platforms/facebook">View</Link>,
+  ],
 ] as const;
 
 const PLATFORM_FEATURES = [
@@ -84,6 +93,7 @@ const PLATFORM_FEATURES = [
   ["TikTok", dashCell(), dashCell(), checkCell(), dashCell(), dashCell()],
   ["YouTube", dashCell(), dashCell(), dashCell(), checkCell(), dashCell()],
   ["Bluesky", dashCell(), checkCell(), dashCell(), dashCell(), checkCell()],
+  ["Facebook (Beta)", dashCell(), dashCell(), dashCell(), dashCell(), dashCell()],
 ] as const;
 
 const ANALYTICS_COVERAGE = [
@@ -94,6 +104,7 @@ const ANALYTICS_COVERAGE = [
   ["TikTok", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-tiktok" href="/docs/api/analytics">View</Link>],
   ["YouTube", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-youtube" href="/docs/api/analytics">View</Link>],
   ["Bluesky", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-bluesky" href="/docs/api/analytics">View</Link>],
+  ["Facebook (Beta)", dashCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-facebook" href="/docs/api/analytics">View</Link>],
 ] as const;
 
 const CONNECT_SNIPPET = `curl -X POST "https://api.unipost.dev/v1/accounts/connect" \\
@@ -146,7 +157,7 @@ export default function PlatformsPage() {
     <DocsPage
       eyebrow="Platforms"
       title="Platform support across UniPost."
-      lead="Use this page to understand what UniPost supports today across Twitter/X, LinkedIn, Instagram, Threads, TikTok, YouTube, and Bluesky. The goal here is macro-level implementation guidance: which destinations exist, how the publish model works across them, where analytics and webhooks fit, and when you need to drop into a platform-specific guide."
+      lead="Use this page to understand what UniPost supports today across Twitter/X, LinkedIn, Instagram, Threads, TikTok, YouTube, Bluesky, and Facebook. The goal here is macro-level implementation guidance: which destinations exist, how the publish model works across them, where analytics and webhooks fit, and when you need to drop into a platform-specific guide."
       className="docs-page-wide"
     >
       <style
@@ -178,7 +189,7 @@ export default function PlatformsPage() {
         }}
       />
       <h2 id="platform-quick-reference">Platform Quick Reference</h2>
-      <p>UniPost currently documents seven publishing destinations in the public platform guides. Each guide expands on media rules, validation behavior, and example request bodies for that network.</p>
+      <p>UniPost currently documents eight publishing destinations in the public platform guides. Each guide expands on media rules, validation behavior, and example request bodies for that network.</p>
       <DocsTable
         columns={["Platform", "Text", "Images", "Video", "Threads", "Analytics", "Guide"]}
         rows={PLATFORM_QUICK_REFERENCE}
