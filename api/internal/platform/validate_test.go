@@ -74,6 +74,15 @@ func stubCapabilities() map[string]Capability {
 				Videos:        VideoCapability{MaxCount: 1},
 			},
 		},
+		"facebook": {
+			DisplayName: "Facebook Page",
+			Text:        TextCapability{MaxLength: 63206},
+			Media: MediaCapability{
+				AllowMixed: false,
+				Images:     ImageCapability{MaxCount: 1},
+				Videos:     VideoCapability{MaxCount: 1},
+			},
+		},
 	}
 }
 
@@ -85,6 +94,7 @@ func stubAccounts() map[string]ValidateAccount {
 		"acc_tiktok":    {Platform: "tiktok"},
 		"acc_bluesky":   {Platform: "bluesky"},
 		"acc_youtube":   {Platform: "youtube"},
+		"acc_facebook":  {Platform: "facebook"},
 		"acc_dead":      {Platform: "twitter", Disconnected: true},
 		"acc_alien":     {Platform: "myspace"}, // unknown_platform path
 	}
@@ -730,6 +740,99 @@ func TestValidate_FirstComment_EmptyAllowed(t *testing.T) {
 	if !res.Valid {
 		t.Fatalf("empty first_comment must be allowed everywhere, got %#v", res.Errors)
 	}
+}
+
+// ─── Facebook mediaType (Feed vs Reel) ────────────────────────────────
+
+func TestValidate_Facebook_InvalidMediaType(t *testing.T) {
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_facebook",
+			Caption:         "hi",
+			MediaURLs:       []string{"https://x/y.mp4"},
+			PlatformOptions: map[string]any{"mediaType": "clip"},
+		},
+	}))
+	hasError(t, res, 0, CodeInvalidFacebookMediaType)
+}
+
+func TestValidate_Facebook_Reel_DisabledByFlag(t *testing.T) {
+	// Without FEATURE_FACEBOOK_REELS the validator must reject `reel`
+	// with the "not enabled" error code so existing integrators keep
+	// seeing a clear explanation.
+	t.Setenv("FEATURE_FACEBOOK_REELS", "")
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_facebook",
+			Caption:         "hi",
+			MediaURLs:       []string{"https://x/y.mp4"},
+			PlatformOptions: map[string]any{"mediaType": "reel"},
+		},
+	}))
+	hasError(t, res, 0, CodeFacebookReelsUnsupported)
+}
+
+func TestValidate_Facebook_Reel_HappyPath(t *testing.T) {
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_facebook",
+			Caption:         "teaser",
+			MediaURLs:       []string{"https://x/y.mp4"},
+			PlatformOptions: map[string]any{"mediaType": "reel"},
+		},
+	}))
+	hasNoError(t, res, CodeFacebookReelsUnsupported)
+	hasNoError(t, res, CodeInvalidFacebookMediaType)
+	hasNoError(t, res, CodeMixedMediaUnsupported)
+	hasNoError(t, res, CodeMissingRequired)
+}
+
+func TestValidate_Facebook_Reel_RequiresVideo(t *testing.T) {
+	// A Reel without media must fail — caption-only Reels aren't a
+	// supported flow.
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_facebook",
+			Caption:         "teaser",
+			PlatformOptions: map[string]any{"mediaType": "reel"},
+		},
+	}))
+	hasError(t, res, 0, CodeMissingRequired)
+}
+
+func TestValidate_Facebook_Reel_RejectsLink(t *testing.T) {
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID: "acc_facebook",
+			Caption:   "teaser",
+			MediaURLs: []string{"https://x/y.mp4"},
+			PlatformOptions: map[string]any{
+				"mediaType": "reel",
+				"link":      "https://example.com",
+			},
+		},
+	}))
+	hasError(t, res, 0, CodeFacebookLinkWithMedia)
+}
+
+func TestValidate_Facebook_Reel_ThumbOffsetBounds(t *testing.T) {
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID: "acc_facebook",
+			Caption:   "teaser",
+			MediaURLs: []string{"https://x/y.mp4"},
+			PlatformOptions: map[string]any{
+				"mediaType":       "reel",
+				"thumb_offset_ms": 70_000, // past the 60s cap
+			},
+		},
+	}))
+	hasError(t, res, 0, CodeInvalidFacebookMediaType)
 }
 
 // ─── benchmark for the §5.4 p95 < 50ms requirement ────────────────────

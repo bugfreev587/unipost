@@ -310,6 +310,7 @@ type SocialPostResult struct {
 	Caption         string             `json:"caption"`
 	Url             pgtype.Text        `json:"url"`
 	DebugCurl       pgtype.Text        `json:"debug_curl"`
+	FbMediaType     pgtype.Text        `json:"fb_media_type"`
 }
 
 type Subscription struct {
@@ -363,13 +364,13 @@ type UserTutorial struct {
 
 type Webhook struct {
 	ID          string             `json:"id"`
-	Name        string             `json:"name"`
 	Url         string             `json:"url"`
 	Secret      string             `json:"secret"`
 	Events      []string           `json:"events"`
 	Active      bool               `json:"active"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	WorkspaceID string             `json:"workspace_id"`
+	Name        string             `json:"name"`
 }
 
 type WebhookDelivery struct {

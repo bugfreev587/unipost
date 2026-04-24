@@ -51,11 +51,18 @@ export interface PlatformOverride {
   linkedin?: {
     visibility: "anyone" | "connections";
   };
-  // Facebook-specific — v1 only exposes an optional `link` input.
-  // Disallowed alongside media (validated server-side and enforced
-  // in the Facebook fields panel via the mediaAttached prop).
+  // Facebook-specific.
+  // `link` — optional link attachment for Feed posts. Disallowed
+  //   alongside media (validated server-side and enforced in the
+  //   composer via the mediaAttached prop).
+  // `mediaType` — which FB publish surface the post targets when
+  //   media is attached: "feed" (default, /{page_id}/videos for
+  //   videos or /{page_id}/photos for images) or "reel"
+  //   (/{page_id}/video_reels; video-only). The toggle is hidden
+  //   when no media is attached — Facebook Reels require a video.
   facebook?: {
     link: string;
+    mediaType: "feed" | "reel";
   };
 }
 
@@ -574,11 +581,18 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
         if (o?.instagram) entry.platform_options = { ...o.instagram };
         if (o?.linkedin) entry.platform_options = { ...o.linkedin };
         if (o?.facebook) {
-          // Only forward `link` when it's non-empty — otherwise we'd
-          // spam the API with empty strings that the adapter has to
-          // trim anyway.
+          const fbOptions: Record<string, string> = {};
           const link = (o.facebook.link || "").trim();
-          if (link) entry.platform_options = { link };
+          if (link) fbOptions.link = link;
+          // Only forward mediaType when the user explicitly picked
+          // Reel. Omitting defaults to Feed on the server and keeps
+          // old payloads shape-identical.
+          if (o.facebook.mediaType === "reel") {
+            fbOptions.mediaType = "reel";
+          }
+          if (Object.keys(fbOptions).length > 0) {
+            entry.platform_options = fbOptions;
+          }
         }
         return entry;
       });

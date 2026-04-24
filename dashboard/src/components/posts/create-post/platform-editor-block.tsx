@@ -86,7 +86,7 @@ export function PlatformEditorBlock({
   const tiktokFields = override.tiktok || DEFAULT_TIKTOK_FIELDS;
   const instagramFields = override.instagram || { mediaType: "feed" as const };
   const linkedinFields = override.linkedin || { visibility: "anyone" as const };
-  const facebookFields = override.facebook || { link: "" };
+  const facebookFields = override.facebook || { link: "", mediaType: "feed" as const };
 
   return (
     <div
@@ -251,6 +251,7 @@ export function PlatformEditorBlock({
               fields={facebookFields}
               onChange={(f) => onPlatformFieldChange("facebook", f)}
               mediaAttached={mediaKind !== "none"}
+              videoAttached={mediaKind === "video"}
             />
           )}
         </div>

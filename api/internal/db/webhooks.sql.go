@@ -14,7 +14,7 @@ import (
 const createWebhook = `-- name: CreateWebhook :one
 INSERT INTO webhooks (workspace_id, name, url, secret, events, active)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, name, url, secret, events, active, created_at, workspace_id
+RETURNING id, url, secret, events, active, created_at, workspace_id, name
 `
 
 type CreateWebhookParams struct {
@@ -38,13 +38,13 @@ func (q *Queries) CreateWebhook(ctx context.Context, arg CreateWebhookParams) (W
 	var i Webhook
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
 		&i.Url,
 		&i.Secret,
 		&i.Events,
 		&i.Active,
 		&i.CreatedAt,
 		&i.WorkspaceID,
+		&i.Name,
 	)
 	return i, err
 }
@@ -130,7 +130,7 @@ func (q *Queries) GetPendingWebhookDeliveries(ctx context.Context) ([]WebhookDel
 }
 
 const getWebhook = `-- name: GetWebhook :one
-SELECT id, name, url, secret, events, active, created_at, workspace_id FROM webhooks WHERE id = $1
+SELECT id, url, secret, events, active, created_at, workspace_id, name FROM webhooks WHERE id = $1
 `
 
 func (q *Queries) GetWebhook(ctx context.Context, id string) (Webhook, error) {
@@ -138,19 +138,19 @@ func (q *Queries) GetWebhook(ctx context.Context, id string) (Webhook, error) {
 	var i Webhook
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
 		&i.Url,
 		&i.Secret,
 		&i.Events,
 		&i.Active,
 		&i.CreatedAt,
 		&i.WorkspaceID,
+		&i.Name,
 	)
 	return i, err
 }
 
 const getWebhookByIDAndWorkspace = `-- name: GetWebhookByIDAndWorkspace :one
-SELECT id, name, url, secret, events, active, created_at, workspace_id FROM webhooks WHERE id = $1 AND workspace_id = $2
+SELECT id, url, secret, events, active, created_at, workspace_id, name FROM webhooks WHERE id = $1 AND workspace_id = $2
 `
 
 type GetWebhookByIDAndWorkspaceParams struct {
@@ -163,13 +163,13 @@ func (q *Queries) GetWebhookByIDAndWorkspace(ctx context.Context, arg GetWebhook
 	var i Webhook
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
 		&i.Url,
 		&i.Secret,
 		&i.Events,
 		&i.Active,
 		&i.CreatedAt,
 		&i.WorkspaceID,
+		&i.Name,
 	)
 	return i, err
 }
@@ -189,7 +189,7 @@ func (q *Queries) HardDeleteWebhook(ctx context.Context, arg HardDeleteWebhookPa
 }
 
 const listWebhooksByWorkspace = `-- name: ListWebhooksByWorkspace :many
-SELECT id, name, url, secret, events, active, created_at, workspace_id FROM webhooks WHERE workspace_id = $1 ORDER BY created_at DESC
+SELECT id, url, secret, events, active, created_at, workspace_id, name FROM webhooks WHERE workspace_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListWebhooksByWorkspace(ctx context.Context, workspaceID string) ([]Webhook, error) {
@@ -203,13 +203,13 @@ func (q *Queries) ListWebhooksByWorkspace(ctx context.Context, workspaceID strin
 		var i Webhook
 		if err := rows.Scan(
 			&i.ID,
-			&i.Name,
 			&i.Url,
 			&i.Secret,
 			&i.Events,
 			&i.Active,
 			&i.CreatedAt,
 			&i.WorkspaceID,
+			&i.Name,
 		); err != nil {
 			return nil, err
 		}
@@ -222,7 +222,7 @@ func (q *Queries) ListWebhooksByWorkspace(ctx context.Context, workspaceID strin
 }
 
 const listWebhooksByWorkspaceAndEvent = `-- name: ListWebhooksByWorkspaceAndEvent :many
-SELECT id, name, url, secret, events, active, created_at, workspace_id FROM webhooks
+SELECT id, url, secret, events, active, created_at, workspace_id, name FROM webhooks
 WHERE workspace_id = $1 AND active = true AND $2::text = ANY(events)
 `
 
@@ -242,13 +242,13 @@ func (q *Queries) ListWebhooksByWorkspaceAndEvent(ctx context.Context, arg ListW
 		var i Webhook
 		if err := rows.Scan(
 			&i.ID,
-			&i.Name,
 			&i.Url,
 			&i.Secret,
 			&i.Events,
 			&i.Active,
 			&i.CreatedAt,
 			&i.WorkspaceID,
+			&i.Name,
 		); err != nil {
 			return nil, err
 		}
@@ -263,7 +263,7 @@ func (q *Queries) ListWebhooksByWorkspaceAndEvent(ctx context.Context, arg ListW
 const rotateWebhookSecret = `-- name: RotateWebhookSecret :one
 UPDATE webhooks SET secret = $3
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, name, url, secret, events, active, created_at, workspace_id
+RETURNING id, url, secret, events, active, created_at, workspace_id, name
 `
 
 type RotateWebhookSecretParams struct {
@@ -277,13 +277,13 @@ func (q *Queries) RotateWebhookSecret(ctx context.Context, arg RotateWebhookSecr
 	var i Webhook
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
 		&i.Url,
 		&i.Secret,
 		&i.Events,
 		&i.Active,
 		&i.CreatedAt,
 		&i.WorkspaceID,
+		&i.Name,
 	)
 	return i, err
 }
@@ -320,7 +320,7 @@ SET name   = $3,
     events = $5,
     active = $6
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, name, url, secret, events, active, created_at, workspace_id
+RETURNING id, url, secret, events, active, created_at, workspace_id, name
 `
 
 type UpdateWebhookURLEventsActiveParams struct {
@@ -344,13 +344,13 @@ func (q *Queries) UpdateWebhookURLEventsActive(ctx context.Context, arg UpdateWe
 	var i Webhook
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
 		&i.Url,
 		&i.Secret,
 		&i.Events,
 		&i.Active,
 		&i.CreatedAt,
 		&i.WorkspaceID,
+		&i.Name,
 	)
 	return i, err
 }

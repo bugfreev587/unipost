@@ -784,7 +784,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     icon: icons.facebook,
     tagline: "Page-owned posting with photo or video, plus inbox comments and DMs.",
     lead: "Facebook integrates at the Page level. Connect the Meta OAuth flow once and pick which Pages to link; each Page becomes its own UniPost account. Publishing is currently one photo or one video per post.",
-    badges: ["Publishing", "Scheduling", "Inbox", "White-label", "Beta"],
+    badges: ["Publishing", "Reels", "Scheduling", "Inbox", "White-label", "Beta"],
     summary: {
       publishing: "limited",
       scheduling: "full",
@@ -796,6 +796,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Text posts", yes, "Up to 63,206 characters"],
       ["Image posts", partial, "Exactly 1 image (v1 scope — no carousel yet)"],
       ["Video posts", partial, "Exactly 1 video (non-resumable, ≤ 1 GB in v1)"],
+      ["Reels", yes, "Vertical video via `platform_options.facebook.mediaType=\"reel\"` (requires `FEATURE_FACEBOOK_REELS`)"],
       ["Link posts", yes, "Provide the URL in caption"],
       ["Scheduling", yes, "Use `scheduled_at`"],
       ["Inbox (comments + DMs)", yes, "Routed into UniPost inbox"],
@@ -807,6 +808,9 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["caption or media", "At least one required", "Text up to 63,206 chars", "UniPost rejects posts with neither text nor media"],
       ["media_urls or media_ids", "Optional", "1 image OR 1 video", "No mixed media. Use `media_urls` for hosted assets or `media_ids` for uploaded files"],
       ["link", "Optional", "URL in caption", "Link and media cannot be combined in the same post"],
+      ["platform_options.mediaType", "Optional", "feed / reel", "`feed` (default) routes to `/{page_id}/videos`; `reel` routes to the 3-phase `/{page_id}/video_reels` flow"],
+      ["platform_options.title", "Optional", "Reels only", "Video title surfaced alongside the Reel"],
+      ["platform_options.thumb_offset_ms", "Optional", "0–60,000 ms", "Reels only — which frame Meta picks as the thumbnail"],
     ],
     analytics: [
       ["Likes", partial, "Roadmapped — Phase 2"],
@@ -845,23 +849,42 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
 }`,
       },
       {
-        title: "Video post",
+        title: "Video post (Feed)",
         body: `{
   "caption": "Highlights from the conference",
   "account_ids": ["sa_facebook_1"],
   "media_urls": ["https://cdn.example.com/highlights.mp4"]
 }`,
       },
+      {
+        title: "Reel",
+        body: `{
+  "caption": "Teaser for tomorrow's drop.",
+  "account_ids": ["sa_facebook_1"],
+  "media_urls": ["https://cdn.example.com/reel-vertical.mp4"],
+  "platform_options": {
+    "facebook": {
+      "mediaType": "reel",
+      "title": "Launch teaser",
+      "thumb_offset_ms": 2500
+    }
+  }
+}`,
+        note: "Reels run through `/{page_id}/video_reels` (3 phases: start → transfer → finish). Vertical video required; link attachments are not supported. Requires `FEATURE_FACEBOOK_REELS=true` on the API.",
+      },
     ],
     errors: [
       ["post_body_required", "Post must include text, link, or media"],
       ["mixed_media_unsupported", "Facebook v1 accepts one photo or one video per post"],
       ["link_with_media_unsupported", "Link and media cannot be combined in the same post"],
+      ["invalid_facebook_media_type", "`mediaType` must be `feed` or `reel`"],
+      ["facebook_reels_unsupported", "Reels publishing requires `FEATURE_FACEBOOK_REELS` to be enabled"],
     ],
     limitations: [
       ["No carousels in v1", "Facebook `batch_publish` is on the roadmap"],
       ["No resumable uploads yet", "Videos must be ≤ 1 GB until Phase 2.5"],
       ["Analytics ship in Phase 2", "Engagement and reach metrics are roadmapped — not yet surfaced"],
+      ["Reels are feature-flagged", "Set `FEATURE_FACEBOOK_REELS=true` to enable the `/video_reels` publish path"],
     ],
   },
 };

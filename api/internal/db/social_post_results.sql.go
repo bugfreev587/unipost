@@ -36,9 +36,9 @@ func (q *Queries) CountPublishedThisMonthByAccount(ctx context.Context, socialAc
 }
 
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
-INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl
+INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl, fb_media_type)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type
 `
 
 type CreateSocialPostResultParams struct {
@@ -51,6 +51,7 @@ type CreateSocialPostResultParams struct {
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
 	Url             pgtype.Text        `json:"url"`
 	DebugCurl       pgtype.Text        `json:"debug_curl"`
+	FbMediaType     pgtype.Text        `json:"fb_media_type"`
 }
 
 func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPostResultParams) (SocialPostResult, error) {
@@ -64,6 +65,7 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		arg.PublishedAt,
 		arg.Url,
 		arg.DebugCurl,
+		arg.FbMediaType,
 	)
 	var i SocialPostResult
 	err := row.Scan(
@@ -77,6 +79,7 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		&i.Caption,
 		&i.Url,
 		&i.DebugCurl,
+		&i.FbMediaType,
 	)
 	return i, err
 }
@@ -91,7 +94,7 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 }
 
 const getSocialPostResultByIDAndPost = `-- name: GetSocialPostResultByIDAndPost :one
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results WHERE id = $1 AND post_id = $2
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type FROM social_post_results WHERE id = $1 AND post_id = $2
 `
 
 type GetSocialPostResultByIDAndPostParams struct {
@@ -113,6 +116,7 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 		&i.Caption,
 		&i.Url,
 		&i.DebugCurl,
+		&i.FbMediaType,
 	)
 	return i, err
 }
@@ -122,6 +126,7 @@ SELECT
   spr.id                     AS social_post_result_id,
   spr.external_id,
   spr.url,
+  spr.fb_media_type,
   sa.id                      AS social_account_id,
   sa.external_account_id     AS page_id,
   sa.access_token,
@@ -142,6 +147,7 @@ type ListFacebookVideosAwaitingStatusRow struct {
 	SocialPostResultID string             `json:"social_post_result_id"`
 	ExternalID         pgtype.Text        `json:"external_id"`
 	Url                pgtype.Text        `json:"url"`
+	FbMediaType        pgtype.Text        `json:"fb_media_type"`
 	SocialAccountID    string             `json:"social_account_id"`
 	PageID             string             `json:"page_id"`
 	AccessToken        string             `json:"access_token"`
@@ -169,6 +175,7 @@ func (q *Queries) ListFacebookVideosAwaitingStatus(ctx context.Context) ([]ListF
 			&i.SocialPostResultID,
 			&i.ExternalID,
 			&i.Url,
+			&i.FbMediaType,
 			&i.SocialAccountID,
 			&i.PageID,
 			&i.AccessToken,
@@ -226,7 +233,7 @@ func (q *Queries) ListPublishedExternalIDsForInboxSync(ctx context.Context, arg 
 }
 
 const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type FROM social_post_results
 WHERE social_account_id = $1
 ORDER BY published_at DESC NULLS LAST
 LIMIT $2
@@ -263,6 +270,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 			&i.Caption,
 			&i.Url,
 			&i.DebugCurl,
+			&i.FbMediaType,
 		); err != nil {
 			return nil, err
 		}
@@ -275,7 +283,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 }
 
 const listSocialPostResultsByPost = `-- name: ListSocialPostResultsByPost :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results WHERE post_id = $1
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type FROM social_post_results WHERE post_id = $1
 `
 
 func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string) ([]SocialPostResult, error) {
@@ -298,6 +306,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 			&i.Caption,
 			&i.Url,
 			&i.DebugCurl,
+			&i.FbMediaType,
 		); err != nil {
 			return nil, err
 		}
@@ -310,7 +319,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 }
 
 const listSocialPostResultsByPostIDs = `-- name: ListSocialPostResultsByPostIDs :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type FROM social_post_results
 WHERE post_id = ANY($1::text[])
 `
 
@@ -334,6 +343,7 @@ func (q *Queries) ListSocialPostResultsByPostIDs(ctx context.Context, dollar_1 [
 			&i.Caption,
 			&i.Url,
 			&i.DebugCurl,
+			&i.FbMediaType,
 		); err != nil {
 			return nil, err
 		}
@@ -355,7 +365,7 @@ SET
   url = $6,
   debug_curl = $7
 WHERE id = $1
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type
 `
 
 type UpdateSocialPostResultAfterRetryParams struct {
@@ -395,6 +405,7 @@ func (q *Queries) UpdateSocialPostResultAfterRetry(ctx context.Context, arg Upda
 		&i.Caption,
 		&i.Url,
 		&i.DebugCurl,
+		&i.FbMediaType,
 	)
 	return i, err
 }

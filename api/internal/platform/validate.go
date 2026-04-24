@@ -30,7 +30,9 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -244,12 +246,49 @@ var youtubeLanguagePattern = regexp.MustCompile(`^[A-Za-z]{2,3}([_-][A-Za-z0-9]{
 
 var instagramMediaTypeValues = []string{"feed", "reels", "story"}
 
-// Facebook mediaType is a forward-looking field. Today only `feed` is
-// actually shipped; `reel` is accepted into the API surface so
-// integrators can write code against the final shape, but the
-// validator rejects it with facebook_reels_unsupported until the
-// /video_reels 3-phase upload flow is implemented.
+// Facebook mediaType is fully wired for both `feed` and `reel`, but
+// the Reel publish path is gated behind FEATURE_FACEBOOK_REELS so we
+// can stage the rollout independently of the code deploy. When the
+// flag is unset or falsy the validator still rejects `reel` with
+// facebook_reels_unsupported.
 var facebookMediaTypeValues = []string{"feed", "reel"}
+
+// facebookReelsEnabled returns whether the FEATURE_FACEBOOK_REELS
+// flag is on. Checked via env var at call time (not cached) so a
+// deployer can toggle the flag without restarting the API.
+func facebookReelsEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FEATURE_FACEBOOK_REELS"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// coerceOptionNumber normalizes a platform_options numeric field into
+// a plain int. JSON decode yields float64 for numbers; integrators may
+// also pass int64 or a numeric string. Returns (0, false) on a shape
+// we don't recognize rather than silently accepting nonsense.
+func coerceOptionNumber(v any) (int, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int(x), x == float64(int(x))
+	case float32:
+		return int(x), float32(int(x)) == x
+	case int:
+		return x, true
+	case int32:
+		return int(x), true
+	case int64:
+		return int(x), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(x))
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
 
 func hasOpt(opts map[string]any, key string) bool {
 	if opts == nil {
@@ -967,14 +1006,9 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 
 		// platform_options.facebook.mediaType declares which Facebook
 		// publish surface to target — `feed` (the current default) or
-		// `reel`. `reel` is accepted as a future-proof field but the
-		// 3-phase /video_reels upload flow is not shipped yet, so we
-		// reject it cleanly with its own code. See Phase 3 for the
-		// actual Reel implementation.
-		//
-		// Accept both `mediaType` (instagram-style camelCase) and
-		// `media_type` (snake_case) so integrators can be consistent
-		// with either convention.
+		// `reel`. Accept both `mediaType` (instagram-style camelCase)
+		// and `media_type` (snake_case) so integrators can be
+		// consistent with either convention.
 		fbMediaType := strings.TrimSpace(optString(post.PlatformOptions, "mediaType"))
 		if fbMediaType == "" {
 			fbMediaType = strings.TrimSpace(optString(post.PlatformOptions, "media_type"))
@@ -991,16 +1025,80 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 					Actual:            fbMediaType,
 					Severity:          SeverityError,
 				})
-			} else if fbMediaType == "reel" {
+			} else if fbMediaType == "reel" && !facebookReelsEnabled() {
+				// Feature-flag gate. Keeps the reject shape stable
+				// when Reels is disabled in a given environment so
+				// existing integrators get the same clear error.
 				res.Errors = append(res.Errors, Issue{
 					PlatformPostIndex: i,
 					AccountID:         post.AccountID,
 					Platform:          plat,
 					Field:             "platform_options.mediaType",
 					Code:              CodeFacebookReelsUnsupported,
-					Message:           "Facebook Reels publishing is not yet supported. Use mediaType=feed with a horizontal or square video, or wait for Reels support.",
+					Message:           "Facebook Reels publishing is not enabled for this environment. Set FEATURE_FACEBOOK_REELS=true on the API, or switch to mediaType=feed.",
 					Severity:          SeverityError,
 				})
+			} else if fbMediaType == "reel" {
+				// Reel-specific shape guards. These are distinct
+				// from the feed-video rules because FB's
+				// /{page_id}/video_reels endpoint has different
+				// constraints than /{page_id}/videos:
+				//   - Exactly one video, no photos, no mixed media.
+				//   - No plain caption-only Reel (media required).
+				//   - No link on a Reel — Reels don't carry a
+				//     link-preview attachment the way Feed posts can.
+				//   - thumb_offset_ms must be a plausible non-
+				//     negative millisecond value if supplied.
+				// Scheduled Reels are handled by the existing
+				// scheduled-media rejection above and aren't
+				// special-cased here.
+				if len(mediaItems) == 0 {
+					res.Errors = append(res.Errors, Issue{
+						PlatformPostIndex: i,
+						AccountID:         post.AccountID,
+						Platform:          plat,
+						Field:             "media_urls",
+						Code:              CodeMissingRequired,
+						Message:           "Facebook Reels require exactly one video — caption-only Reels are not supported",
+						Severity:          SeverityError,
+					})
+				} else if videoCount != 1 || imageCount > 0 || len(mediaItems) != 1 {
+					res.Errors = append(res.Errors, Issue{
+						PlatformPostIndex: i,
+						AccountID:         post.AccountID,
+						Platform:          plat,
+						Field:             "media_urls",
+						Code:              CodeMixedMediaUnsupported,
+						Message:           "Facebook Reels require exactly one video — photos and mixed media are not supported",
+						Actual:            len(mediaItems),
+						Severity:          SeverityError,
+					})
+				}
+				if fbLink != "" {
+					res.Errors = append(res.Errors, Issue{
+						PlatformPostIndex: i,
+						AccountID:         post.AccountID,
+						Platform:          plat,
+						Field:             "platform_options.link",
+						Code:              CodeFacebookLinkWithMedia,
+						Message:           "Facebook Reels do not accept a link attachment — drop platform_options.link",
+						Severity:          SeverityError,
+					})
+				}
+				if raw, ok := post.PlatformOptions["thumb_offset_ms"]; ok {
+					if n, ok := coerceOptionNumber(raw); !ok || n < 0 || n > 60_000 {
+						res.Errors = append(res.Errors, Issue{
+							PlatformPostIndex: i,
+							AccountID:         post.AccountID,
+							Platform:          plat,
+							Field:             "platform_options.thumb_offset_ms",
+							Code:              CodeInvalidFacebookMediaType,
+							Message:           "thumb_offset_ms must be an integer between 0 and 60000 (milliseconds)",
+							Actual:            raw,
+							Severity:          SeverityError,
+						})
+					}
+				}
 			}
 		}
 	}

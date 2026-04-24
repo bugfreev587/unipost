@@ -1,6 +1,6 @@
 -- name: CreateSocialPostResult :one
-INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl, fb_media_type)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: ListSocialPostResultsByPost :many
@@ -74,6 +74,7 @@ SELECT
   spr.id                     AS social_post_result_id,
   spr.external_id,
   spr.url,
+  spr.fb_media_type,
   sa.id                      AS social_account_id,
   sa.external_account_id     AS page_id,
   sa.access_token,

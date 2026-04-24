@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -401,6 +402,17 @@ func (a *FacebookAdapter) Post(ctx context.Context, accessToken string, text str
 		return nil, err
 	}
 
+	// mediaType switches which Facebook publish surface we target for
+	// video media. `feed` (or empty — the historical default) goes to
+	// /{page_id}/videos with file_url; `reel` goes to the 3-phase
+	// /{page_id}/video_reels flow. Anything else is rejected at the
+	// validator, so by the time we reach here we only have to handle
+	// the two shipped values.
+	mediaType := strings.ToLower(strings.TrimSpace(optString(opts, "mediaType")))
+	if mediaType == "" {
+		mediaType = strings.ToLower(strings.TrimSpace(optString(opts, "media_type")))
+	}
+
 	// Dispatch by media kind.
 	if hasMedia {
 		m := media[0]
@@ -412,6 +424,9 @@ func (a *FacebookAdapter) Post(ctx context.Context, accessToken string, text str
 		case MediaKindImage, MediaKindGIF:
 			return a.postPhoto(ctx, accessToken, pageID, text, m.URL)
 		case MediaKindVideo:
+			if mediaType == "reel" {
+				return a.postVideoReel(ctx, accessToken, pageID, text, m.URL, opts)
+			}
 			return a.postVideo(ctx, accessToken, pageID, text, m.URL)
 		default:
 			return nil, fmt.Errorf("facebook: unsupported media kind %q for %s", kind, m.URL)
@@ -603,6 +618,242 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 		URL:        fmt.Sprintf("https://www.facebook.com/%s/videos/%s", pageID, videoID),
 		Status:     "processing",
 	}, nil
+}
+
+// postVideoReel publishes to the /{page_id}/video_reels endpoint in
+// three phases. Reels can't be driven through /videos + file_url —
+// Facebook explicitly routes Reel uploads through a different
+// initialize/transfer/finish flow. UniPost picks the file_url
+// transfer variant so the upload path matches the Feed video flow
+// as closely as possible (stage to R2 once, hand Meta a public URL,
+// Meta pulls asynchronously).
+//
+// 1. start:   POST /{page_id}/video_reels?upload_phase=start
+//             → returns video_id + upload_url
+// 2. transfer POST {upload_url}?upload_phase=transfer&file_url=<R2>
+//             Meta pulls the bytes asynchronously
+// 3. finish:  POST /{page_id}/video_reels?upload_phase=finish&
+//             video_id=&video_state=PUBLISHED[&description&title&...]
+//
+// After finish we poll /{video_id}?fields=status for up to ~60s just
+// like the Feed path, and return Status="processing" if Meta is still
+// transcoding so the status worker can flip it to "published" later.
+func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID, description, videoURL string, opts map[string]any) (*PostResult, error) {
+	// Stage to R2 the same way postVideo does so Meta's async pull
+	// sees a stable public URL rather than a short-lived presigned
+	// download. Without this the transfer can expire mid-pull on
+	// large videos.
+	stagedURL := videoURL
+	if a.mediaProxy != nil {
+		proxied, err := a.mediaProxy.UploadFromURL(ctx, videoURL)
+		if err != nil {
+			return nil, fmt.Errorf("facebook reel: stage to R2: %w", err)
+		}
+		stagedURL = proxied
+		slog.Info("facebook reel: staged to R2", "staged_url", proxied, "source_url", videoURL)
+	} else {
+		slog.Warn("facebook reel: no media proxy configured; passing source URL directly to FB (may expire mid-fetch)", "source_url", videoURL)
+	}
+
+	// Phase 1: start.
+	videoID, uploadURL, err := a.startVideoReelUpload(ctx, accessToken, pageID)
+	if err != nil {
+		return nil, fmt.Errorf("facebook reel: start: %w", err)
+	}
+	if videoID == "" || uploadURL == "" {
+		return nil, fmt.Errorf("facebook reel: start response missing video_id or upload_url")
+	}
+
+	// Phase 2: transfer. Meta expects Authorization: OAuth <token> on
+	// the transfer request against upload.facebook.com, and a
+	// file_url query param telling it where to pull from.
+	transferURL := uploadURL
+	if strings.Contains(transferURL, "?") {
+		transferURL += "&"
+	} else {
+		transferURL += "?"
+	}
+	transferURL += "upload_phase=transfer&file_url=" + url.QueryEscape(stagedURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", transferURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("facebook reel: build transfer request: %w", err)
+	}
+	req.Header.Set("Authorization", "OAuth "+accessToken)
+	transferResp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook reel: transfer: %w", err)
+	}
+	defer transferResp.Body.Close()
+	transferBody, _ := io.ReadAll(transferResp.Body)
+	if transferResp.StatusCode >= 400 {
+		return nil, wrapFacebookPublishError(transferResp.StatusCode, transferBody)
+	}
+
+	// Phase 3: finish.
+	finishForm := url.Values{
+		"access_token": {accessToken},
+		"upload_phase": {"finish"},
+		"video_id":     {videoID},
+		"video_state":  {"PUBLISHED"},
+	}
+	if description != "" {
+		finishForm.Set("description", description)
+	}
+	if t := strings.TrimSpace(optString(opts, "title")); t != "" {
+		finishForm.Set("title", t)
+	}
+	if n, ok := opts["thumb_offset_ms"]; ok {
+		if v, ok := coerceOptionIntFB(n); ok {
+			finishForm.Set("thumb_offset", strconv.Itoa(v))
+		}
+	}
+	if err := a.finishVideoReelUpload(ctx, pageID, finishForm); err != nil {
+		return nil, fmt.Errorf("facebook reel: finish: %w", err)
+	}
+
+	// Poll status the same way the Feed path does — a Reel that
+	// finishes inside 60s returns a clean "published" result, and
+	// longer uploads return "processing" for the status worker to
+	// flip once Meta is done.
+	for i := 0; i < 12; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+		st, err := a.CheckVideoStatus(ctx, accessToken, videoID)
+		if err != nil {
+			slog.Warn("facebook reel: video status poll failed", "video_id", videoID, "error", err)
+			continue
+		}
+		switch st.VideoStatus {
+		case "ready":
+			if st.PostID != "" {
+				return &PostResult{
+					ExternalID: st.PostID,
+					URL:        feedStoryURL(pageID, st.PostID),
+				}, nil
+			}
+			// Fallback — build the /reel/ permalink from the raw
+			// video id until the Page post id propagates.
+			return &PostResult{
+				ExternalID: videoID,
+				URL:        fmt.Sprintf("https://www.facebook.com/reel/%s", videoID),
+			}, nil
+		case "error", "upload_failed", "expired":
+			msg := "facebook reel: processing failed"
+			if st.ErrorMessage != "" {
+				msg += ": " + st.ErrorMessage
+			}
+			return nil, fmt.Errorf("%s", msg)
+		}
+		if phaseHasError(st) {
+			msg := "facebook reel: phase failed"
+			if st.ErrorMessage != "" {
+				msg += ": " + st.ErrorMessage
+			}
+			return nil, fmt.Errorf("%s", msg)
+		}
+		// Still transient — keep polling.
+	}
+
+	slog.Info("facebook reel: still processing after 60s; returning processing state", "video_id", videoID)
+	return &PostResult{
+		ExternalID: videoID,
+		URL:        fmt.Sprintf("https://www.facebook.com/reel/%s", videoID),
+		Status:     "processing",
+	}, nil
+}
+
+// startVideoReelUpload performs Phase 1 of the /video_reels flow and
+// returns the video_id + upload_url Meta hands back. Kept separate
+// from publishRaw because the Reel start response uses different
+// field names ({"video_id", "upload_url"}) than the generic publish
+// endpoints ({"id", "post_id"}).
+func (a *FacebookAdapter) startVideoReelUpload(ctx context.Context, accessToken, pageID string) (string, string, error) {
+	form := url.Values{
+		"access_token": {accessToken},
+		"upload_phase": {"start"},
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		facebookGraphBase+"/"+pageID+"/video_reels",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("reel start: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", wrapFacebookPublishError(resp.StatusCode, body)
+	}
+	var parsed struct {
+		VideoID   string `json:"video_id"`
+		UploadURL string `json:"upload_url"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", "", fmt.Errorf("reel start: decode: %w (body=%s)", err, string(body))
+	}
+	return parsed.VideoID, parsed.UploadURL, nil
+}
+
+// finishVideoReelUpload performs Phase 3 of the /video_reels flow.
+// The response shape is `{"success": true}` — no id or post_id —
+// which publishRaw would flag as missing-id, so this helper only
+// checks the HTTP status and the "success" flag directly.
+func (a *FacebookAdapter) finishVideoReelUpload(ctx context.Context, pageID string, form url.Values) error {
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		facebookGraphBase+"/"+pageID+"/video_reels",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("reel finish: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return wrapFacebookPublishError(resp.StatusCode, body)
+	}
+	var parsed struct {
+		Success bool `json:"success"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Errorf("reel finish: decode: %w (body=%s)", err, string(body))
+	}
+	if !parsed.Success {
+		return fmt.Errorf("reel finish: server reported success=false (body=%s)", string(body))
+	}
+	return nil
+}
+
+// coerceOptionIntFB pulls an int out of a platform_options value that
+// may be a float64 (JSON number), int, or numeric string. Local copy
+// to keep this adapter file self-contained; the validator has its
+// own flavor for its own error shape.
+func coerceOptionIntFB(v any) (int, bool) {
+	switch x := v.(type) {
+	case float64:
+		if x == float64(int(x)) {
+			return int(x), true
+		}
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(x)); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
 }
 
 // isReelPermalink returns true when FB assigned a permalink under

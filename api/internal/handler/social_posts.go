@@ -579,6 +579,16 @@ func (h *SocialPostHandler) executePublishLoop(
 			debugCurl = pgtype.Text{String: oc.debugCurl, Valid: true}
 		}
 
+		// Persist the Facebook mediaType choice so the status worker can
+		// tell an intentional Reel (expected /reel/ permalink) apart
+		// from an accidental reclassification (fast-fail at 10 min).
+		var fbMediaType pgtype.Text
+		if oc.platform == "facebook" {
+			if mt := fbMediaTypeFromOptions(parsed.Posts[i].PlatformOptions); mt != "" {
+				fbMediaType = pgtype.Text{String: mt, Valid: true}
+			}
+		}
+
 		dbResult, dbErr := h.queries.CreateSocialPostResult(r.Context(), db.CreateSocialPostResultParams{
 			PostID:          post.ID,
 			SocialAccountID: parsed.Posts[i].AccountID,
@@ -589,6 +599,7 @@ func (h *SocialPostHandler) executePublishLoop(
 			PublishedAt:     pubAt,
 			Url:             postURL,
 			DebugCurl:       debugCurl,
+			FbMediaType:     fbMediaType,
 		})
 		if dbErr != nil {
 			// Most common cause: FK violation from a deleted social account.
@@ -1941,4 +1952,22 @@ func (h *SocialPostHandler) getWorkspaceID(r *http.Request) string {
 		return ""
 	}
 	return workspaceID
+}
+
+// fbMediaTypeFromOptions pulls the Facebook publish-surface selector
+// out of platform_options. Accepts both `mediaType` (camelCase, the
+// documented name) and `media_type` (snake_case). Returns "" when the
+// field is unset so callers can default to the Feed video path.
+func fbMediaTypeFromOptions(opts map[string]any) string {
+	if opts == nil {
+		return ""
+	}
+	for _, key := range []string{"mediaType", "media_type"} {
+		if raw, ok := opts[key]; ok {
+			if s, ok := raw.(string); ok {
+				return strings.ToLower(strings.TrimSpace(s))
+			}
+		}
+	}
+	return ""
 }

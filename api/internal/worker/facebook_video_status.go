@@ -151,7 +151,12 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 	// pipeline (/videos + file_url cannot drive that flow), the row
 	// will never leave "uploading". Fail fast once we've waited
 	// long enough that a real upload would've started making progress.
-	if isReelReclassified(st.PermalinkURL) && r.PostCreatedAt.Valid && time.Since(r.PostCreatedAt.Time) > facebookReelReclassifiedCap {
+	//
+	// Exception: rows explicitly submitted as mediaType=reel go
+	// through the /video_reels endpoint, where a /reel/ permalink is
+	// the expected outcome. Don't fast-fail those.
+	intentionalReel := r.FbMediaType.Valid && strings.EqualFold(strings.TrimSpace(r.FbMediaType.String), "reel")
+	if !intentionalReel && isReelReclassified(st.PermalinkURL) && r.PostCreatedAt.Valid && time.Since(r.PostCreatedAt.Time) > facebookReelReclassifiedCap {
 		errMsg := "Facebook reclassified this vertical video as a Reel. Reels publishing is not yet supported — upload a horizontal or square video."
 		if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
 			ID:           r.SocialPostResultID,
