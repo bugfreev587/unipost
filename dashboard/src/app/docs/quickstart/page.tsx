@@ -359,10 +359,26 @@ export default function QuickstartPage() {
       <DocsTable
         columns={["Next capability", "When to add it", "Docs path"]}
         rows={[
-          ["Drafts + preview links", "When a human should review before publish", "API Reference → Drafts / Preview Links"],
-          ["Connect sessions", "When your customers connect their own end-user accounts", "API References → Connect Sessions"],
-          ["Analytics", "When you need reporting or agent feedback loops", "API References → Analytics"],
-          ["Platform guides", "When you need exact per-platform content rules", "Platforms"],
+          [
+            "Drafts + review flows",
+            "When a human should approve content before publish",
+            <Link key="next-drafts" href="/docs/api/posts/drafts">API Reference → Drafts</Link>,
+          ],
+          [
+            "Connect sessions",
+            "When your customers connect their own accounts",
+            <Link key="next-connect" href="/docs/api/connect/sessions">API Reference → Connect Sessions</Link>,
+          ],
+          [
+            "Analytics",
+            "When you need reporting, performance tracking, or automation feedback loops",
+            <Link key="next-analytics" href="/docs/api/analytics">API Reference → Analytics</Link>,
+          ],
+          [
+            "Platform guides",
+            "When you need platform-specific media limits, caption rules, or examples",
+            <Link key="next-platforms" href="/docs/platforms">Platforms</Link>,
+          ],
         ]}
       />
     </DocsPage>
