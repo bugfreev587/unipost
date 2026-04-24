@@ -287,19 +287,22 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     },
     {
       title: "Developer Webhooks",
-      description: "Push delivery for post lifecycle and account events.",
       items: [
-        { label: "Overview", href: "/docs/api/webhooks" },
-        { label: "Create webhook", href: "/docs/api/webhooks/create", method: "POST" },
-        { label: "List webhooks", href: "/docs/api/webhooks/list", method: "GET" },
-        { label: "Get webhook", href: "/docs/api/webhooks/get", method: "GET" },
-        { label: "Update webhook", href: "/docs/api/webhooks/update", method: "PATCH" },
-        { label: "Rotate secret", href: "/docs/api/webhooks/rotate", method: "POST" },
+        {
+          label: "WEBHOOK",
+          children: [
+            { label: "Overview", href: "/docs/api/webhooks" },
+            { label: "Create webhook", href: "/docs/api/webhooks/create", method: "POST" },
+            { label: "List webhooks", href: "/docs/api/webhooks/list", method: "GET" },
+            { label: "Get webhook", href: "/docs/api/webhooks/get", method: "GET" },
+            { label: "Update webhook", href: "/docs/api/webhooks/update", method: "PATCH" },
+            { label: "Rotate secret", href: "/docs/api/webhooks/rotate", method: "POST" },
+          ],
+        },
       ],
     },
     {
       title: "Notifications",
-      description: "Human-facing alert channels and billing-related notifications.",
       items: [
         { label: "Notifications", href: "/docs/api/notifications" },
         { label: "Slack Webhook URL", href: "/docs/api/slack-webhook" },
@@ -884,14 +887,14 @@ export function DocsPage({
 }: {
   eyebrow?: string;
   title: string;
-  lead: React.ReactNode;
+  lead?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <article className="docs-page">
       {eyebrow ? <div className="docs-eyebrow">{eyebrow}</div> : null}
       <h1>{title}</h1>
-      <p className="docs-lead">{lead}</p>
+      {lead ? <p className="docs-lead">{lead}</p> : null}
       {children}
     </article>
   );

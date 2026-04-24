@@ -127,9 +127,6 @@ export function WebhooksContent() {
 
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: "-.8px", marginBottom: 12 }}>Webhooks</h1>
-        <p style={{ fontSize: 15, color: "var(--docs-text-soft)", lineHeight: 1.6 }}>
-          Receive real-time notifications when posts are published, accounts are connected, or tokens expire. UniPost sends HMAC-signed HTTP POST requests to the URL you configure.
-        </p>
       </div>
 
       {/* Setup */}
