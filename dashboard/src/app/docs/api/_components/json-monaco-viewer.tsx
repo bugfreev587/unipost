@@ -163,7 +163,7 @@ export function JsonMonacoViewer({
           domReadOnly: true,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
-          wordWrap: "on",
+          wordWrap: "off",
           folding: true,
           lineNumbers: "on",
           renderLineHighlight: "none",
@@ -174,7 +174,6 @@ export function JsonMonacoViewer({
           fontSize: 13,
           lineHeight: 21,
           fontFamily: "var(--docs-mono, var(--mono), monospace)",
-          wordWrapColumn: 96,
           scrollbar: {
             verticalScrollbarSize: 10,
             horizontalScrollbarSize: 10,
