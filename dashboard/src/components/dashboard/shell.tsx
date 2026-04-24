@@ -213,7 +213,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         style={{
           width: sidebarCollapsed ? 0 : 220,
           minWidth: sidebarCollapsed ? 0 : 220,
-          background: "var(--sidebar)",
+          background: "linear-gradient(180deg, color-mix(in srgb, var(--sidebar) 98%, transparent), color-mix(in srgb, var(--surface2) 80%, transparent))",
           borderRight: sidebarCollapsed ? "none" : "1px solid var(--dborder)",
           display: "flex", flexDirection: "column",
           overflow: "hidden",
@@ -511,7 +511,17 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* ── MAIN ── */}
-      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+      <main
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          position: "relative",
+          background:
+            "radial-gradient(circle at top right, color-mix(in srgb, var(--accent-glow) 100%, transparent), transparent 28%), var(--app-bg)",
+        }}
+      >
         {sidebarCollapsed && (
           <button
             onClick={() => setSidebarCollapsed(false)}
@@ -531,7 +541,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <PanelLeftOpen style={{ width: 16, height: 16 }} />
           </button>
         )}
-        <div style={{ flex: 1, overflowY: "auto", padding: "40px 48px" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px 40px" }}>
           {children}
         </div>
       </main>

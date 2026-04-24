@@ -263,6 +263,31 @@
   text-rendering: optimizeLegibility;
 }
 
+.dashboard-page-frame {
+  position: relative;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 28px;
+  border: 1px solid color-mix(in srgb, var(--dborder) 92%, transparent);
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, transparent), color-mix(in srgb, var(--surface2) 84%, transparent));
+  box-shadow:
+    0 18px 48px color-mix(in srgb, var(--shadow-color) 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+.dashboard-page-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent-glow) 100%, transparent), transparent 36%);
+  opacity: 0.9;
+}
+
 /* ── Dashboard typography tokens ────────────────────────────────────── */
 .dt-page-title    { font-size: 28px; line-height: 34px; font-weight: 720; color: var(--dtext); letter-spacing: -0.035em; }
 .dt-section-title { font-size: 22px; line-height: 30px; font-weight: 700; color: var(--dtext); letter-spacing: -0.02em; }
@@ -321,7 +346,7 @@
   align-items: center;
   gap: 10px;
   padding: 11px 13px;
-  border-radius: 10px;
+  border-radius: 14px;
   cursor: pointer;
   color: color-mix(in srgb, var(--dmuted) 86%, var(--dtext));
   font-size: 14.5px;
@@ -331,12 +356,17 @@
   border: 1px solid transparent;
   text-decoration: none;
 }
-.sidebar-nav-item:hover { background: color-mix(in srgb, var(--sidebar-accent) 86%, white); color: var(--dtext); }
+.sidebar-nav-item:hover {
+  background: color-mix(in srgb, var(--sidebar-accent) 90%, white);
+  color: var(--dtext);
+  border-color: color-mix(in srgb, var(--dborder) 92%, transparent);
+}
 .sidebar-nav-item[data-active="true"] {
-  background: color-mix(in srgb, var(--accent-dim) 58%, white);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-dim) 74%, white), color-mix(in srgb, var(--accent-dim) 48%, transparent));
   color: var(--daccent);
-  border-color: color-mix(in srgb, var(--daccent) 26%, var(--dborder));
+  border-color: color-mix(in srgb, var(--daccent) 32%, var(--dborder));
   font-weight: 600;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 14%, transparent);
 }
 .sidebar-nav-item svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.84; }
 .sidebar-nav-item[data-active="true"] svg { opacity: 1; }
@@ -344,13 +374,13 @@
 /* ── Tables ── */
 .table-wrap {
   border: 1px solid var(--dborder);
-  border-radius: 10px;
+  border-radius: 20px;
   overflow: hidden;
-  background: var(--surface);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-color) 58%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, transparent), color-mix(in srgb, var(--surface2) 84%, transparent));
+  box-shadow: 0 12px 36px color-mix(in srgb, var(--shadow-color) 14%, transparent);
 }
 .table-wrap table { width: 100%; border-collapse: collapse; }
-.table-wrap thead { background: color-mix(in srgb, var(--surface2) 84%, white); }
+.table-wrap thead { background: color-mix(in srgb, var(--surface2) 84%, var(--surface)); }
 .table-wrap th {
   padding: 15px 20px;
   text-align: left;
@@ -370,7 +400,7 @@
 }
 .table-wrap tr:last-child td { border-bottom: none; }
 .table-wrap tbody tr { transition: background 0.1s; }
-.table-wrap tbody tr:hover { background: color-mix(in srgb, var(--surface2) 82%, white); }
+.table-wrap tbody tr:hover { background: color-mix(in srgb, var(--surface2) 72%, var(--surface)); }
 
 /* ── Badges ── */
 .dbadge {
@@ -409,15 +439,23 @@
   background: var(--daccent);
   color: var(--primary-foreground);
   font-weight: 600;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--primary) 18%, transparent);
 }
-.dbtn-primary:hover { background: var(--primary-hover); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 28%, transparent), 0 10px 28px -18px var(--shadow-color); }
+.dbtn-primary:hover { background: var(--primary-hover); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 28%, transparent), 0 16px 34px -18px var(--shadow-color); transform: translateY(-1px); }
 .dbtn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .dbtn-ghost {
-  background: transparent;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   color: var(--dmuted);
   border-color: var(--dborder2);
 }
 .dbtn-ghost:hover { background: var(--surface2); color: var(--dtext); border-color: var(--dborder2); }
+
+@media (max-width: 960px) {
+  .dashboard-page-frame {
+    padding: 20px;
+    border-radius: 22px;
+  }
+}
 .dbtn-danger {
   background: transparent;
   color: var(--danger);
