@@ -42,7 +42,15 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^GET \/v1\/social-posts\/[^/]+\/analytics$/i, href: "/docs/api/analytics/posts" },
   { match: /^GET \/v1\/social-posts\/[^/]+$/i, href: "/docs/api/posts/get" },
   { match: /^GET \/v1\/social-posts$/i, href: "/docs/api/posts/list" },
-  { match: /^GET \/v1\/social-accounts(?:\/[^/]+\/health)?$/i, href: "/docs/api/accounts/list" },
+  { match: /^GET \/v1\/profiles$/i, href: "/docs/api/profiles/list" },
+  { match: /^GET \/v1\/profiles\/[^/]+$/i, href: "/docs/api/profiles/get" },
+  { match: /^PATCH \/v1\/profiles\/[^/]+$/i, href: "/docs/api/profiles/update" },
+  { match: /^POST \/v1\/social-accounts\/connect$/i, href: "/docs/api/accounts/connect" },
+  { match: /^DELETE \/v1\/social-accounts\/[^/]+$/i, href: "/docs/api/accounts/disconnect" },
+  { match: /^GET \/v1\/social-accounts\/[^/]+\/capabilities$/i, href: "/docs/api/accounts/capabilities" },
+  { match: /^GET \/v1\/social-accounts\/[^/]+\/health$/i, href: "/docs/api/accounts/health" },
+  { match: /^GET \/v1\/social-accounts\/[^/]+\/tiktok\/creator-info$/i, href: "/docs/api/accounts/tiktok-creator-info" },
+  { match: /^GET \/v1\/social-accounts$/i, href: "/docs/api/accounts/list" },
   { match: /^(?:POST|GET) \/v1\/connect\/sessions(?:\/[^/]+)?$/i, href: "/docs/api/connect/sessions" },
   { match: /^POST \/v1\/webhooks$/i, href: "/docs/api/webhooks/create" },
   { match: /^GET \/v1\/webhooks$/i, href: "/docs/api/webhooks/list" },
@@ -57,7 +65,6 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
     match: /^(?:POST|GET|DELETE) \/v1\/workspaces\/[^/]+\/platform-credentials(?:\/[^/]+)?$/i,
     href: "/docs/api/white-label/credentials",
   },
-  { match: /^PATCH \/v1\/profiles\/[^/]+$/i, href: "/docs/api/white-label/branding" },
 ];
 
 function normalizeEndpointReference(value: string) {

@@ -15,6 +15,7 @@ export default function ApiReferenceLandingPage() {
       <DocsTable
         columns={["Group", "What it covers", "Start here"]}
         rows={[
+          ["Profiles", "Workspace-scoped brands and hosted Connect branding settings", "Profiles"],
           ["Accounts", "List, connect, disconnect, and inspect social accounts", "Social Accounts"],
           ["Connect sessions", "Hosted onboarding for end-user-owned accounts", "Connect Sessions"],
           ["Posts", "Create, validate, schedule, draft, and preview content", "Create Post"],
@@ -23,6 +24,9 @@ export default function ApiReferenceLandingPage() {
           ["Webhooks", "Subscribe to publish and account events", "Webhooks"],
         ]}
       />
+
+      <h2 id="profiles">Profiles</h2>
+      <p>Profiles are the brand or tenant containers that sit underneath one workspace. In the public API today you can list profiles, fetch one profile, and update branding fields for hosted Connect. Profile creation and deletion still live on the dashboard-authenticated surface.</p>
 
       <h2 id="connect-sessions">Connect sessions</h2>
       <p>Use Connect sessions when your customers need to connect their own social accounts inside your product. This is where UniPost stops being just a posting API and becomes account-onboarding infrastructure.</p>
@@ -69,8 +73,13 @@ export default function ApiReferenceLandingPage() {
           <p><Link href="/docs/api/media">Open Media API</Link></p>
         </div>
         <div className="docs-card">
+          <div className="docs-card-title">Profiles reference</div>
+          <p>Use profiles when one workspace maps to multiple brands, storefronts, or customer-facing Connect entry points.</p>
+          <p><Link href="/docs/api/profiles/list">Open Profiles</Link></p>
+        </div>
+        <div className="docs-card">
           <div className="docs-card-title">Accounts reference</div>
-          <p>Use the social accounts reference when you need account IDs, filtering, or managed account lookups.</p>
+          <p>Use the social accounts reference when you need account IDs, direct connect/disconnect operations, capabilities, or managed account lookups.</p>
           <p><Link href="/docs/api/accounts/list">Open Social Accounts</Link></p>
         </div>
         <div className="docs-card">

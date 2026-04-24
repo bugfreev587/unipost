@@ -192,10 +192,22 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Accounts",
       items: [
         {
+          label: "profiles",
+          children: [
+            { label: "List profiles", href: "/docs/api/profiles/list", method: "GET" },
+            { label: "Get profile", href: "/docs/api/profiles/get", method: "GET" },
+            { label: "Update profile", href: "/docs/api/profiles/update", method: "PATCH" },
+          ],
+        },
+        {
           label: "accounts",
           children: [
             { label: "List accounts", href: "/docs/api/accounts/list", method: "GET" },
+            { label: "Connect account", href: "/docs/api/accounts/connect", method: "POST" },
+            { label: "Disconnect account", href: "/docs/api/accounts/disconnect", method: "DELETE" },
+            { label: "Get account capabilities", href: "/docs/api/accounts/capabilities", method: "GET" },
             { label: "Check account health", href: "/docs/api/accounts/health", method: "GET" },
+            { label: "Get TikTok creator info", href: "/docs/api/accounts/tiktok-creator-info", method: "GET" },
           ],
         },
         {
