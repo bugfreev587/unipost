@@ -4,7 +4,7 @@ import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ApiInlineLink } from "../api/_components/doc-components";
@@ -617,6 +617,8 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const [activeHeading, setActiveHeading] = useState("");
   const [apiSidebarWidth, setApiSidebarWidth] = useState(API_SIDEBAR_DEFAULT_WIDTH);
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
+  const dragStartXRef = useRef(0);
+  const dragStartWidthRef = useRef(API_SIDEBAR_DEFAULT_WIDTH);
   const activePrimaryNav = getActivePrimaryNav(pathname);
   const sidebarSections = DOCS_SIDEBAR_NAV[activePrimaryNav];
   const isApiPage = pathname.startsWith("/docs/api");
@@ -667,7 +669,8 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     if (!isDraggingSidebar) return;
 
     const handlePointerMove = (event: PointerEvent) => {
-      const nextWidth = clampApiSidebarWidth(event.clientX - 28);
+      const delta = event.clientX - dragStartXRef.current;
+      const nextWidth = clampApiSidebarWidth(dragStartWidthRef.current + delta);
       setApiSidebarWidth(nextWidth);
     };
 
@@ -838,6 +841,8 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                 if (event.pointerType === "mouse" || event.pointerType === "pen") {
                   event.preventDefault();
                 }
+                dragStartXRef.current = event.clientX;
+                dragStartWidthRef.current = apiSidebarWidth;
                 setIsDraggingSidebar(true);
               }}
             />
