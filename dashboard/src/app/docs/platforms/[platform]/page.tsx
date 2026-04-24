@@ -502,7 +502,7 @@ export default async function PlatformDetailPage({
   const supportsManagedUploads = data.requirements.some((row) => row[0].includes("media_urls") || row[0].includes("media_ids"));
 
   return (
-    <DocsPage eyebrow="Platform Guide" title={data.title} lead={data.lead}>
+    <DocsPage eyebrow="Platform Guide" title={data.title} lead={data.lead} className="docs-page-wide">
       <h2 id="overview">Overview</h2>
       <p>{data.overview}</p>
 

@@ -17,6 +17,7 @@ export default function PlatformsPage() {
       eyebrow="Platforms"
       title="Platform guides built for implementation, not browsing."
       lead="Every platform page follows the same structure so a developer can answer the practical questions quickly: what UniPost supports there, what the platform requires, what the request should look like, and what validation errors to expect."
+      className="docs-page-wide"
     >
       <h2 id="support-matrix">Support matrix</h2>
       <DocsTable
