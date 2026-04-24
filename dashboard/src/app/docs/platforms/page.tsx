@@ -2,93 +2,98 @@ import Link from "next/link";
 import { DocsCode, DocsPage, DocsTable } from "../_components/docs-shell";
 import { ApiInlineLink } from "../api/_components/doc-components";
 
-const CHECK = "✓";
-const DASH = "—";
+function checkCell() {
+  return <span className="docs-matrix-check">✓</span>;
+}
+
+function dashCell() {
+  return <span className="docs-matrix-dash">—</span>;
+}
 
 const PLATFORM_QUICK_REFERENCE = [
   [
     "Twitter/X",
-    CHECK,
-    CHECK,
-    CHECK,
-    CHECK,
-    CHECK,
+    checkCell(),
+    checkCell(),
+    checkCell(),
+    checkCell(),
+    checkCell(),
     <Link key="twitter-guide" href="/docs/platforms/twitter">View</Link>,
   ],
   [
     "LinkedIn",
-    CHECK,
-    CHECK,
-    CHECK,
-    DASH,
-    CHECK,
+    checkCell(),
+    checkCell(),
+    checkCell(),
+    dashCell(),
+    checkCell(),
     <Link key="linkedin-guide" href="/docs/platforms/linkedin">View</Link>,
   ],
   [
     "Instagram",
-    DASH,
-    CHECK,
-    CHECK,
-    DASH,
-    CHECK,
+    dashCell(),
+    checkCell(),
+    checkCell(),
+    dashCell(),
+    checkCell(),
     <Link key="instagram-guide" href="/docs/platforms/instagram">View</Link>,
   ],
   [
     "Threads",
-    CHECK,
-    CHECK,
-    CHECK,
-    CHECK,
-    CHECK,
+    checkCell(),
+    checkCell(),
+    checkCell(),
+    checkCell(),
+    checkCell(),
     <Link key="threads-guide" href="/docs/platforms/threads">View</Link>,
   ],
   [
     "TikTok",
-    DASH,
-    CHECK,
-    CHECK,
-    DASH,
-    DASH,
+    dashCell(),
+    checkCell(),
+    checkCell(),
+    dashCell(),
+    dashCell(),
     <Link key="tiktok-guide" href="/docs/platforms/tiktok">View</Link>,
   ],
   [
     "YouTube",
-    DASH,
-    DASH,
-    CHECK,
-    DASH,
-    CHECK,
+    dashCell(),
+    dashCell(),
+    checkCell(),
+    dashCell(),
+    checkCell(),
     <Link key="youtube-guide" href="/docs/platforms/youtube">View</Link>,
   ],
   [
     "Bluesky",
-    CHECK,
-    CHECK,
-    CHECK,
-    CHECK,
-    DASH,
+    checkCell(),
+    checkCell(),
+    checkCell(),
+    checkCell(),
+    dashCell(),
     <Link key="bluesky-guide" href="/docs/platforms/bluesky">View</Link>,
   ],
 ] as const;
 
 const PLATFORM_FEATURES = [
-  ["Twitter/X", CHECK, CHECK, DASH, DASH, CHECK],
-  ["LinkedIn", DASH, CHECK, DASH, CHECK, DASH],
-  ["Instagram", CHECK, DASH, CHECK, DASH, CHECK],
-  ["Threads", DASH, CHECK, DASH, DASH, DASH],
-  ["TikTok", DASH, DASH, CHECK, DASH, DASH],
-  ["YouTube", DASH, DASH, DASH, CHECK, DASH],
-  ["Bluesky", DASH, CHECK, DASH, DASH, CHECK],
+  ["Twitter/X", checkCell(), checkCell(), dashCell(), dashCell(), checkCell()],
+  ["LinkedIn", dashCell(), checkCell(), dashCell(), checkCell(), dashCell()],
+  ["Instagram", checkCell(), dashCell(), checkCell(), dashCell(), checkCell()],
+  ["Threads", dashCell(), checkCell(), dashCell(), dashCell(), dashCell()],
+  ["TikTok", dashCell(), dashCell(), checkCell(), dashCell(), dashCell()],
+  ["YouTube", dashCell(), dashCell(), dashCell(), checkCell(), dashCell()],
+  ["Bluesky", dashCell(), checkCell(), dashCell(), dashCell(), checkCell()],
 ] as const;
 
 const ANALYTICS_COVERAGE = [
-  ["Twitter/X", CHECK, CHECK, <Link key="analytics-twitter" href="/docs/api/analytics">Analytics</Link>],
-  ["LinkedIn", CHECK, CHECK, <Link key="analytics-linkedin" href="/docs/api/analytics">Analytics</Link>],
-  ["Instagram", CHECK, CHECK, <Link key="analytics-instagram" href="/docs/api/analytics">Analytics</Link>],
-  ["Threads", CHECK, CHECK, <Link key="analytics-threads" href="/docs/api/analytics">Analytics</Link>],
-  ["TikTok", CHECK, DASH, <Link key="analytics-tiktok" href="/docs/api/analytics">Analytics</Link>],
-  ["YouTube", CHECK, CHECK, <Link key="analytics-youtube" href="/docs/api/analytics">Analytics</Link>],
-  ["Bluesky", CHECK, DASH, <Link key="analytics-bluesky" href="/docs/api/analytics">Analytics</Link>],
+  ["Twitter/X", checkCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-twitter" href="/docs/api/analytics">View</Link>],
+  ["LinkedIn", checkCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-linkedin" href="/docs/api/analytics">View</Link>],
+  ["Instagram", checkCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-instagram" href="/docs/api/analytics">View</Link>],
+  ["Threads", checkCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-threads" href="/docs/api/analytics">View</Link>],
+  ["TikTok", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-tiktok" href="/docs/api/analytics">View</Link>],
+  ["YouTube", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-youtube" href="/docs/api/analytics">View</Link>],
+  ["Bluesky", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-bluesky" href="/docs/api/analytics">View</Link>],
 ] as const;
 
 const CONNECT_SNIPPET = `curl -X POST "https://api.unipost.dev/v1/accounts/connect" \\
@@ -144,6 +149,34 @@ export default function PlatformsPage() {
       lead="Use this page to understand what UniPost supports today across Twitter/X, LinkedIn, Instagram, Threads, TikTok, YouTube, and Bluesky. The goal here is macro-level implementation guidance: which destinations exist, how the publish model works across them, where analytics and webhooks fit, and when you need to drop into a platform-specific guide."
       className="docs-page-wide"
     >
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            .docs-table td:has(.docs-matrix-check),
+            .docs-table td:has(.docs-matrix-dash),
+            .docs-table th.docs-matrix-center{
+              text-align:center;
+            }
+            .docs-matrix-check{
+              display:inline-flex;
+              align-items:center;
+              justify-content:center;
+              min-width:20px;
+              color:#22c55e;
+              font-weight:700;
+              font-size:18px;
+              line-height:1;
+            }
+            .docs-matrix-dash{
+              display:inline-flex;
+              align-items:center;
+              justify-content:center;
+              min-width:20px;
+              color:var(--docs-text-soft);
+            }
+          `,
+        }}
+      />
       <h2 id="platform-quick-reference">Platform Quick Reference</h2>
       <p>UniPost currently documents seven publishing destinations in the public platform guides. Each guide expands on media rules, validation behavior, and example request bodies for that network.</p>
       <DocsTable
@@ -173,9 +206,9 @@ export default function PlatformsPage() {
       />
 
       <h2 id="analytics-coverage">Analytics Coverage</h2>
-      <p>UniPost already exposes analytics as a shared layer rather than making you integrate each platform&apos;s reporting stack separately. The current public docs focus on workspace rollups and post-level metrics.</p>
+      <p>Which analytics KPIs are clearly represented in UniPost&apos;s current public analytics docs? This matrix only marks metrics that are explicitly documented today.</p>
       <DocsTable
-        columns={["Platform", "Workspace Summary", "Post Analytics", "Docs"]}
+        columns={["Platform", "Impressions", "Reach", "Likes", "Comments", "Views", "Docs"]}
         rows={ANALYTICS_COVERAGE}
       />
 
