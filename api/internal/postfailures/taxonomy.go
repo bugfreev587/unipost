@@ -42,6 +42,15 @@ func Classify(raw string) Classification {
 	case strings.Contains(s, "timeout") || strings.Contains(s, "temporarily unavailable") || strings.Contains(s, "try again later"):
 		c.ErrorCode = "temporary_platform_error"
 		c.IsRetriable = true
+	case strings.Contains(s, "container processing failed") || strings.Contains(s, "container processing timed out"):
+		// Instagram's async media container can fail or stall on the
+		// first try for transient reasons (IG-side transcoding hiccup,
+		// source URL race). The container itself is terminal once it
+		// reports ERROR, but a fresh container on retry usually
+		// succeeds — classify retriable so the queue schedules one
+		// instead of giving up after a single attempt.
+		c.ErrorCode = "temporary_platform_error"
+		c.IsRetriable = true
 	case strings.Contains(s, "token") && (strings.Contains(s, "expired") || strings.Contains(s, "invalid")):
 		c.ErrorCode = "auth_token_invalid"
 	case strings.Contains(s, "disconnected") || strings.Contains(s, "reconnect"):

@@ -501,29 +501,40 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	if oc.debugCurl != "" {
 		debugCurl = pgtype.Text{String: oc.debugCurl, Valid: true}
 	}
-	updated, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-		ID:           res.ID,
-		Status:       "failed",
-		ExternalID:   pgtype.Text{},
-		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
-		PublishedAt:  pgtype.Timestamptz{},
-		Url:          pgtype.Text{},
-		DebugCurl:    debugCurl,
-	})
-	if err != nil {
-		return err
-	}
 
+	// Classify before touching the result row. If this attempt is
+	// retriable and another attempt is coming, keep the row in
+	// "processing" — writing "failed" here would flash in the UI
+	// even though the queue is about to re-dispatch. Only terminal
+	// outcomes (non-retriable, or a retry job that just hit its
+	// max-attempts ceiling) should flip the row to failed.
 	failure := postfailures.BuildParams(
 		post.ID,
-		updated.ID,
+		res.ID,
 		post.WorkspaceID,
-		updated.SocialAccountID,
+		res.SocialAccountID,
 		postfailures.FirstNonEmpty(oc.platform, job.Platform),
 		"dispatch",
 		errMsg,
 		errMsg,
 	)
+	anotherAttempt := failure.IsRetriable && (job.Kind == "dispatch" || job.Attempts < job.MaxAttempts)
+	resultStatus := "failed"
+	if anotherAttempt {
+		resultStatus = "processing"
+	}
+
+	if _, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+		ID:           res.ID,
+		Status:       resultStatus,
+		ExternalID:   pgtype.Text{},
+		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
+		PublishedAt:  pgtype.Timestamptz{},
+		Url:          pgtype.Text{},
+		DebugCurl:    debugCurl,
+	}); err != nil {
+		return err
+	}
 	h.recordPostFailure(ctx, failure)
 
 	if failure.IsRetriable {
@@ -631,9 +642,20 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 		errMsg = fmt.Sprintf("delivery attempt stalled after %s and exhausted retry attempts", staleDeliveryAttemptTimeout.Round(time.Second))
 	}
 
+	// Match handleJobDispatchFailure's status logic: keep the row in
+	// "processing" while another attempt is queued, only flip to
+	// "failed" when we've truly run out of retries. Stale dispatch
+	// jobs always schedule a fresh retry; stale retry jobs only
+	// schedule another attempt if they haven't hit the attempt cap.
+	anotherAttempt := job.Kind == "dispatch" || job.Attempts < job.MaxAttempts
+	resultStatus := "failed"
+	if anotherAttempt {
+		resultStatus = "processing"
+	}
+
 	if _, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
 		ID:           result.ID,
-		Status:       "failed",
+		Status:       resultStatus,
 		ExternalID:   pgtype.Text{},
 		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
 		PublishedAt:  pgtype.Timestamptz{},
