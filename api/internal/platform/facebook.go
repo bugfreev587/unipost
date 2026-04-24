@@ -726,6 +726,20 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 		return nil, wrapFacebookPublishError(transferResp.StatusCode, transferBody)
 	}
 
+	// Phase 2.5: wait for the hosted-pull to actually complete.
+	// Meta's 200 on the transfer request is an ACK, not a
+	// completion — rupload starts the pull from our R2 URL
+	// asynchronously. Calling Phase 3 (finish) before Meta has
+	// finished downloading lands as a silent no-op: the request
+	// returns {"success": true} but processing_phase stays at
+	// "not_started" and the video is wedged forever in
+	// video_status="upload_complete". Poll /video_id until
+	// uploading_phase reports "complete" (or the video errors)
+	// before calling finish.
+	if err := a.waitForReelUploadComplete(ctx, accessToken, videoID); err != nil {
+		return nil, err
+	}
+
 	// Phase 3: finish.
 	finishForm := url.Values{
 		"access_token": {accessToken},
@@ -803,6 +817,50 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 		Status:         "processing",
 		FinalMediaType: "reel",
 	}, nil
+}
+
+// waitForReelUploadComplete polls /video_id until Meta confirms the
+// hosted-pull (the Phase 2 transfer) has finished downloading our
+// file, or the upload errors. Required before calling Phase 3
+// (finish) — calling finish too early silently no-ops and leaves
+// the Reel stuck at video_status="upload_complete" forever.
+//
+// Cap: 3 minutes, 5-second poll. Small Reels (≤50 MB) typically
+// upload in under 30 seconds on Meta's side; 3 min covers the
+// long tail without hanging the request indefinitely. On timeout
+// we return an error rather than calling finish on a half-uploaded
+// video (which would produce the "Invalid Mutation on Attachment
+// Ent" error or silently wedge the video).
+func (a *FacebookAdapter) waitForReelUploadComplete(ctx context.Context, accessToken, videoID string) error {
+	const maxAttempts = 36 // 36 × 5s = 180s = 3 min
+	for i := 0; i < maxAttempts; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+		st, err := a.CheckVideoStatus(ctx, accessToken, videoID)
+		if err != nil {
+			slog.Warn("facebook reel: upload-complete poll failed",
+				"video_id", videoID, "error", err)
+			continue
+		}
+		if strings.EqualFold(st.UploadingStatus, "complete") {
+			return nil
+		}
+		if strings.EqualFold(st.UploadingStatus, "error") ||
+			st.VideoStatus == "error" ||
+			st.VideoStatus == "upload_failed" ||
+			st.VideoStatus == "expired" {
+			msg := "facebook reel: upload failed"
+			if st.ErrorMessage != "" {
+				msg += ": " + st.ErrorMessage
+			}
+			return fmt.Errorf("%s", msg)
+		}
+		// Still "not_started" or "in_progress" — keep polling.
+	}
+	return fmt.Errorf("facebook reel: upload did not complete within 3 minutes")
 }
 
 // startVideoReelUpload performs Phase 1 of the /video_reels flow and
