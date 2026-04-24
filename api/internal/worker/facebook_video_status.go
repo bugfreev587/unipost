@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +51,11 @@ const (
 	facebookVideoStatusTick        = 2 * time.Minute
 	facebookVideoStatusConcurrency = 5
 	facebookVideoStatusStaleCap    = 12 * time.Hour
+	// A video with a /reel/ permalink was reclassified into the Reels
+	// pipeline, which UniPost's /videos + file_url path cannot drive.
+	// These never finish on their own — shorten the timeout so users
+	// get a clear failure long before the generic stale cap fires.
+	facebookReelReclassifiedCap = 10 * time.Minute
 )
 
 func (w *FacebookVideoStatusWorker) Start(ctx context.Context) {
@@ -141,6 +147,31 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 		return
 	}
 
+	// Reel reclassification: if FB pushed the upload onto the Reels
+	// pipeline (/videos + file_url cannot drive that flow), the row
+	// will never leave "uploading". Fail fast once we've waited
+	// long enough that a real upload would've started making progress.
+	if isReelReclassified(st.PermalinkURL) && r.PostCreatedAt.Valid && time.Since(r.PostCreatedAt.Time) > facebookReelReclassifiedCap {
+		errMsg := "Facebook reclassified this vertical video as a Reel. Reels publishing is not yet supported — upload a horizontal or square video."
+		if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+			ID:           r.SocialPostResultID,
+			Status:       "failed",
+			ExternalID:   r.ExternalID,
+			ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
+			PublishedAt:  pgtype.Timestamptz{Valid: false},
+			Url:          r.Url,
+			DebugCurl:    pgtype.Text{Valid: false},
+		}); err != nil {
+			slog.Error("facebook video status: reel-reclassified update failed",
+				"result_id", r.SocialPostResultID, "error", err)
+			return
+		}
+		slog.Warn("facebook video status: flipped to failed (reel reclassified)",
+			"result_id", r.SocialPostResultID, "video_id", videoID,
+			"permalink_url", st.PermalinkURL)
+		return
+	}
+
 	switch st.VideoStatus {
 	case "ready":
 		// Swap external_id to the feed-story id once FB hands it
@@ -172,7 +203,7 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 		slog.Info("facebook video status: flipped to published",
 			"result_id", r.SocialPostResultID, "video_id", videoID, "post_id", st.PostID)
 
-	case "error":
+	case "error", "upload_failed", "expired":
 		errMsg := "Facebook rejected the video"
 		if st.ErrorMessage != "" {
 			errMsg = "Facebook rejected the video: " + st.ErrorMessage
@@ -194,6 +225,29 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 			"result_id", r.SocialPostResultID, "video_id", videoID, "message", errMsg)
 
 	default:
+		// Phase-level failure with top-level still transient — FB
+		// sometimes reports a phase as errored before the top-level
+		// video_status flips. Promote to failed immediately so the
+		// user sees a clear failure instead of a 12h silence.
+		if phaseErr := firstPhaseError(st); phaseErr != "" {
+			errMsg := "Facebook video upload failed: " + phaseErr
+			if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+				ID:           r.SocialPostResultID,
+				Status:       "failed",
+				ExternalID:   r.ExternalID,
+				ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
+				PublishedAt:  pgtype.Timestamptz{Valid: false},
+				Url:          r.Url,
+				DebugCurl:    pgtype.Text{Valid: false},
+			}); err != nil {
+				slog.Error("facebook video status: phase-error update failed",
+					"result_id", r.SocialPostResultID, "error", err)
+				return
+			}
+			slog.Warn("facebook video status: flipped to failed (phase error)",
+				"result_id", r.SocialPostResultID, "video_id", videoID, "message", errMsg)
+			return
+		}
 		// Still uploading/processing/publishing. Fail out only if the
 		// row has been in this limbo for so long that continuing to
 		// wait is clearly wasted effort — 12h is well past any
@@ -219,4 +273,40 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 				"phase", st.VideoStatus, "age", time.Since(r.PostCreatedAt.Time))
 		}
 	}
+}
+
+// isReelReclassified returns true when FB's permalink_url indicates
+// the upload was routed into the Reels pipeline (/reel/...) — the
+// /videos + file_url path cannot drive that flow, so the row will
+// never leave "uploading" on its own.
+func isReelReclassified(permalinkURL string) bool {
+	trimmed := strings.TrimSpace(permalinkURL)
+	if trimmed == "" {
+		return false
+	}
+	return strings.Contains(trimmed, "/reel/")
+}
+
+// firstPhaseError returns the first non-empty phase-level error
+// message on the status response, or "" when every phase is clean.
+// Used to promote "phase=error, top-level still transient" states
+// into a failed row without waiting for the stale cap.
+func firstPhaseError(st *platform.FacebookVideoStatus) string {
+	if st == nil {
+		return ""
+	}
+	// The adapter's CheckVideoStatus already copies the first
+	// non-empty phase error into ErrorMessage, so when we see the
+	// phase status string report "error" the message is already
+	// there.
+	if strings.EqualFold(st.UploadingStatus, "error") ||
+		strings.EqualFold(st.ProcessingStatus, "error") ||
+		strings.EqualFold(st.PublishingStatus, "error") {
+		if st.ErrorMessage != "" {
+			return st.ErrorMessage
+		}
+		return fmt.Sprintf("phase failed (uploading=%s, processing=%s, publishing=%s)",
+			st.UploadingStatus, st.ProcessingStatus, st.PublishingStatus)
+	}
+	return ""
 }

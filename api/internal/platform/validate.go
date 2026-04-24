@@ -217,6 +217,13 @@ const (
 	// callers hit the same guards the compose UI already enforces.
 	CodeFacebookLinkWithMedia             = "facebook_link_with_media"
 	CodeFacebookScheduledMediaUnsupported = "facebook_scheduled_media_unsupported"
+	// Facebook Reels are a separate publish surface
+	// (`/{page_id}/video_reels`) that UniPost's adapter does not
+	// implement yet. We accept the platform_options.facebook.mediaType
+	// field so the API surface is future-proof, but reject `reel`
+	// requests with a clear code until Phase 3 lands.
+	CodeInvalidFacebookMediaType = "invalid_facebook_media_type"
+	CodeFacebookReelsUnsupported = "facebook_reels_unsupported"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -236,6 +243,13 @@ const minScheduleAhead = 30 * time.Second
 var youtubeLanguagePattern = regexp.MustCompile(`^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})*$`)
 
 var instagramMediaTypeValues = []string{"feed", "reels", "story"}
+
+// Facebook mediaType is a forward-looking field. Today only `feed` is
+// actually shipped; `reel` is accepted into the API surface so
+// integrators can write code against the final shape, but the
+// validator rejects it with facebook_reels_unsupported until the
+// /video_reels 3-phase upload flow is implemented.
+var facebookMediaTypeValues = []string{"feed", "reel"}
 
 func hasOpt(opts map[string]any, key string) bool {
 	if opts == nil {
@@ -949,6 +963,45 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 				Message:           "Scheduled publishing for Facebook photos/videos is not yet supported.",
 				Severity:          SeverityError,
 			})
+		}
+
+		// platform_options.facebook.mediaType declares which Facebook
+		// publish surface to target — `feed` (the current default) or
+		// `reel`. `reel` is accepted as a future-proof field but the
+		// 3-phase /video_reels upload flow is not shipped yet, so we
+		// reject it cleanly with its own code. See Phase 3 for the
+		// actual Reel implementation.
+		//
+		// Accept both `mediaType` (instagram-style camelCase) and
+		// `media_type` (snake_case) so integrators can be consistent
+		// with either convention.
+		fbMediaType := strings.TrimSpace(optString(post.PlatformOptions, "mediaType"))
+		if fbMediaType == "" {
+			fbMediaType = strings.TrimSpace(optString(post.PlatformOptions, "media_type"))
+		}
+		if fbMediaType != "" {
+			if err := validateEnum("facebook", "mediaType", fbMediaType, facebookMediaTypeValues); err != nil {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "platform_options.mediaType",
+					Code:              CodeInvalidFacebookMediaType,
+					Message:           "facebook mediaType must be feed or reel",
+					Actual:            fbMediaType,
+					Severity:          SeverityError,
+				})
+			} else if fbMediaType == "reel" {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "platform_options.mediaType",
+					Code:              CodeFacebookReelsUnsupported,
+					Message:           "Facebook Reels publishing is not yet supported. Use mediaType=feed with a horizontal or square video, or wait for Reels support.",
+					Severity:          SeverityError,
+				})
+			}
 		}
 	}
 

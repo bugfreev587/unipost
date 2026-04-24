@@ -540,6 +540,16 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 			slog.Warn("facebook: video status poll failed", "video_id", videoID, "error", err)
 			continue
 		}
+		// Reel reclassification: if FB's permalink_url starts with
+		// /reel/ the upload was routed to the Reels pipeline, which
+		// /videos + file_url doesn't drive — the upload stays stuck
+		// in uploading/in_progress indefinitely. Abort early with a
+		// clear error instead of waiting 60s then sitting in
+		// `processing` for 12h.
+		if isReelPermalink(st.PermalinkURL) {
+			_ = a.tryDeleteVideo(ctx, accessToken, videoID)
+			return nil, fmt.Errorf("facebook: vertical video was reclassified as a Reel; Reels publishing is not yet supported — upload a horizontal or square video")
+		}
 		switch st.VideoStatus {
 		case "ready":
 			// Prefer the feed-story id so the public URL lands on
@@ -561,8 +571,20 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 				ExternalID: videoID,
 				URL:        fmt.Sprintf("https://www.facebook.com/%s/videos/%s", pageID, videoID),
 			}, nil
-		case "error":
+		case "error", "upload_failed", "expired":
 			msg := "facebook: video processing failed"
+			if st.ErrorMessage != "" {
+				msg += ": " + st.ErrorMessage
+			}
+			return nil, fmt.Errorf("%s", msg)
+		}
+		// Phase-level failure with top-level still transient — FB
+		// sometimes reports the phase as errored while
+		// `video_status` still reads "uploading"/"processing".
+		// Fail fast on the phase signal rather than waiting for the
+		// top-level status to catch up.
+		if phaseHasError(st) {
+			msg := "facebook: video phase failed"
 			if st.ErrorMessage != "" {
 				msg += ": " + st.ErrorMessage
 			}
@@ -581,6 +603,64 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 		URL:        fmt.Sprintf("https://www.facebook.com/%s/videos/%s", pageID, videoID),
 		Status:     "processing",
 	}, nil
+}
+
+// isReelPermalink returns true when FB assigned a permalink under
+// /reel/, which means it reclassified the video into the Reels
+// pipeline. The /videos + file_url path cannot drive that pipeline, so
+// the upload will never finish and we should fail fast.
+func isReelPermalink(permalinkURL string) bool {
+	trimmed := strings.TrimSpace(permalinkURL)
+	if trimmed == "" {
+		return false
+	}
+	// Graph returns either a fully-qualified URL or a root-relative
+	// path depending on the field selection.
+	return strings.Contains(trimmed, "/reel/")
+}
+
+// phaseHasError returns true when any of the three upload phases
+// reports status="error" — this can fire before the top-level
+// `video_status` flips, so it's worth a separate check.
+func phaseHasError(st *FacebookVideoStatus) bool {
+	if st == nil {
+		return false
+	}
+	return strings.EqualFold(st.UploadingStatus, "error") ||
+		strings.EqualFold(st.ProcessingStatus, "error") ||
+		strings.EqualFold(st.PublishingStatus, "error")
+}
+
+// tryDeleteVideo best-efforts the cleanup of a stuck video resource.
+// We issue DELETE /{video_id} so FB doesn't leave an orphan row
+// attached to the Page. Failures are logged and swallowed — we've
+// already decided to return an error for this publish regardless.
+func (a *FacebookAdapter) tryDeleteVideo(ctx context.Context, accessToken, videoID string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", facebookGraphBase+"/"+videoID+"?access_token="+url.QueryEscape(accessToken), nil)
+	if err != nil {
+		slog.Warn("facebook: build delete request failed", "video_id", videoID, "error", err)
+		return err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		slog.Warn("facebook: delete video failed", "video_id", videoID, "error", err)
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		slog.Warn("facebook: delete video non-2xx", "video_id", videoID, "status", resp.StatusCode, "body", truncateForLog(string(body), 240))
+		return fmt.Errorf("facebook: delete video returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// truncateForLog clips a string to n bytes for log readability.
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // FacebookVideoStatus mirrors the subset of /{video_id}?fields=status,post_id
