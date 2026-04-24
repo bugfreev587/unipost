@@ -285,102 +285,189 @@ export default function QuickstartPage() {
       className="docs-page-wide"
       eyebrow="Get Started"
       title="Quickstart"
-      lead="Create an API key, connect an account, fetch its ID, and publish your first post."
+      lead="Create an API key, connect an account, and publish your first post — in about five minutes."
     >
-      <h2 id="install-sdk">Install the SDK</h2>
-      <DocsCodeTabs snippets={INSTALL_SNIPPETS} />
+      <style dangerouslySetInnerHTML={{ __html: styles }} />
 
-      <h2 id="authentication">Authentication</h2>
-      <p>Every request uses a Bearer API key. The SDKs read <code>UNIPOST_API_KEY</code> by default.</p>
+      <div className="qs-badges">
+        <span className="qs-badge">~5 min</span>
+        <span className="qs-badge">Node · Python · Go</span>
+        <span className="qs-badge">REST · SDK · MCP</span>
+        <span className="qs-badge">Free tier</span>
+      </div>
 
-      <h3 id="get-api-key">Get your API key</h3>
-      <p>When signed up, UniPost automatically creates one workspace and one Default profile for you.</p>
-      <ul className="docs-step-list">
-        <li>Step 1: Open Dashboard → API Keys.</li>
-        <li>Step 2: Click Create API Key.</li>
-        <li>Step 3: Copy the key and store it as <code>UNIPOST_API_KEY</code>.</li>
-      </ul>
+      <h2 id="at-a-glance">At a glance</h2>
+      <DocsTable
+        columns={["Question", "Answer"]}
+        rows={[
+          ["Time to first post", "~5 minutes"],
+          ["You'll need", "A UniPost account and one connected social account"],
+          ["Languages", "Node.js, Python, or Go (or call the REST API directly)"],
+          ["What you'll have at the end", "A live post and an account ID you can publish to"],
+          ["Cost", "Free — the free tier covers the quickstart"],
+        ]}
+      />
 
-      <h3 id="set-up-client">Set up the client</h3>
-      <p>Set <code>UNIPOST_API_KEY</code> as env var, the SDK clients load it automatically.</p>
-      <DocsCodeTabs snippets={INIT_SNIPPETS} />
+      <h2 id="steps">The four steps</h2>
+      <div className="qs-flow">
+        <a href="#install" className="qs-flow-step">
+          <div className="qs-flow-num">1</div>
+          <div className="qs-flow-body">
+            <div className="qs-flow-title">Install the SDK</div>
+            <div className="qs-flow-sub">One command in your language of choice.</div>
+          </div>
+        </a>
+        <a href="#authentication" className="qs-flow-step">
+          <div className="qs-flow-num">2</div>
+          <div className="qs-flow-body">
+            <div className="qs-flow-title">Get your API key</div>
+            <div className="qs-flow-sub">Create one in the dashboard, store as <code>UNIPOST_API_KEY</code>.</div>
+          </div>
+        </a>
+        <a href="#connect-account" className="qs-flow-step">
+          <div className="qs-flow-num">3</div>
+          <div className="qs-flow-body">
+            <div className="qs-flow-title">Connect an account</div>
+            <div className="qs-flow-sub">From the dashboard or via <code>connect.sessions</code>.</div>
+          </div>
+        </a>
+        <a href="#first-post" className="qs-flow-step">
+          <div className="qs-flow-num">4</div>
+          <div className="qs-flow-body">
+            <div className="qs-flow-title">Publish your first post</div>
+            <div className="qs-flow-sub">One <code>POST /v1/posts</code> call.</div>
+          </div>
+        </a>
+      </div>
 
       <h2 id="key-concepts">Key concepts</h2>
       <DocsTable
         columns={["Object", "What it means"]}
         rows={[
-          ["Profiles", "Containers for accounts and branding. Every new workspace starts with one Default profile."],
+          ["Profiles", "Containers for accounts and branding. Every workspace starts with one Default profile."],
           ["Accounts", "Connected social accounts you can publish to"],
           ["Posts", "One publish request, with one or more platform payloads"],
           ["Webhooks", "Async status updates for publish and account events"],
         ]}
       />
 
-      <h2 id="step-1-connect-account">Step 1: Connect an account</h2>
-      <p>For customer-owned accounts, create a Connect session. For workspace-owned accounts, connect once from the dashboard.</p>
+      <h2 id="install">1. Install the SDK</h2>
+      <DocsCodeTabs snippets={INSTALL_SNIPPETS} />
+
+      <h2 id="authentication">2. Get your API key</h2>
+      <p className="qs-note">Every request uses a Bearer API key. Each SDK reads <code>UNIPOST_API_KEY</code> by default.</p>
+      <ul className="qs-checklist">
+        <li>Open Dashboard → API Keys</li>
+        <li>Click <strong>Create API Key</strong></li>
+        <li>Copy the key and store it as <code>UNIPOST_API_KEY</code> in your environment</li>
+      </ul>
+      <h3 id="init-client">Initialize the client</h3>
+      <DocsCodeTabs snippets={INIT_SNIPPETS} />
+
+      <h2 id="connect-account">3. Connect an account</h2>
+      <p className="qs-note">Two paths. Pick one — you don't need both.</p>
+      <DocsTable
+        columns={["Account owner", "How to connect", "Best for"]}
+        rows={[
+          ["Your team", "Dashboard → Accounts → Connect", "Prototypes, internal tools, your own brand accounts"],
+          ["Your customer", <ApiInlineLink key="api-connect" endpoint="POST /v1/connect/sessions" />, "SaaS products onboarding customer accounts"],
+        ]}
+      />
+      <h3 id="connect-session-example">Create a Connect session (customer-owned)</h3>
       <DocsCodeTabs snippets={CONNECT_SNIPPETS} />
 
-      <h3 id="available-platforms">Available platforms</h3>
+      <h3 id="supported-platforms">Supported platforms</h3>
       <DocsTable
-        columns={["Platform", "API Value", "Guide"]}
+        columns={["Platform", "API value", "Guide"]}
         rows={[
-          ["X / Twitter", "`twitter`", <Link key="twitter-guide" href="/docs/platforms/twitter">Twitter/X Guide</Link>],
-          ["LinkedIn", "`linkedin`", <Link key="linkedin-guide" href="/docs/platforms/linkedin">LinkedIn Guide</Link>],
-          ["Instagram", "`instagram`", <Link key="instagram-guide" href="/docs/platforms/instagram">Instagram Guide</Link>],
-          ["TikTok", "`tiktok`", <Link key="tiktok-guide" href="/docs/platforms/tiktok">TikTok Guide</Link>],
-          ["YouTube", "`youtube`", <Link key="youtube-guide" href="/docs/platforms/youtube">YouTube Guide</Link>],
-          ["Bluesky", "`bluesky`", <Link key="bluesky-guide" href="/docs/platforms/bluesky">Bluesky Guide</Link>],
+          ["X / Twitter", "`twitter`", <Link key="gd-twitter" href="/docs/platforms/twitter">Twitter/X</Link>],
+          ["LinkedIn", "`linkedin`", <Link key="gd-linkedin" href="/docs/platforms/linkedin">LinkedIn</Link>],
+          ["Instagram", "`instagram`", <Link key="gd-instagram" href="/docs/platforms/instagram">Instagram</Link>],
+          ["Threads", "`threads`", <Link key="gd-threads" href="/docs/platforms/threads">Threads</Link>],
+          ["TikTok", "`tiktok`", <Link key="gd-tiktok" href="/docs/platforms/tiktok">TikTok</Link>],
+          ["YouTube", "`youtube`", <Link key="gd-youtube" href="/docs/platforms/youtube">YouTube</Link>],
+          ["Bluesky", "`bluesky`", <Link key="gd-bluesky" href="/docs/platforms/bluesky">Bluesky</Link>],
+          ["Facebook (Beta)", "`facebook`", <Link key="gd-facebook" href="/docs/platforms/facebook">Facebook</Link>],
         ]}
       />
 
-      <h2 id="step-2-get-connected-accounts">Step 2: Get your connected accounts</h2>
-      <p>List accounts and capture the UniPost account ID you want to publish to.</p>
+      <h2 id="get-account-id">Get your account ID</h2>
+      <p className="qs-note">List accounts and grab the UniPost ID you want to publish to.</p>
       <DocsCodeTabs snippets={LIST_SNIPPETS} />
 
-      <h2 id="step-3-publish-first-post">Step 3: Publish your first post</h2>
-      <p>Use <code>platform_posts[]</code> for new integrations.</p>
+      <h2 id="first-post">4. Publish your first post</h2>
+      <p className="qs-note">Use <code>platform_posts[]</code> for new integrations. Add an <code>idempotency_key</code> from day one.</p>
       <DocsCodeTabs snippets={CREATE_POST_SNIPPETS} />
 
-      <h3 id="posting-multiple-platforms">Posting to multiple platforms</h3>
-      <p>Add more entries to <code>platform_posts[]</code> when you want different copy per destination.</p>
-
-      <h3 id="publishing-immediately">Publishing immediately</h3>
-      <p>Add <code>idempotency_key</code> from day one. Retries inside the 24-hour window return the original response instead of posting twice.</p>
-
-      <h3 id="creating-draft">Creating a draft</h3>
-      <p>Set <code>status: &quot;draft&quot;</code> when a human should review before publish.</p>
-      <DocsCodeTabs snippets={DRAFT_SNIPPETS} />
-
-      <h2 id="validate-before-publish">Validate before publish</h2>
-      <p>Call Validate with the same body you plan to send to <ApiInlineLink endpoint="POST /v1/posts" />.</p>
-      <DocsCodeTabs snippets={VALIDATE_SNIPPETS} />
-
-      <h2 id="what-next">What&apos;s next?</h2>
+      <h2 id="next-level">Level up</h2>
       <DocsTable
-        columns={["Next capability", "When to add it", "Docs path"]}
+        columns={["Capability", "What it adds", "How"]}
         rows={[
-          [
-            "Drafts + review flows",
-            "When a human should approve content before publish",
-            <Link key="next-drafts" href="/docs/api/posts/drafts">API Reference → Drafts</Link>,
-          ],
-          [
-            "Connect sessions",
-            "When your customers connect their own accounts",
-            <Link key="next-connect" href="/docs/api/connect/sessions">API Reference → Connect Sessions</Link>,
-          ],
-          [
-            "Analytics",
-            "When you need reporting, performance tracking, or automation feedback loops",
-            <Link key="next-analytics" href="/docs/api/analytics">API Reference → Analytics</Link>,
-          ],
-          [
-            "Platform guides",
-            "When you need platform-specific media limits, caption rules, or examples",
-            <Link key="next-platforms" href="/docs/platforms">Platforms</Link>,
-          ],
+          ["Validate before publish", "Catch caption, media, and thread shape issues before they hit the platform", <ApiInlineLink key="ap-validate" endpoint="POST /v1/posts/validate" />],
+          ["Drafts + review", "Create a post in `draft` status for human approval before it goes live", "`status: \"draft\"` on create"],
+          ["Cross-post with different copy", "Send different captions per platform in one request", "Multiple entries in `platform_posts[]`"],
+          ["Idempotency", "Retries inside 24h return the original response instead of publishing twice", "`idempotency_key` on every create"],
+          ["Webhooks", "Get async publish + account events pushed to your server", <Link key="nx-wh" href="/docs/api/webhooks">Webhooks</Link>],
         ]}
       />
+
+      <h3 id="validate-example">Validate example</h3>
+      <DocsCodeTabs snippets={VALIDATE_SNIPPETS} />
+
+      <h3 id="draft-example">Draft example</h3>
+      <DocsCodeTabs snippets={DRAFT_SNIPPETS} />
+
+      <h2 id="next-steps">Next steps</h2>
+      <div className="qs-next">
+        <Link href="/docs/platforms" className="qs-next-card">
+          <div className="qs-next-kicker">Per platform</div>
+          <div className="qs-next-title">Platform guides</div>
+          <div className="qs-next-body">Caption limits, media rules, analytics, and inbox support by platform.</div>
+        </Link>
+        <Link href="/docs/white-label" className="qs-next-card">
+          <div className="qs-next-kicker">For customer accounts</div>
+          <div className="qs-next-title">White-label</div>
+          <div className="qs-next-body">Branded Connect flows on your own OAuth apps.</div>
+        </Link>
+        <Link href="/docs/api/posts/create" className="qs-next-card">
+          <div className="qs-next-kicker">API reference</div>
+          <div className="qs-next-title">Create post</div>
+          <div className="qs-next-body">Full request / response schema for the publish endpoint.</div>
+        </Link>
+        <Link href="/docs/mcp" className="qs-next-card">
+          <div className="qs-next-kicker">For agents</div>
+          <div className="qs-next-title">MCP</div>
+          <div className="qs-next-body">Hosted MCP server so LLMs can publish through UniPost.</div>
+        </Link>
+      </div>
     </DocsPage>
   );
 }
+
+const styles = `
+.qs-badges{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 24px}
+.qs-badge{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);color:var(--docs-text);font-size:11.5px;font-weight:600;letter-spacing:.01em}
+.qs-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:6px 0 14px;max-width:none}
+.qs-note code{font-family:var(--docs-mono);font-size:12.5px}
+.qs-flow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0 6px}
+.qs-flow-step{display:grid;grid-template-columns:36px 1fr;gap:14px;align-items:start;padding:14px 16px;border:1px solid var(--docs-border);border-radius:14px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
+.qs-flow-step:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
+.qs-flow-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));color:var(--docs-link);font-size:13px;font-weight:700;border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border))}
+.qs-flow-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:3px}
+.qs-flow-sub{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
+.qs-flow-sub code{font-family:var(--docs-mono);font-size:12px}
+.qs-checklist{list-style:none;padding:0;margin:10px 0 14px;display:grid;grid-template-columns:1fr;gap:4px}
+.qs-checklist li{position:relative;padding-left:22px;font-size:14px;line-height:1.7;color:var(--docs-text-soft)}
+.qs-checklist li::before{content:"";position:absolute;left:0;top:9px;width:12px;height:12px;border-radius:4px;border:1.5px solid color-mix(in srgb, var(--docs-link) 45%, var(--docs-border-strong));background:color-mix(in srgb, var(--docs-link) 14%, transparent)}
+.qs-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
+.qs-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
+.qs-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
+.qs-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
+.qs-next-kicker{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint)}
+.qs-next-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text)}
+.qs-next-body{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
+@media (max-width:960px){
+  .qs-flow{grid-template-columns:1fr}
+  .qs-next{grid-template-columns:1fr}
+}
+`;
