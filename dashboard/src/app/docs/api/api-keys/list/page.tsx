@@ -75,7 +75,7 @@ export default function ListApiKeysPage() {
       method="GET"
       path="/v1/workspaces/:workspace_id/api-keys"
       requestSections={[
-        { title: "Authentication", items: AUTH_FIELDS },
+        { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },
       ]}
       responses={[

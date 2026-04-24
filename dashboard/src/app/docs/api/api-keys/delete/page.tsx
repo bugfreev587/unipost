@@ -56,7 +56,7 @@ export default function DeleteApiKeyPage() {
       method="DELETE"
       path="/v1/workspaces/:workspace_id/api-keys/:key_id"
       requestSections={[
-        { title: "Authentication", items: AUTH_FIELDS },
+        { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },
       ]}
       responses={[

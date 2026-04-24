@@ -75,7 +75,7 @@ export default function CreateApiKeyPage() {
       method="POST"
       path="/v1/workspaces/:workspace_id/api-keys"
       requestSections={[
-        { title: "Authentication", items: AUTH_FIELDS },
+        { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },
         { title: "Request Body", items: BODY_FIELDS },
       ]}
