@@ -97,10 +97,28 @@ LIMIT 100;
 -- (instead of all recent Page posts) so we only fetch comments on
 -- content the user created through us — matches the Q&A decision
 -- to keep FB comment polling scoped to UniPost-managed content.
+--
+-- remotely_deleted_at IS NULL excludes posts the sync worker has
+-- already discovered are gone from the platform side (user deleted
+-- them on Facebook). Without that filter the worker would keep
+-- hitting "#100 subcode 33" on every tick forever.
 SELECT external_id
 FROM social_post_results
 WHERE social_account_id = $1
   AND status = 'published'
   AND external_id IS NOT NULL
+  AND remotely_deleted_at IS NULL
   AND published_at >= NOW() - ($2::INT * INTERVAL '1 day')
 ORDER BY published_at DESC;
+
+-- name: MarkSocialPostResultRemotelyDeleted :exec
+-- Records that a previously-published post no longer exists on the
+-- platform side. The inbox sync worker calls this when Graph
+-- returns "#100 subcode 33" on a comment fetch. Looked up by
+-- (account, external_id) since that's the natural key the sync
+-- loop already has; no-op if we somehow see the same delete twice.
+UPDATE social_post_results
+SET remotely_deleted_at = COALESCE(remotely_deleted_at, NOW()),
+    error_message       = COALESCE(error_message, $3)
+WHERE social_account_id = $1
+  AND external_id       = $2;

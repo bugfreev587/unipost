@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1200,6 +1201,34 @@ func FeedStoryURL(pageID, storyID string) string {
 	return feedStoryURL(pageID, storyID)
 }
 
+// ErrFacebookPostNotFound is returned by FetchComments (and other
+// per-post reads) when Graph responds with the generic "Object with
+// ID 'X' does not exist, cannot be loaded due to missing permissions,
+// or does not support this operation" error (code 100, subcode 33).
+// When we've already verified the token has the relevant scopes and
+// can read other posts on the same Page, this error almost always
+// means the post was deleted on the platform side after UniPost
+// published it. Callers (the inbox sync worker) use this sentinel
+// to mark the row as remotely deleted and stop polling it.
+var ErrFacebookPostNotFound = errors.New("facebook: post not found (deleted on platform or inaccessible)")
+
+// isFacebookPostNotFound detects Graph's "#100 subcode 33" error
+// envelope in a response body. Kept as a body-level check rather
+// than a typed unmarshal downstream so wrapFacebookPublishError
+// can stay focused on its own (different) error taxonomy.
+func isFacebookPostNotFound(body []byte) bool {
+	var parsed struct {
+		Error struct {
+			Code    int `json:"code"`
+			Subcode int `json:"error_subcode"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false
+	}
+	return parsed.Error.Code == 100 && parsed.Error.Subcode == 33
+}
+
 // wrapFacebookPublishError turns Graph API error responses into
 // something the UI can act on. Auth-shaped errors (190 / 102 / 200)
 // route to a "needs reconnect" message that the Posts Overview's
@@ -1519,6 +1548,14 @@ func (a *FacebookAdapter) FetchComments(ctx context.Context, accessToken string,
 			"status", resp.StatusCode,
 			"post_id", postExternalID,
 			"body", string(body))
+		// Graph's "#100 subcode 33" on a /{post_id}/comments fetch
+		// with a token that has pages_read_engagement typically
+		// means the post was deleted on the platform side. Return
+		// a sentinel so the sync worker can mark the row as
+		// remotely-deleted and stop polling it every tick.
+		if isFacebookPostNotFound(body) {
+			return nil, ErrFacebookPostNotFound
+		}
 		return nil, fmt.Errorf("facebook fetch comments %d: %s", resp.StatusCode, string(body))
 	}
 

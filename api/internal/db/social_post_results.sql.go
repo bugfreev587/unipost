@@ -38,7 +38,7 @@ func (q *Queries) CountPublishedThisMonthByAccount(ctx context.Context, socialAc
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
 INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl, fb_media_type)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at
 `
 
 type CreateSocialPostResultParams struct {
@@ -80,6 +80,7 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		&i.Url,
 		&i.DebugCurl,
 		&i.FbMediaType,
+		&i.RemotelyDeletedAt,
 	)
 	return i, err
 }
@@ -94,7 +95,7 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 }
 
 const getSocialPostResultByIDAndPost = `-- name: GetSocialPostResultByIDAndPost :one
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type FROM social_post_results WHERE id = $1 AND post_id = $2
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at FROM social_post_results WHERE id = $1 AND post_id = $2
 `
 
 type GetSocialPostResultByIDAndPostParams struct {
@@ -117,6 +118,7 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 		&i.Url,
 		&i.DebugCurl,
 		&i.FbMediaType,
+		&i.RemotelyDeletedAt,
 	)
 	return i, err
 }
@@ -197,6 +199,7 @@ FROM social_post_results
 WHERE social_account_id = $1
   AND status = 'published'
   AND external_id IS NOT NULL
+  AND remotely_deleted_at IS NULL
   AND published_at >= NOW() - ($2::INT * INTERVAL '1 day')
 ORDER BY published_at DESC
 `
@@ -212,6 +215,11 @@ type ListPublishedExternalIDsForInboxSyncParams struct {
 // (instead of all recent Page posts) so we only fetch comments on
 // content the user created through us — matches the Q&A decision
 // to keep FB comment polling scoped to UniPost-managed content.
+//
+// remotely_deleted_at IS NULL excludes posts the sync worker has
+// already discovered are gone from the platform side (user deleted
+// them on Facebook). Without that filter the worker would keep
+// hitting "#100 subcode 33" on every tick forever.
 func (q *Queries) ListPublishedExternalIDsForInboxSync(ctx context.Context, arg ListPublishedExternalIDsForInboxSyncParams) ([]pgtype.Text, error) {
 	rows, err := q.db.Query(ctx, listPublishedExternalIDsForInboxSync, arg.SocialAccountID, arg.Column2)
 	if err != nil {
@@ -233,7 +241,7 @@ func (q *Queries) ListPublishedExternalIDsForInboxSync(ctx context.Context, arg 
 }
 
 const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at FROM social_post_results
 WHERE social_account_id = $1
 ORDER BY published_at DESC NULLS LAST
 LIMIT $2
@@ -271,6 +279,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 			&i.Url,
 			&i.DebugCurl,
 			&i.FbMediaType,
+			&i.RemotelyDeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -283,7 +292,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 }
 
 const listSocialPostResultsByPost = `-- name: ListSocialPostResultsByPost :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type FROM social_post_results WHERE post_id = $1
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at FROM social_post_results WHERE post_id = $1
 `
 
 func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string) ([]SocialPostResult, error) {
@@ -307,6 +316,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 			&i.Url,
 			&i.DebugCurl,
 			&i.FbMediaType,
+			&i.RemotelyDeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -319,7 +329,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 }
 
 const listSocialPostResultsByPostIDs = `-- name: ListSocialPostResultsByPostIDs :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at FROM social_post_results
 WHERE post_id = ANY($1::text[])
 `
 
@@ -344,6 +354,7 @@ func (q *Queries) ListSocialPostResultsByPostIDs(ctx context.Context, dollar_1 [
 			&i.Url,
 			&i.DebugCurl,
 			&i.FbMediaType,
+			&i.RemotelyDeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -353,6 +364,30 @@ func (q *Queries) ListSocialPostResultsByPostIDs(ctx context.Context, dollar_1 [
 		return nil, err
 	}
 	return items, nil
+}
+
+const markSocialPostResultRemotelyDeleted = `-- name: MarkSocialPostResultRemotelyDeleted :exec
+UPDATE social_post_results
+SET remotely_deleted_at = COALESCE(remotely_deleted_at, NOW()),
+    error_message       = COALESCE(error_message, $3)
+WHERE social_account_id = $1
+  AND external_id       = $2
+`
+
+type MarkSocialPostResultRemotelyDeletedParams struct {
+	SocialAccountID string      `json:"social_account_id"`
+	ExternalID      pgtype.Text `json:"external_id"`
+	ErrorMessage    pgtype.Text `json:"error_message"`
+}
+
+// Records that a previously-published post no longer exists on the
+// platform side. The inbox sync worker calls this when Graph
+// returns "#100 subcode 33" on a comment fetch. Looked up by
+// (account, external_id) since that's the natural key the sync
+// loop already has; no-op if we somehow see the same delete twice.
+func (q *Queries) MarkSocialPostResultRemotelyDeleted(ctx context.Context, arg MarkSocialPostResultRemotelyDeletedParams) error {
+	_, err := q.db.Exec(ctx, markSocialPostResultRemotelyDeleted, arg.SocialAccountID, arg.ExternalID, arg.ErrorMessage)
+	return err
 }
 
 const updateSocialPostResultAfterRetry = `-- name: UpdateSocialPostResultAfterRetry :one
@@ -365,7 +400,7 @@ SET
   url = $6,
   debug_curl = $7
 WHERE id = $1
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at
 `
 
 type UpdateSocialPostResultAfterRetryParams struct {
@@ -406,6 +441,7 @@ func (q *Queries) UpdateSocialPostResultAfterRetry(ctx context.Context, arg Upda
 		&i.Url,
 		&i.DebugCurl,
 		&i.FbMediaType,
+		&i.RemotelyDeletedAt,
 	)
 	return i, err
 }

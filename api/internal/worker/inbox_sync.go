@@ -15,6 +15,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -228,6 +229,24 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 				}
 				entries, fetchErr := fbAdapter.FetchComments(ctx, accessToken, pidText.String)
 				if fetchErr != nil {
+					// Post was deleted on FB (or became inaccessible):
+					// flip the result row so the inbox-sync query
+					// skips it forever. Otherwise we'd log the same
+					// 400 on every sync tick.
+					if errors.Is(fetchErr, platform.ErrFacebookPostNotFound) {
+						if mErr := w.queries.MarkSocialPostResultRemotelyDeleted(ctx, db.MarkSocialPostResultRemotelyDeletedParams{
+							SocialAccountID: acc.ID,
+							ExternalID:      pgtype.Text{String: pidText.String, Valid: true},
+							ErrorMessage:    pgtype.Text{String: "Post was deleted on Facebook; inbox sync stopped tracking it.", Valid: true},
+						}); mErr != nil {
+							slog.Warn("inbox sync worker: mark remotely-deleted failed",
+								"account_id", acc.ID, "post_id", pidText.String, "err", mErr)
+						} else {
+							slog.Info("inbox sync worker: marked facebook post as remotely deleted",
+								"account_id", acc.ID, "post_id", pidText.String)
+						}
+						continue
+					}
 					slog.Warn("inbox sync worker: facebook fetch comments failed",
 						"account_id", acc.ID, "post_id", pidText.String, "err", fetchErr)
 					continue

@@ -300,17 +300,18 @@ type SocialPost struct {
 }
 
 type SocialPostResult struct {
-	ID              string             `json:"id"`
-	PostID          string             `json:"post_id"`
-	SocialAccountID string             `json:"social_account_id"`
-	Status          string             `json:"status"`
-	ExternalID      pgtype.Text        `json:"external_id"`
-	ErrorMessage    pgtype.Text        `json:"error_message"`
-	PublishedAt     pgtype.Timestamptz `json:"published_at"`
-	Caption         string             `json:"caption"`
-	Url             pgtype.Text        `json:"url"`
-	DebugCurl       pgtype.Text        `json:"debug_curl"`
-	FbMediaType     pgtype.Text        `json:"fb_media_type"`
+	ID                string             `json:"id"`
+	PostID            string             `json:"post_id"`
+	SocialAccountID   string             `json:"social_account_id"`
+	Status            string             `json:"status"`
+	ExternalID        pgtype.Text        `json:"external_id"`
+	ErrorMessage      pgtype.Text        `json:"error_message"`
+	PublishedAt       pgtype.Timestamptz `json:"published_at"`
+	Caption           string             `json:"caption"`
+	Url               pgtype.Text        `json:"url"`
+	DebugCurl         pgtype.Text        `json:"debug_curl"`
+	FbMediaType       pgtype.Text        `json:"fb_media_type"`
+	RemotelyDeletedAt pgtype.Timestamptz `json:"remotely_deleted_at"`
 }
 
 type Subscription struct {
