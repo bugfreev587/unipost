@@ -88,6 +88,8 @@ export function JsonMonacoViewer({
   const [themeName, setThemeName] = useState("unipost-json-dark");
 
   function applyTheme(monaco: typeof import("monaco-editor")) {
+    const isDark = document.documentElement.classList.contains("dark");
+    const name = isDark ? "unipost-json-dark" : "unipost-json-light";
     const styles = getComputedStyle(document.documentElement);
     const editorBackground = styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
     const editorForeground = styles.getPropertyValue("--docs-tech-text-soft").trim() || "#d6d9e5";
@@ -98,8 +100,8 @@ export function JsonMonacoViewer({
     const keywordColor = styles.getPropertyValue("--docs-code-keyword").trim() || "#d1a8ff";
     const constantColor = styles.getPropertyValue("--docs-code-constant").trim() || "#f08ab1";
 
-    monaco.editor.defineTheme("unipost-json-dark", {
-      base: "vs-dark",
+    monaco.editor.defineTheme(name, {
+      base: isDark ? "vs-dark" : "vs",
       inherit: true,
       rules: [
         { token: "string.key.json", foreground: stringColor.replace("#", "") },
@@ -115,11 +117,11 @@ export function JsonMonacoViewer({
         "editorGutter.background": editorBackground,
         "editorIndentGuide.background1": borderColor,
         "editorIndentGuide.activeBackground1": lineNumber,
-        "editor.selectionBackground": "rgba(124,178,255,0.16)",
-        "editor.inactiveSelectionBackground": "rgba(124,178,255,0.10)",
+        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.16)" : "rgba(15,86,184,0.14)",
+        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.10)" : "rgba(15,86,184,0.08)",
       },
     });
-    setThemeName("unipost-json-dark");
+    setThemeName(name);
   }
 
   useEffect(() => {
@@ -199,6 +201,8 @@ export function MonacoCodeViewer({
   const [themeName, setThemeName] = useState("unipost-snippet-dark");
 
   function applyTheme(monaco: typeof import("monaco-editor")) {
+    const isDark = document.documentElement.classList.contains("dark");
+    const name = isDark ? "unipost-snippet-dark" : "unipost-snippet-light";
     const styles = getComputedStyle(document.documentElement);
     const editorBackground = styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
     const editorForeground = styles.getPropertyValue("--docs-tech-text-soft").trim() || "#d6d9e5";
@@ -212,8 +216,8 @@ export function MonacoCodeViewer({
     const typeColor = styles.getPropertyValue("--docs-code-type").trim() || "#6dd39a";
     const commentColor = styles.getPropertyValue("--docs-code-comment").trim() || "#7c8aa0";
 
-    monaco.editor.defineTheme("unipost-snippet-dark", {
-      base: "vs-dark",
+    monaco.editor.defineTheme(name, {
+      base: isDark ? "vs-dark" : "vs",
       inherit: true,
       rules: [
         { token: "comment", foreground: commentColor.replace("#", "") },
@@ -235,12 +239,12 @@ export function MonacoCodeViewer({
         "editorGutter.background": editorBackground,
         "editorIndentGuide.background1": borderColor,
         "editorIndentGuide.activeBackground1": lineNumber,
-        "editor.selectionBackground": "rgba(124,178,255,0.16)",
-        "editor.inactiveSelectionBackground": "rgba(124,178,255,0.10)",
+        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.16)" : "rgba(15,86,184,0.14)",
+        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.10)" : "rgba(15,86,184,0.08)",
         "editor.lineHighlightBackground": "transparent",
       },
     });
-    setThemeName("unipost-snippet-dark");
+    setThemeName(name);
   }
 
   useEffect(() => {

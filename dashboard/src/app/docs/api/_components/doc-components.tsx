@@ -139,7 +139,7 @@ export function EndpointHeader({ method, path, description, badges }: {
       {badges && badges.length > 0 && (
         <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
           {badges.map(b => (
-            <span key={b} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 5, background: "var(--docs-tech-chip)", color: "var(--docs-tech-muted)", border: "1px solid rgba(255,255,255,.08)", fontFamily: "var(--docs-mono)", fontWeight: 600 }}>{b}</span>
+            <span key={b} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 5, background: "var(--docs-tech-chip)", color: "var(--docs-tech-muted)", border: "1px solid var(--docs-tech-border)", fontFamily: "var(--docs-mono)", fontWeight: 600 }}>{b}</span>
           ))}
         </div>
       )}
