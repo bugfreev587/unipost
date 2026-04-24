@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
+import { DocsCode, DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 import { ApiInlineLink } from "../api/_components/doc-components";
 
 const UPLOAD_CREDS_SNIPPETS = [
@@ -119,7 +119,7 @@ export default function WhiteLabelPage() {
 
       <h3 id="step-2">2. Whitelist the redirect URI</h3>
       <p>In each platform&apos;s App settings, add UniPost&apos;s OAuth callback as an authorized redirect URI. The platform refuses to redirect back with the <code>code</code> otherwise and your users see a generic error page.</p>
-      <pre><code>https://api.unipost.dev/v1/oauth/callback/{"{platform}"}</code></pre>
+      <DocsCode code={`https://api.unipost.dev/v1/oauth/callback/{platform}`} language="text" />
       <p>Substitute <code>{"{platform}"}</code> with <code>linkedin</code>, <code>twitter</code>, <code>tiktok</code>, <code>youtube</code>, or <code>meta</code> — one entry per platform whose credentials you&apos;ll upload. This is UniPost&apos;s fixed callback path; the full OAuth round-trip is documented in the <Link href="/docs/api/connect/sessions">Connect Sessions reference</Link>.</p>
 
       <h3 id="step-3">3. Upload credentials to UniPost</h3>

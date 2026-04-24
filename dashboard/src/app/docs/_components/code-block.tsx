@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { JsonMonacoTabs, JsonMonacoViewer, MonacoTabs } from "../api/_components/json-monaco-viewer";
+import { JsonMonacoTabs, JsonMonacoViewer, MonacoCodeViewer, MonacoTabs } from "../api/_components/json-monaco-viewer";
 
 export type CodeLanguage =
   | "javascript"
@@ -16,149 +16,6 @@ export type CodeSnippet = {
   label: string;
   code: string;
   lang?: string;
-};
-
-type TokenKind =
-  | "plain"
-  | "comment"
-  | "string"
-  | "keyword"
-  | "number"
-  | "function"
-  | "type"
-  | "constant";
-
-type Token = {
-  kind: TokenKind;
-  value: string;
-};
-
-const KEYWORDS: Record<CodeLanguage, string[]> = {
-  javascript: [
-    "async",
-    "await",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "default",
-    "else",
-    "export",
-    "extends",
-    "finally",
-    "for",
-    "from",
-    "function",
-    "if",
-    "import",
-    "in",
-    "instanceof",
-    "let",
-    "new",
-    "of",
-    "return",
-    "switch",
-    "throw",
-    "try",
-    "while",
-    "yield",
-  ],
-  python: [
-    "and",
-    "as",
-    "class",
-    "def",
-    "elif",
-    "else",
-    "except",
-    "False",
-    "finally",
-    "for",
-    "from",
-    "if",
-    "import",
-    "in",
-    "is",
-    "None",
-    "or",
-    "pass",
-    "raise",
-    "return",
-    "True",
-    "try",
-    "while",
-    "with",
-    "yield",
-  ],
-  go: [
-    "break",
-    "case",
-    "const",
-    "continue",
-    "default",
-    "defer",
-    "else",
-    "fallthrough",
-    "for",
-    "func",
-    "go",
-    "if",
-    "import",
-    "interface",
-    "map",
-    "package",
-    "range",
-    "return",
-    "select",
-    "struct",
-    "switch",
-    "type",
-    "var",
-  ],
-  json: ["false", "null", "true"],
-  bash: [
-    "case",
-    "do",
-    "done",
-    "elif",
-    "else",
-    "esac",
-    "fi",
-    "for",
-    "function",
-    "if",
-    "in",
-    "then",
-    "while",
-  ],
-  text: [],
-};
-
-const TYPE_WORDS = new Set([
-  "boolean",
-  "dict",
-  "float",
-  "int",
-  "interface",
-  "list",
-  "map",
-  "number",
-  "object",
-  "string",
-  "struct",
-]);
-
-const TOKEN_COLORS: Record<TokenKind, string> = {
-  plain: "var(--docs-code-plain)",
-  comment: "var(--docs-code-comment)",
-  string: "var(--docs-code-string)",
-  keyword: "var(--docs-code-keyword)",
-  number: "var(--docs-code-number)",
-  function: "var(--docs-code-function)",
-  type: "var(--docs-code-type)",
-  constant: "var(--docs-code-constant)",
 };
 
 function normalizeLanguage(value?: string, code?: string): CodeLanguage {
@@ -185,62 +42,6 @@ function formatJsonForCopy(code: string) {
   } catch {
     return code;
   }
-}
-
-function tokenize(code: string, language: CodeLanguage): Token[] {
-  if (language === "text") {
-    return [{ kind: "plain", value: code }];
-  }
-
-  const keywordPattern = KEYWORDS[language].length
-    ? `\\b(?:${KEYWORDS[language].join("|")})\\b`
-    : "(?!)";
-
-  const commentPattern =
-    language === "python" || language === "bash"
-      ? "#.*$"
-      : language === "json"
-        ? "(?!)"
-        : "//.*$";
-
-  const stringPattern =
-    language === "bash"
-      ? `"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'`
-      : "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`";
-
-  const regex = new RegExp(
-    [
-      `(?<comment>${commentPattern})`,
-      `(?<string>${stringPattern})`,
-      `(?<keyword>${keywordPattern})`,
-      `(?<number>\\b\\d+(?:\\.\\d+)?\\b)`,
-      `(?<function>\\b[A-Za-z_][\\w]*\\s*(?=\\())`,
-      `(?<constant>\\b[A-Z][A-Z0-9_]{2,}\\b)`,
-      `(?<type>\\b(?:${Array.from(TYPE_WORDS).join("|")})\\b)`,
-    ].join("|"),
-    "gm"
-  );
-
-  const tokens: Token[] = [];
-  let lastIndex = 0;
-
-  for (const match of code.matchAll(regex)) {
-    const index = match.index ?? 0;
-    if (index > lastIndex) {
-      tokens.push({ kind: "plain", value: code.slice(lastIndex, index) });
-    }
-
-    const groups = match.groups || {};
-    const kind = (Object.keys(groups).find((key) => groups[key]) as TokenKind | undefined) || "plain";
-    tokens.push({ kind, value: match[0] });
-    lastIndex = index + match[0].length;
-  }
-
-  if (lastIndex < code.length) {
-    tokens.push({ kind: "plain", value: code.slice(lastIndex) });
-  }
-
-  return tokens;
 }
 
 function CopyButton({ code }: { code: string }) {
@@ -295,23 +96,9 @@ export function CodeBlock({
       </div>
     );
   }
-  const tokens = useMemo(() => tokenize(code, normalized), [code, normalized]);
 
   if (bare) {
-    return (
-      <pre className="docs-code-surface bare">
-        <code className={`docs-code-content language-${normalized}`}>
-          {tokens.map((token, index) => (
-            <span
-              key={`${token.kind}-${index}`}
-              style={{ color: TOKEN_COLORS[token.kind] }}
-            >
-              {token.value}
-            </span>
-          ))}
-        </code>
-      </pre>
-    );
+    return <MonacoCodeViewer code={code} language={normalized} height={compact ? 220 : undefined} />;
   }
 
   return (
@@ -322,18 +109,7 @@ export function CodeBlock({
         </div>
         <CopyButton code={code} />
       </div>
-      <pre className="docs-code-surface">
-        <code className={`docs-code-content language-${normalized}`}>
-          {tokens.map((token, index) => (
-            <span
-              key={`${token.kind}-${index}`}
-              style={{ color: TOKEN_COLORS[token.kind] }}
-            >
-              {token.value}
-            </span>
-          ))}
-        </code>
-      </pre>
+      <MonacoCodeViewer code={code} language={normalized} height={compact ? 220 : undefined} />
     </div>
   );
 }
