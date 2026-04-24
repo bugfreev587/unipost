@@ -176,6 +176,20 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 			failureSummaries = append(failureSummaries, fmt.Sprintf("[%s] %s", pp.AccountID, validationErr.Error()))
 		}
 
+		// Carry the Facebook mediaType choice onto the result row from
+		// the moment it's first written so the async/queue publish
+		// path matches the immediate-publish path. The status worker
+		// needs this value to tell an intentional Reel
+		// (fb_media_type='reel', /reel/ permalink expected) apart
+		// from an accidental reclassification of a Feed video
+		// (fb_media_type NULL → fast-fail at 10 min).
+		var fbMediaType pgtype.Text
+		if platformName == "facebook" {
+			if mt := fbMediaTypeFromOptions(pp.PlatformOptions); mt != "" {
+				fbMediaType = pgtype.Text{String: mt, Valid: true}
+			}
+		}
+
 		res, err := h.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
 			PostID:          post.ID,
 			SocialAccountID: pp.AccountID,
@@ -186,6 +200,7 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 			PublishedAt:     pgtype.Timestamptz{},
 			Url:             pgtype.Text{},
 			DebugCurl:       pgtype.Text{},
+			FbMediaType:     fbMediaType,
 		})
 		if err != nil {
 			return nil, nil, err
