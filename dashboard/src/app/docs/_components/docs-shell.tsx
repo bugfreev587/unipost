@@ -176,7 +176,6 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
   platforms: [
     {
       title: "Platforms",
-      description: "Supported publishing destinations and implementation notes.",
       items: [
         { label: "Twitter/X", href: "/docs/platforms/twitter" },
         { label: "LinkedIn", href: "/docs/platforms/linkedin" },
@@ -192,12 +191,15 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
   resources: [
     {
       title: "Resources",
-      description: "Guides and operational references that support product setup, alerting, and workspace management.",
       items: [
-        { label: "Notifications", href: "/docs/resources/notifications" },
-        { label: "Billing", href: "/docs/resources/billing" },
-        { label: "Slack Webhook URL", href: "/docs/resources/slack-webhook" },
-        { label: "Discord Webhook URL", href: "/docs/resources/discord-webhook" },
+        {
+          label: "Notifications",
+          children: [
+            { label: "Overview", href: "/docs/resources/notifications" },
+            { label: "Slack Webhook URL", href: "/docs/resources/slack-webhook" },
+            { label: "Discord Webhook URL", href: "/docs/resources/discord-webhook" },
+          ],
+        },
       ],
     },
   ],
@@ -446,6 +448,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-auth-btn.primary:hover{filter:brightness(1.04)}
 .docs-layout{max-width:1540px;margin:0 auto;padding:28px 28px 88px;display:grid;grid-template-columns:264px minmax(0,1fr) 224px;gap:30px}
 .docs-layout-api{grid-template-columns:var(--docs-api-sidebar-width, 336px) 14px minmax(0,1fr);column-gap:0}
+.docs-layout-platforms{grid-template-columns:228px minmax(0,1fr) 224px}
 .docs-sidebar,.docs-toc{position:sticky;top:96px;align-self:start;max-height:calc(100vh - 118px);overflow:auto;padding-bottom:16px}
 .docs-sidebar-card,.docs-toc-card{background:var(--docs-nav-surface);border:1px solid var(--docs-border);border-radius:18px;padding:15px 14px;box-shadow:var(--docs-card-shadow)}
 .docs-sidebar-resizer{position:sticky;top:96px;align-self:start;height:calc(100vh - 118px);display:flex;align-items:stretch;justify-content:center}
@@ -541,7 +544,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-step-list li{padding-left:4px;margin-bottom:10px;font-size:16px;line-height:1.72;color:var(--docs-text-soft)}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
-@media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,1fr);gap:26px}.docs-toc{display:none}.docs-layout-api{grid-template-columns:var(--docs-api-sidebar-width, 312px) 14px minmax(0,1fr)}}
+@media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,1fr);gap:26px}.docs-toc{display:none}.docs-layout-api{grid-template-columns:var(--docs-api-sidebar-width, 312px) 14px minmax(0,1fr)}.docs-layout-platforms{grid-template-columns:220px minmax(0,1fr)}}
 @media (max-width:960px){.docs-topbar-inner{padding:12px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-left,.docs-topbar-right{width:100%}.docs-topbar-left{gap:14px}.docs-primary-nav{gap:14px;overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.docs-topbar-right{align-items:flex-start;justify-content:flex-start;flex-direction:row}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar,.docs-sidebar-resizer{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page-api{padding:32px 24px 38px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}}
 `;
 
@@ -763,7 +766,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <div
-        className={`docs-layout${isApiPage ? " docs-layout-api" : ""}`}
+        className={`docs-layout${isApiPage ? " docs-layout-api" : ""}${activePrimaryNav === "platforms" ? " docs-layout-platforms" : ""}`}
         style={isApiPage ? { ["--docs-api-sidebar-width" as any]: `${apiSidebarWidth}px` } : undefined}
       >
         <aside className="docs-sidebar">
