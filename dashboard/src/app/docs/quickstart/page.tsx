@@ -290,24 +290,18 @@ export default function QuickstartPage() {
       <DocsCodeTabs snippets={INSTALL_SNIPPETS} />
 
       <h2 id="authentication">Authentication</h2>
-      <ul className="docs-step-list">
-        <li>Every request uses a Bearer API key.</li>
-        <li>Production keys start with <code>up_live_</code>.</li>
-        <li>Test keys start with <code>up_test_</code>.</li>
-        <li>The SDKs read <code>UNIPOST_API_KEY</code> by default.</li>
-      </ul>
+      <p>Every request uses a Bearer API key. The SDKs read <code>UNIPOST_API_KEY</code> by default.</p>
 
       <h3 id="get-api-key">Get your API key</h3>
+      <p>When signed up, UniPost automatically creates one workspace and one Default profile for you.</p>
       <ul className="docs-step-list">
-        <li>Sign up or sign in to UniPost.</li>
-        <li>UniPost automatically creates one workspace and one Default profile for you.</li>
-        <li>Open Dashboard → API Keys.</li>
-        <li>Click Create API Key.</li>
-        <li>Copy the key and store it as <code>UNIPOST_API_KEY</code>.</li>
+        <li>Step 1: Open Dashboard → API Keys.</li>
+        <li>Step 2: Click Create API Key.</li>
+        <li>Step 3: Copy the key and store it as <code>UNIPOST_API_KEY</code>.</li>
       </ul>
 
       <h3 id="set-up-client">Set up the client</h3>
-      <p>Once <code>UNIPOST_API_KEY</code> is set, the SDK clients load it automatically.</p>
+      <p>Set <code>UNIPOST_API_KEY</code> as env var, the SDK clients load it automatically.</p>
       <DocsCodeTabs snippets={INIT_SNIPPETS} />
 
       <h2 id="key-concepts">Key concepts</h2>
@@ -327,7 +321,7 @@ export default function QuickstartPage() {
 
       <h3 id="available-platforms">Available platforms</h3>
       <DocsTable
-        columns={["Platform", "Value"]}
+        columns={["Platform", "API Value"]}
         rows={[
           ["X / Twitter", "`twitter`"],
           ["LinkedIn", "`linkedin`"],
