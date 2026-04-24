@@ -10,6 +10,16 @@ export type PlatformSummary = {
   connection: string;
 };
 
+export type SpecRow = readonly [label: string, value: string];
+
+export type MediaSurfaceSpec = {
+  surface: string;
+  description?: string;
+  text?: readonly SpecRow[];
+  image?: readonly SpecRow[];
+  video?: readonly SpecRow[];
+};
+
 export type PlatformDoc = {
   title: string;
   brandColor: string;
@@ -20,6 +30,7 @@ export type PlatformDoc = {
   summary: PlatformSummary;
   capabilities: readonly (readonly string[])[];
   requirements: readonly (readonly string[])[];
+  mediaSpecs?: readonly MediaSurfaceSpec[];
   options?: readonly (readonly string[])[];
   analytics: readonly (readonly string[])[];
   inbox?: {
@@ -119,6 +130,36 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["thread_position", "Optional", "1-indexed", "Use on each thread entry"],
       ["first_comment", "Optional", "text", "Supported as a self-reply"],
     ],
+    mediaSpecs: [
+      {
+        surface: "Post",
+        description: "Specs apply to a single tweet; thread entries repeat these limits per post.",
+        text: [
+          ["Character limit (Free)", "280 — URLs count as 23 chars, emoji count as 2"],
+          ["Character limit (Premium)", "25,000"],
+          ["Mentions / hashtags", "Count toward the character budget"],
+        ],
+        image: [
+          ["Formats", "JPG, PNG, WebP, animated GIF"],
+          ["Max per post", "4 images (mutually exclusive with video or GIF)"],
+          ["Max file size", "5 MB per image, 15 MB per GIF"],
+          ["Dimensions", "Min 4 × 4 px, max 8,192 × 8,192 px"],
+          ["GIF dimensions", "Max 1,280 × 1,080 px"],
+          ["Recommended ratios", "16:9 (1,200 × 675), 1:1 (1,200 × 1,200), 4:5 (1,080 × 1,350)"],
+        ],
+        video: [
+          ["Formats", "MP4 (H.264 + AAC), MOV"],
+          ["Max per post", "1 (mutually exclusive with images)"],
+          ["Max file size", "512 MB"],
+          ["Duration", "0.5 sec – 140 sec standard; Premium supports up to 3 hr with `longVideo`"],
+          ["Dimensions", "Min 32 × 32 px, max 1,920 × 1,200 px"],
+          ["Aspect ratio", "1:3 to 3:1; 16:9 or 1:1 recommended"],
+          ["Frame rate", "≤ 40 fps (30 fps recommended)"],
+          ["Bitrate", "≤ 25 Mbps"],
+          ["Audio", "AAC-LC mono or stereo, 128 kbps recommended"],
+        ],
+      },
+    ],
     analytics: [
       ["Impressions", yes, "Supported"],
       ["Likes", yes, "Supported"],
@@ -206,6 +247,33 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["thread_position", "Optional", "1-indexed", "Preferred way to create multi-post flows"],
       ["first_comment", "Rejected", "n/a", "Use thread_position instead"],
     ],
+    mediaSpecs: [
+      {
+        surface: "Post",
+        description: "Bluesky is grapheme-counted (not UTF-16 code units). URLs and mentions consume the 300-grapheme budget.",
+        text: [
+          ["Character limit", "300 graphemes (hard limit)"],
+          ["Per thread entry", "300 graphemes each"],
+        ],
+        image: [
+          ["Formats", "JPEG, PNG, WebP"],
+          ["Max per post", "4"],
+          ["Max file size", "~1 MB per image after server compression (strict)"],
+          ["Max dimensions", "2,000 × 2,000 px"],
+          ["Aspect ratio", "Any; 16:9 (1,200 × 675), 1:1, 4:5 common"],
+        ],
+        video: [
+          ["Formats", "MP4 (H.264 + AAC)"],
+          ["Max per post", "1"],
+          ["Max file size", "50 MB"],
+          ["Max duration", "60 sec"],
+          ["Max dimensions", "1,920 × 1,080 px"],
+          ["Aspect ratio", "16:9 or 1:1 recommended"],
+          ["Frame rate", "30 fps recommended"],
+          ["Audio", "AAC"],
+        ],
+      },
+    ],
     analytics: [
       ["Likes", yes, "Supported"],
       ["Comments / replies", yes, "Supported"],
@@ -290,6 +358,48 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["media_urls or media_ids", "Optional", "1-9 images OR 1 video", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. Do not mix images and video."],
       ["platform_options.linkedin", "Optional", "visibility", "Use for audience controls"],
       ["first_comment", "Optional", "text", "Posted after the main post lands"],
+    ],
+    mediaSpecs: [
+      {
+        surface: "Feed post",
+        description: "Default share type for a LinkedIn member or organization. Supports text, image, and video.",
+        text: [
+          ["Character limit", "3,000 chars"],
+          ["Visible before fold", "≈210 chars before the 'see more' cut"],
+          ["Hashtags / mentions", "Count inside the 3,000 budget; ≤ 5 hashtags recommended"],
+        ],
+        image: [
+          ["Formats", "JPEG, PNG, GIF (animated allowed)"],
+          ["Max per post", "20 (multi-image / document-like share); 9 commonly used"],
+          ["Max file size", "8 MB per image"],
+          ["Dimensions", "Min 552 × 276 px, max 8,192 × 8,192 px"],
+          ["Recommended ratios", "1.91:1 (1,200 × 627), 1:1 (1,080 × 1,080), 4:5 (1,080 × 1,350)"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV, AVI"],
+          ["Max per post", "1"],
+          ["Max file size", "5 GB"],
+          ["Duration", "3 sec – 10 min (member page), 3 sec – 30 min (organization page)"],
+          ["Dimensions", "Min 256 × 144 px, max 4,096 × 2,304 px"],
+          ["Aspect ratio range", "1:2.4 to 2.4:1; 16:9 or 1:1 recommended"],
+          ["Frame rate", "10 – 60 fps"],
+          ["Bitrate", "10 – 30 Mbps (H.264 high profile)"],
+          ["Audio", "AAC stereo, ≤ 192 kbps"],
+        ],
+      },
+      {
+        surface: "Document post",
+        description: "Carousel-style PDF that LinkedIn renders inline. Not exposed via UniPost today — listed for completeness.",
+        text: [
+          ["Character limit", "3,000 chars (same as feed)"],
+        ],
+        image: [
+          ["Formats", "PDF, PPT, PPTX, DOC, DOCX"],
+          ["Max per post", "1 document"],
+          ["Max file size", "100 MB"],
+          ["Max pages", "300"],
+        ],
+      },
     ],
     options: [
       ["platform_options.linkedin.visibility", "anyone / connections", "Set post audience visibility"],
@@ -381,6 +491,93 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["first_comment", "Optional", "text", "Supported after publish"],
       ["reels", "Exactly 1 video", "Required", "Reels do not accept images or carousels"],
       ["story", "Exactly 1 media item", "Required", "Stories accept one image or one video"],
+    ],
+    mediaSpecs: [
+      {
+        surface: "Feed",
+        description: "Permanent grid post. Single image or single video; can also be a carousel (see below).",
+        text: [
+          ["Caption", "2,200 chars (≈125 visible before the 'more' fold)"],
+          ["Hashtags", "≤ 30 per caption (Instagram policy)"],
+          ["@mentions", "≤ 20 per caption"],
+        ],
+        image: [
+          ["Formats", "JPEG only — Graph API rejects PNG, WebP, HEIC"],
+          ["Max file size", "8 MB"],
+          ["Width", "Min 320 px, max 1,440 px; 1,080 px recommended"],
+          ["Aspect ratio", "4:5 to 1.91:1 (0.8 – 1.91)"],
+          ["Recommended", "1,080 × 1,080 (1:1) or 1,080 × 1,350 (4:5)"],
+          ["Color space", "sRGB (Adobe RGB is re-encoded)"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV (MPEG-4 Part 14)"],
+          ["Max file size", "100 MB"],
+          ["Duration", "3 sec – 60 min"],
+          ["Aspect ratio", "4:5 to 1.91:1"],
+          ["Width", "Max 1,920 px"],
+          ["Frame rate", "23 – 60 fps"],
+          ["Codec", "H.264 (video) + AAC-LC (audio)"],
+          ["Bitrate", "≤ 25 Mbps video, ≤ 128 kbps audio (48 kHz)"],
+        ],
+      },
+      {
+        surface: "Reels",
+        description: "Short-form vertical video. UniPost targets this surface when `platform_options.instagram.mediaType = \"reels\"`.",
+        text: [
+          ["Caption", "2,200 chars"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV"],
+          ["Max per post", "1 (no image or carousel)"],
+          ["Max file size", "1 GB"],
+          ["Duration", "3 sec – 15 min (Graph API ceiling)"],
+          ["Aspect ratio", "9:16 recommended; 0.01:1 – 10:1 accepted"],
+          ["Dimensions", "Min 540 × 960 px; 1,080 × 1,920 recommended"],
+          ["Frame rate", "23 – 60 fps"],
+          ["Codec", "H.264 high profile, closed GOP (≤ 4 sec)"],
+          ["Bitrate", "≤ 25 Mbps video, 128 kbps AAC-LC stereo (48 kHz)"],
+        ],
+      },
+      {
+        surface: "Stories",
+        description: "Ephemeral full-screen vertical content. Single asset per publish; UniPost maps this to `mediaType = \"story\"`.",
+        text: [
+          ["Caption / overlay", "Not rendered as a text body — use overlay stickers in-app"],
+        ],
+        image: [
+          ["Formats", "JPEG"],
+          ["Max file size", "8 MB"],
+          ["Aspect ratio", "9:16 recommended (1,080 × 1,920)"],
+          ["Safe area", "Keep text / CTAs within center 1,080 × 1,420 px"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV"],
+          ["Max file size", "100 MB"],
+          ["Duration", "3 sec – 60 sec (clips > 15 sec may be auto-segmented in-app)"],
+          ["Aspect ratio", "9:16 (1,080 × 1,920 recommended)"],
+          ["Frame rate", "23 – 60 fps"],
+          ["Codec", "H.264 + AAC-LC"],
+        ],
+      },
+      {
+        surface: "Carousel",
+        description: "Multi-item feed post. 2 – 10 children of mixed type (image + video). Crop follows the first child.",
+        text: [
+          ["Caption", "2,200 chars (carousel-level)"],
+        ],
+        image: [
+          ["Item count", "2 – 10 children"],
+          ["Per-item format", "JPEG only"],
+          ["Per-item max size", "8 MB"],
+          ["Aspect ratio", "Derived from first child (1:1 or 4:5 most reliable)"],
+        ],
+        video: [
+          ["Per-item format", "MP4, MOV"],
+          ["Per-item max size", "100 MB"],
+          ["Per-item duration", "3 sec – 60 min"],
+          ["Mixed media", "Image + video allowed in a single carousel"],
+        ],
+      },
     ],
     options: [
       ["platform_options.instagram.mediaType", "feed / reels / story", "Selects which Instagram publish surface UniPost should target."],
@@ -499,6 +696,34 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["thread_position", "Optional", "1-indexed", "Preferred over first_comment"],
       ["first_comment", "Rejected", "n/a", "Validate will catch this before publish"],
     ],
+    mediaSpecs: [
+      {
+        surface: "Post",
+        description: "Text-first post with optional single asset or a 2 – 20 item carousel. Each thread entry repeats these limits.",
+        text: [
+          ["Character limit", "500 chars per post"],
+          ["Per thread entry", "500 chars each"],
+        ],
+        image: [
+          ["Formats", "JPEG, PNG (WebP and GIF accepted but may fail — prefer JPEG/PNG)"],
+          ["Max per post", "1 (single) or up to 20 children in a carousel"],
+          ["Max file size", "8 MB per image"],
+          ["Min width", "320 px"],
+          ["Aspect ratio", "Flexible; 4:5 recommended for feed prominence"],
+          ["Recommended", "1,080 × 1,350 (4:5), 1,080 × 1,080 (1:1), 1,080 × 608 (16:9)"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV"],
+          ["Max per post", "1 standalone, or mixed into a carousel (≤ 20 children total)"],
+          ["Max file size", "1 GB"],
+          ["Duration", "Up to 5 min"],
+          ["Aspect ratios", "9:16, 1:1, 16:9 all accepted"],
+          ["Resolution", "1,080p recommended"],
+          ["Frame rate", "30 fps recommended"],
+          ["Codec", "H.264 + AAC-LC (128 kbps)"],
+        ],
+      },
+    ],
     analytics: [
       ["Impressions", yes, "Supported"],
       ["Likes", yes, "Supported"],
@@ -590,6 +815,43 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["caption", "Optional", "2,200 chars", "Pair with media"],
       ["platform_options.tiktok.privacy_level", "Optional", "privacy enum", "Controls audience visibility"],
       ["platform_options.tiktok.upload_mode", "Optional", "pull_from_url / file_upload", "Use file_upload if CDN domain is not registered"],
+    ],
+    mediaSpecs: [
+      {
+        surface: "Video",
+        description: "TikTok's primary surface. One video per publish; captions and hashtags both count against the caption budget.",
+        text: [
+          ["Caption", "2,200 chars (hashtags + mentions count)"],
+          ["Hashtags", "Included in caption budget; ≤ 100 total"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV, WebM"],
+          ["Max per post", "1"],
+          ["Max file size", "4 GB"],
+          ["Duration", "3 sec – 10 min (Content Posting API ceiling)"],
+          ["Aspect ratio", "9:16 recommended; 1:1 and 16:9 accepted but under-distributed"],
+          ["Dimensions", "Min 720 × 1,280 px; 1,080 × 1,920 recommended"],
+          ["Frame rate", "23 – 60 fps (30 fps recommended)"],
+          ["Codec", "H.264 or H.265 (HEVC)"],
+          ["Audio", "AAC stereo"],
+        ],
+      },
+      {
+        surface: "Photo carousel",
+        description: "Image-only post with its own title and description fields. No video allowed.",
+        text: [
+          ["Title", "90 chars (auto-truncated in-app; hashtags stripped)"],
+          ["Description", "4,000 chars"],
+        ],
+        image: [
+          ["Formats", "JPEG, WebP"],
+          ["Max per post", "35 images"],
+          ["Max file size", "20 MB per image"],
+          ["Aspect ratio", "9:16 recommended"],
+          ["Dimensions", "Auto-resized to 1,080 × 1,920 px"],
+          ["Cover selection", "`platform_options.tiktok.photo_cover_index` picks the cover"],
+        ],
+      },
     ],
     options: [
       ["platform_options.tiktok.privacy_level", "SELF_ONLY / PUBLIC_TO_EVERYONE / MUTUAL_FOLLOW_FRIENDS / FOLLOWER_OF_CREATOR", "Audience visibility"],
@@ -683,6 +945,52 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["platform_options.youtube.made_for_kids", "Required", "boolean", "Explicit audience selection required before publish."],
       ["platform_options.youtube.privacy_status", "Optional", "private / public / unlisted", "Dashboard defaults to `public`, but YouTube may still force private for unverified API projects."],
       ["platform_options.youtube.shorts", "Optional", "boolean", "Routes the upload toward Shorts behavior"],
+    ],
+    mediaSpecs: [
+      {
+        surface: "Video (long-form)",
+        description: "Default YouTube upload surface. Metadata (title + audience) is required; thumbnail is optional.",
+        text: [
+          ["Title", "100 chars (required, cannot fall back to caption)"],
+          ["Description", "5,000 chars"],
+          ["Tags", "500 chars total across all tags"],
+          ["Made for kids", "Required boolean — no default"],
+        ],
+        image: [
+          ["Thumbnail formats", "JPG, PNG, GIF (2 MB max)"],
+          ["Thumbnail dimensions", "1,280 × 720 recommended (min 640 wide), 16:9"],
+          ["Thumbnail support", "Video only — Shorts do not accept custom thumbnails"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV, AVI, WMV, FLV, 3GPP, WebM, MPEG-PS"],
+          ["Max file size", "256 GB"],
+          ["Duration", "Verified channels: up to 12 hr. Unverified: 15 min."],
+          ["Aspect ratio", "16:9 standard (others pillar-/letterboxed by YouTube)"],
+          ["Resolution", "Min 240p; up to 4,320p (8K). 1,080p or 2,160p recommended"],
+          ["Frame rate", "24, 25, 30, 48, 50, or 60 fps (progressive)"],
+          ["Codec", "H.264 high profile recommended; H.265 accepted"],
+          ["Bitrate", "8 Mbps (1080p SDR) – 68 Mbps (2160p HDR)"],
+          ["Audio", "AAC-LC stereo or 5.1, 48 kHz, up to 384 kbps"],
+        ],
+      },
+      {
+        surface: "Shorts",
+        description: "Vertical short-form upload. Classified as a Short automatically when the upload is ≤ 3 min and vertical.",
+        text: [
+          ["Title", "100 chars (required)"],
+          ["Description", "5,000 chars"],
+          ["`#shorts` tag", "Optional — adding to title/description historically boosted Shorts surfacing"],
+        ],
+        video: [
+          ["Max file size", "256 GB (rarely used in practice)"],
+          ["Duration", "≤ 3 min (Oct 2024 cap)"],
+          ["Aspect ratio", "9:16 vertical"],
+          ["Dimensions", "1,080 × 1,920 recommended"],
+          ["Frame rate", "30 fps typical (24 – 60 accepted)"],
+          ["Codec", "H.264"],
+          ["Audio", "AAC-LC stereo, 128 kbps"],
+        ],
+      },
     ],
     options: [
       ["platform_options.youtube.category_id", "string", "YouTube category ID"],
@@ -811,6 +1119,77 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["platform_options.mediaType", "Optional", "feed / reel", "`feed` (default) routes to `/{page_id}/videos`; `reel` routes to the 3-phase `/{page_id}/video_reels` flow"],
       ["platform_options.title", "Optional", "Reels only", "Video title surfaced alongside the Reel"],
       ["platform_options.thumb_offset_ms", "Optional", "0–60,000 ms", "Reels only — which frame Meta picks as the thumbnail"],
+    ],
+    mediaSpecs: [
+      {
+        surface: "Feed post",
+        description: "Default Page publish. Single photo or single video (no carousel in UniPost v1).",
+        text: [
+          ["Character limit", "63,206 chars (feed truncates at ≈480 with 'See more')"],
+          ["Link preview", "Meta pulls Open Graph tags when a URL is the only media"],
+        ],
+        image: [
+          ["Formats", "JPEG, PNG, GIF, BMP, TIFF (JPEG/PNG most reliable)"],
+          ["Max per post (UniPost v1)", "1 (multi-photo album support on the roadmap)"],
+          ["Max file size", "30 MB via Graph API file upload; Open Graph shares cap at 8 MB"],
+          ["Dimensions", "Min 600 × 315 px; 1,200 × 630 recommended for link previews"],
+          ["Aspect ratio", "1.91:1 (link), 1:1 or 4:5 (feed)"],
+          ["Color space", "sRGB"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV (AVI, FLV, MKV, 3GPP also accepted)"],
+          ["Max per post", "1"],
+          ["Max file size", "10 GB via resumable upload (UniPost v1 caps at 1 GB non-resumable)"],
+          ["Duration", "1 sec – 240 min"],
+          ["Aspect ratios", "16:9, 9:16, 1:1, 4:5 all supported"],
+          ["Resolution", "Min 1,280 × 720 recommended; up to 4K accepted"],
+          ["Frame rate", "24 – 60 fps (30 fps recommended)"],
+          ["Codec", "H.264 high profile + AAC-LC"],
+          ["Audio", "Stereo AAC, 128 kbps+"],
+        ],
+      },
+      {
+        surface: "Reels",
+        description: "Vertical short-form publish. UniPost targets this via the 3-phase `/{page_id}/video_reels` flow when `platform_options.facebook.mediaType = \"reel\"` and `FEATURE_FACEBOOK_REELS=true`.",
+        text: [
+          ["Caption / description", "Up to 2,200 chars (Reels caption surface)"],
+          ["Title", "Supplied via `platform_options.facebook.title`"],
+          ["Thumbnail offset", "`thumb_offset_ms` 0 – 60,000 ms picks the cover frame"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV"],
+          ["Max per post", "1"],
+          ["Max file size", "1 GB (UniPost v1, non-resumable). Meta accepts larger via resumable upload."],
+          ["Duration", "3 sec – 90 sec recommended; Meta permits up to 90 min on long Reels"],
+          ["Aspect ratio", "9:16 vertical (1,080 × 1,920 recommended)"],
+          ["Resolution", "Min 540 × 960 px"],
+          ["Frame rate", "24 – 60 fps (30 fps recommended)"],
+          ["Codec", "H.264 high profile + AAC-LC"],
+          ["Audio", "Stereo AAC, 128 kbps+, 48 kHz"],
+          ["Restrictions", "No link attachments, no mixed media, no carousel"],
+        ],
+      },
+      {
+        surface: "Stories",
+        description: "Not yet exposed by UniPost — listed so the media-optimization roadmap has the full Page surface.",
+        text: [
+          ["Caption", "Overlay only (no feed text body)"],
+        ],
+        image: [
+          ["Formats", "JPEG, PNG"],
+          ["Max file size", "4 MB"],
+          ["Aspect ratio", "9:16 (1,080 × 1,920)"],
+          ["Safe area", "Reserve top/bottom 250 px for chrome"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV"],
+          ["Max file size", "4 GB"],
+          ["Duration", "1 sec – 60 sec"],
+          ["Aspect ratio", "9:16 (1,080 × 1,920)"],
+          ["Frame rate", "30 fps"],
+          ["Codec", "H.264 + AAC-LC"],
+        ],
+      },
     ],
     analytics: [
       ["Likes", partial, "Roadmapped — Phase 2"],

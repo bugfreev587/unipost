@@ -102,6 +102,49 @@ export default async function PlatformDetailPage({
         </p>
       ) : null}
 
+      {data.mediaSpecs ? (
+        <>
+          <h2 id="media-specs">Media specifications</h2>
+          <p className="plat-note">
+            Per-surface limits for text, images, and video. These are the source of
+            truth UniPost uses for preflight validation and media optimization —
+            treat hard-limit values as enforced and &quot;recommended&quot; values as
+            platform guidance.
+          </p>
+          {data.mediaSpecs.map((spec) => (
+            <div key={spec.surface} className="plat-spec-block">
+              <h3
+                id={`media-specs-${spec.surface.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                className="plat-spec-heading"
+              >
+                {spec.surface}
+              </h3>
+              {spec.description ? (
+                <p className="plat-note">{spec.description}</p>
+              ) : null}
+              {spec.text ? (
+                <DocsTable
+                  columns={["Text", "Value"]}
+                  rows={spec.text.map((row) => [row[0], row[1]])}
+                />
+              ) : null}
+              {spec.image ? (
+                <DocsTable
+                  columns={["Image", "Value"]}
+                  rows={spec.image.map((row) => [row[0], row[1]])}
+                />
+              ) : null}
+              {spec.video ? (
+                <DocsTable
+                  columns={["Video", "Value"]}
+                  rows={spec.video.map((row) => [row[0], row[1]])}
+                />
+              ) : null}
+            </div>
+          ))}
+        </>
+      ) : null}
+
       {data.options ? (
         <>
           <h2 id="platform-options">Platform-specific options</h2>
@@ -218,6 +261,9 @@ const styles = `
 .tone-muted .plat-summary-value{color:var(--docs-text-faint)}
 .plat-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:10px 0 18px;max-width:none}
 .plat-example-title{margin-top:22px;margin-bottom:8px;font-size:15.5px;letter-spacing:-.015em}
+.plat-spec-block{margin:6px 0 22px}
+.plat-spec-block .docs-table-wrap+.docs-table-wrap{margin-top:10px}
+.plat-spec-heading{margin-top:22px;margin-bottom:8px;font-size:15.5px;letter-spacing:-.015em}
 .plat-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0 4px}
 .plat-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .plat-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
