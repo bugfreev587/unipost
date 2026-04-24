@@ -145,6 +145,16 @@ type PostResult struct {
 	// the post is live. Get handlers re-poll FB and flip the row
 	// to "published" once processing completes.
 	Status string
+	// FinalMediaType, when non-empty, tells the handler which
+	// platform publish surface the adapter actually ended up using
+	// — possibly different from what the user submitted. Currently
+	// used by Facebook: when a Feed video gets reclassified by FB
+	// as a Reel and the adapter falls back to the /video_reels
+	// endpoint, it reports FinalMediaType="reel" so the handler
+	// persists the correct fb_media_type in the result row (which
+	// keeps the status worker from fast-failing the /reel/
+	// permalink).
+	FinalMediaType string
 }
 
 // PostMetrics holds unified analytics metrics across all platforms.

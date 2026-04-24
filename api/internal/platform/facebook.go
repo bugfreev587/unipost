@@ -427,7 +427,7 @@ func (a *FacebookAdapter) Post(ctx context.Context, accessToken string, text str
 			if mediaType == "reel" {
 				return a.postVideoReel(ctx, accessToken, pageID, text, m.URL, opts)
 			}
-			return a.postVideo(ctx, accessToken, pageID, text, m.URL)
+			return a.postVideo(ctx, accessToken, pageID, text, m.URL, opts)
 		default:
 			return nil, fmt.Errorf("facebook: unsupported media kind %q for %s", kind, m.URL)
 		}
@@ -508,7 +508,7 @@ func (a *FacebookAdapter) postPhoto(ctx context.Context, accessToken, pageID, ca
 // result. If it doesn't, we return Status="processing" so the row
 // shows as in-flight in the dashboard — the Get handler's re-poll
 // flips it to "published" once FB is done.
-func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, description, videoURL string) (*PostResult, error) {
+func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, description, videoURL string, opts map[string]any) (*PostResult, error) {
 	stagedURL := videoURL
 	if a.mediaProxy != nil {
 		proxied, err := a.mediaProxy.UploadFromURL(ctx, videoURL)
@@ -557,13 +557,35 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 		}
 		// Reel reclassification: if FB's permalink_url starts with
 		// /reel/ the upload was routed to the Reels pipeline, which
-		// /videos + file_url doesn't drive — the upload stays stuck
-		// in uploading/in_progress indefinitely. Abort early with a
-		// clear error instead of waiting 60s then sitting in
-		// `processing` for 12h.
+		// /videos + file_url doesn't drive — the upload would stay
+		// stuck in uploading/in_progress indefinitely.
+		//
+		// When the Reels feature flag is on, transparently clean up
+		// the stuck feed-video resource and retry via the Reels
+		// path. The user's intent was "publish this video"; the
+		// feed-vs-reel distinction is FB's aspect-ratio routing
+		// decision, not something they should have to care about.
+		// The FinalMediaType="reel" hint tells the handler to
+		// persist fb_media_type='reel' so the status worker treats
+		// the row as an intentional Reel.
+		//
+		// When the flag is off, fall back to the Phase-1 fast-fail
+		// behavior but with a more actionable message pointing at
+		// the flag / composer toggle.
 		if isReelPermalink(st.PermalinkURL) {
 			_ = a.tryDeleteVideo(ctx, accessToken, videoID)
-			return nil, fmt.Errorf("facebook: vertical video was reclassified as a Reel; Reels publishing is not yet supported — upload a horizontal or square video")
+			if facebookReelsEnabled() {
+				slog.Info("facebook: feed video reclassified as Reel, retrying via /video_reels", "video_id", videoID)
+				res, err := a.postVideoReel(ctx, accessToken, pageID, description, videoURL, opts)
+				if err != nil {
+					return nil, err
+				}
+				if res != nil {
+					res.FinalMediaType = "reel"
+				}
+				return res, nil
+			}
+			return nil, fmt.Errorf("facebook: Facebook reclassified this vertical video as a Reel. Enable FEATURE_FACEBOOK_REELS on the API or switch to the Reel option in the composer")
 		}
 		switch st.VideoStatus {
 		case "ready":
@@ -730,15 +752,17 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 		case "ready":
 			if st.PostID != "" {
 				return &PostResult{
-					ExternalID: st.PostID,
-					URL:        feedStoryURL(pageID, st.PostID),
+					ExternalID:     st.PostID,
+					URL:            feedStoryURL(pageID, st.PostID),
+					FinalMediaType: "reel",
 				}, nil
 			}
 			// Fallback — build the /reel/ permalink from the raw
 			// video id until the Page post id propagates.
 			return &PostResult{
-				ExternalID: videoID,
-				URL:        fmt.Sprintf("https://www.facebook.com/reel/%s", videoID),
+				ExternalID:     videoID,
+				URL:            fmt.Sprintf("https://www.facebook.com/reel/%s", videoID),
+				FinalMediaType: "reel",
 			}, nil
 		case "error", "upload_failed", "expired":
 			msg := "facebook reel: processing failed"
@@ -759,9 +783,10 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 
 	slog.Info("facebook reel: still processing after 60s; returning processing state", "video_id", videoID)
 	return &PostResult{
-		ExternalID: videoID,
-		URL:        fmt.Sprintf("https://www.facebook.com/reel/%s", videoID),
-		Status:     "processing",
+		ExternalID:     videoID,
+		URL:            fmt.Sprintf("https://www.facebook.com/reel/%s", videoID),
+		Status:         "processing",
+		FinalMediaType: "reel",
 	}, nil
 }
 

@@ -582,9 +582,16 @@ func (h *SocialPostHandler) executePublishLoop(
 		// Persist the Facebook mediaType choice so the status worker can
 		// tell an intentional Reel (expected /reel/ permalink) apart
 		// from an accidental reclassification (fast-fail at 10 min).
+		// If the adapter auto-fell-back from Feed to Reel (FB
+		// reclassified the video), the FinalMediaType hint on the
+		// result wins over whatever the user originally submitted.
 		var fbMediaType pgtype.Text
 		if oc.platform == "facebook" {
-			if mt := fbMediaTypeFromOptions(parsed.Posts[i].PlatformOptions); mt != "" {
+			mt := fbMediaTypeFromOptions(parsed.Posts[i].PlatformOptions)
+			if oc.result != nil && oc.result.FinalMediaType != "" {
+				mt = oc.result.FinalMediaType
+			}
+			if mt != "" {
 				fbMediaType = pgtype.Text{String: mt, Valid: true}
 			}
 		}
