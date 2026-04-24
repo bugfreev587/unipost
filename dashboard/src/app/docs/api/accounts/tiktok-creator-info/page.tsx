@@ -22,10 +22,31 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "max_video_post_duration_sec", type: "number", description: "Maximum video length TikTok currently allows for this account." },
 ];
 
-const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: 'Common values include "UNAUTHORIZED", "NOT_FOUND", "WRONG_PLATFORM", "NEEDS_RECONNECT", and "TIKTOK_ERROR".' },
+const RESPONSE_401_FIELDS: ApiFieldItem[] = [
+  { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized".' },
+  { name: "error.message", type: "string", description: "Returned when the API key is missing, invalid, or otherwise rejected." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
+];
+
+const RESPONSE_404_FIELDS: ApiFieldItem[] = [
+  { name: "error.code", type: "string", description: 'Usually "NOT_FOUND".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "not_found".' },
+  { name: "error.message", type: "string", description: "Returned when the account does not exist or is outside the current workspace." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
+];
+
+const RESPONSE_409_FIELDS: ApiFieldItem[] = [
+  { name: "error.code", type: "string", description: 'Either "WRONG_PLATFORM" or "NEEDS_RECONNECT".' },
   { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "wrong_platform" or "needs_reconnect".' },
-  { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "error.message", type: "string", description: 'Returned when the account is not TikTok, or when the TikTok token has expired and the account must be reconnected.' },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
+];
+
+const RESPONSE_502_FIELDS: ApiFieldItem[] = [
+  { name: "error.code", type: "string", description: 'Usually "TIKTOK_ERROR".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "tiktok_error".' },
+  { name: "error.message", type: "string", description: "Returned when TikTok fails upstream for a non-auth reason that the caller cannot fix directly." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
@@ -69,12 +90,60 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
-    label: "409",
+    label: "401",
+    code: `{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "normalized_code": "unauthorized",
+    "message": "Missing or invalid API key."
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "404",
+    code: `{
+  "error": {
+    "code": "NOT_FOUND",
+    "normalized_code": "not_found",
+    "message": "Account not found"
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "409 wrong platform",
+    code: `{
+  "error": {
+    "code": "WRONG_PLATFORM",
+    "normalized_code": "wrong_platform",
+    "message": "Account is not a TikTok account"
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "409 reconnect",
     code: `{
   "error": {
     "code": "NEEDS_RECONNECT",
     "normalized_code": "needs_reconnect",
     "message": "Your TikTok connection has expired. Please reconnect the account."
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "502",
+    code: `{
+  "error": {
+    "code": "TIKTOK_ERROR",
+    "normalized_code": "tiktok_error",
+    "message": "tiktok creator_info (500): upstream unavailable"
   },
   "request_id": "req_123"
 }`,
@@ -95,10 +164,10 @@ export default function TikTokCreatorInfoPage() {
       ]}
       responses={[
         { code: "200", fields: RESPONSE_200_FIELDS },
-        { code: "401", fields: ERROR_FIELDS },
-        { code: "404", fields: ERROR_FIELDS },
-        { code: "409", fields: ERROR_FIELDS },
-        { code: "502", fields: ERROR_FIELDS },
+        { code: "401", fields: RESPONSE_401_FIELDS },
+        { code: "404", fields: RESPONSE_404_FIELDS },
+        { code: "409", fields: RESPONSE_409_FIELDS },
+        { code: "502", fields: RESPONSE_502_FIELDS },
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
