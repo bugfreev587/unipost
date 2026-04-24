@@ -15,6 +15,18 @@ const createdWebhookIds = [];
 const createdMediaIds = [];
 const createdPlatformCredentialKeys = [];
 
+function pickStableProfile(profiles = [], workspace) {
+  if (!Array.isArray(profiles) || profiles.length === 0) return null;
+
+  const defaultProfileId = workspace?.default_profile_id;
+  if (defaultProfileId) {
+    const defaultProfile = profiles.find((profile) => profile.id === defaultProfileId);
+    if (defaultProfile) return defaultProfile;
+  }
+
+  return profiles.find((profile) => !String(profile?.name || '').startsWith('SDK ')) || profiles[0];
+}
+
 function section(title) {
   console.log(`\n${'─'.repeat(50)}`);
   console.log(`  ${title}`);
@@ -170,7 +182,7 @@ async function main() {
     return res;
   });
   profiles = profilesPage?.data || [];
-  firstProfile = profiles[0];
+  firstProfile = pickStableProfile(profiles, workspace);
 
   if (firstProfile) {
     await test('profiles.get()', async () => {

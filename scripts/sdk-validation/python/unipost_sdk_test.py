@@ -23,6 +23,23 @@ created_media_ids = []
 created_platform_credentials = []
 
 
+def pick_stable_profile(profiles, workspace):
+    if not profiles:
+        return None
+
+    default_profile_id = getattr(workspace, "default_profile_id", None) if workspace else None
+    if default_profile_id:
+        for profile in profiles:
+            if getattr(profile, "id", None) == default_profile_id:
+                return profile
+
+    for profile in profiles:
+        if not str(getattr(profile, "name", "")).startswith("SDK "):
+            return profile
+
+    return profiles[0]
+
+
 def section(title):
     print(f"\n{'─' * 50}")
     print(f"  {title}")
@@ -127,7 +144,7 @@ def main():
 
     profiles_page = test("profiles.list()", lambda: _test_profiles_list(client))
     profiles = profiles_page.get("data", []) if profiles_page else []
-    first_profile = profiles[0] if profiles else None
+    first_profile = pick_stable_profile(profiles, workspace)
     if first_profile:
         test("profiles.get()", lambda: _test_profiles_get(client, first_profile.id))
         test("profiles.create() + delete()", lambda: _test_profiles_create_delete(client))

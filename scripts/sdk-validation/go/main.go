@@ -57,6 +57,20 @@ func ptrString(value string) *string {
 	return &value
 }
 
+func pickStableProfile(profiles []unipost.Profile, workspace *unipost.Workspace) *unipost.Profile {
+	if len(profiles) == 0 {
+		return nil
+	}
+
+	for i := range profiles {
+		if !strings.HasPrefix(profiles[i].Name, "SDK ") {
+			return &profiles[i]
+		}
+	}
+
+	return &profiles[0]
+}
+
 func main() {
 	fmt.Println("\n╔══════════════════════════════════════════════════╗")
 	fmt.Println("║     sdk-go — API Validation Test                 ║")
@@ -140,7 +154,7 @@ func main() {
 		if len(page.Data) == 0 {
 			return fmt.Errorf("expected at least one profile")
 		}
-		firstProfile = &page.Data[0]
+		firstProfile = pickStableProfile(page.Data, workspace)
 		return nil
 	})
 
