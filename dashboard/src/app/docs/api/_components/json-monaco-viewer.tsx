@@ -175,6 +175,7 @@ export function JsonMonacoViewer({
           lineHeight: 21,
           fontFamily: "var(--docs-mono, var(--mono), monospace)",
           scrollbar: {
+            alwaysConsumeMouseWheel: false,
             verticalScrollbarSize: 10,
             horizontalScrollbarSize: 10,
           },
@@ -291,6 +292,7 @@ export function MonacoCodeViewer({
           lineHeight: 21,
           fontFamily: "var(--docs-mono, var(--mono), monospace)",
           scrollbar: {
+            alwaysConsumeMouseWheel: false,
             verticalScrollbarSize: 10,
             horizontalScrollbarSize: 10,
           },
