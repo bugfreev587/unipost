@@ -164,7 +164,6 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
   overview: [
     {
       title: "Overview",
-      description: "Core onboarding and developer surfaces for UniPost.",
       items: [
         { label: "Quickstart", href: "/docs/quickstart" },
         { label: "SDKs", href: "/docs/sdk" },

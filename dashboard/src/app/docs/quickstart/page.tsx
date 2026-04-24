@@ -1,6 +1,57 @@
 import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 import { ApiInlineLink } from "../api/_components/doc-components";
 
+const INSTALL_SNIPPETS = [
+  { label: "Node.js", code: "npm install @unipost/sdk" },
+  { label: "Python", code: "pip install unipost" },
+  { label: "Go", code: "go get github.com/unipost-dev/sdk-go" },
+];
+
+const INIT_SNIPPETS = [
+  {
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+});`,
+  },
+  {
+    label: "Python",
+    code: `from unipost import UniPost
+import os
+
+client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])`,
+  },
+  {
+    label: "Go",
+    code: `client := unipost.NewClient(
+  unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
+)`,
+  },
+];
+
+const CREATE_PROFILE_SNIPPETS = [
+  {
+    label: "Node.js",
+    code: `const profile = await client.profiles.create({
+  name: "My First Profile",
+});`,
+  },
+  {
+    label: "Python",
+    code: `profile = client.profiles.create(
+  name="My First Profile",
+)`,
+  },
+  {
+    label: "Go",
+    code: `profile, err := client.Profiles.Create(ctx, &unipost.CreateProfileParams{
+  Name: "My First Profile",
+})`,
+  },
+];
+
 const CONNECT_SNIPPETS = [
   {
     label: "Node.js",
@@ -225,55 +276,124 @@ func main() {
   },
 ];
 
+const DRAFT_SNIPPETS = [
+  {
+    label: "Node.js",
+    code: `const draft = await client.posts.create({
+  platformPosts: [
+    {
+      accountId: "sa_bluesky_123",
+      caption: "Review this before publish",
+    },
+  ],
+  status: "draft",
+});`,
+  },
+  {
+    label: "Python",
+    code: `draft = client.posts.create(
+  platform_posts=[
+    {
+      "account_id": "sa_bluesky_123",
+      "caption": "Review this before publish",
+    },
+  ],
+  status="draft",
+)`,
+  },
+  {
+    label: "Go",
+    code: `draft, err := client.Posts.Create(ctx, &unipost.CreatePostParams{
+  PlatformPosts: []unipost.PlatformPost{
+    {
+      AccountID: "sa_bluesky_123",
+      Caption:   "Review this before publish",
+    },
+  },
+  Status: "draft",
+})`,
+  },
+];
+
 export default function QuickstartPage() {
   return (
     <DocsPage
       className="docs-page-wide"
       eyebrow="Get Started"
       title="Quickstart"
-      lead="The shortest path to a working UniPost integration: create an API key, connect an account, fetch its ID, publish once, then validate before you automate."
+      lead="Create an API key, connect an account, fetch its ID, and publish your first post."
     >
-      <h2 id="outcome">What you will finish with</h2>
-      <p>You will end this guide with one connected account, one successful publish path, and one validation step you can reuse before every automated post.</p>
+      <h2 id="install-sdk">Install the SDK</h2>
+      <DocsCodeTabs snippets={INSTALL_SNIPPETS} />
+
+      <h2 id="authentication">Authentication</h2>
+      <ul className="docs-step-list">
+        <li>Every request uses a Bearer API key.</li>
+        <li>Production keys start with <code>up_live_</code>.</li>
+        <li>Test keys start with <code>up_test_</code>.</li>
+      </ul>
+
+      <h3 id="get-api-key">Get your API key</h3>
+      <p>Create a workspace, then generate an API key from the dashboard.</p>
+
+      <h3 id="set-up-client">Set up the client</h3>
+      <DocsCodeTabs snippets={INIT_SNIPPETS} />
+
+      <h2 id="key-concepts">Key concepts</h2>
       <DocsTable
-        columns={["Step", "Why it matters"]}
+        columns={["Object", "What it means"]}
         rows={[
-          ["Create an API key", "Establish auth for every request"],
-          ["Connect an account", "Get a valid `social_account_id`"],
-          ["List accounts", "Verify the account exists and capture its ID"],
-          ["Publish with `platform_posts[]`", "Use the recommended shape for per-platform copy"],
-          ["Validate before automation", "Catch platform errors before publish"],
+          ["Profiles", "Containers for accounts and branding"],
+          ["Accounts", "Connected social accounts you can publish to"],
+          ["Posts", "One publish request, with one or more platform payloads"],
+          ["Webhooks", "Async status updates for publish and account events"],
         ]}
       />
 
-      <h2 id="before-you-start">Before you start</h2>
-      <ul className="docs-step-list">
-        <li>You need a UniPost workspace and an API key.</li>
-        <li>This guide assumes you are connecting a workspace-owned account. If customers connect their own accounts, use Connect sessions instead.</li>
-        <li>The examples use Bluesky for speed, but the publish shape applies across platforms.</li>
-      </ul>
+      <h2 id="step-1-create-profile">Step 1: Create a profile</h2>
+      <p>Create one profile for the brand or workspace you want to publish under.</p>
+      <DocsCodeTabs snippets={CREATE_PROFILE_SNIPPETS} />
 
-      <h2 id="step-1">1. Create an API key</h2>
-      <p>Create a workspace, then generate an API key from the dashboard. Production keys start with <code>up_live_</code>. Test keys start with <code>up_test_</code>.</p>
-
-      <h2 id="step-2">2. Connect an account</h2>
-      <p>For customer-owned accounts, create a hosted Connect session and redirect the user to the returned URL. For workspace-owned accounts, connect once from the dashboard and continue below.</p>
+      <h2 id="step-2-connect-account">Step 2: Connect an account</h2>
+      <p>For customer-owned accounts, create a Connect session. For workspace-owned accounts, connect once from the dashboard.</p>
       <DocsCodeTabs snippets={CONNECT_SNIPPETS} />
 
-      <h2 id="step-3">3. List accounts and capture the ID</h2>
-      <p>After connecting, list accounts and capture the UniPost account ID you want to publish to. Publish requests use that ID, not a platform username.</p>
+      <h3 id="available-platforms">Available platforms</h3>
+      <DocsTable
+        columns={["Platform", "Value"]}
+        rows={[
+          ["X / Twitter", "`twitter`"],
+          ["LinkedIn", "`linkedin`"],
+          ["Instagram", "`instagram`"],
+          ["TikTok", "`tiktok`"],
+          ["YouTube", "`youtube`"],
+          ["Bluesky", "`bluesky`"],
+        ]}
+      />
+
+      <h2 id="step-3-get-connected-accounts">Step 3: Get your connected accounts</h2>
+      <p>List accounts and capture the UniPost account ID you want to publish to.</p>
       <DocsCodeTabs snippets={LIST_SNIPPETS} />
 
-      <h2 id="step-4">4. Publish your first post</h2>
-      <p>Use <code>platform_posts[]</code>. It keeps caption, media, and per-platform options separate, and it is the recommended shape for new integrations.</p>
+      <h2 id="step-4-publish-first-post">Step 4: Publish your first post</h2>
+      <p>Use <code>platform_posts[]</code> for new integrations.</p>
       <DocsCodeTabs snippets={CREATE_POST_SNIPPETS} />
+
+      <h3 id="posting-multiple-platforms">Posting to multiple platforms</h3>
+      <p>Add more entries to <code>platform_posts[]</code> when you want different copy per destination.</p>
+
+      <h3 id="publishing-immediately">Publishing immediately</h3>
       <p>Add <code>idempotency_key</code> from day one. Retries inside the 24-hour window return the original response instead of posting twice.</p>
 
-      <h2 id="step-5">5. Validate before publish</h2>
-      <p>Before any automated publish flow, call Validate with the same body you plan to send to <ApiInlineLink endpoint="POST /v1/posts" />. UniPost catches caption limits, unsupported media combinations, and platform conflicts before anything is posted.</p>
+      <h3 id="creating-draft">Creating a draft</h3>
+      <p>Set <code>status: "draft"</code> when a human should review before publish.</p>
+      <DocsCodeTabs snippets={DRAFT_SNIPPETS} />
+
+      <h2 id="validate-before-publish">Validate before publish</h2>
+      <p>Call Validate with the same body you plan to send to <ApiInlineLink endpoint="POST /v1/posts" />.</p>
       <DocsCodeTabs snippets={VALIDATE_SNIPPETS} />
 
-      <h2 id="what-next">What to add next</h2>
+      <h2 id="what-next">What&apos;s next?</h2>
       <DocsTable
         columns={["Next capability", "When to add it", "Docs path"]}
         rows={[
