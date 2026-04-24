@@ -228,12 +228,13 @@ func main() {
 export default function QuickstartPage() {
   return (
     <DocsPage
+      className="docs-page-wide"
       eyebrow="Get Started"
       title="Quickstart"
-      lead="This is the shortest useful path through UniPost: create an API key, connect an account, fetch its account ID, publish with `platform_posts[]`, and validate before you automate. Follow this page when you want a real integration working fast."
+      lead="The shortest path to a working UniPost integration: create an API key, connect an account, fetch its ID, publish once, then validate before you automate."
     >
       <h2 id="outcome">What you will finish with</h2>
-      <p>UniPost is most useful when you think of it as one publishing layer with three responsibilities: connect accounts, publish content with platform-aware payloads, and read back operational or analytics signals.</p>
+      <p>You will end this guide with one connected account, one successful publish path, and one validation step you can reuse before every automated post.</p>
       <DocsTable
         columns={["Step", "Why it matters"]}
         rows={[
@@ -247,29 +248,29 @@ export default function QuickstartPage() {
 
       <h2 id="before-you-start">Before you start</h2>
       <ul className="docs-step-list">
-        <li>You need a UniPost workspace and an API key from the dashboard.</li>
-        <li>This guide assumes you are connecting a team-owned account directly. If customers connect their own accounts, use Connect sessions instead.</li>
-        <li>The examples below use Bluesky because it is the shortest direct connect path, but the publish shape applies across platforms.</li>
+        <li>You need a UniPost workspace and an API key.</li>
+        <li>This guide assumes you are connecting a workspace-owned account. If customers connect their own accounts, use Connect sessions instead.</li>
+        <li>The examples use Bluesky for speed, but the publish shape applies across platforms.</li>
       </ul>
 
       <h2 id="step-1">1. Create an API key</h2>
-      <p>Create a workspace in UniPost, then generate an API key from the dashboard. Production keys start with <code>up_live_</code>. Test keys start with <code>up_test_</code>.</p>
+      <p>Create a workspace, then generate an API key from the dashboard. Production keys start with <code>up_live_</code>. Test keys start with <code>up_test_</code>.</p>
 
       <h2 id="step-2">2. Connect an account</h2>
-      <p>For customer-owned accounts, create a hosted Connect session and redirect the user to the returned URL. If you are wiring up a team-owned account for yourself, you can connect it once from the dashboard and continue with the SDK flow below.</p>
+      <p>For customer-owned accounts, create a hosted Connect session and redirect the user to the returned URL. For workspace-owned accounts, connect once from the dashboard and continue below.</p>
       <DocsCodeTabs snippets={CONNECT_SNIPPETS} />
 
       <h2 id="step-3">3. List accounts and capture the ID</h2>
-      <p>After connecting, list the workspace&apos;s social accounts and copy the one you want to publish to. Every publish request ultimately needs a UniPost account ID, not a platform username.</p>
+      <p>After connecting, list accounts and capture the UniPost account ID you want to publish to. Publish requests use that ID, not a platform username.</p>
       <DocsCodeTabs snippets={LIST_SNIPPETS} />
 
       <h2 id="step-4">4. Publish your first post</h2>
-      <p>The recommended request shape is <code>platform_posts[]</code>. It keeps each platform&apos;s caption, media, and options separate, and it works better for AI-generated content than the older <code>caption + account_ids</code> shape.</p>
+      <p>Use <code>platform_posts[]</code>. It keeps caption, media, and per-platform options separate, and it is the recommended shape for new integrations.</p>
       <DocsCodeTabs snippets={CREATE_POST_SNIPPETS} />
-      <p>Add <code>idempotency_key</code> from day one. If you retry the same request within 24 hours, UniPost returns the original response instead of double-posting.</p>
+      <p>Add <code>idempotency_key</code> from day one. Retries inside the 24-hour window return the original response instead of posting twice.</p>
 
       <h2 id="step-5">5. Validate before publish</h2>
-      <p>Before any automated publish path, call Validate with the same body you plan to send to <ApiInlineLink endpoint="POST /v1/posts" />. UniPost catches caption overages, unsupported media combinations, and platform-specific field conflicts before the request writes anything.</p>
+      <p>Before any automated publish flow, call Validate with the same body you plan to send to <ApiInlineLink endpoint="POST /v1/posts" />. UniPost catches caption limits, unsupported media combinations, and platform conflicts before anything is posted.</p>
       <DocsCodeTabs snippets={VALIDATE_SNIPPETS} />
 
       <h2 id="what-next">What to add next</h2>

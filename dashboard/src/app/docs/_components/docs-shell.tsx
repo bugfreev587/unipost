@@ -488,6 +488,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-main-api{max-width:none}
 .docs-page{background:color-mix(in srgb, var(--docs-bg-elevated) 98%, transparent);border:1px solid var(--docs-border);border-radius:24px;padding:48px 52px 56px;box-shadow:var(--docs-card-shadow)}
 .docs-page-api{padding:42px 46px 52px}
+.docs-page-wide h1,.docs-page-wide .docs-lead,.docs-page-wide p,.docs-page-wide .docs-list,.docs-page-wide .docs-step-list,.docs-page-wide .docs-callout{max-width:none}
 .docs-eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:18px}
 .docs-page h1{font-size:42px;line-height:1.04;letter-spacing:-.045em;font-weight:730;margin:0 0 14px;color:var(--docs-text);max-width:12ch}
 .docs-page-api h1{max-width:none}
@@ -889,14 +890,16 @@ export function DocsPage({
   title,
   lead,
   children,
+  className,
 }: {
   eyebrow?: string;
   title: string;
   lead?: React.ReactNode;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <article className="docs-page">
+    <article className={`docs-page${className ? ` ${className}` : ""}`}>
       {eyebrow ? <div className="docs-eyebrow">{eyebrow}</div> : null}
       <h1>{title}</h1>
       {lead ? <p className="docs-lead">{lead}</p> : null}

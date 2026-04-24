@@ -78,6 +78,7 @@ const CURL_SNIPPET = [
 export default function McpPage() {
   return (
     <DocsPage
+      className="docs-page-wide"
       eyebrow="Get Started"
       title="MCP"
       lead="UniPost exposes a hosted Model Context Protocol server so agents can list accounts, validate content, publish posts, and inspect analytics through one tool layer instead of seven separate platform APIs."

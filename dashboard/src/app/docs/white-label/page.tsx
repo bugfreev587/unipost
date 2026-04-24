@@ -41,6 +41,7 @@ console.log(session.url);`,
 export default function WhiteLabelPage() {
   return (
     <DocsPage
+      className="docs-page-wide"
       eyebrow="Guide"
       title="White-label"
       lead="White-label lets your customers connect their own social accounts through a UniPost-hosted flow that shows your brand, runs against your OAuth apps, and never mentions UniPost to the end user."

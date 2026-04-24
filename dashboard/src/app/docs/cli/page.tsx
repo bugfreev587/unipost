@@ -3,6 +3,7 @@ import { DocsPage } from "../_components/docs-shell";
 export default function CliPage() {
   return (
     <DocsPage
+      className="docs-page-wide"
       eyebrow="Overview"
       title="CLI"
       lead="A first-party UniPost CLI is planned so developers can script common workflows like auth checks, account inspection, publish operations, and analytics queries from the terminal."

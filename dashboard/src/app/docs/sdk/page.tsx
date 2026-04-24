@@ -260,6 +260,7 @@ if err != nil {
 export default function SdkPage() {
   return (
     <DocsPage
+      className="docs-page-wide"
       eyebrow="Get Started"
       title="SDKs"
       lead="UniPost has first-party SDKs for JavaScript, Python, and Go. This page shows how to install them, initialize a client, publish with the recommended request shape, validate drafts, work with analytics, and handle errors in each language."
