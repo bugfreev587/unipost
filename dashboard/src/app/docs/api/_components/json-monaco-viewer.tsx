@@ -87,10 +87,6 @@ export function JsonMonacoViewer({
   const formatted = useMemo(() => tryFormatJson(code), [code]);
   const [themeName, setThemeName] = useState("unipost-json-dark");
 
-  if (!formatted) {
-    return null;
-  }
-
   function applyTheme(monaco: typeof import("monaco-editor")) {
     const styles = getComputedStyle(document.documentElement);
     const editorBackground = styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
@@ -136,6 +132,10 @@ export function JsonMonacoViewer({
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
     return () => observer.disconnect();
   }, []);
+
+  if (!formatted) {
+    return null;
+  }
 
   return (
     <div
@@ -202,6 +202,7 @@ export function MonacoCodeViewer({
     const styles = getComputedStyle(document.documentElement);
     const editorBackground = styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
     const editorForeground = styles.getPropertyValue("--docs-tech-text-soft").trim() || "#d6d9e5";
+    const lineNumber = styles.getPropertyValue("--docs-tech-muted").trim() || "#9aa0b5";
     const borderColor = styles.getPropertyValue("--docs-tech-border").trim() || "#3a3d4f";
     const stringColor = styles.getPropertyValue("--docs-code-string").trim() || "#7dc7ff";
     const numberColor = styles.getPropertyValue("--docs-code-number").trim() || "#f9b44d";
@@ -229,11 +230,13 @@ export function MonacoCodeViewer({
       colors: {
         "editor.background": editorBackground,
         "editor.foreground": editorForeground,
+        "editorLineNumber.foreground": lineNumber,
+        "editorLineNumber.activeForeground": editorForeground,
         "editorGutter.background": editorBackground,
         "editorIndentGuide.background1": borderColor,
-        "editorIndentGuide.activeBackground1": borderColor,
-        "editor.selectionBackground": "rgba(124,178,255,0.14)",
-        "editor.inactiveSelectionBackground": "rgba(124,178,255,0.08)",
+        "editorIndentGuide.activeBackground1": lineNumber,
+        "editor.selectionBackground": "rgba(124,178,255,0.16)",
+        "editor.inactiveSelectionBackground": "rgba(124,178,255,0.10)",
         "editor.lineHighlightBackground": "transparent",
       },
     });
@@ -261,7 +264,7 @@ export function MonacoCodeViewer({
       }}
     >
       <MonacoEditor
-        height={height ?? estimateHeight(value, { min: 88, max: 436, lineHeight: 21, padding: 30 })}
+        height={height ?? estimateHeight(value, { min: 168, max: 468, lineHeight: 20, padding: 28 })}
         defaultLanguage={normalizedLanguage}
         theme={themeName}
         value={value}
@@ -278,24 +281,20 @@ export function MonacoCodeViewer({
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
           wordWrap: "on",
-          folding: false,
-          lineNumbers: "off",
-          lineDecorationsWidth: 0,
-          lineNumbersMinChars: 0,
+          folding: true,
+          lineNumbers: "on",
           glyphMargin: false,
           renderLineHighlight: "none",
           overviewRulerBorder: false,
           overviewRulerLanes: 0,
-          hideCursorInOverviewRuler: true,
-          guides: { indentation: false },
           padding: { top: 14, bottom: 14 },
-          fontSize: 12.75,
+          fontSize: 13,
           lineHeight: 21,
           fontFamily: "var(--docs-mono, var(--mono), monospace)",
           wordWrapColumn: 96,
           scrollbar: {
-            verticalScrollbarSize: 8,
-            horizontalScrollbarSize: 8,
+            verticalScrollbarSize: 10,
+            horizontalScrollbarSize: 10,
           },
         }}
       />
