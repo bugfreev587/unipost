@@ -34,6 +34,19 @@ export interface ApiKeyCreateResponse {
   created_at: string;
 }
 
+export interface WebhookSubscription {
+  id: string;
+  url: string;
+  events: string[];
+  active: boolean;
+  secret_preview: string;
+  created_at: string;
+}
+
+export interface WebhookCreateResponse extends WebhookSubscription {
+  secret: string;
+}
+
 export interface ApiResponse<T> {
   data: T;
   meta?: {
@@ -298,6 +311,58 @@ export async function revokeApiKey(
   keyId: string
 ): Promise<void> {
   return request(`/v1/workspaces/${workspaceId}/api-keys/${keyId}`, token, {
+    method: "DELETE",
+  });
+}
+
+// Developer webhooks (workspace-scoped)
+
+export async function listWebhooks(
+  token: string,
+  workspaceId: string
+): Promise<ApiResponse<WebhookSubscription[]>> {
+  return request(`/v1/workspaces/${workspaceId}/webhooks`, token);
+}
+
+export async function createWebhook(
+  token: string,
+  workspaceId: string,
+  data: { url: string; events: string[] }
+): Promise<ApiResponse<WebhookCreateResponse>> {
+  return request(`/v1/workspaces/${workspaceId}/webhooks`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateWebhook(
+  token: string,
+  workspaceId: string,
+  webhookId: string,
+  data: { url?: string; events?: string[]; active?: boolean }
+): Promise<ApiResponse<WebhookSubscription>> {
+  return request(`/v1/workspaces/${workspaceId}/webhooks/${webhookId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function rotateWebhookSecret(
+  token: string,
+  workspaceId: string,
+  webhookId: string
+): Promise<ApiResponse<WebhookCreateResponse>> {
+  return request(`/v1/workspaces/${workspaceId}/webhooks/${webhookId}/rotate`, token, {
+    method: "POST",
+  });
+}
+
+export async function deleteWebhook(
+  token: string,
+  workspaceId: string,
+  webhookId: string
+): Promise<void> {
+  return request(`/v1/workspaces/${workspaceId}/webhooks/${webhookId}`, token, {
     method: "DELETE",
   });
 }

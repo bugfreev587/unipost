@@ -29,6 +29,45 @@ func NewWebhookSubscriptionHandler(queries *db.Queries) *WebhookSubscriptionHand
 	return &WebhookSubscriptionHandler{queries: queries}
 }
 
+// requireWorkspace resolves the workspace for both auth modes:
+//
+//   - Clerk dashboard routes: validates ownership of the workspaceID path param
+//   - API key routes: uses the workspace already bound by middleware, or enforces
+//     that the optional workspaceID path param matches it
+func (h *WebhookSubscriptionHandler) requireWorkspace(r *http.Request, w http.ResponseWriter) (string, bool) {
+	pathWorkspaceID := chi.URLParam(r, "workspaceID")
+	if userID := auth.GetUserID(r.Context()); userID != "" {
+		if pathWorkspaceID == "" {
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing workspace id")
+			return "", false
+		}
+		_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
+			ID:     pathWorkspaceID,
+			UserID: userID,
+		})
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
+				return "", false
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
+			return "", false
+		}
+		return pathWorkspaceID, true
+	}
+
+	boundWorkspaceID := auth.GetWorkspaceID(r.Context())
+	if boundWorkspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return "", false
+	}
+	if pathWorkspaceID != "" && pathWorkspaceID != boundWorkspaceID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
+		return "", false
+	}
+	return boundWorkspaceID, true
+}
+
 // webhookResponse is the read-shape: secret_preview only, never
 // plaintext. Returned by GET / Update endpoints.
 type webhookResponse struct {
@@ -86,9 +125,8 @@ func generateWebhookSecret() (string, error) {
 // it's generated server-side and returned in the response exactly
 // once. Pass {url, events} only.
 func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
-	workspaceID := auth.GetWorkspaceID(r.Context())
-	if workspaceID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+	workspaceID, ok := h.requireWorkspace(r, w)
+	if !ok {
 		return
 	}
 
@@ -144,9 +182,8 @@ func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Reque
 
 // List handles GET /v1/webhooks.
 func (h *WebhookSubscriptionHandler) List(w http.ResponseWriter, r *http.Request) {
-	workspaceID := auth.GetWorkspaceID(r.Context())
-	if workspaceID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+	workspaceID, ok := h.requireWorkspace(r, w)
+	if !ok {
 		return
 	}
 
@@ -177,9 +214,8 @@ func (h *WebhookSubscriptionHandler) List(w http.ResponseWriter, r *http.Request
 
 // Get handles GET /v1/webhooks/{id}.
 func (h *WebhookSubscriptionHandler) Get(w http.ResponseWriter, r *http.Request) {
-	workspaceID := auth.GetWorkspaceID(r.Context())
-	if workspaceID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+	workspaceID, ok := h.requireWorkspace(r, w)
+	if !ok {
 		return
 	}
 	id := chi.URLParam(r, "id")
@@ -201,9 +237,8 @@ func (h *WebhookSubscriptionHandler) Get(w http.ResponseWriter, r *http.Request)
 // Update handles PATCH /v1/webhooks/{id}. Allows updating url,
 // events, and active. CANNOT touch the secret — use /rotate for that.
 func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
-	workspaceID := auth.GetWorkspaceID(r.Context())
-	if workspaceID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+	workspaceID, ok := h.requireWorkspace(r, w)
+	if !ok {
 		return
 	}
 	id := chi.URLParam(r, "id")
@@ -270,9 +305,8 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 // Rotate handles POST /v1/webhooks/{id}/rotate. Generates a new
 // signing secret and returns it once.
 func (h *WebhookSubscriptionHandler) Rotate(w http.ResponseWriter, r *http.Request) {
-	workspaceID := auth.GetWorkspaceID(r.Context())
-	if workspaceID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+	workspaceID, ok := h.requireWorkspace(r, w)
+	if !ok {
 		return
 	}
 	id := chi.URLParam(r, "id")
@@ -306,9 +340,8 @@ func (h *WebhookSubscriptionHandler) Rotate(w http.ResponseWriter, r *http.Reque
 // Delete handles DELETE /v1/webhooks/{id}. Hard delete — removes the
 // row entirely. Pending deliveries cascade-delete via the FK.
 func (h *WebhookSubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	workspaceID := auth.GetWorkspaceID(r.Context())
-	if workspaceID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+	workspaceID, ok := h.requireWorkspace(r, w)
+	if !ok {
 		return
 	}
 	id := chi.URLParam(r, "id")

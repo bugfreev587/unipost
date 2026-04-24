@@ -18,6 +18,7 @@ import { listProfiles, getWorkspace, getBilling, getMe, type Profile, type Works
 import { buildContactPageHref } from "@/lib/support";
 import {
   Key,
+  Webhook,
   Send,
   ListTodo,
   BarChart3,
@@ -58,6 +59,7 @@ const ALL_NAV_ITEMS = [
   { href: "/posts/queue", label: "Queue", icon: ListTodo, exactMatch: true },
   { href: "/inbox", label: "Inbox", icon: MessageSquare, featureFlag: "INBOX" },
   { href: "/api-keys", label: "API Keys", icon: Key },
+  { href: "/webhooks", label: "Webhooks", icon: Webhook },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
     { href: "/analytics/api", label: "API" },

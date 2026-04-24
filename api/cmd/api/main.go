@@ -504,6 +504,12 @@ func main() {
 		r.Get("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.List)
 		r.Post("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.Create)
 		r.Delete("/v1/workspaces/{workspaceID}/api-keys/{keyID}", apiKeyHandler.Revoke)
+		r.Post("/v1/workspaces/{workspaceID}/webhooks", webhookSubHandler.Create)
+		r.Get("/v1/workspaces/{workspaceID}/webhooks", webhookSubHandler.List)
+		r.Get("/v1/workspaces/{workspaceID}/webhooks/{id}", webhookSubHandler.Get)
+		r.Patch("/v1/workspaces/{workspaceID}/webhooks/{id}", webhookSubHandler.Update)
+		r.Delete("/v1/workspaces/{workspaceID}/webhooks/{id}", webhookSubHandler.Delete)
+		r.Post("/v1/workspaces/{workspaceID}/webhooks/{id}/rotate", webhookSubHandler.Rotate)
 
 		// Accounts (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/accounts", socialAccountHandler.List)
