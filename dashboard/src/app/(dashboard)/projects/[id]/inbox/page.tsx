@@ -80,7 +80,10 @@ type CommentNode = {
 };
 
 const COMMENT_THREAD_INDENT = 36;
-const COMMENT_THREAD_LINE_COLOR = "rgba(255,255,255,.22)";
+// Theme-aware stroke for the comment-tree connectors. `--dborder2`
+// maps to border-strong in both light and dark themes, so the line
+// stays visible in either mode.
+const COMMENT_THREAD_LINE_COLOR = "var(--dborder2)";
 // Radius of the rounded bend where the vertical stroke turns into
 // the horizontal stroke. Small enough to feel tight, big enough to
 // read as a curve rather than a kink at most zoom levels.
