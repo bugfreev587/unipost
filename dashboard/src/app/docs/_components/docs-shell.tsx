@@ -302,12 +302,17 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       ],
     },
     {
-      title: "Notifications",
+      title: "Billing",
+      items: [
+        { label: "Billing", href: "/docs/api/billing", method: "GET" },
+      ],
+    },
+    {
+      title: "Resources",
       items: [
         { label: "Notifications", href: "/docs/api/notifications" },
         { label: "Slack Webhook URL", href: "/docs/api/slack-webhook" },
         { label: "Discord Webhook URL", href: "/docs/api/discord-webhook" },
-        { label: "Billing", href: "/docs/api/billing", method: "GET" },
       ],
     },
   ],

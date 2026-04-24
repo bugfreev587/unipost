@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 export default function NotificationsPage() {
   return (
     <DocsPage
-      eyebrow="API Reference"
+      eyebrow="Resources"
       title="Set up Notifications"
     >
       <div className="docs-callout">
