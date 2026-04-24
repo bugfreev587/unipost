@@ -686,28 +686,35 @@ func (a *FacebookAdapter) postVideoReel(ctx context.Context, accessToken, pageID
 		return nil, fmt.Errorf("facebook reel: start response missing video_id or upload_url")
 	}
 
-	// Phase 2: transfer. Meta's rupload.facebook.com endpoint requires
-	// - Authorization: OAuth <token> for the Page access credential
-	// - offset: 0 header (parsed as unsigned long) — even when
-	//   we're using the hosted-file (file_url) variant, rupload runs
-	//   the same request-shape check it uses for the chunked-upload
-	//   path and returns
+	// Phase 2: transfer. Meta's rupload.facebook.com endpoint accepts
+	// file_url via HTTP header, not the query string — passing it as
+	// a query param makes rupload think we're doing a binary upload
+	// and it fails with either
 	//   "HeaderValuePredicate: Header Offset not convertable to
-	//   unsigned long" when offset is absent or empty.
-	// - file_url query param so Meta knows where to pull from
-	//   asynchronously (we also send upload_phase=transfer here).
+	//    unsigned long"
+	// (missing offset header) or
+	//   "Invalid Header format: expected either both Content-Length
+	//    and X-Entity-Length, or Transfer-Encoding alone"
+	// (offset present but no body / no byte count). Canonical shape:
+	//   POST <upload_url>
+	//   Authorization: OAuth <token>
+	//   file_url: <public URL>
+	//   offset: 0
+	// The upload_phase=transfer query param is still required so
+	// Meta routes the request to the hosted-pull handler.
 	transferURL := uploadURL
 	if strings.Contains(transferURL, "?") {
 		transferURL += "&"
 	} else {
 		transferURL += "?"
 	}
-	transferURL += "upload_phase=transfer&file_url=" + url.QueryEscape(stagedURL)
+	transferURL += "upload_phase=transfer"
 	req, err := http.NewRequestWithContext(ctx, "POST", transferURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("facebook reel: build transfer request: %w", err)
 	}
 	req.Header.Set("Authorization", "OAuth "+accessToken)
+	req.Header.Set("file_url", stagedURL)
 	req.Header.Set("offset", "0")
 	transferResp, err := a.client.Do(req)
 	if err != nil {
