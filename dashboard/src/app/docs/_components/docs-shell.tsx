@@ -289,7 +289,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Developer Webhooks",
       items: [
         {
-          label: "WEBHOOK",
+          label: "webhooks",
           children: [
             { label: "Overview", href: "/docs/api/webhooks" },
             { label: "Create webhook", href: "/docs/api/webhooks/create", method: "POST" },
