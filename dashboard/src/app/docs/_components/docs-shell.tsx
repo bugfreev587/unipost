@@ -24,7 +24,7 @@ type NavGroup = {
 
 type SidebarItem = NavLeaf | NavGroup;
 
-type DocsPrimaryKey = "overview" | "platforms" | "api-reference";
+type DocsPrimaryKey = "overview" | "platforms" | "api-reference" | "resources";
 
 type DocsPrimaryNav = {
   key: DocsPrimaryKey;
@@ -157,6 +157,7 @@ const DOCS_PRIMARY_NAV: DocsPrimaryNav[] = [
   { key: "overview", label: "Overview", href: "/docs" },
   { key: "platforms", label: "Platforms", href: "/docs/platforms" },
   { key: "api-reference", label: "API Reference", href: "/docs/api" },
+  { key: "resources", label: "Resources", href: "/docs/resources" },
 ];
 
 const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
@@ -185,6 +186,18 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
         { label: "TikTok", href: "/docs/platforms/tiktok" },
         { label: "YouTube", href: "/docs/platforms/youtube" },
         { label: "Bluesky", href: "/docs/platforms/bluesky" },
+      ],
+    },
+  ],
+  resources: [
+    {
+      title: "Resources",
+      description: "Guides and operational references that support product setup, alerting, and workspace management.",
+      items: [
+        { label: "Notifications", href: "/docs/resources/notifications" },
+        { label: "Billing", href: "/docs/resources/billing" },
+        { label: "Slack Webhook URL", href: "/docs/resources/slack-webhook" },
+        { label: "Discord Webhook URL", href: "/docs/resources/discord-webhook" },
       ],
     },
   ],
@@ -299,20 +312,6 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Rotate secret", href: "/docs/api/webhooks/rotate", method: "POST" },
           ],
         },
-      ],
-    },
-    {
-      title: "Billing",
-      items: [
-        { label: "Billing", href: "/docs/api/billing", method: "GET" },
-      ],
-    },
-    {
-      title: "Resources",
-      items: [
-        { label: "Notifications", href: "/docs/api/notifications" },
-        { label: "Slack Webhook URL", href: "/docs/api/slack-webhook" },
-        { label: "Discord Webhook URL", href: "/docs/api/discord-webhook" },
       ],
     },
   ],
@@ -559,6 +558,7 @@ function isNavGroupActive(current: string, item: NavGroup) {
 
 function getActivePrimaryNav(current: string): DocsPrimaryKey {
   if (current.startsWith("/docs/platforms")) return "platforms";
+  if (current.startsWith("/docs/resources")) return "resources";
   if (current.startsWith("/docs/api")) return "api-reference";
   return "overview";
 }

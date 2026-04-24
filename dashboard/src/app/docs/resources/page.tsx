@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function NotificationsPage() {
+export default function ResourcesIndexPage() {
   redirect("/docs/resources/notifications");
 }

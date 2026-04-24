@@ -137,7 +137,7 @@ export default function DocsHomePage() {
         <li>Open <Link href="/docs/api/api-keys/list">API Keys</Link> first when you are wiring a new backend, SDK client, or environment setup.</li>
         <li>Read <Link href="/docs/api/connect/sessions">Connect Sessions</Link> and <Link href="/docs/api/users">Managed Users</Link> when your product needs customer-owned account onboarding.</li>
         <li>Use <Link href="/docs/api/media">Media</Link>, <Link href="/docs/api/posts/validate">Validate</Link>, and <Link href="/docs/api/posts/drafts">Drafts</Link> for safer media-heavy or human-reviewed publish flows.</li>
-        <li>Open <Link href="/docs/api/analytics">Analytics</Link>, <Link href="/docs/api/notifications">Notifications</Link>, and <Link href="/docs/api/billing">Billing</Link> when you are building operational tooling around the core publish path.</li>
+        <li>Open <Link href="/docs/api/analytics">Analytics</Link>, <Link href="/docs/resources/notifications">Notifications</Link>, and <Link href="/docs/resources/billing">Billing</Link> when you are building operational tooling around the core publish path.</li>
         <li>Open <Link href="/docs/platforms">Platforms</Link> when you need per-network constraints, media rules, or content examples.</li>
         <li>Use <Link href="/docs/api">API Reference</Link> when you already know the capability you want and need exact request and response details.</li>
         <li>Read <Link href="/docs/sdk">SDK</Link> and <Link href="/docs/mcp">MCP</Link> when UniPost is being consumed by agents, scripts, or internal developer tooling.</li>
