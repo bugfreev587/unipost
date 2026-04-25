@@ -232,6 +232,7 @@ type PostDeliveryJob struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	DismissedAt        pgtype.Timestamptz `json:"dismissed_at"`
 }
 
 type PostFailure struct {

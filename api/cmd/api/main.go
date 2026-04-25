@@ -618,6 +618,7 @@ func main() {
 		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry", socialPostHandler.RetryDeliveryJob)
 		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
 		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
+		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/dismiss", socialPostHandler.DismissDeliveryJobHandler)
 
 		// OAuth connect (dashboard, profile-scoped)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
@@ -811,6 +812,7 @@ func main() {
 		r.Post("/v1/post-delivery-jobs/{jobID}/retry", socialPostHandler.RetryDeliveryJob)
 		r.Post("/v1/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
 		r.Post("/v1/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
+		r.Post("/v1/post-delivery-jobs/{jobID}/dismiss", socialPostHandler.DismissDeliveryJobHandler)
 		// Drafts API (Sprint 2). Drafts are social_posts rows in
 		// status='draft' — no platform dispatch, no quota charge,
 		// no webhook fired. Publish flips them via optimistic lock

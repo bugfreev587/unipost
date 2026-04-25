@@ -722,6 +722,16 @@ export async function cancelPostDeliveryJob(
   });
 }
 
+export async function dismissPostDeliveryJob(
+  token: string,
+  workspaceId: string,
+  jobId: string
+): Promise<ApiResponse<PostDeliveryJob>> {
+  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/${jobId}/dismiss`, token, {
+    method: "POST",
+  });
+}
+
 // Billing (workspace-scoped)
 
 export interface BillingInfo {

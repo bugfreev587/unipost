@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { AlertCircle, Loader2, RotateCcw, StopCircle } from "lucide-react";
+import { AlertCircle, Archive, Loader2, RotateCcw, StopCircle } from "lucide-react";
 import {
   cancelPostDeliveryJob,
+  dismissPostDeliveryJob,
   getPostDeliveryJobsSummary,
   listPostDeliveryJobs,
   listSocialPostSummaries,
@@ -185,15 +186,17 @@ export default function QueuePage() {
     });
   }, [jobs, posts]);
 
-  const runAction = async (job: PostDeliveryJob, action: "retry" | "cancel") => {
+  const runAction = async (job: PostDeliveryJob, action: "retry" | "cancel" | "dismiss") => {
     try {
       setBusyJobId(job.id);
       const token = await getToken();
       if (!token || !workspaceId) return;
       if (action === "retry") {
         await retryPostDeliveryJobNow(token, workspaceId, job.id);
-      } else {
+      } else if (action === "cancel") {
         await cancelPostDeliveryJob(token, workspaceId, job.id);
+      } else {
+        await dismissPostDeliveryJob(token, workspaceId, job.id);
       }
       const [jobsRes, summaryRes] = await Promise.all([
         listPostDeliveryJobs(token, workspaceId),
@@ -279,10 +282,21 @@ export default function QueuePage() {
                     <td>
                       <div className="queue-actions">
                         {job.state === "dead" && (
-                          <button className="queue-btn" disabled={busyJobId === job.id} onClick={() => runAction(job, "retry")}>
-                            <RotateCcw style={{ width: 13, height: 13 }} />
-                            Retry now
-                          </button>
+                          <>
+                            <button className="queue-btn" disabled={busyJobId === job.id} onClick={() => runAction(job, "retry")}>
+                              <RotateCcw style={{ width: 13, height: 13 }} />
+                              Retry now
+                            </button>
+                            <button
+                              className="queue-btn"
+                              disabled={busyJobId === job.id}
+                              onClick={() => runAction(job, "dismiss")}
+                              title="Archive this delivery from the queue. The failure record stays in analytics."
+                            >
+                              <Archive style={{ width: 13, height: 13 }} />
+                              Dismiss
+                            </button>
+                          </>
                         )}
                         {(job.state === "pending" || job.state === "retrying") && (
                           <button className="queue-btn" disabled={busyJobId === job.id} onClick={() => runAction(job, "cancel")}>

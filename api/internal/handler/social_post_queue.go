@@ -854,6 +854,27 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 	})
 }
 
+// DismissDeliveryJob archives a terminal (dead/failed/cancelled)
+// delivery job from the queue view. The row is preserved for audit
+// — analytics still sees the underlying social_post_result.failed
+// row — but the queue list and summary skip dismissed rows so users
+// can clear non-actionable failures from their view.
+func (h *SocialPostHandler) DismissDeliveryJob(ctx context.Context, workspaceID, jobID string) (db.PostDeliveryJob, error) {
+	job, err := h.queries.DismissPostDeliveryJob(ctx, db.DismissPostDeliveryJobParams{
+		ID:          jobID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		// pgx.ErrNoRows wraps as "no rows in result set" — surface a
+		// readable message rather than the SQL noise.
+		if strings.Contains(err.Error(), "no rows") {
+			return db.PostDeliveryJob{}, fmt.Errorf("only terminal (dead, failed, cancelled) jobs can be dismissed")
+		}
+		return db.PostDeliveryJob{}, err
+	}
+	return job, nil
+}
+
 func (h *SocialPostHandler) CancelDeliveryJob(ctx context.Context, workspaceID, jobID string) (db.PostDeliveryJob, error) {
 	job, err := h.queries.GetPostDeliveryJobByIDAndWorkspace(ctx, db.GetPostDeliveryJobByIDAndWorkspaceParams{
 		ID:          jobID,
@@ -1070,6 +1091,21 @@ func (h *SocialPostHandler) CancelDeliveryJobHandler(w http.ResponseWriter, r *h
 		return
 	}
 	job, err := h.CancelDeliveryJob(r.Context(), workspaceID, jobID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	writeSuccess(w, postDeliveryJobResponseFromRow(job))
+}
+
+func (h *SocialPostHandler) DismissDeliveryJobHandler(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.getWorkspaceID(r)
+	jobID := chi.URLParam(r, "jobID")
+	if jobID == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing job id")
+		return
+	}
+	job, err := h.DismissDeliveryJob(r.Context(), workspaceID, jobID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return

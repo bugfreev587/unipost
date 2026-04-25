@@ -53,6 +53,10 @@ ORDER BY last_attempt_at ASC, id ASC;
 -- past the failure (published via a later retry, or re-dispatching).
 -- A dead dispatch job for a result that's now 'published' is history,
 -- not something the queue page should offer "Retry now" on.
+--
+-- Also hide dismissed jobs by default; pass include_dismissed=true
+-- to show the archive (no UI for that today; reserved for future
+-- restore flow).
 SELECT j.* FROM post_delivery_jobs j
 LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
 WHERE j.workspace_id = $1
@@ -64,18 +68,27 @@ WHERE j.workspace_id = $1
     j.state NOT IN ('dead', 'failed')
     OR COALESCE(r.status, 'failed') = 'failed'
   )
+  AND (
+    COALESCE(sqlc.narg('include_dismissed')::boolean, FALSE) = TRUE
+    OR j.dismissed_at IS NULL
+  )
 ORDER BY j.created_at DESC
 LIMIT $2 OFFSET $3;
 
 -- name: GetPostDeliveryJobsSummaryByWorkspace :one
 -- dead_count mirrors the ListPostDeliveryJobsByWorkspace filter so the
 -- card total and the table agree: a dead dispatch superseded by a
--- succeeded retry shouldn't show up in either surface.
+-- succeeded retry shouldn't show up in either surface, and dismissed
+-- jobs are excluded so the dead-count tile follows the table.
 SELECT
-  COUNT(*) FILTER (WHERE j.state = 'pending')::bigint   AS pending_count,
-  COUNT(*) FILTER (WHERE j.state = 'running')::bigint   AS running_count,
-  COUNT(*) FILTER (WHERE j.state = 'retrying')::bigint  AS retrying_count,
-  COUNT(*) FILTER (WHERE j.state = 'dead' AND COALESCE(r.status, 'failed') = 'failed')::bigint AS dead_count,
+  COUNT(*) FILTER (WHERE j.state = 'pending'  AND j.dismissed_at IS NULL)::bigint AS pending_count,
+  COUNT(*) FILTER (WHERE j.state = 'running'  AND j.dismissed_at IS NULL)::bigint AS running_count,
+  COUNT(*) FILTER (WHERE j.state = 'retrying' AND j.dismissed_at IS NULL)::bigint AS retrying_count,
+  COUNT(*) FILTER (
+    WHERE j.state = 'dead'
+      AND j.dismissed_at IS NULL
+      AND COALESCE(r.status, 'failed') = 'failed'
+  )::bigint AS dead_count,
   COUNT(*) FILTER (
     WHERE j.state = 'succeeded'
       AND j.kind = 'retry'
@@ -203,3 +216,28 @@ RETURNING *;
 DELETE FROM post_delivery_jobs
 WHERE state = 'succeeded'
   AND finished_at < NOW() - sqlc.arg('max_age')::interval;
+
+-- name: DismissPostDeliveryJob :one
+-- User-driven archive of a dead delivery job. Idempotent: dismissing
+-- an already-dismissed job is a no-op that returns the existing row.
+-- We restrict to terminal states ('dead', 'failed', 'cancelled') so
+-- a user can't accidentally hide an active delivery from the queue.
+UPDATE post_delivery_jobs
+SET dismissed_at = COALESCE(dismissed_at, NOW()),
+    updated_at = NOW()
+WHERE id = $1
+  AND workspace_id = $2
+  AND state IN ('dead', 'failed', 'cancelled')
+RETURNING *;
+
+-- name: AutoDismissOldDeadDeliveryJobs :exec
+-- Auto-archive dead jobs whose terminal point (finished_at, falling
+-- back to updated_at for legacy rows) is older than the supplied
+-- threshold. Run periodically by a worker so workspaces that never
+-- click Dismiss don't accumulate stale dead rows forever.
+UPDATE post_delivery_jobs
+SET dismissed_at = NOW(),
+    updated_at = NOW()
+WHERE state = 'dead'
+  AND dismissed_at IS NULL
+  AND COALESCE(finished_at, updated_at) < sqlc.arg('older_than')::timestamptz;

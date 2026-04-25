@@ -11,13 +11,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const autoDismissOldDeadDeliveryJobs = `-- name: AutoDismissOldDeadDeliveryJobs :exec
+UPDATE post_delivery_jobs
+SET dismissed_at = NOW(),
+    updated_at = NOW()
+WHERE state = 'dead'
+  AND dismissed_at IS NULL
+  AND COALESCE(finished_at, updated_at) < $1::timestamptz
+`
+
+// Auto-archive dead jobs whose terminal point (finished_at, falling
+// back to updated_at for legacy rows) is older than the supplied
+// threshold. Run periodically by a worker so workspaces that never
+// click Dismiss don't accumulate stale dead rows forever.
+func (q *Queries) AutoDismissOldDeadDeliveryJobs(ctx context.Context, olderThan pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, autoDismissOldDeadDeliveryJobs, olderThan)
+	return err
+}
+
 const cancelPostDeliveryJob = `-- name: CancelPostDeliveryJob :one
 UPDATE post_delivery_jobs
 SET state = 'cancelled',
     updated_at = NOW(),
     finished_at = NOW()
 WHERE id = $1
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at
 `
 
 func (q *Queries) CancelPostDeliveryJob(ctx context.Context, id string) (PostDeliveryJob, error) {
@@ -44,6 +62,7 @@ func (q *Queries) CancelPostDeliveryJob(ctx context.Context, id string) (PostDel
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.DismissedAt,
 	)
 	return i, err
 }
@@ -82,7 +101,7 @@ SET state = 'running',
     updated_at = NOW()
 FROM eligible
 WHERE j.id = eligible.id
-RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at
+RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at
 `
 
 func (q *Queries) ClaimPostDispatchJobs(ctx context.Context, limit int32) ([]PostDeliveryJob, error) {
@@ -115,6 +134,7 @@ func (q *Queries) ClaimPostDispatchJobs(ctx context.Context, limit int32) ([]Pos
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.DismissedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -165,7 +185,7 @@ SET state = 'retrying',
     updated_at = NOW()
 FROM eligible
 WHERE j.id = eligible.id
-RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at
+RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at
 `
 
 func (q *Queries) ClaimPostRetryJobs(ctx context.Context, limit int32) ([]PostDeliveryJob, error) {
@@ -198,6 +218,7 @@ func (q *Queries) ClaimPostRetryJobs(ctx context.Context, limit int32) ([]PostDe
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.DismissedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -231,7 +252,7 @@ INSERT INTO post_delivery_jobs (
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 )
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at
 `
 
 type CreatePostDeliveryJobParams struct {
@@ -296,6 +317,7 @@ func (q *Queries) CreatePostDeliveryJob(ctx context.Context, arg CreatePostDeliv
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.DismissedAt,
 	)
 	return i, err
 }
@@ -311,8 +333,56 @@ func (q *Queries) DeleteOldSucceededPostDeliveryJobs(ctx context.Context, maxAge
 	return err
 }
 
+const dismissPostDeliveryJob = `-- name: DismissPostDeliveryJob :one
+UPDATE post_delivery_jobs
+SET dismissed_at = COALESCE(dismissed_at, NOW()),
+    updated_at = NOW()
+WHERE id = $1
+  AND workspace_id = $2
+  AND state IN ('dead', 'failed', 'cancelled')
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at
+`
+
+type DismissPostDeliveryJobParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+// User-driven archive of a dead delivery job. Idempotent: dismissing
+// an already-dismissed job is a no-op that returns the existing row.
+// We restrict to terminal states ('dead', 'failed', 'cancelled') so
+// a user can't accidentally hide an active delivery from the queue.
+func (q *Queries) DismissPostDeliveryJob(ctx context.Context, arg DismissPostDeliveryJobParams) (PostDeliveryJob, error) {
+	row := q.db.QueryRow(ctx, dismissPostDeliveryJob, arg.ID, arg.WorkspaceID)
+	var i PostDeliveryJob
+	err := row.Scan(
+		&i.ID,
+		&i.PostID,
+		&i.SocialPostResultID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.Platform,
+		&i.PostInputIndex,
+		&i.Kind,
+		&i.State,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.FailureStage,
+		&i.ErrorCode,
+		&i.PlatformErrorCode,
+		&i.LastError,
+		&i.NextRunAt,
+		&i.LastAttemptAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.DismissedAt,
+	)
+	return i, err
+}
+
 const getPostDeliveryJobByIDAndWorkspace = `-- name: GetPostDeliveryJobByIDAndWorkspace :one
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at FROM post_delivery_jobs
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -345,16 +415,21 @@ func (q *Queries) GetPostDeliveryJobByIDAndWorkspace(ctx context.Context, arg Ge
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.DismissedAt,
 	)
 	return i, err
 }
 
 const getPostDeliveryJobsSummaryByWorkspace = `-- name: GetPostDeliveryJobsSummaryByWorkspace :one
 SELECT
-  COUNT(*) FILTER (WHERE j.state = 'pending')::bigint   AS pending_count,
-  COUNT(*) FILTER (WHERE j.state = 'running')::bigint   AS running_count,
-  COUNT(*) FILTER (WHERE j.state = 'retrying')::bigint  AS retrying_count,
-  COUNT(*) FILTER (WHERE j.state = 'dead' AND COALESCE(r.status, 'failed') = 'failed')::bigint AS dead_count,
+  COUNT(*) FILTER (WHERE j.state = 'pending'  AND j.dismissed_at IS NULL)::bigint AS pending_count,
+  COUNT(*) FILTER (WHERE j.state = 'running'  AND j.dismissed_at IS NULL)::bigint AS running_count,
+  COUNT(*) FILTER (WHERE j.state = 'retrying' AND j.dismissed_at IS NULL)::bigint AS retrying_count,
+  COUNT(*) FILTER (
+    WHERE j.state = 'dead'
+      AND j.dismissed_at IS NULL
+      AND COALESCE(r.status, 'failed') = 'failed'
+  )::bigint AS dead_count,
   COUNT(*) FILTER (
     WHERE j.state = 'succeeded'
       AND j.kind = 'retry'
@@ -375,7 +450,8 @@ type GetPostDeliveryJobsSummaryByWorkspaceRow struct {
 
 // dead_count mirrors the ListPostDeliveryJobsByWorkspace filter so the
 // card total and the table agree: a dead dispatch superseded by a
-// succeeded retry shouldn't show up in either surface.
+// succeeded retry shouldn't show up in either surface, and dismissed
+// jobs are excluded so the dead-count tile follows the table.
 func (q *Queries) GetPostDeliveryJobsSummaryByWorkspace(ctx context.Context, workspaceID string) (GetPostDeliveryJobsSummaryByWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, getPostDeliveryJobsSummaryByWorkspace, workspaceID)
 	var i GetPostDeliveryJobsSummaryByWorkspaceRow
@@ -390,7 +466,7 @@ func (q *Queries) GetPostDeliveryJobsSummaryByWorkspace(ctx context.Context, wor
 }
 
 const listPostDeliveryJobsByPost = `-- name: ListPostDeliveryJobsByPost :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at FROM post_delivery_jobs
 WHERE post_id = $1
 ORDER BY created_at DESC
 `
@@ -425,6 +501,7 @@ func (q *Queries) ListPostDeliveryJobsByPost(ctx context.Context, postID string)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.DismissedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -437,7 +514,7 @@ func (q *Queries) ListPostDeliveryJobsByPost(ctx context.Context, postID string)
 }
 
 const listPostDeliveryJobsByPostIDs = `-- name: ListPostDeliveryJobsByPostIDs :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at FROM post_delivery_jobs
 WHERE post_id = ANY($1::text[])
 ORDER BY created_at DESC
 `
@@ -472,6 +549,7 @@ func (q *Queries) ListPostDeliveryJobsByPostIDs(ctx context.Context, dollar_1 []
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.DismissedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -484,7 +562,7 @@ func (q *Queries) ListPostDeliveryJobsByPostIDs(ctx context.Context, dollar_1 []
 }
 
 const listPostDeliveryJobsByResult = `-- name: ListPostDeliveryJobsByResult :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at FROM post_delivery_jobs
 WHERE social_post_result_id = $1
 ORDER BY created_at DESC
 `
@@ -519,6 +597,7 @@ func (q *Queries) ListPostDeliveryJobsByResult(ctx context.Context, socialPostRe
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.DismissedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -531,7 +610,7 @@ func (q *Queries) ListPostDeliveryJobsByResult(ctx context.Context, socialPostRe
 }
 
 const listPostDeliveryJobsByWorkspace = `-- name: ListPostDeliveryJobsByWorkspace :many
-SELECT j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at FROM post_delivery_jobs j
+SELECT j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at FROM post_delivery_jobs j
 LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
 WHERE j.workspace_id = $1
   AND (
@@ -542,27 +621,37 @@ WHERE j.workspace_id = $1
     j.state NOT IN ('dead', 'failed')
     OR COALESCE(r.status, 'failed') = 'failed'
   )
+  AND (
+    COALESCE($5::boolean, FALSE) = TRUE
+    OR j.dismissed_at IS NULL
+  )
 ORDER BY j.created_at DESC
 LIMIT $2 OFFSET $3
 `
 
 type ListPostDeliveryJobsByWorkspaceParams struct {
-	WorkspaceID string      `json:"workspace_id"`
-	Limit       int32       `json:"limit"`
-	Offset      int32       `json:"offset"`
-	States      pgtype.Text `json:"states"`
+	WorkspaceID      string      `json:"workspace_id"`
+	Limit            int32       `json:"limit"`
+	Offset           int32       `json:"offset"`
+	States           pgtype.Text `json:"states"`
+	IncludeDismissed pgtype.Bool `json:"include_dismissed"`
 }
 
 // Hide dead/failed jobs whose social_post_result has already moved
 // past the failure (published via a later retry, or re-dispatching).
 // A dead dispatch job for a result that's now 'published' is history,
 // not something the queue page should offer "Retry now" on.
+//
+// Also hide dismissed jobs by default; pass include_dismissed=true
+// to show the archive (no UI for that today; reserved for future
+// restore flow).
 func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListPostDeliveryJobsByWorkspaceParams) ([]PostDeliveryJob, error) {
 	rows, err := q.db.Query(ctx, listPostDeliveryJobsByWorkspace,
 		arg.WorkspaceID,
 		arg.Limit,
 		arg.Offset,
 		arg.States,
+		arg.IncludeDismissed,
 	)
 	if err != nil {
 		return nil, err
@@ -592,6 +681,7 @@ func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListP
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.DismissedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -604,7 +694,7 @@ func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListP
 }
 
 const listStaleActivePostDeliveryJobs = `-- name: ListStaleActivePostDeliveryJobs :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at FROM post_delivery_jobs
 WHERE state IN ('running', 'retrying')
   AND last_attempt_at IS NOT NULL
   AND last_attempt_at <= $1::timestamptz
@@ -641,6 +731,7 @@ func (q *Queries) ListStaleActivePostDeliveryJobs(ctx context.Context, staleBefo
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.DismissedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -666,7 +757,7 @@ SET state = $2,
       ELSE finished_at
     END
 WHERE id = $1
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at
 `
 
 type MarkPostDeliveryJobFailedParams struct {
@@ -711,6 +802,7 @@ func (q *Queries) MarkPostDeliveryJobFailed(ctx context.Context, arg MarkPostDel
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.DismissedAt,
 	)
 	return i, err
 }
@@ -726,7 +818,7 @@ SET state = 'succeeded',
     updated_at = NOW(),
     finished_at = NOW()
 WHERE id = $1
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at
 `
 
 func (q *Queries) MarkPostDeliveryJobSucceeded(ctx context.Context, id string) (PostDeliveryJob, error) {
@@ -753,6 +845,7 @@ func (q *Queries) MarkPostDeliveryJobSucceeded(ctx context.Context, id string) (
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.DismissedAt,
 	)
 	return i, err
 }

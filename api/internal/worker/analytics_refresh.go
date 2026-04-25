@@ -68,7 +68,26 @@ func (w *AnalyticsRefreshWorker) Start(ctx context.Context) {
 		case <-ticker.C:
 			w.refreshDue(ctx)
 			w.sweepAbandonedMedia(ctx)
+			w.sweepOldDeadDeliveryJobs(ctx)
 		}
+	}
+}
+
+// deadJobAutoDismissAfter is how long a dead delivery job stays in
+// the queue's default view before the worker auto-archives it. 30
+// days matches a typical "I might still want to retry that" window
+// for users who only check the queue weekly.
+const deadJobAutoDismissAfter = 30 * 24 * time.Hour
+
+// sweepOldDeadDeliveryJobs auto-dismisses dead delivery jobs whose
+// terminal point is older than deadJobAutoDismissAfter. Idempotent
+// at the SQL layer (only touches rows where dismissed_at IS NULL).
+// Runs alongside the hourly analytics tick — once a day would be
+// fine, but folding in here keeps worker scaffolding minimal.
+func (w *AnalyticsRefreshWorker) sweepOldDeadDeliveryJobs(ctx context.Context) {
+	threshold := pgtype.Timestamptz{Time: time.Now().Add(-deadJobAutoDismissAfter), Valid: true}
+	if err := w.queries.AutoDismissOldDeadDeliveryJobs(ctx, threshold); err != nil {
+		slog.Error("queue sweeper: auto-dismiss failed", "error", err)
 	}
 }
 
