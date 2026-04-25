@@ -60,3 +60,21 @@ SELECT * FROM media
 WHERE status = 'pending'
   AND created_at < NOW() - INTERVAL '7 days'
 LIMIT 100;
+
+-- name: ScheduleMediaCleanup :exec
+-- Sets cleanup_after_at on a media row so the MediaCleanupWorker
+-- will hard-delete it on its next tick after the timestamp passes.
+-- Idempotent — taking the GREATEST of current and incoming means
+-- when a single media is consumed by multiple parallel publishes,
+-- the slowest platform's window wins.
+UPDATE media
+SET cleanup_after_at = GREATEST(cleanup_after_at, $2)
+WHERE id = $1
+  AND status != 'deleted';
+
+-- name: ListMediaDueForCleanup :many
+SELECT * FROM media
+WHERE cleanup_after_at IS NOT NULL
+  AND cleanup_after_at <= NOW()
+  AND status != 'deleted'
+LIMIT 100;

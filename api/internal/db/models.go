@@ -91,15 +91,16 @@ type LandingVisit struct {
 }
 
 type Media struct {
-	ID          string             `json:"id"`
-	StorageKey  string             `json:"storage_key"`
-	ContentType string             `json:"content_type"`
-	SizeBytes   int64              `json:"size_bytes"`
-	Status      string             `json:"status"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UploadedAt  pgtype.Timestamptz `json:"uploaded_at"`
-	WorkspaceID string             `json:"workspace_id"`
-	ContentHash pgtype.Text        `json:"content_hash"`
+	ID             string             `json:"id"`
+	StorageKey     string             `json:"storage_key"`
+	ContentType    string             `json:"content_type"`
+	SizeBytes      int64              `json:"size_bytes"`
+	Status         string             `json:"status"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UploadedAt     pgtype.Timestamptz `json:"uploaded_at"`
+	WorkspaceID    string             `json:"workspace_id"`
+	ContentHash    pgtype.Text        `json:"content_hash"`
+	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
 }
 
 type MetaUserToken struct {

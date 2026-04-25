@@ -14,7 +14,7 @@ import (
 const createMedia = `-- name: CreateMedia :one
 INSERT INTO media (workspace_id, storage_key, content_type, size_bytes, status, content_hash)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at
 `
 
 type CreateMediaParams struct {
@@ -46,12 +46,13 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Media
 		&i.UploadedAt,
 		&i.WorkspaceID,
 		&i.ContentHash,
+		&i.CleanupAfterAt,
 	)
 	return i, err
 }
 
 const getActiveMediaByHash = `-- name: GetActiveMediaByHash :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at FROM media
 WHERE workspace_id = $1 AND content_hash = $2 AND status != 'deleted'
 ORDER BY
   CASE status
@@ -82,12 +83,13 @@ func (q *Queries) GetActiveMediaByHash(ctx context.Context, arg GetActiveMediaBy
 		&i.UploadedAt,
 		&i.WorkspaceID,
 		&i.ContentHash,
+		&i.CleanupAfterAt,
 	)
 	return i, err
 }
 
 const getMedia = `-- name: GetMedia :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media WHERE id = $1
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at FROM media WHERE id = $1
 `
 
 func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
@@ -103,12 +105,13 @@ func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
 		&i.UploadedAt,
 		&i.WorkspaceID,
 		&i.ContentHash,
+		&i.CleanupAfterAt,
 	)
 	return i, err
 }
 
 const getMediaByHash = `-- name: GetMediaByHash :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at FROM media
 WHERE workspace_id = $1 AND content_hash = $2 AND status = 'uploaded'
 LIMIT 1
 `
@@ -131,12 +134,13 @@ func (q *Queries) GetMediaByHash(ctx context.Context, arg GetMediaByHashParams) 
 		&i.UploadedAt,
 		&i.WorkspaceID,
 		&i.ContentHash,
+		&i.CleanupAfterAt,
 	)
 	return i, err
 }
 
 const getMediaByIDAndWorkspace = `-- name: GetMediaByIDAndWorkspace :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media WHERE id = $1 AND workspace_id = $2
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at FROM media WHERE id = $1 AND workspace_id = $2
 `
 
 type GetMediaByIDAndWorkspaceParams struct {
@@ -157,6 +161,7 @@ func (q *Queries) GetMediaByIDAndWorkspace(ctx context.Context, arg GetMediaByID
 		&i.UploadedAt,
 		&i.WorkspaceID,
 		&i.ContentHash,
+		&i.CleanupAfterAt,
 	)
 	return i, err
 }
@@ -172,7 +177,7 @@ func (q *Queries) HardDeleteMedia(ctx context.Context, id string) error {
 }
 
 const listAbandonedMedia = `-- name: ListAbandonedMedia :many
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at FROM media
 WHERE status = 'pending'
   AND created_at < NOW() - INTERVAL '7 days'
 LIMIT 100
@@ -197,6 +202,7 @@ func (q *Queries) ListAbandonedMedia(ctx context.Context) ([]Media, error) {
 			&i.UploadedAt,
 			&i.WorkspaceID,
 			&i.ContentHash,
+			&i.CleanupAfterAt,
 		); err != nil {
 			return nil, err
 		}
@@ -209,7 +215,7 @@ func (q *Queries) ListAbandonedMedia(ctx context.Context) ([]Media, error) {
 }
 
 const listMediaByWorkspace = `-- name: ListMediaByWorkspace :many
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at FROM media
 WHERE workspace_id = $1 AND status != 'deleted'
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -240,6 +246,46 @@ func (q *Queries) ListMediaByWorkspace(ctx context.Context, arg ListMediaByWorks
 			&i.UploadedAt,
 			&i.WorkspaceID,
 			&i.ContentHash,
+			&i.CleanupAfterAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMediaDueForCleanup = `-- name: ListMediaDueForCleanup :many
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at FROM media
+WHERE cleanup_after_at IS NOT NULL
+  AND cleanup_after_at <= NOW()
+  AND status != 'deleted'
+LIMIT 100
+`
+
+func (q *Queries) ListMediaDueForCleanup(ctx context.Context) ([]Media, error) {
+	rows, err := q.db.Query(ctx, listMediaDueForCleanup)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Media{}
+	for rows.Next() {
+		var i Media
+		if err := rows.Scan(
+			&i.ID,
+			&i.StorageKey,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UploadedAt,
+			&i.WorkspaceID,
+			&i.ContentHash,
+			&i.CleanupAfterAt,
 		); err != nil {
 			return nil, err
 		}
@@ -258,7 +304,7 @@ SET status = 'uploaded',
     content_type = $3,
     uploaded_at = NOW()
 WHERE id = $1
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at
 `
 
 type MarkMediaUploadedParams struct {
@@ -280,8 +326,31 @@ func (q *Queries) MarkMediaUploaded(ctx context.Context, arg MarkMediaUploadedPa
 		&i.UploadedAt,
 		&i.WorkspaceID,
 		&i.ContentHash,
+		&i.CleanupAfterAt,
 	)
 	return i, err
+}
+
+const scheduleMediaCleanup = `-- name: ScheduleMediaCleanup :exec
+UPDATE media
+SET cleanup_after_at = GREATEST(cleanup_after_at, $2)
+WHERE id = $1
+  AND status != 'deleted'
+`
+
+type ScheduleMediaCleanupParams struct {
+	ID             string             `json:"id"`
+	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
+}
+
+// Sets cleanup_after_at on a media row so the MediaCleanupWorker
+// will hard-delete it on its next tick after the timestamp passes.
+// Idempotent — taking the GREATEST of current and incoming means
+// when a single media is consumed by multiple parallel publishes,
+// the slowest platform's window wins.
+func (q *Queries) ScheduleMediaCleanup(ctx context.Context, arg ScheduleMediaCleanupParams) error {
+	_, err := q.db.Exec(ctx, scheduleMediaCleanup, arg.ID, arg.CleanupAfterAt)
+	return err
 }
 
 const softDeleteMedia = `-- name: SoftDeleteMedia :exec
@@ -302,7 +371,7 @@ func (q *Queries) SoftDeleteMedia(ctx context.Context, arg SoftDeleteMediaParams
 const updateMediaStorageKey = `-- name: UpdateMediaStorageKey :one
 UPDATE media SET storage_key = $2
 WHERE id = $1
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at
 `
 
 type UpdateMediaStorageKeyParams struct {
@@ -323,6 +392,7 @@ func (q *Queries) UpdateMediaStorageKey(ctx context.Context, arg UpdateMediaStor
 		&i.UploadedAt,
 		&i.WorkspaceID,
 		&i.ContentHash,
+		&i.CleanupAfterAt,
 	)
 	return i, err
 }

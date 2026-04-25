@@ -48,10 +48,17 @@ func NewMediaHandler(queries *db.Queries, store *storage.Client) *MediaHandler {
 
 // MediaSizeHardCap is the global ceiling for any single upload, on
 // top of the per-platform soft caps from the capabilities table.
-// Set to 25 MB based on Sprint 2 founder hand-off Q4 — covers
-// everything except long-form video, keeps R2 storage / egress costs
-// predictable.
-const MediaSizeHardCap = 25 * 1024 * 1024
+// Set to 4 GB to cover TikTok video (4 GB) and YouTube short uploads
+// while still rejecting obviously-broken multi-gigabyte attempts at
+// the front door. The per-platform validators reject anything larger
+// than each network's own cap (Twitter 512 MB, IG Reels 1 GB, etc.)
+// before we get anywhere near a wasted upload.
+//
+// Storage cost is bounded by the post-publish cleanup_after_at
+// sweeper (worker.MediaCleanupWorker): every media >= 200 MB gets
+// scheduled for hard delete two hours after the publish that
+// consumed it, keeping R2 occupancy near zero for large files.
+const MediaSizeHardCap = 4 * 1024 * 1024 * 1024
 
 // allowedMimeTypes is the union of every adapter's accepted formats.
 // We could derive this from the capabilities map but a static set

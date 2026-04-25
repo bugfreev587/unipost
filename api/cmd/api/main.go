@@ -302,6 +302,9 @@ func main() {
 	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
 	go analyticsRefreshWorker.Start(workerCtx)
 
+	mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
+	go mediaCleanupWorker.Start(workerCtx)
+
 	// Facebook's /videos endpoint returns a video_id immediately and
 	// finishes asynchronously. The initial publish poll waits 60s;
 	// beyond that the row sits in `processing` until someone opens the

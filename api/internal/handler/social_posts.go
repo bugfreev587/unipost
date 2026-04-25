@@ -1059,6 +1059,18 @@ func (h *SocialPostHandler) publishOneContext(
 	oc.err = err
 	oc.debugCurl = debugRec.Serialize()
 
+	// Sprint 5: schedule R2 cleanup for any large media this publish
+	// consumed. Push-mode adapters (Twitter, LinkedIn, YouTube,
+	// Bluesky) have already finished pulling the bytes; pull-mode
+	// adapters (Instagram, Facebook, Threads, TikTok) handed the URL
+	// to the platform but the platform may async-fetch for several
+	// minutes — the 2 hour window in scheduleLargeMediaCleanup
+	// covers both. Best-effort: a failure here doesn't fail the
+	// publish, the abandoned-pending sweeper is still the safety net.
+	if err == nil && postResult != nil && len(pp.MediaIDs) > 0 {
+		h.scheduleLargeMediaCleanup(ctx, pp.MediaIDs)
+	}
+
 	// Sprint 4 PR3: first_comment dispatch. Only fires when the main
 	// post succeeded AND the adapter implements FirstCommentAdapter
 	// (validator already rejected first_comment on platforms that
@@ -1078,6 +1090,54 @@ func (h *SocialPostHandler) publishOneContext(
 		}
 	}
 	return
+}
+
+// LargeMediaThresholdBytes is the size at which a successfully-
+// published media row gets a cleanup_after_at timestamp. Anything
+// smaller stays in the user's library indefinitely; anything bigger
+// is hard-deleted by MediaCleanupWorker on its next 5-minute tick
+// after the publish-relative window elapses.
+//
+// 200 MB matches the founder hand-off — covers casual photos and
+// short-form video without nagging cleanup, but catches every
+// upload that meaningfully consumes the 10 GB R2 bucket.
+const LargeMediaThresholdBytes = 200 * 1024 * 1024
+
+// publishCleanupWindow is how long after a successful adapter.Post
+// we keep large media in R2. Two hours is a deliberately generous
+// safety margin for pull-mode platforms (Instagram, Facebook,
+// Threads, TikTok) whose async fetch can run for 10-20 minutes for
+// large videos. Push-mode platforms don't need it, but a few extra
+// hours of storage on already-uploaded files is cheap compared to
+// the unrecoverable failure of deleting mid-fetch.
+const publishCleanupWindow = 2 * time.Hour
+
+// scheduleLargeMediaCleanup tags every supplied media_id whose
+// stored size meets LargeMediaThresholdBytes for hard delete by
+// the MediaCleanupWorker once publishCleanupWindow elapses. Best-
+// effort: nothing here fails the publish, since the abandoned-
+// pending sweeper still catches uncleaned rows on its weekly tick.
+func (h *SocialPostHandler) scheduleLargeMediaCleanup(ctx context.Context, mediaIDs []string) {
+	if h.queries == nil || len(mediaIDs) == 0 {
+		return
+	}
+	deadline := pgtype.Timestamptz{Time: time.Now().Add(publishCleanupWindow), Valid: true}
+	for _, id := range mediaIDs {
+		row, err := h.queries.GetMedia(ctx, id)
+		if err != nil {
+			slog.Warn("media cleanup schedule: row lookup failed", "media_id", id, "err", err)
+			continue
+		}
+		if row.SizeBytes < LargeMediaThresholdBytes {
+			continue
+		}
+		if err := h.queries.ScheduleMediaCleanup(ctx, db.ScheduleMediaCleanupParams{
+			ID:             id,
+			CleanupAfterAt: deadline,
+		}); err != nil {
+			slog.Warn("media cleanup schedule: update failed", "media_id", id, "err", err)
+		}
+	}
 }
 
 // resolveMediaIDsToURLs is the publish-time half of the media library

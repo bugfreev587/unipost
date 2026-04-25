@@ -153,9 +153,9 @@ function MediaThumbnails({
 }) {
   // The per-thumb "Retry" icon is too small to explain *why* the
   // upload failed (server errors like "size_bytes exceeds the global
-  // hard cap of 26214400" only showed up as a tooltip before). Roll
-  // all failed items into a single red banner beneath the grid so
-  // users see the actual error without having to hover.
+  // hard cap of 4294967296" only showed up as a tooltip before).
+  // Roll all failed items into a single red banner beneath the grid
+  // so users see the actual error without having to hover.
   // TikTok-duration rejections are shown in a dedicated banner below
   // *while a cap is in force*; if the user unselects TikTok we move
   // them back here so Retry is available.
@@ -277,22 +277,37 @@ function formatDurationShort(seconds: number): string {
 }
 
 // humanizeMediaError rewrites the rawest server messages into something
-// a user can act on. Today the most common offender is the 25MB hard
-// cap — "size_bytes exceeds the global hard cap of 26214400" means
-// nothing to a non-developer. Everything else falls through unchanged
-// so we don't accidentally hide useful detail.
+// a user can act on. The hard-cap branch handles the global upload
+// ceiling (currently 4 GB) — "size_bytes exceeds the global hard cap
+// of 4294967296" means nothing to a non-developer. Everything else
+// falls through unchanged so we don't accidentally hide useful detail.
 function humanizeMediaError(raw: string, file: File): string {
   const hardCapMatch = /exceeds the global hard cap of (\d+)/.exec(raw);
   if (hardCapMatch) {
     const capBytes = parseInt(hardCapMatch[1], 10);
-    const capMB = (capBytes / (1024 * 1024)).toFixed(0);
-    const fileMB = (file.size / (1024 * 1024)).toFixed(1);
-    return `File is ${fileMB} MB — max upload size is ${capMB} MB. Compress the file or use a shorter clip.`;
+    const capDisplay = formatBytesHuman(capBytes);
+    const fileDisplay = formatBytesHuman(file.size);
+    const isVideo = file.type.startsWith("video/");
+    const isImage = file.type.startsWith("image/");
+    const kind = isVideo ? "Video" : isImage ? "Image" : "File";
+    const fix = isVideo
+      ? "Trim the clip, re-export at a lower bitrate, or downscale to 1080p before retrying."
+      : isImage
+      ? "Downscale the resolution or increase JPEG compression before retrying."
+      : "Compress it before retrying.";
+    return `${kind} is ${fileDisplay} — UniPost caps managed uploads at ${capDisplay}. ${fix}`;
   }
   if (raw === "TIKTOK_VIDEO_TOO_LONG") {
     return "Video was rejected because it was too long for the TikTok account that was selected. Retry now that TikTok is unselected, or pick a shorter video.";
   }
   return raw;
+}
+
+function formatBytesHuman(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)} GB`;
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
 function MediaPreviewDialog({
