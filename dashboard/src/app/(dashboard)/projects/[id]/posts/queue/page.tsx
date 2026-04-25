@@ -52,6 +52,50 @@ function badge(status: string) {
   return <span className={`dbadge ${cls}`}>{status}</span>;
 }
 
+// Dead jobs come in two flavors and the UI used to render both as "—"
+// in the Next Retry column, which made non-retriable failures look
+// like the queue had silently given up. Split them so each case is
+// obvious at a glance.
+function nextRetryCell(job: PostDeliveryJob) {
+  if (job.next_run_at) {
+    return new Date(job.next_run_at).toLocaleString();
+  }
+  if (job.state === "dead") {
+    if (job.attempts >= job.max_attempts) {
+      return (
+        <span
+          style={{ color: "var(--dmuted)" }}
+          title="All retry attempts were used. Use Retry now to start a fresh attempt."
+        >
+          Retries exhausted
+        </span>
+      );
+    }
+    return (
+      <span
+        style={{ color: "var(--danger)" }}
+        title="The platform returned a non-retriable error (bad input, permission denied, app not yet audited, etc.). The queue stopped early because retrying would just repeat the same failure. Fix the underlying issue and use Retry now."
+      >
+        Won&apos;t retry — non-retriable
+      </span>
+    );
+  }
+  return "—";
+}
+
+function attemptsCell(job: PostDeliveryJob) {
+  const label = `${job.attempts}/${job.max_attempts}`;
+  if (job.state === "dead" && job.attempts < job.max_attempts) {
+    return (
+      <span title="Stopped early — the platform returned a non-retriable error">
+        {label}{" "}
+        <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>(stopped)</span>
+      </span>
+    );
+  }
+  return label;
+}
+
 export default function QueuePage() {
   const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
@@ -229,8 +273,8 @@ export default function QueuePage() {
                     <td>{job.platform || "unknown"}</td>
                     <td>{badge(job.state)}</td>
                     <td>{job.failure_stage || (job.kind === "retry" ? "Retry queue" : job.state === "running" ? "Dispatching" : "Queued")}</td>
-                    <td>{job.attempts}/{job.max_attempts}</td>
-                    <td>{job.next_run_at ? new Date(job.next_run_at).toLocaleString() : "—"}</td>
+                    <td>{attemptsCell(job)}</td>
+                    <td>{nextRetryCell(job)}</td>
                     <td style={{ maxWidth: 360 }}>{job.last_error || "—"}</td>
                     <td>
                       <div className="queue-actions">
