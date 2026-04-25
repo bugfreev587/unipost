@@ -1,5 +1,13 @@
 export const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "support@unipost.dev";
-export const SUPPORT_SLACK_URL = process.env.NEXT_PUBLIC_SUPPORT_SLACK_URL || "";
+// Public Discord invite URL — set NEXT_PUBLIC_SUPPORT_DISCORD_URL to a
+// permanent invite from Discord (Server icon → Invite People → Edit
+// invite link → Expire after: Never, Max uses: No limit). Falls back
+// to the legacy NEXT_PUBLIC_SUPPORT_SLACK_URL while existing
+// deployments roll over to the new var.
+export const SUPPORT_DISCORD_URL =
+  process.env.NEXT_PUBLIC_SUPPORT_DISCORD_URL ||
+  process.env.NEXT_PUBLIC_SUPPORT_SLACK_URL ||
+  "";
 
 type SupportEmailOptions = {
   subject: string;

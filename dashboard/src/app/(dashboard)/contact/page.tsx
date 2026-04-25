@@ -3,7 +3,7 @@
 import { Suspense, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Bug, Lightbulb, HelpCircle, Mail, MessageSquareText } from "lucide-react";
-import { buildSupportMailto, SUPPORT_EMAIL, SUPPORT_SLACK_URL } from "@/lib/support";
+import { buildSupportMailto, SUPPORT_EMAIL, SUPPORT_DISCORD_URL } from "@/lib/support";
 
 const CONTACT_OPTIONS = [
   {
@@ -74,7 +74,7 @@ function ContactPageContent() {
           Get help fast
         </h1>
         <p style={{ fontSize: 14, color: "var(--dmuted)", lineHeight: 1.7 }}>
-          Report a bug, request a feature, ask a question, or join the Slack community.
+          Report a bug, request a feature, ask a question, or join the Discord community.
         </p>
       </div>
 
@@ -198,14 +198,14 @@ function ContactPageContent() {
           >
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <MessageSquareText style={{ width: 16, height: 16, color: "var(--daccent)" }} />
-              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--dtext)" }}>Slack community</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--dtext)" }}>Discord community</div>
             </div>
             <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.6, marginBottom: 12 }}>
-              Join the UniPost Slack workspace for help, feedback, and product updates. After joining, use #help-and-feedback for discussion and follow #announcements for fixes, releases, and known issues.
+              Join the UniPost Discord server for help, feedback, and product updates. After joining, use #help-and-feedback for discussion and follow #announcements for fixes, releases, and known issues.
             </div>
-            {SUPPORT_SLACK_URL ? (
+            {SUPPORT_DISCORD_URL ? (
               <a
-                href={SUPPORT_SLACK_URL}
+                href={SUPPORT_DISCORD_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{
@@ -221,11 +221,11 @@ function ContactPageContent() {
                   fontWeight: 600,
                 }}
               >
-                Join Slack Community
+                Join Discord Community
               </a>
             ) : (
               <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
-                Set `NEXT_PUBLIC_SUPPORT_SLACK_URL` to enable the join button.
+                Set `NEXT_PUBLIC_SUPPORT_DISCORD_URL` to enable the join button.
               </div>
             )}
           </div>
