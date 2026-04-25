@@ -390,15 +390,17 @@ export default function ProjectWebhooksPage() {
                 <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
                   <Plus style={{ width: 14, height: 14 }} /> New webhook
                 </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
+                <DialogContent
+                  className="!max-w-[680px] sm:!max-w-[680px] !p-0 !gap-0 flex flex-col max-h-[min(88vh,820px)] overflow-hidden"
+                >
+                  <DialogHeader className="px-6 pt-6 pb-4 border-b border-[var(--dborder)] gap-1.5">
                     <DialogTitle>{editing ? "Edit webhook" : "Create webhook"}</DialogTitle>
                     <DialogDescription>
                       Choose the destination URL and the event set UniPost should deliver.
                     </DialogDescription>
                   </DialogHeader>
 
-                  <div style={{ padding: "8px 0", display: "grid", gap: 18 }}>
+                  <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5" style={{ display: "grid", gap: 18 }}>
                     <div>
                       <label className="dform-label">Name</label>
                       <input
@@ -419,8 +421,8 @@ export default function ProjectWebhooksPage() {
                         onChange={(e) => setURL(e.target.value)}
                       />
                       <div className="dt-micro" style={{ marginTop: 8, color: "var(--dmuted)" }}>
-                        Use an HTTPS endpoint you control. UniPost signs every request with
-                        <code style={{ marginLeft: 4, fontFamily: "var(--font-geist-mono, monospace)" }}>
+                        Use an HTTPS endpoint you control. UniPost signs every request with{" "}
+                        <code style={{ fontFamily: "var(--font-geist-mono, monospace)" }}>
                           X-UniPost-Signature
                         </code>.
                       </div>
@@ -471,7 +473,13 @@ export default function ProjectWebhooksPage() {
 
                     <div>
                       <label className="dform-label">Events</label>
-                      <div style={{ display: "grid", gap: 12 }}>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                          gap: 12,
+                        }}
+                      >
                         {GROUPS.map((group) => (
                           <div
                             key={group}
@@ -480,22 +488,25 @@ export default function ProjectWebhooksPage() {
                               borderRadius: 12,
                               background: "var(--surface2)",
                               overflow: "hidden",
+                              display: "flex",
+                              flexDirection: "column",
                             }}
                           >
                             <div
                               style={{
                                 padding: "10px 14px",
                                 borderBottom: "1px solid var(--dborder)",
-                                fontSize: 12,
+                                fontSize: 11,
                                 fontWeight: 700,
-                                letterSpacing: ".08em",
+                                letterSpacing: ".09em",
                                 textTransform: "uppercase",
                                 color: "var(--dmuted2)",
+                                background: "color-mix(in srgb, var(--surface) 64%, var(--surface2))",
                               }}
                             >
                               {group}
                             </div>
-                            <div style={{ display: "grid", gap: 8, padding: 12 }}>
+                            <div style={{ display: "grid", gap: 8, padding: 10 }}>
                               {EVENT_OPTIONS.filter((option) => option.group === group).map((option) => {
                                 const checked = events.includes(option.id);
                                 return (
@@ -507,21 +518,22 @@ export default function ProjectWebhooksPage() {
                                       gap: 10,
                                       padding: "10px 12px",
                                       borderRadius: 10,
-                                      border: checked ? "1px solid rgba(59,130,246,.28)" : "1px solid var(--dborder)",
+                                      border: checked ? "1px solid rgba(59,130,246,.36)" : "1px solid var(--dborder)",
                                       background: checked ? "rgba(59,130,246,.08)" : "var(--surface)",
                                       cursor: "pointer",
+                                      transition: "border-color .12s ease, background .12s ease",
                                     }}
                                   >
                                     <input
                                       type="checkbox"
                                       checked={checked}
                                       onChange={() => toggleEvent(option.id)}
-                                      style={{ marginTop: 2 }}
+                                      style={{ marginTop: 2, flex: "none" }}
                                     />
-                                    <div>
+                                    <div style={{ minWidth: 0 }}>
                                       <div
                                         style={{
-                                          fontSize: 13,
+                                          fontSize: 12.5,
                                           fontWeight: 600,
                                           color: "var(--dtext)",
                                           fontFamily: "var(--font-geist-mono, monospace)",
@@ -529,7 +541,7 @@ export default function ProjectWebhooksPage() {
                                       >
                                         {option.title}
                                       </div>
-                                      <div style={{ fontSize: 12.5, color: "var(--dmuted)", lineHeight: 1.55, marginTop: 4 }}>
+                                      <div style={{ fontSize: 12, color: "var(--dmuted)", lineHeight: 1.5, marginTop: 4 }}>
                                         {option.description}
                                       </div>
                                     </div>
@@ -543,7 +555,7 @@ export default function ProjectWebhooksPage() {
                     </div>
                   </div>
 
-                  <DialogFooter>
+                  <DialogFooter className="!m-0 px-6 py-4 border-t border-[var(--dborder)] bg-[var(--surface2)]">
                     <button
                       className="dbtn dbtn-ghost"
                       onClick={() => {
