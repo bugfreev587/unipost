@@ -386,41 +386,37 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <div style={{ padding: "0 10px 10px" }}>
           <Link
             href={supportHref}
+            title="Get help with failed actions, billing, or account issues"
             style={{
               display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-              padding: "12px 12px",
-              borderRadius: 12,
-              border: "1px solid rgba(59,130,246,0.24)",
-              background: "linear-gradient(180deg, rgba(59,130,246,0.14), rgba(59,130,246,0.08))",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: "1px solid color-mix(in srgb, var(--daccent) 22%, var(--dborder))",
+              background: "color-mix(in srgb, var(--daccent) 8%, transparent)",
               color: "var(--dtext)",
               textDecoration: "none",
+              fontSize: 13,
+              fontWeight: 500,
+              transition: "background 0.12s ease, border-color 0.12s ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "color-mix(in srgb, var(--daccent) 14%, transparent)";
+              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--daccent) 38%, var(--dborder))";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "color-mix(in srgb, var(--daccent) 8%, transparent)";
+              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--daccent) 22%, var(--dborder))";
             }}
           >
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 10,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "rgba(59,130,246,0.18)",
-                color: "#93c5fd",
-                flexShrink: 0,
-              }}
-            >
-              <Mail style={{ width: 16, height: 16 }} strokeWidth={1.75} />
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <div className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)" }}>
-                Contact support
-              </div>
-              <div className="dt-micro" style={{ color: "var(--dmuted)", lineHeight: 1.5, marginTop: 2 }}>
-                Get help with failed actions, billing, or account issues.
-              </div>
-            </div>
+            <Mail
+              style={{ width: 14, height: 14, color: "var(--daccent)", flexShrink: 0 }}
+              strokeWidth={1.75}
+            />
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              Contact support
+            </span>
           </Link>
         </div>
 

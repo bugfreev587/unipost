@@ -87,8 +87,17 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-search svg{color:var(--dmuted2);flex-shrink:0}
 .posts-select{background:var(--surface2);border:1px solid var(--dborder);border-radius:10px;padding:0 12px;height:38px;color:var(--dtext);font-size:14px;font-family:inherit;cursor:pointer;outline:none}
 .posts-select:focus{border-color:var(--daccent)}
-.posts-row{cursor:pointer;transition:background .1s}
-.posts-row:hover{background:var(--surface2)}
+.posts-row{cursor:pointer;transition:background .12s ease, box-shadow .12s ease}
+/* Hover state — needs to read clearly in both themes. The flat
+   --surface2 value we used before changed luminance by only a few
+   percent and was barely visible. Switch to an accent-tinted mix
+   so the hover pulses with the brand green at low opacity, which
+   stays legible against either light (white) or dark (#0f0f0f)
+   surfaces. The inset box-shadow on every cell adds a subtle bar
+   on the left edge as an extra affordance — applied per-cell
+   because <tr> doesn't reliably accept box-shadow across browsers. */
+.posts-row:hover>td{background:color-mix(in srgb, var(--daccent) 9%, var(--surface))}
+.posts-row:hover>td:first-child{box-shadow:inset 3px 0 0 var(--daccent)}
 .posts-caption{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px;font-size:15px;line-height:1.5;color:var(--dtext);font-weight:500}
 .posts-plats{display:flex;gap:3px;align-items:center}
 .posts-plats-more{font-size:11.5px;color:var(--dmuted2);font-weight:600}
