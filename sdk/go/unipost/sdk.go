@@ -20,7 +20,7 @@ import (
 const (
 	defaultBaseURL = "https://api.unipost.dev"
 	defaultTimeout = 30 * time.Second
-	sdkVersion     = "0.2.0-local"
+	sdkVersion     = "0.2.4"
 )
 
 type Option func(*Client)

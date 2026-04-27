@@ -77,7 +77,7 @@ function parseApiError(status, body) {
 }
 
 const MAX_RETRIES = 2;
-const SDK_VERSION = "@unipost/sdk/0.2.0-local";
+const SDK_VERSION = "@unipost/sdk/0.2.4";
 
 class HttpClient {
   constructor(options) {

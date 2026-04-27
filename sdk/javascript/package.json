@@ -1,6 +1,6 @@
 {
   "name": "@unipost/sdk",
-  "version": "0.2.0-local",
+  "version": "0.2.4",
   "type": "module",
   "exports": {
     ".": {

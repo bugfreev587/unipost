@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-__version__ = "0.2.0-local"
+__version__ = "0.2.4"
 
 
 class UniPostError(Exception):
