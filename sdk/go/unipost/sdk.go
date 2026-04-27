@@ -52,6 +52,7 @@ type Client struct {
 	Platforms           *PlatformsService
 	Plans               *PlansService
 	PlatformCredentials *PlatformCredentialsService
+	APIKeys             *APIKeysService
 	Posts               *PostsService
 	DeliveryJobs        *DeliveryJobsService
 	Media               *MediaService
@@ -78,6 +79,7 @@ func NewClient(opts ...Option) *Client {
 	client.Platforms = &PlatformsService{client: client}
 	client.Plans = &PlansService{client: client}
 	client.PlatformCredentials = &PlatformCredentialsService{client: client}
+	client.APIKeys = &APIKeysService{client: client}
 	client.Posts = &PostsService{client: client}
 	client.DeliveryJobs = &DeliveryJobsService{client: client}
 	client.Media = &MediaService{client: client}
@@ -563,24 +565,76 @@ type PaginatedPlatformCredentials struct {
 	Meta PageMeta
 }
 
-func (s *PlatformCredentialsService) Create(ctx context.Context, workspaceID string, params *CreatePlatformCredentialParams) (*PlatformCredential, error) {
+func (s *PlatformCredentialsService) Create(ctx context.Context, params *CreatePlatformCredentialParams) (*PlatformCredential, error) {
 	var envelope apiEnvelope[PlatformCredential]
-	if err := s.client.do(ctx, http.MethodPost, "/v1/workspaces/"+workspaceID+"/platform-credentials", nil, params, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodPost, "/v1/platform-credentials", nil, params, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
 }
 
-func (s *PlatformCredentialsService) List(ctx context.Context, workspaceID string) (*PaginatedPlatformCredentials, error) {
+func (s *PlatformCredentialsService) List(ctx context.Context) (*PaginatedPlatformCredentials, error) {
 	var envelope apiEnvelope[[]PlatformCredential]
-	if err := s.client.do(ctx, http.MethodGet, "/v1/workspaces/"+workspaceID+"/platform-credentials", nil, nil, &envelope, nil); err != nil {
+	if err := s.client.do(ctx, http.MethodGet, "/v1/platform-credentials", nil, nil, &envelope, nil); err != nil {
 		return nil, err
 	}
 	return &PaginatedPlatformCredentials{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
 }
 
-func (s *PlatformCredentialsService) Delete(ctx context.Context, workspaceID, platform string) error {
-	return s.client.do(ctx, http.MethodDelete, "/v1/workspaces/"+workspaceID+"/platform-credentials/"+platform, nil, nil, nil, nil)
+func (s *PlatformCredentialsService) Delete(ctx context.Context, platform string) error {
+	return s.client.do(ctx, http.MethodDelete, "/v1/platform-credentials/"+platform, nil, nil, nil, nil)
+}
+
+// API keys ────────────────────────────────────────────────────────────
+
+type APIKey struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Prefix      string     `json:"prefix"`
+	Environment string     `json:"environment"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+}
+
+type CreatedAPIKey struct {
+	APIKey
+	Key string `json:"key"`
+}
+
+type CreateAPIKeyParams struct {
+	Name        string `json:"name"`
+	Environment string `json:"environment,omitempty"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+}
+
+type APIKeysService struct {
+	client *Client
+}
+
+type PaginatedAPIKeys struct {
+	Data []APIKey
+	Meta PageMeta
+}
+
+func (s *APIKeysService) List(ctx context.Context) (*PaginatedAPIKeys, error) {
+	var envelope apiEnvelope[[]APIKey]
+	if err := s.client.do(ctx, http.MethodGet, "/v1/api-keys", nil, nil, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &PaginatedAPIKeys{Data: envelope.Data, Meta: pageMetaFromEnvelope(envelope)}, nil
+}
+
+func (s *APIKeysService) Create(ctx context.Context, params *CreateAPIKeyParams) (*CreatedAPIKey, error) {
+	var envelope apiEnvelope[CreatedAPIKey]
+	if err := s.client.do(ctx, http.MethodPost, "/v1/api-keys", nil, params, &envelope, nil); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (s *APIKeysService) Revoke(ctx context.Context, keyID string) error {
+	return s.client.do(ctx, http.MethodDelete, "/v1/api-keys/"+keyID, nil, nil, nil, nil)
 }
 
 type PlatformResult struct {

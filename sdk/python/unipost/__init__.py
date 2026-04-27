@@ -240,10 +240,10 @@ class PlatformCredentialsAPI:
     def __init__(self, http: _HttpClient):
         self._http = http
 
-    def create(self, workspace_id: str, *, platform: str, client_id: str, client_secret: str):
+    def create(self, *, platform: str, client_id: str, client_secret: str):
         payload = self._http.request(
             "POST",
-            f"/v1/workspaces/{workspace_id}/platform-credentials",
+            "/v1/platform-credentials",
             json_body={
                 "platform": platform,
                 "client_id": client_id,
@@ -252,14 +252,36 @@ class PlatformCredentialsAPI:
         )
         return _wrap(payload["data"])
 
-    def list(self, workspace_id: str):
-        payload = self._http.request("GET", f"/v1/workspaces/{workspace_id}/platform-credentials")
+    def list(self):
+        payload = self._http.request("GET", "/v1/platform-credentials")
         payload["data"] = [_wrap(item) for item in payload.get("data", [])]
         return payload
 
-    def delete(self, workspace_id: str, platform: str):
-        payload = self._http.request("DELETE", f"/v1/workspaces/{workspace_id}/platform-credentials/{platform}")
+    def delete(self, platform: str):
+        payload = self._http.request("DELETE", f"/v1/platform-credentials/{platform}")
         return _wrap(payload.get("data", payload))
+
+
+class ApiKeysAPI:
+    def __init__(self, http: _HttpClient):
+        self._http = http
+
+    def list(self):
+        payload = self._http.request("GET", "/v1/api-keys")
+        payload["data"] = [_wrap(item) for item in payload.get("data", [])]
+        return payload
+
+    def create(self, *, name: str, environment: Optional[str] = None, expires_at: Optional[str] = None):
+        payload = self._http.request(
+            "POST",
+            "/v1/api-keys",
+            json_body=_compact({"name": name, "environment": environment, "expires_at": expires_at}),
+        )
+        return _wrap(payload["data"])
+
+    def revoke(self, key_id: str):
+        self._http.request("DELETE", f"/v1/api-keys/{key_id}")
+        return None
 
 
 class PostsAPI:
@@ -594,6 +616,7 @@ class UniPost:
         self.platforms = PlatformsAPI(http)
         self.plans = PlansAPI(http)
         self.platform_credentials = PlatformCredentialsAPI(http)
+        self.api_keys = ApiKeysAPI(http)
         self.posts = PostsAPI(http)
         self.delivery_jobs = DeliveryJobsAPI(http)
         self.media = MediaAPI(http)

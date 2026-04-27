@@ -444,9 +444,36 @@ declare class Plans {
 
 declare class PlatformCredentials {
   constructor(http: unknown);
-  create(workspaceId: string, params: CreatePlatformCredentialParams): Promise<PlatformCredential>;
-  list(workspaceId: string): Promise<PaginatedResponse<PlatformCredential>>;
-  delete(workspaceId: string, platform: string): Promise<Record<string, unknown> | undefined>;
+  create(params: CreatePlatformCredentialParams): Promise<PlatformCredential>;
+  list(): Promise<PaginatedResponse<PlatformCredential>>;
+  delete(platform: string): Promise<Record<string, unknown> | undefined>;
+}
+
+interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  environment: "production" | "test";
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+}
+
+interface CreatedApiKey extends ApiKey {
+  key: string;
+}
+
+interface CreateApiKeyParams {
+  name: string;
+  environment?: "production" | "test";
+  expiresAt?: string;
+}
+
+declare class ApiKeys {
+  constructor(http: unknown);
+  list(): Promise<PaginatedResponse<ApiKey>>;
+  create(params: CreateApiKeyParams): Promise<CreatedApiKey>;
+  revoke(keyId: string): Promise<void>;
 }
 
 declare class Posts {
@@ -532,6 +559,7 @@ declare class UniPost {
   readonly platforms: Platforms;
   readonly plans: Plans;
   readonly platformCredentials: PlatformCredentials;
+  readonly apiKeys: ApiKeys;
   readonly posts: Posts;
   readonly deliveryJobs: DeliveryJobs;
   readonly media: Media;

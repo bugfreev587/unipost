@@ -376,8 +376,8 @@ class PlatformCredentials {
     this.http = http;
   }
 
-  async create(workspaceId, params = {}) {
-    const response = await this.http.post(`/v1/workspaces/${workspaceId}/platform-credentials`, {
+  async create(params = {}) {
+    const response = await this.http.post(`/v1/platform-credentials`, {
       platform: params.platform,
       client_id: params.clientId,
       client_secret: params.clientSecret,
@@ -385,13 +385,35 @@ class PlatformCredentials {
     return response.data;
   }
 
-  async list(workspaceId) {
-    return this.http.get(`/v1/workspaces/${workspaceId}/platform-credentials`);
+  async list() {
+    return this.http.get(`/v1/platform-credentials`);
   }
 
-  async delete(workspaceId, platform) {
-    const response = await this.http.delete(`/v1/workspaces/${workspaceId}/platform-credentials/${platform}`);
+  async delete(platform) {
+    const response = await this.http.delete(`/v1/platform-credentials/${platform}`);
     return response?.data ?? response;
+  }
+}
+
+class ApiKeys {
+  constructor(http) {
+    this.http = http;
+  }
+
+  async list() {
+    return this.http.get("/v1/api-keys");
+  }
+
+  async create(params = {}) {
+    const body = { name: params.name };
+    if (params.environment !== undefined) body.environment = params.environment;
+    if (params.expiresAt !== undefined) body.expires_at = params.expiresAt;
+    const response = await this.http.post("/v1/api-keys", body);
+    return response.data;
+  }
+
+  async revoke(keyId) {
+    await this.http.delete(`/v1/api-keys/${keyId}`);
   }
 }
 
@@ -748,6 +770,7 @@ class UniPost {
     this.platforms = new Platforms(http);
     this.plans = new Plans(http);
     this.platformCredentials = new PlatformCredentials(http);
+    this.apiKeys = new ApiKeys(http);
     this.posts = new Posts(http);
     this.deliveryJobs = new DeliveryJobs(http);
     this.media = new Media(http);
