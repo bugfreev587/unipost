@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+__version__ = "0.2.0-local"
+
 
 class UniPostError(Exception):
     def __init__(self, message: str, status: int = 0, code: str = ""):
@@ -76,7 +78,7 @@ class _HttpClient:
             json=json_body,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
-                "User-Agent": "unipost-python/0.2.0-local",
+                "User-Agent": f"unipost-python/{__version__}",
                 **(headers or {}),
             },
             timeout=self.timeout,

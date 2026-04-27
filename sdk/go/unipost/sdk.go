@@ -20,6 +20,7 @@ import (
 const (
 	defaultBaseURL = "https://api.unipost.dev"
 	defaultTimeout = 30 * time.Second
+	sdkVersion     = "0.2.0-local"
 )
 
 type Option func(*Client)
@@ -169,7 +170,7 @@ func (c *Client) do(ctx context.Context, method, path string, query map[string]s
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("User-Agent", "sdk-go/0.2.0-local")
+	req.Header.Set("User-Agent", "sdk-go/"+sdkVersion)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
