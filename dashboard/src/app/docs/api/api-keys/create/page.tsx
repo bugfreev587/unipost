@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
@@ -8,7 +9,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const PATH_FIELDS: ApiFieldItem[] = [
-  { name: "workspace_id", type: "string", description: "Workspace that will own the new API key." },
+  { name: "workspace_id", type: "string", description: <>Workspace that will own the new API key. <Link href="/docs/api/workspaces/list">[get your workspace_id]</Link></> },
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [

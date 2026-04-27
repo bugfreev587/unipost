@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import type { ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
@@ -9,12 +8,16 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const PATH_FIELDS: ApiFieldItem[] = [
-  { name: "workspace_id", type: "string", description: <>Workspace that owns the API key. <Link href="/docs/api/workspaces/list">[get your workspace_id]</Link></> },
-  { name: "key_id", type: "string", description: "API key record ID to revoke." },
+  { name: "workspace_id", type: "string", description: "Workspace to fetch." },
 ];
 
-const RESPONSE_204_FIELDS: ApiFieldItem[] = [
-  { name: "status", type: "204 No Content", description: "The API key was revoked successfully and no response body is returned." },
+const RESPONSE_200_FIELDS: ApiFieldItem[] = [
+  { name: "id", type: "string", description: "Workspace ID." },
+  { name: "name", type: "string", description: "Human-readable workspace name." },
+  { name: "per_account_monthly_limit", type: "number | null", description: "Optional per-account monthly publish quota." },
+  { name: "usage_modes", type: "string[]", description: 'Active usage modes such as "publishing" or "agentic".' },
+  { name: "created_at", type: "string", description: "Creation timestamp." },
+  { name: "updated_at", type: "string", description: "Last update timestamp." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
@@ -28,7 +31,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl -X DELETE "https://api.unipost.dev/v1/workspaces/ws_123/api-keys/key_123" \\
+    code: `curl "https://api.unipost.dev/v1/workspaces/ws_123" \\
   -H "Cookie: __session=<clerk-session-cookie>"`,
   },
 ];
@@ -36,32 +39,34 @@ const SNIPPETS = [
 const RESPONSE_SNIPPETS = [
   {
     lang: "json",
-    label: "404",
+    label: "200",
     code: `{
-  "error": {
-    "code": "NOT_FOUND",
-    "normalized_code": "not_found",
-    "message": "API key not found"
-  },
-  "request_id": "req_123"
+  "data": {
+    "id": "ws_123",
+    "name": "Acme",
+    "per_account_monthly_limit": null,
+    "usage_modes": ["publishing"],
+    "created_at": "2026-01-04T10:00:00Z",
+    "updated_at": "2026-04-23T18:00:00Z"
+  }
 }`,
   },
 ];
 
-export default function DeleteApiKeyPage() {
+export default function GetWorkspacePage() {
   return (
     <SingleEndpointReferencePage
       section="core"
-      title="Delete API key"
-      description="Revokes one API key from a workspace in the dashboard. After deletion, the key can no longer authenticate requests."
-      method="DELETE"
-      path="/v1/workspaces/:workspace_id/api-keys/:key_id"
+      title="Get workspace"
+      description="Returns one workspace by ID. The caller must own the workspace; otherwise the route returns 404. This is a Clerk session route used by the dashboard, not a Bearer API key route."
+      method="GET"
+      path="/v1/workspaces/:workspace_id"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },
       ]}
       responses={[
-        { code: "204", fields: RESPONSE_204_FIELDS },
+        { code: "200", fields: RESPONSE_200_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
         { code: "404", fields: ERROR_FIELDS },
         { code: "500", fields: ERROR_FIELDS },

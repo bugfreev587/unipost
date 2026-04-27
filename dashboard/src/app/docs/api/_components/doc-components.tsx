@@ -42,6 +42,8 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^GET \/v1\/(?:posts|social-posts)\/[^/]+\/analytics$/i, href: "/docs/api/analytics/posts" },
   { match: /^GET \/v1\/(?:posts|social-posts)\/[^/]+$/i, href: "/docs/api/posts/get" },
   { match: /^GET \/v1\/(?:posts|social-posts)$/i, href: "/docs/api/posts/list" },
+  { match: /^GET \/v1\/workspaces$/i, href: "/docs/api/workspaces/list" },
+  { match: /^GET \/v1\/workspaces\/[^/]+$/i, href: "/docs/api/workspaces/get" },
   { match: /^GET \/v1\/profiles$/i, href: "/docs/api/profiles/list" },
   { match: /^POST \/v1\/profiles$/i, href: "/docs/api/profiles/create" },
   { match: /^GET \/v1\/profiles\/[^/]+$/i, href: "/docs/api/profiles/get" },
