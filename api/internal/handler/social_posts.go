@@ -1998,27 +1998,10 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, map[string]bool{"deleted": true})
 }
 
-// getWorkspaceID extracts workspace ID from API key context or URL param (dashboard routes).
+// getWorkspaceID returns the workspace ID stamped into the request
+// context by DualAuthMiddleware.
 func (h *SocialPostHandler) getWorkspaceID(r *http.Request) string {
-	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
-		return pid
-	}
-	workspaceID := chi.URLParam(r, "workspaceID")
-	if workspaceID == "" {
-		return ""
-	}
-	userID := auth.GetUserID(r.Context())
-	if userID == "" {
-		return ""
-	}
-	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID:     workspaceID,
-		UserID: userID,
-	})
-	if err != nil {
-		return ""
-	}
-	return workspaceID
+	return auth.GetWorkspaceID(r.Context())
 }
 
 // fbMediaTypeFromOptions pulls the Facebook publish-surface selector

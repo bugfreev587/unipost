@@ -26,22 +26,11 @@ func NewProfileHandler(queries *db.Queries) *ProfileHandler {
 	return &ProfileHandler{queries: queries}
 }
 
-// resolveWorkspaceID returns the workspace ID from the URL param if
-// present, otherwise looks up the user's default workspace. Returns
-// empty string if no workspace found.
+// resolveWorkspaceID reads the workspace ID stamped into the request
+// context by DualAuthMiddleware (API-key path → key's workspace; Clerk
+// path → user's default workspace).
 func (h *ProfileHandler) resolveWorkspaceID(r *http.Request) string {
-	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
-		return workspaceID
-	}
-	if wid := chi.URLParam(r, "workspaceID"); wid != "" {
-		return wid
-	}
-	userID := auth.GetUserID(r.Context())
-	workspaces, err := h.queries.ListWorkspacesByUser(r.Context(), userID)
-	if err != nil || len(workspaces) == 0 {
-		return ""
-	}
-	return workspaces[0].ID
+	return auth.GetWorkspaceID(r.Context())
 }
 
 type profileResponse struct {

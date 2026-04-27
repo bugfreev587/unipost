@@ -29,7 +29,7 @@ import (
 
 // RetryResult handles
 //
-//	POST /v1/workspaces/{workspaceID}/social-posts/{id}/results/{resultID}/retry
+//	POST /v1/posts/{id}/results/{resultID}/retry
 //
 // Only rows with status='failed' may be retried — a published or
 // processing row returns 409 so we can't accidentally double-publish

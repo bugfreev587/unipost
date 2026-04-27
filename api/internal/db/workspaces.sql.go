@@ -46,6 +46,25 @@ func (q *Queries) DeleteWorkspace(ctx context.Context, id string) error {
 	return err
 }
 
+const getDefaultWorkspaceForUser = `-- name: GetDefaultWorkspaceForUser :one
+SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1
+`
+
+func (q *Queries) GetDefaultWorkspaceForUser(ctx context.Context, userID string) (Workspace, error) {
+	row := q.db.QueryRow(ctx, getDefaultWorkspaceForUser, userID)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.PerAccountMonthlyLimit,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UsageModes,
+	)
+	return i, err
+}
+
 const getWorkspace = `-- name: GetWorkspace :one
 SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes FROM workspaces WHERE id = $1
 `

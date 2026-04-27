@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
@@ -109,9 +110,9 @@ func toInboxResponse(item db.InboxItem) inboxItemResponse {
 }
 
 // List returns inbox items for a workspace.
-// GET /v1/workspaces/{workspaceID}/inbox?source=ig_comment&is_read=false
+// GET /v1/inbox?source=ig_comment&is_read=false
 func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 
 	params := db.ListInboxItemsByWorkspaceParams{
 		WorkspaceID: workspaceID,
@@ -208,9 +209,9 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // UnreadCount returns the unread count for a workspace.
-// GET /v1/workspaces/{workspaceID}/inbox/unread-count
+// GET /v1/inbox/unread-count
 func (h *InboxHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	count, err := h.queries.CountUnreadByWorkspace(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to count unread")
@@ -220,9 +221,9 @@ func (h *InboxHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get returns a single inbox item.
-// GET /v1/workspaces/{workspaceID}/inbox/{id}
+// GET /v1/inbox/{id}
 func (h *InboxHandler) Get(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	id := chi.URLParam(r, "id")
 
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
@@ -236,9 +237,9 @@ func (h *InboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // MarkRead marks a single inbox item as read.
-// POST /v1/workspaces/{workspaceID}/inbox/{id}/read
+// POST /v1/inbox/{id}/read
 func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	id := chi.URLParam(r, "id")
 
 	if err := h.queries.MarkInboxItemRead(r.Context(), db.MarkInboxItemReadParams{
@@ -251,9 +252,9 @@ func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 }
 
 // MarkAllRead marks all inbox items as read for a workspace.
-// POST /v1/workspaces/{workspaceID}/inbox/mark-all-read
+// POST /v1/inbox/mark-all-read
 func (h *InboxHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	count, err := h.queries.MarkAllInboxItemsRead(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark all read")
@@ -263,9 +264,9 @@ func (h *InboxHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 }
 
 // MediaContext returns media details for a comment's parent post.
-// GET /v1/workspaces/{workspaceID}/inbox/{id}/media-context
+// GET /v1/inbox/{id}/media-context
 func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	id := chi.URLParam(r, "id")
 
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
@@ -393,10 +394,10 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 }
 
 // Reply sends a reply to a comment/DM/thread reply.
-// POST /v1/workspaces/{workspaceID}/inbox/{id}/reply
+// POST /v1/inbox/{id}/reply
 // Body: { "text": "..." }
 func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	id := chi.URLParam(r, "id")
 
 	var body struct {
@@ -546,10 +547,10 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateThreadState persists a thread-level status for a conversation.
-// POST /v1/workspaces/{workspaceID}/inbox/{id}/thread-state
+// POST /v1/inbox/{id}/thread-state
 // Body: { "thread_status": "open" | "assigned" | "resolved", "assigned_to": "..." }
 func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	id := chi.URLParam(r, "id")
 
 	var body struct {
@@ -605,9 +606,9 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 }
 
 // Sync manually fetches comments/replies from all connected IG/Threads accounts.
-// POST /v1/workspaces/{workspaceID}/inbox/sync
+// POST /v1/inbox/sync
 func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 
 	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), workspaceID)
 	if err != nil {

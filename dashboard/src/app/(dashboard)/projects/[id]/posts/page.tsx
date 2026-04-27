@@ -217,7 +217,7 @@ export default function PostsPage() {
       if (!token) return;
       const [a, p, pr] = await Promise.all([
         listSocialAccounts(token, profileId),
-        listSocialPosts(token, workspaceId),
+        listSocialPosts(token),
         listProfiles(token).catch(() => ({ data: [] as Profile[] })),
       ]);
       setAccounts(a.data);
@@ -281,13 +281,13 @@ export default function PostsPage() {
       if (!token) return;
       setActionBusy(true);
       if (action.kind === "archive") {
-        await Promise.all(action.ids.map((id) => archiveSocialPost(token, workspaceId, id)));
+        await Promise.all(action.ids.map((id) => archiveSocialPost(token, id)));
       }
       if (action.kind === "restore") {
-        await Promise.all(action.ids.map((id) => restoreSocialPost(token, workspaceId, id)));
+        await Promise.all(action.ids.map((id) => restoreSocialPost(token, id)));
       }
       if (action.kind === "delete") {
-        await Promise.all(action.ids.map((id) => deleteSocialPost(token, workspaceId, id)));
+        await Promise.all(action.ids.map((id) => deleteSocialPost(token, id)));
       }
       setSelectedPostIds((current) => {
         const next = new Set(current);
@@ -769,7 +769,7 @@ function PostResultCard({
     try {
       const token = await getToken();
       if (!token) return;
-      await retrySocialPostResult(token, workspaceId, post.id, result.id);
+      await retrySocialPostResult(token, post.id, result.id);
       // Parent status may have flipped to published/partial —
       // reload the whole list so every row reflects the latest
       // derivation instead of surgically patching one card.

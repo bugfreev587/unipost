@@ -814,7 +814,7 @@ export function CreatePostDrawer({
       form.updateMediaItem(fingerprint, { progress: 5 });
       const contentHash = await hashFile(file);
       form.updateMediaItem(fingerprint, { progress: 10 });
-      const res = await createMedia(token, workspaceId, {
+      const res = await createMedia(token, {
         filename: file.name,
         content_type: file.type || "application/octet-stream",
         size_bytes: file.size,
@@ -846,7 +846,7 @@ export function CreatePostDrawer({
       });
       // Trigger server-side hydration: HEAD the R2 object, flip status
       // from 'pending' to 'uploaded' so the publish validator accepts it.
-      await getMedia(token, workspaceId, res.data.id);
+      await getMedia(token, res.data.id);
       form.updateMediaItem(fingerprint, { progress: 100, mediaId: res.data.id });
     } catch (err) {
       console.error("Media upload failed:", err);
@@ -860,7 +860,7 @@ export function CreatePostDrawer({
 
     setIsValidating(true);
     try {
-      const res = await validateSocialPost(token, workspaceId, payload);
+      const res = await validateSocialPost(token, payload);
       const result = res.data;
       setValidationResult(result);
       setValidationChecked(true);
@@ -942,7 +942,7 @@ export function CreatePostDrawer({
       form.setSubmitting(true);
       const token = validation.token;
       if (!token) return;
-      const response = await createSocialPost(token, workspaceId, payload);
+      const response = await createSocialPost(token, payload);
       await onCreated(response.data.id);
       // TikTok processes video/photo uploads asynchronously — the
       // Content Posting API audit requires us to tell the user the post
@@ -1014,7 +1014,7 @@ export function CreatePostDrawer({
       if (!token) return;
       const payload = form.buildPayload();
       payload.status = "draft";
-      const response = await createSocialPost(token, workspaceId, payload);
+      const response = await createSocialPost(token, payload);
       await onCreated(response.data.id);
       onOpenChange(false);
     } catch (err) {

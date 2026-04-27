@@ -50,7 +50,7 @@ function BillingSettingsContent() {
       setBillingError(null);
       const token = await getToken();
       if (!token) return;
-      const res = await getBilling(token, workspaceId);
+      const res = await getBilling(token);
       setBilling(res.data);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load billing";
@@ -84,7 +84,7 @@ function BillingSettingsContent() {
       setBillingError(null);
       const token = await getToken();
       if (!token) return;
-      const res = await createCheckout(token, workspaceId, planId);
+      const res = await createCheckout(token, planId);
       window.location.href = res.data.checkout_url;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start billing checkout";
@@ -100,7 +100,7 @@ function BillingSettingsContent() {
       setBillingError(null);
       const token = await getToken();
       if (!token) return;
-      const res = await createPortal(token, workspaceId);
+      const res = await createPortal(token);
       window.location.href = res.data.portal_url;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to open billing portal";

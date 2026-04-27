@@ -175,39 +175,34 @@ export async function listWorkspaces(
 }
 
 export async function getWorkspace(
-  token: string,
-  workspaceId: string
+  token: string
 ): Promise<ApiResponse<Workspace>> {
-  return request(`/v1/workspaces/${workspaceId}`, token);
+  return request(`/v1/workspace`, token);
 }
 
 export async function updateWorkspace(
   token: string,
-  workspaceId: string,
   data: { name: string }
 ): Promise<ApiResponse<Workspace>> {
-  return request(`/v1/workspaces/${workspaceId}`, token, {
+  return request(`/v1/workspace`, token, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
 }
 
 // Profiles (dashboard / Clerk auth).
-// Path is /v1/dashboard/profiles to avoid colliding with the
-// API-key-auth /v1/profiles routes the public SDK uses — both are
-// registered on the same root mux on the backend.
 
 export async function listProfiles(
   token: string
 ): Promise<ApiResponse<Profile[]>> {
-  return request("/v1/dashboard/profiles", token);
+  return request("/v1/profiles", token);
 }
 
 export async function getProfile(
   token: string,
   id: string
 ): Promise<ApiResponse<Profile>> {
-  return request(`/v1/dashboard/profiles/${id}`, token);
+  return request(`/v1/profiles/${id}`, token);
 }
 
 export async function createProfile(
@@ -219,7 +214,7 @@ export async function createProfile(
     branding_primary_color?: string;
   }
 ): Promise<ApiResponse<Profile>> {
-  return request("/v1/dashboard/profiles", token, {
+  return request("/v1/profiles", token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -235,7 +230,7 @@ export async function updateProfile(
     branding_primary_color?: string;
   }
 ): Promise<ApiResponse<Profile>> {
-  return request(`/v1/dashboard/profiles/${id}`, token, {
+  return request(`/v1/profiles/${id}`, token, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
@@ -245,7 +240,7 @@ export async function deleteProfile(
   token: string,
   id: string
 ): Promise<void> {
-  return request(`/v1/dashboard/profiles/${id}`, token, { method: "DELETE" });
+  return request(`/v1/profiles/${id}`, token, { method: "DELETE" });
 }
 
 // Platform credentials (White Label, workspace-scoped)
@@ -258,17 +253,15 @@ export interface PlatformCredential {
 
 export async function listPlatformCredentials(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<PlatformCredential[]>> {
-  return request(`/v1/workspaces/${workspaceId}/platform-credentials`, token);
+  return request(`/v1/platform-credentials`, token);
 }
 
 export async function createPlatformCredential(
   token: string,
-  workspaceId: string,
   data: { platform: string; client_id: string; client_secret: string }
 ): Promise<ApiResponse<PlatformCredential>> {
-  return request(`/v1/workspaces/${workspaceId}/platform-credentials`, token, {
+  return request(`/v1/platform-credentials`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -276,11 +269,10 @@ export async function createPlatformCredential(
 
 export async function deletePlatformCredential(
   token: string,
-  workspaceId: string,
   platform: string
 ): Promise<void> {
   return request(
-    `/v1/workspaces/${workspaceId}/platform-credentials/${platform}`,
+    `/v1/platform-credentials/${platform}`,
     token,
     { method: "DELETE" }
   );
@@ -290,17 +282,15 @@ export async function deletePlatformCredential(
 
 export async function listApiKeys(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<ApiKey[]>> {
-  return request(`/v1/workspaces/${workspaceId}/api-keys`, token);
+  return request(`/v1/api-keys`, token);
 }
 
 export async function createApiKey(
   token: string,
-  workspaceId: string,
   data: { name: string; environment?: string; expires_at?: string }
 ): Promise<ApiResponse<ApiKeyCreateResponse>> {
-  return request(`/v1/workspaces/${workspaceId}/api-keys`, token, {
+  return request(`/v1/api-keys`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -308,10 +298,9 @@ export async function createApiKey(
 
 export async function revokeApiKey(
   token: string,
-  workspaceId: string,
   keyId: string
 ): Promise<void> {
-  return request(`/v1/workspaces/${workspaceId}/api-keys/${keyId}`, token, {
+  return request(`/v1/api-keys/${keyId}`, token, {
     method: "DELETE",
   });
 }
@@ -320,17 +309,15 @@ export async function revokeApiKey(
 
 export async function listWebhooks(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<WebhookSubscription[]>> {
-  return request(`/v1/workspaces/${workspaceId}/webhooks`, token);
+  return request(`/v1/webhooks`, token);
 }
 
 export async function createWebhook(
   token: string,
-  workspaceId: string,
   data: { name: string; url: string; events: string[]; active?: boolean; secret?: string }
 ): Promise<ApiResponse<WebhookCreateResponse>> {
-  return request(`/v1/workspaces/${workspaceId}/webhooks`, token, {
+  return request(`/v1/webhooks`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -338,11 +325,10 @@ export async function createWebhook(
 
 export async function updateWebhook(
   token: string,
-  workspaceId: string,
   webhookId: string,
   data: { name?: string; url?: string; events?: string[]; active?: boolean }
 ): Promise<ApiResponse<WebhookSubscription>> {
-  return request(`/v1/workspaces/${workspaceId}/webhooks/${webhookId}`, token, {
+  return request(`/v1/webhooks/${webhookId}`, token, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
@@ -350,20 +336,18 @@ export async function updateWebhook(
 
 export async function rotateWebhookSecret(
   token: string,
-  workspaceId: string,
   webhookId: string
 ): Promise<ApiResponse<WebhookCreateResponse>> {
-  return request(`/v1/workspaces/${workspaceId}/webhooks/${webhookId}/rotate`, token, {
+  return request(`/v1/webhooks/${webhookId}/rotate`, token, {
     method: "POST",
   });
 }
 
 export async function deleteWebhook(
   token: string,
-  workspaceId: string,
   webhookId: string
 ): Promise<void> {
-  return request(`/v1/workspaces/${workspaceId}/webhooks/${webhookId}`, token, {
+  return request(`/v1/webhooks/${webhookId}`, token, {
     method: "DELETE",
   });
 }
@@ -434,23 +418,21 @@ export interface PendingConnection {
 
 export async function getPendingConnection(
   token: string,
-  workspaceId: string,
   pendingId: string
 ): Promise<ApiResponse<PendingConnection>> {
   return request(
-    `/v1/workspaces/${workspaceId}/pending-connections/${pendingId}`,
+    `/v1/pending-connections/${pendingId}`,
     token
   );
 }
 
 export async function finalizePendingConnection(
   token: string,
-  workspaceId: string,
   pendingId: string,
   pageIds: string[]
 ): Promise<ApiResponse<{ connected_account_ids: string[]; connected_count: number }>> {
   return request(
-    `/v1/workspaces/${workspaceId}/pending-connections/${pendingId}/finalize`,
+    `/v1/pending-connections/${pendingId}/finalize`,
     token,
     { method: "POST", body: JSON.stringify({ page_ids: pageIds }) }
   );
@@ -642,21 +624,18 @@ export interface PostDeliveryJobsSummary {
 
 export async function listSocialPosts(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<SocialPost[]>> {
-  return request(`/v1/workspaces/${workspaceId}/posts`, token);
+  return request(`/v1/posts`, token);
 }
 
 export async function listSocialPostSummaries(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<SocialPostSummary[]>> {
-  return request(`/v1/workspaces/${workspaceId}/posts/summaries`, token);
+  return request(`/v1/posts/summaries`, token);
 }
 
 export async function archiveSocialPost(
   token: string,
-  _workspaceId: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
   return request(`/v1/posts/${postId}`, token, {
@@ -667,7 +646,6 @@ export async function archiveSocialPost(
 
 export async function restoreSocialPost(
   token: string,
-  _workspaceId: string,
   postId: string
 ): Promise<ApiResponse<SocialPost>> {
   return request(`/v1/posts/${postId}`, token, {
@@ -683,12 +661,11 @@ export async function restoreSocialPost(
 // status can flip to "published" or "partial" as a side effect.
 export async function retrySocialPostResult(
   token: string,
-  workspaceId: string,
   postId: string,
   resultId: string
 ): Promise<ApiResponse<SocialPostResult>> {
   return request(
-    `/v1/workspaces/${workspaceId}/posts/${postId}/results/${resultId}/retry`,
+    `/v1/posts/${postId}/results/${resultId}/retry`,
     token,
     { method: "POST" }
   );
@@ -696,54 +673,48 @@ export async function retrySocialPostResult(
 
 export async function deleteSocialPost(
   token: string,
-  workspaceId: string,
   postId: string
 ): Promise<ApiResponse<{ deleted: boolean }>> {
-  return request(`/v1/workspaces/${workspaceId}/posts/${postId}`, token, {
+  return request(`/v1/posts/${postId}`, token, {
     method: "DELETE",
   });
 }
 
 export async function listPostDeliveryJobs(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<PostDeliveryJob[]>> {
-  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs`, token);
+  return request(`/v1/post-delivery-jobs`, token);
 }
 
 export async function getPostDeliveryJobsSummary(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<PostDeliveryJobsSummary>> {
-  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/summary`, token);
+  return request(`/v1/post-delivery-jobs/summary`, token);
 }
 
 export async function retryPostDeliveryJobNow(
   token: string,
-  workspaceId: string,
   jobId: string
 ): Promise<ApiResponse<PostDeliveryJob>> {
-  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/${jobId}/retry`, token, {
+  return request(`/v1/post-delivery-jobs/${jobId}/retry`, token, {
     method: "POST",
   });
 }
 
 export async function cancelPostDeliveryJob(
   token: string,
-  workspaceId: string,
   jobId: string
 ): Promise<ApiResponse<PostDeliveryJob>> {
-  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/${jobId}/cancel`, token, {
+  return request(`/v1/post-delivery-jobs/${jobId}/cancel`, token, {
     method: "POST",
   });
 }
 
 export async function dismissPostDeliveryJob(
   token: string,
-  workspaceId: string,
   jobId: string
 ): Promise<ApiResponse<PostDeliveryJob>> {
-  return request(`/v1/workspaces/${workspaceId}/post-delivery-jobs/${jobId}/dismiss`, token, {
+  return request(`/v1/post-delivery-jobs/${jobId}/dismiss`, token, {
     method: "POST",
   });
 }
@@ -772,17 +743,15 @@ export interface Plan {
 
 export async function getBilling(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<BillingInfo>> {
-  return request(`/v1/workspaces/${workspaceId}/billing`, token);
+  return request(`/v1/billing`, token);
 }
 
 export async function createCheckout(
   token: string,
-  workspaceId: string,
   planId: string
 ): Promise<ApiResponse<{ checkout_url: string }>> {
-  return request(`/v1/workspaces/${workspaceId}/billing/checkout`, token, {
+  return request(`/v1/billing/checkout`, token, {
     method: "POST",
     body: JSON.stringify({ plan_id: planId }),
   });
@@ -790,9 +759,8 @@ export async function createCheckout(
 
 export async function createPortal(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<{ portal_url: string }>> {
-  return request(`/v1/workspaces/${workspaceId}/billing/portal`, token, {
+  return request(`/v1/billing/portal`, token, {
     method: "POST",
   });
 }
@@ -804,10 +772,9 @@ export async function listPlans(): Promise<ApiResponse<Plan[]>> {
 
 export async function createSocialPost(
   token: string,
-  workspaceId: string,
   data: CreateSocialPostPayload
 ): Promise<ApiResponse<SocialPost>> {
-  return request(`/v1/workspaces/${workspaceId}/posts`, token, {
+  return request(`/v1/posts`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -815,10 +782,9 @@ export async function createSocialPost(
 
 export async function validateSocialPost(
   token: string,
-  workspaceId: string,
   data: CreateSocialPostPayload
 ): Promise<ApiResponse<SocialPostValidationResult>> {
-  return request(`/v1/workspaces/${workspaceId}/posts/validate`, token, {
+  return request(`/v1/posts/validate`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -837,18 +803,16 @@ export interface MediaUpload {
 
 export async function getMedia(
   token: string,
-  workspaceId: string,
   mediaId: string
 ): Promise<ApiResponse<MediaUpload>> {
-  return request(`/v1/workspaces/${workspaceId}/media/${mediaId}`, token);
+  return request(`/v1/media/${mediaId}`, token);
 }
 
 export async function createMedia(
   token: string,
-  workspaceId: string,
   data: { filename: string; content_type: string; size_bytes: number; content_hash?: string }
 ): Promise<ApiResponse<MediaUpload>> {
-  return request(`/v1/workspaces/${workspaceId}/media`, token, {
+  return request(`/v1/media`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -1019,12 +983,11 @@ export interface PostAnalytics {
 
 export async function getPostAnalytics(
   token: string,
-  workspaceId: string,
   postId: string,
   opts?: { refresh?: boolean }
 ): Promise<ApiResponse<PostAnalytics[]>> {
   const qs = opts?.refresh ? "?refresh=true" : "";
-  return request(`/v1/workspaces/${workspaceId}/posts/${postId}/analytics${qs}`, token);
+  return request(`/v1/posts/${postId}/analytics${qs}`, token);
 }
 
 // Aggregated analytics (powers the analytics page)
@@ -1101,26 +1064,23 @@ function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string
 
 export async function getAnalyticsSummary(
   token: string,
-  workspaceId: string,
   params?: AnalyticsRangeParams
 ): Promise<ApiResponse<AnalyticsSummary>> {
-  return request(`/v1/workspaces/${workspaceId}/analytics/summary${rangeQuery(params)}`, token);
+  return request(`/v1/analytics/summary${rangeQuery(params)}`, token);
 }
 
 export async function getAnalyticsTrend(
   token: string,
-  workspaceId: string,
   params?: AnalyticsRangeParams & { metric?: string }
 ): Promise<ApiResponse<AnalyticsTrend>> {
-  return request(`/v1/workspaces/${workspaceId}/analytics/trend${rangeQuery(params)}`, token);
+  return request(`/v1/analytics/trend${rangeQuery(params)}`, token);
 }
 
 export async function getAnalyticsByPlatform(
   token: string,
-  workspaceId: string,
   params?: AnalyticsRangeParams
 ): Promise<ApiResponse<PlatformAnalytics[]>> {
-  return request(`/v1/workspaces/${workspaceId}/analytics/by-platform${rangeQuery(params)}`, token);
+  return request(`/v1/analytics/by-platform${rangeQuery(params)}`, token);
 }
 
 // Admin
@@ -1592,29 +1552,26 @@ export interface APIMetricsOverall {
 
 export async function getAPIMetricsSummary(
   token: string,
-  workspaceId: string,
   from: string,
   to: string
 ): Promise<ApiResponse<APIMetricsSummaryRow[]>> {
-  return request(`/v1/workspaces/${workspaceId}/api-metrics/summary?from=${from}&to=${to}`, token);
+  return request(`/v1/api-metrics/summary?from=${from}&to=${to}`, token);
 }
 
 export async function getAPIMetricsTrend(
   token: string,
-  workspaceId: string,
   from: string,
   to: string
 ): Promise<ApiResponse<APIMetricsTrendRow[]>> {
-  return request(`/v1/workspaces/${workspaceId}/api-metrics/trend?from=${from}&to=${to}`, token);
+  return request(`/v1/api-metrics/trend?from=${from}&to=${to}`, token);
 }
 
 export async function getAPIMetricsOverall(
   token: string,
-  workspaceId: string,
   from: string,
   to: string
 ): Promise<ApiResponse<APIMetricsOverall>> {
-  return request(`/v1/workspaces/${workspaceId}/api-metrics/overall?from=${from}&to=${to}`, token);
+  return request(`/v1/api-metrics/overall?from=${from}&to=${to}`, token);
 }
 
 // Inbox
@@ -1645,49 +1602,44 @@ export interface InboxItem {
 
 export async function listInboxItems(
   token: string,
-  workspaceId: string,
   filters?: { source?: string; is_read?: string }
 ): Promise<ApiResponse<InboxItem[]>> {
   const qs = new URLSearchParams();
   if (filters?.source) qs.set("source", filters.source);
   if (filters?.is_read) qs.set("is_read", filters.is_read);
   const q = qs.toString();
-  return request(`/v1/workspaces/${workspaceId}/inbox${q ? `?${q}` : ""}`, token);
+  return request(`/v1/inbox${q ? `?${q}` : ""}`, token);
 }
 
 export async function getInboxUnreadCount(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<{ count: number }>> {
-  return request(`/v1/workspaces/${workspaceId}/inbox/unread-count`, token);
+  return request(`/v1/inbox/unread-count`, token);
 }
 
 export async function markInboxItemRead(
   token: string,
-  workspaceId: string,
   id: string
 ): Promise<void> {
-  return request(`/v1/workspaces/${workspaceId}/inbox/${id}/read`, token, {
+  return request(`/v1/inbox/${id}/read`, token, {
     method: "POST",
   });
 }
 
 export async function markAllInboxRead(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<{ marked: number }>> {
-  return request(`/v1/workspaces/${workspaceId}/inbox/mark-all-read`, token, {
+  return request(`/v1/inbox/mark-all-read`, token, {
     method: "POST",
   });
 }
 
 export async function replyToInboxItem(
   token: string,
-  workspaceId: string,
   id: string,
   text: string
 ): Promise<ApiResponse<InboxItem>> {
-  return request(`/v1/workspaces/${workspaceId}/inbox/${id}/reply`, token, {
+  return request(`/v1/inbox/${id}/reply`, token, {
     method: "POST",
     body: JSON.stringify({ text }),
   });
@@ -1704,19 +1656,17 @@ export interface IGMediaContext {
 
 export async function getInboxMediaContext(
   token: string,
-  workspaceId: string,
   inboxItemId: string
 ): Promise<ApiResponse<IGMediaContext>> {
-  return request(`/v1/workspaces/${workspaceId}/inbox/${inboxItemId}/media-context`, token);
+  return request(`/v1/inbox/${inboxItemId}/media-context`, token);
 }
 
 export async function updateInboxThreadState(
   token: string,
-  workspaceId: string,
   id: string,
   data: { thread_status: "open" | "assigned" | "resolved"; assigned_to?: string }
 ): Promise<ApiResponse<InboxItem>> {
-  return request(`/v1/workspaces/${workspaceId}/inbox/${id}/thread-state`, token, {
+  return request(`/v1/inbox/${id}/thread-state`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -1724,9 +1674,8 @@ export async function updateInboxThreadState(
 
 export async function syncInbox(
   token: string,
-  workspaceId: string
 ): Promise<ApiResponse<{ new_items: number }>> {
-  return request(`/v1/workspaces/${workspaceId}/inbox/sync`, token, {
+  return request(`/v1/inbox/sync`, token, {
     method: "POST",
   });
 }

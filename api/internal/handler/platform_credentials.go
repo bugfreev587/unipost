@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
@@ -28,47 +27,19 @@ type platformCredentialResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// requireWorkspace resolves the workspace id from the URL and
-// validates the caller is allowed to act on it. Supports both auth
-// modes:
-//
-//	Clerk  (Dashboard):  looks up ownership via GetWorkspaceByIDAndOwner
-//	API key (integrator): the middleware has already bound an API key to
-//	                       one workspace; we just enforce the URL matches.
+// requireWorkspace returns the workspace ID stamped into the request
+// context by DualAuthMiddleware (API-key path → key's workspace; Clerk
+// path → user's default workspace).
 func (h *PlatformCredentialHandler) requireWorkspace(r *http.Request, w http.ResponseWriter) (string, bool) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing workspace id")
-		return "", false
-	}
-	if userID := auth.GetUserID(r.Context()); userID != "" {
-		_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-			ID:     workspaceID,
-			UserID: userID,
-		})
-		if err != nil {
-			if err == pgx.ErrNoRows {
-				writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
-				return "", false
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
-			return "", false
-		}
-		return workspaceID, true
-	}
-	boundWsID := auth.GetWorkspaceID(r.Context())
-	if boundWsID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing auth context")
-		return "", false
-	}
-	if boundWsID != workspaceID {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return "", false
 	}
 	return workspaceID, true
 }
 
-// Create handles POST /v1/workspaces/{workspaceID}/platform-credentials
+// Create handles POST /v1/platform-credentials
 func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.requireWorkspace(r, w)
 	if !ok {
@@ -121,7 +92,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// List handles GET /v1/workspaces/{workspaceID}/platform-credentials
+// List handles GET /v1/platform-credentials
 func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.requireWorkspace(r, w)
 	if !ok {
@@ -146,7 +117,7 @@ func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request)
 	writeSuccessWithListMeta(w, result, len(result), len(result))
 }
 
-// Delete handles DELETE /v1/workspaces/{workspaceID}/platform-credentials/{platform}
+// Delete handles DELETE /v1/platform-credentials/{platform}
 func (h *PlatformCredentialHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.requireWorkspace(r, w)
 	if !ok {

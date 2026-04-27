@@ -136,7 +136,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
       }
 
       setIsValidating(true);
-      const validation = await validateSocialPost(token, workspaceId, payload);
+      const validation = await validateSocialPost(token, payload);
       setValidationResult(validation.data);
       setIsValidating(false);
       if (validation.data.errors.length > 0) return;
@@ -146,7 +146,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
       }
 
       setSubmitting(true);
-      await createSocialPost(token, workspaceId, payload);
+      await createSocialPost(token, payload);
       onCreated();
       onClose();
     } catch (err) {

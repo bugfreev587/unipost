@@ -116,9 +116,9 @@ export default function QueuePage() {
         const token = await getToken();
         if (!token || cancelled) return;
         const [jobsRes, summaryRes, postsRes] = await Promise.all([
-          listPostDeliveryJobs(token, workspaceId),
-          getPostDeliveryJobsSummary(token, workspaceId),
-          listSocialPostSummaries(token, workspaceId),
+          listPostDeliveryJobs(token),
+          getPostDeliveryJobsSummary(token),
+          listSocialPostSummaries(token),
         ]);
         if (cancelled) return;
         setJobs(jobsRes.data);
@@ -192,15 +192,15 @@ export default function QueuePage() {
       const token = await getToken();
       if (!token || !workspaceId) return;
       if (action === "retry") {
-        await retryPostDeliveryJobNow(token, workspaceId, job.id);
+        await retryPostDeliveryJobNow(token, job.id);
       } else if (action === "cancel") {
-        await cancelPostDeliveryJob(token, workspaceId, job.id);
+        await cancelPostDeliveryJob(token, job.id);
       } else {
-        await dismissPostDeliveryJob(token, workspaceId, job.id);
+        await dismissPostDeliveryJob(token, job.id);
       }
       const [jobsRes, summaryRes] = await Promise.all([
-        listPostDeliveryJobs(token, workspaceId),
-        getPostDeliveryJobsSummary(token, workspaceId),
+        listPostDeliveryJobs(token),
+        getPostDeliveryJobsSummary(token),
       ]);
       setJobs(jobsRes.data);
       setSummary(summaryRes.data);

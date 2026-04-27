@@ -6,9 +6,9 @@ import type { InboxItem } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-function getWsUrl(workspaceId: string, token: string): string {
+function getWsUrl(token: string): string {
   const base = API_URL.replace(/^http/, "ws");
-  return `${base}/v1/workspaces/${workspaceId}/inbox/ws?token=${token}`;
+  return `${base}/v1/inbox/ws?token=${token}`;
 }
 
 /**
@@ -17,7 +17,7 @@ function getWsUrl(workspaceId: string, token: string): string {
  * so the caller can poll as a fallback when WS is unavailable.
  */
 export function useInboxWebSocket(
-  workspaceId: string | null,
+  enabled: boolean,
   onNewItem: (item: InboxItem) => void,
   onSyncComplete?: () => void
 ): { connected: boolean } {
@@ -33,7 +33,7 @@ export function useInboxWebSocket(
   getTokenRef.current = getToken;
 
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!enabled) return;
 
     mountedRef.current = true;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -65,7 +65,7 @@ export function useInboxWebSocket(
     }
 
     async function connect() {
-      if (!mountedRef.current || !workspaceId) return;
+      if (!mountedRef.current || !enabled) return;
 
       // If we're offline, skip the attempt entirely — waiting for `online`.
       if (typeof navigator !== "undefined" && navigator.onLine === false) {
@@ -84,7 +84,7 @@ export function useInboxWebSocket(
         const token = await getTokenRef.current();
         if (!token || !mountedRef.current) return;
 
-        const ws = new WebSocket(getWsUrl(workspaceId, token));
+        const ws = new WebSocket(getWsUrl(token));
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -163,7 +163,7 @@ export function useInboxWebSocket(
       }
       setConnected(false);
     };
-  }, [workspaceId]); // only re-run when workspace changes
+  }, [enabled]);
 
   return { connected };
 }

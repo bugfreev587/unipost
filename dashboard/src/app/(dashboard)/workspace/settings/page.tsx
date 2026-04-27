@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { listWorkspaces, updateWorkspace, type Workspace } from "@/lib/api";
+import { getWorkspace, updateWorkspace, type Workspace } from "@/lib/api";
 
 export default function WorkspaceSettingsPage() {
   const { getToken } = useAuth();
@@ -16,11 +16,9 @@ export default function WorkspaceSettingsPage() {
       try {
         const token = await getToken();
         if (!token) return;
-        const res = await listWorkspaces(token);
-        if (res.data.length > 0) {
-          setWorkspace(res.data[0]);
-          setName(res.data[0].name);
-        }
+        const res = await getWorkspace(token);
+        setWorkspace(res.data);
+        setName(res.data.name);
       } catch (err) { console.error("Failed to load workspace:", err); }
     }
     load();
@@ -34,7 +32,7 @@ export default function WorkspaceSettingsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await updateWorkspace(token, workspace.id, { name: name.trim() });
+      const res = await updateWorkspace(token, { name: name.trim() });
       setWorkspace(res.data);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -52,7 +50,6 @@ export default function WorkspaceSettingsPage() {
         </div>
       </div>
 
-      {/* General */}
       <div className="settings-section">
         <div className="settings-section-header">General</div>
         <div className="settings-section-body">
@@ -74,47 +71,6 @@ export default function WorkspaceSettingsPage() {
             <span style={{ fontSize: 13, lineHeight: "18px", color: "var(--dtext)" }}>
               {new Date(workspace.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
             </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Multi-Workspace */}
-      <div className="settings-section">
-        <div className="settings-section-header">Multi-Workspace</div>
-        <div className="settings-section-body">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, color: "var(--dtext)" }}>Create New Workspace</div>
-              <div style={{ fontSize: 13, color: "var(--dmuted)" }}>Separate security boundary with its own API keys, billing, and posts.</div>
-            </div>
-            <button className="dbtn" disabled style={{ opacity: 0.4, cursor: "not-allowed" }}>
-              Coming Soon
-            </button>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, color: "var(--dtext)" }}>Switch Workspace</div>
-              <div style={{ fontSize: 13, color: "var(--dmuted)" }}>Switch between your workspaces.</div>
-            </div>
-            <button className="dbtn" disabled style={{ opacity: 0.4, cursor: "not-allowed" }}>
-              Coming Soon
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Danger Zone */}
-      <div className="settings-section danger-section">
-        <div className="settings-section-header">Danger Zone</div>
-        <div className="settings-section-body">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, color: "var(--dtext)" }}>Delete Workspace</div>
-              <div style={{ fontSize: 13, color: "var(--dmuted)" }}>Cannot delete your only workspace.</div>
-            </div>
-            <button className="dbtn dbtn-danger" disabled style={{ opacity: 0.4, cursor: "not-allowed" }}>
-              Delete Workspace
-            </button>
           </div>
         </div>
       </div>

@@ -242,10 +242,10 @@ export default function AnalyticsPage() {
         // On a normal load we don't need this ordering, since aggregations
         // and per-post both serve from the same cached table.
         if (forceRefresh) {
-          const postsRes = await listSocialPosts(token, workspaceId);
+          const postsRes = await listSocialPosts(token);
           const published = (postsRes.data || []).filter((p) => p.status === "published");
           const results = await Promise.allSettled(
-            published.map((p) => getPostAnalytics(token, workspaceId, p.id, { refresh: true }))
+            published.map((p) => getPostAnalytics(token, p.id, { refresh: true }))
           );
           const map: Record<string, PostAnalytics[]> = {};
           results.forEach((r, i) => {
@@ -258,13 +258,13 @@ export default function AnalyticsPage() {
         }
 
         const [summaryRes, trendRes, byPlatformRes, postsRes] = await Promise.all([
-          getAnalyticsSummary(token, workspaceId, apiRange),
-          getAnalyticsTrend(token, workspaceId, {
+          getAnalyticsSummary(token, apiRange),
+          getAnalyticsTrend(token, {
             ...apiRange,
             metric: "posts,impressions,likes,comments,shares",
           }),
-          getAnalyticsByPlatform(token, workspaceId, apiRange),
-          listSocialPosts(token, workspaceId),
+          getAnalyticsByPlatform(token, apiRange),
+          listSocialPosts(token),
         ]);
 
         setSummary(summaryRes.data);
@@ -278,7 +278,7 @@ export default function AnalyticsPage() {
         if (!forceRefresh) {
           const published = (postsRes.data || []).filter((p) => p.status === "published");
           const results = await Promise.allSettled(
-            published.map((p) => getPostAnalytics(token, workspaceId, p.id))
+            published.map((p) => getPostAnalytics(token, p.id))
           );
           const map: Record<string, PostAnalytics[]> = {};
           results.forEach((r, i) => {

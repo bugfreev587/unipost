@@ -297,7 +297,7 @@ func parseGroupBy(raw string) []string {
 }
 
 // getWorkspaceID resolves the workspace context for either auth mode
-// (API key or Clerk session via /v1/workspaces/{workspaceID}/...).
+// (API key or Clerk session via /v1/...).
 func (h *AnalyticsRollupHandler) getWorkspaceID(r *http.Request) string {
 	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
 		return pid

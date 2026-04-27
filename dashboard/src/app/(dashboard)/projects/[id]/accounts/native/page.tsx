@@ -24,9 +24,8 @@ const CRED_PLATFORMS = [
 ];
 
 export default function NativeModePage() {
-  const { id: profileId } = useParams<{ id: string }>();
+  useParams<{ id: string }>();
   const { getToken } = useAuth();
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [creds, setCreds] = useState<PlatformCredential[]>([]);
   const [loading, setLoading] = useState(true);
   const [credForms, setCredForms] = useState<Record<string, { clientId: string; clientSecret: string }>>({});
@@ -34,22 +33,15 @@ export default function NativeModePage() {
   const [credError, setCredError] = useState("");
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
-  // Resolve the profile's workspace_id once on mount. Platform
-  // credentials are workspace-scoped, not profile-scoped, so the URL
-  // param (a profile_id) is not directly usable as the resource
-  // identifier — we have to look up the parent workspace first.
   const loadCreds = useCallback(async () => {
     try {
       const token = await getToken();
       if (!token) return;
-      const profileRes = await getProfile(token, profileId);
-      const wsId = profileRes.data.workspace_id;
-      setWorkspaceId(wsId);
-      const credsRes = await listPlatformCredentials(token, wsId);
+      const credsRes = await listPlatformCredentials(token);
       setCreds(credsRes.data ?? []);
     } catch { /* silent */ }
     finally { setLoading(false); }
-  }, [getToken, profileId]);
+  }, [getToken]);
 
   useEffect(() => { loadCreds(); }, [loadCreds]);
 
@@ -59,12 +51,12 @@ export default function NativeModePage() {
 
   async function handleCredSave(platform: string) {
     const form = credForms[platform];
-    if (!form?.clientId || !form?.clientSecret || !workspaceId) return;
+    if (!form?.clientId || !form?.clientSecret) return;
     setCredSaving(platform); setCredError("");
     try {
       const token = await getToken();
       if (!token) return;
-      await createPlatformCredential(token, workspaceId, {
+      await createPlatformCredential(token, {
         platform,
         client_id: form.clientId,
         client_secret: form.clientSecret,
@@ -79,11 +71,10 @@ export default function NativeModePage() {
   }
 
   async function handleCredDelete(platform: string) {
-    if (!workspaceId) { setRemoveTarget(null); return; }
     try {
       const token = await getToken();
       if (!token) return;
-      await deletePlatformCredential(token, workspaceId, platform);
+      await deletePlatformCredential(token, platform);
       loadCreds();
     } catch { /* silent */ }
     finally { setRemoveTarget(null); }

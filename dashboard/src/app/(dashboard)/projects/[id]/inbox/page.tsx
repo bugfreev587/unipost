@@ -653,9 +653,9 @@ export default function InboxPage() {
       const token = await getToken();
       if (!token) return;
       const [itemsRes, unreadRes, socialPostsRes] = await Promise.all([
-        listInboxItems(token, workspaceId),
-        getInboxUnreadCount(token, workspaceId),
-        listSocialPostSummaries(token, workspaceId),
+        listInboxItems(token),
+        getInboxUnreadCount(token),
+        listSocialPostSummaries(token),
       ]);
       const accountsRes = profileId ? await listSocialAccounts(token, profileId) : null;
       setItems(itemsRes.data || []);
@@ -674,7 +674,7 @@ export default function InboxPage() {
 
   // Real-time: WebSocket pushes new items instantly.
   const { connected: wsConnected } = useInboxWebSocket(
-    workspaceId,
+    !!workspaceId,
     (newItem) => {
       setItems((prev) => {
         if (prev.some((i) => i.id === newItem.id)) return prev;
@@ -777,7 +777,7 @@ export default function InboxPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await syncInbox(token, workspaceId);
+      const res = await syncInbox(token);
       setSyncData((res.data as SyncResponse) || null);
       await load();
     } finally {
@@ -789,7 +789,7 @@ export default function InboxPage() {
     if (!workspaceId) return;
     const token = await getToken();
     if (!token) return;
-    await markAllInboxRead(token, workspaceId);
+    await markAllInboxRead(token);
     setItems((prev) => prev.map((item) => ({ ...item, is_read: true })));
     setUnreadCount(0);
   }
@@ -802,7 +802,7 @@ export default function InboxPage() {
     if (!token) return;
 
     await Promise.all(
-      unreadInbound.map((item) => markInboxItemRead(token, workspaceId, item.id).catch(() => undefined))
+      unreadInbound.map((item) => markInboxItemRead(token, item.id).catch(() => undefined))
     );
     setItems((prev) =>
       prev.map((item) =>
@@ -824,7 +824,7 @@ export default function InboxPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await replyToInboxItem(token, workspaceId, targetItem.id, draft);
+      const res = await replyToInboxItem(token, targetItem.id, draft);
       if (res.data) {
         setItems((prev) => [...prev, res.data]);
       }
@@ -856,7 +856,7 @@ export default function InboxPage() {
 
     await Promise.all(
       Array.from(distinctThreadLeaders.values()).map((item) =>
-        updateInboxThreadState(token, workspaceId, item.id, {
+        updateInboxThreadState(token, item.id, {
           thread_status: threadStatus,
           assigned_to: assignedTo,
         })
@@ -939,7 +939,7 @@ export default function InboxPage() {
         if (!key || mediaContext[key] || attemptedMediaKeys.current.has(key)) continue;
         attemptedMediaKeys.current.add(key); // mark attempted BEFORE fetch
         try {
-          const res = await getInboxMediaContext(token, workspaceId, group.items[0].id);
+          const res = await getInboxMediaContext(token, group.items[0].id);
           if (res.data) {
             setMediaContext((prev) => ({ ...prev, [key!]: res.data }));
           }
@@ -972,7 +972,7 @@ export default function InboxPage() {
       try {
         const token = await getToken();
         if (!token) return;
-        const res = await getInboxMediaContext(token, workspaceId, firstItem.id);
+        const res = await getInboxMediaContext(token, firstItem.id);
         if (res.data) {
           setMediaContext((prev) => ({ ...prev, [parentID]: res.data }));
         }

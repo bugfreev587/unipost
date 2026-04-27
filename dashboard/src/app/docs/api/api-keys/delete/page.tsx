@@ -1,25 +1,23 @@
 "use client";
 
-import Link from "next/link";
 import type { ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
-  { name: "Clerk session", type: "Browser session", meta: "Cookie/session", description: "Dashboard-authenticated route. This endpoint does not use a Bearer API key." },
+  { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key, or a Clerk session JWT for dashboard callers. A key can revoke itself; the next request authenticated with that key will fail." },
 ];
 
 const PATH_FIELDS: ApiFieldItem[] = [
-  { name: "workspace_id", type: "string", description: <>Workspace that owns the API key. <Link href="/docs/api/workspaces/list">[get your workspace_id]</Link></> },
   { name: "key_id", type: "string", description: "API key record ID to revoke." },
 ];
 
 const RESPONSE_204_FIELDS: ApiFieldItem[] = [
-  { name: "status", type: "204 No Content", description: "The API key was revoked successfully and no response body is returned." },
+  { name: "status", type: "204 No Content", description: "Revoked successfully; no response body." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED", "NOT_FOUND", or "INTERNAL_ERROR".' },
-  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized", "not_found", or "internal_error".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized" or "not_found".' },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
@@ -28,8 +26,8 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl -X DELETE "https://api.unipost.dev/v1/workspaces/ws_123/api-keys/key_123" \\
-  -H "Cookie: __session=<clerk-session-cookie>"`,
+    code: `curl -X DELETE "https://api.unipost.dev/v1/api-keys/key_123" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
 ];
 
@@ -52,10 +50,10 @@ export default function DeleteApiKeyPage() {
   return (
     <SingleEndpointReferencePage
       section="core"
-      title="Delete API key"
-      description="Revokes one API key from a workspace in the dashboard. After deletion, the key can no longer authenticate requests."
+      title="Revoke API key"
+      description="Revokes one API key from the authenticated workspace. Subsequent requests using the revoked key fail with 401. Revoking a key cannot be undone — generate a new one if you need to restore access."
       method="DELETE"
-      path="/v1/workspaces/:workspace_id/api-keys/:key_id"
+      path="/v1/api-keys/:key_id"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Params", items: PATH_FIELDS },

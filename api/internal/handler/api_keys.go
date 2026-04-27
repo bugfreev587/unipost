@@ -62,52 +62,27 @@ func toAPIKeyResponse(k db.ApiKey) apiKeyResponse {
 }
 
 func (h *APIKeyHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserID(r.Context())
-	workspaceID := chi.URLParam(r, "workspaceID")
-
-	// Verify ownership
-	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID:     workspaceID,
-		UserID: userID,
-	})
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
-
 	keys, err := h.queries.ListAPIKeysByWorkspace(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list API keys")
 		return
 	}
-
 	result := make([]apiKeyResponse, len(keys))
 	for i, k := range keys {
 		result[i] = toAPIKeyResponse(k)
 	}
-
 	writeSuccessWithListMeta(w, result, len(result), len(result))
 }
 
 func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserID(r.Context())
-	workspaceID := chi.URLParam(r, "workspaceID")
-
-	// Verify ownership
-	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID:     workspaceID,
-		UserID: userID,
-	})
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
@@ -120,12 +95,10 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
 		return
 	}
-
 	if body.Name == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Name is required")
 		return
 	}
-
 	if body.Environment == "" {
 		body.Environment = "production"
 	}
@@ -134,7 +107,6 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate key
 	plaintext, prefix, hash, err := apikey.Generate(body.Environment)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate API key")
@@ -176,25 +148,14 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserID(r.Context())
-	workspaceID := chi.URLParam(r, "workspaceID")
-	keyID := chi.URLParam(r, "keyID")
-
-	// Verify ownership
-	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID:     workspaceID,
-		UserID: userID,
-	})
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
+	keyID := chi.URLParam(r, "keyID")
 
-	_, err = h.queries.RevokeAPIKey(r.Context(), db.RevokeAPIKeyParams{
+	_, err := h.queries.RevokeAPIKey(r.Context(), db.RevokeAPIKeyParams{
 		ID:          keyID,
 		WorkspaceID: workspaceID,
 	})
@@ -206,6 +167,5 @@ func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to revoke API key")
 		return
 	}
-
 	w.WriteHeader(http.StatusNoContent)
 }

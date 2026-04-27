@@ -169,7 +169,7 @@ type summaryResponse struct {
 }
 
 // GetSummary handles GET /v1/analytics/summary
-// and  GET /v1/workspaces/{workspaceID}/analytics/summary
+// and  GET /v1/analytics/summary
 func (h *AnalyticsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.getWorkspaceID(r)
 	if workspaceID == "" {
@@ -274,7 +274,7 @@ type trendResponse struct {
 }
 
 // GetTrend handles GET /v1/analytics/trend
-// and  GET /v1/workspaces/{workspaceID}/analytics/trend
+// and  GET /v1/analytics/trend
 //
 // metric query param is a CSV of: posts, impressions, likes, comments, shares.
 // Defaults to "posts,impressions,likes" if absent.
@@ -375,7 +375,7 @@ type byPlatformRow struct {
 }
 
 // GetByPlatform handles GET /v1/analytics/by-platform
-// and  GET /v1/workspaces/{workspaceID}/analytics/by-platform
+// and  GET /v1/analytics/by-platform
 func (h *AnalyticsHandler) GetByPlatform(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.getWorkspaceID(r)
 	if workspaceID == "" {

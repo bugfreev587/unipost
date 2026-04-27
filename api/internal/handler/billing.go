@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/stripe/stripe-go/v82"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -37,16 +36,11 @@ type billingResponse struct {
 	TrialEligible  bool    `json:"trial_eligible"`
 }
 
-// GetBilling handles GET /v1/billing (Clerk auth, workspace-scoped)
+// GetBilling handles GET /v1/billing (dual auth, workspace-scoped)
 func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
-	userID := auth.GetUserID(r.Context())
-
-	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID: workspaceID, UserID: userID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
 
@@ -72,12 +66,13 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 
 // CreateCheckout handles POST /v1/billing/checkout
 func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
 	userID := auth.GetUserID(r.Context())
-
-	workspace, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID: workspaceID, UserID: userID,
-	})
+	workspace, err := h.queries.GetWorkspace(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
 		return
@@ -188,16 +183,12 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 
 // CreatePortal handles POST /v1/billing/portal
 func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
-	userID := auth.GetUserID(r.Context())
-
-	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID: workspaceID, UserID: userID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
+	userID := auth.GetUserID(r.Context())
 
 	sub, err := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	if err != nil || sub.StripeCustomerID.String == "" {

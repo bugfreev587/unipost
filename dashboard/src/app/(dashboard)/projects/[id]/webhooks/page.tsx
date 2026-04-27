@@ -140,7 +140,7 @@ export default function ProjectWebhooksPage() {
       setError(null);
       const token = await getToken();
       if (!token) return;
-      const res = await listWebhooks(token, workspaceId);
+      const res = await listWebhooks(token);
       setWebhooks(res.data);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load webhooks";
@@ -222,13 +222,13 @@ export default function ProjectWebhooksPage() {
       if (!token) return;
 
       if (editing) {
-        await updateWebhook(token, workspaceId, editing.id, {
+        await updateWebhook(token, editing.id, {
           name: trimmedName,
           url: trimmedURL,
           events,
         });
       } else {
-        const res = await createWebhook(token, workspaceId, {
+        const res = await createWebhook(token, {
           name: trimmedName,
           url: trimmedURL,
           events,
@@ -260,7 +260,7 @@ export default function ProjectWebhooksPage() {
       setError(null);
       const token = await getToken();
       if (!token) return;
-      await updateWebhook(token, workspaceId, webhook.id, {
+      await updateWebhook(token, webhook.id, {
         active: !webhook.active,
       });
       await loadWebhooks();
@@ -280,7 +280,7 @@ export default function ProjectWebhooksPage() {
       setError(null);
       const token = await getToken();
       if (!token) return;
-      const res = await rotateWebhookSecret(token, workspaceId, rotateTarget.id);
+      const res = await rotateWebhookSecret(token, rotateTarget.id);
       setRotateTarget(null);
       setSecretReveal({
         secret: res.data.secret,
@@ -304,7 +304,7 @@ export default function ProjectWebhooksPage() {
       setError(null);
       const token = await getToken();
       if (!token) return;
-      await deleteWebhook(token, workspaceId, deleteTarget.id);
+      await deleteWebhook(token, deleteTarget.id);
       setDeleteTarget(null);
       await loadWebhooks();
     } catch (err) {

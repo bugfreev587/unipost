@@ -188,7 +188,7 @@ func (h *OAuthHandler) handleFacebookCallback(
 }
 
 // PendingConnectionGet handles
-// GET /v1/workspaces/{workspaceID}/pending-connections/{id} —
+// GET /v1/pending-connections/{id} —
 // returns the stored pages list so the Dashboard picker can render.
 // No tokens are returned; encrypted tokens stay server-side until
 // the finalize endpoint decrypts + writes social_accounts rows.
@@ -245,7 +245,7 @@ func (h *OAuthHandler) PendingConnectionGet(w http.ResponseWriter, r *http.Reque
 }
 
 // PendingConnectionFinalize handles
-// POST /v1/workspaces/{workspaceID}/pending-connections/{id}/finalize
+// POST /v1/pending-connections/{id}/finalize
 // Request body: { "page_ids": ["123", "456"] }
 //
 // Creates one social_accounts row per selected Page, upserts the

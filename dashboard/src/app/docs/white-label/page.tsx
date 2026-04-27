@@ -34,7 +34,7 @@ console.log(session.url);`,
   },
 ];
 
-const UPLOAD_CREDS_SNIPPET = `POST /v1/workspaces/{workspace_id}/platform-credentials
+const UPLOAD_CREDS_SNIPPET = `POST /v1/platform-credentials
 
 {
   "platform": "linkedin",

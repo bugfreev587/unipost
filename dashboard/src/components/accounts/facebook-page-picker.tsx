@@ -73,7 +73,7 @@ export function FacebookPagePicker({ open, pendingId, workspaceId, getToken, onC
           if (!cancelled) setLoad({ kind: "error", message: "Not signed in" });
           return;
         }
-        const res = await getPendingConnection(token, workspaceId, pendingId);
+        const res = await getPendingConnection(token, pendingId);
         if (cancelled) return;
         setLoad({ kind: "ready", data: res.data });
         // Pre-select the sole publishable Page when there's exactly
@@ -114,7 +114,7 @@ export function FacebookPagePicker({ open, pendingId, workspaceId, getToken, onC
         setSubmitError("Not signed in");
         return;
       }
-      const res = await finalizePendingConnection(token, workspaceId, pendingId, Array.from(selected));
+      const res = await finalizePendingConnection(token, pendingId, Array.from(selected));
       // Block any further refetches: the pending row is gone on the
       // server, so the next GET would 404 and flash an error banner
       // on the modal right before the parent unmounts us.

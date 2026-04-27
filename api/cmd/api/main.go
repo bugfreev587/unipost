@@ -160,18 +160,6 @@ func main() {
 
 	queries := db.New(pool)
 
-	withDeprecation := func(successor func(*http.Request) string, next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Deprecation", "true")
-			w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
-			w.Header().Set("Link", `<`+successor(r)+`>; rel="successor-version"`)
-			next(w, r)
-		}
-	}
-	withStaticDeprecation := func(successor string, next http.HandlerFunc) http.HandlerFunc {
-		return withDeprecation(func(*http.Request) string { return successor }, next)
-	}
-
 	// Build the Stripe billing manager now that the DB is ready. The
 	// SUPER_ADMINS list may contain email addresses, which the manager
 	// resolves to Clerk user IDs lazily via a closure over queries.GetUser.
@@ -417,8 +405,8 @@ func main() {
 
 	// WebSocket — auth via ?token= query param (browser WS API
 	// doesn't support custom headers). Handler validates Clerk JWT.
-	wsHandler := ws.NewHandler(wsHub)
-	r.Get("/v1/workspaces/{workspaceID}/inbox/ws", wsHandler.ServeHTTP)
+	wsHandler := ws.NewHandler(wsHub, queries)
+	r.Get("/v1/inbox/ws", wsHandler.ServeHTTP)
 
 	// OAuth callback routes (no auth — called by OAuth providers)
 	r.Get("/v1/oauth/callback/{platform}", oauthHandler.Callback)
@@ -454,32 +442,22 @@ func main() {
 	// land later.
 	r.Post("/v1/meta/data-deletion", metaDataDeletionHandler.HandleDataDeletion)
 
-	// Dashboard routes (Clerk session auth)
+	// User-identity routes (Clerk session only — these are about the
+	// signed-in human, not a workspace, so no API-key counterpart).
 	r.Group(func(r chi.Router) {
 		r.Use(auth.ClerkSessionMiddleware)
 
-		// Whoami — returns the authenticated user's identity plus an
-		// is_admin flag derived from ADMIN_USERS. The dashboard reads
-		// this on mount to decide whether to render the Admin link.
 		r.Get("/v1/me", meHandler.Get)
-		// Dashboard root resolver: returns default_profile_id +
-		// last_profile_id, lazily creating a "Default" profile for
-		// fresh signups and backfilling default_profile_id for legacy
-		// users with existing profiles but no stamped default.
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
-		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding) // legacy, kept for backward compat
+		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding)
 		r.Patch("/v1/me/intent", meHandler.SetIntent)
 		r.Post("/v1/me/onboarding-shown", meHandler.MarkShown)
 		r.Delete("/v1/me", meHandler.Delete)
 
-		// Activation guide (dashboard empty state) — legacy, kept for
-		// rollout compatibility. Superseded by /v1/me/tutorials.
 		activationHandler := handler.NewActivationHandler(queries)
 		r.Get("/v1/me/activation", activationHandler.Get)
 		r.Post("/v1/me/activation/dismiss", activationHandler.Dismiss)
 
-		// Notification settings. Account-scoped; no workspace context
-		// needed. See /settings/notifications page.
 		notificationHandler := handler.NewNotificationHandler(queries, mailer, os.Getenv("APP_BASE_URL"))
 		r.Get("/v1/me/notifications/events", notificationHandler.ListEvents)
 		r.Get("/v1/me/notifications/channels", notificationHandler.ListChannels)
@@ -490,198 +468,11 @@ func main() {
 		r.Put("/v1/me/notifications/subscriptions", notificationHandler.UpsertSubscription)
 		r.Delete("/v1/me/notifications/subscriptions/{id}", notificationHandler.DeleteSubscription)
 
-		// Tutorials framework.
 		tutorialsHandler := handler.NewTutorialsHandler(queries)
 		r.Get("/v1/me/tutorials", tutorialsHandler.List)
 		r.Post("/v1/me/tutorials/{id}/complete", tutorialsHandler.Complete)
 		r.Post("/v1/me/tutorials/{id}/dismiss", tutorialsHandler.Dismiss)
 		r.Post("/v1/me/tutorials/{id}/reopen", tutorialsHandler.Reopen)
-
-		// Workspace management (dashboard)
-		r.Get("/v1/workspaces", workspaceHandler.DashboardList)
-		r.Get("/v1/workspaces/{workspaceID}", workspaceHandler.DashboardGet)
-		r.Patch("/v1/workspaces/{workspaceID}", workspaceHandler.DashboardUpdate)
-
-		// Dashboard profile routes are namespaced under /v1/dashboard/
-		// to avoid colliding with the API-key-auth /v1/profiles routes
-		// registered in the API key group below — both groups attach to
-		// the same root mux, so identical paths shadow each other.
-		r.Get("/v1/dashboard/profiles", profileHandler.List)
-		r.Post("/v1/dashboard/profiles", profileHandler.Create)
-		r.Get("/v1/dashboard/profiles/{id}", profileHandler.Get)
-		r.Patch("/v1/dashboard/profiles/{id}", profileHandler.Update)
-		r.Delete("/v1/dashboard/profiles/{id}", profileHandler.Delete)
-
-		// Workspace-scoped dashboard routes
-		r.Get("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.List)
-		r.Post("/v1/workspaces/{workspaceID}/api-keys", apiKeyHandler.Create)
-		r.Delete("/v1/workspaces/{workspaceID}/api-keys/{keyID}", apiKeyHandler.Revoke)
-		r.Post("/v1/workspaces/{workspaceID}/webhooks", webhookSubHandler.Create)
-		r.Get("/v1/workspaces/{workspaceID}/webhooks", webhookSubHandler.List)
-		r.Get("/v1/workspaces/{workspaceID}/webhooks/{id}", webhookSubHandler.Get)
-		r.Patch("/v1/workspaces/{workspaceID}/webhooks/{id}", webhookSubHandler.Update)
-		r.Delete("/v1/workspaces/{workspaceID}/webhooks/{id}", webhookSubHandler.Delete)
-		r.Post("/v1/workspaces/{workspaceID}/webhooks/{id}/rotate", webhookSubHandler.Rotate)
-
-		// Accounts (dashboard, profile-scoped)
-		r.Get("/v1/profiles/{profileID}/accounts", socialAccountHandler.List)
-		r.Post("/v1/profiles/{profileID}/accounts/connect", socialAccountHandler.Connect)
-		r.Delete("/v1/profiles/{profileID}/accounts/{accountID}", socialAccountHandler.Disconnect)
-		r.Get("/v1/profiles/{profileID}/social-accounts", withDeprecation(func(r *http.Request) string {
-			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts"
-		}, socialAccountHandler.List))
-		r.Post("/v1/profiles/{profileID}/social-accounts/connect", withDeprecation(func(r *http.Request) string {
-			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/connect"
-		}, socialAccountHandler.Connect))
-		r.Delete("/v1/profiles/{profileID}/social-accounts/{accountID}", withDeprecation(func(r *http.Request) string {
-			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID")
-		}, socialAccountHandler.Disconnect))
-		// TikTok creator_info — required for the Content Posting API audit
-		// UI (see internal/handler/tiktok_creator_info.go).
-		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
-		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
-		r.Get("/v1/profiles/{profileID}/social-accounts/{accountID}/tiktok/creator-info", withDeprecation(func(r *http.Request) string {
-			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID") + "/tiktok/creator-info"
-		}, socialAccountHandler.TikTokCreatorInfo))
-		r.Get("/v1/profiles/{profileID}/social-accounts/{accountID}/pinterest/boards", withDeprecation(func(r *http.Request) string {
-			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID") + "/pinterest/boards"
-		}, socialAccountHandler.PinterestBoards))
-		// Facebook Page Insights — still super-admin gated while
-		// Facebook Pages is in development. Drop the middleware when
-		// the feature ships to all users.
-		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
-			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
-		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
-			Get("/v1/profiles/{profileID}/social-accounts/{accountID}/facebook/page-insights", withDeprecation(func(r *http.Request) string {
-				return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID") + "/facebook/page-insights"
-			}, socialAccountHandler.FacebookPageInsights))
-
-		// Managed Users view (dashboard, profile-scoped).
-		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
-		r.Get("/v1/profiles/{profileID}/users/{external_user_id}", managedUsersHandler.Get)
-
-		// Media library (dashboard, workspace-scoped — injects workspaceID
-		// into context so the shared media handler can use GetWorkspaceID)
-		r.Post("/v1/workspaces/{workspaceID}/media", func(w http.ResponseWriter, r *http.Request) {
-			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
-			mediaHandler.Create(w, r.WithContext(ctx))
-		})
-		r.Get("/v1/workspaces/{workspaceID}/media/{id}", func(w http.ResponseWriter, r *http.Request) {
-			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
-			mediaHandler.Get(w, r.WithContext(ctx))
-		})
-
-		// Posts (dashboard, workspace-scoped)
-		r.Get("/v1/workspaces/{workspaceID}/posts", socialPostHandler.List)
-		r.Get("/v1/workspaces/{workspaceID}/posts/summaries", socialPostHandler.ListSummaries)
-		r.Post("/v1/workspaces/{workspaceID}/posts", socialPostHandler.Create)
-		r.Post("/v1/workspaces/{workspaceID}/posts/validate", func(w http.ResponseWriter, r *http.Request) {
-			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
-			socialPostHandler.Validate(w, r.WithContext(ctx))
-		})
-		r.Get("/v1/workspaces/{workspaceID}/social-posts", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts"
-		}, socialPostHandler.List))
-		r.Get("/v1/workspaces/{workspaceID}/social-posts/summaries", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/summaries"
-		}, socialPostHandler.ListSummaries))
-		r.Post("/v1/workspaces/{workspaceID}/social-posts", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts"
-		}, socialPostHandler.Create))
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/validate", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/validate"
-		}, func(w http.ResponseWriter, r *http.Request) {
-			ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
-			socialPostHandler.Validate(w, r.WithContext(ctx))
-		}))
-		r.Post("/v1/workspaces/{workspaceID}/posts/{id}/archive", socialPostHandler.Archive)
-		r.Post("/v1/workspaces/{workspaceID}/posts/{id}/restore", socialPostHandler.Restore)
-		r.Delete("/v1/workspaces/{workspaceID}/posts/{id}", socialPostHandler.Delete)
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/archive", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/archive"
-		}, socialPostHandler.Archive))
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/restore", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/restore"
-		}, socialPostHandler.Restore))
-		r.Delete("/v1/workspaces/{workspaceID}/social-posts/{id}", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id")
-		}, socialPostHandler.Delete))
-		// Per-platform retry for a failed social_post_result row.
-		// Only rows with status='failed' are retryable; see
-		// social_post_retry.go for the safety gates + parent-status
-		// recomputation logic.
-		r.Post("/v1/workspaces/{workspaceID}/posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
-		r.Get("/v1/workspaces/{workspaceID}/posts/{id}/queue", socialPostHandler.GetPostQueue)
-		r.Post("/v1/workspaces/{workspaceID}/social-posts/{id}/results/{resultID}/retry", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/results/" + chi.URLParam(r, "resultID") + "/retry"
-		}, socialPostHandler.RetryResult))
-		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/queue", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/queue"
-		}, socialPostHandler.GetPostQueue))
-		r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
-		r.Get("/v1/workspaces/{workspaceID}/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
-		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry", socialPostHandler.RetryDeliveryJob)
-		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
-		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
-		r.Post("/v1/workspaces/{workspaceID}/post-delivery-jobs/{jobID}/dismiss", socialPostHandler.DismissDeliveryJobHandler)
-
-		// OAuth connect (dashboard, profile-scoped)
-		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
-
-		// Facebook Page picker — pending-connection read + finalize.
-		// ENABLE_FACEBOOK_PAGES gates both so a toggled-off flag
-		// keeps unreviewed traffic off Meta's Graph API during audit.
-		r.Route("/v1/workspaces/{workspaceID}/pending-connections", func(r chi.Router) {
-			r.Use(auth.RequireFacebookSuperAdmin(superAdminChecker))
-			r.Use(func(next http.Handler) http.Handler {
-				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					ctx := auth.SetWorkspaceID(r.Context(), chi.URLParam(r, "workspaceID"))
-					next.ServeHTTP(w, r.WithContext(ctx))
-				})
-			})
-			r.Get("/{id}", oauthHandler.PendingConnectionGet)
-			r.Post("/{id}/finalize", oauthHandler.PendingConnectionFinalize)
-		})
-
-		// Platform credentials (White Label, workspace-scoped)
-		r.Post("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.Create)
-		r.Get("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.List)
-		r.Delete("/v1/workspaces/{workspaceID}/platform-credentials/{platform}", platformCredHandler.Delete)
-
-		// Billing (dashboard, workspace-scoped)
-		r.Get("/v1/workspaces/{workspaceID}/billing", billingHandler.GetBilling)
-		r.Post("/v1/workspaces/{workspaceID}/billing/checkout", billingHandler.CreateCheckout)
-		r.Post("/v1/workspaces/{workspaceID}/billing/portal", billingHandler.CreatePortal)
-
-		// Analytics (dashboard, workspace-scoped)
-		r.Get("/v1/workspaces/{workspaceID}/analytics/summary", analyticsHandler.GetSummary)
-		r.Get("/v1/workspaces/{workspaceID}/analytics/trend", analyticsHandler.GetTrend)
-		r.Get("/v1/workspaces/{workspaceID}/analytics/by-platform", analyticsHandler.GetByPlatform)
-		// Per-post analytics (workspace-scoped). Mirrors the API-key route below.
-		r.Get("/v1/workspaces/{workspaceID}/posts/{id}/analytics", analyticsHandler.GetAnalytics)
-		r.Get("/v1/workspaces/{workspaceID}/social-posts/{id}/analytics", withDeprecation(func(r *http.Request) string {
-			return "/v1/workspaces/" + chi.URLParam(r, "workspaceID") + "/posts/" + chi.URLParam(r, "id") + "/analytics"
-		}, analyticsHandler.GetAnalytics))
-
-		// API metrics (dashboard, workspace-scoped)
-		r.Get("/v1/workspaces/{workspaceID}/api-metrics/summary", apiMetricsHandler.Summary)
-		r.Get("/v1/workspaces/{workspaceID}/api-metrics/trend", apiMetricsHandler.Trend)
-		r.Get("/v1/workspaces/{workspaceID}/api-metrics/overall", apiMetricsHandler.Overall)
-
-		// Inbox (dashboard, workspace-scoped) — unified view of
-		// Instagram comments/DMs and Threads replies.
-		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool)
-		r.Route("/v1/workspaces/{workspaceID}/inbox", func(r chi.Router) {
-			r.Get("/", inboxHandler.List)
-			r.Get("/unread-count", inboxHandler.UnreadCount)
-			r.Post("/mark-all-read", inboxHandler.MarkAllRead)
-			r.Post("/sync", inboxHandler.Sync)
-			r.Get("/{id}", inboxHandler.Get)
-			r.Get("/{id}/media-context", inboxHandler.MediaContext)
-			r.Post("/{id}/read", inboxHandler.MarkRead)
-			r.Post("/{id}/reply", inboxHandler.Reply)
-			r.Post("/{id}/thread-state", inboxHandler.UpdateThreadState)
-		})
 	})
 
 	// Admin routes — Clerk session + ADMIN_USERS gate. The middleware
@@ -702,170 +493,102 @@ func main() {
 		r.Get("/v1/admin/users/{id}/post-failures", adminHandler.ListUserPostFailures)
 	})
 
-	// Public API routes (API key auth)
+	// All workspace-scoped routes — accept either a Bearer API key or
+	// a Clerk session JWT. DualAuthMiddleware resolves the token and
+	// stamps workspaceID into the request context (and apiKeyID for
+	// API-key paths). Handlers always read workspaceID from context;
+	// it is never carried in the URL anymore.
 	r.Group(func(r chi.Router) {
-		r.Use(auth.APIKeyMiddleware(queries))
+		r.Use(auth.DualAuthMiddleware(queries))
 		r.Use(apiMetricsRecorder.Middleware)
 
-		// Workspace info (API key scoped)
+		// Workspace info.
 		r.Get("/v1/workspace", workspaceHandler.Get)
 		r.Patch("/v1/workspace", workspaceHandler.Update)
 
-		// Profiles (API key scoped)
+		// API keys.
+		r.Get("/v1/api-keys", apiKeyHandler.List)
+		r.Post("/v1/api-keys", apiKeyHandler.Create)
+		r.Delete("/v1/api-keys/{keyID}", apiKeyHandler.Revoke)
+
+		// Profiles.
 		r.Get("/v1/profiles", profileHandler.APIList)
 		r.Post("/v1/profiles", profileHandler.APICreate)
 		r.Get("/v1/profiles/{id}", profileHandler.APIGet)
 		r.Patch("/v1/profiles/{id}", profileHandler.APIUpdate)
 		r.Delete("/v1/profiles/{id}", profileHandler.APIDelete)
 
+		// Accounts (workspace-wide).
 		r.Get("/v1/accounts", socialAccountHandler.List)
 		r.Post("/v1/accounts/connect", socialAccountHandler.Connect)
 		r.Delete("/v1/accounts/{id}", socialAccountHandler.Disconnect)
-		r.Get("/v1/social-accounts", withStaticDeprecation("/v1/accounts", socialAccountHandler.List))
-		r.Post("/v1/social-accounts/connect", withStaticDeprecation("/v1/accounts/connect", socialAccountHandler.Connect))
-		r.Delete("/v1/social-accounts/{id}", withDeprecation(func(r *http.Request) string {
-			return "/v1/accounts/" + chi.URLParam(r, "id")
-		}, socialAccountHandler.Disconnect))
-		// Per-account capability lookup. Returns the platform's
-		// capability scoped to one account; falls back to platform
-		// defaults until Sprint 2 adds account-specific overrides.
 		r.Get("/v1/accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
-		r.Get("/v1/social-accounts/{id}/capabilities", withDeprecation(func(r *http.Request) string {
-			return "/v1/accounts/" + chi.URLParam(r, "id") + "/capabilities"
-		}, platformHandler.GetAccountCapabilities))
-		// Account health (Sprint 2 PR7) — derived from the last 10
-		// social_post_results rows. ok / degraded / disconnected.
 		r.Get("/v1/accounts/{id}/health", socialAccountHandler.AccountHealth)
-		r.Get("/v1/social-accounts/{id}/health", withDeprecation(func(r *http.Request) string {
-			return "/v1/accounts/" + chi.URLParam(r, "id") + "/health"
-		}, socialAccountHandler.AccountHealth))
-		// TikTok creator_info — required for the Content Posting API audit
-		// UI (see internal/handler/tiktok_creator_info.go).
 		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
-		r.Get("/v1/social-accounts/{id}/tiktok/creator-info", withDeprecation(func(r *http.Request) string {
-			return "/v1/accounts/" + chi.URLParam(r, "id") + "/tiktok/creator-info"
-		}, socialAccountHandler.TikTokCreatorInfo))
-		r.Get("/v1/social-accounts/{id}/pinterest/boards", withDeprecation(func(r *http.Request) string {
-			return "/v1/accounts/" + chi.URLParam(r, "id") + "/pinterest/boards"
-		}, socialAccountHandler.PinterestBoards))
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
 			Get("/v1/accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
-		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
-			Get("/v1/social-accounts/{id}/facebook/page-insights", withDeprecation(func(r *http.Request) string {
-				return "/v1/accounts/" + chi.URLParam(r, "id") + "/facebook/page-insights"
-			}, socialAccountHandler.FacebookPageInsights))
 
-		// Media library — two-step upload (POST returns presigned URL,
-		// client PUTs to R2 directly), then reference the media_id in
+		// Profile-nested account / user views (used by the dashboard's
+		// profile switcher to scope by current profile).
+		r.Get("/v1/profiles/{profileID}/accounts", socialAccountHandler.List)
+		r.Post("/v1/profiles/{profileID}/accounts/connect", socialAccountHandler.Connect)
+		r.Delete("/v1/profiles/{profileID}/accounts/{accountID}", socialAccountHandler.Disconnect)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
+		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
+			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
+		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
+		r.Get("/v1/profiles/{profileID}/users/{external_user_id}", managedUsersHandler.Get)
+		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
+
+		// Media — two-step upload (POST returns presigned URL, client
+		// PUTs to R2 directly), then reference the media_id in
 		// platform_posts[].media_ids on subsequent /v1/posts.
 		r.Post("/v1/media", mediaHandler.Create)
 		r.Get("/v1/media/{id}", mediaHandler.Get)
 		r.Delete("/v1/media/{id}", mediaHandler.Delete)
 
-		// Sprint 3 PR2: Connect sessions. Customer creates a session,
-		// emails the URL to their end user, and polls (or waits for
-		// the account.connected webhook) until completion.
+		// Connect sessions.
 		r.Post("/v1/connect/sessions", connectSessionHandler.Create)
 		r.Get("/v1/connect/sessions/{id}", connectSessionHandler.Get)
 
-		// White-label platform credentials (API-key). Same handlers as
-		// the Clerk dashboard routes above — requireWorkspace() handles
-		// the auth-mode split. URL keeps the workspaceID so the caller
-		// can't accidentally mutate a different workspace's creds if
-		// they later share an API key (defense-in-depth; the middleware
-		// already scopes the context to one workspace per key).
-		r.Post("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.Create)
-		r.Get("/v1/workspaces/{workspaceID}/platform-credentials", platformCredHandler.List)
-		r.Delete("/v1/workspaces/{workspaceID}/platform-credentials/{platform}", platformCredHandler.Delete)
+		// White-label platform credentials.
+		r.Post("/v1/platform-credentials", platformCredHandler.Create)
+		r.Get("/v1/platform-credentials", platformCredHandler.List)
+		r.Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
 
+		// Posts.
 		r.Get("/v1/posts", socialPostHandler.List)
+		r.Get("/v1/posts/summaries", socialPostHandler.ListSummaries)
 		r.Post("/v1/posts", socialPostHandler.Create)
-		r.Get("/v1/social-posts", withStaticDeprecation("/v1/posts", socialPostHandler.List))
-		r.Post("/v1/social-posts", withStaticDeprecation("/v1/posts", socialPostHandler.Create))
-		// Pure preflight — runs the same checks Create() will run, but
-		// without writing rows or hitting platform APIs. LLM clients
-		// call this BEFORE publish to self-correct draft errors.
+		r.Post("/v1/posts/bulk", socialPostHandler.CreateBulk)
 		r.Post("/v1/posts/validate", socialPostHandler.Validate)
 		r.Get("/v1/posts/{id}", socialPostHandler.Get)
-		r.Get("/v1/posts/{id}/analytics", analyticsHandler.GetAnalytics)
+		r.Patch("/v1/posts/{id}", socialPostHandler.UpdateDraft)
+		r.Delete("/v1/posts/{id}", socialPostHandler.Delete)
 		r.Post("/v1/posts/{id}/archive", socialPostHandler.Archive)
 		r.Post("/v1/posts/{id}/restore", socialPostHandler.Restore)
-		r.Delete("/v1/posts/{id}", socialPostHandler.Delete)
-		r.Post("/v1/posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
+		r.Post("/v1/posts/{id}/cancel", socialPostHandler.CancelPost)
+		r.Post("/v1/posts/{id}/publish", socialPostHandler.PublishDraft)
+		r.Post("/v1/posts/{id}/preview-link", previewHandler.CreateLink)
 		r.Get("/v1/posts/{id}/queue", socialPostHandler.GetPostQueue)
-		r.Post("/v1/social-posts/validate", withStaticDeprecation("/v1/posts/validate", socialPostHandler.Validate))
-		r.Get("/v1/social-posts/{id}", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id")
-		}, socialPostHandler.Get))
-		r.Get("/v1/social-posts/{id}/analytics", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id") + "/analytics"
-		}, analyticsHandler.GetAnalytics))
-		r.Post("/v1/social-posts/{id}/archive", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id") + "/archive"
-		}, socialPostHandler.Archive))
-		r.Post("/v1/social-posts/{id}/restore", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id") + "/restore"
-		}, socialPostHandler.Restore))
-		r.Delete("/v1/social-posts/{id}", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id")
-		}, socialPostHandler.Delete))
-		r.Post("/v1/social-posts/{id}/results/{resultID}/retry", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id") + "/results/" + chi.URLParam(r, "resultID") + "/retry"
-		}, socialPostHandler.RetryResult))
-		r.Get("/v1/social-posts/{id}/queue", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id") + "/queue"
-		}, socialPostHandler.GetPostQueue))
+		r.Get("/v1/posts/{id}/analytics", analyticsHandler.GetAnalytics)
+		r.Post("/v1/posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
+
+		// Post delivery jobs.
 		r.Get("/v1/post-delivery-jobs", socialPostHandler.ListDeliveryJobs)
 		r.Get("/v1/post-delivery-jobs/summary", socialPostHandler.GetDeliveryJobsSummary)
 		r.Post("/v1/post-delivery-jobs/{jobID}/retry", socialPostHandler.RetryDeliveryJob)
 		r.Post("/v1/post-delivery-jobs/{jobID}/retry-now", socialPostHandler.RetryDeliveryJobNow)
 		r.Post("/v1/post-delivery-jobs/{jobID}/cancel", socialPostHandler.CancelDeliveryJobHandler)
 		r.Post("/v1/post-delivery-jobs/{jobID}/dismiss", socialPostHandler.DismissDeliveryJobHandler)
-		// Drafts API (Sprint 2). Drafts are social_posts rows in
-		// status='draft' — no platform dispatch, no quota charge,
-		// no webhook fired. Publish flips them via optimistic lock
-		// then routes through the same publish loop the immediate
-		// path uses.
-		r.Post("/v1/posts/{id}/publish", socialPostHandler.PublishDraft)
-		r.Patch("/v1/posts/{id}", socialPostHandler.UpdateDraft)
-		r.Post("/v1/social-posts/{id}/publish", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id") + "/publish"
-		}, socialPostHandler.PublishDraft))
-		r.Patch("/v1/social-posts/{id}", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id")
-		}, socialPostHandler.UpdateDraft))
-		// Sprint 3 PR8: cancel a draft or scheduled post. Optimistic-locked
-		// to lose cleanly against a concurrent publish flip.
-		r.Post("/v1/posts/{id}/cancel", socialPostHandler.CancelPost)
-		r.Post("/v1/social-posts/{id}/cancel", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id") + "/cancel"
-		}, socialPostHandler.CancelPost))
-		// Sprint 4 PR2: bulk publish — up to 50 posts in one request,
-		// per-post idempotency, partial-success semantics.
-		r.Post("/v1/posts/bulk", socialPostHandler.CreateBulk)
-		r.Post("/v1/social-posts/bulk", withStaticDeprecation("/v1/posts/bulk", socialPostHandler.CreateBulk))
 
-		// Sprint 4 PR5: Managed Users view — list / detail of end
-		// users onboarded via Connect, grouped by external_user_id.
+		// Managed users.
 		r.Get("/v1/users", managedUsersHandler.List)
 		r.Get("/v1/users/{external_user_id}", managedUsersHandler.Get)
-		// Hosted preview link (Sprint 2). Returns a 24h JWT-signed
-		// URL the caller can share without exposing the API key.
-		r.Post("/v1/posts/{id}/preview-link", previewHandler.CreateLink)
-		r.Post("/v1/social-posts/{id}/preview-link", withDeprecation(func(r *http.Request) string {
-			return "/v1/posts/" + chi.URLParam(r, "id") + "/preview-link"
-		}, previewHandler.CreateLink))
 
-		// Analytics aggregations (API key)
-		r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)
-		r.Get("/v1/analytics/trend", analyticsHandler.GetTrend)
-		r.Get("/v1/analytics/by-platform", analyticsHandler.GetByPlatform)
-		// Sprint 5 PR1: dimensional rollup with day/week/month
-		// granularity + dynamic GROUP BY across platform / account /
-		// external_user_id / status.
-		r.Get("/v1/analytics/rollup", analyticsRollupHandler.GetRollup)
-
+		// Webhooks.
 		r.Post("/v1/webhooks", webhookSubHandler.Create)
 		r.Get("/v1/webhooks", webhookSubHandler.List)
 		r.Get("/v1/webhooks/{id}", webhookSubHandler.Get)
@@ -873,8 +596,48 @@ func main() {
 		r.Delete("/v1/webhooks/{id}", webhookSubHandler.Delete)
 		r.Post("/v1/webhooks/{id}/rotate", webhookSubHandler.Rotate)
 
-		r.Get("/v1/oauth/connect/{platform}", oauthHandler.Connect)
+		// Analytics.
+		r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)
+		r.Get("/v1/analytics/trend", analyticsHandler.GetTrend)
+		r.Get("/v1/analytics/by-platform", analyticsHandler.GetByPlatform)
+		r.Get("/v1/analytics/rollup", analyticsRollupHandler.GetRollup)
+
+		// API metrics.
+		r.Get("/v1/api-metrics/summary", apiMetricsHandler.Summary)
+		r.Get("/v1/api-metrics/trend", apiMetricsHandler.Trend)
+		r.Get("/v1/api-metrics/overall", apiMetricsHandler.Overall)
+
+		// Billing.
+		r.Get("/v1/billing", billingHandler.GetBilling)
+		r.Post("/v1/billing/checkout", billingHandler.CreateCheckout)
+		r.Post("/v1/billing/portal", billingHandler.CreatePortal)
 		r.Get("/v1/usage", billingHandler.GetUsage)
+
+		// OAuth (workspace-scoped, non-profile entry).
+		r.Get("/v1/oauth/connect/{platform}", oauthHandler.Connect)
+
+		// Facebook Page picker — pending-connection read + finalize.
+		// Still gated by ENABLE_FACEBOOK_PAGES super-admin while the
+		// integration is in audit.
+		r.Route("/v1/pending-connections", func(r chi.Router) {
+			r.Use(auth.RequireFacebookSuperAdmin(superAdminChecker))
+			r.Get("/{id}", oauthHandler.PendingConnectionGet)
+			r.Post("/{id}/finalize", oauthHandler.PendingConnectionFinalize)
+		})
+
+		// Inbox — unified Instagram comments/DMs and Threads replies.
+		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool)
+		r.Route("/v1/inbox", func(r chi.Router) {
+			r.Get("/", inboxHandler.List)
+			r.Get("/unread-count", inboxHandler.UnreadCount)
+			r.Post("/mark-all-read", inboxHandler.MarkAllRead)
+			r.Post("/sync", inboxHandler.Sync)
+			r.Get("/{id}", inboxHandler.Get)
+			r.Get("/{id}/media-context", inboxHandler.MediaContext)
+			r.Post("/{id}/read", inboxHandler.MarkRead)
+			r.Post("/{id}/reply", inboxHandler.Reply)
+			r.Post("/{id}/thread-state", inboxHandler.UpdateThreadState)
+		})
 	})
 
 	srv := &http.Server{

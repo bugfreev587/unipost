@@ -61,7 +61,7 @@ func computeEngagementRate(m *platform.PostMetrics) float64 {
 }
 
 // GetAnalytics handles GET /v1/social-posts/{id}/analytics
-// (and the workspace-scoped /v1/workspaces/{workspaceID}/social-posts/{id}/analytics).
+// (and the workspace-scoped /v1/posts/{id}/analytics).
 //
 // Pass ?refresh=true to bypass the 1-hour cache and force a live fetch from
 // each platform. For backward compatibility, ?refresh=1 is also accepted.
@@ -223,24 +223,7 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *AnalyticsHandler) getWorkspaceID(r *http.Request) string {
-	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
-		return pid
-	}
-	workspaceID := chi.URLParam(r, "workspaceID")
-	if workspaceID == "" {
-		return ""
-	}
-	userID := auth.GetUserID(r.Context())
-	if userID == "" {
-		return ""
-	}
-	_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-		ID: workspaceID, UserID: userID,
-	})
-	if err != nil {
-		return ""
-	}
-	return workspaceID
+	return auth.GetWorkspaceID(r.Context())
 }
 
 func float64FromNumeric(n pgtype.Numeric) float64 {

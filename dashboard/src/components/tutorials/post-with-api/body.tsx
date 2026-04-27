@@ -110,7 +110,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
         setKeyState({ kind: "error", message: "Session expired. Please sign in again." });
         return;
       }
-      const res = await createApiKey(token, workspace.id, {
+      const res = await createApiKey(token, {
         name: "Tutorial key",
         environment: "production",
       });

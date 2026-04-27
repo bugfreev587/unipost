@@ -28,9 +28,14 @@ func NewRecorder(queries *db.Queries) *Recorder {
 // Middleware returns the chi-compatible handler wrapper.
 func (rec *Recorder) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only record requests authenticated via API key, not Clerk session.
+		// DualAuthMiddleware stamps APIKeyID in context for API-key paths.
+		if auth.GetAPIKeyID(r.Context()) == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		workspaceID := auth.GetWorkspaceID(r.Context())
 		if workspaceID == "" {
-			// Not an API-key request — skip metrics recording.
 			next.ServeHTTP(w, r)
 			return
 		}

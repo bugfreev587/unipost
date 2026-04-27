@@ -178,7 +178,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       try {
         const token = await getToken();
         if (!token) return;
-        const res = await getBilling(token, currentProfile.workspace_id);
+        const res = await getBilling(token);
         setBilling(res.data);
       } catch { /* silent */ }
     }
@@ -191,7 +191,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       try {
         const token = await getToken();
         if (!token) return;
-        const res = await getWorkspace(token, currentProfile.workspace_id);
+        const res = await getWorkspace(token);
         setWorkspace(res.data);
       } catch { /* silent */ }
     }

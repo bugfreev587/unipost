@@ -38,7 +38,7 @@ export default function ApiKeysPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await listApiKeys(token, workspaceId);
+      const res = await listApiKeys(token);
       setKeys(res.data);
     } catch (err) {
       console.error("Failed to load API keys:", err);
@@ -55,7 +55,7 @@ export default function ApiKeysPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await createApiKey(token, workspaceId, { name: keyName.trim(), environment: keyEnv });
+      const res = await createApiKey(token, { name: keyName.trim(), environment: keyEnv });
       setNewKey(res.data.key);
       setCreateOpen(false);
       setKeyName("");
@@ -72,7 +72,7 @@ export default function ApiKeysPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await revokeApiKey(token, workspaceId, keyId);
+      await revokeApiKey(token, keyId);
       loadKeys();
     } catch (err) {
       console.error("Failed to revoke:", err);

@@ -243,10 +243,10 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         {
-          label: "workspaces",
+          label: "workspace",
           children: [
-            { label: "List workspaces", href: "/docs/api/workspaces/list", method: "GET" },
-            { label: "Get workspace", href: "/docs/api/workspaces/get", method: "GET" },
+            { label: "Get workspace", href: "/docs/api/workspace/get", method: "GET" },
+            { label: "Update workspace", href: "/docs/api/workspace/update", method: "PATCH" },
           ],
         },
         {
@@ -254,7 +254,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           children: [
             { label: "List API keys", href: "/docs/api/api-keys/list", method: "GET" },
             { label: "Create API key", href: "/docs/api/api-keys/create", method: "POST" },
-            { label: "Delete API key", href: "/docs/api/api-keys/delete", method: "DELETE" },
+            { label: "Revoke API key", href: "/docs/api/api-keys/delete", method: "DELETE" },
           ],
         },
       ],

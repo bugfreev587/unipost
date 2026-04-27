@@ -41,9 +41,9 @@ export default function APIMetricsPage() {
       const to = new Date().toISOString();
       const from = new Date(Date.now() - range * 24 * 60 * 60 * 1000).toISOString();
       const [o, s, t] = await Promise.all([
-        getAPIMetricsOverall(token, workspaceId, from, to),
-        getAPIMetricsSummary(token, workspaceId, from, to),
-        getAPIMetricsTrend(token, workspaceId, from, to),
+        getAPIMetricsOverall(token, from, to),
+        getAPIMetricsSummary(token, from, to),
+        getAPIMetricsTrend(token, from, to),
       ]);
       setOverall(o.data);
       setSummary(s.data || []);

@@ -1,6 +1,9 @@
 -- name: ListWorkspacesByUser :many
 SELECT * FROM workspaces WHERE user_id = $1 ORDER BY created_at DESC;
 
+-- name: GetDefaultWorkspaceForUser :one
+SELECT * FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1;
+
 -- name: GetWorkspace :one
 SELECT * FROM workspaces WHERE id = $1;
 

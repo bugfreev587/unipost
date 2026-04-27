@@ -31,43 +31,16 @@ func NewWebhookSubscriptionHandler(queries *db.Queries) *WebhookSubscriptionHand
 	return &WebhookSubscriptionHandler{queries: queries}
 }
 
-// requireWorkspace resolves the workspace for both auth modes:
-//
-//   - Clerk dashboard routes: validates ownership of the workspaceID path param
-//   - API key routes: uses the workspace already bound by middleware, or enforces
-//     that the optional workspaceID path param matches it
+// requireWorkspace returns the workspace ID stamped into the request
+// context by DualAuthMiddleware (API-key path → key's workspace; Clerk
+// path → user's default workspace).
 func (h *WebhookSubscriptionHandler) requireWorkspace(r *http.Request, w http.ResponseWriter) (string, bool) {
-	pathWorkspaceID := chi.URLParam(r, "workspaceID")
-	if userID := auth.GetUserID(r.Context()); userID != "" {
-		if pathWorkspaceID == "" {
-			writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing workspace id")
-			return "", false
-		}
-		_, err := h.queries.GetWorkspaceByIDAndOwner(r.Context(), db.GetWorkspaceByIDAndOwnerParams{
-			ID:     pathWorkspaceID,
-			UserID: userID,
-		})
-		if err != nil {
-			if err == pgx.ErrNoRows {
-				writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
-				return "", false
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace")
-			return "", false
-		}
-		return pathWorkspaceID, true
-	}
-
-	boundWorkspaceID := auth.GetWorkspaceID(r.Context())
-	if boundWorkspaceID == "" {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return "", false
 	}
-	if pathWorkspaceID != "" && pathWorkspaceID != boundWorkspaceID {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Workspace not found")
-		return "", false
-	}
-	return boundWorkspaceID, true
+	return workspaceID, true
 }
 
 // webhookResponse is the read-shape: secret_preview only, never
