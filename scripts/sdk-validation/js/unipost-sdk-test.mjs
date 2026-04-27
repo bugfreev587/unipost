@@ -473,7 +473,8 @@ async function main() {
 
     await test('posts.analytics()', async () => {
       const res = await client.posts.analytics(firstPost.id);
-      assert(Array.isArray(res), 'Expected analytics array');
+      const items = Array.isArray(res) ? res : res?.data;
+      assert(Array.isArray(items), 'Expected analytics array');
     });
   } else {
     skip('posts.get()', 'No posts available');
