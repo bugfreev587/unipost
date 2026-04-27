@@ -243,13 +243,6 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         {
-          label: "workspace",
-          children: [
-            { label: "Get workspace", href: "/docs/api/workspace/get", method: "GET" },
-            { label: "Update workspace", href: "/docs/api/workspace/update", method: "PATCH" },
-          ],
-        },
-        {
           label: "api keys",
           children: [
             { label: "List API keys", href: "/docs/api/api-keys/list", method: "GET" },
