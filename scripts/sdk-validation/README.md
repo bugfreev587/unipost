@@ -28,6 +28,7 @@ What it covers now:
 - Users list/get when managed users exist
 - Webhook signature verification plus webhook CRUD/rotate
 - Platform credentials create/list/delete when the workspace plan allows it
+- API keys list, plus a create/revoke round-trip (mint a test key, verify the prefix, revoke it)
 - Posts validate/list/get/queue/analytics
 - Draft create/update/preview/archive/restore
 - Scheduled create/update/cancel

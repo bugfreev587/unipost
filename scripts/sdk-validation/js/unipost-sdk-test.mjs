@@ -107,9 +107,9 @@ async function cleanup(client) {
     }
   }
 
-  for (const { workspaceId, platform } of createdPlatformCredentialKeys.splice(0)) {
+  for (const platform of createdPlatformCredentialKeys.splice(0)) {
     try {
-      await client.platformCredentials.delete(workspaceId, platform);
+      await client.platformCredentials.delete(platform);
       console.log(`  🧹 Deleted platform credential ${platform}`);
     } catch (error) {
       console.log(`  ⚠ Failed to delete platform credential ${platform}... (${error.message})`);
@@ -407,36 +407,51 @@ async function main() {
 
   section('6. Platform credentials');
 
-  if (workspace?.id) {
-    const platformKey = `sdk-js-${Date.now()}`;
-    await test('platformCredentials.create()/list()/delete()', async () => {
-      try {
-        const created = await client.platformCredentials.create(workspace.id, {
-          platform: platformKey,
-          clientId: 'sdk-client-id',
-          clientSecret: 'sdk-client-secret',
-        });
-        assert(created.platform === platformKey, 'Expected created credential platform');
-        createdPlatformCredentialKeys.push({ workspaceId: workspace.id, platform: platformKey });
+  const platformKey = `sdk-js-${Date.now()}`;
+  await test('platformCredentials.create()/list()/delete()', async () => {
+    try {
+      const created = await client.platformCredentials.create({
+        platform: platformKey,
+        clientId: 'sdk-client-id',
+        clientSecret: 'sdk-client-secret',
+      });
+      assert(created.platform === platformKey, 'Expected created credential platform');
+      createdPlatformCredentialKeys.push(platformKey);
 
-        const listed = await client.platformCredentials.list(workspace.id);
-        assert(Array.isArray(listed.data), 'Expected credential list');
-        assert(listed.data.some((item) => item.platform === platformKey), 'Expected created credential in list');
+      const listed = await client.platformCredentials.list();
+      assert(Array.isArray(listed.data), 'Expected credential list');
+      assert(listed.data.some((item) => item.platform === platformKey), 'Expected created credential in list');
 
-        await client.platformCredentials.delete(workspace.id, platformKey);
-        createdPlatformCredentialKeys.pop();
-      } catch (error) {
-        if (error instanceof UniPostError && error.code === 'forbidden') {
-          console.log('⏭ SKIP — plan-gated');
-          skipped += 1;
-          return;
-        }
-        throw error;
+      await client.platformCredentials.delete(platformKey);
+      createdPlatformCredentialKeys.pop();
+    } catch (error) {
+      if (error instanceof UniPostError && error.code === 'forbidden') {
+        console.log('⏭ SKIP — plan-gated');
+        skipped += 1;
+        return;
       }
+      throw error;
+    }
+  });
+
+  section('6b. API keys');
+
+  await test('apiKeys.list()', async () => {
+    const page = await client.apiKeys.list();
+    assert(Array.isArray(page.data), 'Expected api_keys list');
+  });
+
+  await test('apiKeys.create()/revoke()', async () => {
+    const created = await client.apiKeys.create({
+      name: `sdk-js-mint-${Date.now()}`,
+      environment: 'test',
     });
-  } else {
-    skip('platformCredentials.create()/list()/delete()', 'No workspace context');
-  }
+    assert(typeof created.key === 'string' && created.key.startsWith('up_test_'),
+      'Expected up_test_ prefixed key');
+    assert(typeof created.id === 'string' && created.id.length > 0,
+      'Expected key id');
+    await client.apiKeys.revoke(created.id);
+  });
 
   section('7. Posts');
 

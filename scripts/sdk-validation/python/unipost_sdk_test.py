@@ -85,7 +85,7 @@ def expect_api_error(name, fn, expected_codes):
     return test(name, runner)
 
 
-def cleanup(client, workspace_id):
+def cleanup(client):
     if created_webhook_ids or created_media_ids or created_post_ids or created_platform_credentials:
         section("Cleanup")
 
@@ -112,7 +112,7 @@ def cleanup(client, workspace_id):
 
     for platform_name in list(created_platform_credentials):
         try:
-            client.platform_credentials.delete(workspace_id, platform_name)
+            client.platform_credentials.delete(platform_name)
             print(f"  🧹 Deleted platform credential {platform_name}")
         except Exception as exc:
             print(f"  ⚠ Failed to delete platform credential {platform_name}... ({exc})")
@@ -225,11 +225,13 @@ def main():
 
     section("6. Platform credentials")
 
-    if workspace:
-        platform_name = f"sdk-py-{int(datetime.now(timezone.utc).timestamp())}"
-        test("platform_credentials.create()/list()/delete()", lambda: _test_platform_credentials(client, workspace.id, platform_name))
-    else:
-        skip("platform_credentials.create()/list()/delete()", "No workspace available")
+    platform_name = f"sdk-py-{int(datetime.now(timezone.utc).timestamp())}"
+    test("platform_credentials.create()/list()/delete()", lambda: _test_platform_credentials(client, platform_name))
+
+    section("6b. API keys")
+
+    test("api_keys.list()", lambda: _test_api_keys_list(client))
+    test("api_keys.create()/revoke()", lambda: _test_api_keys_roundtrip(client))
 
     section("7. Posts")
 
@@ -300,7 +302,7 @@ def main():
     test("usage.get()", lambda: _test_usage(client))
     test("oauth.connect() — known backend path", lambda: _test_oauth_connect(client))
 
-    cleanup(client, workspace.id if workspace else "")
+    cleanup(client)
 
     print("\n╔══════════════════════════════════════════════════╗")
     print(f"║  Results: {passed:2d} passed  {failed:2d} failed  {skipped:2d} skipped      ║")
@@ -515,10 +517,9 @@ def _test_webhook_rotate(client, webhook_id):
     return payload
 
 
-def _test_platform_credentials(client, workspace_id, platform_name):
+def _test_platform_credentials(client, platform_name):
     try:
         created = client.platform_credentials.create(
-            workspace_id,
             platform=platform_name,
             client_id="sdk-client-id",
             client_secret="sdk-client-secret",
@@ -529,10 +530,25 @@ def _test_platform_credentials(client, workspace_id, platform_name):
             return None
         raise
     created_platform_credentials.append(platform_name)
-    listed = client.platform_credentials.list(workspace_id)
+    listed = client.platform_credentials.list()
     assert_true(any(item.platform == platform_name for item in listed.get("data", [])), "Expected credential in list")
-    client.platform_credentials.delete(workspace_id, platform_name)
+    client.platform_credentials.delete(platform_name)
     created_platform_credentials.remove(platform_name)
+    return created
+
+
+def _test_api_keys_list(client):
+    payload = client.api_keys.list()
+    assert_true(isinstance(payload.get("data", []), list), "Expected api_keys list")
+    return payload
+
+
+def _test_api_keys_roundtrip(client):
+    name = f"sdk-py-mint-{int(datetime.now(timezone.utc).timestamp())}"
+    created = client.api_keys.create(name=name, environment="test")
+    assert_true(getattr(created, "key", "").startswith("up_test_"), "Expected up_test_ prefixed key")
+    assert_true(getattr(created, "id", ""), "Expected key id")
+    client.api_keys.revoke(created.id)
     return created
 
 

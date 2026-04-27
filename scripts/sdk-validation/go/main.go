@@ -555,45 +555,73 @@ func main() {
 
 	section("6. Platform credentials")
 
-	if workspace != nil {
-		platformName := fmt.Sprintf("sdk-go-%d", time.Now().Unix())
-		test("PlatformCredentials.Create()/List()/Delete()", func() error {
-			item, err := client.PlatformCredentials.Create(ctx, workspace.ID, &unipost.CreatePlatformCredentialParams{
-				Platform:     platformName,
-				ClientID:     "sdk-client-id",
-				ClientSecret: "sdk-client-secret",
-			})
-			if err != nil {
-				if apiErr, ok := err.(*unipost.APIError); ok && apiErr.Code == "forbidden" {
-					skip("PlatformCredentials.Create()/List()/Delete()", "Plan-gated")
-					return nil
-				}
-				return err
-			}
-			if item.Platform != platformName {
-				return fmt.Errorf("expected created platform credential")
-			}
-			createdPlatformCredentials = append(createdPlatformCredentials, platformName)
-			page, err := client.PlatformCredentials.List(ctx, workspace.ID)
-			if err != nil {
-				return err
-			}
-			found := false
-			for _, cred := range page.Data {
-				if cred.Platform == platformName {
-					found = true
-				}
-			}
-			if !found {
-				return fmt.Errorf("expected created credential in list")
-			}
-			if err := client.PlatformCredentials.Delete(ctx, workspace.ID, platformName); err != nil {
-				return err
-			}
-			createdPlatformCredentials = createdPlatformCredentials[:len(createdPlatformCredentials)-1]
-			return nil
+	platformName := fmt.Sprintf("sdk-go-%d", time.Now().Unix())
+	test("PlatformCredentials.Create()/List()/Delete()", func() error {
+		item, err := client.PlatformCredentials.Create(ctx, &unipost.CreatePlatformCredentialParams{
+			Platform:     platformName,
+			ClientID:     "sdk-client-id",
+			ClientSecret: "sdk-client-secret",
 		})
-	}
+		if err != nil {
+			if apiErr, ok := err.(*unipost.APIError); ok && apiErr.Code == "forbidden" {
+				skip("PlatformCredentials.Create()/List()/Delete()", "Plan-gated")
+				return nil
+			}
+			return err
+		}
+		if item.Platform != platformName {
+			return fmt.Errorf("expected created platform credential")
+		}
+		createdPlatformCredentials = append(createdPlatformCredentials, platformName)
+		page, err := client.PlatformCredentials.List(ctx)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, cred := range page.Data {
+			if cred.Platform == platformName {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("expected created credential in list")
+		}
+		if err := client.PlatformCredentials.Delete(ctx, platformName); err != nil {
+			return err
+		}
+		createdPlatformCredentials = createdPlatformCredentials[:len(createdPlatformCredentials)-1]
+		return nil
+	})
+
+	section("6b. API keys")
+
+	test("APIKeys.List()", func() error {
+		page, err := client.APIKeys.List(ctx)
+		if err != nil {
+			return err
+		}
+		if page.Data == nil {
+			return fmt.Errorf("expected api_keys data slice")
+		}
+		return nil
+	})
+
+	test("APIKeys.Create()/Revoke()", func() error {
+		created, err := client.APIKeys.Create(ctx, &unipost.CreateAPIKeyParams{
+			Name:        fmt.Sprintf("sdk-go-mint-%d", time.Now().Unix()),
+			Environment: "test",
+		})
+		if err != nil {
+			return err
+		}
+		if !strings.HasPrefix(created.Key, "up_test_") {
+			return fmt.Errorf("expected up_test_ prefixed key, got %q", created.Key)
+		}
+		if created.ID == "" {
+			return fmt.Errorf("expected key id")
+		}
+		return client.APIKeys.Revoke(ctx, created.ID)
+	})
 
 	section("7. Posts")
 
@@ -948,7 +976,7 @@ func main() {
 		return nil
 	})
 
-	cleanup(ctx, client, workspace)
+	cleanup(ctx, client)
 
 	fmt.Println("\n╔══════════════════════════════════════════════════╗")
 	fmt.Printf("║  Results: %2d passed  %2d failed  %2d skipped      ║\n", passed, failed, skipped)
@@ -973,7 +1001,7 @@ func maybeAccountIDs(id string) []string {
 	return []string{id}
 }
 
-func cleanup(ctx context.Context, client *unipost.Client, workspace *unipost.Workspace) {
+func cleanup(ctx context.Context, client *unipost.Client) {
 	if len(createdWebhookIDs) > 0 || len(createdMediaIDs) > 0 || len(createdPostIDs) > 0 || len(createdPlatformCredentials) > 0 {
 		section("Cleanup")
 	}
@@ -1002,13 +1030,11 @@ func cleanup(ctx context.Context, client *unipost.Client, workspace *unipost.Wor
 		}
 	}
 
-	if workspace != nil {
-		for _, platformName := range createdPlatformCredentials {
-			if err := client.PlatformCredentials.Delete(ctx, workspace.ID, platformName); err != nil {
-				fmt.Printf("  ⚠ Failed to delete platform credential %s... (%v)\n", platformName, err)
-			} else {
-				fmt.Printf("  🧹 Deleted platform credential %s\n", platformName)
-			}
+	for _, platformName := range createdPlatformCredentials {
+		if err := client.PlatformCredentials.Delete(ctx, platformName); err != nil {
+			fmt.Printf("  ⚠ Failed to delete platform credential %s... (%v)\n", platformName, err)
+		} else {
+			fmt.Printf("  🧹 Deleted platform credential %s\n", platformName)
 		}
 	}
 }
