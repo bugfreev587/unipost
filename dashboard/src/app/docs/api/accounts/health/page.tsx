@@ -1,15 +1,7 @@
 "use client";
 
-import {
-  ApiReferencePage,
-  ApiReferenceGrid,
-  ApiEndpointCard,
-  ApiAccordion,
-  ApiFieldList,
-  ApiRequestConfigCard,
-  CodeTabs,
-  type ApiFieldItem,
-} from "../../_components/doc-components";
+import type { ApiFieldItem } from "../../_components/doc-components";
+import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
   {
@@ -30,70 +22,67 @@ const PATH_FIELDS: ApiFieldItem[] = [
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
+    name: "social_account_id",
+    type: "string",
+    description: "UniPost account ID the health snapshot belongs to.",
+  },
+  {
+    name: "platform",
+    type: "string",
+    description: "Normalized platform name.",
+  },
+  {
     name: "status",
     type: "string",
-    description: 'High-level account state such as "active" or "reconnect_required".',
+    description: 'Derived health state such as "ok", "degraded", or "disconnected".',
   },
   {
-    name: "token_refreshed_at",
+    name: "last_successful_post_at",
     type: "string | null",
-    description: "Last successful token refresh timestamp.",
+    description: "Most recent successfully published post timestamp, if one exists.",
   },
   {
-    name: "last_publish_at",
-    type: "string | null",
-    description: "Most recent publish attempt timestamp.",
+    name: "last_error",
+    type: "object | null",
+    description: "Most recent publish failure, when health is degraded.",
   },
   {
-    name: "last_publish_status",
-    type: "string | null",
-    description: "Outcome of the most recent publish attempt.",
+    name: "last_error.code",
+    type: "string",
+    description: "Coarse failure category such as token expiry or rate limiting.",
   },
   {
-    name: "last_publish_error",
+    name: "last_error.message",
+    type: "string",
+    description: "Raw downstream error message when available.",
+  },
+  {
+    name: "last_error.occurred_at",
+    type: "string",
+    description: "When the most recent failure occurred.",
+  },
+  {
+    name: "token_expires_at",
     type: "string | null",
-    description: "Most recent downstream platform error, if one exists.",
+    description: "Stored token expiration time when the platform provides one.",
   },
 ];
 
-const RESPONSE_401_FIELDS: ApiFieldItem[] = [
+const ERROR_FIELDS: ApiFieldItem[] = [
   {
     name: "error.code",
     type: "string",
-    description: 'Usually "UNAUTHORIZED".',
+    description: 'Usually "UNAUTHORIZED", "NOT_FOUND", or "INTERNAL_ERROR".',
   },
   {
     name: "error.normalized_code",
     type: "string",
-    description: 'Lowercase alias such as "unauthorized".',
+    description: 'Lowercase alias such as "unauthorized", "not_found", or "internal_error".',
   },
   {
     name: "error.message",
     type: "string",
-    description: "Human-readable auth error.",
-  },
-  {
-    name: "request_id",
-    type: "string",
-    description: "Request identifier for debugging and support.",
-  },
-];
-
-const RESPONSE_404_FIELDS: ApiFieldItem[] = [
-  {
-    name: "error.code",
-    type: "string",
-    description: 'Usually "NOT_FOUND".',
-  },
-  {
-    name: "error.normalized_code",
-    type: "string",
-    description: 'Lowercase alias such as "not_found".',
-  },
-  {
-    name: "error.message",
-    type: "string",
-    description: "Returned when the account is missing or outside the workspace.",
+    description: "Human-readable error message.",
   },
   {
     name: "request_id",
@@ -129,22 +118,12 @@ const RESPONSE_SNIPPETS = [
     label: "200",
     code: `{
   "data": {
-    "status": "active",
-    "token_refreshed_at": "2026-04-22T10:12:00Z",
-    "last_publish_at": "2026-04-22T08:30:00Z",
-    "last_publish_status": "published",
-    "last_publish_error": null
-  }
-}`,
-  },
-  {
-    lang: "json",
-    label: "401",
-    code: `{
-  "error": {
-    "code": "UNAUTHORIZED",
-    "normalized_code": "unauthorized",
-    "message": "Missing or invalid API key."
+    "social_account_id": "sa_twitter_1",
+    "platform": "twitter",
+    "status": "ok",
+    "last_successful_post_at": "2026-04-22T08:30:00Z",
+    "last_error": null,
+    "token_expires_at": "2026-05-22T10:12:00Z"
   },
   "request_id": "req_123"
 }`,
@@ -156,7 +135,7 @@ const RESPONSE_SNIPPETS = [
   "error": {
     "code": "NOT_FOUND",
     "normalized_code": "not_found",
-    "message": "Account not found."
+    "message": "Account not found"
   },
   "request_id": "req_123"
 }`,
@@ -165,65 +144,24 @@ const RESPONSE_SNIPPETS = [
 
 export default function AccountHealthPage() {
   return (
-    <ApiReferencePage
+    <SingleEndpointReferencePage
       section="accounts"
       title="Account health"
       description="Returns the current operational health for one connected account. Use it to decide whether reconnect attention is needed before your app tries to publish."
-    >
-      <ApiReferenceGrid
-        left={
-          <div style={{ display: "grid", gap: 16 }}>
-            <ApiRequestConfigCard
-              method="GET"
-              path="/v1/accounts/:account_id/health"
-              requestPathTemplate="/v1/accounts/:account_id/health"
-              baseUrl="https://api.unipost.dev"
-              authFields={AUTH_FIELDS}
-              pathFields={PATH_FIELDS}
-              useMonacoForJsonResponse
-            />
-
-            <ApiEndpointCard method="GET" path="/v1/accounts/:account_id/health">
-              <div style={{ padding: "16px 18px" }}>
-                <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
-                <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/accounts/:account_id/health</code>
-              </div>
-            </ApiEndpointCard>
-
-            <ApiEndpointCard method="GET" path="/v1/accounts/:account_id/health">
-              <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
-                <ApiFieldList items={AUTH_FIELDS} />
-              </div>
-              <div style={{ padding: "18px" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Path Params</div>
-                <ApiFieldList items={PATH_FIELDS} />
-              </div>
-            </ApiEndpointCard>
-
-            <ApiEndpointCard method="GET" path="/v1/accounts/:account_id/health">
-              <div style={{ padding: "18px 18px 4px" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
-              </div>
-              <ApiAccordion title="200">
-                <ApiFieldList items={RESPONSE_200_FIELDS} />
-              </ApiAccordion>
-              <ApiAccordion title="401">
-                <ApiFieldList items={RESPONSE_401_FIELDS} />
-              </ApiAccordion>
-              <ApiAccordion title="404">
-                <ApiFieldList items={RESPONSE_404_FIELDS} />
-              </ApiAccordion>
-            </ApiEndpointCard>
-          </div>
-        }
-        right={
-          <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
-            <CodeTabs snippets={SNIPPETS} />
-            <CodeTabs snippets={RESPONSE_SNIPPETS} />
-          </div>
-        }
-      />
-    </ApiReferencePage>
+      method="GET"
+      path="/v1/accounts/:account_id/health"
+      requestSections={[
+        { title: "Authorization", items: AUTH_FIELDS },
+        { title: "Path Params", items: PATH_FIELDS },
+      ]}
+      responses={[
+        { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "401", fields: ERROR_FIELDS },
+        { code: "404", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
+      ]}
+      snippets={SNIPPETS}
+      responseSnippets={RESPONSE_SNIPPETS}
+    />
   );
 }

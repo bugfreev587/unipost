@@ -1,14 +1,7 @@
 "use client";
 
-import {
-  ApiReferencePage,
-  ApiReferenceGrid,
-  ApiEndpointCard,
-  ApiAccordion,
-  ApiFieldList,
-  CodeTabs,
-  type ApiFieldItem,
-} from "../../_components/doc-components";
+import type { ApiFieldItem } from "../../_components/doc-components";
+import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
   {
@@ -26,6 +19,14 @@ const BODY_FIELDS: ApiFieldItem[] = [
     description: "Recommended unified request shape for per-account content.",
   },
   {
+    name: "scheduled_at?",
+    type: "string",
+    description: "Optional scheduled publish time in ISO-8601 format.",
+  },
+];
+
+const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
+  {
     name: "platform_posts[].account_id",
     type: "string",
     description: "Connected social account to validate against.",
@@ -41,22 +42,57 @@ const BODY_FIELDS: ApiFieldItem[] = [
     description: "Public asset URLs to validate for that destination.",
   },
   {
-    name: "scheduled_at?",
+    name: "platform_posts[].media_ids?",
+    type: "string[]",
+    description: "Media library IDs to validate for that destination.",
+  },
+  {
+    name: "platform_posts[].thread_position?",
+    type: "integer",
+    description: "1-indexed thread slot for X and Bluesky thread validation.",
+  },
+  {
+    name: "platform_posts[].first_comment?",
     type: "string",
-    description: "Optional scheduled publish time in ISO-8601 format.",
+    description: "Optional first reply/comment validation for supported platforms.",
+  },
+  {
+    name: "platform_posts[].platform_options?",
+    type: "object",
+    description: "Platform-specific options such as Instagram media type or Pinterest board selection.",
   },
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
-    name: "ok",
+    name: "valid",
     type: "boolean",
-    description: "Whether the request is safe to publish as-is.",
+    description: "Whether the payload can be published without fatal validation errors.",
   },
   {
     name: "errors",
     type: "array",
-    description: "Validation issues found while checking the payload.",
+    description: "Blocking validation issues.",
+  },
+  {
+    name: "errors[].platform_post_index",
+    type: "integer",
+    description: "0-based input index that produced the issue.",
+  },
+  {
+    name: "errors[].account_id",
+    type: "string",
+    description: "Account ID associated with the issue when known.",
+  },
+  {
+    name: "errors[].platform",
+    type: "string",
+    description: "Resolved platform associated with the issue when known.",
+  },
+  {
+    name: "errors[].field",
+    type: "string",
+    description: "Request field that failed validation.",
   },
   {
     name: "errors[].code",
@@ -69,50 +105,32 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     description: "Human-readable validation message.",
   },
   {
-    name: "errors[].fatal",
-    type: "boolean",
-    description: "Whether this issue should block publish.",
+    name: "errors[].severity",
+    type: "string",
+    description: 'Issue severity. Blocking items are returned as "error".',
+  },
+  {
+    name: "warnings",
+    type: "array",
+    description: "Non-blocking validation issues.",
   },
 ];
 
-const RESPONSE_401_FIELDS: ApiFieldItem[] = [
+const ERROR_FIELDS: ApiFieldItem[] = [
   {
     name: "error.code",
     type: "string",
-    description: 'Usually "UNAUTHORIZED".',
+    description: 'Usually "UNAUTHORIZED", "VALIDATION_ERROR", or "INTERNAL_ERROR".',
   },
   {
     name: "error.normalized_code",
     type: "string",
-    description: 'Lowercase alias such as "unauthorized".',
+    description: 'Lowercase alias such as "unauthorized", "validation_error", or "internal_error".',
   },
   {
     name: "error.message",
     type: "string",
-    description: "Human-readable auth error.",
-  },
-  {
-    name: "request_id",
-    type: "string",
-    description: "Request identifier for debugging and support.",
-  },
-];
-
-const RESPONSE_422_FIELDS: ApiFieldItem[] = [
-  {
-    name: "error.code",
-    type: "string",
-    description: 'Usually "VALIDATION_FAILED".',
-  },
-  {
-    name: "error.normalized_code",
-    type: "string",
-    description: 'Lowercase alias such as "validation_error".',
-  },
-  {
-    name: "error.message",
-    type: "string",
-    description: "Returned when the request body shape is invalid.",
+    description: "Human-readable error message.",
   },
   {
     name: "request_id",
@@ -213,25 +231,21 @@ const RESPONSE_SNIPPETS = [
     label: "200",
     code: `{
   "data": {
-    "ok": false,
+    "valid": false,
     "errors": [
       {
-        "code": "CAPTION_TOO_LONG",
-        "message": "Caption exceeds the platform limit.",
-        "fatal": true
+        "platform_post_index": 0,
+        "account_id": "sa_twitter_1",
+        "platform": "twitter",
+        "field": "caption",
+        "code": "exceeds_max_length",
+        "message": "Caption exceeds maximum length for twitter (280 characters)",
+        "severity": "error"
       }
-    ]
-  }
-}`,
+    ],
+    "warnings": []
   },
-  {
-    lang: "json",
-    label: "401",
-    code: `{
-  "error": {
-    "code": "UNAUTHORIZED",
-    "message": "Missing or invalid API key."
-  }
+  "request_id": "req_123"
 }`,
   },
   {
@@ -239,64 +253,36 @@ const RESPONSE_SNIPPETS = [
     label: "422",
     code: `{
   "error": {
-    "code": "VALIDATION_FAILED",
-    "message": "platform_posts is required."
-  }
+    "code": "VALIDATION_ERROR",
+    "normalized_code": "validation_error",
+    "message": "either platform_posts or account_ids is required"
+  },
+  "request_id": "req_123"
 }`,
   },
 ];
 
 export default function ValidatePage() {
   return (
-    <ApiReferencePage
+    <SingleEndpointReferencePage
       section="publishing"
-      title="Validate"
+      title="Validate post"
       description="Runs preflight checks against the same payload shape as publish. Use it before automation or AI-driven posting so content problems are caught before quota is consumed."
-    >
-      <ApiReferenceGrid
-        left={
-          <div style={{ display: "grid", gap: 16 }}>
-            <ApiEndpointCard method="POST" path="/v1/posts/validate">
-              <div style={{ padding: "16px 18px" }}>
-                <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#3b82f6", marginRight: 12 }}>POST</span>
-                <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/posts/validate</code>
-              </div>
-            </ApiEndpointCard>
-
-            <ApiEndpointCard method="POST" path="/v1/posts/validate">
-              <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
-                <ApiFieldList items={AUTH_FIELDS} />
-              </div>
-              <div style={{ padding: "18px" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Request Body</div>
-                <ApiFieldList items={BODY_FIELDS} />
-              </div>
-            </ApiEndpointCard>
-
-            <ApiEndpointCard method="POST" path="/v1/posts/validate">
-              <div style={{ padding: "18px 18px 4px" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
-              </div>
-              <ApiAccordion title="200">
-                <ApiFieldList items={RESPONSE_200_FIELDS} />
-              </ApiAccordion>
-              <ApiAccordion title="401">
-                <ApiFieldList items={RESPONSE_401_FIELDS} />
-              </ApiAccordion>
-              <ApiAccordion title="422">
-                <ApiFieldList items={RESPONSE_422_FIELDS} />
-              </ApiAccordion>
-            </ApiEndpointCard>
-          </div>
-        }
-        right={
-          <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
-            <CodeTabs snippets={SNIPPETS} />
-            <CodeTabs snippets={RESPONSE_SNIPPETS} />
-          </div>
-        }
-      />
-    </ApiReferencePage>
+      method="POST"
+      path="/v1/posts/validate"
+      requestSections={[
+        { title: "Authorization", items: AUTH_FIELDS },
+        { title: "Request Body", items: BODY_FIELDS },
+        { title: "platform_posts[]", items: PLATFORM_POST_FIELDS },
+      ]}
+      responses={[
+        { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "401", fields: ERROR_FIELDS },
+        { code: "422", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
+      ]}
+      snippets={SNIPPETS}
+      responseSnippets={RESPONSE_SNIPPETS}
+    />
   );
 }

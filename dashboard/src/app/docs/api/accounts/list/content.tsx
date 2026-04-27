@@ -1,16 +1,9 @@
 "use client";
 import Link from "next/link";
 import {
-  ApiReferencePage,
-  ApiReferenceGrid,
-  ApiEndpointCard,
-  ApiAccordion,
-  ApiFieldList,
-  ApiRequestConfigCard,
-  CodeTabs,
   type ApiFieldItem,
 } from "../../_components/doc-components";
-import { JsonMonacoTabs } from "../../_components/json-monaco-viewer";
+import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
   {
@@ -92,21 +85,26 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   },
 ];
 
-const RESPONSE_401_FIELDS: ApiFieldItem[] = [
+const ERROR_FIELDS: ApiFieldItem[] = [
   {
     name: "error.code",
     type: "string",
-    description: 'Usually "UNAUTHORIZED".',
+    description: 'Usually "UNAUTHORIZED" or "INTERNAL_ERROR".',
   },
   {
     name: "error.normalized_code",
     type: "string",
-    description: 'Lowercase compatibility alias such as "unauthorized".',
+    description: 'Lowercase compatibility alias such as "unauthorized" or "internal_error".',
   },
   {
     name: "error.message",
     type: "string",
     description: "Human-readable auth error.",
+  },
+  {
+    name: "request_id",
+    type: "string",
+    description: "Request identifier for debugging and support.",
   },
 ];
 
@@ -173,7 +171,11 @@ func main() {
   },
 ];
 
-const RESPONSE_200 = `{
+const RESPONSE_SNIPPETS = [
+  {
+    lang: "json",
+    label: "200",
+    code: `{
   "data": [
     {
       "id": "sa_instagram_123",
@@ -191,27 +193,9 @@ const RESPONSE_200 = `{
     "limit": 1
   },
   "request_id": "req_123"
-}`;
-
-const RESPONSE_401 = `{
-  "error": {
-    "code": "UNAUTHORIZED",
-    "normalized_code": "unauthorized",
-    "message": "Missing or invalid API key."
+}`,
   },
-  "request_id": "req_123"
-}`;
-
-const RESPONSE_TABS = [
-  { code: "200", body: RESPONSE_200, fields: RESPONSE_200_FIELDS },
-  { code: "401", body: RESPONSE_401, fields: RESPONSE_401_FIELDS },
 ];
-
-const RESPONSE_SNIPPETS = RESPONSE_TABS.map((tab) => ({
-  lang: "json",
-  label: tab.code,
-  code: tab.body,
-}));
 
 export function ListAccountsContent() {
   return (
@@ -231,65 +215,24 @@ export function ListAccountsContent() {
         }}
       />
 
-      <ApiReferencePage
+      <SingleEndpointReferencePage
         section="accounts"
         title="List accounts"
         description={<>Returns connected social accounts in the current workspace. Use it to discover publishable <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>account_id</code> values.</>}
-      >
-        <ApiReferenceGrid
-          left={
-            <>
-              <div style={{ display: "grid", gap: 16 }}>
-                <ApiRequestConfigCard
-                  method="GET"
-                  path="/v1/accounts"
-                  requestPathTemplate="/v1/accounts?{platform}&{external_user_id}"
-                  baseUrl="https://api.unipost.dev"
-                  authFields={AUTH_FIELDS}
-                  queryFields={QUERY_FIELDS}
-                  useMonacoForJsonResponse
-                />
-
-                <ApiEndpointCard method="GET" path="/v1/accounts">
-                  <div style={{ padding: "16px 18px" }}>
-                    <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#10b981", marginRight: 12 }}>GET</span>
-                    <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>/v1/accounts</code>
-                  </div>
-                </ApiEndpointCard>
-
-                <ApiEndpointCard method="GET" path="/v1/accounts">
-                  <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Authorization</div>
-                    <ApiFieldList items={AUTH_FIELDS} />
-                  </div>
-                  <div style={{ padding: "18px" }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Query Params</div>
-                    <ApiFieldList items={QUERY_FIELDS} />
-                  </div>
-                </ApiEndpointCard>
-
-                <ApiEndpointCard method="GET" path="/v1/accounts">
-                  <div style={{ padding: "18px 18px 4px" }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
-                  </div>
-                  <ApiAccordion title="200">
-                    <ApiFieldList items={RESPONSE_200_FIELDS} />
-                  </ApiAccordion>
-                  <ApiAccordion title="401">
-                    <ApiFieldList items={RESPONSE_401_FIELDS} />
-                  </ApiAccordion>
-                </ApiEndpointCard>
-              </div>
-            </>
-          }
-          right={
-            <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
-              <CodeTabs snippets={SNIPPETS} />
-              <JsonMonacoTabs snippets={RESPONSE_SNIPPETS} />
-            </div>
-          }
-        />
-      </ApiReferencePage>
+      method="GET"
+      path="/v1/accounts"
+      requestSections={[
+        { title: "Authorization", items: AUTH_FIELDS },
+        { title: "Query Params", items: QUERY_FIELDS },
+      ]}
+      responses={[
+        { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "401", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
+      ]}
+      snippets={SNIPPETS}
+      responseSnippets={RESPONSE_SNIPPETS}
+    />
     </>
   );
 }

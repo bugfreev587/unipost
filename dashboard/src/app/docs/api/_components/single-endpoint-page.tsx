@@ -172,13 +172,7 @@ export function SingleEndpointReferencePage({
   const pathSection = requestSections.find((section) => normalizeSectionTitle(section.title).startsWith("path"));
   const querySection = requestSections.find((section) => normalizeSectionTitle(section.title).startsWith("query"));
   const bodySection = requestSections.find((section) => normalizeSectionTitle(section.title) === "request body");
-  const unsupportedSections = requestSections.filter((section) => {
-    const title = normalizeSectionTitle(section.title);
-    return title !== "authorization" && !title.startsWith("path") && !title.startsWith("query") && title !== "request body";
-  });
-  const shouldRenderPlayground =
-    unsupportedSections.length === 0 &&
-    Boolean(authSection || pathSection || querySection || bodySection);
+  const shouldRenderPlayground = Boolean(authSection || pathSection || querySection || bodySection);
   const providedResponseSnippets = new Map(responseSnippets.map((snippet) => [snippet.label, snippet]));
   const resolvedResponseSnippets = responses.map((response) => (
     providedResponseSnippets.get(response.code) ?? buildDefaultResponseSnippet(response)
