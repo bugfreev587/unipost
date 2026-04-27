@@ -5,7 +5,7 @@ Official Python SDK for the UniPost API.
 ## Install
 
 ```bash
-pip install unipost-sdk
+pip install unipost
 ```
 
 ## Quickstart

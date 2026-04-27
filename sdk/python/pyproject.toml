@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "unipost-sdk"
+name = "unipost"
 version = "0.2.0-local"
 description = "Official Python SDK for the UniPost API"
 readme = "README.md"

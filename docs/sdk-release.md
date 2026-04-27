@@ -23,7 +23,7 @@ Once the tag lands on GitHub, `/Users/xiaoboyu/unipost/.github/workflows/sdk-rel
 
 - runs the SDK regression suites
 - publishes `@unipost/sdk` to npm
-- builds and publishes `unipost-sdk` to PyPI
+- builds and publishes `unipost` to PyPI
 
 Go still needs a separate release step unless you later align the public module path with this repo.
 
@@ -174,7 +174,7 @@ python3 -m twine upload dist/*
 Verify:
 
 ```bash
-python3 -m pip index versions unipost-sdk
+python3 -m pip index versions unipost
 ```
 
 ## 8. Release the Go SDK
@@ -219,7 +219,7 @@ If you do not have a separate `sdk-go` repo yet, that is the missing piece befor
 
 ## Notes
 
-- The Python distribution name in `pyproject.toml` is currently `unipost-sdk`.
+- The Python distribution name in `pyproject.toml` is currently `unipost`.
 - The import path stays:
 
 ```python
