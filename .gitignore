@@ -1,0 +1,10 @@
+# Claude Code workspace metadata.
+.claude/
+
+# Go build outputs.
+/api/api
+/scripts/sdk-validation/go/unipost-sdk-test
+
+# Python bytecode caches.
+__pycache__/
+*.pyc
