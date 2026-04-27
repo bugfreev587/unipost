@@ -66,8 +66,8 @@ type accountCapabilityResponse struct {
 // level defaults. The endpoint exists today so the schema is stable
 // for clients; Sprint 2 will add the account-specific overrides.
 func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.Request) {
-	profileID := auth.GetWorkspaceID(r.Context())
-	if profileID == "" {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
@@ -77,9 +77,9 @@ func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.
 		accountID = chi.URLParam(r, "accountID")
 	}
 
-	acc, err := h.queries.GetSocialAccountByIDAndProfile(r.Context(), db.GetSocialAccountByIDAndProfileParams{
-		ID:        accountID,
-		ProfileID: profileID,
+	acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+		ID:          accountID,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")

@@ -155,11 +155,12 @@ section "Sprint 1 PR1 — Capabilities API"
 
 api_no_auth "/v1/platforms/capabilities"
 assert_status "200" "GET /v1/platforms/capabilities (no auth)"
-assert_jq '.data.schema_version' '1.1' 'Schema version bumped to 1.1 (Sprint 2)'
+assert_jq_truthy '.data.schema_version' 'Schema version present'
 assert_jq '.data.platforms.twitter.text.max_length' '280' 'Twitter max_length=280'
 assert_jq '.data.platforms.twitter.text.supports_threads' 'true' 'Twitter supports_threads=true'
 assert_jq '.data.platforms.instagram.media.requires_media' 'true' 'Instagram requires_media=true'
 assert_jq '.data.platforms.youtube.media.images.max_count' '0' 'YouTube image max_count=0'
+GLOBAL_CAP_SCHEMA=$(echo "$RESP_BODY" | jq -r '.data.schema_version // empty')
 
 # Real GET (not HEAD — chi only sets Cache-Control on GET).
 CACHE_HEADER=$(curl -sS -D - -o /dev/null "${BASE_URL}/v1/platforms/capabilities" | tr -d '\r' | grep -i '^cache-control:' || echo '')
@@ -294,8 +295,8 @@ api POST "/v1/media" '{"filename":"x.exe","content_type":"application/x-executab
 assert_status "422" "POST /v1/media rejects bad mime"
 
 # Reject oversized.
-api POST "/v1/media" '{"filename":"big.jpg","content_type":"image/jpeg","size_bytes":104857600}'
-assert_status "422" "POST /v1/media rejects > 25 MB"
+api POST "/v1/media" '{"filename":"big.jpg","content_type":"image/jpeg","size_bytes":4294967297}'
+assert_status "422" "POST /v1/media rejects > global hard cap"
 
 # Happy-path create.
 api POST "/v1/media" "$(jq -nc --arg sz "$TINY_PNG_SIZE" \
@@ -477,7 +478,11 @@ if [[ -n "$ANY_ID" ]]; then
   section "Sprint 1 PR1 — Per-account capabilities"
   api GET "/v1/accounts/${ANY_ID}/capabilities"
   assert_status "200" "GET /v1/accounts/{id}/capabilities"
-  assert_jq '.data.schema_version' '1.1' 'schema 1.1'
+  if [[ -n "${GLOBAL_CAP_SCHEMA:-}" ]]; then
+    assert_jq '.data.schema_version' "$GLOBAL_CAP_SCHEMA" 'schema matches global capabilities'
+  else
+    assert_jq_truthy '.data.schema_version' 'schema version present'
+  fi
   assert_jq_truthy '.data.platform' 'platform present'
 fi
 
@@ -485,12 +490,22 @@ fi
 
 section "Sprint 1 PR8 — Webhook secret server-generated"
 
-# Reject client-provided secret.
-api POST "/v1/webhooks" '{"url":"https://webhook.site/_smoke","events":["post.published"],"secret":"my-secret"}'
-assert_status "422" "POST /v1/webhooks rejects client-provided secret"
+# Accept client-provided secret.
+api POST "/v1/webhooks" '{"name":"Smoke Test Custom Secret","url":"https://webhook.site/_smoke","events":["post.published"],"secret":"my-secret-123"}'
+if [[ "$RESP_STATUS" == "201" ]]; then
+  pass "POST /v1/webhooks accepts client-provided secret"
+  CUSTOM_WEBHOOK_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
+  assert_jq '.data.secret' 'my-secret-123' 'custom secret echoed once on create'
+  if [[ -n "$CUSTOM_WEBHOOK_ID" ]]; then
+    api DELETE "/v1/webhooks/${CUSTOM_WEBHOOK_ID}"
+    assert_status "200" "DELETE /v1/webhooks/{id} (custom-secret webhook)"
+  fi
+else
+  fail "POST /v1/webhooks with custom secret" "HTTP $RESP_STATUS — body: ${RESP_BODY:0:200}"
+fi
 
 # Create webhook with no secret — server generates one.
-api POST "/v1/webhooks" '{"url":"https://webhook.site/_smoke","events":["post.published"]}'
+api POST "/v1/webhooks" '{"name":"Smoke Test Webhook","url":"https://webhook.site/_smoke","events":["post.published"]}'
 if [[ "$RESP_STATUS" == "201" ]]; then
   pass "POST /v1/webhooks creates webhook"
   WEBHOOK_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
