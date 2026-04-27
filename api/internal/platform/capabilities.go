@@ -40,7 +40,9 @@ package platform
 // 1.4 → 1.5 (2026-04): tightened TikTok photo formats to the
 // official JPEG/WebP set and corrected Bluesky / TikTok photo limits
 // based on current docs + production failures. Field shape unchanged.
-const CapabilitiesSchemaVersion = "1.5"
+// 1.5 → 1.6 (2026-04): added Pinterest to the public publish
+// capability map. Purely additive.
+const CapabilitiesSchemaVersion = "1.6"
 
 // Capability is the full set of post-creation rules for one platform.
 // Clients hit GET /v1/platforms/capabilities to fetch the whole map.
@@ -244,6 +246,33 @@ var Capabilities = map[string]Capability{
 				MaxDurationSeconds: 12 * 60 * 60, // 12 hours upper bound
 				MaxFileSizeBytes:   256 * 1024 * 1024 * 1024,
 				AllowedFormats:     []string{"mp4", "mov", "webm"},
+			},
+		},
+		Thread:       ThreadCapability{Supported: false},
+		Scheduling:   SchedulingCapability{Supported: true},
+		FirstComment: FirstCommentCapability{Supported: false},
+	},
+	"pinterest": {
+		DisplayName: "Pinterest",
+		Text: TextCapability{
+			MaxLength:       800,
+			MinLength:       0,
+			Required:        false,
+			SupportsThreads: false,
+		},
+		Media: MediaCapability{
+			RequiresMedia: true,
+			AllowMixed:    false,
+			Images: ImageCapability{
+				MaxCount:         1,
+				MaxFileSizeBytes: 20 * 1024 * 1024,
+				AllowedFormats:   []string{"jpg", "jpeg", "png", "webp"},
+			},
+			Videos: VideoCapability{
+				MaxCount:           1,
+				MaxDurationSeconds: 15 * 60,
+				MaxFileSizeBytes:   2 * 1024 * 1024 * 1024,
+				AllowedFormats:     []string{"mp4", "mov"},
 			},
 		},
 		Thread:       ThreadCapability{Supported: false},

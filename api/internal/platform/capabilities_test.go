@@ -13,7 +13,7 @@ import (
 func TestCapabilitiesAllPlatformsPresent(t *testing.T) {
 	expected := []string{
 		"twitter", "instagram", "tiktok", "youtube",
-		"threads", "linkedin", "bluesky",
+		"threads", "linkedin", "bluesky", "pinterest",
 	}
 	for _, p := range expected {
 		if _, ok := Capabilities[p]; !ok {
@@ -72,8 +72,8 @@ func TestCapabilitiesJSONShape(t *testing.T) {
 // can't silently de-bump it. The docs page hardcodes this value in an
 // example response, so a drift would lie to readers.
 func TestCapabilitiesSchemaVersion(t *testing.T) {
-	if CapabilitiesSchemaVersion != "1.5" {
-		t.Errorf("CapabilitiesSchemaVersion must be 1.5, got %s", CapabilitiesSchemaVersion)
+	if CapabilitiesSchemaVersion != "1.6" {
+		t.Errorf("CapabilitiesSchemaVersion must be 1.6, got %s", CapabilitiesSchemaVersion)
 	}
 }
 

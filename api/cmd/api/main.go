@@ -87,6 +87,7 @@ func main() {
 	platform.Register(platform.NewLinkedInAdapter())
 	platform.Register(platform.NewInstagramAdapter())
 	platform.Register(platform.NewThreadsAdapter())
+	platform.Register(platform.NewPinterestAdapter())
 
 	platform.Register(platform.NewTwitterAdapter()) // Native mode only — requires user's own API credentials
 
@@ -538,9 +539,13 @@ func main() {
 		// TikTok creator_info — required for the Content Posting API audit
 		// UI (see internal/handler/tiktok_creator_info.go).
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Get("/v1/profiles/{profileID}/social-accounts/{accountID}/tiktok/creator-info", withDeprecation(func(r *http.Request) string {
 			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID") + "/tiktok/creator-info"
 		}, socialAccountHandler.TikTokCreatorInfo))
+		r.Get("/v1/profiles/{profileID}/social-accounts/{accountID}/pinterest/boards", withDeprecation(func(r *http.Request) string {
+			return "/v1/profiles/" + chi.URLParam(r, "profileID") + "/accounts/" + chi.URLParam(r, "accountID") + "/pinterest/boards"
+		}, socialAccountHandler.PinterestBoards))
 		// Facebook Page Insights — still super-admin gated while
 		// Facebook Pages is in development. Drop the middleware when
 		// the feature ships to all users.
@@ -737,9 +742,13 @@ func main() {
 		// TikTok creator_info — required for the Content Posting API audit
 		// UI (see internal/handler/tiktok_creator_info.go).
 		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Get("/v1/social-accounts/{id}/tiktok/creator-info", withDeprecation(func(r *http.Request) string {
 			return "/v1/accounts/" + chi.URLParam(r, "id") + "/tiktok/creator-info"
 		}, socialAccountHandler.TikTokCreatorInfo))
+		r.Get("/v1/social-accounts/{id}/pinterest/boards", withDeprecation(func(r *http.Request) string {
+			return "/v1/accounts/" + chi.URLParam(r, "id") + "/pinterest/boards"
+		}, socialAccountHandler.PinterestBoards))
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
 			Get("/v1/accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).

@@ -79,7 +79,7 @@ export const AYRSHARE = {
   },
   faqs: [
     { q: "Can I use UniPost if I'm already using Ayrshare?", a: "Yes. You can run both in parallel during migration. UniPost's free tier lets you test without committing." },
-    { q: "Does UniPost support all the platforms Ayrshare supports?", a: "UniPost currently supports 7 platforms. Ayrshare supports 15+. If you need Facebook, Pinterest, or other platforms, check our roadmap or contact us." },
+    { q: "Does UniPost support all the platforms Ayrshare supports?", a: "UniPost currently supports 8 platforms. Ayrshare supports 15+. If you need Facebook or other platforms beyond Pinterest, check our roadmap or contact us." },
     { q: "Is UniPost's API compatible with Ayrshare?", a: "The API is similar in concept but not drop-in compatible. Field names and endpoint paths differ. See the migration guide above for the exact changes needed." },
     { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required." },
     { q: "What about Ayrshare's white-label features?", a: "UniPost supports White-label (Native mode) on all paid plans, which gives your users a branded OAuth experience. Custom-domain white-labeling is on the roadmap." },

@@ -79,7 +79,7 @@ export const ZERNIO = {
   },
   faqs: [
     { q: "Can I use UniPost if I'm already using Zernio?", a: "Yes. You can run both in parallel during migration. UniPost's free tier lets you test without any financial commitment." },
-    { q: "Does UniPost support all the platforms Zernio supports?", a: "UniPost currently supports 7 platforms. Zernio supports 14. If you need Facebook, Pinterest, or other platforms, check our roadmap or contact us." },
+    { q: "Does UniPost support all the platforms Zernio supports?", a: "UniPost currently supports 8 platforms. Zernio supports 14. If you need Facebook or other platforms beyond Pinterest, check our roadmap or contact us." },
     { q: "Both have MCP — what's the difference?", a: "UniPost's MCP Server is a core feature designed for developer API workflows. Zernio offers MCP as an add-on. Both let AI agents post on behalf of users." },
     { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required." },
     { q: "Is Zernio better for enterprise?", a: "Zernio has more enterprise features (SOC 2, larger platform coverage, enterprise clients). UniPost is better suited for solo developers and small teams who want simple pricing and a free tier." },

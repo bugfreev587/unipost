@@ -15,6 +15,7 @@ import { TikTokFields } from "./platform-fields/tiktok-fields";
 import { InstagramFields } from "./platform-fields/instagram-fields";
 import { LinkedInFields } from "./platform-fields/linkedin-fields";
 import { FacebookFields } from "./platform-fields/facebook-fields";
+import { PinterestFields } from "./platform-fields/pinterest-fields";
 import type { SocialAccount } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { SocialPostValidationIssue } from "@/lib/api";
@@ -47,7 +48,7 @@ interface PlatformEditorBlockProps {
   // account's creator cap and can gate R2 uploads accordingly.
   onTiktokMaxDurationChange: (sec: number | null) => void;
   onCaptionChange: (caption: string) => void;
-  onPlatformFieldChange: <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook">(
+  onPlatformFieldChange: <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook" | "pinterest">(
     platform: K,
     fields: Partial<NonNullable<PlatformOverride[K]>>
   ) => void;
@@ -87,6 +88,7 @@ export function PlatformEditorBlock({
   const instagramFields = override.instagram || { mediaType: "feed" as const };
   const linkedinFields = override.linkedin || { visibility: "anyone" as const };
   const facebookFields = override.facebook || { link: "", mediaType: "feed" as const };
+  const pinterestFields = override.pinterest || { boardId: "", title: "", link: "" };
 
   return (
     <div
@@ -252,6 +254,16 @@ export function PlatformEditorBlock({
               onChange={(f) => onPlatformFieldChange("facebook", f)}
               mediaAttached={mediaKind !== "none"}
               videoAttached={mediaKind === "video"}
+            />
+          )}
+          {account.platform === "pinterest" && (
+            <PinterestFields
+              accountId={account.id}
+              profileId={profileId}
+              getToken={getToken}
+              fields={pinterestFields}
+              issues={issues}
+              onChange={(f) => onPlatformFieldChange("pinterest", f)}
             />
           )}
         </div>

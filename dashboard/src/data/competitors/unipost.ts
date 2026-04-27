@@ -23,7 +23,7 @@ export const UNIPOST = {
     ],
   },
   platforms: {
-    total: 7,
+    total: 8,
     x: true,
     bluesky: true,
     linkedin: true,
@@ -32,7 +32,7 @@ export const UNIPOST = {
     tiktok: true,
     youtube: true,
     facebook: "coming",
-    pinterest: "coming",
+    pinterest: true,
   } as Record<string, boolean | string | number>,
   features: {
     scheduledPosts: true,

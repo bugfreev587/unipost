@@ -30,6 +30,7 @@ const BASE_PLATFORMS = [
   { id: "linkedin", name: "LinkedIn", type: "oauth" as const },
   { id: "instagram", name: "Instagram", type: "oauth" as const },
   { id: "threads", name: "Threads", type: "oauth" as const },
+  { id: "pinterest", name: "Pinterest", type: "oauth" as const },
   { id: "tiktok", name: "TikTok", type: "oauth" as const },
   { id: "youtube", name: "YouTube", type: "oauth" as const },
   { id: "twitter", name: "X / Twitter", type: "oauth" as const },
@@ -42,7 +43,7 @@ const FACEBOOK_PLATFORM = { id: "facebook", name: "Facebook Page", type: "oauth"
 // platforms (TikTok, YouTube) are slower and more failure-prone, so we
 // filter them out by default when the user arrives via the activation
 // modal (?first=1). A "Show all platforms" link escape-hatches.
-const FIRST_TIME_PLATFORM_IDS = new Set(["bluesky", "linkedin", "instagram", "threads", "twitter"]);
+const FIRST_TIME_PLATFORM_IDS = new Set(["bluesky", "linkedin", "instagram", "threads", "twitter", "pinterest"]);
 
 export default function AccountsPage() {
   const { id: profileId } = useParams<{ id: string }>();

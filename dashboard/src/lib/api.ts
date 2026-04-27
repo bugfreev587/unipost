@@ -468,6 +468,22 @@ export async function disconnectSocialAccount(
   );
 }
 
+export interface PinterestBoard {
+  id: string;
+  name: string;
+}
+
+export async function listPinterestBoards(
+  token: string,
+  profileId: string,
+  accountId: string
+): Promise<ApiResponse<{ boards: PinterestBoard[] }>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/pinterest/boards`,
+    token
+  );
+}
+
 // TikTok creator_info — required by TikTok's Content Posting API audit.
 // Populates the compose UI's creator nickname, privacy options, interaction
 // toggle availability, and max video length. See

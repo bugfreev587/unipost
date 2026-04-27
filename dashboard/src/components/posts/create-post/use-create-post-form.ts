@@ -64,6 +64,11 @@ export interface PlatformOverride {
     link: string;
     mediaType: "feed" | "reel";
   };
+  pinterest?: {
+    boardId: string;
+    title: string;
+    link: string;
+  };
 }
 
 export interface CreatePostFormState {
@@ -90,6 +95,7 @@ export const PLATFORM_ORDER = [
   "threads",
   "instagram",
   "facebook",
+  "pinterest",
   "tiktok",
   "youtube",
 ] as const;
@@ -101,6 +107,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   threads: "Threads",
   instagram: "Instagram",
   facebook: "Facebook",
+  pinterest: "Pinterest",
   tiktok: "TikTok",
   youtube: "YouTube",
 };
@@ -112,6 +119,7 @@ export const PLATFORM_CHAR_LIMITS: Record<string, number> = {
   threads: 500,
   instagram: 2200,
   facebook: 63206,
+  pinterest: 800,
   tiktok: 2200,
   youtube: 5000,
 };
@@ -123,6 +131,7 @@ export const PLATFORM_BRAND_COLORS: Record<string, string> = {
   threads: "#e7e7ea",
   instagram: "#e1306c",
   facebook: "#1877f2",
+  pinterest: "#e60023",
   tiktok: "#ff0050",
   youtube: "#ff0000",
 };
@@ -314,7 +323,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   }, []);
 
   const updateOverridePlatformField = useCallback(
-    <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook">(
+    <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook" | "pinterest">(
       accountId: string,
       platform: K,
       fields: Partial<NonNullable<PlatformOverride[K]>>
@@ -479,6 +488,17 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     return null;
   }, [selectedAccounts, overrides]);
 
+  const pinterestBlocker = useMemo(() => {
+    const pinterestAccounts = selectedAccounts.filter((acc) => acc.platform === "pinterest");
+    if (pinterestAccounts.length === 0) return null;
+    if (mediaItems.length === 0) return "pinterest_media";
+    if (mediaItems.length !== 1) return "pinterest_single_media";
+    for (const acc of pinterestAccounts) {
+      if (!overrides[acc.id]?.pinterest?.boardId?.trim()) return "pinterest_board";
+    }
+    return null;
+  }, [selectedAccounts, mediaItems.length, overrides]);
+
   const canSubmit = useMemo(() => {
     if (submitting) return false;
     if (selectedAccountIds.size === 0) return false;
@@ -490,8 +510,9 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (publishMode === "schedule" && scheduledAt && new Date(scheduledAt) <= new Date()) return false;
     if (publishMode === "queue" && !queueId) return false;
     if (tiktokBlocker) return false;
+    if (pinterestBlocker) return false;
     return true;
-  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId, hasPlatformOnlyContent, tiktokBlocker]);
+  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId, hasPlatformOnlyContent, tiktokBlocker, pinterestBlocker]);
 
   // Not wrapped in useCallback — always reads latest state to avoid
   // stale closure issues with mediaItems/uploadedMediaIds.
@@ -594,6 +615,18 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
             entry.platform_options = fbOptions;
           }
         }
+        if (o?.pinterest) {
+          const pinOptions: Record<string, string> = {};
+          const boardId = o.pinterest.boardId.trim();
+          const title = o.pinterest.title.trim();
+          const link = o.pinterest.link.trim();
+          if (boardId) pinOptions.board_id = boardId;
+          if (title) pinOptions.title = title;
+          if (link) pinOptions.link = link;
+          if (Object.keys(pinOptions).length > 0) {
+            entry.platform_options = pinOptions;
+          }
+        }
         return entry;
       });
     } else {
@@ -668,5 +701,6 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     hasOverLimit,
     canSubmit,
     tiktokBlocker,
+    pinterestBlocker,
   };
 }

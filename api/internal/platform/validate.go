@@ -30,6 +30,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -226,6 +227,8 @@ const (
 	// requests with a clear code until Phase 3 lands.
 	CodeInvalidFacebookMediaType = "invalid_facebook_media_type"
 	CodeFacebookReelsUnsupported = "facebook_reels_unsupported"
+	CodePinterestBoardRequired   = "pinterest_board_required"
+	CodeInvalidPinterestLink     = "invalid_pinterest_link"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -1099,6 +1102,40 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 						})
 					}
 				}
+			}
+		}
+	}
+
+	if plat == "pinterest" {
+		boardID := strings.TrimSpace(optString(post.PlatformOptions, "board_id"))
+		if boardID == "" {
+			boardID = strings.TrimSpace(optString(post.PlatformOptions, "boardId"))
+		}
+		if boardID == "" {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.board_id",
+				Code:              CodePinterestBoardRequired,
+				Message:           "Pinterest requires platform_options.board_id so the Pin has a destination board",
+				Severity:          SeverityError,
+			})
+		}
+		link := strings.TrimSpace(optString(post.PlatformOptions, "link"))
+		if link != "" {
+			u, err := url.Parse(link)
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "platform_options.link",
+					Code:              CodeInvalidPinterestLink,
+					Message:           "Pinterest link must be a valid absolute URL",
+					Actual:            link,
+					Severity:          SeverityError,
+				})
 			}
 		}
 	}

@@ -21,6 +21,7 @@ export const PLATFORM_LIMITS: PlatformLimit[] = [
   { platform: "linkedin",  icon: "\uD83D\uDCBC", name: "LinkedIn",     maxLength: 3000, countingMethod: "standard" },
   { platform: "instagram", icon: "\uD83D\uDCF8", name: "Instagram",    maxLength: 2200, countingMethod: "standard" },
   { platform: "threads",   icon: "\uD83E\uDDF5", name: "Threads",      maxLength: 500,  countingMethod: "standard" },
+  { platform: "pinterest", icon: "\uD83D\uDCCC", name: "Pinterest",    maxLength: 800,  countingMethod: "standard" },
   { platform: "tiktok",    icon: "\uD83C\uDFB5", name: "TikTok",       maxLength: 2200, countingMethod: "standard" },
   { platform: "youtube",   icon: "\u25B6\uFE0F",  name: "YouTube",      maxLength: 5000, countingMethod: "standard" },
   { platform: "bluesky",   icon: "\uD83E\uDD8B", name: "Bluesky",      maxLength: 300,  countingMethod: "grapheme" },

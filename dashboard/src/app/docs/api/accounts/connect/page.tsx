@@ -9,7 +9,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "profile_id?", type: "string", description: "Profile that should own the connected account. Required when the workspace has multiple profiles." },
-  { name: "platform", type: "string", description: "Platform key such as twitter, linkedin, instagram, threads, tiktok, youtube, or bluesky." },
+  { name: "platform", type: "string", description: "Platform key such as twitter, linkedin, instagram, threads, pinterest, tiktok, youtube, or bluesky." },
   { name: "credentials", type: "object", description: "Adapter-specific credentials payload used for direct account connection." },
 ];
 
