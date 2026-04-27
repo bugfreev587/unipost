@@ -10,6 +10,18 @@ function dashCell() {
   return <span className="docs-matrix-dash">—</span>;
 }
 
+const PLATFORM_API_NAMES = [
+  ["Twitter / X", <code key="twitter">twitter</code>],
+  ["LinkedIn", <code key="linkedin">linkedin</code>],
+  ["Instagram", <code key="instagram">instagram</code>],
+  ["Threads", <code key="threads">threads</code>],
+  ["TikTok", <code key="tiktok">tiktok</code>],
+  ["YouTube", <code key="youtube">youtube</code>],
+  ["Bluesky", <code key="bluesky">bluesky</code>],
+  ["Facebook", <code key="facebook">facebook</code>],
+  ["Pinterest", <code key="pinterest">pinterest</code>],
+] as const;
+
 const PLATFORM_QUICK_REFERENCE = [
   [
     "Twitter/X",
@@ -188,6 +200,13 @@ export default function PlatformsPage() {
           `,
         }}
       />
+      <h2 id="platform-names">Platform names in the UniPost API</h2>
+      <p>Wherever the API accepts a platform — as a query filter, a request body field, or a path segment — UniPost uses the lowercase, URL-safe identifier listed below. Use this exact value when calling endpoints like <ApiInlineLink endpoint="GET /v1/accounts" />, <ApiInlineLink endpoint="POST /v1/accounts/connect" />, or <ApiInlineLink endpoint="POST /v1/connect/sessions" />.</p>
+      <DocsTable
+        columns={["Network", "API platform value"]}
+        rows={PLATFORM_API_NAMES}
+      />
+
       <h2 id="platform-quick-reference">Platform Quick Reference</h2>
       <p>UniPost currently documents eight publishing destinations in the public platform guides. Each guide expands on media rules, validation behavior, and example request bodies for that network.</p>
       <DocsTable

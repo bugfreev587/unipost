@@ -19,7 +19,7 @@ export default function PlatformCredentialsPage() {
       <DocsTable
         columns={["Field", "Required", "Notes"]}
         rows={[
-          ["platform", "Yes", "One of linkedin, twitter, tiktok, youtube, meta"],
+          ["platform", "Yes", <>One of linkedin, twitter, tiktok, youtube, meta. <Link href="/docs/platforms#platform-names">[available platforms]</Link></>],
           ["client_id", "Yes", "Client / App ID from the platform developer portal"],
           ["client_secret", "Yes", "Stored encrypted at rest (AES-256-GCM). Never returned in any read endpoint."],
         ]}

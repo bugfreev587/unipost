@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
@@ -9,7 +10,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "profile_id?", type: "string", description: "Profile that should own the connected account. Required when the workspace has multiple profiles." },
-  { name: "platform", type: "string", description: "Platform key such as twitter, linkedin, instagram, threads, pinterest, tiktok, youtube, or bluesky." },
+  { name: "platform", type: "string", description: <>Platform key such as twitter, linkedin, instagram, threads, pinterest, tiktok, youtube, or bluesky. <Link href="/docs/platforms#platform-names">[available platforms]</Link></> },
   { name: "credentials", type: "object", description: "Adapter-specific credentials payload used for direct account connection." },
 ];
 

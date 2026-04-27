@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import {
   ApiReferencePage,
   ApiReferenceGrid,
@@ -24,7 +25,7 @@ const QUERY_FIELDS: ApiFieldItem[] = [
   {
     name: "platform?",
     type: "string",
-    description: "Only return accounts for one platform.",
+    description: <>Only return accounts for one platform. <Link href="/docs/platforms#platform-names">[available platforms]</Link></>,
   },
   {
     name: "external_user_id?",

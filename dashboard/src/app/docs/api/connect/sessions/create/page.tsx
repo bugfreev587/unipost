@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { ApiFieldItem } from "../../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../../_components/single-endpoint-page";
 
@@ -8,7 +9,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
-  { name: "platform", type: "string", description: "Destination platform for the hosted onboarding flow." },
+  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow. <Link href="/docs/platforms#platform-names">[available platforms]</Link></> },
   { name: "profile_id?", type: "string", description: "Profile that should own the resulting connected account. Required when the workspace has multiple profiles." },
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
