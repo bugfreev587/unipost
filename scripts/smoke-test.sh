@@ -149,6 +149,122 @@ echo -e "  base url: ${CYAN}${BASE_URL}${NC}"
 echo -e "  api key:  ${CYAN}${API_KEY:0:16}...${NC}"
 echo
 
+# ── Workspace removal — workspaceless surface + API-key CRUD via API key ─
+
+section "Workspace removal — workspaceless API surface"
+
+# /v1/workspace (singular) returns the workspace bound to the API key.
+api GET "/v1/workspace"
+assert_status "200" "GET /v1/workspace"
+assert_jq_truthy '.data.id' 'workspace.id present'
+assert_jq_truthy '.data.name' 'workspace.name present'
+WORKSPACE_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
+
+# Old plural list endpoint must be gone (hard cutover, no aliases).
+api GET "/v1/workspaces"
+if [[ "$RESP_STATUS" == "404" || "$RESP_STATUS" == "405" ]]; then
+  pass "GET /v1/workspaces removed (HTTP $RESP_STATUS)"
+else
+  fail "GET /v1/workspaces should be gone" "got HTTP $RESP_STATUS"
+fi
+
+# Old workspace-scoped api-keys path must be gone.
+if [[ -n "$WORKSPACE_ID" ]]; then
+  api GET "/v1/workspaces/${WORKSPACE_ID}/api-keys"
+  if [[ "$RESP_STATUS" == "404" || "$RESP_STATUS" == "405" ]]; then
+    pass "GET /v1/workspaces/{id}/api-keys removed (HTTP $RESP_STATUS)"
+  else
+    fail "GET /v1/workspaces/{id}/api-keys should be gone" "got HTTP $RESP_STATUS"
+  fi
+fi
+
+# ── API keys CRUD via API-key auth (dual-auth, Stripe-parity) ─────────
+
+section "API keys — dual-auth CRUD via API key"
+
+# List existing keys.
+api GET "/v1/api-keys"
+assert_status "200" "GET /v1/api-keys (list via API key)"
+assert_jq_truthy '.data' 'data array present'
+
+# Mint a new test key via the API key (new capability).
+api POST "/v1/api-keys" '{"name":"smoke-test-mint","environment":"test"}'
+assert_status "201" "POST /v1/api-keys (mint via API key)"
+MINTED_KEY_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
+MINTED_KEY=$(echo "$RESP_BODY" | jq -r '.data.key // empty')
+if [[ -n "$MINTED_KEY" && "$MINTED_KEY" == up_test_* ]]; then
+  pass "minted key has up_test_ prefix"
+else
+  fail "minted key prefix" "got: ${MINTED_KEY:0:16}..."
+fi
+
+# Confirm the new key is listed.
+if [[ -n "$MINTED_KEY_ID" ]]; then
+  api GET "/v1/api-keys"
+  FOUND=$(echo "$RESP_BODY" | jq -r --arg id "$MINTED_KEY_ID" '[.data[] | select(.id == $id)] | length')
+  if [[ "$FOUND" == "1" ]]; then
+    pass "minted key visible in list"
+  else
+    fail "minted key not in list" "id=$MINTED_KEY_ID"
+  fi
+
+  # The minted key itself can read /v1/workspace.
+  PROBE=$(curl -sS -o /tmp/unipost-smoke-mint -w '%{http_code}' \
+    -H "Authorization: Bearer $MINTED_KEY" "${BASE_URL}/v1/workspace")
+  if [[ "$PROBE" == "200" ]]; then
+    pass "minted key can authenticate"
+  else
+    fail "minted key authentication" "HTTP $PROBE"
+  fi
+
+  # Revoke via the original API key.
+  api DELETE "/v1/api-keys/${MINTED_KEY_ID}"
+  assert_status "204" "DELETE /v1/api-keys/{id} (revoke via API key)"
+
+  # The revoked key should no longer authenticate.
+  PROBE=$(curl -sS -o /tmp/unipost-smoke-mint -w '%{http_code}' \
+    -H "Authorization: Bearer $MINTED_KEY" "${BASE_URL}/v1/workspace")
+  if [[ "$PROBE" == "401" ]]; then
+    pass "revoked key rejected on subsequent request"
+  else
+    fail "revoked key still works" "HTTP $PROBE"
+  fi
+fi
+
+# Bad token format → 401 (covers DualAuth's prefix branch + Clerk fallback).
+BAD=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer this_is_not_a_real_key" "${BASE_URL}/v1/workspace")
+if [[ "$BAD" == "401" ]]; then
+  pass "bad bearer rejected (HTTP 401)"
+else
+  fail "bad bearer should be 401" "got HTTP $BAD"
+fi
+
+# ── Workspaceless dashboard-class endpoints (dual-auth) ───────────────
+
+section "Workspaceless surface — billing / api-metrics / analytics / platform-credentials"
+
+api GET "/v1/billing"
+assert_status "200" "GET /v1/billing"
+assert_jq_truthy '.data.plan' 'billing.plan present'
+
+api GET "/v1/usage"
+assert_status "200" "GET /v1/usage"
+
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+DAY_AGO=$(date -u -v-1d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)
+
+api GET "/v1/api-metrics/overall?from=${DAY_AGO}&to=${NOW}"
+assert_status "200" "GET /v1/api-metrics/overall"
+
+TODAY=$(date -u +%Y-%m-%d)
+YESTERDAY=$(date -u -v-1d +%Y-%m-%d 2>/dev/null || date -u -d '1 day ago' +%Y-%m-%d)
+api GET "/v1/analytics/summary?from=${YESTERDAY}&to=${TODAY}"
+assert_status "200" "GET /v1/analytics/summary"
+
+api GET "/v1/platform-credentials"
+assert_status "200" "GET /v1/platform-credentials"
+
 # ── Sprint 1 / PR1 — Capabilities API (no auth) ───────────────────────
 
 section "Sprint 1 PR1 — Capabilities API"
