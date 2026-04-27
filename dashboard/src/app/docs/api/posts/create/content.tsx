@@ -431,9 +431,8 @@ export function CreatePostContent() {
       responses={[
         { code: "202", fields: RESPONSE_202_FIELDS },
         { code: "201", fields: RESPONSE_201_FIELDS },
+        { code: "400", fields: ERROR_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
-        { code: "404", fields: ERROR_FIELDS },
-        { code: "409", fields: ERROR_FIELDS },
         { code: "422", fields: ERROR_FIELDS },
         { code: "500", fields: ERROR_FIELDS },
       ]}

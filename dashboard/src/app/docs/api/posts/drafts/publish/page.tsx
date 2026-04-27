@@ -86,8 +86,10 @@ export default function PublishDraftPage() {
       ]}
       responses={[
         { code: "202", fields: RESPONSE_202_FIELDS },
+        { code: "400", fields: ERROR_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
         { code: "409", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}

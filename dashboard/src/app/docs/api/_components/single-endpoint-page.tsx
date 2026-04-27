@@ -52,6 +52,99 @@ function queryTemplateFromFields(fields: ApiFieldItem[]) {
     .join("&")}`;
 }
 
+function isErrorResponse(fields: ApiFieldItem[]) {
+  return fields.some((field) => field.name.startsWith("error."));
+}
+
+function defaultErrorSnippet(code: string) {
+  switch (code) {
+    case "400":
+      return {
+        code: "VALIDATION_ERROR",
+        normalized_code: "validation_error",
+        message: "Request failed validation.",
+      };
+    case "401":
+      return {
+        code: "UNAUTHORIZED",
+        normalized_code: "unauthorized",
+        message: "Missing or invalid credentials.",
+      };
+    case "404":
+      return {
+        code: "NOT_FOUND",
+        normalized_code: "not_found",
+        message: "Resource not found.",
+      };
+    case "409":
+      return {
+        code: "CONFLICT",
+        normalized_code: "conflict",
+        message: "Request conflicts with the current resource state.",
+      };
+    case "422":
+      return {
+        code: "VALIDATION_ERROR",
+        normalized_code: "validation_error",
+        message: "Request body failed validation.",
+      };
+    case "500":
+      return {
+        code: "INTERNAL_ERROR",
+        normalized_code: "internal_error",
+        message: "Internal server error.",
+      };
+    case "502":
+      return {
+        code: "UPSTREAM_ERROR",
+        normalized_code: "upstream_error",
+        message: "Upstream platform request failed.",
+      };
+    case "503":
+      return {
+        code: "SERVICE_UNAVAILABLE",
+        normalized_code: "service_unavailable",
+        message: "Service unavailable.",
+      };
+    default:
+      return {
+        code: "ERROR",
+        normalized_code: "error",
+        message: `Request failed with status ${code}.`,
+      };
+  }
+}
+
+function buildDefaultResponseSnippet(response: ResponseSection): Snippet {
+  if (response.code === "204") {
+    return {
+      lang: "text",
+      label: response.code,
+      code: "No response body",
+    };
+  }
+
+  if (isErrorResponse(response.fields)) {
+    return {
+      lang: "json",
+      label: response.code,
+      code: JSON.stringify({
+        error: defaultErrorSnippet(response.code),
+        request_id: "req_123",
+      }, null, 2),
+    };
+  }
+
+  return {
+    lang: "json",
+    label: response.code,
+    code: JSON.stringify({
+      data: {},
+      request_id: "req_123",
+    }, null, 2),
+  };
+}
+
 export function SingleEndpointReferencePage({
   section,
   title,
@@ -86,6 +179,10 @@ export function SingleEndpointReferencePage({
   const shouldRenderPlayground =
     unsupportedSections.length === 0 &&
     Boolean(authSection || pathSection || querySection || bodySection);
+  const providedResponseSnippets = new Map(responseSnippets.map((snippet) => [snippet.label, snippet]));
+  const resolvedResponseSnippets = responses.map((response) => (
+    providedResponseSnippets.get(response.code) ?? buildDefaultResponseSnippet(response)
+  ));
 
   return (
     <ApiReferencePage section={section} title={title} description={description}>
@@ -143,7 +240,7 @@ export function SingleEndpointReferencePage({
         right={
           <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
             <CodeTabs snippets={snippets} />
-            <CodeTabs snippets={responseSnippets} />
+            <CodeTabs snippets={resolvedResponseSnippets} />
           </div>
         }
       />

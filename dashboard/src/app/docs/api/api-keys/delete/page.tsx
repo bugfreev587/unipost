@@ -63,6 +63,7 @@ export default function DeleteApiKeyPage() {
         { code: "204", fields: RESPONSE_204_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
         { code: "404", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}

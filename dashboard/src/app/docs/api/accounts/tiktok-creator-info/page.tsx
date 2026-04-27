@@ -167,6 +167,7 @@ export default function TikTokCreatorInfoPage() {
         { code: "401", fields: RESPONSE_401_FIELDS },
         { code: "404", fields: RESPONSE_404_FIELDS },
         { code: "409", fields: RESPONSE_409_FIELDS },
+        { code: "500", fields: RESPONSE_502_FIELDS },
         { code: "502", fields: RESPONSE_502_FIELDS },
       ]}
       snippets={SNIPPETS}

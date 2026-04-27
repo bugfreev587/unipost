@@ -146,6 +146,7 @@ export default function BulkPostsPage() {
       ]}
       responses={[
         { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "400", fields: ERROR_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
         { code: "422", fields: ERROR_FIELDS },
         { code: "500", fields: ERROR_FIELDS },

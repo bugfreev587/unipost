@@ -107,6 +107,8 @@ export default function CreateConnectSessionPage() {
       responses={[
         { code: "201", fields: RESPONSE_201_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
+        { code: "422", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}

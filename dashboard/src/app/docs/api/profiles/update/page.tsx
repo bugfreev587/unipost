@@ -117,7 +117,9 @@ export default function UpdateProfilePage() {
         { code: "200", fields: RESPONSE_200_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
         { code: "404", fields: ERROR_FIELDS },
+        { code: "409", fields: ERROR_FIELDS },
         { code: "422", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}

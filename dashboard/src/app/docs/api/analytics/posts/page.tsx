@@ -91,6 +91,7 @@ export default function PostAnalyticsPage() {
         { code: "200", fields: RESPONSE_200_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
         { code: "404", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}

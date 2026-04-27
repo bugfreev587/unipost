@@ -45,7 +45,7 @@ const draft = await client.posts.create({
 const RESPONSE_SNIPPETS = [
   {
     lang: "json",
-    label: "200",
+    label: "201",
     code: `{
   "data": {
     "id": "post_abc123",
@@ -81,8 +81,10 @@ export default function CreateDraftPage() {
         { title: "Request Body", items: BODY_FIELDS },
       ]}
       responses={[
-        { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "201", fields: RESPONSE_200_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
+        { code: "422", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
