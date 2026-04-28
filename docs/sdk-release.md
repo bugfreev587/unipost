@@ -19,19 +19,18 @@ That command:
 - pushes `main`
 - pushes `v0.2.1`
 
-Once the tag lands on GitHub, `/Users/xiaoboyu/unipost/.github/workflows/sdk-release.yml` automatically:
+Once the tags land on GitHub:
 
-- runs the SDK regression suites
-- publishes `@unipost/sdk` to npm
-- builds and publishes `unipost` to PyPI
+- `sdk-js` publishes through `/Users/xiaoboyu/unipost-dev/sdk-js/.github/workflows/publish.yml`
+- `sdk-python` publishes through `/Users/xiaoboyu/unipost-dev/sdk-python/.github/workflows/publish.yml`
 
 Go still needs a separate release step unless you later align the public module path with this repo.
 
 ## Current release model
 
-- JavaScript SDK publishes from `/Users/xiaoboyu/unipost/sdk/javascript`
-- Python SDK publishes from `/Users/xiaoboyu/unipost/sdk/python`
-- Go SDK source lives in `/Users/xiaoboyu/unipost/sdk/go`, but the declared module path is `github.com/unipost-dev/sdk-go`
+- JavaScript SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-js`
+- Python SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-python`
+- Go SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-go`
 
 That means:
 
@@ -43,11 +42,11 @@ That means:
 
 Update the version string in these files:
 
-- `/Users/xiaoboyu/unipost/sdk/javascript/package.json`
-- `/Users/xiaoboyu/unipost/sdk/javascript/dist/index.mjs`
-- `/Users/xiaoboyu/unipost/sdk/python/pyproject.toml`
-- `/Users/xiaoboyu/unipost/sdk/python/unipost/__init__.py`
-- `/Users/xiaoboyu/unipost/sdk/go/unipost/sdk.go`
+- `/Users/xiaoboyu/unipost-dev/sdk-js/package.json`
+- `/Users/xiaoboyu/unipost-dev/sdk-js/src/http.ts`
+- `/Users/xiaoboyu/unipost-dev/sdk-python/pyproject.toml`
+- `/Users/xiaoboyu/unipost-dev/sdk-python/unipost/__init__.py`
+- `/Users/xiaoboyu/unipost-dev/sdk-go/unipost/client.go`
 
 Example target version:
 
@@ -58,9 +57,9 @@ Example target version:
 From repo root:
 
 ```bash
-scripts/regression/run-suite.sh sdk-js
-scripts/regression/run-suite.sh sdk-python
-scripts/regression/run-suite.sh sdk-go
+scripts/sdk-source-validation/run-suite.sh sdk-js
+scripts/sdk-source-validation/run-suite.sh sdk-python
+scripts/sdk-source-validation/run-suite.sh sdk-go
 ```
 
 Recommended extra safety check:
@@ -92,9 +91,9 @@ If you prefer the manual path, here is the equivalent flow.
 Example:
 
 ```bash
-git add sdk/javascript/package.json sdk/javascript/dist/index.mjs sdk/python/pyproject.toml sdk/python/unipost/__init__.py sdk/go/unipost/sdk.go
-git commit -m "Release SDKs v0.2.1"
-git push origin main
+git -C /Users/xiaoboyu/unipost-dev/sdk-js status
+git -C /Users/xiaoboyu/unipost-dev/sdk-python status
+git -C /Users/xiaoboyu/unipost-dev/sdk-go status
 ```
 
 ### Create and push the Git tag
@@ -102,31 +101,20 @@ git push origin main
 If you are using one shared SDK version across languages, create a repo tag after the release commit:
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git -C /Users/xiaoboyu/unipost-dev/sdk-js tag v0.2.1
+git -C /Users/xiaoboyu/unipost-dev/sdk-python tag v0.2.1
+git -C /Users/xiaoboyu/unipost-dev/sdk-go tag v0.2.1
 ```
 
 This is useful for release history and is required if you later align the Go module release with Git tags.
 
-## 5. Automatic publish workflow
+## 5. Source validation workflow
 
-The workflow at `/Users/xiaoboyu/unipost/.github/workflows/sdk-release.yml` publishes JavaScript and Python SDKs when:
+If you want a GitHub-hosted pre-release check from the `unipost` repo, run:
 
-- you push a tag like `v0.2.1`, or
-- you manually run the workflow against an existing tag
+- `/Users/xiaoboyu/unipost/.github/workflows/sdk-source-validation.yml`
 
-Required GitHub secrets:
-
-- `UNIPOST_REGRESSION_API_KEY`
-- `REGRESSION_TEST_ACCOUNT_ID`
-- `NPM_TOKEN`
-- `PYPI_API_TOKEN`
-
-Optional GitHub variable:
-
-- `UNIPOST_API_BASE_URL`
-
-The workflow validates first, then publishes only if validation passes.
+That workflow checks out the `sdk-js`, `sdk-python`, and `sdk-go` repos into the runner, then runs the same source-validation suites against them before release.
 
 ## 6. Publish the JavaScript SDK manually
 
@@ -140,7 +128,7 @@ npm login
 Publish:
 
 ```bash
-cd /Users/xiaoboyu/unipost/sdk/javascript
+cd /Users/xiaoboyu/unipost-dev/sdk-js
 npm publish --access public
 ```
 
@@ -161,7 +149,7 @@ python3 -m pip install --upgrade build twine
 Build:
 
 ```bash
-cd /Users/xiaoboyu/unipost/sdk/python
+cd /Users/xiaoboyu/unipost-dev/sdk-python
 python3 -m build
 ```
 
@@ -187,7 +175,7 @@ module github.com/unipost-dev/sdk-go
 
 So the public Go release must happen from the repository that actually resolves at `github.com/unipost-dev/sdk-go`.
 
-If that repository is a mirror of `/Users/xiaoboyu/unipost/sdk/go`, the release flow is:
+If that repository is the same repository currently checked out at `/Users/xiaoboyu/unipost-dev/sdk-go`, the release flow is:
 
 1. Sync the latest `/sdk/go` source into the `sdk-go` repository.
 2. Commit the version bump there.

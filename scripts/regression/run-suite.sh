@@ -42,24 +42,31 @@ case "$SUITE" in
       bash "$ROOT_DIR/scripts/smoke-test.sh"
     ;;
   sdk-js)
-    run_and_log bash -lc '
-      cd scripts/sdk-validation/js
-      npm ci
-      UNIPOST_API_KEY="$1" BASE_URL="$2" TEST_ACCOUNT_ID="$3" TEST_PUBLISH_NOW="$4" node unipost-sdk-test.mjs
-    ' _ "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+    run_and_log env \
+      UNIPOST_API_KEY="$UNIPOST_API_KEY" \
+      BASE_URL="$BASE_URL" \
+      TEST_ACCOUNT_ID="$TEST_ACCOUNT_ID" \
+      TEST_PUBLISH_NOW="$TEST_PUBLISH_NOW" \
+      LOG_DIR="$LOG_DIR" \
+      bash "$ROOT_DIR/scripts/sdk-published-regression/run-suite.sh" sdk-js
     ;;
   sdk-python)
-    run_and_log bash -lc '
-      cd scripts/sdk-validation/python
-      python3 -m pip install --disable-pip-version-check -r requirements.txt
-      UNIPOST_API_KEY="$1" BASE_URL="$2" TEST_ACCOUNT_ID="$3" TEST_PUBLISH_NOW="$4" python3 unipost_sdk_test.py
-    ' _ "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+    run_and_log env \
+      UNIPOST_API_KEY="$UNIPOST_API_KEY" \
+      BASE_URL="$BASE_URL" \
+      TEST_ACCOUNT_ID="$TEST_ACCOUNT_ID" \
+      TEST_PUBLISH_NOW="$TEST_PUBLISH_NOW" \
+      LOG_DIR="$LOG_DIR" \
+      bash "$ROOT_DIR/scripts/sdk-published-regression/run-suite.sh" sdk-python
     ;;
   sdk-go)
-    run_and_log bash -lc '
-      cd scripts/sdk-validation/go
-      GOCACHE="${RUNNER_TEMP:-/tmp}/unipost-go-cache" UNIPOST_API_KEY="$1" BASE_URL="$2" TEST_ACCOUNT_ID="$3" TEST_PUBLISH_NOW="$4" go run main.go
-    ' _ "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+    run_and_log env \
+      UNIPOST_API_KEY="$UNIPOST_API_KEY" \
+      BASE_URL="$BASE_URL" \
+      TEST_ACCOUNT_ID="$TEST_ACCOUNT_ID" \
+      TEST_PUBLISH_NOW="$TEST_PUBLISH_NOW" \
+      LOG_DIR="$LOG_DIR" \
+      bash "$ROOT_DIR/scripts/sdk-published-regression/run-suite.sh" sdk-go
     ;;
   *)
     echo "unknown suite: $SUITE" >&2

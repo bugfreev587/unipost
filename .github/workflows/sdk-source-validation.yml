@@ -1,0 +1,81 @@
+name: SDK Source Validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout sdk-js
+        uses: actions/checkout@v4
+        with:
+          repository: unipost-dev/sdk-js
+          path: .sdk-sources/sdk-js
+
+      - name: Checkout sdk-python
+        uses: actions/checkout@v4
+        with:
+          repository: unipost-dev/sdk-python
+          path: .sdk-sources/sdk-python
+
+      - name: Checkout sdk-go
+        uses: actions/checkout@v4
+        with:
+          repository: unipost-dev/sdk-go
+          path: .sdk-sources/sdk-go
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: scripts/sdk-validation/js/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: scripts/sdk-validation/go/go.mod
+
+      - name: Prepare scripts
+        run: chmod +x scripts/sdk-source-validation/run-suite.sh
+
+      - name: Validate JavaScript SDK source
+        env:
+          UNIPOST_DEV_ROOT: ${{ github.workspace }}/.sdk-sources
+          UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
+          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
+          BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
+          LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
+        run: scripts/sdk-source-validation/run-suite.sh sdk-js
+
+      - name: Validate Python SDK source
+        env:
+          UNIPOST_DEV_ROOT: ${{ github.workspace }}/.sdk-sources
+          UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
+          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
+          BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
+          LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
+        run: scripts/sdk-source-validation/run-suite.sh sdk-python
+
+      - name: Validate Go SDK source
+        env:
+          UNIPOST_DEV_ROOT: ${{ github.workspace }}/.sdk-sources
+          UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
+          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
+          BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
+          LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
+        run: scripts/sdk-source-validation/run-suite.sh sdk-go
+
+      - name: Upload source validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-source-validation-logs
+          path: artifacts/sdk-source-validation/
+          if-no-files-found: warn

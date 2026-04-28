@@ -1,6 +1,6 @@
-# SDK Validation Tests
+# SDK Source Validation Tests
 
-Live API tests for the current UniPost SDK surfaces.
+Live API tests for unreleased UniPost SDK source changes.
 
 All three validation scripts use the local SDK packages from the public unipost-dev workspace, so unreleased SDK changes can be verified against the live UniPost API before publishing:
 - JavaScript: `/Users/xiaoboyu/unipost-dev/sdk-js` (`dist/index.mjs`)
@@ -77,3 +77,34 @@ Coverage matches the JavaScript suite above, plus Go-specific page-meta checks s
   - `posts.retryResult()` only runs when a safe failed result already exists.
   - `deliveryJobs.retry()/cancel()` only runs when a retryable job already exists.
 - Direct destructive calls such as deleting an arbitrary pre-existing account are intentionally not forced in validation. Cleanup paths still verify delete behavior for resources the scripts create themselves, such as posts, media, webhooks, and temporary profiles.
+
+## Running the source-validation suites
+
+From repo root:
+
+```bash
+scripts/sdk-source-validation/run-suite.sh sdk-js
+scripts/sdk-source-validation/run-suite.sh sdk-python
+scripts/sdk-source-validation/run-suite.sh sdk-go
+```
+
+If your SDK checkout root is not `/Users/xiaoboyu/unipost-dev`, override it with:
+
+```bash
+UNIPOST_DEV_ROOT=/path/to/unipost-dev scripts/sdk-source-validation/run-suite.sh sdk-js
+```
+
+## Published-package regression
+
+Published-package regression is intentionally separate:
+
+- source validation uses unreleased SDK source from `/Users/xiaoboyu/unipost-dev`
+- regression monitoring uses the released packages from npm, PyPI, and Go module resolution
+
+Run the published-package suites with:
+
+```bash
+scripts/sdk-published-regression/run-suite.sh sdk-js
+scripts/sdk-published-regression/run-suite.sh sdk-python
+scripts/sdk-published-regression/run-suite.sh sdk-go
+```

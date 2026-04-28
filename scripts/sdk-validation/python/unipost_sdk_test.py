@@ -4,7 +4,9 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-sys.path.insert(0, "/Users/xiaoboyu/unipost-dev/sdk-python")
+SDK_PATH = os.environ.get("UNIPOST_PYTHON_SDK_PATH", "/Users/xiaoboyu/unipost-dev/sdk-python")
+if SDK_PATH:
+    sys.path.insert(0, SDK_PATH)
 
 from unipost import UniPost, UniPostError, verify_webhook_signature
 

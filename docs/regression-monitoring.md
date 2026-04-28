@@ -1,6 +1,6 @@
 # Regression Monitoring
 
-This repo now includes a scheduled regression monitor for the public UniPost API and SDKs.
+This repo now includes a scheduled regression monitor for the public UniPost API and the released UniPost SDK packages.
 
 ## What runs
 
@@ -9,11 +9,13 @@ The GitHub Actions workflow at `/Users/xiaoboyu/unipost/.github/workflows/regres
 It executes four suites:
 
 - `smoke`: `/Users/xiaoboyu/unipost/scripts/smoke-test.sh`
-- `sdk-js`: `/Users/xiaoboyu/unipost/scripts/sdk-validation/js/unipost-sdk-test.mjs`
-- `sdk-python`: `/Users/xiaoboyu/unipost/scripts/sdk-validation/python/unipost_sdk_test.py`
-- `sdk-go`: `/Users/xiaoboyu/unipost/scripts/sdk-validation/go/main.go`
+- `sdk-js`: published-package regression via `/Users/xiaoboyu/unipost/scripts/sdk-published-regression/run-suite.sh`
+- `sdk-python`: published-package regression via `/Users/xiaoboyu/unipost/scripts/sdk-published-regression/run-suite.sh`
+- `sdk-go`: published-package regression via `/Users/xiaoboyu/unipost/scripts/sdk-published-regression/run-suite.sh`
 
-Each suite is wrapped by `/Users/xiaoboyu/unipost/scripts/regression/run-suite.sh`, which standardizes env vars and writes a dedicated log file into `artifacts/regression/`.
+The source-SDK validation flow is separate and lives under `/Users/xiaoboyu/unipost/scripts/sdk-source-validation/run-suite.sh`. That flow validates unreleased SDK source from `/Users/xiaoboyu/unipost-dev` and should be used before tagging new SDK releases.
+
+Each regression suite is wrapped by `/Users/xiaoboyu/unipost/scripts/regression/run-suite.sh`, which standardizes env vars and writes a dedicated log file into `artifacts/regression/`.
 
 If any suite fails, the workflow sends a webhook alert through `/Users/xiaoboyu/unipost/scripts/regression/send-alert.sh`.
 
@@ -53,9 +55,8 @@ This keeps the hourly checks deterministic and makes failures easier to diagnose
 The hourly monitor currently verifies:
 
 - public REST API smoke coverage
-- webhook CRUD and rotate flows
-- webhook signature verification in SDK suites
-- JavaScript, Python, and Go SDK compatibility against the live API
+- released JavaScript, Python, and Go SDK compatibility against the live API
+- whether the packages customers actually install still work against production
 
 It does not yet synthetically verify outbound webhook delivery to a real public receiver.
 

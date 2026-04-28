@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Prepare scripts
-        run: chmod +x scripts/smoke-test.sh scripts/regression/run-suite.sh
+        run: chmod +x scripts/smoke-test.sh scripts/regression/run-suite.sh scripts/sdk-published-regression/run-suite.sh
 
       - name: Run smoke regression
         env:
@@ -40,11 +40,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-          cache-dependency-path: scripts/sdk-validation/js/package-lock.json
 
       - name: Prepare scripts
-        run: chmod +x scripts/regression/run-suite.sh
+        run: chmod +x scripts/regression/run-suite.sh scripts/sdk-published-regression/run-suite.sh
 
       - name: Run JavaScript SDK regression
         env:
@@ -73,7 +71,7 @@ jobs:
           python-version: "3.11"
 
       - name: Prepare scripts
-        run: chmod +x scripts/regression/run-suite.sh
+        run: chmod +x scripts/regression/run-suite.sh scripts/sdk-published-regression/run-suite.sh
 
       - name: Run Python SDK regression
         env:
@@ -102,7 +100,7 @@ jobs:
           go-version-file: scripts/sdk-validation/go/go.mod
 
       - name: Prepare scripts
-        run: chmod +x scripts/regression/run-suite.sh
+        run: chmod +x scripts/regression/run-suite.sh scripts/sdk-published-regression/run-suite.sh
 
       - name: Run Go SDK regression
         env:
