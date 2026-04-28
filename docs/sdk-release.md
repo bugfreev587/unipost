@@ -17,6 +17,7 @@ That command:
 - bumps all SDK version strings
 - auto-cleans leftover version/dist changes from a previously failed release attempt
 - rebuilds the JS dist bundle
+- force-stages the ignored `sdk-js/dist/` release artifacts before commit
 - runs lightweight local validation
 - runs all three source-validation suites against the updated SDK source
 - creates the release commit

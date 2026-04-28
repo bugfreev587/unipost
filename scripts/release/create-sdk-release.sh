@@ -191,7 +191,8 @@ for repo in "${REPOS[@]}"; do
   dir="${SDKS_ROOT}/${repo}"
   case "$repo" in
     sdk-js)
-      git -C "$dir" add package.json src/http.ts dist/
+      git -C "$dir" add package.json src/http.ts
+      git -C "$dir" add -f dist/
       ;;
     sdk-python)
       git -C "$dir" add pyproject.toml unipost/__init__.py unipost/http.py unipost/async_client.py
