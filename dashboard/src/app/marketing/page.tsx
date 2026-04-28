@@ -637,6 +637,9 @@ body{
 .lp-code-amber{color:#fcd34d}
 .lp-platforms{
   padding-top:28px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
 }
 .lp-platforms-label{
   font-size:12px;
@@ -645,10 +648,12 @@ body{
   letter-spacing:.12em;
   font-weight:800;
   margin-bottom:18px;
+  text-align:center;
 }
 .lp-platform-row{
   display:flex;
   flex-wrap:wrap;
+  justify-content:center;
   gap:12px;
 }
 .lp-platform-chip{
