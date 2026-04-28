@@ -3,7 +3,8 @@
 # Cut a release across all three SDKs in /Users/xiaoboyu/unipost-dev/:
 #   - bumps version files in each repo
 #   - rebuilds the JS dist so it ships the new SDK_VERSION header
-#   - runs basic smoke checks (Go test, Python import, JS dist node --check)
+#   - runs basic local checks (Go test, Python import, JS dist node --check)
+#   - runs the three source-validation suites before it will tag a release
 #   - commits and tags v<version> in each repo
 #   - optionally pushes commit + tag to origin/main
 #
@@ -20,6 +21,11 @@ PUSH="${2:-}"
 TAG="v${VERSION}"
 SDKS_ROOT="${UNIPOST_DEV_ROOT:-/Users/xiaoboyu/unipost-dev}"
 REPOS=(sdk-js sdk-python sdk-go)
+UNIPOST_API_KEY="${UNIPOST_API_KEY:-}"
+BASE_URL="${BASE_URL:-https://api.unipost.dev}"
+TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID:-}"
+TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW:-false}"
+SOURCE_VALIDATION_LOG_DIR="${SOURCE_VALIDATION_LOG_DIR:-${ROOT_DIR}/artifacts/sdk-source-validation-release}"
 
 if [[ -z "$VERSION" ]]; then
   echo "usage: $0 <version> [--push]" >&2
@@ -28,6 +34,11 @@ fi
 
 if [[ -n "$PUSH" && "$PUSH" != "--push" ]]; then
   echo "unknown option: $PUSH" >&2
+  exit 64
+fi
+
+if [[ -z "$UNIPOST_API_KEY" ]]; then
+  echo "UNIPOST_API_KEY is required so source validation can run before release" >&2
   exit 64
 fi
 
@@ -75,6 +86,31 @@ python3 -c "import sys; sys.path.insert(0, '${SDKS_ROOT}/sdk-python'); import un
   cd "${SDKS_ROOT}/sdk-go"
   go test ./... >/dev/null
 )
+
+# Hard gate: all three source-validation suites must pass before we tag.
+LOG_DIR="${SOURCE_VALIDATION_LOG_DIR}" \
+UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
+UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
+BASE_URL="${BASE_URL}" \
+TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
+TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
+  "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-js
+
+LOG_DIR="${SOURCE_VALIDATION_LOG_DIR}" \
+UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
+UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
+BASE_URL="${BASE_URL}" \
+TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
+TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
+  "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-python
+
+LOG_DIR="${SOURCE_VALIDATION_LOG_DIR}" \
+UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
+UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
+BASE_URL="${BASE_URL}" \
+TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
+TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
+  "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-go
 
 # Commit + tag in each repo.
 for repo in "${REPOS[@]}"; do

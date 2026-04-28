@@ -7,13 +7,17 @@ This guide documents the current release flow for UniPost SDKs after source chan
 After one-time GitHub secret setup, the release path for JavaScript and Python can be nearly one command:
 
 ```bash
+UNIPOST_API_KEY=up_live_xxx \
+TEST_ACCOUNT_ID=sa_xxx \
 scripts/release/create-sdk-release.sh 0.2.1 --push
 ```
 
 That command:
 
 - bumps all SDK version strings
+- rebuilds the JS dist bundle
 - runs lightweight local validation
+- runs all three source-validation suites against the updated SDK source
 - creates the release commit
 - creates the git tag
 - pushes `main`
@@ -73,14 +77,20 @@ scripts/regression/run-suite.sh smoke
 If your working tree is clean and your npm / PyPI secrets are already configured in GitHub, use:
 
 ```bash
+UNIPOST_API_KEY=up_live_xxx \
+TEST_ACCOUNT_ID=sa_xxx \
 scripts/release/create-sdk-release.sh 0.2.1 --push
 ```
 
 If you want to stop before pushing:
 
 ```bash
+UNIPOST_API_KEY=up_live_xxx \
+TEST_ACCOUNT_ID=sa_xxx \
 scripts/release/create-sdk-release.sh 0.2.1
 ```
+
+`UNIPOST_API_KEY` is required because the release script hard-gates on the three source-validation suites before it will commit or tag a release.
 
 ## 4. Manual release steps
 
