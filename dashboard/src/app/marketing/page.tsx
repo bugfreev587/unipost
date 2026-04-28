@@ -241,14 +241,15 @@ body{
   margin:0 auto;
   padding:0 var(--lp-pad);
   height:62px;
-  display:flex;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
   align-items:center;
-  justify-content:space-between;
   gap:16px;
 }
 .lp-nav-links{
   display:flex;
   align-items:center;
+  justify-content:center;
   gap:4px;
 }
 .lp-nav-link{
@@ -414,6 +415,10 @@ body{
 .lp-hero-copy{
   position:relative;
   z-index:1;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  text-align:center;
 }
 .lp-hero-title{
   margin:22px 0 18px;
@@ -437,6 +442,7 @@ body{
 .lp-hero-actions{
   display:flex;
   align-items:center;
+  justify-content:center;
   gap:12px;
   flex-wrap:wrap;
   margin:32px 0 24px;
@@ -446,6 +452,7 @@ body{
   grid-template-columns:repeat(2,minmax(0,1fr));
   gap:12px;
   max-width:640px;
+  width:100%;
 }
 .lp-hero-proof-card{
   display:flex;
@@ -1056,7 +1063,7 @@ body{
 @media (max-width:720px){
   :root{--lp-pad:18px;--lp-section:72px}
   .lp-page{padding-bottom:88px}
-  .lp-nav-inner{height:58px}
+  .lp-nav-inner{height:58px;display:flex;justify-content:space-between}
   .lp-hero{
     padding-top:24px;
   }

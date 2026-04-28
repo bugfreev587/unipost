@@ -329,16 +329,16 @@
   margin: 0 auto;
   padding: 0 32px;
   min-height: 56px;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
 }
 
 .mk-nav-left {
   display: flex;
   align-items: center;
-  gap: 32px;
+  justify-content: flex-start;
   min-width: 0;
 }
 
@@ -352,6 +352,7 @@
 .mk-nav-links {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   flex-wrap: wrap;
 }
@@ -381,12 +382,14 @@
 .mk-auth-row {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 
 .mk-auth-controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 12px;
 }
 
@@ -436,6 +439,7 @@
     padding: 0 24px;
     min-height: 64px;
     align-items: flex-start;
+    display: flex;
     flex-direction: column;
     justify-content: center;
     padding-top: 12px;
@@ -451,12 +455,14 @@
 
   .mk-nav-links {
     width: 100%;
+    justify-content: flex-start;
   }
 
   .mk-auth-row,
   .mk-auth-controls {
     width: 100%;
     flex-wrap: wrap;
+    justify-content: flex-start;
   }
 }
 
