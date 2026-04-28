@@ -3,7 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type SuccessResponse struct {
@@ -146,6 +148,26 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 		Error: ErrorBody{
 			Code:           code,
 			NormalizedCode: normalizeErrorCode(code),
+			Message:        message,
+		},
+		RequestID: requestIDFromResponse(w),
+	})
+}
+
+// writeRateLimited writes a 429 with the precise normalized_code
+// returned by the limiter (rate_limited / enqueue_rate_limited /
+// queue_depth_exceeded) and a Retry-After header derived from the
+// limiter's recommendation. Falls back to a 1-second hint if the
+// limiter could not compute one.
+func writeRateLimited(w http.ResponseWriter, normalizedCode, message string, retryAfter time.Duration) {
+	if retryAfter < time.Second {
+		retryAfter = time.Second
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+	writeJSON(w, http.StatusTooManyRequests, ErrorResponse{
+		Error: ErrorBody{
+			Code:           "RATE_LIMITED",
+			NormalizedCode: normalizedCode,
 			Message:        message,
 		},
 		RequestID: requestIDFromResponse(w),

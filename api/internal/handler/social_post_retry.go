@@ -42,6 +42,19 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
+
+	// Retry creates exactly one new active delivery job. All three
+	// admission controls apply at units=1.
+	if !h.admit(w, r, workspaceID, "POST /v1/posts/{id}/results/{resultID}/retry", admissionOpts{
+		request:      true,
+		enqueue:      true,
+		depth:        true,
+		enqueueUnits: 1,
+		depthUnits:   1,
+	}) {
+		return
+	}
+
 	postID := chi.URLParam(r, "id")
 	if postID == "" {
 		postID = chi.URLParam(r, "postID")

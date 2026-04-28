@@ -98,6 +98,16 @@ FROM post_delivery_jobs j
 LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
 WHERE j.workspace_id = $1;
 
+-- name: CountActiveDeliveryJobsByWorkspace :one
+-- Active count for the queue-depth admission check (rate-limit PRD).
+-- "Active" = not yet terminal: dispatch + retry rows the worker still
+-- has work to do on. Hits the post_delivery_jobs_workspace_active_idx
+-- partial index added in migration 054.
+SELECT COUNT(*)::bigint AS active_count
+FROM post_delivery_jobs
+WHERE workspace_id = $1
+  AND state IN ('pending', 'running', 'retrying');
+
 -- name: ClaimPostDispatchJobs :many
 WITH eligible AS (
   SELECT j.id

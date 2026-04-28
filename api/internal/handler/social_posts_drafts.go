@@ -111,6 +111,23 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	}
 	postID := chi.URLParam(r, "id")
 
+	// Admission — request rate first; if accepted, also count this
+	// publish toward enqueue / depth. depthUnits is conservative at
+	// 1 here because the per-platform fan-out count requires
+	// decoding the metadata, which we do below; over-counting (i.e.
+	// not penalizing fan-out enough) is preferable to paying the
+	// decode cost twice. The published draft commonly fans out to
+	// 1–3 jobs, so the under-count is small.
+	if !h.admit(w, r, workspaceID, "POST /v1/posts/{id}/publish", admissionOpts{
+		request:      true,
+		enqueue:      true,
+		depth:        true,
+		enqueueUnits: 1,
+		depthUnits:   1,
+	}) {
+		return
+	}
+
 	// Optimistic lock — only one caller can win the draft → publishing
 	// transition. The loser sees pgx.ErrNoRows.
 	claimed, err := h.queries.ClaimDraftForPublish(r.Context(), db.ClaimDraftForPublishParams{
@@ -371,6 +388,9 @@ func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
+	if !h.admit(w, r, workspaceID, "POST /v1/posts/{id}/cancel", admissionOpts{request: true}) {
+		return
+	}
 	postID := chi.URLParam(r, "id")
 	w.Header().Set("Deprecation", "true")
 	w.Header().Set("Sunset", "Tue, 31 Mar 2027 00:00:00 GMT")
@@ -392,6 +412,9 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if !h.admit(w, r, workspaceID, "PATCH /v1/posts/{id}", admissionOpts{request: true}) {
 		return
 	}
 	postID := chi.URLParam(r, "id")

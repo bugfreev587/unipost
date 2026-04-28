@@ -32,6 +32,8 @@ import (
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
+	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
@@ -183,6 +185,27 @@ func main() {
 	syncStripePriceIDs(ctx, queries)
 	quotaChecker := quota.NewChecker(queries)
 
+	// Rate-limit / queue-admission infrastructure (April 2026 PRD).
+	// REDIS_URL points at Railway-internal Redis; absence is allowed
+	// for local dev and falls through to NoopLimiter, with a loud
+	// startup warning so misconfigured prod is obvious.
+	redisClient, err := appredis.New(ctx, os.Getenv("REDIS_URL"))
+	if err != nil {
+		slog.Error("redis: connection failed; rate limiter will run in degraded mode", "error", err)
+		// Don't os.Exit — the limiter falls open via its circuit
+		// breaker and Postgres-backed depth check still works. We'd
+		// rather a degraded-but-running API than a full outage on a
+		// Redis blip during boot.
+	}
+	var limiter ratelimit.Limiter
+	if redisClient != nil {
+		limiter = ratelimit.NewRedisLimiter(redisClient, queries)
+		slog.Info("ratelimit: redis-backed limiter active")
+	} else {
+		limiter = ratelimit.NoopLimiter{}
+		slog.Warn("ratelimit: REDIS_URL unset; admission control disabled (NoopLimiter)")
+	}
+
 	// Start background workers
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
@@ -269,7 +292,7 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher)
-	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.

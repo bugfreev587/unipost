@@ -24,6 +24,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -43,13 +44,21 @@ type SocialPostHandler struct {
 	// media_ids feature; the handler returns a clear error if a
 	// caller tries to use it on a server without R2 configured.
 	storage *storage.Client
+	// limiter is the runtime admission control layer added in the
+	// April 2026 rate-limit PRD. Always non-nil — main.go injects
+	// either RedisLimiter or NoopLimiter — so call sites do not
+	// need a nil guard.
+	limiter ratelimit.Limiter
 }
 
-func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client) *SocialPostHandler {
+func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter) *SocialPostHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
-	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus, storage: store}
+	if limiter == nil {
+		limiter = ratelimit.NoopLimiter{}
+	}
+	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus, storage: store, limiter: limiter}
 }
 
 type postResultResponse struct {
@@ -270,6 +279,14 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Request-rate admission first — fast-fail bursts before paying
+	// the JSON-decode cost. Enqueue + depth are checked later, only
+	// once we know whether this request will actually queue work
+	// (drafts and idempotency replays do not).
+	if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{request: true}) {
+		return
+	}
+
 	var body publishRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body: "+err.Error())
@@ -334,9 +351,29 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Branch on scheduled vs immediate.
+	// Enqueue admission applies to BOTH scheduled and immediate paths
+	// — work is being accepted either way. Queue depth only applies
+	// to immediate, since scheduled posts do not create delivery
+	// jobs until the scheduler fires (depth is re-checked there in
+	// Phase 3).
+	deliveryJobUnits := len(parsed.Posts)
 	if parsed.ScheduledAt != nil {
+		if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{
+			enqueue:      true,
+			enqueueUnits: 1,
+		}) {
+			return
+		}
 		h.createScheduledPost(w, r, workspaceID, parsed)
+		return
+	}
+
+	if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{
+		enqueue:      true,
+		depth:        true,
+		enqueueUnits: 1,
+		depthUnits:   deliveryJobUnits,
+	}) {
 		return
 	}
 	h.createImmediatePost(w, r, workspaceID, parsed, accountMap)

@@ -75,6 +75,13 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bulk gets request-limiter-only coverage in v1 (rate-limit PRD
+	// §6.1, §8.1). Batch-aware enqueue/depth admission is deferred
+	// until bulk becomes a publicly supported surface.
+	if !h.admit(w, r, workspaceID, "POST /v1/posts/bulk", admissionOpts{request: true}) {
+		return
+	}
+
 	var body bulkRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body: "+err.Error())

@@ -230,6 +230,24 @@ func (q *Queries) ClaimPostRetryJobs(ctx context.Context, limit int32) ([]PostDe
 	return items, nil
 }
 
+const countActiveDeliveryJobsByWorkspace = `-- name: CountActiveDeliveryJobsByWorkspace :one
+SELECT COUNT(*)::bigint AS active_count
+FROM post_delivery_jobs
+WHERE workspace_id = $1
+  AND state IN ('pending', 'running', 'retrying')
+`
+
+// Active count for the queue-depth admission check (rate-limit PRD).
+// "Active" = not yet terminal: dispatch + retry rows the worker still
+// has work to do on. Hits the post_delivery_jobs_workspace_active_idx
+// partial index added in migration 054.
+func (q *Queries) CountActiveDeliveryJobsByWorkspace(ctx context.Context, workspaceID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveDeliveryJobsByWorkspace, workspaceID)
+	var active_count int64
+	err := row.Scan(&active_count)
+	return active_count, err
+}
+
 const createPostDeliveryJob = `-- name: CreatePostDeliveryJob :one
 INSERT INTO post_delivery_jobs (
   post_id,

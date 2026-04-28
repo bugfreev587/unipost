@@ -78,6 +78,18 @@ func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
 	return status
 }
 
+// PlanIDFor returns the plan ID associated with a workspace, or
+// "free" when no subscription row exists. Used by the rate-limit
+// admission layer to look up the workspace's runtime safety
+// thresholds (see internal/ratelimit/plans.go).
+func (c *Checker) PlanIDFor(ctx context.Context, workspaceID string) string {
+	sub, err := c.queries.GetSubscriptionByWorkspace(ctx, workspaceID)
+	if err != nil || sub.PlanID == "" {
+		return "free"
+	}
+	return sub.PlanID
+}
+
 // Increment adds to the usage count for the current period.
 func (c *Checker) Increment(ctx context.Context, workspaceID string, count int) {
 	c.queries.IncrementUsage(ctx, db.IncrementUsageParams{
