@@ -68,9 +68,21 @@ func (q *Queries) CancelPostDeliveryJob(ctx context.Context, id string) (PostDel
 }
 
 const claimPostDispatchJobs = `-- name: ClaimPostDispatchJobs :many
-WITH eligible AS (
-  SELECT j.id
+WITH active_per_ws AS (
+  SELECT workspace_id, COUNT(*)::int AS cnt
+  FROM post_delivery_jobs
+  WHERE state IN ('running', 'retrying')
+  GROUP BY workspace_id
+),
+ranked AS (
+  SELECT
+    j.id,
+    j.created_at,
+    j.workspace_id,
+    ROW_NUMBER() OVER (PARTITION BY j.workspace_id ORDER BY j.created_at, j.id) AS rn,
+    COALESCE(a.cnt, 0) AS active_cnt
   FROM post_delivery_jobs j
+  LEFT JOIN active_per_ws a ON a.workspace_id = j.workspace_id
   WHERE j.kind = 'dispatch'
     AND j.state = 'pending'
     AND NOT EXISTS (
@@ -90,8 +102,13 @@ WITH eligible AS (
           OR (earlier.created_at = j.created_at AND earlier.id < j.id)
         )
     )
-  ORDER BY j.created_at ASC, j.id ASC
-  LIMIT $1
+),
+eligible AS (
+  SELECT id FROM ranked
+  WHERE $1::int = 0
+     OR active_cnt + rn <= $1::int
+  ORDER BY created_at ASC, id ASC
+  LIMIT $2::int
   FOR UPDATE SKIP LOCKED
 )
 UPDATE post_delivery_jobs j
@@ -104,8 +121,25 @@ WHERE j.id = eligible.id
 RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at
 `
 
-func (q *Queries) ClaimPostDispatchJobs(ctx context.Context, limit int32) ([]PostDeliveryJob, error) {
-	rows, err := q.db.Query(ctx, claimPostDispatchJobs, limit)
+type ClaimPostDispatchJobsParams struct {
+	WorkspaceConcurrentCap int32 `json:"workspace_concurrent_cap"`
+	BatchLimit             int32 `json:"batch_limit"`
+}
+
+// $1 = batch limit (max jobs to claim in one tick)
+// $2 = per-workspace concurrent cap (max running+retrying allowed
+//
+//	per workspace; 0 disables the cap for backward compat)
+//
+// The active_per_ws CTE snapshots active counts once per query.
+// The ranked CTE assigns a per-workspace ROW_NUMBER over the
+// pending queue so the per-workspace cap is enforced even within
+// a single batch — admitting the rn-th candidate makes the
+// workspace's in-flight count = active_cnt + rn, so we admit only
+// when (active_cnt + rn) <= cap. With ws_cap=0 the predicate is
+// always satisfied and behavior matches the pre-Phase-2 query.
+func (q *Queries) ClaimPostDispatchJobs(ctx context.Context, arg ClaimPostDispatchJobsParams) ([]PostDeliveryJob, error) {
+	rows, err := q.db.Query(ctx, claimPostDispatchJobs, arg.WorkspaceConcurrentCap, arg.BatchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -147,9 +181,24 @@ func (q *Queries) ClaimPostDispatchJobs(ctx context.Context, limit int32) ([]Pos
 }
 
 const claimPostRetryJobs = `-- name: ClaimPostRetryJobs :many
-WITH eligible AS (
-  SELECT j.id
+WITH active_per_ws AS (
+  SELECT workspace_id, COUNT(*)::int AS cnt
+  FROM post_delivery_jobs
+  WHERE state IN ('running', 'retrying')
+  GROUP BY workspace_id
+),
+ranked AS (
+  SELECT
+    j.id,
+    COALESCE(j.next_run_at, j.created_at) AS sort_key,
+    j.workspace_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY j.workspace_id
+      ORDER BY COALESCE(j.next_run_at, j.created_at), j.id
+    ) AS rn,
+    COALESCE(a.cnt, 0) AS active_cnt
   FROM post_delivery_jobs j
+  LEFT JOIN active_per_ws a ON a.workspace_id = j.workspace_id
   WHERE j.kind = 'retry'
     AND j.state = 'pending'
     AND (j.next_run_at IS NULL OR j.next_run_at <= NOW())
@@ -174,8 +223,13 @@ WITH eligible AS (
           )
         )
     )
-  ORDER BY COALESCE(j.next_run_at, j.created_at) ASC, j.id ASC
-  LIMIT $1
+),
+eligible AS (
+  SELECT id FROM ranked
+  WHERE $1::int = 0
+     OR active_cnt + rn <= $1::int
+  ORDER BY sort_key ASC, id ASC
+  LIMIT $2::int
   FOR UPDATE SKIP LOCKED
 )
 UPDATE post_delivery_jobs j
@@ -188,8 +242,15 @@ WHERE j.id = eligible.id
 RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at
 `
 
-func (q *Queries) ClaimPostRetryJobs(ctx context.Context, limit int32) ([]PostDeliveryJob, error) {
-	rows, err := q.db.Query(ctx, claimPostRetryJobs, limit)
+type ClaimPostRetryJobsParams struct {
+	WorkspaceConcurrentCap int32 `json:"workspace_concurrent_cap"`
+	BatchLimit             int32 `json:"batch_limit"`
+}
+
+// $1 = batch limit (max jobs to claim in one tick)
+// $2 = per-workspace concurrent cap (see ClaimPostDispatchJobs notes)
+func (q *Queries) ClaimPostRetryJobs(ctx context.Context, arg ClaimPostRetryJobsParams) ([]PostDeliveryJob, error) {
+	rows, err := q.db.Query(ctx, claimPostRetryJobs, arg.WorkspaceConcurrentCap, arg.BatchLimit)
 	if err != nil {
 		return nil, err
 	}

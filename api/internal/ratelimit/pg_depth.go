@@ -54,12 +54,17 @@ func (l *depthLimiter) Check(ctx context.Context, scope QueueScope, addedUnits i
 		return Decision{Allowed: true, Reason: "depth_count_failed"}, err
 	}
 
-	if int(count)+addedUnits > cap {
-		return Decision{
-			Allowed:    false,
-			RetryAfter: 30 * time.Second,
-			Reason:     NormQueueDepthExceeded,
-		}, nil
+	depth := int(count)
+	dec := Decision{
+		QueueDepth: depth,
+		QueueCap:   cap,
 	}
-	return Decision{Allowed: true}, nil
+	if depth+addedUnits > cap {
+		dec.Allowed = false
+		dec.RetryAfter = 30 * time.Second
+		dec.Reason = NormQueueDepthExceeded
+		return dec, nil
+	}
+	dec.Allowed = true
+	return dec, nil
 }

@@ -49,7 +49,14 @@ func newRequestLimiter(rdb *redislib.Client) *requestLimiter {
 // ARGV[3] = now (unix seconds, float)
 // ARGV[4] = requested tokens (always 1 for request limiter)
 //
-// Returns: { allowed (0/1), retry_after_seconds (number) }
+// Returns: { allowed (0/1), retry_after_seconds, remaining (int),
+//            limit (int), reset_unix_seconds (int) }
+//
+// remaining is floor(tokens) so a partially-refilled bucket reports
+// the conservative number to the client. reset_unix_seconds is the
+// unix timestamp at which the bucket would be back to full given
+// the current refill rate; zero would mean "already full", which
+// for a just-decremented bucket implies "1 token / rate" seconds.
 //
 // State stored in Redis: a hash with fields
 //   tokens : current token count (float)
@@ -96,7 +103,14 @@ redis.call('HSET', key, 'tokens', tokens, 'ts', ts)
 local ttl = math.ceil(capacity / math.max(rate, 0.001)) + 1
 redis.call('EXPIRE', key, ttl)
 
-return { allowed, retry_after }
+local time_to_full = 0
+if tokens < capacity and rate > 0 then
+    time_to_full = (capacity - tokens) / rate
+end
+local reset_unix = math.ceil(now + time_to_full)
+local remaining = math.floor(tokens)
+
+return { allowed, retry_after, remaining, math.floor(capacity), reset_unix }
 `)
 
 func (l *requestLimiter) Allow(ctx context.Context, scope RequestScope) (Decision, error) {
@@ -128,18 +142,21 @@ func (l *requestLimiter) Allow(ctx context.Context, scope RequestScope) (Decisio
 		return l.degradedAllow(scope.WorkspaceID, capacity, rate)
 	}
 
-	allowed, retryAfter, perr := parseScriptResult(res)
+	state, perr := parseRequestBucketResult(res)
 	if perr != nil {
 		return Decision{}, perr
 	}
-	if allowed {
-		return Decision{Allowed: true}, nil
+	dec := Decision{
+		Allowed:    state.allowed,
+		RetryAfter: state.retryAfter,
+		Limit:      state.limit,
+		Remaining:  state.remaining,
+		ResetUnix:  state.resetUnix,
 	}
-	return Decision{
-		Allowed:    false,
-		RetryAfter: retryAfter,
-		Reason:     NormRequestLimited,
-	}, nil
+	if !dec.Allowed {
+		dec.Reason = NormRequestLimited
+	}
+	return dec, nil
 }
 
 // degradedAllow runs the local in-memory token bucket used while the
@@ -157,15 +174,18 @@ func (l *requestLimiter) degradedAllow(workspaceID string, capacity, rate float6
 	}
 	l.degradedMu.Unlock()
 
-	allowed, retry := bucket.allow()
-	if allowed {
-		return Decision{Allowed: true}, nil
-	}
-	return Decision{
-		Allowed:    false,
+	allowed, retry, remaining, reset := bucket.allow()
+	dec := Decision{
+		Allowed:    allowed,
 		RetryAfter: retry,
-		Reason:     "request_limited_degraded",
-	}, nil
+		Limit:      int(capacity),
+		Remaining:  remaining,
+		ResetUnix:  reset,
+	}
+	if !allowed {
+		dec.Reason = "request_limited_degraded"
+	}
+	return dec, nil
 }
 
 // localTokenBucket is the in-process fallback used when the circuit
@@ -187,41 +207,86 @@ func newLocalTokenBucket(capacity, rate float64) *localTokenBucket {
 	}
 }
 
-func (b *localTokenBucket) allow() (bool, time.Duration) {
+// allow returns (allowed, retry-after, remaining-tokens-floor,
+// reset-unix-when-full). The remaining/reset values are populated
+// for both allow and deny so the degraded fallback still drives the
+// X-UniPost-RateLimit-* headers — a Redis outage shouldn't make the
+// headers go silent.
+func (b *localTokenBucket) allow() (bool, time.Duration, int, int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := time.Now()
 	elapsed := now.Sub(b.last).Seconds()
 	b.tokens = math.Min(b.capacity, b.tokens+elapsed*b.rate)
 	b.last = now
-	if b.tokens >= 1 {
+
+	allowed := b.tokens >= 1
+	var retry time.Duration
+	if allowed {
 		b.tokens -= 1
-		return true, 0
+	} else {
+		needed := 1 - b.tokens
+		retry = time.Duration(math.Ceil(needed/b.rate)) * time.Second
+		if retry < time.Second {
+			retry = time.Second
+		}
 	}
-	needed := 1 - b.tokens
-	retry := time.Duration(math.Ceil(needed/b.rate)) * time.Second
-	if retry < time.Second {
-		retry = time.Second
+
+	timeToFull := 0.0
+	if b.tokens < b.capacity && b.rate > 0 {
+		timeToFull = (b.capacity - b.tokens) / b.rate
 	}
-	return false, retry
+	return allowed, retry, int(math.Floor(b.tokens)), now.Unix() + int64(math.Ceil(timeToFull))
 }
 
-// parseScriptResult unpacks the {allowed, retry_after} tuple Lua
-// returns. go-redis decodes Lua return values as []interface{} of
-// int64s for redis.call results.
-func parseScriptResult(res []interface{}) (allowed bool, retryAfter time.Duration, err error) {
-	if len(res) != 2 {
-		return false, 0, fmt.Errorf("ratelimit: lua returned %d values, expected 2", len(res))
+// requestBucketState holds the parsed Lua return values for the
+// request limiter. Kept as a struct so the Allow path can copy the
+// state directly into Decision instead of juggling 5 return values.
+type requestBucketState struct {
+	allowed    bool
+	retryAfter time.Duration
+	remaining  int
+	limit      int
+	resetUnix  int64
+}
+
+// parseRequestBucketResult unpacks the {allowed, retry, remaining,
+// limit, reset_unix} tuple Lua returns. go-redis decodes Lua
+// integers as int64 inside an []interface{}.
+func parseRequestBucketResult(res []interface{}) (requestBucketState, error) {
+	if len(res) != 5 {
+		return requestBucketState{}, fmt.Errorf("ratelimit: token bucket lua returned %d values, expected 5", len(res))
 	}
-	a, aerr := toInt64(res[0])
-	if aerr != nil {
-		return false, 0, aerr
+	a, err := toInt64(res[0])
+	if err != nil {
+		return requestBucketState{}, err
 	}
-	r, rerr := toInt64(res[1])
-	if rerr != nil {
-		return false, 0, rerr
+	retry, err := toInt64(res[1])
+	if err != nil {
+		return requestBucketState{}, err
 	}
-	return a == 1, time.Duration(r) * time.Second, nil
+	remaining, err := toInt64(res[2])
+	if err != nil {
+		return requestBucketState{}, err
+	}
+	limit, err := toInt64(res[3])
+	if err != nil {
+		return requestBucketState{}, err
+	}
+	reset, err := toInt64(res[4])
+	if err != nil {
+		return requestBucketState{}, err
+	}
+	if remaining < 0 {
+		remaining = 0
+	}
+	return requestBucketState{
+		allowed:    a == 1,
+		retryAfter: time.Duration(retry) * time.Second,
+		remaining:  int(remaining),
+		limit:      int(limit),
+		resetUnix:  reset,
+	}, nil
 }
 
 func toInt64(v interface{}) (int64, error) {

@@ -16,6 +16,23 @@ type PostDispatchWorker struct {
 
 const staleDeliveryAttemptTimeout = 5 * time.Minute
 
+// claimBatchLimit is the per-tick claim count. Conservative —
+// platforms tolerate parallel publish but the per-account
+// serialization in ClaimPostDispatchJobs already throttles real
+// fan-out, so 20 is plenty.
+const claimBatchLimit = 20
+
+// workspaceConcurrentDispatchCap is the per-workspace cap on
+// running+retrying delivery jobs the worker will allow in flight
+// at any moment. Phase-2 of the rate-limit PRD: this is the
+// worker-domain protection layer that the API-side admission
+// controls cannot reach. The number is intentionally tier-blind
+// for v1 — Phase 3 promotes it to a per-plan map. 30 is sized to
+// cover routine publishing fan-out (a 5-platform post = 5 jobs)
+// while still capping a runaway retry storm to a manageable
+// number of concurrent platform calls.
+const workspaceConcurrentDispatchCap = 30
+
 func NewPostDispatchWorker(queries *db.Queries, postHandler *handler.SocialPostHandler) *PostDispatchWorker {
 	return &PostDispatchWorker{queries: queries, postHandler: postHandler}
 }
@@ -40,7 +57,10 @@ func (w *PostDispatchWorker) runOnce(ctx context.Context) {
 	if err := w.postHandler.RecoverStaleDeliveryJobs(ctx, staleDeliveryAttemptTimeout); err != nil {
 		slog.Error("post dispatch worker: stale recovery failed", "error", err)
 	}
-	jobs, err := w.queries.ClaimPostDispatchJobs(ctx, 20)
+	jobs, err := w.queries.ClaimPostDispatchJobs(ctx, db.ClaimPostDispatchJobsParams{
+		BatchLimit:             claimBatchLimit,
+		WorkspaceConcurrentCap: workspaceConcurrentDispatchCap,
+	})
 	if err != nil {
 		slog.Error("post dispatch worker: claim failed", "error", err)
 		return
@@ -81,7 +101,10 @@ func (w *PostRetryWorker) runOnce(ctx context.Context) {
 	if err := w.postHandler.RecoverStaleDeliveryJobs(ctx, staleDeliveryAttemptTimeout); err != nil {
 		slog.Error("post retry worker: stale recovery failed", "error", err)
 	}
-	jobs, err := w.queries.ClaimPostRetryJobs(ctx, 20)
+	jobs, err := w.queries.ClaimPostRetryJobs(ctx, db.ClaimPostRetryJobsParams{
+		BatchLimit:             claimBatchLimit,
+		WorkspaceConcurrentCap: workspaceConcurrentDispatchCap,
+	})
 	if err != nil {
 		slog.Error("post retry worker: claim failed", "error", err)
 		return

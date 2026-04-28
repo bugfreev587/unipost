@@ -20,10 +20,38 @@ import (
 // hint the handler writes into the Retry-After response header — for
 // allowed requests it is zero. Reason is for structured logging /
 // metrics, never user-visible.
+//
+// Limit / Remaining / ResetUnix / QueueDepth / QueueCap are
+// optional state-snapshot fields populated by Redis-backed limiters
+// (request token bucket and Postgres depth checker today). They
+// drive the X-UniPost-RateLimit-* response headers — when zero,
+// the handler omits the header rather than emitting a misleading
+// "0 remaining" value. NoopLimiter leaves them all zero so degraded
+// installs simply skip the headers.
 type Decision struct {
 	Allowed    bool
 	RetryAfter time.Duration
 	Reason     string
+
+	// Limit is the burst capacity / window cap exposed to the
+	// client (e.g. 20 for p10 request bucket).
+	Limit int
+
+	// Remaining is how many units the workspace can still consume
+	// before being denied. For token bucket this is current tokens
+	// floor()'d to int.
+	Remaining int
+
+	// ResetUnix is the unix-seconds timestamp at which the bucket
+	// (or window) returns to full / empty respectively. Zero means
+	// "no useful reset hint" and the header is omitted.
+	ResetUnix int64
+
+	// QueueDepth / QueueCap describe the workspace's active
+	// delivery-job count and its plan cap. Populated by the depth
+	// limiter; both zero ⇒ skip the X-UniPost-QueueDepth header.
+	QueueDepth int
+	QueueCap   int
 }
 
 // RequestScope identifies one admission attempt against the per-workspace

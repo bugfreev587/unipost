@@ -342,7 +342,7 @@ func main() {
 		AllowedOrigins:   []string{"https://app.unipost.dev", "https://unipost.dev", "http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
-		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-UniPost-Usage", "X-UniPost-Warning"},
+		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-UniPost-Usage", "X-UniPost-Warning", "X-UniPost-RateLimit-Limit", "X-UniPost-RateLimit-Remaining", "X-UniPost-RateLimit-Reset", "X-UniPost-QueueDepth", "Retry-After"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))

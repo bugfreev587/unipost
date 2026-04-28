@@ -14,11 +14,33 @@
 package handler
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 )
+
+// applyRateLimitHeaders writes the X-UniPost-RateLimit-* and
+// X-UniPost-QueueDepth headers from a Decision. Called for both
+// allow and deny so clients can observe approach to the limit
+// without paying for a 429 first. The headers are only written
+// when the limiter populated meaningful state (Limit > 0 or
+// QueueCap > 0); NoopLimiter and limiters that didn't run leave
+// them blank rather than emitting misleading zeros.
+func applyRateLimitHeaders(w http.ResponseWriter, dec ratelimit.Decision) {
+	if dec.Limit > 0 {
+		w.Header().Set("X-UniPost-RateLimit-Limit", strconv.Itoa(dec.Limit))
+		w.Header().Set("X-UniPost-RateLimit-Remaining", strconv.Itoa(dec.Remaining))
+		if dec.ResetUnix > 0 {
+			w.Header().Set("X-UniPost-RateLimit-Reset", strconv.FormatInt(dec.ResetUnix, 10))
+		}
+	}
+	if dec.QueueCap > 0 {
+		w.Header().Set("X-UniPost-QueueDepth", fmt.Sprintf("%d/%d", dec.QueueDepth, dec.QueueCap))
+	}
+}
 
 // admissionOpts toggles which controls run for a given route.
 //
@@ -63,6 +85,7 @@ func (h *SocialPostHandler) admit(
 			PlanID:      planID,
 			Route:       route,
 		})
+		applyRateLimitHeaders(w, dec)
 		if err != nil {
 			slog.Warn("ratelimit: request limiter error, allowing", "err", err, "ws", workspaceID, "route", route)
 		} else if !dec.Allowed {
@@ -101,6 +124,7 @@ func (h *SocialPostHandler) admit(
 			WorkspaceID: workspaceID,
 			PlanID:      planID,
 		}, units)
+		applyRateLimitHeaders(w, dec)
 		if err != nil {
 			slog.Warn("ratelimit: depth limiter error, allowing", "err", err, "ws", workspaceID, "route", route)
 		} else if !dec.Allowed {
