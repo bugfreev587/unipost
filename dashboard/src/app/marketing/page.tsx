@@ -672,6 +672,11 @@ body{
 }
 .lp-section-head{
   max-width:720px;
+  margin:0 auto 28px;
+  text-align:center;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
   margin-bottom:28px;
 }
 .lp-section-head h2{
@@ -685,6 +690,7 @@ body{
   color:var(--lp-soft);
   font-size:17px;
   line-height:1.75;
+  max-width:680px;
 }
 .lp-usecase-grid{
   display:grid;
