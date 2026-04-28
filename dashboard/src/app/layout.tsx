@@ -32,6 +32,41 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
+const themeInitScript = `
+(() => {
+  try {
+    const storageKey = "unipost-theme";
+    const cookieKey = "unipost-theme";
+    const host = window.location.hostname;
+    const isMarketingHost =
+      host === "unipost.dev" ||
+      host === "www.unipost.dev" ||
+      (host.endsWith(".unipost.dev") && host !== "app.unipost.dev");
+    const cookieMatch = document.cookie.match(/(?:^|; )unipost-theme=(light|dark)(?:;|$)/);
+    const cookieTheme = cookieMatch ? cookieMatch[1] : null;
+    const storedTheme = localStorage.getItem(storageKey);
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const resolvedTheme = (cookieTheme === "light" || cookieTheme === "dark")
+      ? cookieTheme
+      : (storedTheme === "light" || storedTheme === "dark")
+        ? storedTheme
+      : isMarketingHost
+        ? "light"
+        : (prefersDark ? "dark" : "light");
+    const root = document.documentElement;
+    root.classList.toggle("dark", resolvedTheme === "dark");
+    root.classList.toggle("light", resolvedTheme === "light");
+    root.style.colorScheme = resolvedTheme;
+    root.dataset.theme = resolvedTheme;
+    localStorage.setItem(storageKey, resolvedTheme);
+    const domain = host === "unipost.dev" || host.endsWith(".unipost.dev")
+      ? "; domain=.unipost.dev"
+      : "";
+    document.cookie = cookieKey + "=" + resolvedTheme + "; path=/; max-age=31536000; samesite=lax" + domain;
+  } catch (_) {}
+})();
+`;
+
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || "https://unipost.dev"),
   title: "UniPost",
@@ -47,34 +82,6 @@ export const metadata: Metadata = {
     apple: "/brand/unipost-icon-128.png",
   },
 };
-
-const themeInitScript = `
-(() => {
-  try {
-    const storageKey = "unipost-theme";
-    const cookieMatch = document.cookie.match(/(?:^|; )unipost-theme=(light|dark)(?:;|$)/);
-    const cookieTheme = cookieMatch ? cookieMatch[1] : null;
-    const storedTheme = localStorage.getItem(storageKey);
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const resolvedTheme = (cookieTheme === "light" || cookieTheme === "dark")
-      ? cookieTheme
-      : (storedTheme === "light" || storedTheme === "dark")
-        ? storedTheme
-      : (prefersDark ? "dark" : "light");
-    const root = document.documentElement;
-    root.classList.toggle("dark", resolvedTheme === "dark");
-    root.classList.toggle("light", resolvedTheme === "light");
-    root.style.colorScheme = resolvedTheme;
-    root.dataset.theme = resolvedTheme;
-    localStorage.setItem(storageKey, resolvedTheme);
-    const host = window.location.hostname;
-    const domain = host === "unipost.dev" || host.endsWith(".unipost.dev")
-      ? "; domain=.unipost.dev"
-      : "";
-    document.cookie = "unipost-theme=" + resolvedTheme + "; path=/; max-age=31536000; samesite=lax" + domain;
-  } catch (_) {}
-})();
-`;
 
 export default function RootLayout({
   children,
