@@ -40,7 +40,12 @@ const CSS = `
 .queue-table th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dmuted2);background:var(--surface2)}
 .queue-table td{color:var(--dtext);vertical-align:top}
 .queue-table tr:last-child td{border-bottom:none}
-.queue-actions{display:flex;gap:8px;flex-wrap:wrap}
+.queue-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;white-space:nowrap}
+.queue-error-cell{display:flex;flex-direction:column;align-items:flex-start;gap:4px;max-width:380px}
+.queue-error-text--collapsed{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;line-height:1.45;max-width:100%;word-break:break-all}
+.queue-error-text--expanded{white-space:pre-wrap;word-break:break-word;line-height:1.45;max-width:100%}
+.queue-error-toggle{padding:0;border:0;background:transparent;color:var(--dmuted);font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+.queue-error-toggle:hover{color:var(--dtext)}
 .queue-btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:8px;border:1px solid var(--dborder);background:var(--surface2);color:var(--dtext);font-size:12px;font-weight:600;cursor:pointer}
 .queue-btn:disabled{opacity:.5;cursor:not-allowed}
 .queue-empty,.queue-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:260px;text-align:center;border:1px dashed var(--dborder);border-radius:16px;color:var(--dmuted)}
@@ -51,6 +56,25 @@ const CSS = `
 function badge(status: string) {
   const cls = STATUS_BADGE[status] || "dbadge-gray";
   return <span className={`dbadge ${cls}`}>{status}</span>;
+}
+
+function ErrorCell({ message }: { message: string | null | undefined }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!message) return <>—</>;
+  return (
+    <div className="queue-error-cell">
+      <div className={expanded ? "queue-error-text--expanded" : "queue-error-text--collapsed"}>
+        {message}
+      </div>
+      <button
+        type="button"
+        className="queue-error-toggle"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "Show less" : "Show more"}
+      </button>
+    </div>
+  );
 }
 
 // Dead jobs come in two flavors and the UI used to render both as "—"
@@ -278,7 +302,7 @@ export default function QueuePage() {
                     <td>{job.failure_stage || (job.kind === "retry" ? "Retry queue" : job.state === "running" ? "Dispatching" : "Queued")}</td>
                     <td>{attemptsCell(job)}</td>
                     <td>{nextRetryCell(job)}</td>
-                    <td style={{ maxWidth: 360 }}>{job.last_error || "—"}</td>
+                    <td><ErrorCell message={job.last_error} /></td>
                     <td>
                       <div className="queue-actions">
                         {job.state === "dead" && (
