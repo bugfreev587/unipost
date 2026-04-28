@@ -120,8 +120,7 @@ function createMcpServer(apiKey) {
         version: "0.6.0",
         // Sprint 3 PR9: added unipost_create_connect_session,
         // unipost_reschedule_post, unipost_cancel_post.
-        // Sprint 4 PR9: added unipost_bulk_create_posts,
-        // unipost_list_managed_users. The single-post create tool also
+        // Sprint 4 PR9: added unipost_list_managed_users. The single-post create tool also
         // gained the optional first_comment field on platform_posts[].
     });
     server.tool("unipost_list_accounts", "List all connected social media accounts", {
@@ -590,27 +589,6 @@ function createMcpServer(apiKey) {
         return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
     });
     // ── Sprint 4 v0.5.0 tools ──
-    server.tool("unipost_bulk_create_posts", [
-        "Publish up to 50 social posts in a single call. Returns one result entry per input post (success or per-post error).",
-        "",
-        "Each post in the `posts` array is the same shape as a single unipost_create_post call: pass platform_posts[] with",
-        "per-account captions, or use the legacy caption + account_ids fan-out shape. Drafts and scheduled posts are NOT supported in bulk —",
-        "use unipost_create_post for those.",
-        "",
-        "Per-post idempotency_key still works; re-sending the same batch with the same keys safely retries failed posts.",
-        "Quota counts each post individually. Mid-batch quota exhaustion fails only the remaining posts, not the whole batch.",
-    ].join("\n"), {
-        posts: zod_1.z
-            .array(zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()))
-            .max(50)
-            .describe("Array of post bodies (1-50). Each entry is a complete /v1/social-posts request body."),
-    }, async ({ posts }) => {
-        const data = await apiRequest("/v1/social-posts/bulk", apiKey, {
-            method: "POST",
-            body: JSON.stringify({ posts }),
-        });
-        return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
-    });
     server.tool("unipost_list_managed_users", "List end users onboarded via UniPost Connect, grouped by external_user_id with per-platform account counts. Use this when an AI agent needs a workspace-level view of all managed users (e.g. 'who has a Twitter account connected via Connect?').", {
         limit: zod_1.z.number().int().min(1).max(100).optional().describe("Page size, default 25, max 100."),
     }, async ({ limit }) => {

@@ -35,7 +35,6 @@ export function MethodBadge({ method }: { method: string }) {
 const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^POST \/v1\/(?:posts|social-posts)\/validate$/i, href: "/docs/api/posts/validate" },
   { match: /^POST \/v1\/(?:posts|social-posts)\/[^/]+\/publish$/i, href: "/docs/api/posts/drafts/publish" },
-  { match: /^POST \/v1\/(?:posts|social-posts)\/bulk$/i, href: "/docs/api/posts/bulk" },
   { match: /^PATCH \/v1\/(?:posts|social-posts)\/[^/]+$/i, href: "/docs/api/posts/update" },
   { match: /^POST \/v1\/(?:posts|social-posts)$/i, href: "/docs/api/posts/create" },
   { match: /^GET \/v1\/(?:posts|social-posts)\/[^/]+\/queue$/i, href: "/docs/api/posts/get" },

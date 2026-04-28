@@ -445,7 +445,6 @@ export function CreatePostContent() {
             { method: "POST", path: "/v1/posts/validate", label: "Validate post", href: "/docs/api/posts/validate" },
             { method: "GET", path: "/v1/posts", label: "List posts", href: "/docs/api/posts/list" },
             { method: "GET", path: "/v1/posts/:post_id", label: "Get post", href: "/docs/api/posts/get" },
-            { method: "POST", path: "/v1/posts/bulk", label: "Bulk publish", href: "/docs/api/posts/bulk" },
             { method: "GET", path: "/v1/posts/:post_id/analytics", label: "Post analytics", href: "/docs/api/analytics/posts" },
             { method: "GET", path: "/v1/webhooks", label: "List webhooks", href: "/docs/api/webhooks" },
             { method: "POST", path: "/v1/media", label: "Reserve media upload", href: "/docs/api/media/reserve" },
