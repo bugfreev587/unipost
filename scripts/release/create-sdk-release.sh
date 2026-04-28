@@ -27,6 +27,79 @@ TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID:-}"
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW:-false}"
 SOURCE_VALIDATION_LOG_DIR="${SOURCE_VALIDATION_LOG_DIR:-${ROOT_DIR}/artifacts/sdk-source-validation-release}"
 
+allowed_release_paths() {
+  local repo="$1"
+  case "$repo" in
+    sdk-js)
+      cat <<'EOF'
+package.json
+src/http.ts
+dist/
+EOF
+      ;;
+    sdk-python)
+      cat <<'EOF'
+pyproject.toml
+unipost/__init__.py
+unipost/http.py
+unipost/async_client.py
+EOF
+      ;;
+    sdk-go)
+      cat <<'EOF'
+unipost/client.go
+EOF
+      ;;
+  esac
+}
+
+path_is_allowed_for_repo() {
+  local repo="$1"
+  local path="$2"
+  while IFS= read -r allowed; do
+    [[ -z "$allowed" ]] && continue
+    if [[ "$allowed" == */ ]]; then
+      [[ "$path" == "$allowed"* ]] && return 0
+    else
+      [[ "$path" == "$allowed" ]] && return 0
+    fi
+  done < <(allowed_release_paths "$repo")
+  return 1
+}
+
+cleanup_incomplete_release_state() {
+  local repo="$1"
+  local dir="$2"
+  local status_output
+  status_output="$(git -C "$dir" status --porcelain)"
+  [[ -z "$status_output" ]] && return 0
+
+  local -a restore_paths=()
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+
+    local status="${line:0:2}"
+    local path="${line:3}"
+
+    if [[ "$status" == "??" ]]; then
+      echo "$repo has untracked files ($path); refusing to auto-clean" >&2
+      return 1
+    fi
+
+    if ! path_is_allowed_for_repo "$repo" "$path"; then
+      echo "$repo has non-release changes ($path); refusing to auto-clean" >&2
+      return 1
+    fi
+
+    restore_paths+=("$path")
+  done <<< "$status_output"
+
+  if [[ ${#restore_paths[@]} -gt 0 ]]; then
+    git -C "$dir" restore --staged --worktree -- "${restore_paths[@]}"
+    echo "$repo: cleaned leftover release-state changes"
+  fi
+}
+
 if [[ -z "$VERSION" ]]; then
   echo "usage: $0 <version> [--push]" >&2
   exit 64
@@ -55,6 +128,7 @@ for repo in "${REPOS[@]}"; do
     echo "$repo is on branch '$branch'; expected 'main'" >&2
     exit 1
   fi
+  cleanup_incomplete_release_state "$repo" "$dir"
   if [[ -n "$(git -C "$dir" status --short)" ]]; then
     echo "$repo working tree is not clean; commit or stash first" >&2
     exit 1

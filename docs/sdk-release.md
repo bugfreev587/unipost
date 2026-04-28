@@ -15,6 +15,7 @@ scripts/release/create-sdk-release.sh 0.2.1 --push
 That command:
 
 - bumps all SDK version strings
+- auto-cleans leftover version/dist changes from a previously failed release attempt
 - rebuilds the JS dist bundle
 - runs lightweight local validation
 - runs all three source-validation suites against the updated SDK source
@@ -74,7 +75,7 @@ scripts/regression/run-suite.sh smoke
 
 ## 3. Simplest release command
 
-If your working tree is clean and your npm / PyPI secrets are already configured in GitHub, use:
+If your SDK repos are either clean or only contain leftover release-state changes from a previously failed run, and your npm / PyPI secrets are already configured in GitHub, use:
 
 ```bash
 UNIPOST_API_KEY=up_live_xxx \
