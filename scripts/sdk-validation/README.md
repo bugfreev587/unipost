@@ -2,10 +2,10 @@
 
 Live API tests for the current UniPost SDK surfaces.
 
-All three validation scripts now use the local SDK packages checked into this repo so unreleased SDK changes can be verified against the live UniPost API before publishing:
-- JavaScript: `/Users/xiaoboyu/unipost/sdk/javascript`
-- Go: `/Users/xiaoboyu/unipost/sdk/go`
-- Python: `/Users/xiaoboyu/unipost/sdk/python`
+All three validation scripts use the local SDK packages from the public unipost-dev workspace, so unreleased SDK changes can be verified against the live UniPost API before publishing:
+- JavaScript: `/Users/xiaoboyu/unipost-dev/sdk-js` (`dist/index.mjs`)
+- Go: `/Users/xiaoboyu/unipost-dev/sdk-go` (wired via a `replace` directive in `go/go.mod`)
+- Python: `/Users/xiaoboyu/unipost-dev/sdk-python` (added to `sys.path`)
 
 ## JavaScript / TypeScript
 

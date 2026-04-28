@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 
+# Cut a release across all three SDKs in /Users/xiaoboyu/unipost-dev/:
+#   - bumps version files in each repo
+#   - rebuilds the JS dist so it ships the new SDK_VERSION header
+#   - runs basic smoke checks (Go test, Python import, JS dist node --check)
+#   - commits and tags v<version> in each repo
+#   - optionally pushes commit + tag to origin/main
+#
+# Usage:
+#   scripts/release/create-sdk-release.sh <version> [--push]
+#
+# Each unipost-dev repo must be on `main` with a clean working tree.
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION="${1:-}"
 PUSH="${2:-}"
 TAG="v${VERSION}"
+SDKS_ROOT="${UNIPOST_DEV_ROOT:-/Users/xiaoboyu/unipost-dev}"
+REPOS=(sdk-js sdk-python sdk-go)
 
 if [[ -z "$VERSION" ]]; then
   echo "usage: $0 <version> [--push]" >&2
@@ -17,44 +31,84 @@ if [[ -n "$PUSH" && "$PUSH" != "--push" ]]; then
   exit 64
 fi
 
-cd "$ROOT_DIR"
+# Pre-flight: each repo must exist, be on main, be clean, and not already
+# have the target tag.
+for repo in "${REPOS[@]}"; do
+  dir="${SDKS_ROOT}/${repo}"
+  if [[ ! -d "$dir/.git" ]]; then
+    echo "not a git repo: $dir" >&2
+    exit 1
+  fi
+  branch=$(git -C "$dir" branch --show-current)
+  if [[ "$branch" != "main" ]]; then
+    echo "$repo is on branch '$branch'; expected 'main'" >&2
+    exit 1
+  fi
+  if [[ -n "$(git -C "$dir" status --short)" ]]; then
+    echo "$repo working tree is not clean; commit or stash first" >&2
+    exit 1
+  fi
+  if git -C "$dir" rev-parse "$TAG" >/dev/null 2>&1; then
+    echo "$repo already has tag $TAG" >&2
+    exit 1
+  fi
+done
 
-if [[ -n "$(git status --short)" ]]; then
-  echo "working tree is not clean; commit or stash changes before creating a release" >&2
-  exit 1
-fi
+# Bump versions in each repo.
+"${ROOT_DIR}/scripts/release/bump-sdk-version.sh" "$VERSION"
 
-if git rev-parse "$TAG" >/dev/null 2>&1; then
-  echo "tag already exists: $TAG" >&2
-  exit 1
-fi
-
-scripts/release/bump-sdk-version.sh "$VERSION"
-
-node --check scripts/sdk-validation/js/unipost-sdk-test.mjs
-python3 -c "import sys; sys.path.insert(0, 'sdk/python'); import unipost; print(unipost.__version__)"
+# Rebuild JS dist so the published bundle carries the new SDK_VERSION.
 (
-  cd sdk/go
-  go test ./...
+  cd "${SDKS_ROOT}/sdk-js"
+  if [[ -f package-lock.json ]]; then
+    npm ci --silent
+  else
+    npm install --silent
+  fi
+  npm run build --silent
 )
 
-git add \
-  sdk/javascript/package.json \
-  sdk/javascript/dist/index.mjs \
-  sdk/python/pyproject.toml \
-  sdk/python/unipost/__init__.py \
-  sdk/go/unipost/sdk.go
+# Smoke checks before tagging.
+node --check "${SDKS_ROOT}/sdk-js/dist/index.mjs"
+python3 -c "import sys; sys.path.insert(0, '${SDKS_ROOT}/sdk-python'); import unipost; assert unipost.__version__ == '${VERSION}', unipost.__version__"
+(
+  cd "${SDKS_ROOT}/sdk-go"
+  go test ./... >/dev/null
+)
 
-git commit -m "Release SDKs v${VERSION}"
-git tag "$TAG"
+# Commit + tag in each repo.
+for repo in "${REPOS[@]}"; do
+  dir="${SDKS_ROOT}/${repo}"
+  case "$repo" in
+    sdk-js)
+      git -C "$dir" add package.json src/http.ts dist/
+      ;;
+    sdk-python)
+      git -C "$dir" add pyproject.toml unipost/__init__.py unipost/http.py unipost/async_client.py
+      ;;
+    sdk-go)
+      git -C "$dir" add unipost/client.go
+      ;;
+  esac
+  if [[ -z "$(git -C "$dir" diff --cached --name-only)" ]]; then
+    echo "$repo: no version-related changes detected; skipping commit" >&2
+    continue
+  fi
+  git -C "$dir" commit -m "Release v${VERSION}"
+  git -C "$dir" tag "$TAG"
+done
 
 if [[ "$PUSH" == "--push" ]]; then
-  git push origin main
-  git push origin "$TAG"
-  echo "Release commit and tag pushed: ${TAG}"
+  for repo in "${REPOS[@]}"; do
+    dir="${SDKS_ROOT}/${repo}"
+    git -C "$dir" push origin main
+    git -C "$dir" push origin "$TAG"
+    echo "${repo}: pushed main + ${TAG}"
+  done
 else
-  echo "Created release commit and tag locally: ${TAG}"
-  echo "Next:"
-  echo "  git push origin main"
-  echo "  git push origin ${TAG}"
+  echo
+  echo "Created release commits and tags locally. To publish, run:"
+  for repo in "${REPOS[@]}"; do
+    echo "  git -C ${SDKS_ROOT}/${repo} push origin main && git -C ${SDKS_ROOT}/${repo} push origin ${TAG}"
+  done
 fi

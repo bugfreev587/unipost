@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { UniPost, UniPostError, verifyWebhookSignature } from '../../../sdk/javascript/dist/index.mjs';
+import { UniPost, UniPostError, verifyWebhookSignature } from '/Users/xiaoboyu/unipost-dev/sdk-js/dist/index.mjs';
 
 const API_KEY = process.env.UNIPOST_API_KEY || 'YOUR_API_KEY_HERE';
 const TEST_ACCOUNT_ID_ENV = process.env.TEST_ACCOUNT_ID || '';

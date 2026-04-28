@@ -135,7 +135,9 @@ func main() {
 
 	if workspace != nil {
 		test("Workspace.Update() — no-op", func() error {
-			updated, err := client.Workspace.Update(ctx, workspace.PerAccountMonthlyLimit)
+			updated, err := client.Workspace.Update(ctx, &unipost.UpdateWorkspaceParams{
+				PerAccountMonthlyLimit: workspace.PerAccountMonthlyLimit,
+			})
 			if err != nil {
 				return err
 			}
@@ -883,7 +885,7 @@ func main() {
 		return nil
 	})
 
-	retryableJobs, _ := client.DeliveryJobs.List(ctx, &unipost.ListDeliveryJobsParams{Limit: 20, States: "pending,retrying"})
+	retryableJobs, _ := client.DeliveryJobs.List(ctx, &unipost.ListDeliveryJobsParams{Limit: 20, States: []string{"pending", "retrying"}})
 	if len(retryableJobs) > 0 {
 		jobID := retryableJobs[0].ID
 		test("DeliveryJobs.Retry()/Cancel()", func() error {

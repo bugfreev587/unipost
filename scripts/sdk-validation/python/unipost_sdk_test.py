@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../sdk/python")))
+sys.path.insert(0, "/Users/xiaoboyu/unipost-dev/sdk-python")
 
 from unipost import UniPost, UniPostError, verify_webhook_signature
 
@@ -319,7 +319,8 @@ def main():
 
 def _test_platform_capabilities(client):
     payload = client.platforms.capabilities()
-    assert_true(isinstance(payload.platforms, object), "Expected platforms payload")
+    assert_true(isinstance(payload, dict), "Expected platforms capabilities dict")
+    assert_true("platforms" in payload, "Expected platforms map")
     return payload
 
 
@@ -398,7 +399,7 @@ def _test_accounts_health(client, account_id):
 def _test_accounts_capabilities(client, account_id):
     try:
         payload = client.accounts.capabilities(account_id)
-        assert_true(bool(payload.schema_version), "Expected schema version")
+        assert_true(bool(payload.get("schema_version")), "Expected schema version")
         return payload
     except UniPostError as exc:
         if exc.code == "not_found":
@@ -408,7 +409,7 @@ def _test_accounts_capabilities(client, account_id):
 
 def _test_tiktok_creator_info(client, account_id):
     payload = client.accounts.tiktok_creator_info(account_id)
-    assert_true(hasattr(payload, "creator_username") or hasattr(payload, "creator_nickname"), "Expected TikTok creator info")
+    assert_true("creator_username" in payload or "creator_nickname" in payload, "Expected TikTok creator info")
     return payload
 
 
@@ -473,7 +474,7 @@ def _test_verify_signature():
     payload = b'{"event":"post.published","data":{"id":"post_test_123"}}'
     secret = "whsec_test_local"
     signature = "sha256=" + hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-    assert_true(verify_webhook_signature(payload, signature, secret), "Expected valid signature")
+    assert_true(verify_webhook_signature(payload=payload, signature=signature, secret=secret), "Expected valid signature")
     return True
 
 
@@ -694,14 +695,14 @@ def _test_delivery_job_commands(client, job):
 def _test_analytics_summary(client):
     now = datetime.now(timezone.utc)
     payload = client.analytics.summary(from_date=(now - timedelta(days=30)).strftime("%Y-%m-%d"), to_date=now.strftime("%Y-%m-%d"))
-    assert_true(hasattr(payload, "posts"), "Expected summary payload")
+    assert_true("posts" in payload, "Expected summary payload")
     return payload
 
 
 def _test_analytics_trend(client):
     now = datetime.now(timezone.utc)
     payload = client.analytics.trend(from_date=(now - timedelta(days=30)).strftime("%Y-%m-%d"), to_date=now.strftime("%Y-%m-%d"))
-    assert_true(isinstance(payload.dates, list), "Expected trend dates")
+    assert_true(isinstance(payload.get("dates"), list), "Expected trend dates")
     return payload
 
 
@@ -714,7 +715,11 @@ def _test_analytics_by_platform(client):
 
 def _test_analytics_rollup(client):
     now = datetime.now(timezone.utc)
-    payload = client.analytics.rollup(**{"from": (now - timedelta(days=30)).isoformat(), "to": now.isoformat(), "granularity": "day"})
+    payload = client.analytics.rollup(
+        from_date=(now - timedelta(days=30)).isoformat(),
+        to_date=now.isoformat(),
+        granularity="day",
+    )
     assert_true(isinstance(payload.series, list), "Expected rollup series")
     return payload
 
@@ -728,7 +733,7 @@ def _test_usage(client):
 def _test_oauth_connect(client):
     try:
         payload = client.oauth.connect("bluesky", redirect_url="https://example.com/callback")
-        assert_true(bool(payload.auth_url), "Expected auth_url")
+        assert_true(bool(payload.get("auth_url")), "Expected auth_url")
         return payload
     except UniPostError as exc:
         if exc.code in ("unauthorized", "validation_error"):
