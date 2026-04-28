@@ -160,9 +160,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const result = await client.posts.validate({
   platformPosts: [
@@ -177,9 +175,8 @@ const result = await client.posts.validate({
     lang: "python",
     label: "Python",
     code: `from unipost import UniPost
-import os
 
-client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+client = UniPost()
 
 result = client.posts.validate(
   platform_posts=[
@@ -198,15 +195,12 @@ result = client.posts.validate(
 import (
   "context"
   "log"
-  "os"
 
   "github.com/unipost-dev/sdk-go/unipost"
 )
 
 func main() {
-  client := unipost.NewClient(
-    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
-  )
+  client := unipost.NewClient()
 
   validation, err := client.Posts.Validate(context.Background(), &unipost.ValidatePostParams{
     PlatformPosts: []unipost.PlatformPost{

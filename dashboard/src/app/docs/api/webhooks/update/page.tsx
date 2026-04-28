@@ -51,9 +51,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const webhook = await client.webhooks.update("wh_abc123", {
   name: "Failure-only webhook",
@@ -62,6 +60,51 @@ const webhook = await client.webhooks.update("wh_abc123", {
 });
 
 console.log(webhook.active);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+webhook = client.webhooks.update(
+  "wh_abc123",
+  name="Failure-only webhook",
+  active=False,
+  events=["post.failed"],
+)
+
+print(webhook["data"]["active"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  active := false
+  webhook, err := client.Webhooks.Update(context.Background(), "wh_abc123", &unipost.UpdateWebhookParams{
+    Name:   unipost.String("Failure-only webhook"),
+    Active: &active,
+    Events: []string{"post.failed"},
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(webhook.Active)
+}`,
   },
 ];
 

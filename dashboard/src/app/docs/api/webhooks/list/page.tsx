@@ -42,12 +42,43 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const { data: webhooks, meta } = await client.webhooks.list();
 console.log(webhooks.length);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+webhooks = client.webhooks.list()
+print(webhooks["data"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  webhooks, err := client.Webhooks.List(context.Background())
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = webhooks
+}`,
   },
 ];
 

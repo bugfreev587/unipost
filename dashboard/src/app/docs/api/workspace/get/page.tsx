@@ -30,6 +30,50 @@ const SNIPPETS = [
     code: `curl "https://api.unipost.dev/v1/workspace" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
+  {
+    lang: "js",
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const workspace = await client.workspace.get();
+console.log(workspace.name);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+workspace = client.workspace.get()
+print(workspace["data"]["name"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  workspace, err := client.Workspace.Get(context.Background())
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(workspace.Name)
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

@@ -42,6 +42,61 @@ const SNIPPETS = [
     "environment": "production"
   }'`,
   },
+  {
+    lang: "js",
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const created = await client.apiKeys.create({
+  name: "Production backend",
+  environment: "production",
+});
+
+console.log(created.key); // store this now`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+created = client.api_keys.create(
+  name="Production backend",
+  environment="production",
+)
+
+print(created["data"]["key"])  # store this now`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  created, err := client.APIKeys.Create(context.Background(), &unipost.CreateAPIKeyParams{
+    Name:        "Production backend",
+    Environment: "production",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(created.Key) // store this now
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

@@ -35,6 +35,49 @@ const SNIPPETS = [
     code: `curl "https://api.unipost.dev/v1/webhooks/wh_abc123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
+  {
+    lang: "js",
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const webhook = await client.webhooks.get("wh_abc123");
+console.log(webhook.events);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+webhook = client.webhooks.get("wh_abc123")
+print(webhook["data"]["events"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  webhook, err := client.Webhooks.Get(context.Background(), "wh_abc123")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = webhook
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

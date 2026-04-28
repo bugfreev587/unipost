@@ -35,11 +35,38 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 await client.accounts.disconnect("sa_twitter_123");`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+client.accounts.disconnect("sa_twitter_123")`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  if _, err := client.Accounts.Disconnect(context.Background(), "sa_twitter_123"); err != nil {
+    log.Fatal(err)
+  }
+}`,
   },
 ];
 

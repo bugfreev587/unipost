@@ -54,16 +54,56 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const profile = await client.profiles.update("pr_brand_us", {
-  branding_display_name: "Brand US",
-  branding_primary_color: "#10b981",
+  brandingDisplayName: "Brand US",
+  brandingPrimaryColor: "#10b981",
 });
 
-console.log(profile.branding_display_name);`,
+console.log(profile.brandingDisplayName);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+profile = client.profiles.update(
+  "pr_brand_us",
+  branding_display_name="Brand US",
+  branding_primary_color="#10b981",
+)
+
+print(profile["data"]["branding_display_name"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  profile, err := client.Profiles.Update(context.Background(), "pr_brand_us", &unipost.UpdateProfileParams{
+    BrandingDisplayName:  unipost.String("Brand US"),
+    BrandingPrimaryColor: unipost.String("#10b981"),
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(profile.BrandingDisplayName)
+}`,
   },
 ];
 

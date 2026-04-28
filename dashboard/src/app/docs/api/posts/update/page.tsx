@@ -37,27 +37,99 @@ const ERROR_FIELDS: ApiFieldItem[] = [
 const SNIPPETS = [
   {
     lang: "curl",
-    label: "Archive",
-    code: `curl -X PATCH "https://api.unipost.dev/v1/posts/post_abc123" \\
+    label: "cURL",
+    code: `# Archive a post
+curl -X PATCH "https://api.unipost.dev/v1/posts/post_abc123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"archived": true}'`,
-  },
-  {
-    lang: "curl",
-    label: "Cancel",
-    code: `curl -X PATCH "https://api.unipost.dev/v1/posts/post_sched_123" \\
+  -d '{"archived": true}'
+
+# Cancel a scheduled post
+curl -X PATCH "https://api.unipost.dev/v1/posts/post_sched_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"status": "canceled"}'`,
-  },
-  {
-    lang: "curl",
-    label: "Reschedule",
-    code: `curl -X PATCH "https://api.unipost.dev/v1/posts/post_sched_123" \\
+  -d '{"status": "canceled"}'
+
+# Reschedule
+curl -X PATCH "https://api.unipost.dev/v1/posts/post_sched_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"scheduled_at": "2026-04-24T18:00:00Z"}'`,
+  },
+  {
+    lang: "js",
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+// Archive
+await client.posts.update("post_abc123", { archived: true });
+
+// Cancel a scheduled post
+await client.posts.update("post_sched_123", { status: "canceled" });
+
+// Reschedule
+await client.posts.update("post_sched_123", {
+  scheduledAt: "2026-04-24T18:00:00Z",
+});`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+# Archive
+client.posts.update("post_abc123", archived=True)
+
+# Cancel a scheduled post
+client.posts.update("post_sched_123", status="canceled")
+
+# Reschedule
+client.posts.update(
+  "post_sched_123",
+  scheduled_at="2026-04-24T18:00:00Z",
+)`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  ctx := context.Background()
+
+  // Archive
+  archived := true
+  if _, err := client.Posts.Update(ctx, "post_abc123", &unipost.UpdatePostParams{
+    Archived: &archived,
+  }); err != nil {
+    log.Fatal(err)
+  }
+
+  // Cancel a scheduled post
+  if _, err := client.Posts.Cancel(ctx, "post_sched_123"); err != nil {
+    log.Fatal(err)
+  }
+
+  // Reschedule
+  if _, err := client.Posts.Update(ctx, "post_sched_123", &unipost.UpdatePostParams{
+    ScheduledAt: unipost.String("2026-04-24T18:00:00Z"),
+  }); err != nil {
+    log.Fatal(err)
+  }
+}`,
   },
 ];
 

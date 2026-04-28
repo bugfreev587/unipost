@@ -52,9 +52,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const webhook = await client.webhooks.create({
   name: "Publishing status webhook",
@@ -63,6 +61,49 @@ const webhook = await client.webhooks.create({
 });
 
 console.log(webhook.secret); // store this now`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+webhook = client.webhooks.create(
+  name="Publishing status webhook",
+  url="https://api.example.com/unipost/webhooks",
+  events=["post.published", "post.partial", "post.failed"],
+)
+
+print(webhook["data"]["secret"])  # store this now`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  webhook, err := client.Webhooks.Create(context.Background(), &unipost.CreateWebhookParams{
+    Name:   "Publishing status webhook",
+    URL:    "https://api.example.com/unipost/webhooks",
+    Events: []string{"post.published", "post.partial", "post.failed"},
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(webhook.Secret) // store this now
+}`,
   },
 ];
 

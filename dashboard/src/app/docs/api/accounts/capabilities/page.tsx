@@ -42,12 +42,44 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const caps = await client.accounts.capabilities("sa_instagram_123");
 console.log(caps.capability.media.images.max_count);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+caps = client.accounts.capabilities("sa_instagram_123")
+print(caps["data"]["capability"]["text"]["max_length"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  caps, err := client.Accounts.Capabilities(context.Background(), "sa_instagram_123")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(caps["capability"])
+}`,
   },
 ];
 

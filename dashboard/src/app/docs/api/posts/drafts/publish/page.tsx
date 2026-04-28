@@ -26,15 +26,53 @@ const ERROR_FIELDS: ApiFieldItem[] = [
 ];
 const SNIPPETS = [
   {
+    lang: "curl",
+    label: "cURL",
+    code: `curl -X POST "https://api.unipost.dev/v1/posts/post_abc123/publish" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
+  {
     lang: "js",
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 await client.posts.publish("post_abc123");`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+result = client.posts.publish("post_abc123")
+print(result["data"]["status"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  post, err := client.Posts.Publish(context.Background(), "post_abc123")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(post.Status)
+}`,
   },
 ];
 const RESPONSE_SNIPPETS = [

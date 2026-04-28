@@ -253,9 +253,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const post = await client.posts.create({
   idempotencyKey: "launch-day-2026-04-22",
@@ -279,9 +277,8 @@ console.log(post.executionMode); // async`,
     lang: "python",
     label: "Python",
     code: `from unipost import UniPost
-import os
 
-client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+client = UniPost()
 
 post = client.posts.create(
   idempotency_key="launch-day-2026-04-22",
@@ -309,15 +306,12 @@ print(post["data"]["execution_mode"])`,
 import (
   "context"
   "log"
-  "os"
 
   "github.com/unipost-dev/sdk-go/unipost"
 )
 
 func main() {
-  client := unipost.NewClient(
-    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
-  )
+  client := unipost.NewClient()
 
   post, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
     IdempotencyKey: "launch-day-2026-04-22",

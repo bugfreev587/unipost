@@ -49,9 +49,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const page = await client.posts.list({
   status: "published,partial",
@@ -60,6 +58,46 @@ const page = await client.posts.list({
 
 console.log(page.data.length);
 console.log(page.nextCursor);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+page = client.posts.list(status="published,partial", limit=25)
+
+print(len(page["data"]))
+print(page["meta"].get("next_cursor"))`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  page, err := client.Posts.List(context.Background(), &unipost.ListPostsParams{
+    Status: "published,partial",
+    Limit:  25,
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(len(page.Data))
+  fmt.Println(page.Meta.NextCursor)
+}`,
   },
 ];
 

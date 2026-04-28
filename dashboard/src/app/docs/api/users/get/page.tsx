@@ -34,12 +34,44 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const user = await client.users.get("user_abc");
 console.log(user.external_user_id);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+user = client.users.get("user_abc")
+print(user["data"]["external_user_id"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  user, err := client.Users.Get(context.Background(), "user_abc")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(user.ExternalUserID)
+}`,
   },
 ];
 const RESPONSE_SNIPPETS = [

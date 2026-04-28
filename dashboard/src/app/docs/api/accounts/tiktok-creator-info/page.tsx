@@ -62,12 +62,44 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const info = await client.accounts.tiktokCreatorInfo("sa_tiktok_123");
 console.log(info.privacy_level_options);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+info = client.accounts.tiktok_creator_info("sa_tiktok_123")
+print(info["data"]["privacy_level_options"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  info, err := client.Accounts.TikTokCreatorInfo(context.Background(), "sa_tiktok_123")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(info["privacy_level_options"])
+}`,
   },
 ];
 
