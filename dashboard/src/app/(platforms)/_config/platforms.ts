@@ -160,7 +160,7 @@ print(data['id'])  # post_abc123`,
       "OAuth handled completely automatically",
       "Token refresh runs in background forever",
       "Unified media upload across all platforms",
-      "Consistent error format across 7 platforms",
+      "Consistent error format across 8 platforms",
       "We handle breaking API changes",
     ],
   },
@@ -189,7 +189,7 @@ print(data['id'])  # post_abc123`,
     { q: "How long does setup take?", a: "In Quickstart mode: about 5 minutes. Connect your Instagram Business account via OAuth and you're ready to post via API." },
     { q: "What happens when my token expires?", a: "UniPost's background worker automatically refreshes Meta tokens before they expire (every 60 days). You don't need to do anything." },
     { q: "Can I post Instagram Stories?", a: "Not yet. Currently supports feed posts, videos, and Reels. Story support is on the roadmap." },
-    { q: "Is Instagram included in the free plan?", a: "Yes. The free plan includes 100 posts/month to all 7 platforms including Instagram. No credit card required." },
+    { q: "Is Instagram included in the free plan?", a: "Yes. The free plan includes 100 posts/month to all 8 platforms including Instagram. No credit card required." },
   ],
 
   seo: {
@@ -289,7 +289,7 @@ response = requests.post(
       "OAuth handled completely automatically",
       "Token refresh runs in background forever",
       "Unified media upload across all platforms",
-      "Consistent error format across 7 platforms",
+      "Consistent error format across 8 platforms",
       "We handle breaking API changes",
     ],
   },
@@ -319,7 +319,7 @@ response = requests.post(
     { q: "Do I need LinkedIn developer access?", a: "In Quickstart mode, no — UniPost's credentials handle everything. In White-label mode, you'll need your own LinkedIn app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your LinkedIn account via OAuth and start posting immediately." },
     { q: "What happens when my token expires?", a: "UniPost automatically refreshes LinkedIn tokens in the background. You never need to re-authenticate." },
-    { q: "Is LinkedIn included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including LinkedIn." },
+    { q: "Is LinkedIn included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 8 platforms including LinkedIn." },
   ],
 
   seo: {
@@ -419,7 +419,7 @@ response = requests.post(
       "OAuth 2.0 PKCE handled automatically",
       "Rate limits managed in background",
       "Unified media upload across all platforms",
-      "Consistent error format across 7 platforms",
+      "Consistent error format across 8 platforms",
       "We handle breaking API changes",
     ],
   },
@@ -447,7 +447,7 @@ response = requests.post(
     { q: "Do I need my own Twitter developer account?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Twitter app credentials." },
     { q: "How does UniPost handle rate limits?", a: "UniPost queues requests and retries automatically when rate limits are hit. You don't need to build any retry logic." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Twitter tokens automatically in the background. No action needed on your end." },
-    { q: "Is Twitter included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including Twitter." },
+    { q: "Is Twitter included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 8 platforms including Twitter." },
   ],
 
   seo: {
@@ -547,7 +547,7 @@ response = requests.post(
       "OAuth handled completely automatically",
       "Video upload managed end-to-end",
       "Unified media upload across all platforms",
-      "Consistent error format across 7 platforms",
+      "Consistent error format across 8 platforms",
       "We handle breaking API changes",
     ],
   },
@@ -575,7 +575,7 @@ response = requests.post(
     { q: "Do I need TikTok developer access?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own TikTok app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect a TikTok creator account via OAuth and start uploading." },
     { q: "What happens when my token expires?", a: "UniPost refreshes TikTok tokens automatically in the background." },
-    { q: "Is TikTok included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including TikTok." },
+    { q: "Is TikTok included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 8 platforms including TikTok." },
   ],
 
   seo: {
@@ -675,7 +675,7 @@ response = requests.post(
       "OAuth handled completely automatically",
       "Video upload managed end-to-end",
       "Unified media upload across all platforms",
-      "Consistent error format across 7 platforms",
+      "Consistent error format across 8 platforms",
       "We handle breaking API changes",
     ],
   },
@@ -702,7 +702,7 @@ response = requests.post(
     { q: "Do I need Google developer access?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Google OAuth app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your YouTube channel via OAuth and start uploading." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Google tokens automatically in the background." },
-    { q: "Is YouTube included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including YouTube." },
+    { q: "Is YouTube included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 8 platforms including YouTube." },
   ],
 
   seo: {
@@ -831,7 +831,7 @@ response = requests.post(
     { q: "How long does setup take?", a: "About 2 minutes. Generate an App Password at bsky.app, paste it into the UniPost Dashboard, and start posting." },
     { q: "Can I attach images or videos to Bluesky posts?", a: "Yes. Send a public asset URL in media_urls, or upload a local file with POST /v1/media and then publish with media_ids. UniPost handles the AT Protocol media upload flow." },
     { q: "Does Bluesky have rate limits?", a: "AT Protocol has generous limits. UniPost manages them automatically so you don't need to worry." },
-    { q: "Is Bluesky included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including Bluesky." },
+    { q: "Is Bluesky included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 8 platforms including Bluesky." },
   ],
 
   seo: {
@@ -930,7 +930,7 @@ response = requests.post(
       "OAuth handled completely automatically",
       "Token refresh runs in background forever",
       "Unified media upload across all platforms",
-      "Consistent error format across 7 platforms",
+      "Consistent error format across 8 platforms",
       "We handle breaking API changes",
     ],
   },
@@ -958,7 +958,7 @@ response = requests.post(
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your Threads account via OAuth and start posting." },
     { q: "What's the character limit for Threads?", a: "500 characters per post. UniPost validates content length before posting." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Meta tokens automatically in the background." },
-    { q: "Is Threads included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 7 platforms including Threads." },
+    { q: "Is Threads included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 8 platforms including Threads." },
   ],
 
   seo: {

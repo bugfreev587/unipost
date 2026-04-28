@@ -45,6 +45,7 @@ const PLATFORM_LINKS = [
   { label: "Threads", href: "/threads-api" },
   { label: "TikTok", href: "/tiktok-api" },
   { label: "YouTube", href: "/youtube-api" },
+  { label: "Pinterest", href: "/pinterest-api" },
 ];
 
 const COMPARE_LINKS = [
@@ -90,7 +91,7 @@ export function SiteFooter() {
             <p className="site-footer-brand-copy">
               Unified social media API for developers.
               <br />
-              Post to 7 platforms with one API call.
+              Connect, publish, and monitor across 8 platforms.
             </p>
           </div>
 

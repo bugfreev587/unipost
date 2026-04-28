@@ -253,7 +253,7 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
             <div className="pp-plat-icon" style={{ background: cfg.brandColor + "15" }}>{PLATFORM_ICONS[cfg.slug] ?? cfg.icon}</div>
             <span>{cfg.name} API</span>
             <span style={{ color: "var(--muted2)" }}>·</span>
-            <span style={{ color: "var(--accent)", fontSize: 12, fontFamily: "var(--mono)" }}>7 platforms supported</span>
+            <span style={{ color: "var(--accent)", fontSize: 12, fontFamily: "var(--mono)" }}>8 platforms supported</span>
           </div>
 
           {isWaitlist && (

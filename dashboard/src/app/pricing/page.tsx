@@ -20,7 +20,7 @@ const TIERS = [
 ];
 const FEATURES_FREE = [
   { text: "100 posts per month", included: true }, { text: "Unlimited social accounts", included: true },
-  { text: "All 7 platforms", included: true }, { text: "Webhooks", included: true },
+  { text: "All 8 platforms", included: true }, { text: "Webhooks", included: true },
   { text: "Analytics", included: true }, { text: "Scheduled posts", included: true },
   { text: "MCP Server (AI Agent)", included: true }, { text: "Unlimited API keys", included: true },
   { text: "Unlimited team members", included: true }, { text: "Quickstart mode", included: true },
@@ -28,7 +28,7 @@ const FEATURES_FREE = [
 ];
 const FEATURES_PAID = [
   { text: "posts per month", dynamic: true, included: true }, { text: "Unlimited social accounts", included: true },
-  { text: "All 7 platforms", included: true }, { text: "Webhooks", included: true },
+  { text: "All 8 platforms", included: true }, { text: "Webhooks", included: true },
   { text: "Analytics", included: true }, { text: "Scheduled posts", included: true },
   { text: "MCP Server (AI Agent)", included: true }, { text: "Unlimited API keys", included: true },
   { text: "Unlimited team members", included: true }, { text: "Quickstart mode", included: true },
@@ -36,7 +36,7 @@ const FEATURES_PAID = [
 ];
 const COMPARE_ROWS = [
   { name: "Post volume", sub: null, free: "100/mo", paid: "dynamic" },
-  { name: "All 7 platforms", sub: "X, Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube", free: true, paid: true },
+  { name: "All 8 platforms", sub: "X, Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest", free: true, paid: true },
   { name: "Unlimited social accounts", sub: null, free: true, paid: true },
   { name: "Unlimited API keys", sub: null, free: true, paid: true },
   { name: "Unlimited team members", sub: null, free: true, paid: true },
