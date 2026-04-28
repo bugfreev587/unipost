@@ -19,6 +19,7 @@ import { ChevronDown } from "lucide-react";
 import type { SocialAccount, Profile } from "@/lib/api";
 import {
   createSocialPost,
+  friendlyRateLimitMessage,
   createMedia,
   getMedia,
   listProfiles,
@@ -976,7 +977,11 @@ export function CreatePostDrawer({
         onOpenChange(false);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to create post";
+      // Rate-limit errors get a friendlier, action-oriented message.
+      // Non-429 errors fall through to the raw API message + the
+      // existing support links so customers can escalate real bugs.
+      const friendly = friendlyRateLimitMessage(err);
+      const message = friendly ?? (err instanceof Error ? err.message : "Failed to create post");
       console.error("Create post failed:", err);
       console.error("[CreatePost] payload was:", JSON.stringify(form.buildPayload(), null, 2));
       setSubmitError({
@@ -1018,7 +1023,8 @@ export function CreatePostDrawer({
       await onCreated(response.data.id);
       onOpenChange(false);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save draft";
+      const friendly = friendlyRateLimitMessage(err);
+      const message = friendly ?? (err instanceof Error ? err.message : "Failed to save draft");
       console.error("Save draft failed:", err);
       setSubmitError({
         message,

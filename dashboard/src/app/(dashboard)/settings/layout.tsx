@@ -8,6 +8,7 @@ const TABS = [
   { href: "/settings/workspace", label: "Workspace" },
   { href: "/settings/notifications", label: "Notifications" },
   { href: "/settings/billing", label: "Billing" },
+  { href: "/settings/api-limits", label: "API Limits" },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

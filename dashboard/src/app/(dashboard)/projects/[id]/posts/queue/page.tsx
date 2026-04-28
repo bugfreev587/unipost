@@ -6,10 +6,12 @@ import { AlertCircle, Archive, Loader2, RotateCcw, StopCircle } from "lucide-rea
 import {
   cancelPostDeliveryJob,
   dismissPostDeliveryJob,
+  getApiLimits,
   getPostDeliveryJobsSummary,
   listPostDeliveryJobs,
   listSocialPostSummaries,
   retryPostDeliveryJobNow,
+  type ApiLimits,
   type PostDeliveryJob,
   type PostDeliveryJobsSummary,
   type SocialPostSummary,
@@ -52,6 +54,53 @@ const CSS = `
 .queue-error{display:flex;align-items:flex-start;gap:10px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--danger) 30%,var(--dborder));border-radius:12px;background:var(--danger-soft);color:var(--danger)}
 @media (max-width: 900px){.queue-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.queue-table{display:block;overflow:auto}}
 `;
+
+// CapacityBanner shows the workspace's active queue depth against
+// the plan's cap, so a customer who's about to hit the depth limit
+// sees it before the next publish surfaces a 429. Non-blocking —
+// purely informational. Uses the same green/amber/red threshold
+// scheme as the API Limits settings page.
+function CapacityBanner({ current, cap }: { current: number; cap: number }) {
+  const pct = cap > 0 ? Math.min(100, (current / cap) * 100) : 0;
+  const barColor = pct >= 90 ? "#f87171" : pct >= 60 ? "#fbbf24" : "var(--daccent)";
+  return (
+    <div
+      style={{
+        border: "1px solid var(--dborder)",
+        borderRadius: 12,
+        padding: "12px 16px",
+        background: "var(--surface2)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+        <div style={{ fontSize: 12, color: "var(--dmuted2)", letterSpacing: ".08em", textTransform: "uppercase" }}>
+          Active capacity
+        </div>
+        <div style={{ fontSize: 13, color: "var(--dtext)", fontWeight: 600 }}>
+          {current.toLocaleString()} / {cap.toLocaleString()}
+        </div>
+      </div>
+      <div
+        style={{
+          marginTop: 8,
+          height: 6,
+          background: "var(--dborder)",
+          borderRadius: 3,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${pct}%`,
+            height: "100%",
+            background: barColor,
+            transition: "width 0.4s ease, background 0.2s",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
 
 function badge(status: string) {
   const cls = STATUS_BADGE[status] || "dbadge-gray";
@@ -127,6 +176,7 @@ export default function QueuePage() {
   const [jobs, setJobs] = useState<PostDeliveryJob[]>([]);
   const [posts, setPosts] = useState<SocialPostSummary[]>([]);
   const [summary, setSummary] = useState<PostDeliveryJobsSummary | null>(null);
+  const [limits, setLimits] = useState<ApiLimits | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyJobId, setBusyJobId] = useState("");
@@ -139,18 +189,29 @@ export default function QueuePage() {
       try {
         const token = await getToken();
         if (!token || cancelled) return;
-        const [jobsRes, summaryRes, postsRes] = await Promise.all([
+        // ApiLimits failure is non-fatal — the page still renders the
+        // queue without the capacity banner if the limits endpoint
+        // hiccups. Fold it in via Promise.allSettled so one slow
+        // limits read doesn't stall the visible queue table.
+        const [jobsRes, summaryRes, postsRes, limitsRes] = await Promise.allSettled([
           listPostDeliveryJobs(token),
           getPostDeliveryJobsSummary(token),
           listSocialPostSummaries(token),
+          getApiLimits(token),
         ]);
         if (cancelled) return;
-        setJobs(jobsRes.data);
-        setSummary(summaryRes.data);
-        setPosts(postsRes.data);
-        setError("");
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load queue");
+        if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.data);
+        if (summaryRes.status === "fulfilled") setSummary(summaryRes.value.data);
+        if (postsRes.status === "fulfilled") setPosts(postsRes.value.data);
+        if (limitsRes.status === "fulfilled") setLimits(limitsRes.value.data);
+        // Surface the first hard failure if everything-but-limits
+        // failed; limits alone failing is silent.
+        const fatal = [jobsRes, summaryRes, postsRes].find((r) => r.status === "rejected");
+        if (fatal && fatal.status === "rejected") {
+          setError(fatal.reason instanceof Error ? fatal.reason.message : "Failed to load queue");
+        } else {
+          setError("");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -243,6 +304,13 @@ export default function QueuePage() {
         <div className="dt-title">Queue</div>
         <div className="dt-subtitle">Platform deliveries currently pending, running, processing, or retrying.</div>
       </div>
+
+      {limits && limits.queue_depth_cap > 0 && (
+        <CapacityBanner
+          current={limits.queue_depth_current}
+          cap={limits.queue_depth_cap}
+        />
+      )}
 
       {summary && (
         <div className="queue-summary">

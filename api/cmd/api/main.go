@@ -636,6 +636,13 @@ func main() {
 		r.Post("/v1/billing/portal", billingHandler.CreatePortal)
 		r.Get("/v1/usage", billingHandler.GetUsage)
 
+		// Rate-limit / queue-admission visibility — public-facing
+		// read of the workspace's runtime safety caps + a live
+		// snapshot of current queue depth. Drives the dashboard's
+		// API Limits settings page.
+		apiLimitsHandler := handler.NewApiLimitsHandler(queries, quotaChecker)
+		r.Get("/v1/limits", apiLimitsHandler.Get)
+
 		// OAuth (workspace-scoped, non-profile entry).
 		r.Get("/v1/oauth/connect/{platform}", oauthHandler.Connect)
 

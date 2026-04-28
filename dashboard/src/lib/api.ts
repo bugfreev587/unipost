@@ -770,6 +770,47 @@ export async function listPlans(): Promise<ApiResponse<Plan[]>> {
   return res.json();
 }
 
+// API Limits / runtime safety caps. Read-only — values come from
+// the same internal/ratelimit/plans.go map the API actually
+// enforces, so the page never drifts from reality. queue_depth_current
+// is a snapshot at request time; the page polls to refresh.
+export interface ApiLimits {
+  plan_id: string;
+  request_rate_per_min: number;
+  request_burst: number;
+  enqueue_posts_per_min: number;
+  enqueue_posts_per_5min: number;
+  queue_depth_cap: number;
+  managed_user_depth_cap: number;
+  queue_depth_current: number;
+}
+
+export async function getApiLimits(token: string): Promise<ApiResponse<ApiLimits>> {
+  return request(`/v1/limits`, token);
+}
+
+// friendlyRateLimitMessage upgrades a generic 429 Error to a
+// human-readable message branched on the limiter that fired
+// (rate / enqueue / depth). Handlers that catch a publish failure
+// call this first and fall back to the raw error message when it
+// returns null. Keeping the strings here so all dashboard surfaces
+// — drawer, queue page, future re-publish UIs — stay consistent.
+export function friendlyRateLimitMessage(err: unknown): string | null {
+  if (!(err instanceof Error)) return null;
+  const e = err as ApiFetchError;
+  if (e.status !== 429) return null;
+  switch (e.code) {
+    case "rate_limited":
+      return "You're publishing too quickly. Wait a few seconds and retry.";
+    case "enqueue_rate_limited":
+      return "This workspace is creating posts too quickly. Slow down and retry shortly.";
+    case "queue_depth_exceeded":
+      return "Your queue has too many active deliveries. Wait for them to drain or upgrade your plan.";
+    default:
+      return "Too many requests. Please retry shortly.";
+  }
+}
+
 export async function createSocialPost(
   token: string,
   data: CreateSocialPostPayload
