@@ -27,11 +27,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px
 .tl-page{max-width:var(--content-max);margin:0 auto;padding:0 var(--px)}
 
 /* Hero */
-.tl-hero{padding:var(--section-py) 0 56px;max-width:880px}
+.tl-hero{padding:var(--section-py) 0 56px;max-width:880px;margin:0 auto;text-align:center;display:flex;flex-direction:column;align-items:center}
 .tl-eyebrow{font-size:11.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:18px;font-family:var(--mono)}
 .tl-hero-title{font-size:52px;font-weight:900;letter-spacing:-2px;line-height:1.05;color:var(--text);margin-bottom:24px}
 .tl-hero-title em{color:var(--accent);font-style:normal}
-.tl-hero-sub{font-size:17px;color:#bbb;line-height:1.7;max-width:680px}
+.tl-hero-sub{font-size:17px;color:var(--muted);line-height:1.7;max-width:680px}
 
 /* Tool card grid */
 .tl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:0 0 var(--section-py)}
