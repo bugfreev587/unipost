@@ -43,6 +43,40 @@ const client = new UniPost();
 const { data: users, meta } = await client.users.list();
 console.log(users.length);`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+users = client.users.list()
+print(len(users["data"]))`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  users, err := client.Users.List(context.Background())
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(len(users))
+}`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

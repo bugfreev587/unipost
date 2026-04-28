@@ -23,6 +23,22 @@ const ERROR_FIELDS: ApiFieldItem[] = [
 ];
 const SNIPPETS = [
   {
+    lang: "curl",
+    label: "cURL",
+    code: `curl -X POST "https://api.unipost.dev/v1/posts" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "status": "draft",
+    "platform_posts": [
+      {
+        "account_id": "sa_twitter_1",
+        "caption": "Work in progress"
+      }
+    ]
+  }'`,
+  },
+  {
     lang: "js",
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
@@ -38,6 +54,51 @@ const draft = await client.posts.create({
     },
   ],
 });`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+draft = client.posts.create(
+  status="draft",
+  platform_posts=[
+    {"account_id": "sa_twitter_1", "caption": "Work in progress"},
+  ],
+)
+
+print(draft["data"]["id"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  draft, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
+    Status: "draft",
+    PlatformPosts: []unipost.PlatformPost{
+      {AccountID: "sa_twitter_1", Caption: "Work in progress"},
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(draft.ID)
+}`,
   },
 ];
 const RESPONSE_SNIPPETS = [

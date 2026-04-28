@@ -65,6 +65,57 @@ const account = await client.accounts.connect({
 
 console.log(account.id);`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+import os
+
+client = UniPost()
+
+account = client.accounts.connect(
+  profile_id="pr_brand_us",
+  platform="bluesky",
+  credentials={
+    "identifier": "alex.bsky.social",
+    "password": os.environ["BLUESKY_APP_PASSWORD"],
+  },
+)
+
+print(account["data"]["id"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  account, err := client.Accounts.Connect(context.Background(), &unipost.ConnectAccountParams{
+    Platform:  "bluesky",
+    ProfileID: "pr_brand_us",
+    Credentials: map[string]string{
+      "identifier": "alex.bsky.social",
+      "password":   os.Getenv("BLUESKY_APP_PASSWORD"),
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(account.ID)
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

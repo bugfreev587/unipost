@@ -37,6 +37,53 @@ const SNIPPETS = [
   -H "Content-Type: application/json" \\
   -d '{ "name": "Acme Inc." }'`,
   },
+  {
+    lang: "js",
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const workspace = await client.workspace.update({
+  perAccountMonthlyLimit: 100,
+});
+console.log(workspace.per_account_monthly_limit);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+workspace = client.workspace.update(per_account_monthly_limit=100)
+print(workspace["data"]["per_account_monthly_limit"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  limit := int32(100)
+  workspace, err := client.Workspace.Update(context.Background(), &limit)
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(workspace.PerAccountMonthlyLimit)
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

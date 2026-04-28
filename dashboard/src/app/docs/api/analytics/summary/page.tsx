@@ -47,6 +47,49 @@ const rollup = await client.analytics.rollup({
   granularity: "day",
 });`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+rollup = client.analytics.rollup(
+  **{
+    "from": "2026-04-01T00:00:00Z",
+    "to": "2026-04-30T00:00:00Z",
+    "granularity": "day",
+  }
+)
+print(rollup["data"]["totals"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  rollup, err := client.Analytics.Rollup(context.Background(), &unipost.AnalyticsRollupParams{
+    From:        "2026-04-01T00:00:00Z",
+    To:          "2026-04-30T00:00:00Z",
+    Granularity: "day",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = rollup
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

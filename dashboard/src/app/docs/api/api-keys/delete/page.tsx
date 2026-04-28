@@ -29,6 +29,44 @@ const SNIPPETS = [
     code: `curl -X DELETE "https://api.unipost.dev/v1/api-keys/key_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
+  {
+    lang: "js",
+    label: "Node.js",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+await client.apiKeys.revoke("key_123");`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+client.api_keys.revoke("key_123")`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  if err := client.APIKeys.Revoke(context.Background(), "key_123"); err != nil {
+    log.Fatal(err)
+  }
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

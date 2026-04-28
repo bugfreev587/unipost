@@ -42,6 +42,39 @@ const client = new UniPost();
 
 const postAnalytics = await client.posts.analytics("post_abc123");`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+analytics = client.posts.analytics("post_abc123")
+print(analytics["data"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  metrics, err := client.Posts.Analytics(context.Background(), "post_abc123", false)
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = metrics
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

@@ -55,6 +55,54 @@ await fetch(uploadUrl, {
 
 console.log(mediaId);`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+import requests
+
+client = UniPost()
+
+reservation = client.media.upload(
+  filename="photo.jpg",
+  content_type="image/jpeg",
+  size_bytes=284192,
+)
+
+with open("photo.jpg", "rb") as f:
+  requests.put(reservation["data"]["upload_url"], data=f)
+
+print(reservation["data"]["media_id"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  reservation, err := client.Media.Upload(context.Background(), &unipost.MediaUploadRequest{
+    Filename:    "photo.jpg",
+    ContentType: "image/jpeg",
+    SizeBytes:   284192,
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // PUT raw bytes to reservation.UploadURL with your HTTP client of choice.
+  fmt.Println(reservation.MediaID)
+}`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

@@ -38,6 +38,40 @@ const client = new UniPost();
 const media = await client.media.get("media_123");
 console.log(media.status);`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+media = client.media.get("media_123")
+print(media["data"]["status"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  media, err := client.Media.Get(context.Background(), "media_123")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(media.Status)
+}`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

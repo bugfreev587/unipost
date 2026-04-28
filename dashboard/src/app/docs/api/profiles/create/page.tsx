@@ -47,11 +47,58 @@ const SNIPPETS = [
   {
     lang: "js",
     label: "Node.js",
-    code: `const profile = await client.profiles.create({
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const profile = await client.profiles.create({
   name: "Brand US",
   brandingDisplayName: "Brand US",
   brandingPrimaryColor: "#10b981",
 });`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+profile = client.profiles.create(
+  name="Brand US",
+  branding_display_name="Brand US",
+  branding_primary_color="#10b981",
+)
+
+print(profile["data"]["id"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  profile, err := client.Profiles.Create(context.Background(), &unipost.CreateProfileParams{
+    Name:                   "Brand US",
+    BrandingDisplayName:    unipost.String("Brand US"),
+    BrandingPrimaryColor:   unipost.String("#10b981"),
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(profile.ID)
+}`,
   },
 ];
 

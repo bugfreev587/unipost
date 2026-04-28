@@ -47,6 +47,22 @@ const PUBLISHED_PAYLOAD = `{
 
 const VERIFY_SNIPPETS = [
   {
+    lang: "curl",
+    label: "cURL",
+    code: `# UniPost POSTs the webhook event to your URL with these headers:
+#
+#   X-UniPost-Signature: sha256=<hex-of-hmac-sha256(secret, body)>
+#   X-UniPost-Event: post.published
+#   X-UniPost-Delivery: dlv_abc123
+#
+# Replay locally to test your handler:
+curl -X POST "https://your-app.example.com/webhooks/unipost" \\
+  -H "Content-Type: application/json" \\
+  -H "X-UniPost-Signature: sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$UNIPOST_WEBHOOK_SECRET" | awk '{print $2}')" \\
+  -H "X-UniPost-Event: post.published" \\
+  --data "$BODY"`,
+  },
+  {
     lang: "js",
     label: "Node.js",
     code: `import { verifyWebhookSignature } from "@unipost/sdk";
@@ -69,6 +85,71 @@ app.post("/webhooks/unipost", async (req, res) => {
   console.log(event, data.id);
   return res.status(200).json({ received: true });
 });`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import verify_webhook_signature
+from flask import Flask, request, jsonify
+import os
+
+app = Flask(__name__)
+
+@app.post("/webhooks/unipost")
+def handle_webhook():
+    signature = request.headers.get("X-UniPost-Signature", "")
+    is_valid = verify_webhook_signature(
+        request.get_data(),
+        signature,
+        os.environ["UNIPOST_WEBHOOK_SECRET"],
+    )
+
+    if not is_valid:
+        return jsonify({"error": "Invalid signature"}), 401
+
+    payload = request.get_json()
+    print(payload["event"], payload["data"]["id"])
+    return jsonify({"received": True})`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "encoding/json"
+  "io"
+  "net/http"
+  "os"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func handleWebhook(w http.ResponseWriter, r *http.Request) {
+  body, err := io.ReadAll(r.Body)
+  if err != nil {
+    http.Error(w, "read error", http.StatusBadRequest)
+    return
+  }
+
+  signature := r.Header.Get("X-UniPost-Signature")
+  if !unipost.VerifyWebhookSignature(body, signature, os.Getenv("UNIPOST_WEBHOOK_SECRET")) {
+    http.Error(w, "invalid signature", http.StatusUnauthorized)
+    return
+  }
+
+  var event struct {
+    Event string         \`json:"event"\`
+    Data  map[string]any \`json:"data"\`
+  }
+  if err := json.Unmarshal(body, &event); err != nil {
+    http.Error(w, "bad payload", http.StatusBadRequest)
+    return
+  }
+
+  w.WriteHeader(http.StatusOK)
+  _, _ = w.Write([]byte(\`{"received":true}\`))
+}`,
   },
 ];
 

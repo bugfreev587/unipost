@@ -108,6 +108,40 @@ const client = new UniPost();
 const health = await client.accounts.health("sa_twitter_1");
 console.log(health.status);`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+health = client.accounts.health("sa_twitter_1")
+print(health["data"]["status"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  health, err := client.Accounts.Health(context.Background(), "sa_twitter_1")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(health.Status)
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

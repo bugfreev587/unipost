@@ -44,6 +44,40 @@ const client = new UniPost();
 const rotated = await client.webhooks.rotate("wh_abc123");
 console.log(rotated.secret); // store immediately`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+rotated = client.webhooks.rotate("wh_abc123")
+print(rotated["data"]["secret"])  # store immediately`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  rotated, err := client.Webhooks.Rotate(context.Background(), "wh_abc123")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(rotated.Secret) // store immediately
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

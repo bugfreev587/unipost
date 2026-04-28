@@ -48,6 +48,40 @@ const client = new UniPost();
 const profile = await client.profiles.get("pr_brand_us");
 console.log(profile.name);`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+profile = client.profiles.get("pr_brand_us")
+print(profile["data"]["name"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  profile, err := client.Profiles.Get(context.Background(), "pr_brand_us")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(profile.Name)
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

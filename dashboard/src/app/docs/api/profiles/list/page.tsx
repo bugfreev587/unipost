@@ -45,6 +45,42 @@ const client = new UniPost();
 const { data: profiles } = await client.profiles.list();
 console.log(profiles.map((profile) => profile.name));`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+profiles = client.profiles.list()
+print([p["name"] for p in profiles["data"]])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  profiles, err := client.Profiles.List(context.Background())
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  for _, profile := range profiles.Data {
+    fmt.Println(profile.Name)
+  }
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

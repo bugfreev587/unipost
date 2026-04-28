@@ -52,6 +52,42 @@ const post = await client.posts.get("post_abc123");
 console.log(post.data.status);
 console.log(post.data.results);`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+post = client.posts.get("post_abc123")
+print(post["data"]["status"])
+print(post["data"]["results"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  post, err := client.Posts.Get(context.Background(), "post_abc123")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(post.Status)
+  fmt.Println(post.Results)
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

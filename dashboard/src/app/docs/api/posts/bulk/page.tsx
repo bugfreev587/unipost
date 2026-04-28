@@ -68,26 +68,80 @@ const SNIPPETS = [
 
 const client = new UniPost();
 
-const batch = await client.posts.bulk({
-  posts: [
+const batch = await client.posts.bulkCreate([
+  {
+    platformPosts: [
+      {
+        accountId: "sa_twitter_789",
+        caption: "Post one",
+      },
+    ],
+  },
+  {
+    platformPosts: [
+      {
+        accountId: "sa_linkedin_456",
+        caption: "Post two",
+      },
+    ],
+  },
+]);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+batch = client.posts.bulk_create([
+  {
+    "platform_posts": [
+      {"account_id": "sa_twitter_789", "caption": "Post one"},
+    ],
+  },
+  {
+    "platform_posts": [
+      {"account_id": "sa_linkedin_456", "caption": "Post two"},
+    ],
+  },
+])
+
+print(batch["data"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  batch, err := client.Posts.BulkCreate(context.Background(), []*unipost.CreatePostParams{
     {
-      platformPosts: [
-        {
-          accountId: "sa_twitter_789",
-          caption: "Post one",
-        },
-      ],
+      PlatformPosts: []unipost.PlatformPost{
+        {AccountID: "sa_twitter_789", Caption: "Post one"},
+      },
     },
     {
-      platformPosts: [
-        {
-          accountId: "sa_linkedin_456",
-          caption: "Post two",
-        },
-      ],
+      PlatformPosts: []unipost.PlatformPost{
+        {AccountID: "sa_linkedin_456", Caption: "Post two"},
+      },
     },
-  ],
-});`,
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = batch
+}`,
   },
 ];
 

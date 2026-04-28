@@ -62,6 +62,53 @@ const session = await client.connect.createSession({
 
 console.log(session.url);`,
   },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+session = client.connect.create_session(
+  platform="twitter",
+  profile_id="pr_brand_us",
+  external_user_id="user_123",
+  external_user_email="alex@acme.com",
+  return_url="https://app.acme.com/integrations/done",
+)
+
+print(session["data"]["url"])`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  session, err := client.Connect.CreateSession(context.Background(), &unipost.CreateConnectSessionParams{
+    Platform:          "twitter",
+    ProfileID:         "pr_brand_us",
+    ExternalUserID:    "user_123",
+    ExternalUserEmail: "alex@acme.com",
+    ReturnURL:         "https://app.acme.com/integrations/done",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(session.URL)
+}`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

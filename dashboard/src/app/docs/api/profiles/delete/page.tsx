@@ -32,7 +32,40 @@ const SNIPPETS = [
   {
     lang: "js",
     label: "Node.js",
-    code: `await client.profiles.delete("pr_brand_us");`,
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+await client.profiles.delete("pr_brand_us");`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `from unipost import UniPost
+
+client = UniPost()
+
+client.profiles.delete("pr_brand_us")`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  if err := client.Profiles.Delete(context.Background(), "pr_brand_us"); err != nil {
+    log.Fatal(err)
+  }
+}`,
   },
 ];
 
