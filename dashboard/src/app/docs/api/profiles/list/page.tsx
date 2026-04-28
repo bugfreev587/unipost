@@ -40,9 +40,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const { data: profiles } = await client.profiles.list();
 console.log(profiles.map((profile) => profile.name));`,

@@ -120,9 +120,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const { data: accounts } = await client.accounts.list({
   platform: "instagram",
@@ -134,9 +132,8 @@ console.log(accounts);`,
     lang: "python",
     label: "Python",
     code: `from unipost import UniPost
-import os
 
-client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+client = UniPost()
 
 accounts = client.accounts.list(platform="instagram")
 print(accounts["data"])`,
@@ -149,15 +146,12 @@ print(accounts["data"])`,
 import (
   "context"
   "log"
-  "os"
 
   "github.com/unipost-dev/sdk-go/unipost"
 )
 
 func main() {
-  client := unipost.NewClient(
-    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
-  )
+  client := unipost.NewClient()
 
   accounts, err := client.Accounts.List(context.Background(), &unipost.ListAccountsParams{
     Platform: "instagram",

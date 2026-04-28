@@ -42,9 +42,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const caps = await client.accounts.capabilities("sa_instagram_123");
 console.log(caps.capability.media.images.max_count);`,

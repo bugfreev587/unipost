@@ -70,15 +70,12 @@ account_id = accounts["data"][0]["id"]`,
 import (
   "context"
   "log"
-  "os"
 
   "github.com/unipost-dev/sdk-go/unipost"
 )
 
 func main() {
-  client := unipost.NewClient(
-    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
-  )
+  client := unipost.NewClient()
 
   accounts, err := client.Accounts.List(context.Background(), nil)
   if err != nil {
@@ -141,15 +138,12 @@ post = client.posts.create(
 import (
   "context"
   "log"
-  "os"
 
   "github.com/unipost-dev/sdk-go/unipost"
 )
 
 func main() {
-  client := unipost.NewClient(
-    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
-  )
+  client := unipost.NewClient()
 
   post, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
     PlatformPosts: []unipost.PlatformPost{
@@ -213,15 +207,12 @@ result = client.posts.validate(
 import (
   "context"
   "log"
-  "os"
 
   "github.com/unipost-dev/sdk-go/unipost"
 )
 
 func main() {
-  client := unipost.NewClient(
-    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
-  )
+  client := unipost.NewClient()
 
   validation, err := client.Posts.Validate(context.Background(), &unipost.ValidatePostParams{
     PlatformPosts: []unipost.PlatformPost{

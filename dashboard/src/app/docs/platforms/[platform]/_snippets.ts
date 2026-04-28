@@ -141,9 +141,7 @@ function renderJs(parsed: JsonObject): string {
   const literal = jsObj(parsed, 0, TOP_LEVEL_JS_KEYS);
   return `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const post = await client.posts.create(${literal});
 
@@ -187,9 +185,8 @@ function renderPython(parsed: JsonObject): string {
     .map(([k, v]) => `  ${k}=${pyValueRaw(v, 1)}`)
     .join(",\n");
   return `from unipost import UniPost
-import os
 
-client = UniPost(api_key=os.environ["UNIPOST_API_KEY"])
+client = UniPost()
 
 post = client.posts.create(
 ${kwargs},
@@ -286,15 +283,12 @@ function renderGo(parsed: JsonObject): string {
 import (
   "context"
   "log"
-  "os"
 
   "github.com/unipost-dev/sdk-go/unipost"
 )
 
 func main() {
-  client := unipost.NewClient(
-    unipost.WithAPIKey(os.Getenv("UNIPOST_API_KEY")),
-  )
+  client := unipost.NewClient()
 
   post, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
 ${params}

@@ -39,9 +39,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const rollup = await client.analytics.rollup({
   from: "2026-04-01T00:00:00Z",

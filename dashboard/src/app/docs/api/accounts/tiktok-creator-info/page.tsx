@@ -62,9 +62,7 @@ const SNIPPETS = [
     label: "Node.js",
     code: `import { UniPost } from "@unipost/sdk";
 
-const client = new UniPost({
-  apiKey: process.env.UNIPOST_API_KEY,
-});
+const client = new UniPost();
 
 const info = await client.accounts.tiktokCreatorInfo("sa_tiktok_123");
 console.log(info.privacy_level_options);`,
