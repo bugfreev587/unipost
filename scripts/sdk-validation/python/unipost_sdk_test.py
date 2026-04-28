@@ -557,7 +557,8 @@ def _test_api_keys_roundtrip(client):
 
 def _test_posts_validate(client):
     payload = client.posts.validate(caption="SDK validation", account_ids=[TEST_ACCOUNT_ID] if TEST_ACCOUNT_ID else [], status="draft")
-    assert_true(isinstance(payload.valid, bool), "Expected validation result")
+    valid = payload.get("valid") if isinstance(payload, dict) else getattr(payload, "valid", None)
+    assert_true(isinstance(valid, bool), "Expected validation result")
     return payload
 
 
@@ -575,7 +576,9 @@ def _test_posts_get(client, post_id):
 
 def _test_posts_queue(client, post_id):
     payload = client.posts.get_queue(post_id)
-    assert_true(payload.post.id == post_id, "Expected queue payload")
+    post = payload.get("post") if isinstance(payload, dict) else getattr(payload, "post", None)
+    queued_post_id = post.get("id") if isinstance(post, dict) else getattr(post, "id", None)
+    assert_true(queued_post_id == post_id, "Expected queue payload")
     return payload
 
 
@@ -602,7 +605,9 @@ def _test_update_draft(client, post_id):
 
 def _test_preview_link(client, post_id):
     payload = client.posts.preview_link(post_id)
-    assert_true(bool(payload.url and payload.token), "Expected preview link")
+    url = payload.get("url") if isinstance(payload, dict) else getattr(payload, "url", None)
+    token = payload.get("token") if isinstance(payload, dict) else getattr(payload, "token", None)
+    assert_true(bool(url and token), "Expected preview link")
     return payload
 
 
