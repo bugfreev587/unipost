@@ -26,12 +26,7 @@ export function ToolCard({ tool }: { tool: ToolCardData }) {
         <span className="tl-card-name">{tool.name}</span>
         {tool.badge && (
           <span
-            className="tl-card-badge"
-            style={
-              tool.status === "coming_soon"
-                ? { background: "#ffffff08", color: "#666", border: "1px solid #333" }
-                : undefined
-            }
+            className={`tl-card-badge${tool.status === "coming_soon" ? " tl-card-badge-muted" : ""}`}
           >
             {tool.badge}
           </span>

@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
+import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
@@ -21,41 +23,14 @@ const userButtonAppearance = {
   },
 };
 
-const authRowStyle = { display: "flex", alignItems: "center", gap: 8 } as const;
+const PUBLIC_NAV_ITEMS = [
+  { href: "/solutions", label: "Solutions", key: "solutions" },
+  { href: "/tools", label: "Tools", key: "tools" },
+  { href: "/pricing", label: "Pricing", key: "pricing" },
+  { href: "/docs", label: "Docs", key: "docs" },
+] as const;
 
-const authGhostButtonStyle = {
-  cursor: "pointer",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: "8px 14px",
-  borderRadius: "999px",
-  border: "1px solid rgba(255,255,255,.08)",
-  background: "transparent",
-  color: "#a6a6a0",
-  fontSize: "13px",
-  fontWeight: 600,
-  lineHeight: 1,
-  transition: "all .14s",
-} as const;
-
-const authPrimaryButtonStyle = {
-  cursor: "pointer",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: "8px 14px",
-  borderRadius: "999px",
-  border: "1px solid transparent",
-  background: "#22c55e",
-  color: "#041108",
-  fontSize: "13px",
-  fontWeight: 600,
-  lineHeight: 1,
-  textDecoration: "none",
-  boxShadow: "0 10px 24px rgba(34,197,94,.22)",
-  transition: "all .14s",
-} as const;
+type PublicNavKey = (typeof PUBLIC_NAV_ITEMS)[number]["key"];
 
 export function MarketingNav() {
   const { isSignedIn, isLoaded } = useAuth();
@@ -66,9 +41,9 @@ export function MarketingNav() {
 
   if (isSignedIn) {
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="mk-auth-controls">
         <ThemeToggle />
-        <a href={APP_URL} style={authPrimaryButtonStyle}>
+        <a href={APP_URL} className="mk-auth-btn mk-auth-btn-primary">
           Go to Dashboard
         </a>
         <UserButton appearance={userButtonAppearance} />
@@ -77,19 +52,45 @@ export function MarketingNav() {
   }
 
   return (
-    <div style={authRowStyle}>
+    <div className="mk-auth-row">
       <ThemeToggle />
       <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
-        <button style={authGhostButtonStyle}>
+        <button className="mk-auth-btn mk-auth-btn-ghost">
           Sign in
         </button>
       </SignInButton>
       <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
-        <button style={authPrimaryButtonStyle}>
+        <button className="mk-auth-btn mk-auth-btn-primary">
           Get Started Free
         </button>
       </SignUpButton>
     </div>
+  );
+}
+
+export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
+  return (
+    <nav className="mk-nav">
+      <div className="mk-nav-inner">
+        <div className="mk-nav-left">
+          <Link href="/" className="mk-logo">
+            <UniPostLogo markSize={28} wordmarkColor="var(--marketing-text)" />
+          </Link>
+          <div className="mk-nav-links">
+            {PUBLIC_NAV_ITEMS.map((item) => (
+              <Link
+                key={item.key}
+                href={item.href}
+                className={`mk-nav-link${active === item.key ? " active" : ""}`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+        <MarketingNav />
+      </div>
+    </nav>
   );
 }
 
@@ -139,37 +140,7 @@ export function MarketingCTALight() {
 
 /* Pricing page variants — same logic, pr- prefix classes */
 export function PricingNav() {
-  const { isSignedIn, isLoaded } = useAuth();
-
-  if (!isLoaded) {
-    return <div style={{ display: "flex", alignItems: "center", gap: 8, height: 36 }} />;
-  }
-
-  if (isSignedIn) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <a href={APP_URL} className="pr-btn pr-btn-primary">
-          Go to Dashboard
-        </a>
-        <UserButton appearance={userButtonAppearance} />
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
-        <button className="pr-btn pr-btn-ghost" style={{ cursor: "pointer" }}>
-          Sign in
-        </button>
-      </SignInButton>
-      <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
-        <button className="pr-btn pr-btn-primary" style={{ cursor: "pointer" }}>
-          Get Started Free
-        </button>
-      </SignUpButton>
-    </div>
-  );
+  return <MarketingNav />;
 }
 
 export function PricingCTA({ className = "pr-btn-free", label, href }: { className?: string; label?: string; href?: string }) {
