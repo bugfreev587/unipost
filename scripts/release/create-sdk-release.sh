@@ -94,7 +94,7 @@ UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
 BASE_URL="${BASE_URL}" \
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
-  "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-js
+  bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-js
 
 LOG_DIR="${SOURCE_VALIDATION_LOG_DIR}" \
 UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
@@ -102,7 +102,7 @@ UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
 BASE_URL="${BASE_URL}" \
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
-  "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-python
+  bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-python
 
 LOG_DIR="${SOURCE_VALIDATION_LOG_DIR}" \
 UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
@@ -110,7 +110,7 @@ UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
 BASE_URL="${BASE_URL}" \
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
-  "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-go
+  bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-go
 
 # Commit + tag in each repo.
 for repo in "${REPOS[@]}"; do
