@@ -76,17 +76,17 @@ export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
           <Link href="/" className="mk-logo">
             <UniPostLogo markSize={28} wordmarkColor="var(--marketing-text)" />
           </Link>
-          <div className="mk-nav-links">
-            {PUBLIC_NAV_ITEMS.map((item) => (
-              <Link
-                key={item.key}
-                href={item.href}
-                className={`mk-nav-link${active === item.key ? " active" : ""}`}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
+        </div>
+        <div className="mk-nav-links">
+          {PUBLIC_NAV_ITEMS.map((item) => (
+            <Link
+              key={item.key}
+              href={item.href}
+              className={`mk-nav-link${active === item.key ? " active" : ""}`}
+            >
+              {item.label}
+            </Link>
+          ))}
         </div>
         <MarketingNav />
       </div>
