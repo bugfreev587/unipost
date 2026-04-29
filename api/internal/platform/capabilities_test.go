@@ -72,8 +72,8 @@ func TestCapabilitiesJSONShape(t *testing.T) {
 // can't silently de-bump it. The docs page hardcodes this value in an
 // example response, so a drift would lie to readers.
 func TestCapabilitiesSchemaVersion(t *testing.T) {
-	if CapabilitiesSchemaVersion != "1.6" {
-		t.Errorf("CapabilitiesSchemaVersion must be 1.6, got %s", CapabilitiesSchemaVersion)
+	if CapabilitiesSchemaVersion != "1.7" {
+		t.Errorf("CapabilitiesSchemaVersion must be 1.7, got %s", CapabilitiesSchemaVersion)
 	}
 }
 

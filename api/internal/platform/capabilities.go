@@ -42,7 +42,12 @@ package platform
 // based on current docs + production failures. Field shape unchanged.
 // 1.5 → 1.6 (2026-04): added Pinterest to the public publish
 // capability map. Purely additive.
-const CapabilitiesSchemaVersion = "1.6"
+// 1.6 → 1.7 (2026-04): tightened Facebook video formats to mp4+mov
+// (dropped avi). Meta's Graph /videos endpoint accepts a wider list
+// in theory but mp4/mov are the only formats Meta and our docs both
+// recommend; avi was leftover from an earlier draft and never tested
+// end-to-end. Behavior tightening, not a schema change.
+const CapabilitiesSchemaVersion = "1.7"
 
 // Capability is the full set of post-creation rules for one platform.
 // Clients hit GET /v1/platforms/capabilities to fetch the whole map.
@@ -386,7 +391,7 @@ var Capabilities = map[string]Capability{
 				// 1 GB matches the decision to skip resumable upload
 				// in v1 — anything larger has to wait for Phase 2.5.
 				MaxFileSizeBytes: 1024 * 1024 * 1024,
-				AllowedFormats:   []string{"mp4", "mov", "avi"},
+				AllowedFormats:   []string{"mp4", "mov"},
 			},
 		},
 		Thread:       ThreadCapability{Supported: false},

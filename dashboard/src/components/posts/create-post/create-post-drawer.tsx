@@ -204,7 +204,7 @@ function MediaThumbnails({
             type="file"
             multiple
             className="hidden"
-            accept="image/png,image/jpeg,video/mp4"
+            accept="image/jpeg,image/png,image/webp,image/gif,image/heic,video/mp4,video/quicktime,video/webm,video/x-m4v"
             onChange={(e) => { if (e.target.files) { onAdd(Array.from(e.target.files)); e.target.value = ""; } }}
           />
         </label>

@@ -263,7 +263,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
           ["Aspect ratio", "Any; 16:9 (1,200 × 675), 1:1, 4:5 common"],
         ],
         video: [
-          ["Formats", "MP4 (H.264 + AAC)"],
+          ["Formats", "MP4, MOV (H.264 + AAC)"],
           ["Max per post", "1"],
           ["Max file size", "50 MB"],
           ["Max duration", "60 sec"],
@@ -369,14 +369,14 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
           ["Hashtags / mentions", "Count inside the 3,000 budget; ≤ 5 hashtags recommended"],
         ],
         image: [
-          ["Formats", "JPEG, PNG, GIF (animated allowed)"],
+          ["Formats", "JPEG, PNG"],
           ["Max per post", "20 (multi-image / document-like share); 9 commonly used"],
           ["Max file size", "8 MB per image"],
           ["Dimensions", "Min 552 × 276 px, max 8,192 × 8,192 px"],
           ["Recommended ratios", "1.91:1 (1,200 × 627), 1:1 (1,080 × 1,080), 4:5 (1,080 × 1,350)"],
         ],
         video: [
-          ["Formats", "MP4, MOV, AVI"],
+          ["Formats", "MP4, MOV"],
           ["Max per post", "1"],
           ["Max file size", "5 GB"],
           ["Duration", "3 sec – 10 min (member page), 3 sec – 30 min (organization page)"],
@@ -962,7 +962,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
           ["Thumbnail support", "Video only — Shorts do not accept custom thumbnails"],
         ],
         video: [
-          ["Formats", "MP4, MOV, AVI, WMV, FLV, 3GPP, WebM, MPEG-PS"],
+          ["Formats", "MP4, MOV, WebM (UniPost v1 — YouTube also accepts AVI / WMV / FLV / 3GPP / MPEG-PS via direct upload, but UniPost rejects those at validate)"],
           ["Max file size", "256 GB"],
           ["Duration", "Verified channels: up to 12 hr. Unverified: 15 min."],
           ["Aspect ratio", "16:9 standard (others pillar-/letterboxed by YouTube)"],
@@ -1129,15 +1129,15 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
           ["Link preview", "Meta pulls Open Graph tags when a URL is the only media"],
         ],
         image: [
-          ["Formats", "JPEG, PNG, GIF, BMP, TIFF (JPEG/PNG most reliable)"],
+          ["Formats", "JPEG, PNG, GIF"],
           ["Max per post (UniPost v1)", "1 (multi-photo album support on the roadmap)"],
-          ["Max file size", "30 MB via Graph API file upload; Open Graph shares cap at 8 MB"],
+          ["Max file size", "10 MB (UniPost v1 cap; Meta accepts up to 30 MB via direct Graph upload)"],
           ["Dimensions", "Min 600 × 315 px; 1,200 × 630 recommended for link previews"],
           ["Aspect ratio", "1.91:1 (link), 1:1 or 4:5 (feed)"],
           ["Color space", "sRGB"],
         ],
         video: [
-          ["Formats", "MP4, MOV (AVI, FLV, MKV, 3GPP also accepted)"],
+          ["Formats", "MP4, MOV"],
           ["Max per post", "1"],
           ["Max file size", "10 GB via resumable upload (UniPost v1 caps at 1 GB non-resumable)"],
           ["Duration", "1 sec – 240 min"],
