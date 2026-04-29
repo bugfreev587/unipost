@@ -7,8 +7,8 @@ import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost, retrySocialPostResult,
-  getActivation, listProfiles,
-  type SocialAccount, type SocialPost, type Profile,
+  getActivation, getSocialPostQueue, listProfiles,
+  type SocialAccount, type SocialPost, type Profile, type PostDeliveryJob,
 } from "@/lib/api";
 import { Plus, Search, MoreHorizontal, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
@@ -155,6 +155,18 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-submitted-row{display:contents}
 .posts-submitted-row dt{font-size:11.5px;color:var(--dmuted2);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
 .posts-submitted-row dd{font-size:13px;color:var(--dtext);margin:0;word-break:break-word;white-space:pre-wrap;line-height:1.55}
+.posts-queue-panel{border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);margin-top:10px}
+.posts-queue-body{border-top:1px solid var(--dborder);padding:11px 12px}
+.posts-queue-grid{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}
+.posts-queue-grid dt{font-size:11.5px;color:var(--dmuted2);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.posts-queue-grid dd{font-size:13px;color:var(--dtext);margin:0;word-break:break-word;white-space:pre-wrap;line-height:1.55}
+.posts-queue-empty{font-size:13px;color:var(--dmuted);line-height:1.55}
+.posts-queue-loading{font-size:12px;color:var(--dmuted2);font-family:var(--font-geist-mono),monospace}
+.posts-queue-timeline{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.posts-queue-event{padding:9px 10px;border:1px solid var(--dborder);border-radius:9px;background:var(--surface2)}
+.posts-queue-event-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px}
+.posts-queue-event-meta{font-size:11.5px;color:var(--dmuted2);font-family:var(--font-geist-mono),monospace}
+.posts-queue-event-error{font-size:12px;color:var(--dmuted);line-height:1.5;white-space:pre-wrap;word-break:break-word}
 .posts-retry-row{display:flex;align-items:center;gap:10px;margin-top:10px}
 .posts-retry-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;font-size:13px;font-weight:600;color:var(--dtext);background:var(--surface2);border:1px solid var(--dborder);border-radius:8px;cursor:pointer;transition:border-color 140ms,background 140ms}
 .posts-retry-btn:hover:not(:disabled){border-color:var(--daccent);background:color-mix(in srgb,var(--daccent) 12%,var(--surface2))}
@@ -728,7 +740,59 @@ function PostResultsGrid({
   workspaceId: string;
   onRetryComplete?: () => void | Promise<void>;
 }) {
+  const { getToken } = useAuth();
+  const [jobs, setJobs] = useState<PostDeliveryJob[] | null>(null);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsError, setJobsError] = useState<string | null>(null);
   const results = post.results || [];
+
+  useEffect(() => {
+    let cancelled = false;
+    const shouldLoadQueue =
+      post.status === "queued" ||
+      post.status === "dispatching" ||
+      post.status === "retrying" ||
+      post.status === "failed" ||
+      post.status === "partial" ||
+      results.some((result) => result.status === "processing" || result.status === "failed");
+    if (!shouldLoadQueue) {
+      setJobs(null);
+      setJobsError(null);
+      setJobsLoading(false);
+      return;
+    }
+
+    const loadQueue = async () => {
+      setJobsLoading(true);
+      try {
+        const token = await getToken();
+        if (!token || cancelled) return;
+        const res = await getSocialPostQueue(token, post.id);
+        if (cancelled) return;
+        setJobs(res.data.jobs || []);
+        setJobsError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setJobsError(err instanceof Error ? err.message : "Failed to load queue details");
+      } finally {
+        if (!cancelled) setJobsLoading(false);
+      }
+    };
+
+    void loadQueue();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    getToken,
+    post.id,
+    post.status,
+    post.queued_results_count,
+    post.retrying_count,
+    post.dead_count,
+    results,
+  ]);
+
   if (results.length === 0) {
     return <div className="posts-result-text">No platform results yet.</div>;
   }
@@ -740,6 +804,9 @@ function PostResultsGrid({
           post={post}
           workspaceId={workspaceId}
           result={result}
+          jobs={(jobs || []).filter((job) => job.social_post_result_id === result.id)}
+          jobsLoading={jobsLoading}
+          jobsError={jobsError}
           onRetryComplete={onRetryComplete}
         />
       ))}
@@ -751,11 +818,17 @@ function PostResultCard({
   post,
   result,
   workspaceId,
+  jobs,
+  jobsLoading,
+  jobsError,
   onRetryComplete,
 }: {
   post: SocialPost;
   result: NonNullable<SocialPost["results"]>[number];
   workspaceId: string;
+  jobs: PostDeliveryJob[];
+  jobsLoading: boolean;
+  jobsError: string | null;
   onRetryComplete?: () => void | Promise<void>;
 }) {
   const { getToken } = useAuth();
@@ -866,6 +939,7 @@ function PostResultCard({
             </div>
           ) : null}
           {result.debug_curl ? <DebugCurlPanel curl={result.debug_curl} /> : null}
+          <QueueDiagnostics jobs={jobs} loading={jobsLoading} error={jobsError} />
           {result.submitted ? (
             <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} />
           ) : null}
@@ -879,6 +953,7 @@ function PostResultCard({
           {result.status === "processing" && result.platform === "facebook" ? (
             <FacebookProcessingPanel publishStatus={result.publish_status} />
           ) : null}
+          <QueueDiagnostics jobs={jobs} loading={jobsLoading} error={jobsError} />
           {result.submitted ? (
             <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} />
           ) : null}
@@ -964,6 +1039,136 @@ function DebugCurlPanel({ curl, defaultOpen = false }: { curl: string; defaultOp
             </button>
           </div>
           <pre className="posts-debug-pre">{curl}</pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function QueueDiagnostics({
+  jobs,
+  loading,
+  error,
+}: {
+  jobs: PostDeliveryJob[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const [open, setOpen] = useState(true);
+  if (loading && jobs.length === 0) {
+    return (
+      <div className="posts-queue-panel">
+        <button type="button" className="posts-debug-toggle" aria-expanded>
+          <ChevronDown style={{ width: 12, height: 12 }} />
+          <span>Queue diagnostics</span>
+        </button>
+        <div className="posts-queue-body">
+          <div className="posts-queue-loading">Loading queue details…</div>
+        </div>
+      </div>
+    );
+  }
+  if (error && jobs.length === 0) {
+    return (
+      <div className="posts-queue-panel">
+        <button type="button" className="posts-debug-toggle" aria-expanded>
+          <ChevronDown style={{ width: 12, height: 12 }} />
+          <span>Queue diagnostics</span>
+        </button>
+        <div className="posts-queue-body">
+          <div className="posts-queue-empty">{error}</div>
+        </div>
+      </div>
+    );
+  }
+  if (jobs.length === 0) return null;
+
+  const sorted = [...jobs].sort((a, b) => {
+    const aTime = Date.parse(a.updated_at) || 0;
+    const bTime = Date.parse(b.updated_at) || 0;
+    return bTime - aTime;
+  });
+  const active = sorted.find((job) => job.state === "pending" || job.state === "running" || job.state === "retrying");
+  const latest = active || sorted[0];
+  const timeline = sorted.slice(0, 3);
+
+  return (
+    <div className="posts-queue-panel" style={{ marginTop: 10 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="posts-debug-toggle"
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown style={{ width: 12, height: 12 }} /> : <ChevronRight style={{ width: 12, height: 12 }} />}
+        <span>Queue diagnostics ({jobs.length})</span>
+      </button>
+      {open ? (
+        <div className="posts-queue-body">
+          <dl className="posts-queue-grid">
+            <dt>Current state</dt>
+            <dd>{latest.state}</dd>
+            <dt>Queue lane</dt>
+            <dd>{latest.kind === "retry" ? "Retry queue" : "Initial dispatch"}</dd>
+            <dt>Attempts</dt>
+            <dd>{latest.attempts}/{latest.max_attempts}</dd>
+            <dt>Last update</dt>
+            <dd>{formatLongDate(latest.updated_at)}</dd>
+            {latest.next_run_at ? (
+              <>
+                <dt>Next retry</dt>
+                <dd>{formatLongDate(latest.next_run_at)}</dd>
+              </>
+            ) : null}
+            {latest.last_attempt_at ? (
+              <>
+                <dt>Last attempt</dt>
+                <dd>{formatLongDate(latest.last_attempt_at)}</dd>
+              </>
+            ) : null}
+            {latest.failure_stage ? (
+              <>
+                <dt>Failure stage</dt>
+                <dd>{humanizeCode(latest.failure_stage)}</dd>
+              </>
+            ) : null}
+            {latest.error_code ? (
+              <>
+                <dt>Internal code</dt>
+                <dd>{latest.error_code}</dd>
+              </>
+            ) : null}
+            {latest.platform_error_code ? (
+              <>
+                <dt>Platform code</dt>
+                <dd>{latest.platform_error_code}</dd>
+              </>
+            ) : null}
+            {latest.last_error ? (
+              <>
+                <dt>Worker note</dt>
+                <dd>{latest.last_error}</dd>
+              </>
+            ) : null}
+          </dl>
+
+          {timeline.length > 1 ? (
+            <div className="posts-queue-timeline">
+              {timeline.map((job) => (
+                <div key={job.id} className="posts-queue-event">
+                  <div className="posts-queue-event-top">
+                    <span>{statusBadge(job.state)}</span>
+                    <span className="posts-queue-event-meta">
+                      {job.kind === "retry" ? "retry" : "dispatch"} · {formatLongDate(job.updated_at)}
+                    </span>
+                  </div>
+                  {job.last_error ? (
+                    <div className="posts-queue-event-error">{job.last_error}</div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -1192,6 +1397,14 @@ function formatLongDate(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function humanizeCode(value: string): string {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 type ErrorHint = {

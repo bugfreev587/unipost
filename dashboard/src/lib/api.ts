@@ -622,6 +622,11 @@ export interface PostDeliveryJobsSummary {
   recovered_today_count: number;
 }
 
+export interface SocialPostQueueResponse {
+  post: SocialPost;
+  jobs: PostDeliveryJob[];
+}
+
 export async function listSocialPosts(
   token: string,
 ): Promise<ApiResponse<SocialPost[]>> {
@@ -690,6 +695,13 @@ export async function getPostDeliveryJobsSummary(
   token: string,
 ): Promise<ApiResponse<PostDeliveryJobsSummary>> {
   return request(`/v1/post-delivery-jobs/summary`, token);
+}
+
+export async function getSocialPostQueue(
+  token: string,
+  postId: string
+): Promise<ApiResponse<SocialPostQueueResponse>> {
+  return request(`/v1/posts/${postId}/queue`, token);
 }
 
 export async function retryPostDeliveryJobNow(

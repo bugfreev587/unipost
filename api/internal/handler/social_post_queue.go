@@ -516,6 +516,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	if oc.debugCurl != "" {
 		debugCurl = pgtype.Text{String: oc.debugCurl, Valid: true}
 	}
+	failureStage := inferDispatchFailureStage(errMsg)
 
 	// Classify before touching the result row. If this attempt is
 	// retriable and another attempt is coming, keep the row in
@@ -529,7 +530,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 		post.WorkspaceID,
 		res.SocialAccountID,
 		postfailures.FirstNonEmpty(oc.platform, job.Platform),
-		"dispatch",
+		failureStage,
 		errMsg,
 		errMsg,
 	)
@@ -620,6 +621,32 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
 	return nil
+}
+
+func inferDispatchFailureStage(errMsg string) string {
+	msg := strings.ToLower(strings.TrimSpace(errMsg))
+	switch {
+	case strings.Contains(msg, "fetch_source_read"):
+		return "fetch_source_read"
+	case strings.Contains(msg, "fetch_source"):
+		return "fetch_source"
+	case strings.Contains(msg, "upload_media_status"):
+		return "upload_media_status"
+	case strings.Contains(msg, "upload_media_finalize"):
+		return "upload_media_finalize"
+	case strings.Contains(msg, "upload_media_append"):
+		return "upload_media_append"
+	case strings.Contains(msg, "upload_media_init"):
+		return "upload_media_init"
+	case strings.Contains(msg, "upload_media"):
+		return "upload_media"
+	case strings.Contains(msg, "create_tweet_reply"):
+		return "create_tweet_reply"
+	case strings.Contains(msg, "create_tweet"):
+		return "create_tweet"
+	default:
+		return "dispatch"
+	}
 }
 
 func (h *SocialPostHandler) RecoverStaleDeliveryJobs(ctx context.Context, maxAge time.Duration) error {

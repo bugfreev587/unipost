@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -21,6 +22,13 @@ import (
 type TwitterAdapter struct {
 	client *http.Client
 }
+
+const (
+	twitterFetchSourceTimeout   = 20 * time.Second
+	twitterCreateTweetTimeout   = 20 * time.Second
+	twitterImageUploadTimeout   = 45 * time.Second
+	twitterChunkedUploadTimeout = 2 * time.Minute
+)
 
 func NewTwitterAdapter() *TwitterAdapter {
 	return &TwitterAdapter{client: debugrt.NewClient(30 * time.Second)}
@@ -48,11 +56,11 @@ func (a *TwitterAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig 
 func (a *TwitterAdapter) GetAuthURL(config OAuthConfig, state string) string {
 	// X/Twitter uses OAuth 2.0 with PKCE
 	params := url.Values{
-		"response_type": {"code"},
-		"client_id":     {config.ClientID},
-		"redirect_uri":  {config.RedirectURL},
-		"scope":         {"tweet.read tweet.write users.read offline.access media.write"},
-		"state":         {state},
+		"response_type":         {"code"},
+		"client_id":             {config.ClientID},
+		"redirect_uri":          {config.RedirectURL},
+		"scope":                 {"tweet.read tweet.write users.read offline.access media.write"},
+		"state":                 {state},
 		"code_challenge":        {state[:43]}, // Use part of state as challenge (simplified PKCE)
 		"code_challenge_method": {"plain"},
 	}
@@ -159,7 +167,10 @@ func (a *TwitterAdapter) Post(ctx context.Context, accessToken string, text stri
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/tweets", bytes.NewReader(body))
+	postCtx, cancel := context.WithTimeout(ctx, twitterCreateTweetTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(postCtx, "POST", "https://api.x.com/2/tweets", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +179,7 @@ func (a *TwitterAdapter) Post(ctx context.Context, accessToken string, text stri
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create tweet: %w", err)
+		return nil, wrapTwitterStageError("create_tweet", twitterCreateTweetTimeout, err)
 	}
 	defer resp.Body.Close()
 
@@ -203,7 +214,10 @@ func (a *TwitterAdapter) PostComment(ctx context.Context, accessToken string, pa
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/tweets", bytes.NewReader(body))
+	commentCtx, cancel := context.WithTimeout(ctx, twitterCreateTweetTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(commentCtx, "POST", "https://api.x.com/2/tweets", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +226,7 @@ func (a *TwitterAdapter) PostComment(ctx context.Context, accessToken string, pa
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("twitter post_comment: %w", err)
+		return nil, wrapTwitterStageError("create_tweet_reply", twitterCreateTweetTimeout, err)
 	}
 	defer resp.Body.Close()
 
@@ -240,21 +254,24 @@ func (a *TwitterAdapter) PostComment(ctx context.Context, accessToken string, pa
 // https://api.x.com/2/media/upload.
 func (a *TwitterAdapter) uploadMedia(ctx context.Context, accessToken string, item MediaItem) (string, error) {
 	// Fetch the source bytes once.
-	srcReq, err := http.NewRequestWithContext(ctx, "GET", item.URL, nil)
+	fetchCtx, cancelFetch := context.WithTimeout(ctx, twitterFetchSourceTimeout)
+	defer cancelFetch()
+
+	srcReq, err := http.NewRequestWithContext(fetchCtx, "GET", item.URL, nil)
 	if err != nil {
 		return "", err
 	}
 	srcResp, err := a.client.Do(srcReq)
 	if err != nil {
-		return "", fmt.Errorf("fetch source: %w", err)
+		return "", wrapTwitterStageError("fetch_source", twitterFetchSourceTimeout, err)
 	}
 	defer srcResp.Body.Close()
 	if srcResp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("fetch source (%d)", srcResp.StatusCode)
+		return "", fmt.Errorf("fetch_source (%d)", srcResp.StatusCode)
 	}
 	data, err := io.ReadAll(srcResp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read source: %w", err)
+		return "", wrapTwitterStageError("fetch_source_read", twitterFetchSourceTimeout, err)
 	}
 
 	contentType := srcResp.Header.Get("Content-Type")
@@ -264,12 +281,18 @@ func (a *TwitterAdapter) uploadMedia(ctx context.Context, accessToken string, it
 	}
 
 	if kind == MediaKindVideo {
-		return a.uploadMediaChunked(ctx, accessToken, data, contentType, "tweet_video")
+		uploadCtx, cancelUpload := context.WithTimeout(ctx, twitterChunkedUploadTimeout)
+		defer cancelUpload()
+		return a.uploadMediaChunked(uploadCtx, accessToken, data, contentType, "tweet_video")
 	}
 	if kind == MediaKindGIF {
-		return a.uploadMediaChunked(ctx, accessToken, data, "image/gif", "tweet_gif")
+		uploadCtx, cancelUpload := context.WithTimeout(ctx, twitterChunkedUploadTimeout)
+		defer cancelUpload()
+		return a.uploadMediaChunked(uploadCtx, accessToken, data, "image/gif", "tweet_gif")
 	}
-	return a.uploadMediaSimple(ctx, accessToken, data, contentType)
+	uploadCtx, cancelUpload := context.WithTimeout(ctx, twitterImageUploadTimeout)
+	defer cancelUpload()
+	return a.uploadMediaSimple(uploadCtx, accessToken, data, contentType)
 }
 
 // uploadMediaSimple performs a single multipart POST to /2/media/upload for
@@ -310,7 +333,7 @@ func (a *TwitterAdapter) uploadMediaSimple(ctx context.Context, accessToken stri
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", wrapTwitterStageError("upload_media", twitterImageUploadTimeout, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -354,7 +377,7 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 	initReq.Header.Set("Authorization", "Bearer "+accessToken)
 	initResp, err := a.client.Do(initReq)
 	if err != nil {
-		return "", fmt.Errorf("INIT: %w", err)
+		return "", wrapTwitterStageError("upload_media_init", twitterChunkedUploadTimeout, err)
 	}
 	defer initResp.Body.Close()
 	initBody, _ := io.ReadAll(initResp.Body)
@@ -398,7 +421,7 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 		req.Header.Set("Content-Type", mw.FormDataContentType())
 		resp, err := a.client.Do(req)
 		if err != nil {
-			return "", fmt.Errorf("APPEND segment %d: %w", segment, err)
+			return "", wrapTwitterStageError("upload_media_append", twitterChunkedUploadTimeout, fmt.Errorf("segment %d: %w", segment, err))
 		}
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -417,7 +440,7 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 	finReq.Header.Set("Authorization", "Bearer "+accessToken)
 	finResp, err := a.client.Do(finReq)
 	if err != nil {
-		return "", fmt.Errorf("FINALIZE: %w", err)
+		return "", wrapTwitterStageError("upload_media_finalize", twitterChunkedUploadTimeout, err)
 	}
 	defer finResp.Body.Close()
 	finBody, _ := io.ReadAll(finResp.Body)
@@ -453,7 +476,13 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 		if wait < time.Second {
 			wait = time.Second
 		}
-		time.Sleep(wait)
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", wrapTwitterStageError("upload_media_status", twitterChunkedUploadTimeout, ctx.Err())
+		case <-timer.C:
+		}
 
 		statusParams := url.Values{
 			"command":  {"STATUS"},
@@ -464,7 +493,7 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 		statusReq.Header.Set("Authorization", "Bearer "+accessToken)
 		statusResp, err := a.client.Do(statusReq)
 		if err != nil {
-			return "", fmt.Errorf("STATUS: %w", err)
+			return "", wrapTwitterStageError("upload_media_status", twitterChunkedUploadTimeout, err)
 		}
 		statusBody, _ := io.ReadAll(statusResp.Body)
 		statusResp.Body.Close()
@@ -489,6 +518,19 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 	// explicit reference to make the import obvious to readers.
 	_ = strings.TrimSpace
 	return mediaID, nil
+}
+
+func wrapTwitterStageError(stage string, timeout time.Duration, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s timeout after %s: %w", stage, timeout.Round(time.Second), err)
+	}
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%s canceled after %s: %w", stage, timeout.Round(time.Second), err)
+	}
+	return fmt.Errorf("%s: %w", stage, err)
 }
 
 func (a *TwitterAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
