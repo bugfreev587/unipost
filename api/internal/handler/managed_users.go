@@ -36,30 +36,62 @@ func NewManagedUsersHandler(queries *db.Queries) *ManagedUsersHandler {
 	return &ManagedUsersHandler{queries: queries}
 }
 
-// getProfileID resolves the profile context for either auth mode.
-// API key callers carry it on the request context (set by the
-// API key middleware). Dashboard callers come through the
-// /v1/profiles/{profileID}/users path and the profile is the URL
-// param — we additionally verify the requesting Clerk user owns it.
+// getProfileID resolves the profile_id this Managed Users call
+// should scope its query to. Same shape as the oauth handler's
+// resolver after the a43437f leftover bug fix:
+//
+//  1. URL :profileID — explicit request, ownership-checked
+//     against the auth flavor (Clerk-user join or API-key
+//     workspace match).
+//  2. user.default_profile_id — bare /v1/users hit by a Clerk
+//     session falls back to the dashboard's default profile.
+//  3. workspace's most-recent profile — last-resort path for
+//     API-key callers on the bare route.
+//
+// Pre-fix the function returned auth.GetWorkspaceID() and treated
+// it as a profile id; the SQL filter `profile_id = $1` then never
+// matched real rows (workspace.id != profile.id post-Sprint-1
+// data model), and the dashboard's "Managed Users" page rendered
+// empty even when managed users existed.
 func (h *ManagedUsersHandler) getProfileID(r *http.Request) string {
-	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
-		return pid
+	ctx := r.Context()
+	urlProfileID := chi.URLParam(r, "profileID")
+	userID := auth.GetUserID(ctx)
+	workspaceID := auth.GetWorkspaceID(ctx)
+
+	if urlProfileID != "" {
+		if userID != "" {
+			if _, err := h.queries.GetProfileByIDAndWorkspaceOwner(ctx, db.GetProfileByIDAndWorkspaceOwnerParams{
+				ID:     urlProfileID,
+				UserID: userID,
+			}); err == nil {
+				return urlProfileID
+			}
+			return ""
+		}
+		if workspaceID == "" {
+			return ""
+		}
+		prof, err := h.queries.GetProfile(ctx, urlProfileID)
+		if err != nil || prof.WorkspaceID != workspaceID {
+			return ""
+		}
+		return urlProfileID
 	}
-	profileID := chi.URLParam(r, "profileID")
-	if profileID == "" {
-		return ""
+
+	if userID != "" {
+		if user, err := h.queries.GetUser(ctx, userID); err == nil && user.DefaultProfileID.Valid {
+			return user.DefaultProfileID.String
+		}
 	}
-	userID := auth.GetUserID(r.Context())
-	if userID == "" {
-		return ""
+
+	if workspaceID != "" {
+		if profiles, err := h.queries.ListProfilesByWorkspace(ctx, workspaceID); err == nil && len(profiles) > 0 {
+			return profiles[0].ID
+		}
 	}
-	if _, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
-		ID:     profileID,
-		UserID: userID,
-	}); err != nil {
-		return ""
-	}
-	return profileID
+
+	return ""
 }
 
 // managedUserListEntry is one row in the GET /v1/users response.
