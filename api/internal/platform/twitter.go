@@ -622,8 +622,24 @@ func (a *TwitterAdapter) GetAccountMetrics(ctx context.Context, accessToken, ext
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// Mirror GetAnalytics behavior: surface upstream failure
+		// through PlatformSpecific instead of returning a Go error.
+		// Why: X v2 user-lookup is severely rate-limited / paywalled
+		// on the free tier (≈1 req/15min), so an HTTP error here is
+		// a normal-mode signal, not a bug. Returning a 200 with
+		// zero counts + upstream_status keeps the response JSON
+		// reaching the client (the Cloudflare/Railway edge rewrites
+		// 5xx into a branded plaintext page that strips our body),
+		// while still giving callers an unambiguous flag to branch
+		// on if they want to distinguish "0 followers" from
+		// "upstream rate-limited".
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("twitter: GET /2/users/%s returned %d: %s", externalAccountID, resp.StatusCode, string(body))
+		return &AccountMetrics{
+			PlatformSpecific: map[string]any{
+				"upstream_status": resp.StatusCode,
+				"upstream_error":  string(body),
+			},
+		}, nil
 	}
 
 	var result struct {

@@ -49,7 +49,8 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
     name: "platform_specific",
     type: "object",
-    description: "Untransformed platform-native fields. On X: tweet_count, listed_count.",
+    description:
+      "Untransformed platform-native fields. On X: tweet_count, listed_count. When the upstream call fails (rate-limited, tier-restricted, etc.), follower/following/post counts come back as 0 and platform_specific carries upstream_status (HTTP code from the platform) and upstream_error (response body) — branch on the presence of upstream_status to distinguish a real zero account from an upstream failure.",
   },
   {
     name: "fetched_at",
@@ -124,6 +125,24 @@ const RESPONSE_SNIPPETS = [
     "platform_specific": {
       "tweet_count": 2841,
       "listed_count": 41
+    },
+    "fetched_at": "2026-04-28T18:30:00Z"
+  }
+}`,
+  },
+  {
+    lang: "json",
+    label: "200 (upstream rate-limited)",
+    code: `{
+  "data": {
+    "social_account_id": "sa_twitter_1",
+    "platform": "twitter",
+    "follower_count": 0,
+    "following_count": 0,
+    "post_count": 0,
+    "platform_specific": {
+      "upstream_status": 429,
+      "upstream_error": "{\\"title\\":\\"Too Many Requests\\"}"
     },
     "fetched_at": "2026-04-28T18:30:00Z"
   }
