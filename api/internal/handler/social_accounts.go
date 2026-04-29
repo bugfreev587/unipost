@@ -205,8 +205,23 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	var accounts []db.SocialAccount
 	var err error
 
-	// API key path — workspace-scoped (all profiles)
-	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
+	// Dashboard path must win when the route is profile-nested. Clerk
+	// auth also stamps workspace_id into context, so branching on
+	// workspace first would accidentally turn
+	// /v1/profiles/{profileID}/accounts into a workspace-wide list and
+	// duplicate every account once per loaded profile in the UI.
+	if profileID := h.getProfileID(r); profileID != "" {
+		if extUserID == "" && platformFilter == "" {
+			accounts, err = h.queries.ListSocialAccountsByProfile(r.Context(), profileID)
+		} else {
+			accounts, err = h.queries.ListSocialAccountsByProfileFiltered(r.Context(), db.ListSocialAccountsByProfileFilteredParams{
+				ProfileID:      profileID,
+				ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
+				Platform:       pgtype.Text{String: platformFilter, Valid: platformFilter != ""},
+			})
+		}
+	} else if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
+		// API key path — workspace-scoped (all profiles)
 		if extUserID == "" && platformFilter == "" && profileIDFilter == "" {
 			accounts, err = h.queries.ListSocialAccountsByWorkspace(r.Context(), workspaceID)
 		} else {
@@ -218,21 +233,8 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	} else {
-		// Dashboard path — profile-scoped
-		profileID := h.getProfileID(r)
-		if profileID == "" {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
-			return
-		}
-		if extUserID == "" && platformFilter == "" {
-			accounts, err = h.queries.ListSocialAccountsByProfile(r.Context(), profileID)
-		} else {
-			accounts, err = h.queries.ListSocialAccountsByProfileFiltered(r.Context(), db.ListSocialAccountsByProfileFilteredParams{
-				ProfileID:      profileID,
-				ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
-				Platform:       pgtype.Text{String: platformFilter, Valid: platformFilter != ""},
-			})
-		}
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile or workspace context")
+		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list accounts")
