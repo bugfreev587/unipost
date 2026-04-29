@@ -185,6 +185,29 @@ type AnalyticsAdapter interface {
 	GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error)
 }
 
+// AccountMetrics is the normalized account-level metrics shape — the
+// follower / following / post counts a customer's dashboard would
+// display on a connected account card. Field naming is platform
+// neutral on purpose: "post_count" instead of "tweet_count" so the
+// shape doesn't change when the same endpoint adds Bluesky / Threads
+// support. Platform-specific extras (X "listed_count", etc.) live
+// under PlatformSpecific so the strict normalized shape stays small.
+type AccountMetrics struct {
+	FollowerCount    int64          `json:"follower_count"`
+	FollowingCount   int64          `json:"following_count"`
+	PostCount        int64          `json:"post_count"`
+	PlatformSpecific map[string]any `json:"platform_specific,omitempty"`
+}
+
+// AccountMetricsAdapter is optionally implemented by platforms that
+// expose follower / following / post counts via their public API.
+// Adapters that don't implement this interface trigger a clean
+// 501 NOT_SUPPORTED in the handler — the caller can branch on
+// platform without parsing error strings.
+type AccountMetricsAdapter interface {
+	GetAccountMetrics(ctx context.Context, accessToken, externalAccountID string) (*AccountMetrics, error)
+}
+
 // FirstCommentAdapter is the optional interface adapters implement
 // when they support attaching a first_comment to a published post.
 // The handler dispatcher checks for this interface after a successful

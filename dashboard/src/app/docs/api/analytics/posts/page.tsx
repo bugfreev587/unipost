@@ -15,8 +15,18 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "post_id", type: "string", description: "Requested social post ID." },
   { name: "metrics", type: "object", description: "Normalized engagement and reach metrics." },
   { name: "metrics.likes", type: "number", description: "Like count for the post." },
-  { name: "metrics.comments", type: "number", description: "Comment count for the post." },
+  { name: "metrics.comments", type: "number", description: "Comment count (replies on X / Threads)." },
+  { name: "metrics.shares", type: "number", description: "Share count. On X this is retweets + quote tweets combined; the breakdown is in platform_specific." },
+  { name: "metrics.saves", type: "number", description: "Save / bookmark count when the platform exposes it." },
+  { name: "metrics.impressions", type: "number", description: "Impression count when the platform exposes it." },
   { name: "metrics.reach", type: "number", description: "Reach value when the platform exposes it." },
+  { name: "metrics.video_views", type: "number", description: "Video view count for video posts." },
+  { name: "metrics.engagement_rate", type: "number", description: "Computed engagement rate (0-1) when impressions are available." },
+  {
+    name: "metrics.platform_specific",
+    type: "object",
+    description: "Untransformed platform-native fields the normalized shape doesn't capture. On X: retweet_count, quote_count, bookmark_count.",
+  },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
@@ -87,7 +97,17 @@ const RESPONSE_SNIPPETS = [
     "metrics": {
       "likes": 214,
       "comments": 19,
-      "reach": 4210
+      "shares": 47,
+      "saves": 12,
+      "impressions": 18420,
+      "reach": 4210,
+      "video_views": 0,
+      "engagement_rate": 0.0152,
+      "platform_specific": {
+        "retweet_count": 31,
+        "quote_count": 16,
+        "bookmark_count": 12
+      }
     }
   }
 }`,

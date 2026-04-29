@@ -547,6 +547,7 @@ func main() {
 		r.Delete("/v1/accounts/{id}", socialAccountHandler.Disconnect)
 		r.Get("/v1/accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
 		r.Get("/v1/accounts/{id}/health", socialAccountHandler.AccountHealth)
+		r.Get("/v1/accounts/{id}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
@@ -557,6 +558,7 @@ func main() {
 		r.Get("/v1/profiles/{profileID}/accounts", socialAccountHandler.List)
 		r.Post("/v1/profiles/{profileID}/accounts/connect", socialAccountHandler.Connect)
 		r.Delete("/v1/profiles/{profileID}/accounts/{accountID}", socialAccountHandler.Disconnect)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).

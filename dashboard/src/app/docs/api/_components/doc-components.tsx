@@ -58,6 +58,7 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^DELETE \/v1\/(?:accounts|social-accounts)\/[^/]+$/i, href: "/docs/api/accounts/disconnect" },
   { match: /^GET \/v1\/(?:accounts|social-accounts)\/[^/]+\/capabilities$/i, href: "/docs/api/accounts/capabilities" },
   { match: /^GET \/v1\/(?:accounts|social-accounts)\/[^/]+\/health$/i, href: "/docs/api/accounts/health" },
+  { match: /^GET \/v1\/(?:accounts|social-accounts)\/[^/]+\/metrics$/i, href: "/docs/api/accounts/metrics" },
   { match: /^GET \/v1\/(?:accounts|social-accounts)\/[^/]+\/tiktok\/creator-info$/i, href: "/docs/api/accounts/tiktok-creator-info" },
   { match: /^GET \/v1\/(?:accounts|social-accounts)$/i, href: "/docs/api/accounts/list" },
   { match: /^(?:POST|GET) \/v1\/connect\/sessions(?:\/[^/]+)?$/i, href: "/docs/api/connect/sessions" },

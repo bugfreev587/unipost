@@ -579,6 +579,12 @@ func (a *TwitterAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 
 	pm := result.Data.PublicMetrics
 	// EngagementRate is computed by the analytics handler.
+	//
+	// PlatformSpecific preserves the X-native breakdown that the
+	// normalized model collapses: callers who specifically want the
+	// retweet vs quote split (or the bookmark count separately from
+	// "saves") read it from here. The normalized fields stay
+	// authoritative for cross-platform dashboards.
 	return &PostMetrics{
 		Impressions: pm.ImpressionCount,
 		Views:       pm.ImpressionCount, // legacy alias
@@ -586,6 +592,63 @@ func (a *TwitterAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 		Comments:    pm.ReplyCount,
 		Shares:      pm.RetweetCount + pm.QuoteCount,
 		Saves:       pm.BookmarkCount,
+		PlatformSpecific: map[string]any{
+			"retweet_count":  pm.RetweetCount,
+			"quote_count":    pm.QuoteCount,
+			"bookmark_count": pm.BookmarkCount,
+		},
+	}, nil
+}
+
+// GetAccountMetrics fetches follower / following / tweet counts
+// from X's GET /2/users/:id?user.fields=public_metrics endpoint.
+// externalAccountID is the X user id we stamped at connect time
+// (social_accounts.external_account_id). Scope users.read is
+// already requested by every Twitter Connect (see
+// internal/connect/twitter.go) so existing accounts have it
+// without re-authorization.
+func (a *TwitterAdapter) GetAccountMetrics(ctx context.Context, accessToken, externalAccountID string) (*AccountMetrics, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://api.x.com/2/users/"+externalAccountID+"?user.fields=public_metrics", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("twitter: GET /2/users/%s returned %d: %s", externalAccountID, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data struct {
+			PublicMetrics struct {
+				FollowersCount int64 `json:"followers_count"`
+				FollowingCount int64 `json:"following_count"`
+				TweetCount     int64 `json:"tweet_count"`
+				ListedCount    int64 `json:"listed_count"`
+			} `json:"public_metrics"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("twitter: decode user metrics: %w", err)
+	}
+
+	pm := result.Data.PublicMetrics
+	return &AccountMetrics{
+		FollowerCount:  pm.FollowersCount,
+		FollowingCount: pm.FollowingCount,
+		PostCount:      pm.TweetCount,
+		PlatformSpecific: map[string]any{
+			"tweet_count":  pm.TweetCount,
+			"listed_count": pm.ListedCount,
+		},
 	}, nil
 }
 
