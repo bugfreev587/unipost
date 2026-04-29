@@ -306,26 +306,82 @@ func (h *OAuthHandler) getOAuthConfigForProfile(r *http.Request, profileID, plat
 	return config
 }
 
+// getProfileID resolves the profile_id this OAuth Connect call
+// should attach the resulting social_account to.
+//
+// Resolution order (each step falls through on miss):
+//
+//  1. URL :profileID — the profile-nested route is the explicit
+//     statement of intent. We still verify the caller actually
+//     owns it (ownership check tied to the auth flavor — Clerk
+//     user vs API-key workspace) before honoring it.
+//
+//  2. user.default_profile_id — the bare /v1/oauth/connect/:platform
+//     route doesn't carry a profile id, so we fall back to the
+//     dashboard's default profile for the signed-in user.
+//
+//  3. workspace's first profile — last-resort path for API-key
+//     callers hitting the bare route. The workspace always seeds
+//     at least one profile at signup (see webhooks.go), so this
+//     should never be empty for live workspaces.
+//
+// Pre-fix history: this function used to return whatever
+// auth.GetWorkspaceID surfaced and call it the profile id. That
+// was a leftover from the project→workspace+profile refactor
+// (commit a43437f); it accidentally worked on workspaces whose
+// id happened to equal a profile id from migration 025's data
+// reshuffle, and silently broke for every fresh signup made
+// after the refactor.
 func (h *OAuthHandler) getProfileID(r *http.Request) string {
-	if pid := auth.GetWorkspaceID(r.Context()); pid != "" {
-		return pid
+	ctx := r.Context()
+	urlProfileID := chi.URLParam(r, "profileID")
+	userID := auth.GetUserID(ctx)
+	workspaceID := auth.GetWorkspaceID(ctx)
+
+	if urlProfileID != "" {
+		// Clerk-session callers: ownership-check the profile via
+		// the workspace owner join we already use elsewhere.
+		if userID != "" {
+			if _, err := h.queries.GetProfileByIDAndWorkspaceOwner(ctx, db.GetProfileByIDAndWorkspaceOwnerParams{
+				ID:     urlProfileID,
+				UserID: userID,
+			}); err == nil {
+				return urlProfileID
+			}
+			return ""
+		}
+		// API-key callers: verify the profile lives in the
+		// workspace the key is scoped to.
+		if workspaceID == "" {
+			return ""
+		}
+		prof, err := h.queries.GetProfile(ctx, urlProfileID)
+		if err != nil || prof.WorkspaceID != workspaceID {
+			return ""
+		}
+		return urlProfileID
 	}
-	profileID := chi.URLParam(r, "profileID")
-	if profileID == "" {
-		return ""
+
+	// Bare /v1/oauth/connect/:platform — Clerk-session path uses
+	// the user's default profile.
+	if userID != "" {
+		if user, err := h.queries.GetUser(ctx, userID); err == nil && user.DefaultProfileID.Valid {
+			return user.DefaultProfileID.String
+		}
 	}
-	userID := auth.GetUserID(r.Context())
-	if userID == "" {
-		return ""
+
+	// API-key callers without a URL profile fall through to the
+	// workspace's first profile. ListProfilesByWorkspace orders
+	// by created_at DESC, so this picks the most-recently-created
+	// profile — for single-profile workspaces (the common case)
+	// it's the only one.
+	if workspaceID != "" {
+		if profiles, err := h.queries.ListProfilesByWorkspace(ctx, workspaceID); err == nil && len(profiles) > 0 {
+			return profiles[0].ID
+		}
 	}
-	_, err := h.queries.GetProfileByIDAndWorkspaceOwner(r.Context(), db.GetProfileByIDAndWorkspaceOwnerParams{
-		ID:     profileID,
-		UserID: userID,
-	})
-	if err != nil {
-		return ""
-	}
-	return profileID
+
+	return ""
 }
 
 func (h *OAuthHandler) redirectWithError(w http.ResponseWriter, r *http.Request, redirectURL, errMsg string) {
