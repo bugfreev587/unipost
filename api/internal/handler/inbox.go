@@ -9,6 +9,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -835,6 +836,30 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 					}
 					entries, err := adapter.FetchComments(r.Context(), accessToken, postID)
 					if err != nil {
+						// Mirror the worker's not-found handling: when
+						// Meta says the post is gone (#100 subcode 33),
+						// flip the row's remotely_deleted_at so the
+						// next sync skips it entirely. Without this
+						// branch the manual Sync button keeps surfacing
+						// the deleted post as a sync error forever, even
+						// though there's nothing the user can do about
+						// it. Not added to the syncError slice — a
+						// remotely-deleted row isn't an actionable
+						// failure, just bookkeeping.
+						if stderrors.Is(err, platform.ErrFacebookPostNotFound) {
+							if mErr := h.queries.MarkSocialPostResultRemotelyDeleted(r.Context(), db.MarkSocialPostResultRemotelyDeletedParams{
+								SocialAccountID: acc.ID,
+								ExternalID:      pgtype.Text{String: postID, Valid: true},
+								ErrorMessage:    pgtype.Text{String: "Post was deleted on Facebook; inbox sync stopped tracking it.", Valid: true},
+							}); mErr != nil {
+								slog.Warn("inbox sync: mark remotely-deleted failed",
+									"account_id", acc.ID, "post_id", postID, "err", mErr)
+							} else {
+								slog.Info("inbox sync: marked facebook post as remotely deleted",
+									"account_id", acc.ID, "post_id", postID)
+							}
+							continue
+						}
 						slog.Warn("inbox sync: fetch facebook comments failed",
 							"account_id", acc.ID, "post_id", postID, "err", err)
 						errors = append(errors, syncError{acc.ID, acc.Platform, "fetch_comments:" + postID, err.Error()})
