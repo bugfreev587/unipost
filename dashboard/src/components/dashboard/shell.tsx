@@ -359,7 +359,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                               height: 18,
                               padding: "0 6px",
                               borderRadius: 999,
-                              background: "var(--danger)",
+                              // Dark emerald-700 — distinct from the
+                              // active-tab pale-green AND from the
+                              // brand --daccent (which is brighter),
+                              // so the count reads cleanly on the
+                              // sidebar's neutral background AND on
+                              // the active-row's tinted background.
+                              background: "#047857",
                               color: "white",
                               fontSize: 10,
                               fontWeight: 700,

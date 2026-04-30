@@ -36,10 +36,18 @@ FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 WHERE i.workspace_id = $1
   AND i.is_read = false
+  AND i.is_own = false
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
 `
 
+// Mirrors the inbox UI's "unread" filter exactly: items the user
+// HASN'T read AND wasn't authored by them. Without the is_own = false
+// guard, our own replies (posted via UniPost) get counted as unread
+// even though they never appear in the unread badges on the inbox
+// page itself, and the sidebar count would drift higher than the
+// per-tab counts on the page. is_own is set in the webhook / sync
+// upsert based on author_id == account.external_account_id.
 func (q *Queries) CountUnreadByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
 	row := q.db.QueryRow(ctx, countUnreadByWorkspace, workspaceID)
 	var count int32

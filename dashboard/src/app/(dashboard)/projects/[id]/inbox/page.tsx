@@ -1366,18 +1366,18 @@ export default function InboxPage() {
               >
                 {item.label}
                 {item.count > 0 ? (
-                  // Notification-red — the previous green clashed
-                  // with the active tab's pale-green fill, making the
-                  // unread count read as barely visible against its
-                  // own selection state. Red matches the sidebar
-                  // Inbox badge for consistency across the dashboard.
+                  // Dark emerald-700 — distinct from the active tab's
+                  // pale-green selection fill (which uses --accent-dim,
+                  // close to mint) and from the brighter brand --daccent.
+                  // Matches the sidebar's Inbox badge so the same number
+                  // reads identically across surfaces.
                   <span
                     className="dt-mono"
                     style={{
                       fontSize: 10,
                       padding: "2px 6px",
                       borderRadius: 999,
-                      background: "var(--danger)",
+                      background: "#047857",
                       color: "white",
                       fontWeight: 700,
                     }}
@@ -1476,7 +1476,7 @@ export default function InboxPage() {
                               fontSize: 10,
                               borderRadius: 999,
                               padding: "2px 6px",
-                              background: "var(--danger)",
+                              background: "#047857",
                               color: "white",
                               fontWeight: 700,
                             }}
