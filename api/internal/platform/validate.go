@@ -94,10 +94,20 @@ type ValidateAccount struct {
 // builds this map by joining the referenced IDs against the media
 // table BEFORE calling ValidatePlatformPosts. Missing entries surface
 // as media_id_not_found / media_id_not_in_project errors.
+//
+// Width / Height / DurationMS (Sprint 5) are populated from the columns
+// migration 056 added — they're 0 for non-video uploads, for videos
+// uploaded before the migration, and for videos whose moov atom
+// couldn't be parsed (see storage.ProbeVideo). The placement validator
+// treats 0 as "metadata unknown" and degrades to a warning rather than
+// blocking publish.
 type ValidateMedia struct {
 	Status      string // "pending" | "uploaded" | "attached" | "deleted"
 	ContentType string
 	SizeBytes   int64
+	Width       int
+	Height      int
+	DurationMS  int
 }
 
 // ValidateOptions packages everything ValidatePlatformPosts needs.
@@ -227,6 +237,22 @@ const (
 	// requests with a clear code until Phase 3 lands.
 	CodeInvalidFacebookMediaType = "invalid_facebook_media_type"
 	CodeFacebookReelsUnsupported = "facebook_reels_unsupported"
+	// Sprint 5: placement-spec checks. The reclassification code
+	// fires when a video's aspect ratio would push Meta to silently
+	// route the upload into a different publishing pipeline than the
+	// user picked — almost always vertical-9:16 video submitted as
+	// mediaType=feed. The other three are straight per-placement
+	// rejects (Reels need 540×960+, Reels are 3-90s).
+	CodeFacebookVideoAspectReclassified = "facebook_video_aspect_reclassified"
+	CodeFacebookVideoAspectUnsupported  = "facebook_video_aspect_unsupported"
+	CodeFacebookVideoDimensionsTooSmall = "facebook_video_dimensions_too_small"
+	CodeFacebookVideoDurationOutOfRange = "facebook_video_duration_out_of_range"
+	// Warning surfaced when we can't pre-flight a placement check
+	// because dimensions are unknown (raw URL submission, non-mp4
+	// container, moov-at-end > 16 MB). Lets LLM agents distinguish
+	// "we checked and it's fine" from "we couldn't check" without
+	// having to remember which media_ids had probe metadata.
+	CodeFacebookVideoMetadataUnknown = "facebook_video_metadata_unknown"
 	CodePinterestBoardRequired   = "pinterest_board_required"
 	CodeInvalidPinterestLink     = "invalid_pinterest_link"
 )
@@ -299,6 +325,33 @@ func hasOpt(opts map[string]any, key string) bool {
 	}
 	_, ok := opts[key]
 	return ok
+}
+
+// firstVideoMetadata returns the ValidateMedia row for the first
+// video media_id referenced by the post. Returns (zero, false) when
+// the post references no media library videos — either it's a raw-
+// URL submission (no probe data exists) or the media is image-only.
+//
+// The validator uses this to decide between three placement-check
+// outcomes: "found probed video → check dimensions" / "found video
+// but probe yielded no dimensions → warning" / "no media library
+// video → warning" (raw URLs aren't probed at validate time; the
+// publish-time stage-and-probe path is a separate concern).
+func firstVideoMetadata(post PlatformPostInput, mediaMap map[string]ValidateMedia) (ValidateMedia, bool) {
+	if mediaMap == nil {
+		return ValidateMedia{}, false
+	}
+	for _, mid := range post.MediaIDs {
+		m, ok := mediaMap[mid]
+		if !ok {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(m.ContentType)), "video/") {
+			continue
+		}
+		return m, true
+	}
+	return ValidateMedia{}, false
 }
 
 func parseYouTubeTimestamp(value string) error {
@@ -1100,6 +1153,136 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 							Actual:            raw,
 							Severity:          SeverityError,
 						})
+					}
+				}
+			}
+		}
+
+		// Placement-spec validation. Runs for both feed (default
+		// when omitted) and reel; matches against the static specs
+		// in capabilities.go so the validator catches Meta's silent
+		// feed→reel reclassification BEFORE the publish call hits
+		// the network. Skipped when:
+		//   - mediaType is "reel" but Reels are flag-disabled (the
+		//     existing CodeFacebookReelsUnsupported error already
+		//     forces a placement switch — adding aspect errors on
+		//     top would just be noise).
+		//   - the post has no video (placements only apply to video).
+		//   - the platform doesn't define a spec for this placement
+		//     (defensive — current capability map covers feed+reel).
+		effectiveMediaType := fbMediaType
+		if effectiveMediaType == "" {
+			effectiveMediaType = "feed"
+		}
+		skipPlacement := effectiveMediaType == "reel" && !facebookReelsEnabled()
+		if videoCount == 1 && !skipPlacement {
+			if spec, ok := cap.Media.Videos.Placements[effectiveMediaType]; ok {
+				meta, hasMeta := firstVideoMetadata(post, opts.Media)
+				switch {
+				case !hasMeta || meta.Width == 0 || meta.Height == 0:
+					// Either the post submitted a raw URL (no probe
+					// data) or the probe yielded nothing. Warn so
+					// the user sees a clear reason but don't block
+					// — they may know their video is fine and want
+					// to publish anyway.
+					res.Warnings = append(res.Warnings, Issue{
+						PlatformPostIndex: i,
+						AccountID:         post.AccountID,
+						Platform:          plat,
+						Field:             "media_ids",
+						Code:              CodeFacebookVideoMetadataUnknown,
+						Message:           "Could not pre-check video dimensions for " + spec.DisplayName + ". " + spec.ReclassifyHint,
+						Severity:          SeverityWarning,
+					})
+				default:
+					// We have dimensions — run the spec checks. All
+					// errors land on media_ids since that's where
+					// the metadata came from; an LLM agent can
+					// follow the code to figure out what to fix.
+					aspect := float64(meta.Width) / float64(meta.Height)
+					if spec.MinAspectRatio > 0 && aspect < spec.MinAspectRatio {
+						res.Errors = append(res.Errors, Issue{
+							PlatformPostIndex: i,
+							AccountID:         post.AccountID,
+							Platform:          plat,
+							Field:             "media_ids",
+							Code:              CodeFacebookVideoAspectReclassified,
+							Message:           fmt.Sprintf("video is %d×%d (aspect %.2f, below %s's minimum of %.2f). %s", meta.Width, meta.Height, aspect, spec.DisplayName, spec.MinAspectRatio, spec.ReclassifyHint),
+							Actual:            fmt.Sprintf("%dx%d", meta.Width, meta.Height),
+							Limit:             fmt.Sprintf(">= %.2f", spec.MinAspectRatio),
+							Severity:          SeverityError,
+						})
+					}
+					if spec.MaxAspectRatio > 0 && aspect > spec.MaxAspectRatio {
+						res.Errors = append(res.Errors, Issue{
+							PlatformPostIndex: i,
+							AccountID:         post.AccountID,
+							Platform:          plat,
+							Field:             "media_ids",
+							Code:              CodeFacebookVideoAspectUnsupported,
+							Message:           fmt.Sprintf("video is %d×%d (aspect %.2f, above %s's maximum of %.2f). %s", meta.Width, meta.Height, aspect, spec.DisplayName, spec.MaxAspectRatio, spec.ReclassifyHint),
+							Actual:            fmt.Sprintf("%dx%d", meta.Width, meta.Height),
+							Limit:             fmt.Sprintf("<= %.2f", spec.MaxAspectRatio),
+							Severity:          SeverityError,
+						})
+					}
+					if spec.MinWidth > 0 && meta.Width < spec.MinWidth {
+						res.Errors = append(res.Errors, Issue{
+							PlatformPostIndex: i,
+							AccountID:         post.AccountID,
+							Platform:          plat,
+							Field:             "media_ids",
+							Code:              CodeFacebookVideoDimensionsTooSmall,
+							Message:           fmt.Sprintf("%s requires width >= %dpx; this video is %dpx wide", spec.DisplayName, spec.MinWidth, meta.Width),
+							Actual:            meta.Width,
+							Limit:             spec.MinWidth,
+							Severity:          SeverityError,
+						})
+					}
+					if spec.MinHeight > 0 && meta.Height < spec.MinHeight {
+						res.Errors = append(res.Errors, Issue{
+							PlatformPostIndex: i,
+							AccountID:         post.AccountID,
+							Platform:          plat,
+							Field:             "media_ids",
+							Code:              CodeFacebookVideoDimensionsTooSmall,
+							Message:           fmt.Sprintf("%s requires height >= %dpx; this video is %dpx tall", spec.DisplayName, spec.MinHeight, meta.Height),
+							Actual:            meta.Height,
+							Limit:             spec.MinHeight,
+							Severity:          SeverityError,
+						})
+					}
+					// Duration only checked when probe extracted it
+					// — duration_ms == 0 from a successful probe is
+					// indistinguishable from "we couldn't read it",
+					// so we skip rather than risk false positives.
+					if meta.DurationMS > 0 {
+						if spec.MinDurationMS > 0 && meta.DurationMS < spec.MinDurationMS {
+							res.Errors = append(res.Errors, Issue{
+								PlatformPostIndex: i,
+								AccountID:         post.AccountID,
+								Platform:          plat,
+								Field:             "media_ids",
+								Code:              CodeFacebookVideoDurationOutOfRange,
+								Message:           fmt.Sprintf("%s requires duration >= %ds; this video is %.1fs", spec.DisplayName, spec.MinDurationMS/1000, float64(meta.DurationMS)/1000),
+								Actual:            meta.DurationMS,
+								Limit:             spec.MinDurationMS,
+								Severity:          SeverityError,
+							})
+						}
+						if spec.MaxDurationMS > 0 && meta.DurationMS > spec.MaxDurationMS {
+							res.Errors = append(res.Errors, Issue{
+								PlatformPostIndex: i,
+								AccountID:         post.AccountID,
+								Platform:          plat,
+								Field:             "media_ids",
+								Code:              CodeFacebookVideoDurationOutOfRange,
+								Message:           fmt.Sprintf("%s allows duration <= %ds; this video is %.1fs", spec.DisplayName, spec.MaxDurationMS/1000, float64(meta.DurationMS)/1000),
+								Actual:            meta.DurationMS,
+								Limit:             spec.MaxDurationMS,
+								Severity:          SeverityError,
+							})
+						}
 					}
 				}
 			}

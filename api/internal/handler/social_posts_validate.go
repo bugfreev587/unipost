@@ -221,6 +221,13 @@ func (h *SocialPostHandler) loadValidateMedia(r *http.Request, workspaceID strin
 			Status:      row.Status,
 			ContentType: row.ContentType,
 			SizeBytes:   row.SizeBytes,
+			// width/height/duration_ms are nullable in the schema —
+			// pgtype.Int4{Valid: false} reads back as Int32==0,
+			// which the validator treats as "metadata unknown" and
+			// downgrades the placement check to a warning.
+			Width:      int(row.Width.Int32),
+			Height:     int(row.Height.Int32),
+			DurationMS: int(row.DurationMs.Int32),
 		}
 	}
 	return out

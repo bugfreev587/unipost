@@ -80,7 +80,31 @@ func stubCapabilities() map[string]Capability {
 			Media: MediaCapability{
 				AllowMixed: false,
 				Images:     ImageCapability{MaxCount: 1},
-				Videos:     VideoCapability{MaxCount: 1},
+				Videos: VideoCapability{
+					MaxCount: 1,
+					// Mirror production placement specs so the
+					// placement-validation tests in this file run
+					// against the same intervals real users hit.
+					Placements: map[string]VideoPlacementSpec{
+						"feed": {
+							DisplayName:    "Facebook Feed",
+							MinAspectRatio: 1.0,
+							MinDurationMS:  1_000,
+							MaxDurationMS:  240 * 60 * 1000,
+							ReclassifyHint: "Facebook silently reclassifies vertical videos as Reels.",
+						},
+						"reel": {
+							DisplayName:    "Facebook Reel",
+							MinAspectRatio: 0.50,
+							MaxAspectRatio: 0.62,
+							MinWidth:       540,
+							MinHeight:      960,
+							MinDurationMS:  3_000,
+							MaxDurationMS:  90_000,
+							ReclassifyHint: "Facebook Reels require 9:16, 540×960+, 3-90s.",
+						},
+					},
+				},
 			},
 		},
 	}
@@ -833,6 +857,216 @@ func TestValidate_Facebook_Reel_ThumbOffsetBounds(t *testing.T) {
 		},
 	}))
 	hasError(t, res, 0, CodeInvalidFacebookMediaType)
+}
+
+// ─── Sprint 5: Facebook placement-spec checks ────────────────────────
+//
+// These tests cover the validator's pre-flight on the FB feed/reel
+// placement specs added to capabilities.go. The key invariant under
+// test is "no surprise reclassification" — Meta will silently route
+// vertical-9:16 video posted to /{page_id}/videos into the Reels
+// pipeline, and the validator must reject that combination at submit
+// time so the publish call never reaches Meta in a state Meta will
+// mutate.
+
+// hasWarning asserts at least one warning has the given code.
+func hasWarning(t *testing.T, res ValidationResult, code string) {
+	t.Helper()
+	for _, w := range res.Warnings {
+		if w.Code == code {
+			return
+		}
+	}
+	t.Errorf("expected warning code %q, got warnings: %#v", code, res.Warnings)
+}
+
+// fbPlacementOpts wires one media row into a single-post request
+// against acc_facebook. Tests use this to drive the placement check
+// without re-stating the validOpts boilerplate every time.
+func fbPlacementOpts(mediaType string, m ValidateMedia) ValidateOptions {
+	post := PlatformPostInput{
+		AccountID: "acc_facebook",
+		Caption:   "preflight",
+		MediaIDs:  []string{"med1"},
+	}
+	if mediaType != "" {
+		post.PlatformOptions = map[string]any{"mediaType": mediaType}
+	}
+	o := validOpts([]PlatformPostInput{post})
+	o.Media = map[string]ValidateMedia{
+		"med1": m,
+	}
+	return o
+}
+
+func TestValidate_Facebook_Feed_VerticalReclassified(t *testing.T) {
+	// 1080×1920 — the user's exact pain case: vertical 9:16 video
+	// posted to feed gets silently reclassified by Meta as a Reel.
+	// Must reject at submit time. The default mediaType (omitted)
+	// is "feed", so this test also exercises the implicit-feed path.
+	res := ValidatePlatformPosts(fbPlacementOpts("", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 1080, Height: 1920, DurationMS: 30_000,
+	}))
+	hasError(t, res, 0, CodeFacebookVideoAspectReclassified)
+}
+
+func TestValidate_Facebook_Feed_VerticalReclassified_ExplicitMediaType(t *testing.T) {
+	// Same case, but with explicit mediaType=feed — verifies the
+	// rule applies whether the user defaulted in or asked for feed.
+	res := ValidatePlatformPosts(fbPlacementOpts("feed", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 720, Height: 1280, DurationMS: 15_000,
+	}))
+	hasError(t, res, 0, CodeFacebookVideoAspectReclassified)
+}
+
+func TestValidate_Facebook_Feed_SquareAccepted(t *testing.T) {
+	// 1:1 square sits at the MinAspectRatio=1.0 boundary. This is
+	// the canonical "stays in feed" case — Meta won't reclassify.
+	res := ValidatePlatformPosts(fbPlacementOpts("feed", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 1080, Height: 1080, DurationMS: 30_000,
+	}))
+	hasNoError(t, res, CodeFacebookVideoAspectReclassified)
+	hasNoError(t, res, CodeFacebookVideoDimensionsTooSmall)
+}
+
+func TestValidate_Facebook_Feed_LandscapeAccepted(t *testing.T) {
+	// 16:9 — definitely stays in feed.
+	res := ValidatePlatformPosts(fbPlacementOpts("feed", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 1920, Height: 1080, DurationMS: 30_000,
+	}))
+	hasNoError(t, res, CodeFacebookVideoAspectReclassified)
+}
+
+func TestValidate_Facebook_Reel_VerticalAccepted(t *testing.T) {
+	// 9:16 vertical, 1080×1920, 30s — the canonical happy-path Reel.
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(fbPlacementOpts("reel", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 1080, Height: 1920, DurationMS: 30_000,
+	}))
+	hasNoError(t, res, CodeFacebookVideoAspectReclassified)
+	hasNoError(t, res, CodeFacebookVideoAspectUnsupported)
+	hasNoError(t, res, CodeFacebookVideoDimensionsTooSmall)
+	hasNoError(t, res, CodeFacebookVideoDurationOutOfRange)
+}
+
+func TestValidate_Facebook_Reel_LandscapeRejected(t *testing.T) {
+	// 16:9 landscape posted as a Reel — aspect way above 0.62 cap.
+	// Should fail with the unsupported-aspect code (distinct from
+	// reclassified, since on Reel side Meta just rejects rather
+	// than reclassifying).
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(fbPlacementOpts("reel", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 1920, Height: 1080, DurationMS: 30_000,
+	}))
+	hasError(t, res, 0, CodeFacebookVideoAspectUnsupported)
+}
+
+func TestValidate_Facebook_Reel_DimensionsTooSmall(t *testing.T) {
+	// 360×640 — vertical aspect is fine, but below Reels' 540×960
+	// minimum. Should fire CodeFacebookVideoDimensionsTooSmall on
+	// both width AND height (separate errors so the user sees
+	// both gaps in one shot).
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(fbPlacementOpts("reel", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 360, Height: 640, DurationMS: 10_000,
+	}))
+	hasError(t, res, 0, CodeFacebookVideoDimensionsTooSmall)
+	// Aspect at 0.5625 is fine — confirm we didn't accidentally
+	// flag aspect alongside the dimension error.
+	hasNoError(t, res, CodeFacebookVideoAspectUnsupported)
+	hasNoError(t, res, CodeFacebookVideoAspectReclassified)
+}
+
+func TestValidate_Facebook_Reel_DurationTooLong(t *testing.T) {
+	// 120s exceeds the Meta 90s Reel cap.
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(fbPlacementOpts("reel", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 1080, Height: 1920, DurationMS: 120_000,
+	}))
+	hasError(t, res, 0, CodeFacebookVideoDurationOutOfRange)
+}
+
+func TestValidate_Facebook_Reel_DurationTooShort(t *testing.T) {
+	// 1.5s is below Meta's 3s Reel floor — Meta rejects at upload.
+	t.Setenv("FEATURE_FACEBOOK_REELS", "true")
+	res := ValidatePlatformPosts(fbPlacementOpts("reel", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 1080, Height: 1920, DurationMS: 1_500,
+	}))
+	hasError(t, res, 0, CodeFacebookVideoDurationOutOfRange)
+}
+
+func TestValidate_Facebook_Reel_DisabledFlagSuppressesPlacement(t *testing.T) {
+	// When FEATURE_FACEBOOK_REELS is off, the existing
+	// CodeFacebookReelsUnsupported error already forces the user
+	// to switch placements. Stacking dimension errors on top would
+	// be noisy and confusing — assert we DON'T pile on.
+	t.Setenv("FEATURE_FACEBOOK_REELS", "")
+	res := ValidatePlatformPosts(fbPlacementOpts("reel", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 360, Height: 640, DurationMS: 100_000,
+	}))
+	hasError(t, res, 0, CodeFacebookReelsUnsupported)
+	hasNoError(t, res, CodeFacebookVideoDimensionsTooSmall)
+	hasNoError(t, res, CodeFacebookVideoDurationOutOfRange)
+	hasNoError(t, res, CodeFacebookVideoAspectUnsupported)
+}
+
+func TestValidate_Facebook_Feed_RawURL_WarnsNotErrors(t *testing.T) {
+	// Raw media_urls submission: no media library row, no probe
+	// data. The validator can't pre-flight the placement, so it
+	// must DOWNGRADE to a warning rather than block — the user
+	// might know their video is fine and just not be using the
+	// media library upload flow.
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID: "acc_facebook",
+			Caption:   "raw url submit",
+			MediaURLs: []string{"https://example.com/video.mp4"},
+		},
+	}))
+	hasNoError(t, res, CodeFacebookVideoAspectReclassified)
+	hasNoError(t, res, CodeFacebookVideoMetadataUnknown) // no error
+	hasWarning(t, res, CodeFacebookVideoMetadataUnknown)
+}
+
+func TestValidate_Facebook_Feed_MissingProbeMetadata_Warns(t *testing.T) {
+	// Media library row exists but probing didn't extract dims
+	// (non-mp4 container, moov-at-end > 16 MB, etc.). Must warn,
+	// not error — same reasoning as the raw-URL case.
+	res := ValidatePlatformPosts(fbPlacementOpts("feed", ValidateMedia{
+		Status: "uploaded", ContentType: "video/webm",
+		// Width/Height/DurationMS all zero — simulates probe miss.
+	}))
+	hasNoError(t, res, CodeFacebookVideoAspectReclassified)
+	hasWarning(t, res, CodeFacebookVideoMetadataUnknown)
+}
+
+func TestValidate_Facebook_Feed_AspectErrorMessageMentionsHint(t *testing.T) {
+	// The error MUST surface the WHY ("Meta will reclassify"), not
+	// just the numeric mismatch — that's the whole point of the
+	// ReclassifyHint field on VideoPlacementSpec.
+	res := ValidatePlatformPosts(fbPlacementOpts("feed", ValidateMedia{
+		Status: "uploaded", ContentType: "video/mp4",
+		Width: 720, Height: 1280, DurationMS: 30_000,
+	}))
+	for _, e := range res.Errors {
+		if e.Code == CodeFacebookVideoAspectReclassified {
+			if !strings.Contains(strings.ToLower(e.Message), "reclassif") {
+				t.Errorf("aspect error message should reference reclassification, got: %q", e.Message)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected CodeFacebookVideoAspectReclassified error, got %+v", res.Errors)
 }
 
 // ─── benchmark for the §5.4 p95 < 50ms requirement ────────────────────
