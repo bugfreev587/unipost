@@ -2133,6 +2133,50 @@ func (a *FacebookAdapter) FetchMediaDetails(ctx context.Context, accessToken, po
 	}, nil
 }
 
+// FacebookSubscribedApp is one row in the response from
+// GET /{page_id}/subscribed_apps — lists which Meta Apps the Page has
+// granted webhook delivery to and which fields each is subscribed to.
+// We surface this from the diagnose endpoint so an operator can see
+// at a glance whether *our* App is in the list and which fields it
+// currently receives.
+type FacebookSubscribedApp struct {
+	ID               string   `json:"id"`
+	Category         string   `json:"category,omitempty"`
+	Name             string   `json:"name,omitempty"`
+	SubscribedFields []string `json:"subscribed_fields,omitempty"`
+}
+
+// FetchPageSubscribedApps reads the list of Meta Apps currently
+// subscribed to a Page's webhook deliveries. Used by the webhook
+// diagnose endpoint so the user can confirm whether OUR App is in
+// the list (and if not, the resubscribe endpoint becomes the fix).
+func (a *FacebookAdapter) FetchPageSubscribedApps(ctx context.Context, pageAccessToken, pageID string) ([]FacebookSubscribedApp, error) {
+	params := url.Values{
+		"access_token": {pageAccessToken},
+	}
+	endpoint := facebookGraphBase + "/" + pageID + "/subscribed_apps?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook fetch subscribed apps: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("facebook fetch subscribed apps %d: %s", resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		Data []FacebookSubscribedApp `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("facebook fetch subscribed apps decode: %w (body=%s)", err, truncateForLog(string(body), 240))
+	}
+	return parsed.Data, nil
+}
+
 // SubscribePageToWebhooks subscribes our Meta App to the Page's feed +
 // Messenger events. Without this call, Meta only delivers webhooks to
 // the Page owner's own App — our App receives nothing. Called once per

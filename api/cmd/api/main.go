@@ -552,6 +552,12 @@ func main() {
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
 			Get("/v1/accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
+		// FB webhook subscription diagnose / repair. Read endpoint
+		// shows whether the Page's webhook subscription with our App
+		// is healthy; the POST re-runs SubscribePageToWebhooks for
+		// Pages that fell off (silent failures during connect-finalize).
+		r.Get("/v1/accounts/{id}/facebook/webhook-status", socialAccountHandler.FacebookWebhookStatus)
+		r.Post("/v1/accounts/{id}/facebook/resubscribe-webhooks", socialAccountHandler.FacebookResubscribeWebhooks)
 
 		// Profile-nested account / user views (used by the dashboard's
 		// profile switcher to scope by current profile).
