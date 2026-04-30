@@ -232,25 +232,10 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 				// Bare ids trigger Meta's "(#12) singular statuses API
 				// is deprecated for v2.4+" rejection because Graph
 				// routes them through the legacy status-object path.
-				// On success we canonicalize the row so subsequent
-				// ticks skip the resolve hop.
-				canonicalID, resolveErr := fbAdapter.ResolvePostID(ctx, accessToken, pidText.String)
-				if resolveErr != nil {
-					if errors.Is(resolveErr, platform.ErrFacebookPostNotFound) {
-						if mErr := w.queries.MarkSocialPostResultRemotelyDeleted(ctx, db.MarkSocialPostResultRemotelyDeletedParams{
-							SocialAccountID: acc.ID,
-							ExternalID:      pgtype.Text{String: pidText.String, Valid: true},
-							ErrorMessage:    pgtype.Text{String: "Post was deleted on Facebook; inbox sync stopped tracking it.", Valid: true},
-						}); mErr != nil {
-							slog.Warn("inbox sync worker: mark remotely-deleted failed",
-								"account_id", acc.ID, "post_id", pidText.String, "err", mErr)
-						}
-						continue
-					}
-					slog.Warn("inbox sync worker: facebook resolve post id failed",
-						"account_id", acc.ID, "post_id", pidText.String, "err", resolveErr)
-					continue
-				}
+				// Pure string op (see ResolvePostID's doc) — no Graph
+				// call. We canonicalize the row so subsequent ticks
+				// see the combined form already.
+				canonicalID := fbAdapter.ResolvePostID(acc.ExternalAccountID, pidText.String)
 				if canonicalID != pidText.String {
 					if cErr := w.queries.CanonicalizeFacebookExternalID(ctx, db.CanonicalizeFacebookExternalIDParams{
 						SocialAccountID: acc.ID,

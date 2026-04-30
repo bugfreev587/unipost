@@ -1520,63 +1520,29 @@ func coerceInsightInt(v any) int64 {
 // ResolvePostID converts a Facebook object id into the combined
 // "{page_id}_{story_id}" form Meta's modern Graph endpoints expect.
 // Ids that already contain "_" are returned unchanged; bare numeric
-// ids are looked up via /{id}?fields=post_id and the response's
-// post_id is returned.
+// ids are prefixed with the page_id.
 //
-// Why: when a Page video publish completes but Meta hasn't propagated
-// the combined post id yet, postVideo's fallback path stores the bare
-// videoID on the result row (see facebook.go's "/{video_id}/" return
-// branch). Subsequent /{bare_id}/comments fetches then trip Meta's
-// "(#12) singular statuses API is deprecated for versions v2.4 and
-// higher" because Graph routes the bare id through its v2.4-removed
-// status-object endpoint. Resolving to combined form fixes that and
-// also gives the inbox sync caller a value it can write back to
-// canonicalize the row, so the resolve cost only happens once per
-// post regardless of how many sync ticks come after.
+// Why this is a pure string operation (no Graph call): the obvious
+// implementation — GET /{id}?fields=post_id — fails with the SAME
+// "(#12) singular statuses API is deprecated for v2.4 and higher"
+// error the comments endpoint trips on, because Graph routes any
+// /{bare_id} request through its v2.4-removed status-object path
+// when the id resolves to a "status" object internally. The combined
+// "{page_id}_{bare_id}" form bypasses that routing and goes through
+// the modern Page-posts endpoint Meta still serves.
 //
-// Returns ErrFacebookPostNotFound when Meta says the underlying
-// object is gone — caller should mark the row remotely-deleted, same
-// as it already does for FetchComments.
-func (a *FacebookAdapter) ResolvePostID(ctx context.Context, accessToken, id string) (string, error) {
+// When pageID is empty we return the input unchanged — the caller
+// then either accepts the upstream failure or skips the post. The
+// only practical caller is the inbox sync, which always has the
+// page_id available (acc.ExternalAccountID).
+func (a *FacebookAdapter) ResolvePostID(pageID, id string) string {
 	if strings.Contains(id, "_") {
-		return id, nil
+		return id
 	}
-	params := url.Values{
-		"access_token": {accessToken},
-		"fields":       {"post_id"},
+	if pageID == "" {
+		return id
 	}
-	endpoint := facebookGraphBase + "/" + id + "?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("facebook resolve post id: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		if isFacebookPostNotFound(body) {
-			return "", ErrFacebookPostNotFound
-		}
-		return "", fmt.Errorf("facebook resolve post id %d: %s", resp.StatusCode, string(body))
-	}
-	var result struct {
-		PostID string `json:"post_id"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("facebook resolve post id decode: %w (body=%s)", err, truncateForLog(string(body), 240))
-	}
-	if result.PostID == "" {
-		// Some object kinds don't carry post_id (e.g. an album
-		// cover). Treat the absence as "not a Page-feed post" — the
-		// caller can either fall back to the bare id (and accept the
-		// deprecation warning) or skip. Returning the original id
-		// keeps existing behavior for these edge cases.
-		return id, nil
-	}
-	return result.PostID, nil
+	return pageID + "_" + id
 }
 
 // FetchComments reads replies on a single Page post by ID. Returns

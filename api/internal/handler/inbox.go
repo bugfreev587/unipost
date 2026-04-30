@@ -819,17 +819,9 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 					}
 					postID := postIDText.String
 					// Resolve bare ids first — see worker/inbox_sync.go's
-					// FB branch for the full rationale (Meta's "(#12)
-					// singular statuses API is deprecated" rejects bare
-					// video / object ids that the legacy status route
-					// would otherwise serve).
-					canonicalID, resolveErr := adapter.ResolvePostID(r.Context(), accessToken, postID)
-					if resolveErr != nil {
-						slog.Warn("inbox sync: facebook resolve post id failed",
-							"account_id", acc.ID, "post_id", postID, "err", resolveErr)
-						errors = append(errors, syncError{acc.ID, acc.Platform, "resolve_post_id:" + postID, resolveErr.Error()})
-						continue
-					}
+					// FB branch + ResolvePostID's doc for the full
+					// rationale. Pure string op, no Graph call.
+					canonicalID := adapter.ResolvePostID(acc.ExternalAccountID, postID)
 					if canonicalID != postID {
 						if cErr := h.queries.CanonicalizeFacebookExternalID(r.Context(), db.CanonicalizeFacebookExternalIDParams{
 							SocialAccountID: acc.ID,

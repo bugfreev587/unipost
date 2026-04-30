@@ -1,37 +1,52 @@
 package platform
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
-// TestResolvePostID_PassThrough locks down the contract that ids
-// already in the canonical "{page_id}_{story_id}" combined form
-// short-circuit without making a Graph call. This is the hot path
-// the inbox sync hits on every tick after the bare-id resolve fix
-// has already canonicalized the row, so it must NOT touch the
-// network — a regression here would burn a Graph quota call per
-// post per sync interval.
-//
-// We pass an empty access token to make the assertion sharp: if
-// the function ever started making the HTTP request for combined
-// ids, Meta would respond with an OAuth error and our context
-// would surface it. The empty-token call here returns instantly
-// because the Contains("_") check fires first.
-func TestResolvePostID_PassThrough(t *testing.T) {
+// TestResolvePostID exercises the pure-string canonicalizer the
+// inbox sync uses to convert bare Facebook video / object ids into
+// the "{page_id}_{story_id}" combined form Meta's modern Graph
+// endpoints expect. The bare-id case is the actual fix path: this
+// is what unblocks the "(#12) singular statuses API is deprecated"
+// rejection on /{bare_id}/comments calls.
+func TestResolvePostID(t *testing.T) {
 	a := NewFacebookAdapter()
-	cases := []string{
-		"123456_789012",                        // realistic combined form
-		"100012345678901_10101010101010101010", // long both sides
-		"a_b",                                  // anything with "_"
+	cases := []struct {
+		name   string
+		pageID string
+		id     string
+		want   string
+	}{
+		{
+			name:   "combined_passes_through",
+			pageID: "999",
+			id:     "123456_789012",
+			want:   "123456_789012", // already combined; pageID ignored
+		},
+		{
+			name:   "bare_gets_prefixed",
+			pageID: "999888777",
+			id:     "122331150824222923", // the production-failing shape
+			want:   "999888777_122331150824222923",
+		},
+		{
+			name:   "empty_pageID_returns_bare_unchanged",
+			pageID: "",
+			id:     "122331150824222923",
+			want:   "122331150824222923",
+		},
+		{
+			name:   "single_underscore_treated_as_combined",
+			pageID: "999",
+			id:     "a_b",
+			want:   "a_b",
+		},
 	}
-	for _, id := range cases {
-		got, err := a.ResolvePostID(context.Background(), "", id)
-		if err != nil {
-			t.Errorf("ResolvePostID(%q) errored: %v (should have short-circuited)", id, err)
-		}
-		if got != id {
-			t.Errorf("ResolvePostID(%q) = %q, want unchanged", id, got)
-		}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := a.ResolvePostID(c.pageID, c.id)
+			if got != c.want {
+				t.Errorf("ResolvePostID(%q, %q) = %q, want %q", c.pageID, c.id, got, c.want)
+			}
+		})
 	}
 }
