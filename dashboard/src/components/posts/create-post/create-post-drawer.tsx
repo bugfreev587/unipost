@@ -12,7 +12,7 @@ import { PublishModePanel } from "./publish-mode-panel";
 import {
   useCreatePostForm,
   PRIMARY_BUTTON_LABELS,
-  measureVideoDuration,
+  measureVideoMetadata,
   type MediaItem,
 } from "./use-create-post-form";
 import { ChevronDown } from "lucide-react";
@@ -785,20 +785,24 @@ export function CreatePostDrawer({
     const { cached, fingerprint } = form.addMediaItem(file);
     if (cached) return;
     try {
-      // Always measure video duration — the TikTok panel, the publish
-      // blocker, and the MEDIA-level oversize banner all key off it,
-      // and a retroactive account selection needs duration for already-
-      // uploaded items too.
+      // Always measure video metadata — the TikTok panel, the publish
+      // blocker, the MEDIA-level oversize banner all key off duration,
+      // and the Facebook placement guidance keys off width/height. One
+      // decode pass yields all three.
       if (file.type.startsWith("video/")) {
         form.updateMediaItem(fingerprint, { progress: 5 });
-        const duration = await measureVideoDuration(file);
-        form.updateMediaItem(fingerprint, { durationSec: duration });
+        const meta = await measureVideoMetadata(file);
+        form.updateMediaItem(fingerprint, {
+          durationSec: meta.durationSec,
+          videoWidth: meta.width,
+          videoHeight: meta.height,
+        });
         // Pre-R2 TikTok duration gate — keeps oversize videos out of
         // object storage entirely. Measured before the first R2 byte.
         if (
           strictestTiktokMaxSec &&
-          typeof duration === "number" &&
-          duration > strictestTiktokMaxSec
+          typeof meta.durationSec === "number" &&
+          meta.durationSec > strictestTiktokMaxSec
         ) {
           form.updateMediaItem(fingerprint, {
             error: "TIKTOK_VIDEO_TOO_LONG",
@@ -807,7 +811,11 @@ export function CreatePostDrawer({
           return;
         }
       } else {
-        form.updateMediaItem(fingerprint, { durationSec: null });
+        form.updateMediaItem(fingerprint, {
+          durationSec: null,
+          videoWidth: null,
+          videoHeight: null,
+        });
       }
 
       const token = await getToken();
@@ -1084,6 +1092,21 @@ export function CreatePostDrawer({
     return v ? v.file : null;
   }, [form.mediaItems]);
 
+  // The Facebook placement guidance keys off the same primary video,
+  // but reads measured dimensions / duration from the MediaItem rather
+  // than the raw File. Pulled from the same item so the UI never shows
+  // "Reel video, 1080×1920" alongside "Feed video, 720×1280" — there
+  // is one video, and one set of measurements.
+  const primaryVideoMeta = useMemo(() => {
+    const v = form.mediaItems.find((m) => m.file.type.startsWith("video/"));
+    if (!v) return null;
+    return {
+      width: v.videoWidth ?? null,
+      height: v.videoHeight ?? null,
+      durationSec: v.durationSec ?? null,
+    };
+  }, [form.mediaItems]);
+
   // When a TikTok account is selected, the in-flight publish label +
   // the processing notice below both key off this flag.
   const publishingToTikTok = useMemo(
@@ -1277,6 +1300,7 @@ export function CreatePostDrawer({
                           issues={accountIssues}
                           mediaKind={mediaKind}
                           mediaFile={primaryVideoFile}
+                          videoMetadata={primaryVideoMeta}
                           getToken={getToken}
                           profileId={account.profile_id || selectedProfileId}
                           onTiktokBlockerChange={(reason) => setTiktokBlocker(account.id, reason)}

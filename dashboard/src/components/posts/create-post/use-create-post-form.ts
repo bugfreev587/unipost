@@ -189,6 +189,14 @@ export interface MediaItem {
   // file isn't a readable video / can't be measured. `undefined` means
   // we haven't tried yet (or measurement is still in flight).
   durationSec: number | null | undefined;
+  // Visual dimensions in pixels — captured by the same client-side
+  // <video> probe that measures duration. Drives Facebook's placement
+  // guidance (vertical 9:16 in feed → suggest switching to Reel) so
+  // the user sees the conflict BEFORE the validator fires server-side.
+  // Same null/undefined semantics as durationSec: undefined = not
+  // measured yet, null = measured but not a video / unreadable.
+  videoWidth: number | null | undefined;
+  videoHeight: number | null | undefined;
 }
 
 /** Fingerprint a File for dedup — same file re-selected → same key */
@@ -197,14 +205,34 @@ function fileFingerprint(file: File): string {
 }
 
 /**
- * Measure a video file's duration in seconds using a hidden <video>
- * element. Resolves to null when the file isn't a video the browser
- * can decode metadata for (unusual codecs, truncated files).
- * Used by the TikTok cap check so we can reject oversize uploads
- * before they ever hit R2.
+ * Measured visual + temporal metadata for a video file, captured
+ * client-side via the same hidden <video> probe one decode pass yields.
+ * width/height come from videoWidth/videoHeight after `loadedmetadata`;
+ * null on either field signals the browser couldn't decode the moov.
  */
-export function measureVideoDuration(file: File): Promise<number | null> {
-  if (!file.type.startsWith("video/")) return Promise.resolve(null);
+export interface VideoMetadata {
+  durationSec: number | null;
+  width: number | null;
+  height: number | null;
+}
+
+/**
+ * Measure a video file's metadata (duration + visual dimensions) using
+ * a hidden <video> element. Resolves to all-null when the file isn't a
+ * video the browser can decode (unusual codecs, truncated files).
+ *
+ * Same probe drives:
+ *   - the TikTok pre-R2 duration gate (rejects oversize uploads before
+ *     they hit storage)
+ *   - the Facebook placement guidance (vertical 9:16 in feed mode →
+ *     suggest switching to Reel before publish)
+ *
+ * Captures all three fields in one decode pass so we don't pay the
+ * createObjectURL / video element cost twice.
+ */
+export function measureVideoMetadata(file: File): Promise<VideoMetadata> {
+  const empty: VideoMetadata = { durationSec: null, width: null, height: null };
+  if (!file.type.startsWith("video/")) return Promise.resolve(empty);
   return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
@@ -218,14 +246,24 @@ export function measureVideoDuration(file: File): Promise<number | null> {
       if (settled) return;
       settled = true;
       const d = video.duration;
+      // videoWidth/videoHeight are 0 until metadata is loaded, then
+      // they reflect the visual dimensions in pixels (with rotation
+      // already applied — a portrait phone clip reports as 1080×1920
+      // even when stored as 1920×1080 with a rotation tag).
+      const w = video.videoWidth;
+      const h = video.videoHeight;
       cleanup();
-      resolve(Number.isFinite(d) ? d : null);
+      resolve({
+        durationSec: Number.isFinite(d) ? d : null,
+        width: w > 0 ? w : null,
+        height: h > 0 ? h : null,
+      });
     };
     video.onerror = () => {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(null);
+      resolve(empty);
     };
     video.src = url;
   });
@@ -395,12 +433,12 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
       const cachedId = uploadCacheRef.current.get(fp);
       if (cachedId) {
         result = { cached: true, fingerprint: fp, mediaId: cachedId };
-        return [...prev, { file, fingerprint: fp, mediaId: cachedId, progress: 100, error: null, durationSec: undefined }];
+        return [...prev, { file, fingerprint: fp, mediaId: cachedId, progress: 100, error: null, durationSec: undefined, videoWidth: undefined, videoHeight: undefined }];
       }
 
       // New file — needs upload
       result = { cached: false, fingerprint: fp, mediaId: null };
-      return [...prev, { file, fingerprint: fp, mediaId: null, progress: 0, error: null, durationSec: undefined }];
+      return [...prev, { file, fingerprint: fp, mediaId: null, progress: 0, error: null, durationSec: undefined, videoWidth: undefined, videoHeight: undefined }];
     });
 
     // Add to mediaFiles unless it was already displayed (duplicate)
