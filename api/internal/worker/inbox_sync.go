@@ -304,10 +304,14 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 			}
 
 			// Messenger DMs — not scoped to UniPost-published posts
-			// because DMs aren't attached to any specific post. The
-			// IG branch above also runs a reconciliation step to
-			// migrate webhook-created rows to canonical thread keys;
-			// we don't have FB webhooks yet so skip it here.
+			// because DMs aren't attached to any specific post.
+			// FB webhooks ARE wired (meta_webhook.go handles fb_dm),
+			// so this poll is the backfill-only path; if Meta keeps
+			// returning code 1 / subcode 99 on a Page it's almost
+			// always either "Messenger isn't enabled for this Page"
+			// or a transient Graph hiccup — surface the wrapped error
+			// so an operator can grep by account_id without having
+			// to chase a separate inner log line.
 			dmEntries, dmErr := fbAdapter.FetchConversations(ctx, accessToken)
 			if dmErr != nil {
 				slog.Warn("inbox sync worker: facebook fetch conversations failed",

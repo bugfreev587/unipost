@@ -1806,8 +1806,9 @@ func (a *FacebookAdapter) FetchConversations(ctx context.Context, accessToken st
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		slog.Warn("facebook fetch conversations failed",
-			"status", resp.StatusCode, "body", string(body))
+		// Caller (inbox sync worker / handler) logs this with the
+		// account_id, so don't double-log it here. Kept the wrapped
+		// error so the caller can still inspect the body if needed.
 		return nil, fmt.Errorf("facebook fetch conversations %d: %s", resp.StatusCode, string(body))
 	}
 
