@@ -34,7 +34,44 @@ function firstIssue(issues: SocialPostValidationIssue[], ...fields: string[]) {
 
 function FieldError({ issue }: { issue?: SocialPostValidationIssue }) {
   if (!issue) return null;
-  return <p className="mt-1.5 text-[11px] leading-relaxed text-[#fca5a5]">{issue.message}</p>;
+  return (
+    <p
+      className="mt-1.5 text-[11px] leading-relaxed"
+      style={{ color: "color-mix(in srgb, var(--danger) 45%, white)" }}
+    >
+      {issue.message}
+    </p>
+  );
+}
+
+const INPUT_CLASS =
+  "w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]";
+
+function inputStyle(hasError: boolean): React.CSSProperties {
+  return {
+    background: "var(--surface1)",
+    borderColor: hasError ? "var(--danger)" : "var(--dborder)",
+    color: "var(--dtext)",
+  };
+}
+
+function labelStyle(hasError: boolean): React.CSSProperties {
+  return {
+    color: hasError ? "color-mix(in srgb, var(--danger) 45%, white)" : "var(--dmuted2)",
+  };
+}
+
+const LABEL_CLASS = "mb-1.5 block text-[11px] font-medium uppercase tracking-wider";
+
+const CHECKBOX_LABEL_CLASS =
+  "flex items-center gap-2 rounded-md border px-3 py-2 text-sm";
+
+function checkboxLabelStyle(): React.CSSProperties {
+  return {
+    background: "var(--surface1)",
+    borderColor: "var(--dborder)",
+    color: "var(--dtext)",
+  };
 }
 
 function ToggleButton({
@@ -192,13 +229,14 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+                <label className={LABEL_CLASS} style={labelStyle(false)}>
                   Category
                 </label>
                 <select
                   value={fields.category}
                   onChange={(e) => onChange({ category: e.target.value })}
-                  className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
+                  className={INPUT_CLASS}
+                  style={inputStyle(false)}
                 >
                   {YOUTUBE_CATEGORY_OPTIONS.map((c) => (
                     <option key={c.id} value={c.id}>{c.label}</option>
@@ -206,21 +244,14 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
                 </select>
               </div>
               <div>
-                <label
-                  className={cn(
-                    "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
-                    licenseIssue ? "text-[#fca5a5]" : "text-[#55555c]"
-                  )}
-                >
+                <label className={LABEL_CLASS} style={labelStyle(!!licenseIssue)}>
                   License
                 </label>
                 <select
                   value={fields.license}
                   onChange={(e) => onChange({ license: e.target.value as NonNullable<PlatformOverride["youtube"]>["license"] })}
-                  className={cn(
-                    "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
-                    licenseIssue ? "border-[#ef4444]" : "border-[#22222a]"
-                  )}
+                  className={INPUT_CLASS}
+                  style={inputStyle(!!licenseIssue)}
                 >
                   {LICENSE_OPTIONS.map((option) => (
                     <option key={option.id} value={option.id}>
@@ -234,12 +265,7 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label
-                  className={cn(
-                    "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
-                    defaultLanguageIssue ? "text-[#fca5a5]" : "text-[#55555c]"
-                  )}
-                >
+                <label className={LABEL_CLASS} style={labelStyle(!!defaultLanguageIssue)}>
                   Default language
                 </label>
                 <input
@@ -247,30 +273,21 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
                   placeholder="en, en-US, zh-CN…"
                   value={fields.defaultLanguage}
                   onChange={(e) => onChange({ defaultLanguage: e.target.value })}
-                  className={cn(
-                    "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]",
-                    defaultLanguageIssue ? "border-[#ef4444]" : "border-[#22222a]"
-                  )}
+                  className={INPUT_CLASS}
+                  style={inputStyle(!!defaultLanguageIssue)}
                 />
                 <FieldError issue={defaultLanguageIssue} />
               </div>
               <div>
-                <label
-                  className={cn(
-                    "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
-                    publishAtIssue ? "text-[#fca5a5]" : "text-[#55555c]"
-                  )}
-                >
+                <label className={LABEL_CLASS} style={labelStyle(!!publishAtIssue)}>
                   Publish at
                 </label>
                 <input
                   type="datetime-local"
                   value={fields.publishAt}
                   onChange={(e) => onChange({ publishAt: e.target.value })}
-                  className={cn(
-                    "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
-                    publishAtIssue ? "border-[#ef4444]" : "border-[#22222a]"
-                  )}
+                  className={INPUT_CLASS}
+                  style={inputStyle(!!publishAtIssue)}
                 />
                 <FieldError issue={publishAtIssue} />
               </div>
@@ -278,27 +295,20 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label
-                  className={cn(
-                    "text-[11px] uppercase tracking-wider font-medium block mb-1.5",
-                    recordingDateIssue ? "text-[#fca5a5]" : "text-[#55555c]"
-                  )}
-                >
+                <label className={LABEL_CLASS} style={labelStyle(!!recordingDateIssue)}>
                   Recording date
                 </label>
                 <input
                   type="date"
                   value={fields.recordingDate}
                   onChange={(e) => onChange({ recordingDate: e.target.value })}
-                  className={cn(
-                    "w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
-                    recordingDateIssue ? "border-[#ef4444]" : "border-[#22222a]"
-                  )}
+                  className={INPUT_CLASS}
+                  style={inputStyle(!!recordingDateIssue)}
                 />
                 <FieldError issue={recordingDateIssue} />
               </div>
               <div>
-                <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+                <label className={LABEL_CLASS} style={labelStyle(false)}>
                   Playlist ID
                 </label>
                 <input
@@ -306,14 +316,15 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
                   placeholder="PLxxxxxxxx"
                   value={fields.playlistId}
                   onChange={(e) => onChange({ playlistId: e.target.value })}
-                  className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]"
+                  className={INPUT_CLASS}
+                  style={inputStyle(false)}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] uppercase tracking-wider text-[#55555c] font-medium block mb-1.5">
+                <label className={LABEL_CLASS} style={labelStyle(false)}>
                   Tags
                 </label>
                 <input
@@ -321,54 +332,60 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
                   placeholder="product, quarterly, update"
                   value={fields.tags}
                   onChange={(e) => onChange({ tags: e.target.value })}
-                  className="w-full rounded-md px-3 py-2 text-sm bg-[#0a0a0b] border border-[#22222a] text-[#f4f4f5] outline-none transition-[border-color] duration-[140ms] focus:border-[#10b981] focus:shadow-[0_0_0_3px_rgba(16,185,129,0.15)] placeholder:text-[#55555c]"
+                  className={INPUT_CLASS}
+                  style={inputStyle(false)}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+              <label className={CHECKBOX_LABEL_CLASS} style={checkboxLabelStyle()}>
                 <input
                   type="checkbox"
                   checked={fields.notifySubscribers}
                   onChange={(e) => onChange({ notifySubscribers: e.target.checked })}
-                  className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+                  className="h-4 w-4 rounded"
+                  style={{ accentColor: "var(--success)" }}
                 />
                 Notify subscribers
               </label>
-              <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+              <label className={CHECKBOX_LABEL_CLASS} style={checkboxLabelStyle()}>
                 <input
                   type="checkbox"
                   checked={fields.embeddable}
                   onChange={(e) => onChange({ embeddable: e.target.checked })}
-                  className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+                  className="h-4 w-4 rounded"
+                  style={{ accentColor: "var(--success)" }}
                 />
                 Allow embedding
               </label>
-              <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+              <label className={CHECKBOX_LABEL_CLASS} style={checkboxLabelStyle()}>
                 <input
                   type="checkbox"
                   checked={fields.publicStatsViewable}
                   onChange={(e) => onChange({ publicStatsViewable: e.target.checked })}
-                  className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+                  className="h-4 w-4 rounded"
+                  style={{ accentColor: "var(--success)" }}
                 />
                 Show public stats
               </label>
-              <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+              <label className={CHECKBOX_LABEL_CLASS} style={checkboxLabelStyle()}>
                 <input
                   type="checkbox"
                   checked={fields.containsSyntheticMedia}
                   onChange={(e) => onChange({ containsSyntheticMedia: e.target.checked })}
-                  className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+                  className="h-4 w-4 rounded"
+                  style={{ accentColor: "var(--success)" }}
                 />
                 Contains synthetic media
               </label>
-              <label className="flex items-center gap-2 rounded-md border border-[#22222a] bg-[#0a0a0b] px-3 py-2 text-sm text-[#d4d4d8]">
+              <label className={CHECKBOX_LABEL_CLASS} style={checkboxLabelStyle()}>
                 <input
                   type="checkbox"
                   checked={fields.shorts}
                   onChange={(e) => onChange({ shorts: e.target.checked })}
-                  className="h-4 w-4 rounded border-[#3f3f46] bg-[#09090b] text-[#10b981] focus:ring-[#10b981]"
+                  className="h-4 w-4 rounded"
+                  style={{ accentColor: "var(--success)" }}
                 />
                 Add Shorts hint
               </label>
@@ -377,7 +394,7 @@ export function YouTubeFields({ fields, onChange, issues = [] }: YouTubeFieldsPr
         )}
       </div>
 
-      <p className="text-[11px] text-[#55555c]">
+      <p className="text-[11px]" style={{ color: "var(--dmuted2)" }}>
         UniPost sends caption text as YouTube `snippet.description`. `title` and `audience` are required. All other YouTube settings are optional.
       </p>
     </div>
