@@ -792,6 +792,12 @@ export default function InboxPage() {
     await markAllInboxRead(token);
     setItems((prev) => prev.map((item) => ({ ...item, is_read: true })));
     setUnreadCount(0);
+    // Tell the sidebar (which lives outside this component tree) to
+    // reset its badge immediately. Without this it'd wait up to 60s
+    // for the next poll and the user would think the badge is stuck.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("inbox:mark-all-read"));
+    }
   }
 
   async function openGroup(group: ConversationGroup) {
@@ -812,6 +818,13 @@ export default function InboxPage() {
       )
     );
     setUnreadCount((count) => Math.max(0, count - unreadInbound.length));
+    // Tell the sidebar so its badge decrements at the same instant
+    // the per-tab counts do — see comment in markAllRead.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("inbox:mark-read", { detail: { count: unreadInbound.length } }),
+      );
+    }
   }
 
   async function handleReply(group: ConversationGroup, targetItem: InboxItem) {
@@ -1149,14 +1162,11 @@ export default function InboxPage() {
                 Reply
               </button>
             ) : null}
-            <button
-              onClick={() =>
-                setItems((prev) => prev.map((c) => c.id === item.id ? { ...c, is_read: !c.is_read } : c))
-              }
-              style={{ border: "none", background: "transparent", color: "var(--dmuted2)", cursor: "pointer", padding: 0, fontSize: 11 }}
-            >
-              {item.is_read ? "Mark unread" : "Mark read"}
-            </button>
+            {/* Per-message Mark read / unread button removed — opening
+                a conversation auto-marks every inbound message in it
+                read (see openGroup), so the manual toggle was both
+                redundant and lying (the toggle only mutated client
+                state and never persisted to the server). */}
           </div>
           {/* Inline reply input */}
           {replyOpen ? (

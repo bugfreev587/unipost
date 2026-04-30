@@ -56,6 +56,32 @@ export function useGlobalInboxUnreadCount(enabled: boolean): number {
     return () => clearInterval(interval);
   }, [enabled, refetch]);
 
+  // Same-tab cross-tree push: the inbox page emits these events when
+  // the user opens a conversation (auto-marking unread items read) or
+  // clicks "Mark all read". Without this listener the sidebar would
+  // wait up to 60s for the next poll and the badge would feel stuck.
+  // BroadcastChannel would also work cross-tab but window events are
+  // enough for the in-tab case the user is currently asking about.
+  useEffect(() => {
+    if (!enabled) return;
+    function onMarkRead(e: Event) {
+      const evt = e as CustomEvent<{ count: number }>;
+      const delta = evt.detail?.count ?? 0;
+      if (delta > 0) {
+        setCount((c) => Math.max(0, c - delta));
+      }
+    }
+    function onMarkAllRead() {
+      setCount(0);
+    }
+    window.addEventListener("inbox:mark-read", onMarkRead);
+    window.addEventListener("inbox:mark-all-read", onMarkAllRead);
+    return () => {
+      window.removeEventListener("inbox:mark-read", onMarkRead);
+      window.removeEventListener("inbox:mark-all-read", onMarkAllRead);
+    };
+  }, [enabled]);
+
   // WebSocket fan-in. Inbound items bump the count optimistically;
   // sync-complete events trigger an authoritative refetch so the
   // count converges even if we missed a marked-read event.
