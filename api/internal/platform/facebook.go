@@ -1323,43 +1323,52 @@ func (a *FacebookAdapter) RefreshToken(ctx context.Context, refreshToken string)
 	return "", "", time.Time{}, fmt.Errorf("facebook page tokens do not support refresh; reconnect the account on invalidation")
 }
 
-// GetAnalytics fetches post-level metrics for a Facebook Page
-// post. One call to Graph's field-expansion API pulls reactions,
-// comments, shares, and insights in a single round trip — cheaper
-// than separate /insights + /comments.summary calls.
+// GetAnalytics fetches post-level metrics for a Facebook Page post.
 //
-// Meta returns 400 rather than 0 when a metric isn't available
-// (fresh posts, posts under the 100-like threshold, unsupported
-// by post type). We log and fall back to zero for missing fields
-// rather than failing the whole refresh — partial metrics are
-// better than none.
+// Split into two HTTP calls because Meta deprecated several post-
+// insights metrics in v22.0 (post_impressions, post_impressions_unique,
+// post_clicks, post_engaged_users, post_video_views — all return code
+// 12 "API Deprecated"). When even one field-expansion sub-field fails
+// the whole response is 400, which previously poisoned likes /
+// comments / shares too. Splitting keeps the cheap counts working
+// even when the insights endpoint is unhappy.
+//
+//	Call 1 — /{post_id}?fields=reactions,comments,shares (always run)
+//	Call 2 — /{post_id}/insights?metric=…       (best-effort)
+//
+// Note on missing fields: Meta no longer exposes per-post Impressions
+// or Reach in v22.0 — those moved exclusively to the Page Insights
+// surface (see GetPageInsights). This function leaves Impressions /
+// Reach at 0 for all Facebook posts going forward.
 func (a *FacebookAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
-	params := url.Values{
+	out := &PostMetrics{}
+
+	// Call 1: cheap field-expansion counts. These are NOT insights
+	// metrics and remain stable across Graph API versions.
+	countsParams := url.Values{
 		"access_token": {accessToken},
 		"fields": {
 			"id," +
 				"reactions.summary(true).limit(0)," +
 				"comments.summary(true).limit(0)," +
-				"shares," +
-				"insights.metric(post_impressions,post_impressions_unique,post_clicks,post_engaged_users,post_video_views)",
+				"shares",
 		},
 	}
-	endpoint := facebookGraphBase + "/" + externalID + "?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	countsReq, err := http.NewRequestWithContext(ctx, "GET",
+		facebookGraphBase+"/"+externalID+"?"+countsParams.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := a.client.Do(req)
+	countsResp, err := a.client.Do(countsReq)
 	if err != nil {
-		return nil, fmt.Errorf("facebook analytics: %w", err)
+		return nil, fmt.Errorf("facebook analytics counts: %w", err)
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+	defer countsResp.Body.Close()
+	countsBody, _ := io.ReadAll(countsResp.Body)
+	if countsResp.StatusCode != http.StatusOK {
+		return nil, wrapFacebookPublishError(countsResp.StatusCode, countsBody)
 	}
-
-	var parsed struct {
+	var counts struct {
 		ID        string `json:"id"`
 		Reactions struct {
 			Summary struct {
@@ -1374,40 +1383,78 @@ func (a *FacebookAdapter) GetAnalytics(ctx context.Context, accessToken string, 
 		Shares struct {
 			Count int64 `json:"count"`
 		} `json:"shares"`
-		Insights struct {
-			Data []struct {
-				Name   string `json:"name"`
-				Values []struct {
-					Value any `json:"value"`
-				} `json:"values"`
-			} `json:"data"`
-		} `json:"insights"`
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("facebook analytics decode: %w", err)
+	if err := json.Unmarshal(countsBody, &counts); err != nil {
+		return nil, fmt.Errorf("facebook analytics counts decode: %w", err)
 	}
+	out.Likes = counts.Reactions.Summary.TotalCount
+	out.Comments = counts.Comments.Summary.TotalCount
+	out.Shares = counts.Shares.Count
 
-	out := &PostMetrics{
-		Likes:    parsed.Reactions.Summary.TotalCount,
-		Comments: parsed.Comments.Summary.TotalCount,
-		Shares:   parsed.Shares.Count,
+	// Call 2: insights endpoint — best-effort. v22.0 still exposes
+	// post_clicks_by_type and the by-source video view metrics; the
+	// pre-v22 totals (post_impressions etc.) are gone for good. If
+	// this call fails (older posts, FB outage, video metrics on a
+	// non-video post), we keep whatever Call 1 returned.
+	insightsParams := url.Values{
+		"access_token": {accessToken},
+		"metric": {"post_clicks_by_type," +
+			"post_video_views_organic," +
+			"post_video_views_paid"},
 	}
-	for _, m := range parsed.Insights.Data {
+	insightsReq, err := http.NewRequestWithContext(ctx, "GET",
+		facebookGraphBase+"/"+externalID+"/insights?"+insightsParams.Encode(), nil)
+	if err != nil {
+		return out, nil
+	}
+	insightsResp, err := a.client.Do(insightsReq)
+	if err != nil {
+		// Network blip on insights doesn't fail the refresh.
+		return out, nil
+	}
+	defer insightsResp.Body.Close()
+	insightsBody, _ := io.ReadAll(insightsResp.Body)
+	if insightsResp.StatusCode != http.StatusOK {
+		// Likely the post is too fresh, video metrics on photo post,
+		// or a not-yet-known-deprecated metric. Counts already in out.
+		return out, nil
+	}
+	var insights struct {
+		Data []struct {
+			Name   string `json:"name"`
+			Values []struct {
+				Value any `json:"value"`
+			} `json:"values"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(insightsBody, &insights); err != nil {
+		return out, nil
+	}
+	var videoOrganic, videoPaid int64
+	for _, m := range insights.Data {
 		if len(m.Values) == 0 {
 			continue
 		}
-		val := coerceInsightInt(m.Values[0].Value)
 		switch m.Name {
-		case "post_impressions":
-			out.Impressions = val
-		case "post_impressions_unique":
-			out.Reach = val
-		case "post_clicks":
-			out.Clicks = val
-		case "post_video_views":
-			out.VideoViews = val
-			out.Views = val
+		case "post_clicks_by_type":
+			// post_clicks_by_type returns a map[string]int. Sum the
+			// values to recover the old post_clicks total.
+			if obj, ok := m.Values[0].Value.(map[string]any); ok {
+				var total int64
+				for _, v := range obj {
+					total += coerceInsightInt(v)
+				}
+				out.Clicks = total
+			}
+		case "post_video_views_organic":
+			videoOrganic = coerceInsightInt(m.Values[0].Value)
+		case "post_video_views_paid":
+			videoPaid = coerceInsightInt(m.Values[0].Value)
 		}
+	}
+	if videoOrganic > 0 || videoPaid > 0 {
+		out.VideoViews = videoOrganic + videoPaid
+		out.Views = out.VideoViews
 	}
 	return out, nil
 }

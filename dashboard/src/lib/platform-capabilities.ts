@@ -11,7 +11,8 @@ export type Platform =
   | "threads"
   | "tiktok"
   | "twitter"
-  | "youtube";
+  | "youtube"
+  | "facebook";
 
 export type MetricKey =
   | "impressions"
@@ -100,6 +101,20 @@ export const PLATFORM_METRICS: Record<Platform, Caps> = {
     // TikTok exposes view_count (= video plays), not display impressions.
     video_views: true,
   },
+  facebook: {
+    // Meta dropped post-level Impressions, Reach, and Engaged Users
+    // from Graph API v22.0 (the metrics return code 12 "API
+    // Deprecated"). Page-level impressions remain — see GetPageInsights
+    // — but per-post is gone for good. Use Page Insights tab for reach.
+    impressions: false,
+    reach: false,
+    likes: true,
+    comments: true,
+    shares: true,
+    saves: false,
+    clicks: true,
+    video_views: true,
+  },
 };
 
 export function platformSupports(platform: string, metric: MetricKey): boolean {
@@ -128,9 +143,14 @@ export function unsupportedReason(platform: string, metric: MetricKey): string {
         return "YouTube Data API doesn't expose impressions for individual videos";
       case "tiktok":
         return "TikTok exposes view_count (video plays), not display impressions";
+      case "facebook":
+        return "Meta dropped post-level impressions in Graph API v22.0 — use the Page Insights tab for Page-level reach";
       default:
         return `${Pname} doesn't expose impressions via API`;
     }
+  }
+  if (metric === "reach" && p === "facebook") {
+    return "Meta dropped post-level reach in Graph API v22.0 — use the Page Insights tab for Page-level reach";
   }
   return `${Pname} doesn't expose ${metric} via API`;
 }
