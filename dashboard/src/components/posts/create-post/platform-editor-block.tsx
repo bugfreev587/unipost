@@ -35,6 +35,15 @@ interface PlatformEditorBlockProps {
   // The first video file attached to the post (null when there isn't one).
   // TikTok fields use it to measure duration against the creator's cap.
   mediaFile: File | null;
+  // Measured visual + temporal metadata for the primary video, or null
+  // when there's no video attached. Each field is independently null
+  // when not yet measured / not measurable. Drives Facebook's placement
+  // guidance (vertical-9:16 in feed → suggest Reel switch).
+  videoMetadata: {
+    width: number | null;
+    height: number | null;
+    durationSec: number | null;
+  } | null;
   // getToken is threaded down so the TikTok fields can fetch creator_info
   // with a fresh Clerk session token without owning its own auth context.
   getToken: () => Promise<string | null>;
@@ -64,6 +73,7 @@ export function PlatformEditorBlock({
   issues = [],
   mediaKind,
   mediaFile,
+  videoMetadata,
   getToken,
   profileId,
   onTiktokBlockerChange,
@@ -254,6 +264,7 @@ export function PlatformEditorBlock({
               onChange={(f) => onPlatformFieldChange("facebook", f)}
               mediaAttached={mediaKind !== "none"}
               videoAttached={mediaKind === "video"}
+              videoMetadata={videoMetadata}
             />
           )}
           {account.platform === "pinterest" && (
