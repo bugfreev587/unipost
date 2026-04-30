@@ -90,6 +90,20 @@ WHERE spr.status = 'processing'
 ORDER BY sp.created_at ASC
 LIMIT 100;
 
+-- name: CanonicalizeFacebookExternalID :exec
+-- Rewrites the external_id of a Facebook result row to its canonical
+-- "{page_id}_{story_id}" form. Used by the inbox sync after
+-- ResolvePostID converts a bare video/object id to the combined form
+-- Meta's modern Graph endpoints expect. Scoped by social_account so
+-- a numeric collision across accounts can't accidentally rewrite the
+-- wrong row, and it's a no-op when the new id matches the old (the
+-- IS DISTINCT FROM guard makes calling it on every sync tick safe).
+UPDATE social_post_results
+SET external_id = $3
+WHERE social_account_id = $1
+  AND external_id        = $2
+  AND external_id IS DISTINCT FROM $3;
+
 -- name: ListPublishedExternalIDsForInboxSync :many
 -- Returns platform post external ids for an account that were
 -- successfully published via UniPost and whose published_at falls

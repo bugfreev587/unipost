@@ -227,7 +227,47 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 				if !pidText.Valid || pidText.String == "" {
 					continue
 				}
-				entries, fetchErr := fbAdapter.FetchComments(ctx, accessToken, pidText.String)
+				// Resolve bare video / object ids to the combined
+				// "{page_id}_{story_id}" form before fetching comments.
+				// Bare ids trigger Meta's "(#12) singular statuses API
+				// is deprecated for v2.4+" rejection because Graph
+				// routes them through the legacy status-object path.
+				// On success we canonicalize the row so subsequent
+				// ticks skip the resolve hop.
+				canonicalID, resolveErr := fbAdapter.ResolvePostID(ctx, accessToken, pidText.String)
+				if resolveErr != nil {
+					if errors.Is(resolveErr, platform.ErrFacebookPostNotFound) {
+						if mErr := w.queries.MarkSocialPostResultRemotelyDeleted(ctx, db.MarkSocialPostResultRemotelyDeletedParams{
+							SocialAccountID: acc.ID,
+							ExternalID:      pgtype.Text{String: pidText.String, Valid: true},
+							ErrorMessage:    pgtype.Text{String: "Post was deleted on Facebook; inbox sync stopped tracking it.", Valid: true},
+						}); mErr != nil {
+							slog.Warn("inbox sync worker: mark remotely-deleted failed",
+								"account_id", acc.ID, "post_id", pidText.String, "err", mErr)
+						}
+						continue
+					}
+					slog.Warn("inbox sync worker: facebook resolve post id failed",
+						"account_id", acc.ID, "post_id", pidText.String, "err", resolveErr)
+					continue
+				}
+				if canonicalID != pidText.String {
+					if cErr := w.queries.CanonicalizeFacebookExternalID(ctx, db.CanonicalizeFacebookExternalIDParams{
+						SocialAccountID: acc.ID,
+						ExternalID:      pgtype.Text{String: pidText.String, Valid: true},
+						ExternalID_2:    pgtype.Text{String: canonicalID, Valid: true},
+					}); cErr != nil {
+						// Soft-fail — the fetch below still works on
+						// the resolved id, we just pay the resolve hop
+						// again on the next tick.
+						slog.Warn("inbox sync worker: canonicalize facebook external id failed",
+							"account_id", acc.ID, "old_id", pidText.String, "new_id", canonicalID, "err", cErr)
+					} else {
+						slog.Info("inbox sync worker: canonicalized facebook external id",
+							"account_id", acc.ID, "old_id", pidText.String, "new_id", canonicalID)
+					}
+				}
+				entries, fetchErr := fbAdapter.FetchComments(ctx, accessToken, canonicalID)
 				if fetchErr != nil {
 					// Post was deleted on FB (or became inaccessible):
 					// flip the result row so the inbox-sync query
@@ -236,19 +276,19 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 					if errors.Is(fetchErr, platform.ErrFacebookPostNotFound) {
 						if mErr := w.queries.MarkSocialPostResultRemotelyDeleted(ctx, db.MarkSocialPostResultRemotelyDeletedParams{
 							SocialAccountID: acc.ID,
-							ExternalID:      pgtype.Text{String: pidText.String, Valid: true},
+							ExternalID:      pgtype.Text{String: canonicalID, Valid: true},
 							ErrorMessage:    pgtype.Text{String: "Post was deleted on Facebook; inbox sync stopped tracking it.", Valid: true},
 						}); mErr != nil {
 							slog.Warn("inbox sync worker: mark remotely-deleted failed",
-								"account_id", acc.ID, "post_id", pidText.String, "err", mErr)
+								"account_id", acc.ID, "post_id", canonicalID, "err", mErr)
 						} else {
 							slog.Info("inbox sync worker: marked facebook post as remotely deleted",
-								"account_id", acc.ID, "post_id", pidText.String)
+								"account_id", acc.ID, "post_id", canonicalID)
 						}
 						continue
 					}
 					slog.Warn("inbox sync worker: facebook fetch comments failed",
-						"account_id", acc.ID, "post_id", pidText.String, "err", fetchErr)
+						"account_id", acc.ID, "post_id", canonicalID, "err", fetchErr)
 					continue
 				}
 				for _, e := range entries {

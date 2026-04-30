@@ -11,6 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const canonicalizeFacebookExternalID = `-- name: CanonicalizeFacebookExternalID :exec
+UPDATE social_post_results
+SET external_id = $3
+WHERE social_account_id = $1
+  AND external_id        = $2
+  AND external_id IS DISTINCT FROM $3
+`
+
+type CanonicalizeFacebookExternalIDParams struct {
+	SocialAccountID string      `json:"social_account_id"`
+	ExternalID      pgtype.Text `json:"external_id"`
+	ExternalID_2    pgtype.Text `json:"external_id_2"`
+}
+
+// Rewrites the external_id of a Facebook result row to its canonical
+// "{page_id}_{story_id}" form. Used by the inbox sync after
+// ResolvePostID converts a bare video/object id to the combined form
+// Meta's modern Graph endpoints expect. Scoped by social_account so
+// a numeric collision across accounts can't accidentally rewrite the
+// wrong row, and it's a no-op when the new id matches the old (the
+// IS DISTINCT FROM guard makes calling it on every sync tick safe).
+func (q *Queries) CanonicalizeFacebookExternalID(ctx context.Context, arg CanonicalizeFacebookExternalIDParams) error {
+	_, err := q.db.Exec(ctx, canonicalizeFacebookExternalID, arg.SocialAccountID, arg.ExternalID, arg.ExternalID_2)
+	return err
+}
+
 const countPublishedThisMonthByAccount = `-- name: CountPublishedThisMonthByAccount :one
 SELECT COUNT(*)::INTEGER AS count
 FROM social_post_results

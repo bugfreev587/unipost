@@ -818,6 +818,29 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					postID := postIDText.String
+					// Resolve bare ids first — see worker/inbox_sync.go's
+					// FB branch for the full rationale (Meta's "(#12)
+					// singular statuses API is deprecated" rejects bare
+					// video / object ids that the legacy status route
+					// would otherwise serve).
+					canonicalID, resolveErr := adapter.ResolvePostID(r.Context(), accessToken, postID)
+					if resolveErr != nil {
+						slog.Warn("inbox sync: facebook resolve post id failed",
+							"account_id", acc.ID, "post_id", postID, "err", resolveErr)
+						errors = append(errors, syncError{acc.ID, acc.Platform, "resolve_post_id:" + postID, resolveErr.Error()})
+						continue
+					}
+					if canonicalID != postID {
+						if cErr := h.queries.CanonicalizeFacebookExternalID(r.Context(), db.CanonicalizeFacebookExternalIDParams{
+							SocialAccountID: acc.ID,
+							ExternalID:      pgtype.Text{String: postID, Valid: true},
+							ExternalID_2:    pgtype.Text{String: canonicalID, Valid: true},
+						}); cErr != nil {
+							slog.Warn("inbox sync: canonicalize facebook external id failed",
+								"account_id", acc.ID, "old_id", postID, "new_id", canonicalID, "err", cErr)
+						}
+						postID = canonicalID
+					}
 					entries, err := adapter.FetchComments(r.Context(), accessToken, postID)
 					if err != nil {
 						slog.Warn("inbox sync: fetch facebook comments failed",
