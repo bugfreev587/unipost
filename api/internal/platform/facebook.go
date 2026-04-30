@@ -1212,11 +1212,43 @@ func FeedStoryURL(pageID, storyID string) string {
 // to mark the row as remotely deleted and stop polling it.
 var ErrFacebookPostNotFound = errors.New("facebook: post not found (deleted on platform or inaccessible)")
 
+// ErrFacebookConversationsUnsupported is returned by FetchConversations
+// when Meta's /{page_id}/conversations endpoint replies with the generic
+// "code 1 / subcode 99 / An unknown error occurred" 5xx envelope. In
+// our experience this is almost always one of:
+//   - the Page admin has Messenger disabled in Page Settings → Messaging
+//   - the Page's category never supported messaging
+//   - the access token lost pages_messaging during a permission edit
+//
+// The inbox sync worker uses this sentinel as the trip condition for a
+// per-account circuit breaker — after a few consecutive hits we stop
+// polling that account's DMs to save Graph quota and log noise. The
+// breaker resets on process restart so a Page that re-enables Messenger
+// gets retried after the next deploy.
+var ErrFacebookConversationsUnsupported = errors.New("facebook: conversations endpoint returned generic 'unknown error' (Messenger likely disabled for this Page)")
+
 // isFacebookPostNotFound detects Graph's "#100 subcode 33" error
 // envelope in a response body. Kept as a body-level check rather
 // than a typed unmarshal downstream so wrapFacebookPublishError
 // can stay focused on its own (different) error taxonomy.
 func isFacebookPostNotFound(body []byte) bool {
+	code, subcode := parseFacebookErrorCodes(body)
+	return code == 100 && subcode == 33
+}
+
+// isFacebookCode1Subcode99 detects the generic "An unknown error
+// occurred" envelope Meta returns from /me/conversations on Pages
+// without Messenger enabled. See ErrFacebookConversationsUnsupported.
+func isFacebookCode1Subcode99(body []byte) bool {
+	code, subcode := parseFacebookErrorCodes(body)
+	return code == 1 && subcode == 99
+}
+
+// parseFacebookErrorCodes pulls (code, error_subcode) out of a Graph
+// error response body. Returns (0, 0) when the body isn't an error
+// envelope — both the post-not-found and conversations-unsupported
+// detectors share the same parse so we don't repeat the JSON shape.
+func parseFacebookErrorCodes(body []byte) (int, int) {
 	var parsed struct {
 		Error struct {
 			Code    int `json:"code"`
@@ -1224,9 +1256,9 @@ func isFacebookPostNotFound(body []byte) bool {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return false
+		return 0, 0
 	}
-	return parsed.Error.Code == 100 && parsed.Error.Subcode == 33
+	return parsed.Error.Code, parsed.Error.Subcode
 }
 
 // wrapFacebookPublishError turns Graph API error responses into
@@ -1807,8 +1839,13 @@ func (a *FacebookAdapter) FetchConversations(ctx context.Context, accessToken st
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		// Caller (inbox sync worker / handler) logs this with the
-		// account_id, so don't double-log it here. Kept the wrapped
-		// error so the caller can still inspect the body if needed.
+		// account_id, so don't double-log it here. The sentinel for
+		// "Messenger disabled" lets the worker trip its circuit
+		// breaker for the offending account; everything else stays
+		// a wrapped error so the caller can still inspect the body.
+		if isFacebookCode1Subcode99(body) {
+			return nil, ErrFacebookConversationsUnsupported
+		}
 		return nil, fmt.Errorf("facebook fetch conversations %d: %s", resp.StatusCode, string(body))
 	}
 

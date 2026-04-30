@@ -72,10 +72,38 @@ type InboxSyncWorker struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
 	pool      *pgxpool.Pool
+
+	// fbDMFailureCounts tracks consecutive FetchConversations
+	// failures per Facebook account that hit the
+	// ErrFacebookConversationsUnsupported sentinel (Meta's
+	// "code 1 / subcode 99" generic). Once a count reaches
+	// fbDMFailureThreshold we skip future DM polls for that
+	// account to save Graph quota and log noise — these failures
+	// almost always mean the Page has Messenger disabled and the
+	// state won't change without operator action. Resets on
+	// process restart and on the first successful fetch.
+	//
+	// Plain map (no mutex) is safe because poll() runs on a single
+	// ticker goroutine; if we ever add concurrent polling this
+	// becomes a sync.Map.
+	fbDMFailureCounts map[string]int
 }
 
+// fbDMFailureThreshold is how many consecutive
+// ErrFacebookConversationsUnsupported hits before the per-account
+// breaker trips. Three matches the cadence: 3 ticks × 5 minutes is
+// a 15-minute window, long enough to absorb a transient Meta hiccup
+// but short enough that a permanently-broken Page stops emitting
+// retry traffic within an hour.
+const fbDMFailureThreshold = 3
+
 func NewInboxSyncWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxSyncWorker {
-	return &InboxSyncWorker{queries: queries, encryptor: encryptor, pool: pool}
+	return &InboxSyncWorker{
+		queries:           queries,
+		encryptor:         encryptor,
+		pool:              pool,
+		fbDMFailureCounts: make(map[string]int),
+	}
 }
 
 func (w *InboxSyncWorker) Start(ctx context.Context) {
@@ -306,17 +334,38 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 			// Messenger DMs — not scoped to UniPost-published posts
 			// because DMs aren't attached to any specific post.
 			// FB webhooks ARE wired (meta_webhook.go handles fb_dm),
-			// so this poll is the backfill-only path; if Meta keeps
-			// returning code 1 / subcode 99 on a Page it's almost
-			// always either "Messenger isn't enabled for this Page"
-			// or a transient Graph hiccup — surface the wrapped error
-			// so an operator can grep by account_id without having
-			// to chase a separate inner log line.
+			// so this poll is the backfill-only path. The circuit
+			// breaker below skips the call entirely once an account
+			// has tripped fbDMFailureThreshold consecutive
+			// "Messenger likely disabled" hits, which saves a Graph
+			// call per tick and stops the warn-spam.
+			if w.fbDMFailureCounts[acc.ID] >= fbDMFailureThreshold {
+				break
+			}
 			dmEntries, dmErr := fbAdapter.FetchConversations(ctx, accessToken)
 			if dmErr != nil {
+				if errors.Is(dmErr, platform.ErrFacebookConversationsUnsupported) {
+					w.fbDMFailureCounts[acc.ID]++
+					if w.fbDMFailureCounts[acc.ID] == fbDMFailureThreshold {
+						// Log the trip event ONCE (==, not >=) so a
+						// long-running stuck account doesn't refill
+						// the log every 5 minutes. Subsequent ticks
+						// short-circuit at the gate above.
+						slog.Info("inbox sync worker: tripping facebook DM polling breaker",
+							"account_id", acc.ID,
+							"consecutive_failures", w.fbDMFailureCounts[acc.ID],
+							"hint", "Page likely has Messenger disabled — re-enable in Page Settings → Messaging, then restart the API to retry")
+					}
+					break
+				}
 				slog.Warn("inbox sync worker: facebook fetch conversations failed",
 					"account_id", acc.ID, "err", dmErr)
 			} else {
+				// Reset on success so transient hiccups don't trip
+				// the breaker over time.
+				if w.fbDMFailureCounts[acc.ID] != 0 {
+					delete(w.fbDMFailureCounts, acc.ID)
+				}
 				for _, e := range dmEntries {
 					isOwn := e.AuthorID != "" && e.AuthorID == acc.ExternalAccountID
 					_, uErr := w.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
