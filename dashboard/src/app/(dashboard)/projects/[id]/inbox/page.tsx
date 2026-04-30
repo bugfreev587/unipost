@@ -1366,15 +1366,20 @@ export default function InboxPage() {
               >
                 {item.label}
                 {item.count > 0 ? (
+                  // Notification-red — the previous green clashed
+                  // with the active tab's pale-green fill, making the
+                  // unread count read as barely visible against its
+                  // own selection state. Red matches the sidebar
+                  // Inbox badge for consistency across the dashboard.
                   <span
                     className="dt-mono"
                     style={{
                       fontSize: 10,
                       padding: "2px 6px",
                       borderRadius: 999,
-                      background: active ? "rgb(16 185 129 / 0.14)" : "var(--surface3)",
-                      color: active ? "var(--daccent)" : "var(--dmuted2)",
-                      border: active ? "1px solid rgb(16 185 129 / 0.18)" : "1px solid var(--dborder)",
+                      background: "var(--danger)",
+                      color: "white",
+                      fontWeight: 700,
                     }}
                   >
                     {item.count}
@@ -1471,8 +1476,9 @@ export default function InboxPage() {
                               fontSize: 10,
                               borderRadius: 999,
                               padding: "2px 6px",
-                              background: "var(--daccent)",
-                              color: "var(--primary-foreground)",
+                              background: "var(--danger)",
+                              color: "white",
+                              fontWeight: 700,
                             }}
                           >
                             {group.unreadCount}

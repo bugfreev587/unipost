@@ -15,6 +15,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { listProfiles, getWorkspace, getBilling, getMe, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
+import { useGlobalInboxUnreadCount } from "@/lib/use-inbox-unread";
 import { buildContactPageHref } from "@/lib/support";
 import {
   Key,
@@ -126,6 +127,20 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const urlProfileId = profileMatch?.[1];
   const profileId = urlProfileId ?? profiles[0]?.id;
   const currentProfile = profiles.find((p) => p.id === profileId);
+
+  // Global inbox unread badge — only enable the hook when (1) the
+  // INBOX feature flag is on for this user (matches the nav item's
+  // visibility check below) and (2) we have a profile context, since
+  // the workspace JWT is required for the WebSocket / count fetch.
+  // Disabled = 0 returned, no network calls, no WS connection.
+  const inboxFeatureEnabled = isFeatureEnabled(
+    FEATURE_FLAGS.INBOX,
+    user?.id,
+    user?.primaryEmailAddress?.emailAddress,
+  );
+  const inboxUnreadCount = useGlobalInboxUnreadCount(
+    Boolean(profileId) && inboxFeatureEnabled,
+  );
 
   const navItems = filterNavItems(user?.id, user?.primaryEmailAddress?.emailAddress);
 
@@ -326,9 +341,35 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                         href={`/projects/${profileId}${item.href}`}
                         data-active={active}
                         className="sidebar-nav-item"
+                        style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-start" }}
                       >
                         <Icon style={{ width: 18, height: 18 }} strokeWidth={1.75} />
-                        {item.label}
+                        <span>{item.label}</span>
+                        {item.href === "/inbox" && inboxUnreadCount > 0 ? (
+                          // Notification-red unread badge — distinct
+                          // from the nav-item's "active" green so users
+                          // see a new comment/DM at a glance even when
+                          // they're on the Inbox tab. Caps at 99+ so a
+                          // wide badge doesn't push the layout around.
+                          <span
+                            aria-label={`${inboxUnreadCount} unread`}
+                            style={{
+                              marginLeft: "auto",
+                              minWidth: 18,
+                              height: 18,
+                              padding: "0 6px",
+                              borderRadius: 999,
+                              background: "var(--danger)",
+                              color: "white",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              lineHeight: "18px",
+                              textAlign: "center",
+                            }}
+                          >
+                            {inboxUnreadCount > 99 ? "99+" : inboxUnreadCount}
+                          </span>
+                        ) : null}
                       </Link>
                     )}
                     {hasSubmenu && submenuOpen && item.submenu && (
