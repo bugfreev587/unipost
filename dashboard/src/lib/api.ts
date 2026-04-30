@@ -1277,6 +1277,28 @@ export interface AdminPostListParams {
   limit?: number;
 }
 
+export interface AdminPostsPlatformAggregate {
+  platform: string;
+  published: number;
+  failed: number;
+  total: number;
+}
+
+export interface AdminPostsDailyAggregate {
+  date: string; // YYYY-MM-DD UTC
+  published: number;
+  failed: number;
+  total: number;
+}
+
+export interface AdminPostsAggregates {
+  total_posts: number;
+  unique_users: number;
+  by_status: Record<string, number>;
+  by_platform: AdminPostsPlatformAggregate[];
+  daily: AdminPostsDailyAggregate[];
+}
+
 export interface AdminBillingRow {
   workspace_id: string;
   workspace_name: string;
@@ -1544,6 +1566,22 @@ export async function listAdminPosts(
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();
   return request(`/v1/admin/posts${s ? `?${s}` : ""}`, token);
+}
+
+export async function listAdminPostsAggregates(
+  token: string,
+  params?: Omit<AdminPostListParams, "limit">
+): Promise<ApiResponse<AdminPostsAggregates>> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.platform) qs.set("platform", params.platform);
+  if (params?.source) qs.set("source", params.source);
+  if (params?.user_id) qs.set("user_id", params.user_id);
+  if (params?.workspace_id) qs.set("workspace_id", params.workspace_id);
+  if (params?.days != null) qs.set("days", String(params.days));
+  const s = qs.toString();
+  return request(`/v1/admin/posts/aggregates${s ? `?${s}` : ""}`, token);
 }
 
 export async function listAdminBilling(

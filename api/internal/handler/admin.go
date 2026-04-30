@@ -401,6 +401,38 @@ type adminPostsQuery struct {
 	Excluded    []string
 }
 
+// adminPostsAggregatesResponse drives the four headline cards, the
+// per-platform breakdown row, and the published-vs-failed time series
+// on /admin/posts. Numbers are SQL-side aggregates so the cards stay
+// accurate even when the row list is LIMITed; the previous client-side
+// counts undercounted whenever filters matched more than 100 posts.
+//
+// by_platform is RESULT-level (one social_post_results row = one
+// platform attempt) so a multi-platform post that succeeds on Twitter
+// and fails on LinkedIn shows up as +1 success / +1 failure split
+// across the two cards rather than getting hidden under "partial".
+type adminPostsAggregatesResponse struct {
+	TotalPosts     int64                          `json:"total_posts"`
+	UniqueUsers    int64                          `json:"unique_users"`
+	ByStatus       map[string]int64               `json:"by_status"`
+	ByPlatform     []adminPostsPlatformAggregate  `json:"by_platform"`
+	Daily          []adminPostsDailyAggregate     `json:"daily"`
+}
+
+type adminPostsPlatformAggregate struct {
+	Platform  string `json:"platform"`
+	Published int64  `json:"published"`
+	Failed    int64  `json:"failed"`
+	Total     int64  `json:"total"`
+}
+
+type adminPostsDailyAggregate struct {
+	Date      string `json:"date"` // YYYY-MM-DD UTC
+	Published int64  `json:"published"`
+	Failed    int64  `json:"failed"`
+	Total     int64  `json:"total"`
+}
+
 type adminBillingRow struct {
 	WorkspaceID          string     `json:"workspace_id"`
 	WorkspaceName        string     `json:"workspace_name"`
@@ -688,6 +720,178 @@ LIMIT $7
 	return out, nil
 }
 
+// queryPostsAggregates produces the headline / per-platform / daily
+// numbers for the admin posts page. Same WHERE clause as queryPosts so
+// the cards and the table always describe the same set; LIMIT only
+// applies to the row list, never to the aggregates.
+//
+// Three independent queries instead of one mega-CTE because each
+// rolls up at a different grain (post / result / day) and PostgreSQL
+// can't share the scan across them anyway. Total round-trip stays
+// under ~50 ms on the indexes we already have on social_posts.
+func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPostsQuery) (*adminPostsAggregatesResponse, error) {
+	days := opts.Days
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+
+	// Common WHERE used by all three queries. Parameter ordering must
+	// match every Query() call below.
+	commonWhere := `
+  WHERE u.id != ALL($1)
+    AND sp.deleted_at IS NULL
+    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND ($3::TEXT = '' OR sp.status = $3)
+    AND ($4::TEXT = '' OR sp.source = $4)
+    AND ($5::TEXT = '' OR u.id = $5)
+    AND ($6::TEXT = '' OR sp.workspace_id = $6)
+    AND ($7::TEXT = '' OR EXISTS (
+      SELECT 1 FROM social_post_results spr2
+      JOIN social_accounts sa2 ON sa2.id = spr2.social_account_id
+      WHERE spr2.post_id = sp.id AND sa2.platform = $7
+    ))
+    AND (
+      $8::TEXT = ''
+      OR u.email ILIKE '%' || $8 || '%'
+      OR w.name ILIKE '%' || $8 || '%'
+      OR COALESCE(sp.caption, '') ILIKE '%' || $8 || '%'
+      OR sp.id ILIKE '%' || $8 || '%'
+    )`
+
+	args := []any{
+		opts.Excluded, days,
+		opts.Status, opts.Source,
+		opts.UserID, opts.WorkspaceID,
+		opts.Platform, opts.Search,
+	}
+
+	out := &adminPostsAggregatesResponse{
+		ByStatus:   map[string]int64{},
+		ByPlatform: []adminPostsPlatformAggregate{},
+		Daily:      []adminPostsDailyAggregate{},
+	}
+
+	// 1) Headline: total posts + status breakdown + unique users.
+	statusRows, err := h.pool.Query(ctx, `
+SELECT sp.status, COUNT(*)::BIGINT AS cnt, COUNT(DISTINCT u.id)::BIGINT AS users
+FROM social_posts sp
+JOIN workspaces w ON w.id = sp.workspace_id
+JOIN users u ON u.id = w.user_id
+`+commonWhere+`
+GROUP BY sp.status`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer statusRows.Close()
+	uniqueUserSet := map[string]struct{}{}
+	for statusRows.Next() {
+		var status string
+		var cnt, users int64
+		if err := statusRows.Scan(&status, &cnt, &users); err != nil {
+			return nil, err
+		}
+		out.ByStatus[status] = cnt
+		out.TotalPosts += cnt
+		// Per-status user counts overlap; recompute total uniques in
+		// one query below rather than trying to dedupe across groups.
+		_ = users
+		_ = uniqueUserSet
+	}
+	if err := statusRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Unique users — one extra small query is cheaper than carrying
+	// per-row user_ids back to Go and deduping.
+	if err := h.pool.QueryRow(ctx, `
+SELECT COUNT(DISTINCT u.id)::BIGINT
+FROM social_posts sp
+JOIN workspaces w ON w.id = sp.workspace_id
+JOIN users u ON u.id = w.user_id
+`+commonWhere, args...).Scan(&out.UniqueUsers); err != nil {
+		return nil, err
+	}
+
+	// 2) Per-platform aggregates — RESULT level. One social_post_results
+	// row equals one platform attempt; this lets a Twitter-published /
+	// LinkedIn-failed post split across the two cards correctly.
+	platformRows, err := h.pool.Query(ctx, `
+SELECT
+  sa.platform,
+  COUNT(*) FILTER (WHERE spr.status = 'published')::BIGINT AS published,
+  COUNT(*) FILTER (WHERE spr.status = 'failed')::BIGINT    AS failed,
+  COUNT(*)::BIGINT                                          AS total
+FROM social_posts sp
+JOIN workspaces w ON w.id = sp.workspace_id
+JOIN users u ON u.id = w.user_id
+JOIN social_post_results spr ON spr.post_id = sp.id
+JOIN social_accounts sa ON sa.id = spr.social_account_id
+`+commonWhere+`
+GROUP BY sa.platform
+ORDER BY sa.platform`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer platformRows.Close()
+	for platformRows.Next() {
+		var item adminPostsPlatformAggregate
+		if err := platformRows.Scan(&item.Platform, &item.Published, &item.Failed, &item.Total); err != nil {
+			return nil, err
+		}
+		out.ByPlatform = append(out.ByPlatform, item)
+	}
+	if err := platformRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 3) Daily series — one row per day in the window even if zero,
+	// produced by a generate_series so the chart doesn't have gaps.
+	// Counts come from the parent post (`sp.status`), not result-level,
+	// so the line matches the headline cards.
+	dailyRows, err := h.pool.Query(ctx, `
+WITH days AS (
+  SELECT generate_series(
+    date_trunc('day', NOW() - ($2::INT - 1) * INTERVAL '1 day'),
+    date_trunc('day', NOW()),
+    INTERVAL '1 day'
+  ) AS day
+),
+matching AS (
+  SELECT
+    date_trunc('day', sp.created_at) AS day,
+    sp.status
+  FROM social_posts sp
+  JOIN workspaces w ON w.id = sp.workspace_id
+  JOIN users u ON u.id = w.user_id
+  `+commonWhere+`
+)
+SELECT
+  to_char(d.day, 'YYYY-MM-DD') AS date,
+  COUNT(*) FILTER (WHERE m.status = 'published')::BIGINT AS published,
+  COUNT(*) FILTER (WHERE m.status = 'failed')::BIGINT    AS failed,
+  COUNT(m.day)::BIGINT                                    AS total
+FROM days d
+LEFT JOIN matching m ON m.day = d.day
+GROUP BY d.day
+ORDER BY d.day`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer dailyRows.Close()
+	for dailyRows.Next() {
+		var item adminPostsDailyAggregate
+		if err := dailyRows.Scan(&item.Date, &item.Published, &item.Failed, &item.Total); err != nil {
+			return nil, err
+		}
+		out.Daily = append(out.Daily, item)
+	}
+	if err := dailyRows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
 func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery) ([]adminBillingRow, error) {
 	days := opts.Days
 	if days <= 0 || days > 365 {
@@ -930,6 +1134,37 @@ func (h *AdminHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load posts: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, out)
+}
+
+// ListPostsAggregates serves GET /v1/admin/posts/aggregates. Same
+// filter params as ListPosts; returns headline / per-platform /
+// per-day numbers without the row list.
+func (h *AdminHandler) ListPostsAggregates(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	days, _ := strconv.Atoi(q.Get("days"))
+
+	excluded, err := h.excludedUserIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve excluded users: "+err.Error())
+		return
+	}
+
+	out, err := h.queryPostsAggregates(r.Context(), adminPostsQuery{
+		Search:      q.Get("search"),
+		Status:      q.Get("status"),
+		Platform:    q.Get("platform"),
+		Source:      q.Get("source"),
+		UserID:      q.Get("user_id"),
+		WorkspaceID: q.Get("workspace_id"),
+		Days:        days,
+		Excluded:    excluded,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load aggregates: "+err.Error())
 		return
 	}
 

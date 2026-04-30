@@ -2,20 +2,47 @@
 
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
-import { listAdminPosts, type AdminPostListParams, type AdminPostRow } from "@/lib/api";
+import {
+  listAdminPosts,
+  listAdminPostsAggregates,
+  type AdminPostListParams,
+  type AdminPostRow,
+  type AdminPostsAggregates,
+} from "@/lib/api";
 
 import { AdminShell, StatCard, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
 const STATUS_OPTIONS = ["all", "draft", "scheduled", "publishing", "published", "failed", "canceled", "archived"] as const;
-const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky"] as const;
+const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky", "facebook"] as const;
 const SOURCE_OPTIONS = ["all", "ui", "dashboard", "api", "mcp"] as const;
 const DAY_OPTIONS = [7, 30, 90] as const;
+
+const PLATFORM_COLORS: Record<string, string> = {
+  twitter: "#0f172a",
+  linkedin: "#0a66c2",
+  instagram: "#e1306c",
+  threads: "#000000",
+  tiktok: "#000000",
+  youtube: "#ff0000",
+  bluesky: "#0085ff",
+  facebook: "#1877f2",
+};
 
 export default function AdminPostsPage() {
   const { getToken } = useAuth();
   const [posts, setPosts] = useState<AdminPostRow[]>([]);
+  const [aggregates, setAggregates] = useState<AdminPostsAggregates | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,13 +61,13 @@ export default function AdminPostsPage() {
   const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ id: string; name: string }>>([]);
   const limit = 100;
 
-  const loadPosts = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      const params: AdminPostListParams = {
+      const baseParams: AdminPostListParams = {
         search: search || undefined,
         status: status !== "all" ? status : undefined,
         platform: platform !== "all" ? platform : undefined,
@@ -48,10 +75,16 @@ export default function AdminPostsPage() {
         user_id: userId || undefined,
         workspace_id: workspaceId || undefined,
         days,
-        limit,
       };
-      const res = await listAdminPosts(token, params);
-      setPosts(res.data);
+      // Issue both calls in parallel — same filter set, separate
+      // round trips because the row list is LIMITed but the
+      // aggregates need to count the full filtered universe.
+      const [listRes, aggRes] = await Promise.all([
+        listAdminPosts(token, { ...baseParams, limit }),
+        listAdminPostsAggregates(token, baseParams),
+      ]);
+      setPosts(listRes.data);
+      setAggregates(aggRes.data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -60,8 +93,8 @@ export default function AdminPostsPage() {
   }, [days, getToken, platform, search, source, status, userId, workspaceId]);
 
   useEffect(() => {
-    loadPosts();
-  }, [loadPosts]);
+    loadAll();
+  }, [loadAll]);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput), 300);
@@ -90,13 +123,14 @@ export default function AdminPostsPage() {
     });
   }, [posts]);
 
-  const failedCount = useMemo(() => posts.filter((post) => post.status === "failed").length, [posts]);
-  const scheduledCount = useMemo(() => posts.filter((post) => post.status === "scheduled").length, [posts]);
-  const publishedCount = useMemo(() => posts.filter((post) => post.status === "published").length, [posts]);
-  const affectedUsers = useMemo(() => new Set(posts.map((post) => post.user_id)).size, [posts]);
+  const total = aggregates?.total_posts ?? 0;
+  const published = aggregates?.by_status?.published ?? 0;
+  const failed = aggregates?.by_status?.failed ?? 0;
+  const scheduled = aggregates?.by_status?.scheduled ?? 0;
+  const uniqueUsers = aggregates?.unique_users ?? 0;
 
   return (
-    <AdminShell title="Posts" loading={loading} onRefresh={loadPosts}>
+    <AdminShell title="Posts" loading={loading} onRefresh={loadAll}>
       {error && (
         <div style={{ background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 22%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
           {error}
@@ -105,17 +139,13 @@ export default function AdminPostsPage() {
 
       <div className="ad-section-header">
         <div className="ad-section-title">Publishing activity</div>
-        <div className="ad-section-meta">Recent cross-tenant post volume and delivery state</div>
+        <div className="ad-section-meta">Cross-tenant post volume and delivery state. All numbers respect the filters below.</div>
       </div>
 
-      <div className="ad-stat-grid">
-        <StatCard label="Posts" value={fmtNumber(posts.length)} sub={`Last ${days} days`} />
-        <StatCard label="Published" value={fmtNumber(publishedCount)} sub={posts.length > 0 ? `${((publishedCount / posts.length) * 100).toFixed(0)}% of current set` : "—"} />
-        <StatCard label="Failed" value={fmtNumber(failedCount)} subColor={failedCount > 0 ? "down" : undefined} sub={posts.length > 0 ? `${((failedCount / posts.length) * 100).toFixed(0)}% of current set` : "—"} />
-        <StatCard label="Scheduled" value={fmtNumber(scheduledCount)} sub={`${fmtNumber(affectedUsers)} users in current set`} valueColor="accent" />
-      </div>
-
-      <div className="ad-filter-bar">
+      {/* Filter bar moved above the cards so it gates the entire view —
+          headline cards, per-platform cards, time-series chart, and the
+          row table are all driven by the same filter state. */}
+      <div className="ad-filter-bar" style={{ marginBottom: 16 }}>
         <input
           className="ad-search"
           placeholder="Search by user, workspace, caption, or post ID..."
@@ -147,17 +177,13 @@ export default function AdminPostsPage() {
         <select value={userId} onChange={(e) => setUserId(e.target.value)}>
           <option value="">All Users</option>
           {userOptions.map((u) => (
-            <option key={u.id} value={u.id}>
-              {`User: ${u.email}`}
-            </option>
+            <option key={u.id} value={u.id}>{`User: ${u.email}`}</option>
           ))}
         </select>
         <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
           <option value="">All Workspaces</option>
           {workspaceOptions.map((w) => (
-            <option key={w.id} value={w.id}>
-              {`Workspace: ${w.name}`}
-            </option>
+            <option key={w.id} value={w.id}>{`Workspace: ${w.name}`}</option>
           ))}
         </select>
         <select value={days} onChange={(e) => setDays(Number(e.target.value) as typeof days)}>
@@ -169,6 +195,137 @@ export default function AdminPostsPage() {
         </select>
       </div>
 
+      <div className="ad-stat-grid">
+        <StatCard label="Posts" value={fmtNumber(total)} sub={`Last ${days} days`} />
+        <StatCard
+          label="Published"
+          value={fmtNumber(published)}
+          sub={total > 0 ? `${((published / total) * 100).toFixed(0)}% of current set` : "—"}
+        />
+        <StatCard
+          label="Failed"
+          value={fmtNumber(failed)}
+          subColor={failed > 0 ? "down" : undefined}
+          sub={total > 0 ? `${((failed / total) * 100).toFixed(0)}% of current set` : "—"}
+        />
+        <StatCard
+          label="Scheduled"
+          value={fmtNumber(scheduled)}
+          sub={`${fmtNumber(uniqueUsers)} users in current set`}
+          valueColor="accent"
+        />
+      </div>
+
+      {/* Per-platform row — RESULT-level so a multi-platform post that
+          partially succeeds shows up correctly in each platform's
+          numbers rather than getting hidden under "partial" status. */}
+      {aggregates && aggregates.by_platform.length > 0 && (
+        <>
+          <div className="ad-section-header" style={{ marginTop: 24 }}>
+            <div className="ad-section-title" style={{ fontSize: 14 }}>By platform</div>
+            <div className="ad-section-meta">Result-level — one platform attempt per row of social_post_results</div>
+          </div>
+          <div className="ad-stat-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
+            {aggregates.by_platform.map((p) => (
+              <div key={p.platform} className="ad-stat-card">
+                <div className="ad-stat-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span
+                    aria-hidden
+                    style={{
+                      display: "inline-block",
+                      width: 8,
+                      height: 8,
+                      borderRadius: 2,
+                      background: PLATFORM_COLORS[p.platform] ?? "var(--dmuted)",
+                    }}
+                  />
+                  {p.platform}
+                </div>
+                <div className="ad-stat-value" style={{ fontSize: 22 }}>
+                  {fmtNumber(p.published)}
+                  <span style={{ color: "var(--dmuted2)", fontWeight: 400, fontSize: 13 }}> / </span>
+                  <span style={{ color: p.failed > 0 ? "var(--danger)" : "var(--dmuted)" }}>
+                    {fmtNumber(p.failed)}
+                  </span>
+                </div>
+                <div className="ad-stat-sub" style={{ color: "var(--dmuted)" }}>
+                  ok / failed · {fmtNumber(p.total)} attempts
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Time series — published vs failed by day. Counts come from the
+          parent post status (matches the headline cards) so totals
+          reconcile across the page. */}
+      {aggregates && aggregates.daily.length > 0 && (
+        <>
+          <div className="ad-section-header" style={{ marginTop: 24 }}>
+            <div className="ad-section-title" style={{ fontSize: 14 }}>Posts per day</div>
+            <div className="ad-section-meta">Published vs failed, last {days} days</div>
+          </div>
+          <div
+            style={{
+              background: "var(--surface-raised)",
+              border: "1px solid var(--dborder)",
+              borderRadius: 12,
+              padding: 16,
+              height: 280,
+            }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={aggregates.daily} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--dborder)" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 11, fill: "var(--dmuted)" }}
+                  tickFormatter={(v: string) => v.slice(5)}
+                  stroke="var(--dborder)"
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fontSize: 11, fill: "var(--dmuted)" }}
+                  stroke="var(--dborder)"
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: "var(--surface-raised)",
+                    border: "1px solid var(--dborder)",
+                    borderRadius: 8,
+                    fontSize: 12,
+                  }}
+                  labelStyle={{ color: "var(--dtext)" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="published"
+                  stroke="var(--success)"
+                  strokeWidth={2}
+                  dot={false}
+                  name="Published"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="failed"
+                  stroke="var(--danger)"
+                  strokeWidth={2}
+                  dot={false}
+                  name="Failed"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+
+      <div className="ad-section-header" style={{ marginTop: 24 }}>
+        <div className="ad-section-title" style={{ fontSize: 14 }}>
+          Posts {posts.length === limit ? `(showing first ${limit})` : `(${posts.length})`}
+        </div>
+        <div className="ad-section-meta">Most recent first</div>
+      </div>
       <div className="ad-tbl-wrap ad-tbl-static">
         <table>
           <thead>
