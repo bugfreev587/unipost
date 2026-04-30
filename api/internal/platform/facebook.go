@@ -1804,6 +1804,71 @@ func (a *FacebookAdapter) FetchCommentAuthor(ctx context.Context, accessToken, c
 	}, nil
 }
 
+// FacebookUserProfile carries the subset of profile fields we ask
+// Graph for when enriching a Messenger sender. PSID-scoped reads use
+// `profile_pic` (full URL) and `name` (computed from first+last);
+// regular FB user ids use `picture{url}` instead but that path isn't
+// the one DM webhooks deliver, so a single struct covers both.
+type FacebookUserProfile struct {
+	ID        string
+	Name      string
+	AvatarURL string
+}
+
+// FetchUserProfile resolves a Messenger PSID (or any FB user id Graph
+// will let us look up with the Page token) into a name + avatar pair.
+// Used by the webhook handler to enrich fb_dm rows in real time —
+// without this Meta only delivers the opaque PSID, which renders as
+// a placeholder name in the inbox UI.
+//
+// Per Meta docs the lookup only succeeds when the user has messaged
+// the Page within the last 24 hours; failure outside that window is
+// expected, and the caller treats nil/error as "skip enrichment".
+func (a *FacebookAdapter) FetchUserProfile(ctx context.Context, accessToken, userID string) (*FacebookUserProfile, error) {
+	params := url.Values{
+		"access_token": {accessToken},
+		"fields":       {"name,first_name,last_name,profile_pic"},
+	}
+	endpoint := facebookGraphBase + "/" + userID + "?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook fetch user profile: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("facebook fetch user profile %d: %s", resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		FirstName  string `json:"first_name"`
+		LastName   string `json:"last_name"`
+		ProfilePic string `json:"profile_pic"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("facebook fetch user profile decode: %w", err)
+	}
+	displayName := parsed.Name
+	if displayName == "" {
+		// Fall back to first+last when Meta gave us the parts but
+		// not the joined display string.
+		displayName = strings.TrimSpace(parsed.FirstName + " " + parsed.LastName)
+	}
+	if parsed.ID == "" && displayName == "" && parsed.ProfilePic == "" {
+		return nil, nil
+	}
+	return &FacebookUserProfile{
+		ID:        parsed.ID,
+		Name:      displayName,
+		AvatarURL: parsed.ProfilePic,
+	}, nil
+}
+
 // FetchConversations returns recent Messenger messages across all
 // conversations the Page participates in. One nested Graph call
 // pulls the latest 25 messages per conversation along with the

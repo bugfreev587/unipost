@@ -40,7 +40,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
 
@@ -48,14 +50,16 @@ import (
 type MetaWebhookHandler struct {
 	queries     *db.Queries
 	pool        *pgxpool.Pool // for pg_notify (ws.Notify)
+	encryptor   *crypto.AESEncryptor
 	appSecret   string
 	verifyToken string
 }
 
-func NewMetaWebhookHandler(queries *db.Queries, pool *pgxpool.Pool, appSecret, verifyToken string) *MetaWebhookHandler {
+func NewMetaWebhookHandler(queries *db.Queries, pool *pgxpool.Pool, encryptor *crypto.AESEncryptor, appSecret, verifyToken string) *MetaWebhookHandler {
 	return &MetaWebhookHandler{
 		queries:     queries,
 		pool:        pool,
+		encryptor:   encryptor,
 		appSecret:   strings.TrimSpace(appSecret),
 		verifyToken: strings.TrimSpace(verifyToken),
 	}
@@ -338,10 +342,19 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 // webhookAccount is a minimal projection of a social account for
 // webhook routing. We need the DB row ID, workspace ID, and external
 // account ID to insert inbox items.
+//
+// AccessToken is the decrypted Page / IG / Threads token, populated
+// only when the webhook handler decided it'll need to make a Graph
+// follow-up call (currently the FB path uses it to enrich comment
+// authors and DM senders with name + avatar — Meta's webhook payload
+// for those events is minimal). Empty string means "we either failed
+// to decrypt or didn't bother loading it"; the caller treats both as
+// "skip enrichment, fall back to whatever the webhook delivered".
 type webhookAccount struct {
 	ID                string
 	WorkspaceID       string
 	ExternalAccountID string
+	AccessToken       string
 }
 
 // findAccountByExternalID finds a social account by platform + external_account_id,
@@ -498,6 +511,31 @@ func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebh
 		accounts = []*webhookAccount{account}
 	}
 
+	// Decrypt the Page access token for each matched account so the
+	// comment + DM handlers can issue Graph follow-up calls to pull
+	// author name + avatar (FB webhook payloads are minimal — the
+	// raw delivery only carries an opaque sender id and sometimes a
+	// name). Failures here aren't fatal; an empty AccessToken just
+	// means enrichment is skipped and the row falls back to whatever
+	// the webhook delivered (often "Facebook user" placeholder).
+	if h.encryptor != nil {
+		for _, account := range accounts {
+			fullRow, fetchErr := h.queries.GetSocialAccount(r.Context(), account.ID)
+			if fetchErr != nil {
+				slog.Warn("meta webhook: load fb account for token failed",
+					"account_id", account.ID, "err", fetchErr)
+				continue
+			}
+			token, decErr := h.encryptor.Decrypt(fullRow.AccessToken)
+			if decErr != nil {
+				slog.Warn("meta webhook: decrypt fb page token failed",
+					"account_id", account.ID, "err", decErr)
+				continue
+			}
+			account.AccessToken = token
+		}
+	}
+
 	for _, account := range accounts {
 		// Feed events (comments, reactions). We only surface comments to
 		// the inbox — reactions/posts don't need human reply.
@@ -530,6 +568,7 @@ func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebh
 			threadKey := senderID
 			parentExternalID := pgtype.Text{}
 			authorName := pgtype.Text{}
+			authorAvatarURL := pgtype.Text{}
 			existing, lookupErr := h.queries.FindDMThreadKeyBySender(r.Context(), db.FindDMThreadKeyBySenderParams{
 				SocialAccountID: account.ID,
 				AuthorID:        pgtype.Text{String: msg.Sender.ID, Valid: true},
@@ -542,6 +581,29 @@ func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebh
 				authorName = existing.AuthorName
 			}
 
+			// Best-effort sender enrichment: pull name + profile_pic
+			// for inbound DMs via /{psid}?fields=name,profile_pic.
+			// Only valid for non-own (inbound) messages within the
+			// 24-hour messaging window — Meta rejects other lookups,
+			// which we treat as "skip enrichment". Skipped entirely
+			// when we already have a name from a previous message in
+			// the same conversation (existing.AuthorName), to avoid
+			// burning Graph quota on repeated lookups.
+			if !isOwn && account.AccessToken != "" && (!authorName.Valid || authorName.String == "") {
+				fb := platform.NewFacebookAdapter()
+				if profile, fetchErr := fb.FetchUserProfile(r.Context(), account.AccessToken, msg.Sender.ID); fetchErr == nil && profile != nil {
+					if profile.Name != "" {
+						authorName = pgtype.Text{String: profile.Name, Valid: true}
+					}
+					if profile.AvatarURL != "" {
+						authorAvatarURL = pgtype.Text{String: profile.AvatarURL, Valid: true}
+					}
+				} else if fetchErr != nil {
+					slog.Info("meta webhook: enrich fb dm sender failed",
+						"account_id", account.ID, "psid", msg.Sender.ID, "err", fetchErr)
+				}
+			}
+
 			dmItem, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 				SocialAccountID:  account.ID,
 				WorkspaceID:      account.WorkspaceID,
@@ -550,6 +612,7 @@ func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebh
 				ParentExternalID: parentExternalID,
 				AuthorName:       authorName,
 				AuthorID:         pgtype.Text{String: msg.Sender.ID, Valid: true},
+				AuthorAvatarUrl:  authorAvatarURL,
 				Body:             pgtype.Text{String: msg.Message.Text, Valid: msg.Message.Text != ""},
 				IsOwn:            isOwn,
 				ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},
@@ -624,6 +687,31 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 		ts = time.Now()
 	}
 
+	// Best-effort enrichment: FB webhooks for `feed` deliver minimal
+	// metadata (often just a sender_id/name pair, no avatar). Issue a
+	// Graph lookup against the comment id to pull from{name,picture}
+	// when we have a Page token available. Failure is silent — the
+	// row still upserts with whatever the webhook gave us.
+	authorAvatarURL := ""
+	if account.AccessToken != "" && !isOwn {
+		fb := platform.NewFacebookAdapter()
+		if author, fetchErr := fb.FetchCommentAuthor(r.Context(), account.AccessToken, val.CommentID); fetchErr == nil && author != nil {
+			if author.ID != "" {
+				authorID = author.ID
+				isOwn = authorID == account.ExternalAccountID
+			}
+			if author.Name != "" {
+				authorName = author.Name
+			}
+			if author.AvatarURL != "" {
+				authorAvatarURL = author.AvatarURL
+			}
+		} else if fetchErr != nil {
+			slog.Info("meta webhook: enrich fb comment author failed",
+				"account_id", account.ID, "comment_id", val.CommentID, "err", fetchErr)
+		}
+	}
+
 	item, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 		SocialAccountID:  account.ID,
 		WorkspaceID:      account.WorkspaceID,
@@ -632,6 +720,7 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 		ParentExternalID: pgtype.Text{String: parentID, Valid: parentID != ""},
 		AuthorName:       pgtype.Text{String: authorName, Valid: authorName != ""},
 		AuthorID:         pgtype.Text{String: authorID, Valid: authorID != ""},
+		AuthorAvatarUrl:  pgtype.Text{String: authorAvatarURL, Valid: authorAvatarURL != ""},
 		Body:             pgtype.Text{String: val.Message, Valid: val.Message != ""},
 		IsOwn:            isOwn,
 		ReceivedAt:       pgtype.Timestamptz{Time: ts, Valid: true},

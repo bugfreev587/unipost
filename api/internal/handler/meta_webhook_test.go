@@ -11,7 +11,7 @@ import (
 )
 
 func TestMetaWebhookVerify(t *testing.T) {
-	h := NewMetaWebhookHandler(nil, nil,"test-secret", "my-verify-token")
+	h := NewMetaWebhookHandler(nil, nil, nil, "test-secret", "my-verify-token")
 
 	t.Run("valid subscribe", func(t *testing.T) {
 		req := httptest.NewRequest("GET",
@@ -55,7 +55,7 @@ func TestMetaWebhookVerify(t *testing.T) {
 
 func TestMetaWebhookHandle(t *testing.T) {
 	appSecret := "test-app-secret"
-	h := NewMetaWebhookHandler(nil, nil,appSecret, "tok")
+	h := NewMetaWebhookHandler(nil, nil, nil, appSecret, "tok")
 
 	sign := func(body string) string {
 		mac := hmac.New(sha256.New, []byte(appSecret))
@@ -99,7 +99,7 @@ func TestMetaWebhookHandle(t *testing.T) {
 	})
 
 	t.Run("not configured", func(t *testing.T) {
-		unconfigured := NewMetaWebhookHandler(nil, nil,"", "tok")
+		unconfigured := NewMetaWebhookHandler(nil, nil, nil, "", "tok")
 		body := `{"object":"instagram","entry":[]}`
 		req := httptest.NewRequest("POST", "/webhooks/meta", strings.NewReader(body))
 		rr := httptest.NewRecorder()

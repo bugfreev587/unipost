@@ -399,6 +399,7 @@ func main() {
 	metaWebhookHandler := handler.NewMetaWebhookHandler(
 		queries,
 		pool,
+		encryptor,
 		os.Getenv("META_APP_SECRET"),
 		os.Getenv("META_WEBHOOK_VERIFY_TOKEN"),
 	)
