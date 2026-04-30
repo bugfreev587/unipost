@@ -24,7 +24,14 @@ export default function AdminPostsPage() {
   const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]>("all");
   const [platform, setPlatform] = useState<(typeof PLATFORM_OPTIONS)[number]>("all");
   const [source, setSource] = useState<(typeof SOURCE_OPTIONS)[number]>("all");
+  const [userId, setUserId] = useState<string>("");
+  const [workspaceId, setWorkspaceId] = useState<string>("");
   const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(30);
+  // Filter dropdown options accumulate across loads so picking one filter
+  // doesn't strand the others — once we've seen a user/workspace we keep
+  // them selectable until a hard refresh.
+  const [userOptions, setUserOptions] = useState<Array<{ id: string; email: string }>>([]);
+  const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ id: string; name: string }>>([]);
   const limit = 100;
 
   const loadPosts = useCallback(async () => {
@@ -38,6 +45,8 @@ export default function AdminPostsPage() {
         status: status !== "all" ? status : undefined,
         platform: platform !== "all" ? platform : undefined,
         source: source !== "all" ? source : undefined,
+        user_id: userId || undefined,
+        workspace_id: workspaceId || undefined,
         days,
         limit,
       };
@@ -48,7 +57,7 @@ export default function AdminPostsPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, getToken, platform, search, source, status]);
+  }, [days, getToken, platform, search, source, status, userId, workspaceId]);
 
   useEffect(() => {
     loadPosts();
@@ -58,6 +67,28 @@ export default function AdminPostsPage() {
     const timer = setTimeout(() => setSearch(searchInput), 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
+
+  // Accumulate user + workspace dropdown options as we see them across
+  // loads. Without this, picking a user filter would shrink the user
+  // dropdown to a single option, making it impossible to switch users
+  // without first clearing.
+  useEffect(() => {
+    if (posts.length === 0) return;
+    setUserOptions((prev) => {
+      const map = new Map(prev.map((u) => [u.id, u.email]));
+      for (const p of posts) map.set(p.user_id, p.user_email);
+      return Array.from(map.entries())
+        .map(([id, email]) => ({ id, email }))
+        .sort((a, b) => a.email.localeCompare(b.email));
+    });
+    setWorkspaceOptions((prev) => {
+      const map = new Map(prev.map((w) => [w.id, w.name]));
+      for (const p of posts) map.set(p.workspace_id, p.workspace_name);
+      return Array.from(map.entries())
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    });
+  }, [posts]);
 
   const failedCount = useMemo(() => posts.filter((post) => post.status === "failed").length, [posts]);
   const scheduledCount = useMemo(() => posts.filter((post) => post.status === "scheduled").length, [posts]);
@@ -110,6 +141,22 @@ export default function AdminPostsPage() {
           {SOURCE_OPTIONS.map((value) => (
             <option key={value} value={value}>
               {value === "all" ? "All Sources" : `Source: ${value}`}
+            </option>
+          ))}
+        </select>
+        <select value={userId} onChange={(e) => setUserId(e.target.value)}>
+          <option value="">All Users</option>
+          {userOptions.map((u) => (
+            <option key={u.id} value={u.id}>
+              {`User: ${u.email}`}
+            </option>
+          ))}
+        </select>
+        <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
+          <option value="">All Workspaces</option>
+          {workspaceOptions.map((w) => (
+            <option key={w.id} value={w.id}>
+              {`Workspace: ${w.name}`}
             </option>
           ))}
         </select>

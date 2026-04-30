@@ -1271,6 +1271,8 @@ export interface AdminPostListParams {
   status?: string;
   platform?: string;
   source?: string;
+  user_id?: string;
+  workspace_id?: string;
   days?: number;
   limit?: number;
 }
@@ -1536,6 +1538,8 @@ export async function listAdminPosts(
   if (params?.status) qs.set("status", params.status);
   if (params?.platform) qs.set("platform", params.platform);
   if (params?.source) qs.set("source", params.source);
+  if (params?.user_id) qs.set("user_id", params.user_id);
+  if (params?.workspace_id) qs.set("workspace_id", params.workspace_id);
   if (params?.days != null) qs.set("days", String(params.days));
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();

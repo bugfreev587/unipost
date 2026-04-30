@@ -390,13 +390,15 @@ type adminPostRow struct {
 }
 
 type adminPostsQuery struct {
-	Search   string
-	Status   string
-	Platform string
-	Source   string
-	Days     int
-	Limit    int
-	Excluded []string
+	Search      string
+	Status      string
+	Platform    string
+	Source      string
+	UserID      string
+	WorkspaceID string
+	Days        int
+	Limit       int
+	Excluded    []string
 }
 
 type adminBillingRow struct {
@@ -611,6 +613,8 @@ WITH post_rollup AS (
     AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
     AND ($3::TEXT = '' OR sp.status = $3)
     AND ($4::TEXT = '' OR sp.source = $4)
+    AND ($8::TEXT = '' OR u.id = $8)
+    AND ($9::TEXT = '' OR sp.workspace_id = $9)
   GROUP BY
     sp.id, u.id, u.email, sp.workspace_id, w.name, sp.status, sp.source,
     sp.caption, sp.created_at, sp.scheduled_at, sp.published_at
@@ -642,7 +646,7 @@ WHERE ($5::TEXT = '' OR $5 = ANY(platforms))
   )
 ORDER BY created_at DESC
 LIMIT $7
-`, opts.Excluded, days, opts.Status, opts.Source, opts.Platform, opts.Search, limit)
+`, opts.Excluded, days, opts.Status, opts.Source, opts.Platform, opts.Search, limit, opts.UserID, opts.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -914,13 +918,15 @@ func (h *AdminHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.queryPosts(r.Context(), adminPostsQuery{
-		Search:   q.Get("search"),
-		Status:   q.Get("status"),
-		Platform: q.Get("platform"),
-		Source:   q.Get("source"),
-		Days:     days,
-		Limit:    limit,
-		Excluded: excluded,
+		Search:      q.Get("search"),
+		Status:      q.Get("status"),
+		Platform:    q.Get("platform"),
+		Source:      q.Get("source"),
+		UserID:      q.Get("user_id"),
+		WorkspaceID: q.Get("workspace_id"),
+		Days:        days,
+		Limit:       limit,
+		Excluded:    excluded,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load posts: "+err.Error())
