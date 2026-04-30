@@ -15,6 +15,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -300,32 +301,87 @@ func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, map[string]bool{"deleted": true})
 }
 
-// tryHydrate is the publish-path equivalent of an R2 upload-complete
-// webhook. HEAD the object; on a successful response, copy the
-// authoritative size + content type from R2 into the row and flip
-// status to 'uploaded'. Returns the updated row + true on success,
-// or the original row + false on any failure.
-//
-// Failures here are SOFT — we don't propagate them, because the
-// caller (Get / publish path) needs to handle the not-yet-uploaded
-// case anyway.
+// tryHydrate is the GET /v1/media/{id} entry point into the shared
+// hydrate helper. Kept as a thin method for symmetry with the publish
+// path, which calls hydrateMediaRow directly.
 func (h *MediaHandler) tryHydrate(r *http.Request, row db.Media) (db.Media, bool) {
-	if h.storage == nil {
+	return hydrateMediaRow(r.Context(), h.queries, h.storage, row)
+}
+
+// hydrateMediaRow is the publish-path equivalent of an R2 upload-
+// complete webhook. HEAD the object; on a successful response, copy
+// the authoritative size + content type from R2 into the row and flip
+// status to 'uploaded'. For video content types it ALSO probes the
+// moov atom to capture width / height / duration_ms — the validator
+// reads those columns to pre-flight Facebook feed-vs-reel placement
+// (and other per-platform rules in PR2) before the publish call hits
+// the network. Probe failures are SOFT: the row still hydrates to
+// 'uploaded', just with NULL metadata, and the validator falls back
+// to a warning instead of blocking.
+//
+// Returns (updated row, true) on success, (original row, false) when
+// R2 says the object isn't there yet — same contract as the original
+// tryHydrate that lived inline on MediaHandler.
+//
+// Lives at package scope (not on MediaHandler) so the publish path's
+// resolveMediaIDsToURLs can call it with its own *db.Queries +
+// *storage.Client without coupling to the media handler.
+func hydrateMediaRow(ctx context.Context, q *db.Queries, s *storage.Client, row db.Media) (db.Media, bool) {
+	if s == nil {
 		return row, false
 	}
-	head, err := h.storage.Head(r.Context(), row.StorageKey)
+	head, err := s.Head(ctx, row.StorageKey)
 	if err != nil || !head.Exists {
 		return row, false
 	}
-	updated, err := h.queries.MarkMediaUploaded(r.Context(), db.MarkMediaUploadedParams{
+
+	contentType := pickContentType(head.ContentType, row.ContentType)
+
+	// Video probing is best-effort. ProbeVideo returns:
+	//   - (zero meta, nil err) when the bytes parsed but yielded no
+	//     usable boxes (non-mp4 container, moov-at-end > 16 MB, etc.)
+	//   - (zero meta, non-nil err) only when R2 itself failed.
+	// In both cases we still flip status to 'uploaded' — the user's
+	// upload landed, we just couldn't extract metadata. Logging a
+	// warning on R2 errors helps diagnose persistent infra issues
+	// without blocking the user.
+	var width, height, durationMs pgtype.Int4
+	if isVideoContentType(contentType) {
+		meta, probeErr := s.ProbeVideo(ctx, row.StorageKey)
+		if probeErr != nil {
+			slog.Warn("hydrateMediaRow: probe video failed",
+				"media_id", row.ID, "storage_key", row.StorageKey, "err", probeErr)
+		}
+		if meta.Width > 0 {
+			width = pgtype.Int4{Int32: int32(meta.Width), Valid: true}
+		}
+		if meta.Height > 0 {
+			height = pgtype.Int4{Int32: int32(meta.Height), Valid: true}
+		}
+		if meta.DurationMS > 0 {
+			durationMs = pgtype.Int4{Int32: int32(meta.DurationMS), Valid: true}
+		}
+	}
+
+	updated, err := q.MarkMediaUploaded(ctx, db.MarkMediaUploadedParams{
 		ID:          row.ID,
 		SizeBytes:   head.SizeBytes,
-		ContentType: pickContentType(head.ContentType, row.ContentType),
+		ContentType: contentType,
+		Width:       width,
+		Height:      height,
+		DurationMs:  durationMs,
 	})
 	if err != nil {
 		return row, false
 	}
 	return updated, true
+}
+
+// isVideoContentType reports whether a MIME type is one of the video
+// formats the media library accepts. Used by hydrateMediaRow to gate
+// the probe call — there's no point parsing image bytes as mp4.
+func isVideoContentType(ct string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "video/")
 }
 
 // pickExt returns a sensible file extension for the storage key.

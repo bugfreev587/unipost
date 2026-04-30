@@ -3,6 +3,7 @@ module github.com/xiaoboyu/unipost-api
 go 1.25.4
 
 require (
+	github.com/abema/go-mp4 v1.5.0
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.98.0

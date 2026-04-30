@@ -39,10 +39,18 @@ ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
 -- name: MarkMediaUploaded :one
+-- Hydrates a pending row after the client's PUT lands. width / height /
+-- duration_ms come from storage.ProbeVideo for video uploads (see
+-- migration 056); pass NULL for images or for any case where probing
+-- couldn't extract them. NULLs leave the columns at NULL — the validator
+-- treats unknown dimensions as "warn, don't block" rather than 0×0.
 UPDATE media
 SET status = 'uploaded',
     size_bytes = $2,
     content_type = $3,
+    width = $4,
+    height = $5,
+    duration_ms = $6,
     uploaded_at = NOW()
 WHERE id = $1
 RETURNING *;
