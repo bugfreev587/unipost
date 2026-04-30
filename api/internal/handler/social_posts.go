@@ -1201,20 +1201,16 @@ func (h *SocialPostHandler) resolveMediaIDsToURLs(ctx context.Context, mediaIDs 
 		if err != nil {
 			return nil, fmt.Errorf("media_id %s: %w", id, err)
 		}
-		// Hydrate pending rows lazily.
+		// Hydrate pending rows lazily — same code path the GET
+		// /v1/media/{id} handler uses, so video metadata gets
+		// captured here on first publish if the user skipped a GET
+		// between PUT and submit.
 		if row.Status == "pending" {
-			head, hErr := h.storage.Head(ctx, row.StorageKey)
-			if hErr != nil || !head.Exists {
+			hydrated, ok := hydrateMediaRow(ctx, h.queries, h.storage, row)
+			if !ok {
 				return nil, fmt.Errorf("media_id %s: not yet uploaded", id)
 			}
-			updated, uErr := h.queries.MarkMediaUploaded(ctx, db.MarkMediaUploadedParams{
-				ID:          row.ID,
-				SizeBytes:   head.SizeBytes,
-				ContentType: pickContentType(head.ContentType, row.ContentType),
-			})
-			if uErr == nil {
-				row = updated
-			}
+			row = hydrated
 		}
 		dlURL, err := h.storage.PresignGet(ctx, row.StorageKey, 15*time.Minute)
 		if err != nil {

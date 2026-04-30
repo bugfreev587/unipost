@@ -101,6 +101,9 @@ type Media struct {
 	WorkspaceID    string             `json:"workspace_id"`
 	ContentHash    pgtype.Text        `json:"content_hash"`
 	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
+	Width          pgtype.Int4        `json:"width"`
+	Height         pgtype.Int4        `json:"height"`
+	DurationMs     pgtype.Int4        `json:"duration_ms"`
 }
 
 type MetaUserToken struct {
