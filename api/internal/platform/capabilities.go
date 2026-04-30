@@ -115,6 +115,75 @@ type VideoCapability struct {
 	MaxFileSizeBytes int64 `json:"max_file_size_bytes,omitempty"`
 	// AllowedFormats lists accepted container/codec hints (e.g. "mp4", "mov").
 	AllowedFormats []string `json:"allowed_formats,omitempty"`
+
+	// Placements (Sprint 5) is keyed by platform_options.mediaType
+	// (e.g. "feed" / "reel" on Facebook). When non-nil, the validator
+	// looks up the active mediaType and checks the uploaded video's
+	// width / height / aspect-ratio / duration against the matching
+	// VideoPlacementSpec. The map is OPTIONAL — platforms with a
+	// single publish surface (Twitter, LinkedIn) can leave it nil and
+	// the validator falls back to the flat MaxDurationSeconds field.
+	Placements map[string]VideoPlacementSpec `json:"placements,omitempty"`
+}
+
+// VideoPlacementSpec encodes the per-placement constraints that
+// determine whether a network will accept the video AS THE PLACEMENT
+// THE USER PICKED. The motivating case is Facebook: posting a 9:16
+// vertical video to /{page_id}/videos (mediaType=feed) gets silently
+// re-routed by Meta into the Reels publishing pipeline. The Reels
+// route then fails for unrelated reasons (missing app permission,
+// scheduled publish) and the user is left wondering why a "feed"
+// post failed. Encoding the routing rule here lets the validator
+// reject the bad combination at submit time so Meta never gets a
+// request it would mutate.
+//
+// All numeric fields use 0 to mean "unbounded" — the validator
+// treats a zero limit as "skip this check" rather than "must be 0".
+// Aspect ratios are W/H float64; the validator computes the actual
+// ratio from probed dimensions and compares against the [Min, Max]
+// closed interval (with a small tolerance to absorb the off-by-one
+// pixels that come out of resize tools).
+type VideoPlacementSpec struct {
+	// DisplayName is how this placement is named in error messages —
+	// e.g. "Facebook Reel" — so users see "Facebook Reels require
+	// 9:16 aspect ratio" rather than the raw mediaType key.
+	DisplayName string `json:"display_name,omitempty"`
+
+	// MinWidth / MinHeight: the smallest pixel dimensions the
+	// placement will accept. Both must be met. Encodes Meta's
+	// "Reels require 540×960 minimum" rule.
+	MinWidth  int `json:"min_width,omitempty"`
+	MinHeight int `json:"min_height,omitempty"`
+
+	// MaxWidth / MaxHeight: 0 = unbounded. Most placements don't
+	// have a useful upper pixel cap (Meta resamples down silently)
+	// but TikTok and YouTube do.
+	MaxWidth  int `json:"max_width,omitempty"`
+	MaxHeight int `json:"max_height,omitempty"`
+
+	// MinAspectRatio / MaxAspectRatio: closed interval on W/H.
+	// Examples:
+	//   feed:  MinAspectRatio=1.0  MaxAspectRatio=0   → square or wider
+	//          (vertical = "below 1.0" = reject; FB would reclassify
+	//          it as a Reel)
+	//   reel:  MinAspectRatio=0.5  MaxAspectRatio=0.62 → ~9:16 vertical
+	//          (9/16 = 0.5625; the interval absorbs encoder rounding)
+	MinAspectRatio float64 `json:"min_aspect_ratio,omitempty"`
+	MaxAspectRatio float64 `json:"max_aspect_ratio,omitempty"`
+
+	// MinDurationMS / MaxDurationMS: 0 = unbounded. Use
+	// milliseconds (not seconds) so we can express FB's exact
+	// 90 000 ms Reel cap and TikTok's 60 000 ms Story cap without
+	// rounding ambiguity.
+	MinDurationMS int `json:"min_duration_ms,omitempty"`
+	MaxDurationMS int `json:"max_duration_ms,omitempty"`
+
+	// ReclassifyHint is a short surface-specific explanation the
+	// validator appends to the error message when an aspect-ratio
+	// check fails — e.g. "Facebook will silently reclassify 9:16
+	// videos as Reels". Surfaces the WHY so users don't think it's
+	// an arbitrary rule.
+	ReclassifyHint string `json:"reclassify_hint,omitempty"`
 }
 
 // ThreadCapability indicates whether the platform supports threading
@@ -391,7 +460,50 @@ var Capabilities = map[string]Capability{
 				// 1 GB matches the decision to skip resumable upload
 				// in v1 — anything larger has to wait for Phase 2.5.
 				MaxFileSizeBytes: 1024 * 1024 * 1024,
-				AllowedFormats:   []string{"mp4", "mov"},
+				AllowedFormats: []string{"mp4", "mov"},
+				// Placement specs encode Meta's silent-routing rule:
+				// post a vertical 9:16 video to /{page_id}/videos
+				// (mediaType=feed) and Meta re-routes the upload into
+				// the Reels publishing pipeline. The reclassified post
+				// then often fails for unrelated reasons — see the
+				// "feed video reclassified as Reel" branch in
+				// platform/facebook.go. Validating against these specs
+				// at submit time prevents the bad combination from
+				// ever reaching Meta.
+				Placements: map[string]VideoPlacementSpec{
+					"feed": {
+						DisplayName: "Facebook Feed",
+						// Square or wider stays in Feed; anything
+						// taller-than-wide (W/H < 1.0) gets routed to
+						// Reels by Meta, regardless of which endpoint
+						// we POST to.
+						MinAspectRatio: 1.0,
+						// No hard upper aspect cap — Meta accepts very
+						// wide cinematic 21:9 etc. without complaint.
+						MinDurationMS:  1_000, // 1 second floor
+						MaxDurationMS:  240 * 60 * 1000,
+						ReclassifyHint: "Facebook silently reclassifies vertical videos as Reels. Either crop to square/landscape or switch placement to mediaType=reel.",
+					},
+					"reel": {
+						DisplayName: "Facebook Reel",
+						// 9:16 = 0.5625. Allow a small interval so
+						// 1080×1920, 1080×1921, 720×1280 etc. all
+						// pass — encoders frequently emit off-by-one
+						// pixel dimensions.
+						MinAspectRatio: 0.50,
+						MaxAspectRatio: 0.62,
+						// Per Meta Reels Specs: 540×960 minimum,
+						// 1080×1920 recommended.
+						MinWidth:  540,
+						MinHeight: 960,
+						// Reels are 3-90 seconds at the time of
+						// writing (Meta has flirted with 60s and 180s
+						// caps; 90s is the documented current).
+						MinDurationMS:  3_000,
+						MaxDurationMS:  90_000,
+						ReclassifyHint: "Facebook Reels require a vertical 9:16 video, 540×960 or larger, between 3 and 90 seconds.",
+					},
+				},
 			},
 		},
 		Thread:       ThreadCapability{Supported: false},
