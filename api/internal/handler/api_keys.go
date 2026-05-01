@@ -85,6 +85,27 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
+	// RBAC migration 063: attribute the new key to its creator. The
+	// creator's role at runtime drives the key's effective permissions
+	// (see dualauth.go authenticateAPIKey). For API-key-auth callers
+	// (no Clerk user), fall back to a synthetic "owner" creator since
+	// pre-RBAC keys all belonged to the workspace owner.
+	creatorUserID := auth.GetUserID(r.Context())
+	if creatorUserID == "" {
+		// API-key-auth path — derive from the calling key's own
+		// creator so the new key inherits the same identity.
+		callingKeyID := auth.GetAPIKeyID(r.Context())
+		if callingKeyID != "" {
+			if calling, err := h.queries.GetAPIKey(r.Context(), callingKeyID); err == nil {
+				creatorUserID = calling.CreatedByUserID
+			}
+		}
+	}
+	if creatorUserID == "" {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"Could not resolve creator identity for new API key")
+		return
+	}
 
 	var body struct {
 		Name        string  `json:"name"`
@@ -124,13 +145,14 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key, err := h.queries.CreateAPIKey(r.Context(), db.CreateAPIKeyParams{
-		ID:          uuid.New().String(),
-		WorkspaceID: workspaceID,
-		Name:        body.Name,
-		Prefix:      prefix,
-		KeyHash:     hash,
-		Environment: body.Environment,
-		ExpiresAt:   expiresAt,
+		ID:              uuid.New().String(),
+		WorkspaceID:     workspaceID,
+		Name:            body.Name,
+		Prefix:          prefix,
+		KeyHash:         hash,
+		Environment:     body.Environment,
+		ExpiresAt:       expiresAt,
+		CreatedByUserID: creatorUserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create API key")

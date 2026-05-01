@@ -43,6 +43,11 @@ type meResponse struct {
 	// signup before /v1/me/bootstrap fires).
 	WorkspaceID   string `json:"workspace_id,omitempty"`
 	WorkspaceName string `json:"workspace_name,omitempty"`
+	// Role in the current workspace (RBAC migration 060). Surfaced so
+	// the dashboard can render role-conditional UI (member-management
+	// page, billing-only-for-owner gates, etc.) without a separate
+	// /v1/members lookup. Empty when no membership.
+	Role string `json:"role,omitempty"`
 	// Intent-collection fields. The frontend uses OnboardingShownAt to
 	// decide whether to pop the Welcome modal on first dashboard load.
 	// OnboardingIntent is one of: "exploring", "own_accounts",
@@ -75,10 +80,19 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		IsAdmin:      h.adminChecker.IsAdmin(r.Context(), userID),
 		IsSuperAdmin: h.superAdminChecker.IsSuperAdminByUser(userID, user.Email),
 	}
-	// Best-effort workspace lookup. A failure here shouldn't block the
-	// rest of the /v1/me response — the dashboard tolerates an empty
-	// workspace name (falls back to the user's first name).
-	if workspaces, wsErr := h.queries.ListWorkspacesByUser(r.Context(), userID); wsErr == nil && len(workspaces) > 0 {
+	// Best-effort workspace + role lookup. RBAC migration 060 made
+	// memberships first-class, so we resolve via the membership table
+	// (which works for both owners and invited members). Falls back
+	// to the legacy "workspace owned by this user" path if the
+	// membership lookup fails — defensive for the brief window during
+	// migration where backfill hadn't run yet.
+	if mem, memErr := h.queries.GetActiveMembership(r.Context(), userID); memErr == nil {
+		if ws, wsErr := h.queries.GetWorkspace(r.Context(), mem.WorkspaceID); wsErr == nil {
+			resp.WorkspaceID = ws.ID
+			resp.WorkspaceName = ws.Name
+		}
+		resp.Role = mem.Role
+	} else if workspaces, wsErr := h.queries.ListWorkspacesByUser(r.Context(), userID); wsErr == nil && len(workspaces) > 0 {
 		resp.WorkspaceID = workspaces[0].ID
 		resp.WorkspaceName = workspaces[0].Name
 	}

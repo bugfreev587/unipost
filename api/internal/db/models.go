@@ -9,16 +9,17 @@ import (
 )
 
 type ApiKey struct {
-	ID          string             `json:"id"`
-	Name        string             `json:"name"`
-	Prefix      string             `json:"prefix"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
-	KeyHash     string             `json:"key_hash"`
-	Environment string             `json:"environment"`
-	WorkspaceID string             `json:"workspace_id"`
+	ID              string             `json:"id"`
+	Name            string             `json:"name"`
+	Prefix          string             `json:"prefix"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
+	KeyHash         string             `json:"key_hash"`
+	Environment     string             `json:"environment"`
+	WorkspaceID     string             `json:"workspace_id"`
+	CreatedByUserID string             `json:"created_by_user_id"`
 }
 
 type ApiMetric struct {
@@ -29,6 +30,23 @@ type ApiMetric struct {
 	StatusCode  int32              `json:"status_code"`
 	DurationMs  int32              `json:"duration_ms"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type AuditLog struct {
+	ID            int64              `json:"id"`
+	WorkspaceID   string             `json:"workspace_id"`
+	ActorUserID   pgtype.Text        `json:"actor_user_id"`
+	ActorApiKeyID pgtype.Text        `json:"actor_api_key_id"`
+	Action        string             `json:"action"`
+	ResourceType  string             `json:"resource_type"`
+	ResourceID    pgtype.Text        `json:"resource_id"`
+	Category      string             `json:"category"`
+	IpAddress     pgtype.Text        `json:"ip_address"`
+	UserAgent     pgtype.Text        `json:"user_agent"`
+	BeforeJson    []byte             `json:"before_json"`
+	AfterJson     []byte             `json:"after_json"`
+	Metadata      []byte             `json:"metadata"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type ConnectSession struct {
@@ -187,6 +205,7 @@ type Plan struct {
 	AllowInbox     bool               `json:"allow_inbox"`
 	AllowAnalytics bool               `json:"allow_analytics"`
 	MaxProfiles    pgtype.Int4        `json:"max_profiles"`
+	MaxMembers     pgtype.Int4        `json:"max_members"`
 }
 
 type PlatformCredential struct {
@@ -403,6 +422,19 @@ type Workspace struct {
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	UsageModes             []string           `json:"usage_modes"`
+}
+
+type WorkspaceInvite struct {
+	ID          string             `json:"id"`
+	WorkspaceID string             `json:"workspace_id"`
+	Email       string             `json:"email"`
+	Role        string             `json:"role"`
+	Token       string             `json:"token"`
+	InvitedBy   string             `json:"invited_by"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	AcceptedAt  pgtype.Timestamptz `json:"accepted_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type WorkspaceMember struct {

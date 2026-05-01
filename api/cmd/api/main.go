@@ -411,7 +411,7 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
-	adminHandler := handler.NewAdminHandler(pool, stripeMgr)
+	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -444,6 +444,14 @@ func main() {
 	// hosted dashboard page reads it via ?state=<oauth_state> as the
 	// bearer. Returns a minimal projection of the session.
 	r.Get("/v1/public/connect/sessions/{id}", connectSessionHandler.PublicGet)
+
+	// RBAC Phase 4: invite preview. The dashboard's /invite/{token}
+	// page calls this BEFORE the user signs in to display "Acme Inc.
+	// invited you to join as editor". The token in the URL is the only
+	// authentication; an invalid / expired / revoked token returns 404
+	// to avoid leaking which tokens existed.
+	publicMembersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+	r.Get("/v1/public/invites/{token}", publicMembersHandler.GetInvite)
 
 	// Sprint 3 PR5: Bluesky Connect form submission. Native HTML form
 	// POST from the hosted dashboard page (cross-origin, no JS). Server
@@ -497,6 +505,13 @@ func main() {
 		r.Post("/v1/me/tutorials/{id}/complete", tutorialsHandler.Complete)
 		r.Post("/v1/me/tutorials/{id}/dismiss", tutorialsHandler.Dismiss)
 		r.Post("/v1/me/tutorials/{id}/reopen", tutorialsHandler.Reopen)
+
+		// RBAC Phase 4: invite acceptance. Requires a Clerk session (the
+		// user clicking the email link) but NOT a workspace context —
+		// they may not be a member of any workspace yet. The handler
+		// creates the membership and stamps the invite accepted.
+		clerkOnlyMembersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+		r.Post("/v1/invites/{token}/accept", clerkOnlyMembersHandler.AcceptInvite)
 	})
 
 	// Admin routes — Clerk session + ADMIN_USERS gate. The middleware
@@ -682,6 +697,25 @@ func main() {
 			r.Get("/{id}", oauthHandler.PendingConnectionGet)
 			r.Post("/{id}/finalize", oauthHandler.PendingConnectionFinalize)
 		})
+
+		// Members & invites (RBAC Phase 4-5). Read access is open to
+		// any role; mutations are admin+ except transfer-ownership
+		// which is owner only. The accept-invite endpoint is mounted
+		// outside this group below — it needs Clerk auth but no role
+		// (the user accepting may not yet be a member of any
+		// workspace).
+		membersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+		r.Get("/v1/members", membersHandler.List)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/members/invite", membersHandler.Invite)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/members/invites/{id}", membersHandler.RevokeInvite)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/members/{userID}/role", membersHandler.ChangeRole)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/members/{userID}", membersHandler.Remove)
+		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/members/{userID}/transfer-ownership", membersHandler.TransferOwnership)
+
+		// Audit log (RBAC Phase 6). Read access only — writes happen
+		// inline at every mutation site via internal/audit.Log().
+		auditHandler := handler.NewAuditHandler(queries)
+		r.Get("/v1/audit-log", auditHandler.List)
 
 		// Inbox — unified Instagram comments/DMs and Threads replies.
 		// Plan-gated (migration 059): Free + API plans get 402.

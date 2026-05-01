@@ -12,21 +12,25 @@ import (
 )
 
 const createAPIKey = `-- name: CreateAPIKey :one
-INSERT INTO api_keys (id, workspace_id, name, prefix, key_hash, environment, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id
+INSERT INTO api_keys (id, workspace_id, name, prefix, key_hash, environment, expires_at, created_by_user_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id, created_by_user_id
 `
 
 type CreateAPIKeyParams struct {
-	ID          string             `json:"id"`
-	WorkspaceID string             `json:"workspace_id"`
-	Name        string             `json:"name"`
-	Prefix      string             `json:"prefix"`
-	KeyHash     string             `json:"key_hash"`
-	Environment string             `json:"environment"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	Name            string             `json:"name"`
+	Prefix          string             `json:"prefix"`
+	KeyHash         string             `json:"key_hash"`
+	Environment     string             `json:"environment"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	CreatedByUserID string             `json:"created_by_user_id"`
 }
 
+// created_by_user_id (RBAC migration 063) attributes the key to the
+// member who created it. The auth path uses this to derive the key's
+// role from the creator's current membership.
 func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (ApiKey, error) {
 	row := q.db.QueryRow(ctx, createAPIKey,
 		arg.ID,
@@ -36,6 +40,7 @@ func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (Api
 		arg.KeyHash,
 		arg.Environment,
 		arg.ExpiresAt,
+		arg.CreatedByUserID,
 	)
 	var i ApiKey
 	err := row.Scan(
@@ -49,12 +54,13 @@ func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (Api
 		&i.KeyHash,
 		&i.Environment,
 		&i.WorkspaceID,
+		&i.CreatedByUserID,
 	)
 	return i, err
 }
 
 const getAPIKey = `-- name: GetAPIKey :one
-SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id FROM api_keys WHERE id = $1
+SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id, created_by_user_id FROM api_keys WHERE id = $1
 `
 
 func (q *Queries) GetAPIKey(ctx context.Context, id string) (ApiKey, error) {
@@ -71,12 +77,13 @@ func (q *Queries) GetAPIKey(ctx context.Context, id string) (ApiKey, error) {
 		&i.KeyHash,
 		&i.Environment,
 		&i.WorkspaceID,
+		&i.CreatedByUserID,
 	)
 	return i, err
 }
 
 const getAPIKeyByHash = `-- name: GetAPIKeyByHash :one
-SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id FROM api_keys WHERE key_hash = $1
+SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id, created_by_user_id FROM api_keys WHERE key_hash = $1
 `
 
 func (q *Queries) GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error) {
@@ -93,12 +100,13 @@ func (q *Queries) GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, 
 		&i.KeyHash,
 		&i.Environment,
 		&i.WorkspaceID,
+		&i.CreatedByUserID,
 	)
 	return i, err
 }
 
 const listAPIKeysByWorkspace = `-- name: ListAPIKeysByWorkspace :many
-SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id FROM api_keys
+SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id, created_by_user_id FROM api_keys
 WHERE workspace_id = $1 AND revoked_at IS NULL
 ORDER BY created_at DESC
 `
@@ -123,6 +131,7 @@ func (q *Queries) ListAPIKeysByWorkspace(ctx context.Context, workspaceID string
 			&i.KeyHash,
 			&i.Environment,
 			&i.WorkspaceID,
+			&i.CreatedByUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -137,7 +146,7 @@ func (q *Queries) ListAPIKeysByWorkspace(ctx context.Context, workspaceID string
 const revokeAPIKey = `-- name: RevokeAPIKey :one
 UPDATE api_keys SET revoked_at = NOW()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id
+RETURNING id, name, prefix, created_at, last_used_at, expires_at, revoked_at, key_hash, environment, workspace_id, created_by_user_id
 `
 
 type RevokeAPIKeyParams struct {
@@ -159,6 +168,7 @@ func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (Api
 		&i.KeyHash,
 		&i.Environment,
 		&i.WorkspaceID,
+		&i.CreatedByUserID,
 	)
 	return i, err
 }

@@ -1345,10 +1345,134 @@ export interface MeResponse {
   // src/lib/use-current-workspace.ts reads these instead.
   workspace_id?: string;
   workspace_name?: string;
+  // Role in the current workspace ("owner" | "admin" | "editor"),
+  // empty when the user has no membership. RBAC migration 060.
+  role?: "owner" | "admin" | "editor" | "";
   // Intent-collection redesign: the dashboard uses these to decide
   // whether to pop the Welcome modal on first load.
   onboarding_intent?: OnboardingIntent;
   onboarding_shown_at?: string;
+}
+
+// ── Members & invites (RBAC) ──
+
+export interface Member {
+  user_id: string;
+  email?: string;
+  role: "owner" | "admin" | "editor";
+  status: "active" | "suspended" | "pending";
+  invited_by?: string;
+  accepted_at?: string;
+  created_at: string;
+}
+
+export interface PendingInvite {
+  id: string;
+  email: string;
+  role: "admin" | "editor";
+  invited_by: string;
+  expires_at: string;
+  created_at: string;
+  url?: string; // only present on the create-invite response
+}
+
+export interface MembersListResponse {
+  members: Member[];
+  pending_invites: PendingInvite[];
+}
+
+export interface PublicInvite {
+  workspace_id: string;
+  workspace_name: string;
+  email: string;
+  role: "admin" | "editor";
+  expires_at: string;
+}
+
+export async function listMembers(token: string): Promise<ApiResponse<MembersListResponse>> {
+  return request("/v1/members", token);
+}
+
+export async function inviteMember(
+  token: string,
+  email: string,
+  role: "admin" | "editor",
+): Promise<ApiResponse<PendingInvite>> {
+  return request("/v1/members/invite", token, {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export async function revokeInvite(token: string, inviteId: string): Promise<void> {
+  await request<void>(`/v1/members/invites/${inviteId}`, token, { method: "DELETE" });
+}
+
+export async function changeMemberRole(
+  token: string,
+  userId: string,
+  role: "admin" | "editor",
+): Promise<ApiResponse<Member>> {
+  return request(`/v1/members/${userId}/role`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function removeMember(token: string, userId: string): Promise<void> {
+  await request<void>(`/v1/members/${userId}`, token, { method: "DELETE" });
+}
+
+export async function transferOwnership(token: string, userId: string): Promise<void> {
+  await request<void>(`/v1/members/${userId}/transfer-ownership`, token, { method: "POST" });
+}
+
+// ── Audit log (RBAC Phase 6) ──
+
+export interface AuditLogEntry {
+  id: number;
+  actor_user_id?: string;
+  actor_api_key_id?: string;
+  action: string;
+  resource_type: string;
+  resource_id?: string;
+  category: string;
+  ip_address?: string;
+  before?: unknown;
+  after?: unknown;
+  metadata?: unknown;
+  created_at: string;
+}
+
+export async function listAuditLog(
+  token: string,
+  params?: { action?: string; category?: string; days?: number; limit?: number },
+): Promise<ApiResponse<AuditLogEntry[]>> {
+  const qs = new URLSearchParams();
+  if (params?.action) qs.set("action", params.action);
+  if (params?.category) qs.set("category", params.category);
+  if (params?.days) qs.set("days", String(params.days));
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const s = qs.toString();
+  return request(`/v1/audit-log${s ? `?${s}` : ""}`, token);
+}
+
+// Public preview — no token required (Clerk session NOT needed; the
+// invite token in the URL IS the authentication).
+export async function getPublicInvite(inviteToken: string): Promise<ApiResponse<PublicInvite>> {
+  const url = `${API_URL}/v1/public/invites/${inviteToken}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error?.message || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// Accept the invite. Requires Clerk session (the invitee must be
+// signed in). Caller passes the user's Clerk JWT as `clerkToken`.
+export async function acceptInvite(clerkToken: string, inviteToken: string): Promise<ApiResponse<Member>> {
+  return request(`/v1/invites/${inviteToken}/accept`, clerkToken, { method: "POST" });
 }
 
 export type OnboardingIntent = "exploring" | "own_accounts" | "building_api" | "skipped";

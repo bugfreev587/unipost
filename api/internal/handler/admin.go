@@ -11,7 +11,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xiaoboyu/unipost-api/internal/audit"
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
+	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
 // AdminHandler exposes read-only aggregates for the /admin dashboard.
@@ -21,10 +24,11 @@ import (
 type AdminHandler struct {
 	pool      *pgxpool.Pool
 	stripeMgr *billing.Manager
+	queries   *db.Queries // for audit-log writes
 }
 
-func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager) *AdminHandler {
-	return &AdminHandler{pool: pool, stripeMgr: stripeMgr}
+func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager, queries *db.Queries) *AdminHandler {
+	return &AdminHandler{pool: pool, stripeMgr: stripeMgr, queries: queries}
 }
 
 func (h *AdminHandler) excludedUserIDs(ctx context.Context) ([]string, error) {
@@ -1233,6 +1237,14 @@ func (h *AdminHandler) SetPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture the previous plan_id for the audit trail before we
+	// overwrite it. Best-effort — if it fails, the audit row just has
+	// a nil "before" snapshot.
+	var previousPlan string
+	_ = h.pool.QueryRow(r.Context(),
+		`SELECT plan_id FROM subscriptions WHERE workspace_id = $1`,
+		workspaceID).Scan(&previousPlan)
+
 	// Upsert: create the subscription row if missing, otherwise flip
 	// plan_id + reset status to active. status='active' matches the
 	// shape Stripe webhooks would produce on a successful change.
@@ -1245,6 +1257,20 @@ func (h *AdminHandler) SetPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update subscription: "+err.Error())
 		return
 	}
+
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID:  workspaceID,
+		ActorUserID:  auth.GetUserID(r.Context()),
+		Action:       audit.ActionPlanChanged,
+		ResourceType: "subscription",
+		ResourceID:   workspaceID,
+		Category:     audit.CategoryBilling,
+		IPAddress:    r.RemoteAddr,
+		UserAgent:    r.UserAgent(),
+		Before:       map[string]any{"plan_id": previousPlan},
+		After:        map[string]any{"plan_id": body.PlanID},
+		Metadata:     map[string]any{"source": "admin_flip", "stripe": false},
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

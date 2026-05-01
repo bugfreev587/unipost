@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countActiveMembersByWorkspace = `-- name: CountActiveMembersByWorkspace :one
@@ -23,6 +25,77 @@ func (q *Queries) CountActiveMembersByWorkspace(ctx context.Context, workspaceID
 	var count int32
 	err := row.Scan(&count)
 	return count, err
+}
+
+const createMembership = `-- name: CreateMembership :one
+INSERT INTO workspace_members (workspace_id, user_id, role, status, invited_by, accepted_at)
+VALUES ($1, $2, $3, 'active', $4, NOW())
+RETURNING workspace_id, user_id, role, status, invited_by, invited_at, accepted_at, created_at, updated_at
+`
+
+type CreateMembershipParams struct {
+	WorkspaceID string      `json:"workspace_id"`
+	UserID      string      `json:"user_id"`
+	Role        string      `json:"role"`
+	InvitedBy   pgtype.Text `json:"invited_by"`
+}
+
+// Creates a new active membership. Used by the invite-accept handler
+// (PR-E Phase 4). The unique-owner partial index prevents two owners
+// coexisting; non-owner roles are unconstrained beyond the PK.
+func (q *Queries) CreateMembership(ctx context.Context, arg CreateMembershipParams) (WorkspaceMember, error) {
+	row := q.db.QueryRow(ctx, createMembership,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.Role,
+		arg.InvitedBy,
+	)
+	var i WorkspaceMember
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.InvitedAt,
+		&i.AcceptedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const deleteMembership = `-- name: DeleteMembership :exec
+DELETE FROM workspace_members
+WHERE workspace_id = $1 AND user_id = $2
+`
+
+type DeleteMembershipParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	UserID      string `json:"user_id"`
+}
+
+// Removes a member from a workspace. The CASCADE on workspaces.id
+// means the underlying row goes away automatically when the entire
+// workspace is deleted. This query is used for explicit per-member
+// removal from the management UI.
+func (q *Queries) DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error {
+	_, err := q.db.Exec(ctx, deleteMembership, arg.WorkspaceID, arg.UserID)
+	return err
+}
+
+const demoteCurrentOwner = `-- name: DemoteCurrentOwner :exec
+UPDATE workspace_members
+SET role = 'admin', updated_at = NOW()
+WHERE workspace_id = $1 AND role = 'owner'
+`
+
+// Step 1 of TransferOwnership (caller wraps these two queries in a
+// single tx so the unique-owner index never sees a transient
+// two-owner state). Demotes the current owner to admin.
+func (q *Queries) DemoteCurrentOwner(ctx context.Context, workspaceID string) error {
+	_, err := q.db.Exec(ctx, demoteCurrentOwner, workspaceID)
+	return err
 }
 
 const getActiveMembership = `-- name: GetActiveMembership :one
@@ -123,4 +196,56 @@ func (q *Queries) ListMembersByWorkspace(ctx context.Context, workspaceID string
 		return nil, err
 	}
 	return items, nil
+}
+
+const promoteToOwner = `-- name: PromoteToOwner :exec
+UPDATE workspace_members
+SET role = 'owner', updated_at = NOW()
+WHERE workspace_id = $1 AND user_id = $2
+`
+
+type PromoteToOwnerParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	UserID      string `json:"user_id"`
+}
+
+// Step 2 of TransferOwnership. MUST run inside the same transaction
+// as DemoteCurrentOwner.
+func (q *Queries) PromoteToOwner(ctx context.Context, arg PromoteToOwnerParams) error {
+	_, err := q.db.Exec(ctx, promoteToOwner, arg.WorkspaceID, arg.UserID)
+	return err
+}
+
+const updateMemberRole = `-- name: UpdateMemberRole :one
+UPDATE workspace_members
+SET role = $3, updated_at = NOW()
+WHERE workspace_id = $1 AND user_id = $2
+RETURNING workspace_id, user_id, role, status, invited_by, invited_at, accepted_at, created_at, updated_at
+`
+
+type UpdateMemberRoleParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	UserID      string `json:"user_id"`
+	Role        string `json:"role"`
+}
+
+// Used by the members management UI (PR-E Phase 5). Owner role is
+// protected by the workspace_members_one_owner_idx unique index —
+// promoting a second owner fails at the DB level. Demote the current
+// owner first via TransferOwnership.
+func (q *Queries) UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) (WorkspaceMember, error) {
+	row := q.db.QueryRow(ctx, updateMemberRole, arg.WorkspaceID, arg.UserID, arg.Role)
+	var i WorkspaceMember
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.InvitedAt,
+		&i.AcceptedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

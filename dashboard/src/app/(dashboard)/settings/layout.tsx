@@ -6,9 +6,11 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/settings/account", label: "Account" },
   { href: "/settings/workspace", label: "Workspace" },
+  { href: "/settings/members", label: "Members" },
   { href: "/settings/notifications", label: "Notifications" },
   { href: "/settings/billing", label: "Billing" },
   { href: "/settings/api-limits", label: "API Limits" },
+  { href: "/settings/audit-log", label: "Audit Log" },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

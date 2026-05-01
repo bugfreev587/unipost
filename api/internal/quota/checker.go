@@ -163,6 +163,19 @@ func (c *Checker) MaxProfilesForPlan(ctx context.Context, workspaceID string) (i
 	return int(plan.MaxProfiles.Int32), true
 }
 
+// MaxMembersForPlan returns (limit, true) when the workspace's plan
+// caps the number of team members. Same semantics as MaxProfilesForPlan
+// — Team / Enterprise return (0, false) for "unlimited", DB read
+// failures fail open. Used by the invite handler.
+func (c *Checker) MaxMembersForPlan(ctx context.Context, workspaceID string) (int, bool) {
+	planID := c.PlanIDFor(ctx, workspaceID)
+	plan, err := c.queries.GetPlan(ctx, planID)
+	if err != nil || !plan.MaxMembers.Valid {
+		return 0, false
+	}
+	return int(plan.MaxMembers.Int32), true
+}
+
 // Increment adds to the usage count for the current period.
 func (c *Checker) Increment(ctx context.Context, workspaceID string, count int) {
 	c.queries.IncrementUsage(ctx, db.IncrementUsageParams{

@@ -33,3 +33,44 @@ ORDER BY
 SELECT COUNT(*)::INTEGER AS count
 FROM workspace_members
 WHERE workspace_id = $1 AND status = 'active';
+
+-- name: CreateMembership :one
+-- Creates a new active membership. Used by the invite-accept handler
+-- (PR-E Phase 4). The unique-owner partial index prevents two owners
+-- coexisting; non-owner roles are unconstrained beyond the PK.
+INSERT INTO workspace_members (workspace_id, user_id, role, status, invited_by, accepted_at)
+VALUES ($1, $2, $3, 'active', $4, NOW())
+RETURNING *;
+
+-- name: UpdateMemberRole :one
+-- Used by the members management UI (PR-E Phase 5). Owner role is
+-- protected by the workspace_members_one_owner_idx unique index —
+-- promoting a second owner fails at the DB level. Demote the current
+-- owner first via TransferOwnership.
+UPDATE workspace_members
+SET role = $3, updated_at = NOW()
+WHERE workspace_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: DeleteMembership :exec
+-- Removes a member from a workspace. The CASCADE on workspaces.id
+-- means the underlying row goes away automatically when the entire
+-- workspace is deleted. This query is used for explicit per-member
+-- removal from the management UI.
+DELETE FROM workspace_members
+WHERE workspace_id = $1 AND user_id = $2;
+
+-- name: DemoteCurrentOwner :exec
+-- Step 1 of TransferOwnership (caller wraps these two queries in a
+-- single tx so the unique-owner index never sees a transient
+-- two-owner state). Demotes the current owner to admin.
+UPDATE workspace_members
+SET role = 'admin', updated_at = NOW()
+WHERE workspace_id = $1 AND role = 'owner';
+
+-- name: PromoteToOwner :exec
+-- Step 2 of TransferOwnership. MUST run inside the same transaction
+-- as DemoteCurrentOwner.
+UPDATE workspace_members
+SET role = 'owner', updated_at = NOW()
+WHERE workspace_id = $1 AND user_id = $2;

@@ -12,7 +12,7 @@ import (
 )
 
 const getPlan = `-- name: GetPlan :one
-SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles FROM plans WHERE id = $1
+SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles, max_members FROM plans WHERE id = $1
 `
 
 func (q *Queries) GetPlan(ctx context.Context, id string) (Plan, error) {
@@ -30,12 +30,13 @@ func (q *Queries) GetPlan(ctx context.Context, id string) (Plan, error) {
 		&i.AllowInbox,
 		&i.AllowAnalytics,
 		&i.MaxProfiles,
+		&i.MaxMembers,
 	)
 	return i, err
 }
 
 const getPlanByStripePriceID = `-- name: GetPlanByStripePriceID :one
-SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles FROM plans WHERE stripe_price_id = $1
+SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles, max_members FROM plans WHERE stripe_price_id = $1
 `
 
 func (q *Queries) GetPlanByStripePriceID(ctx context.Context, stripePriceID pgtype.Text) (Plan, error) {
@@ -53,12 +54,13 @@ func (q *Queries) GetPlanByStripePriceID(ctx context.Context, stripePriceID pgty
 		&i.AllowInbox,
 		&i.AllowAnalytics,
 		&i.MaxProfiles,
+		&i.MaxMembers,
 	)
 	return i, err
 }
 
 const listPlans = `-- name: ListPlans :many
-SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles FROM plans ORDER BY price_cents ASC
+SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles, max_members FROM plans ORDER BY price_cents ASC
 `
 
 func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
@@ -82,6 +84,7 @@ func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
 			&i.AllowInbox,
 			&i.AllowAnalytics,
 			&i.MaxProfiles,
+			&i.MaxMembers,
 		); err != nil {
 			return nil, err
 		}
