@@ -107,8 +107,74 @@ export default function ApiLimitsPage() {
         managedCap={limits.managed_user_depth_cap}
       />
 
+      <DailyCapsCard
+        caps={limits.per_platform_daily_cap}
+        twitterAllowed={limits.plan_allows_twitter}
+      />
+
       <UpgradeFooter />
     </div>
+  );
+}
+
+function DailyCapsCard({
+  caps,
+  twitterAllowed,
+}: {
+  caps: Record<string, number>;
+  twitterAllowed: boolean;
+}) {
+  const display = [
+    { key: "twitter", label: "X / Twitter" },
+    { key: "instagram", label: "Instagram" },
+    { key: "facebook", label: "Facebook Page" },
+    { key: "threads", label: "Threads" },
+    { key: "linkedin", label: "LinkedIn" },
+    { key: "bluesky", label: "Bluesky" },
+    { key: "tiktok", label: "TikTok" },
+    { key: "youtube", label: "YouTube" },
+    { key: "pinterest", label: "Pinterest" },
+  ];
+
+  return (
+    <Card>
+      <CardTitle>Per-account daily safety caps</CardTitle>
+      <p style={{ margin: "6px 0 12px", fontSize: 12, color: "var(--dmuted)", lineHeight: 1.6 }}>
+        Each connected account can publish at most this many successful posts per UTC day.
+        The cap exists to keep the account from being flagged for spam by the platform itself
+        — failed posts never count, and limits reset at 00:00 UTC.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
+        {display.map((p) => {
+          const cap = caps?.[p.key];
+          if (cap == null) return null;
+          const gated = p.key === "twitter" && !twitterAllowed;
+          return (
+            <div
+              key={p.key}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 13,
+                color: gated ? "var(--dmuted)" : "var(--dtext)",
+              }}
+            >
+              <span>
+                {p.label}
+                {gated && (
+                  <span style={{ marginLeft: 6, fontSize: 11, color: "var(--daccent)" }}>
+                    · paid plan
+                  </span>
+                )}
+              </span>
+              <span style={{ fontFamily: "var(--font-mono, ui-monospace)" }}>
+                {cap}/day
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 

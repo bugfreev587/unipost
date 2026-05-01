@@ -62,6 +62,19 @@ type apiLimitsResponse struct {
 	// (states: pending / running / retrying). Compared against
 	// QueueDepthCap to show "47 / 1000".
 	QueueDepthCurrent int `json:"queue_depth_current"`
+
+	// PerPlatformDailyCap exposes the static (account, platform) →
+	// daily publish ceiling so the dashboard can render a "your
+	// safety caps" panel without hard-coding the numbers in the
+	// frontend. Mirrors quota.PerPlatformDailyCap exactly.
+	PerPlatformDailyCap map[string]int `json:"per_platform_daily_cap"`
+
+	// PlanAllowsTwitter is the boolean from plans.allow_twitter for
+	// the workspace's plan (migration 057). Surfaces here so the
+	// dashboard can grey out the X connect tile and the X publish
+	// path in the compose UI without needing a separate "what
+	// platforms am I allowed to use?" endpoint.
+	PlanAllowsTwitter bool `json:"plan_allows_twitter"`
 }
 
 // Get handles GET /v1/limits. Auth comes from DualAuthMiddleware
@@ -99,5 +112,18 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		QueueDepthCap:       limits.WorkspaceQueueDepthCap,
 		ManagedUserDepthCap: limits.ManagedUserQueueDepthCap,
 		QueueDepthCurrent:   int(depth),
+		PerPlatformDailyCap: copyDailyCapMap(),
+		PlanAllowsTwitter:   h.quota.PlanAllowsPlatform(r.Context(), workspaceID, "twitter"),
 	})
+}
+
+// copyDailyCapMap returns a defensive copy of quota.PerPlatformDailyCap
+// so a JSON encoder mutating callers can't reach the package-level map.
+// Cheap — the map has fewer than a dozen entries.
+func copyDailyCapMap() map[string]int {
+	out := make(map[string]int, len(quota.PerPlatformDailyCap))
+	for k, v := range quota.PerPlatformDailyCap {
+		out[k] = v
+	}
+	return out
 }

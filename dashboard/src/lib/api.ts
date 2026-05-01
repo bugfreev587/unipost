@@ -795,6 +795,8 @@ export interface ApiLimits {
   queue_depth_cap: number;
   managed_user_depth_cap: number;
   queue_depth_current: number;
+  per_platform_daily_cap: Record<string, number>;
+  plan_allows_twitter: boolean;
 }
 
 export async function getApiLimits(token: string): Promise<ApiResponse<ApiLimits>> {
