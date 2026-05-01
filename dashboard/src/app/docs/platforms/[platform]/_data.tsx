@@ -213,7 +213,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     limitations: [
       ["Daily safety cap", "20 publishes/day per connected X account (UTC reset). Protects accounts from being flagged for spam — failed posts do not count."],
-      ["Paid plan required", "X publishing and new connections require any paid plan ($10/mo and up); the Free plan covers the other 7 platforms."],
+      ["Paid plan required", "X publishing and new connections require any paid plan ($10/mo and up); the Free plan covers the other 8 platforms."],
       ["No shared Quickstart app", "X removed the managed developer path — every workspace connects with its own keys"],
       ["Inbox is not supported", "UniPost inbox covers Meta and Threads today"],
       ["Rate limits follow your X tier", "Free X-API tier is not enough for production publish volume"],

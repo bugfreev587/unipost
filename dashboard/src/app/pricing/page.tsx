@@ -1,84 +1,172 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { PublicSiteHeader, PricingCTA } from "@/components/marketing/nav";
 import { listProfiles, getBilling } from "@/lib/api";
 
 // ── Data ──
-const TIERS = [
-  { id: "p10",   label: "1,000 Social Posts", posts: "1,000", price: 10 },
-  { id: "p25",   label: "2,500 Social Posts", posts: "2,500", price: 25 },
-  { id: "p50",   label: "5,000 Social Posts", posts: "5,000", price: 50 },
-  { id: "p75",   label: "10,000 Social Posts", posts: "10,000", price: 75 },
-  { id: "p150",  label: "20,000 Social Posts", posts: "20,000", price: 150 },
-  { id: "p300",  label: "40,000 Social Posts", posts: "40,000", price: 300 },
-  { id: "p500",  label: "100,000 Social Posts", posts: "100,000", price: 500 },
-  { id: "p1000", label: "200,000 Social Posts", posts: "200,000", price: 1000 },
+//
+// Pricing redesign (May 2026): tiers are now product-stage based, not
+// per-volume. See docs/prd-pricing-packaging-redesign.md. Plan IDs map
+// 1:1 to plans.id from migration 058.
+type TierFeatureKind = "include" | "exclude" | "headline";
+type TierFeature = { kind: TierFeatureKind; text: string };
+
+type Tier = {
+  id: string;          // plans.id
+  name: string;
+  price: number | null;  // null = custom (Enterprise)
+  priceLabel?: string;   // override for non-numeric display
+  blurb: string;
+  posts: string;       // human-formatted post quota
+  features: TierFeature[];
+  highlight?: boolean; // show "Most popular" ribbon
+  cta?: string;        // CTA button label
+};
+
+const TIERS: Tier[] = [
+  {
+    id: "free",
+    name: "Free",
+    price: 0,
+    blurb: "Try the API and dashboard without a credit card.",
+    posts: "100 posts/mo",
+    features: [
+      { kind: "headline", text: "Posting API + Dashboard" },
+      { kind: "include", text: "8 platforms (excludes X)" },
+      { kind: "include", text: "MCP server (AI agent ready)" },
+      { kind: "include", text: "Webhooks + scheduling" },
+      { kind: "include", text: "1 profile · 1 user" },
+      { kind: "exclude", text: "Inbox" },
+      { kind: "exclude", text: "Analytics" },
+    ],
+  },
+  {
+    id: "api",
+    name: "API",
+    price: 10,
+    blurb: "For developers who only need the publishing API.",
+    posts: "1,000 posts/mo",
+    features: [
+      { kind: "headline", text: "API + MCP only — no dashboard" },
+      { kind: "include", text: "All 9 platforms incl. X" },
+      { kind: "include", text: "Read-only Analytics API" },
+      { kind: "include", text: "Webhooks + scheduling" },
+      { kind: "include", text: "2 profiles · 1 user" },
+      { kind: "exclude", text: "Dashboard UI" },
+      { kind: "exclude", text: "Inbox" },
+    ],
+  },
+  {
+    id: "basic",
+    name: "Basic",
+    price: 19,
+    highlight: true,
+    blurb: "Operating console for solo builders and creators.",
+    posts: "2,500 posts/mo",
+    features: [
+      { kind: "headline", text: "Dashboard + Inbox + Analytics" },
+      { kind: "include", text: "All 9 platforms incl. X" },
+      { kind: "include", text: "Inbox: DMs + comments" },
+      { kind: "include", text: "Full Analytics suite" },
+      { kind: "include", text: "5 profiles · 1 user" },
+      { kind: "exclude", text: "White-label / native mode" },
+    ],
+  },
+  {
+    id: "growth",
+    name: "Growth",
+    price: 59,
+    blurb: "Embed UniPost into your own product.",
+    posts: "7,500 posts/mo",
+    features: [
+      { kind: "headline", text: "White-label / native mode" },
+      { kind: "include", text: "Everything in Basic" },
+      { kind: "include", text: "Bring-your-own platform credentials" },
+      { kind: "include", text: "Branded OAuth flow" },
+      { kind: "include", text: "25 profiles · 3 users" },
+    ],
+  },
+  {
+    id: "team",
+    name: "Team",
+    price: 149,
+    blurb: "For agencies and multi-operator teams.",
+    posts: "25,000 posts/mo",
+    features: [
+      { kind: "headline", text: "RBAC + per-member API keys" },
+      { kind: "include", text: "Everything in Growth" },
+      { kind: "include", text: "Roles: owner / admin / editor" },
+      { kind: "include", text: "Audit log" },
+      { kind: "include", text: "Unlimited profiles · unlimited users" },
+      { kind: "include", text: "Priority support" },
+    ],
+  },
 ];
-const FEATURES_FREE = [
-  { text: "100 posts per month", included: true }, { text: "Unlimited social accounts", included: true },
-  { text: "7 platforms (X requires paid plan)", included: true }, { text: "Webhooks", included: true },
-  { text: "Analytics", included: true }, { text: "Scheduled posts", included: true },
-  { text: "MCP Server (AI Agent)", included: true }, { text: "Unlimited API keys", included: true },
-  { text: "Unlimited team members", included: true }, { text: "Quickstart mode", included: true },
-  { text: "White-label", included: false },
+
+// Comparison matrix for the table further down. Columns are aligned
+// with TIERS minus Enterprise (which lives in its own footer banner).
+type CompareCell = string | boolean;
+type CompareRow = {
+  name: string;
+  sub?: string | null;
+  free: CompareCell;
+  api: CompareCell;
+  basic: CompareCell;
+  growth: CompareCell;
+  team: CompareCell;
+};
+
+const COMPARE_ROWS: CompareRow[] = [
+  { name: "Monthly posts", free: "100", api: "1,000", basic: "2,500", growth: "7,500", team: "25,000" },
+  { name: "Platforms", sub: "X (Twitter), Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest, Facebook", free: "8 (no X)", api: "9", basic: "9", growth: "9", team: "9" },
+  { name: "Profiles", sub: "Brand groupings inside one workspace", free: "1", api: "2", basic: "5", growth: "25", team: "Unlimited" },
+  { name: "Users", sub: "Team members on the workspace", free: "1", api: "1", basic: "1", growth: "3", team: "Unlimited" },
+  { name: "Per-account daily safety caps", sub: "Protects connected accounts from spam flags — X 20/day, IG 100/day, FB 100/day, Threads 250/day, others 50/day", free: true, api: true, basic: true, growth: true, team: true },
+  { name: "Posting API", sub: "REST API for publish / schedule / validate", free: true, api: true, basic: true, growth: true, team: true },
+  { name: "MCP server", sub: "AI agent integration via MCP protocol", free: true, api: true, basic: true, growth: true, team: true },
+  { name: "Webhooks", sub: "Real-time event notifications", free: true, api: true, basic: true, growth: true, team: true },
+  { name: "Scheduling", sub: "Post at a future time", free: true, api: true, basic: true, growth: true, team: true },
+  { name: "Dashboard UI", sub: "Compose, inbox, analytics in browser", free: true, api: false, basic: true, growth: true, team: true },
+  { name: "Inbox", sub: "DMs and comments from connected accounts", free: false, api: false, basic: true, growth: true, team: true },
+  { name: "Analytics", sub: "Reach, impressions, engagement", free: false, api: "read-only API", basic: true, growth: true, team: true },
+  { name: "White-label / native mode", sub: "Bring your own platform credentials", free: false, api: false, basic: false, growth: true, team: true },
+  { name: "RBAC + per-member API keys", sub: "Roles: owner / admin / editor", free: false, api: false, basic: false, growth: false, team: true },
+  { name: "Audit log", sub: "Membership and config-change history", free: false, api: false, basic: false, growth: false, team: true },
 ];
-const FEATURES_PAID = [
-  { text: "posts per month", dynamic: true, included: true }, { text: "Unlimited social accounts", included: true },
-  { text: "All 8 platforms", included: true }, { text: "Webhooks", included: true },
-  { text: "Analytics", included: true }, { text: "Scheduled posts", included: true },
-  { text: "MCP Server (AI Agent)", included: true }, { text: "Unlimited API keys", included: true },
-  { text: "Unlimited team members", included: true }, { text: "Quickstart mode", included: true },
-  { text: "White-label", included: true },
-];
-const COMPARE_ROWS = [
-  { name: "Post volume", sub: null, free: "100/mo", paid: "dynamic" },
-  { name: "Platform coverage", sub: "X requires paid plan; Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest available on Free", free: "7 of 8", paid: "All 8" },
-  { name: "Per-account daily safety caps", sub: "Protects connected accounts from spam flags — X 20/day, IG 100/day, FB 100/day, Threads 250/day, others 50/day", free: true, paid: true },
-  { name: "Unlimited social accounts", sub: null, free: true, paid: true },
-  { name: "Unlimited API keys", sub: null, free: true, paid: true },
-  { name: "Unlimited team members", sub: null, free: true, paid: true },
-  { name: "Webhooks", sub: "Real-time event notifications", free: true, paid: true },
-  { name: "Analytics", sub: "Unified metrics from all platforms", free: true, paid: true },
-  { name: "Scheduled posts", sub: "Post at a future time", free: true, paid: true },
-  { name: "MCP Server", sub: "AI Agent integration via MCP protocol", free: true, paid: true },
-  { name: "Quickstart mode", sub: "Use UniPost credentials", free: true, paid: true },
-  { name: "White-label", sub: "Bring your own credentials", free: false, paid: true },
-];
+
 const FAQS = [
-  { q: "What counts as a post?", a: "One successful publish to a single social account. Posting the same content to 3 platforms counts as 3 posts. Failed or cancelled posts are never counted." },
+  { q: "Why Free, API, Basic, Growth, Team?", a: "Each plan corresponds to a stage of how you use UniPost — evaluating the API, running it as your only integration point, using the dashboard as your operating console, embedding it into your product, or running it as a multi-operator team. Pick by which of those describes you, not by raw post volume." },
+  { q: "What counts as a post?", a: "One successful publish to a single connected social account. Posting the same content to 3 platforms counts as 3 posts. Failed or cancelled posts are never counted." },
+  { q: "Is there a free trial for paid plans?", a: "The Free plan is a permanent free tier — no card required, no time limit. Paid plans (Basic and up) include a 14-day free trial when you upgrade." },
+  { q: "Why is X (Twitter) not on the Free plan?", a: "The X API has the highest per-call cost of any platform we support, and the Free plan's 100-post quota is too small to absorb that cost without distorting our pricing for everyone else. Free workspaces can read existing X data; new X publishes and connections require any paid plan starting at $10/mo." },
+  { q: "Why are there per-account daily limits?", a: "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. Limits reset at 00:00 UTC. Failed posts never count toward the cap." },
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
-  { q: "What's the difference between Quickstart and White-label?", a: "Quickstart uses UniPost's platform credentials so you can start immediately — users see 'UniPost' during OAuth. White-label (called Native mode in API docs) lets you bring your own credentials so users see your app name. White-label requires a paid plan." },
-  { q: "Why is X (Twitter) not on the Free plan?", a: "The X API has the highest per-call cost of any platform we support, and the Free plan's 100-post quota isn't large enough to absorb that cost without distorting our pricing for everyone else. Free workspaces can connect and read existing X accounts, but new X publishes and new X connections require any paid plan ($10/mo and up)." },
-  { q: "Why are there per-account daily limits?", a: "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, and 50/day for Bluesky, LinkedIn, TikTok, YouTube, and Pinterest. Limits reset at 00:00 UTC and apply per connected account, so adding more accounts gives you more headroom. Failed posts never count toward the cap." },
-  { q: "Do unused posts roll over to the next month?", a: "No, post quotas reset at the start of each billing cycle. However, if you exceed your limit we won't cut you off — we'll reach out about upgrading instead." },
-  { q: "What happens if I go over my plan?", a: "We won't shut you down or block your posts. If your usage consistently exceeds the limit, we'll reach out about upgrading. You'll never experience a hard stop that breaks your users' experience." },
-  { q: "Is there a free trial for paid plans?", a: "The Free plan is your trial — 100 posts/month with no credit card required. Upgrade when you need more volume (and to publish to X). There's no time limit on the free tier." },
-  { q: "How does UniPost compare to Ayrshare or Zernio?", a: "UniPost offers a permanent free tier, simpler per-post pricing, and native MCP Server support. See our full comparisons at unipost.dev/compare." },
+  { q: "What happens if I go over my monthly post quota?", a: "We won't shut you down or charge you extra automatically. Posting continues for now, but sustained overage will require an upgrade. API responses include X-UniPost-Usage and X-UniPost-Warning headers so you can monitor programmatically." },
+  { q: "What's the difference between API and Basic?", a: "API is for developers who only consume the REST API and MCP server — no dashboard, no Inbox. Basic is the same plus a full dashboard, Inbox for DMs/comments, and full Analytics. Same publishing API on both." },
+  { q: "When do I need Growth?", a: "When you're embedding UniPost into your own product and need to bring your own platform credentials so end users see your app name during OAuth (white-label / native mode), or you need higher quota and more profiles." },
+  { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
+  { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost bundles dashboard + Inbox + Analytics into Basic at $19/mo with no add-ons (Zernio sells those as $10/each add-ons). PostForMe is API-only at $10 — UniPost API matches that price. See full comparisons at unipost.dev/alternatives." },
 ];
 
 // ── Icons ──
 function CheckIcon({ className = "" }: { className?: string }) { return <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" width="15" height="15" style={{ flexShrink: 0 }}><path d="M3 8l4 4 6-7" /></svg>; }
-function ChevronIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" width="14" height="14" style={{ flexShrink: 0 }}><path d="M4 6l4 4 4-4" /></svg>; }
+function XIcon({ className = "" }: { className?: string }) { return <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15" style={{ flexShrink: 0 }}><path d="M4 8h8" /></svg>; }
 
 // ── Styles ──
-const CSS = `:root{--bg:var(--app-bg);--s1:var(--marketing-surface);--s2:var(--marketing-surface-alt);--s3:var(--marketing-surface-elevated);--border:var(--marketing-border);--b2:var(--marketing-border-strong);--b3:var(--marketing-border-strong);--text:var(--marketing-text);--muted:var(--marketing-muted);--muted2:var(--marketing-subtle);--accent:var(--primary);--adim:var(--success-soft);--blue:var(--marketing-link);--shadow-soft:var(--marketing-shadow-soft);--shadow-lg:var(--marketing-shadow-lg);--r:8px;--mono:var(--font-fira-code),monospace;--ui:var(--font-dm-sans),system-ui,sans-serif;--content-max:1320px;--px:32px}*{box-sizing:border-box;margin:0;padding:0}body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}.pr-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:var(--r);font-size:13.5px;font-weight:600;cursor:pointer;transition:all .15s;border:1px solid transparent;font-family:var(--ui);text-decoration:none;white-space:nowrap}.pr-btn-primary{background:var(--blue);color:#fff}.pr-btn-primary:hover{background:var(--marketing-link-hover)}.pr-btn-ghost{background:transparent;color:var(--muted);border-color:var(--b2)}.pr-btn-ghost:hover{background:var(--s2);color:var(--text);border-color:var(--b3)}.pr-btn-outline{background:transparent;color:var(--text);border-color:var(--b2)}.pr-btn-outline:hover{background:var(--s2);border-color:var(--b3)}.pr-btn-free{background:var(--s2);color:var(--text);border-color:var(--b2);width:100%;justify-content:center;padding:11px;font-size:14px;border-radius:9px}.pr-btn-free:hover{background:var(--s3);border-color:var(--b3)}.pr-btn-paid{background:var(--blue);color:#fff;width:100%;justify-content:center;padding:11px;font-size:14px;border-radius:9px;font-weight:700}.pr-btn-paid:hover{background:var(--marketing-link-hover)}.pr-btn-ent{background:transparent;color:var(--text);border-color:var(--b2);padding:10px 24px;font-size:14px;flex-shrink:0}.pr-btn-ent:hover{background:var(--s2);border-color:var(--b3)}.pr-page{max-width:var(--content-max);margin:0 auto;padding:0 var(--px) 96px}.pr-hero{padding:96px 0 72px;text-align:center}.pr-hero-title{font-size:72px;font-weight:900;letter-spacing:-2px;line-height:1.04;color:var(--text);margin-bottom:20px}.pr-hero-sub{font-size:17px;color:var(--muted);max-width:480px;margin:0 auto 48px;line-height:1.75}.pr-cards{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}.pr-card{background:var(--s1);border:1px solid var(--border);border-radius:16px;padding:32px;display:flex;flex-direction:column;box-shadow:var(--shadow-soft)}.pr-card.paid{border-color:var(--b2)}.pr-card.current-plan{border-color:var(--accent);position:relative}.pr-current-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--accent);color:var(--marketing-auth-primary-text);font-size:11px;font-weight:700;padding:3px 14px;border-radius:20px;font-family:var(--mono);letter-spacing:.03em;white-space:nowrap}.pr-card-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px}.pr-price{font-size:48px;font-weight:900;letter-spacing:-1.5px;color:var(--text);line-height:1;font-family:var(--mono)}.pr-price .mo{font-size:16px;font-weight:400;color:var(--muted);letter-spacing:0}.pr-card-sub{font-size:14px;color:var(--muted);margin-bottom:24px}.pr-divider{height:1px;background:var(--border);margin-bottom:24px}.pr-feats{flex:1;margin-bottom:24px}.pr-feat{display:flex;align-items:flex-start;gap:11px;font-size:14px;color:var(--text);margin-bottom:12px;line-height:1.4}.pr-feat svg{width:15px;height:15px;flex-shrink:0;margin-top:2px}.pr-feat .chk{color:var(--accent)}.pr-feat .chk-no{color:var(--muted2)}.pr-feat.dim{color:var(--muted)}.pr-sel-wrap{position:relative}.pr-sel-btn{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--s2);border:1px solid var(--b2);border-radius:9px;cursor:pointer;font-size:13.5px;font-weight:500;color:var(--text);transition:all .15s;white-space:nowrap;min-width:180px;justify-content:space-between;font-family:var(--ui)}.pr-sel-btn:hover{border-color:var(--b3);background:var(--s3)}.pr-sel-btn svg{width:14px;height:14px;color:var(--muted);flex-shrink:0;transition:transform .2s}.pr-sel-btn.open svg{transform:rotate(180deg)}.pr-dropdown{position:absolute;top:calc(100% + 8px);right:0;background:var(--s2);border:1px solid var(--b2);border-radius:12px;padding:5px;min-width:200px;z-index:30;box-shadow:var(--shadow-lg);animation:pr-drop .15s ease}@keyframes pr-drop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}.pr-drop-item{padding:9px 14px;border-radius:7px;cursor:pointer;font-size:13.5px;color:var(--muted);display:flex;align-items:center;justify-content:space-between;transition:all .1s}.pr-drop-item:hover{background:var(--s3);color:var(--text)}.pr-drop-item.active{color:var(--text);font-weight:500}.pr-drop-item svg{width:13px;height:13px;color:var(--accent)}.pr-soft{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:28px 32px;margin-bottom:16px;display:flex;gap:20px;align-items:flex-start;box-shadow:var(--shadow-soft)}.pr-soft-icon{width:44px;height:44px;flex-shrink:0;background:var(--adim);border:1px solid color-mix(in srgb,var(--accent) 18%,transparent);border-radius:10px;display:flex;align-items:center;justify-content:center}.pr-soft-icon svg{width:20px;height:20px;color:var(--accent)}.pr-soft-title{font-size:16px;font-weight:700;margin-bottom:7px;color:var(--text)}.pr-soft-desc{font-size:14px;color:var(--muted);line-height:1.7}.pr-soft-mono{font-family:var(--mono);font-size:12.5px;color:var(--text);background:var(--s2);border:1px solid var(--border);padding:2px 7px;border-radius:4px}.pr-compare{margin-bottom:64px}.pr-compare-title{font-size:36px;font-weight:800;letter-spacing:-.6px;margin-bottom:28px;text-align:center;color:var(--text)}.pr-compare-wrap{border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-soft)}.pr-compare-hdr{display:grid;grid-template-columns:2.5fr 1fr 1fr;background:var(--s2);border-bottom:1px solid var(--border)}.pr-ch{padding:14px 24px;font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:.03em}.pr-ch.hl{color:var(--accent)}.pr-compare-row{display:grid;grid-template-columns:2.5fr 1fr 1fr;border-bottom:1px solid var(--border);transition:background .1s}.pr-compare-row:last-child{border-bottom:none}.pr-compare-row:hover{background:var(--s2)}.pr-cr{padding:16px 24px;display:flex;align-items:center}.pr-cr-feat{flex-direction:column;align-items:flex-start}.pr-cr-name{font-size:14px;font-weight:600;color:var(--text)}.pr-cr-sub{font-size:12px;color:var(--muted);margin-top:2px}.pr-chk{color:var(--accent)}.pr-cr svg{width:15px;height:15px;flex-shrink:0}.pr-dash{color:var(--muted2);font-size:20px;line-height:1}.pr-cr-val{font-family:var(--mono);font-size:13px}.pr-ent{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:36px 40px;display:flex;align-items:center;justify-content:space-between;gap:32px;margin-bottom:64px;box-shadow:var(--shadow-soft)}.pr-ent-title{font-size:22px;font-weight:700;letter-spacing:-.3px;margin-bottom:8px;color:var(--text)}.pr-ent-desc{font-size:14px;color:var(--muted);line-height:1.65;max-width:480px}.pr-ent-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.pr-ent-chip{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);background:var(--s2);border:1px solid var(--border);padding:4px 11px;border-radius:20px}.pr-ent-chip svg{width:11px;height:11px;color:var(--accent)}.pr-faq-title{font-size:36px;font-weight:800;letter-spacing:-.6px;margin-bottom:28px;text-align:center;color:var(--text)}.pr-faq-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:64px}.pr-faq-item{background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:24px 26px;transition:border-color .15s;box-shadow:var(--shadow-soft)}.pr-faq-item:hover{border-color:var(--b2)}.pr-faq-q{font-size:15px;font-weight:600;margin-bottom:10px;color:var(--text)}.pr-faq-a{font-size:13.5px;color:var(--muted);line-height:1.7}@media(min-width:1600px){:root{--content-max:1360px;--px:40px}}@media(max-width:1024px){:root{--content-max:100%;--px:24px}.pr-cards,.pr-faq-grid{grid-template-columns:1fr}.pr-ent{flex-direction:column;align-items:flex-start}}@media(max-width:680px){.pr-page{padding-bottom:72px}.pr-hero{padding:72px 0 56px}.pr-hero-title{font-size:44px}.pr-card{padding:26px}.pr-card-top{flex-direction:column;gap:16px}.pr-sel-btn{min-width:0;width:100%}.pr-dropdown{left:0;right:auto;width:100%}.pr-soft,.pr-ent{padding:24px}.pr-compare-hdr,.pr-compare-row{grid-template-columns:1.8fr .9fr .9fr}.pr-cr,.pr-ch{padding-inline:16px}}`;
+const CSS = `:root{--bg:var(--app-bg);--s1:var(--marketing-surface);--s2:var(--marketing-surface-alt);--s3:var(--marketing-surface-elevated);--border:var(--marketing-border);--b2:var(--marketing-border-strong);--b3:var(--marketing-border-strong);--text:var(--marketing-text);--muted:var(--marketing-muted);--muted2:var(--marketing-subtle);--accent:var(--primary);--adim:var(--success-soft);--blue:var(--marketing-link);--shadow-soft:var(--marketing-shadow-soft);--shadow-lg:var(--marketing-shadow-lg);--r:8px;--mono:var(--font-fira-code),monospace;--ui:var(--font-dm-sans),system-ui,sans-serif;--content-max:1400px;--px:32px}*{box-sizing:border-box;margin:0;padding:0}body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}.pr-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:var(--r);font-size:13.5px;font-weight:600;cursor:pointer;transition:all .15s;border:1px solid transparent;font-family:var(--ui);text-decoration:none;white-space:nowrap}.pr-btn-primary{background:var(--blue);color:#fff}.pr-btn-primary:hover{background:var(--marketing-link-hover)}.pr-btn-ghost{background:transparent;color:var(--muted);border-color:var(--b2)}.pr-btn-ghost:hover{background:var(--s2);color:var(--text);border-color:var(--b3)}.pr-btn-tier{width:100%;justify-content:center;padding:10px;font-size:13.5px;border-radius:9px;background:var(--s2);color:var(--text);border-color:var(--b2)}.pr-btn-tier:hover{background:var(--s3);border-color:var(--b3)}.pr-btn-tier-hi{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:700}.pr-btn-tier-hi:hover{background:var(--marketing-link-hover);border-color:var(--marketing-link-hover)}.pr-btn-ent{background:transparent;color:var(--text);border-color:var(--b2);padding:10px 24px;font-size:14px;flex-shrink:0}.pr-btn-ent:hover{background:var(--s2);border-color:var(--b3)}.pr-page{max-width:var(--content-max);margin:0 auto;padding:0 var(--px) 96px}.pr-hero{padding:96px 0 56px;text-align:center}.pr-hero-title{font-size:64px;font-weight:900;letter-spacing:-2px;line-height:1.04;color:var(--text);margin-bottom:20px}.pr-hero-sub{font-size:17px;color:var(--muted);max-width:640px;margin:0 auto 12px;line-height:1.7}.pr-hero-altlink{font-size:13px;color:var(--muted2);margin-top:18px}.pr-hero-altlink a{color:var(--blue);text-decoration:underline}.pr-cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:18px}.pr-card{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:24px 20px;display:flex;flex-direction:column;box-shadow:var(--shadow-soft);position:relative}.pr-card.hi{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--shadow-soft)}.pr-card.current{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--shadow-soft)}.pr-ribbon{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:20px;font-family:var(--mono);letter-spacing:.04em;white-space:nowrap}.pr-current-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:20px;font-family:var(--mono);letter-spacing:.04em;white-space:nowrap}.pr-tname{font-size:14px;font-weight:700;color:var(--text);letter-spacing:.02em;margin-bottom:8px;text-transform:uppercase;font-family:var(--mono)}.pr-tprice{font-size:32px;font-weight:900;letter-spacing:-1px;color:var(--text);line-height:1;font-family:var(--mono)}.pr-tprice .mo{font-size:14px;font-weight:400;color:var(--muted);letter-spacing:0;margin-left:2px}.pr-tprice.custom{font-size:22px;letter-spacing:-.5px}.pr-tposts{font-size:12.5px;color:var(--muted);font-family:var(--mono);margin-top:6px}.pr-tblurb{font-size:13px;color:var(--muted);line-height:1.55;margin:14px 0 16px;min-height:40px}.pr-tdivider{height:1px;background:var(--border);margin-bottom:14px}.pr-tfeats{flex:1;margin-bottom:18px}.pr-tfeat{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text);margin-bottom:9px;line-height:1.4}.pr-tfeat svg{width:13px;height:13px;flex-shrink:0;margin-top:2px}.pr-tfeat .chk{color:var(--accent)}.pr-tfeat .chk-no{color:var(--muted2)}.pr-tfeat.dim{color:var(--muted)}.pr-tfeat.headline{font-weight:700;color:var(--text);padding-bottom:8px;border-bottom:1px dashed var(--border);margin-bottom:11px}.pr-tfeat.headline svg{display:none}.pr-soft{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:22px 26px;margin-bottom:64px;display:flex;gap:18px;align-items:flex-start;box-shadow:var(--shadow-soft)}.pr-soft-icon{width:40px;height:40px;flex-shrink:0;background:var(--adim);border:1px solid color-mix(in srgb,var(--accent) 18%,transparent);border-radius:10px;display:flex;align-items:center;justify-content:center}.pr-soft-icon svg{width:18px;height:18px;color:var(--accent)}.pr-soft-title{font-size:15px;font-weight:700;margin-bottom:6px;color:var(--text)}.pr-soft-desc{font-size:13.5px;color:var(--muted);line-height:1.65}.pr-soft-mono{font-family:var(--mono);font-size:12px;color:var(--text);background:var(--s2);border:1px solid var(--border);padding:2px 6px;border-radius:4px}.pr-compare{margin-bottom:64px}.pr-compare-title{font-size:32px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;text-align:center;color:var(--text)}.pr-compare-wrap{border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-soft)}.pr-compare-hdr{display:grid;grid-template-columns:2fr repeat(5,1fr);background:var(--s2);border-bottom:1px solid var(--border)}.pr-ch{padding:13px 16px;font-size:11.5px;font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;font-family:var(--mono)}.pr-ch.hl{color:var(--accent)}.pr-compare-row{display:grid;grid-template-columns:2fr repeat(5,1fr);border-bottom:1px solid var(--border);transition:background .1s}.pr-compare-row:last-child{border-bottom:none}.pr-compare-row:hover{background:var(--s2)}.pr-cr{padding:13px 16px;display:flex;align-items:center}.pr-cr-feat{flex-direction:column;align-items:flex-start}.pr-cr-name{font-size:13px;font-weight:600;color:var(--text)}.pr-cr-sub{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4}.pr-chk{color:var(--accent)}.pr-cr svg{width:13px;height:13px;flex-shrink:0}.pr-dash{color:var(--muted2);font-size:18px;line-height:1}.pr-cr-val{font-family:var(--mono);font-size:11.5px;color:var(--muted)}.pr-cr-val.hl{color:var(--accent);font-weight:600}.pr-ent{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:32px 36px;display:flex;align-items:center;justify-content:space-between;gap:32px;margin-bottom:64px;box-shadow:var(--shadow-soft)}.pr-ent-title{font-size:20px;font-weight:700;letter-spacing:-.3px;margin-bottom:8px;color:var(--text)}.pr-ent-desc{font-size:13.5px;color:var(--muted);line-height:1.65;max-width:520px}.pr-ent-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.pr-ent-chip{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:var(--s2);border:1px solid var(--border);padding:4px 10px;border-radius:20px}.pr-ent-chip svg{width:11px;height:11px;color:var(--accent)}.pr-faq-title{font-size:32px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;text-align:center;color:var(--text)}.pr-faq-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:64px}.pr-faq-item{background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:22px 24px;transition:border-color .15s;box-shadow:var(--shadow-soft)}.pr-faq-item:hover{border-color:var(--b2)}.pr-faq-q{font-size:14.5px;font-weight:600;margin-bottom:9px;color:var(--text)}.pr-faq-a{font-size:13px;color:var(--muted);line-height:1.7}.pr-trial{font-size:11.5px;color:var(--accent);font-weight:600;text-align:center;margin-bottom:8px;font-family:var(--mono)}@media(min-width:1700px){:root{--content-max:1500px;--px:40px}}@media(max-width:1300px){.pr-cards{grid-template-columns:repeat(3,1fr)}.pr-compare-hdr,.pr-compare-row{grid-template-columns:1.6fr repeat(5,1fr)}}@media(max-width:1024px){:root{--content-max:100%;--px:24px}.pr-cards{grid-template-columns:repeat(2,1fr)}.pr-faq-grid{grid-template-columns:1fr}.pr-ent{flex-direction:column;align-items:flex-start}.pr-compare-wrap{overflow-x:auto}.pr-compare-hdr,.pr-compare-row{grid-template-columns:1.4fr repeat(5,minmax(110px,1fr));min-width:780px}}@media(max-width:680px){.pr-page{padding-bottom:72px}.pr-hero{padding:64px 0 40px}.pr-hero-title{font-size:42px}.pr-cards{grid-template-columns:1fr}.pr-soft,.pr-ent{padding:22px}.pr-compare-title,.pr-faq-title{font-size:26px}}`;
 
+// ── Component ──
 export default function PricingPage() {
-  const [selectedTier, setSelectedTier] = useState(0);
-  const [dropOpen, setDropOpen] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<string | null>(null);
   const [profileId, setProjectId] = useState<string | null>(null);
   const [trialEligible, setTrialEligible] = useState(true);
-  const dropRef = useRef<HTMLDivElement>(null);
-  const tier = TIERS[selectedTier];
   const { isSignedIn, getToken } = useAuth();
 
   const APP_URL = "https://app.unipost.dev";
 
-  // Fetch current plan if signed in (fails silently on marketing domain due to CORS)
   const loadPlan = useCallback(async () => {
     if (!isSignedIn) return;
     try {
@@ -89,33 +177,17 @@ export default function PricingPage() {
       const pid = profiles.data[0].id;
       setProjectId(pid);
       const billing = await getBilling(token);
-      const plan = billing.data.plan;
-      setCurrentPlan(plan);
+      setCurrentPlan(billing.data.plan);
       setTrialEligible(billing.data.trial_eligible);
-      // Set dropdown to current plan if it's a paid tier
-      const tierIdx = TIERS.findIndex((t) => t.id === plan);
-      if (tierIdx !== -1) {
-        setSelectedTier(tierIdx);
-      }
     } catch {
-      // CORS or network error on unipost.dev — no current plan info
+      // CORS / network — no current plan info
     }
   }, [isSignedIn, getToken]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadPlan();
-    }, 0);
+    const timer = window.setTimeout(() => { void loadPlan(); }, 0);
     return () => window.clearTimeout(timer);
   }, [loadPlan]);
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (dropRef.current && !dropRef.current.contains(e.target as Node)) setDropOpen(false);
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
 
   return (
     <>
@@ -125,103 +197,75 @@ export default function PricingPage() {
       <div className="pr-page">
         {/* HERO */}
         <div className="pr-hero">
-          <h1 className="pr-hero-title">Predictable pricing<br />without surprises.</h1>
-          <p className="pr-hero-sub">All plans include every feature. The only difference is how many posts you need per month.</p>
-          <p style={{ fontSize: 13, color: "var(--muted2)", marginTop: -28 }}>
-            Comparing with competitors?{" "}
-            <Link href="/alternatives/ayrshare" style={{ color: "var(--blue)", textDecoration: "underline" }}>UniPost vs Ayrshare</Link>
+          <h1 className="pr-hero-title">Start free.<br />Upgrade for visibility,<br />collaboration, and scale.</h1>
+          <p className="pr-hero-sub">
+            Use UniPost as an API or as a dashboard. Paid plans unlock Inbox, Analytics,
+            X publishing, white-label, and team workflows.
+          </p>
+          <p className="pr-hero-altlink">
+            Comparing alternatives?{" "}
+            <Link href="/alternatives/postforme">vs PostForMe</Link>
             {" · "}
-            <Link href="/alternatives/zernio" style={{ color: "var(--blue)", textDecoration: "underline" }}>UniPost vs Zernio</Link>
+            <Link href="/alternatives/zernio">vs Zernio</Link>
+            {" · "}
+            <Link href="/alternatives/ayrshare">vs Ayrshare</Link>
           </p>
         </div>
 
         {/* CARDS */}
         <div className="pr-cards">
-          {/* Free */}
-          <div className={`pr-card ${currentPlan === "free" ? "current-plan" : ""}`}>
-            {currentPlan === "free" && <div className="pr-current-badge">Current Plan</div>}
-            <div className="pr-card-top"><div className="pr-price">$0<span className="mo">/mo</span></div></div>
-            <div className="pr-card-sub">Everything you need to get started.</div>
-            <div className="pr-divider" />
-            <div className="pr-feats">
-              {FEATURES_FREE.map((f) => (
-                <div key={f.text} className={`pr-feat ${!f.included ? "dim" : ""}`}>
-                  {f.included ? <CheckIcon className="chk" /> : <svg className="chk-no" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15" style={{ flexShrink: 0 }}><path d="M4 8h8" /></svg>}
-                  {f.text}
+          {TIERS.map((t) => {
+            const isCurrent = currentPlan === t.id;
+            const showTrial = t.price !== null && t.price > 10 && trialEligible && !isCurrent;
+            const buttonHref = isCurrent
+              ? (profileId ? `${APP_URL}/projects/${profileId}/billing` : APP_URL)
+              : profileId
+                ? `${APP_URL}/projects/${profileId}/billing?upgrade=${t.id}`
+                : undefined;
+            const ctaLabel = isCurrent
+              ? "Go to Dashboard"
+              : t.price === 0
+                ? "Get started"
+                : t.cta ?? "Choose plan";
+            return (
+              <div key={t.id} className={`pr-card ${t.highlight ? "hi" : ""} ${isCurrent ? "current" : ""}`}>
+                {t.highlight && !isCurrent && <div className="pr-ribbon">Most popular</div>}
+                {isCurrent && <div className="pr-current-badge">Current Plan</div>}
+                <div className="pr-tname">{t.name}</div>
+                {t.price === null ? (
+                  <div className="pr-tprice custom">{t.priceLabel ?? "Custom"}</div>
+                ) : (
+                  <div className="pr-tprice">${t.price}<span className="mo">/mo</span></div>
+                )}
+                <div className="pr-tposts">{t.posts}</div>
+                <div className="pr-tblurb">{t.blurb}</div>
+                <div className="pr-tdivider" />
+                <div className="pr-tfeats">
+                  {t.features.map((f, i) => (
+                    <div key={i} className={`pr-tfeat ${f.kind === "headline" ? "headline" : ""} ${f.kind === "exclude" ? "dim" : ""}`}>
+                      {f.kind === "include" && <CheckIcon className="chk" />}
+                      {f.kind === "exclude" && <XIcon className="chk-no" />}
+                      {f.text}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div style={{ marginTop: "auto", paddingTop: 8 }}>
-              {currentPlan === "free" ? (
-                <PricingCTA className="pr-btn-free" label="Go to Dashboard" href={APP_URL} />
-              ) : (
-                <PricingCTA className="pr-btn-free" />
-              )}
-            </div>
-          </div>
-          {/* Paid */}
-          <div className={`pr-card paid ${currentPlan === tier.id ? "current-plan" : ""}`}>
-            {currentPlan === tier.id && <div className="pr-current-badge">Current Plan</div>}
-            <div className="pr-card-top">
-              <div className="pr-price">${tier.price}<span className="mo">/mo</span></div>
-              <div className="pr-sel-wrap" ref={dropRef}>
-                <button className={`pr-sel-btn ${dropOpen ? "open" : ""}`} onClick={() => setDropOpen(!dropOpen)}>
-                  <span>{tier.label}</span>
-                  {TIERS.some((t) => t.id === currentPlan) && (
-                    <span style={{ fontSize: 10, color: "var(--accent)", marginRight: 2 }}>
-                      {TIERS.find((t) => t.id === currentPlan)?.id === tier.id ? "✓" : ""}
-                    </span>
-                  )}
-                  <ChevronIcon />
-                </button>
-                {dropOpen && (
-                  <div className="pr-dropdown">
-                    {TIERS.map((t, i) => (
-                      <div key={t.label} className={`pr-drop-item ${i === selectedTier ? "active" : ""}`} onClick={() => { setSelectedTier(i); setDropOpen(false); }}>
-                        <span>{t.label}</span>
-                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          {t.id === currentPlan && <span style={{ fontSize: 10, color: "var(--accent)", fontFamily: "var(--mono)" }}>Current</span>}
-                          {i === selectedTier && <CheckIcon />}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                {showTrial && <div className="pr-trial">14-day free trial</div>}
+                {buttonHref ? (
+                  <PricingCTA className={`pr-btn pr-btn-tier ${t.highlight ? "pr-btn-tier-hi" : ""}`} label={ctaLabel} href={buttonHref} />
+                ) : (
+                  <PricingCTA className={`pr-btn pr-btn-tier ${t.highlight ? "pr-btn-tier-hi" : ""}`} label={ctaLabel} />
                 )}
               </div>
-            </div>
-            <div className="pr-card-sub">Everything you need to build and scale.</div>
-            <div className="pr-divider" />
-            <div className="pr-feats">
-              {FEATURES_PAID.map((f) => (
-                <div key={f.text} className="pr-feat">
-                  <CheckIcon className="chk" />
-                  {f.dynamic ? `Up to ${tier.posts} successful posts per month` : f.text}
-                </div>
-              ))}
-            </div>
-            {trialEligible && currentPlan !== tier.id && (
-              <div style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600, textAlign: "center", marginBottom: 8, fontFamily: "var(--mono)" }}>
-                14-day free trial included
-              </div>
-            )}
-            <div style={{ marginTop: "auto", paddingTop: 8 }}>
-              {currentPlan === tier.id ? (
-                <PricingCTA className="pr-btn-paid" label="Go to Dashboard" href={profileId ? `${APP_URL}/projects/${profileId}/billing` : APP_URL} />
-              ) : profileId ? (
-                <PricingCTA className="pr-btn-paid" label="Get Started" href={`${APP_URL}/projects/${profileId}/billing?upgrade=${tier.id}`} />
-              ) : (
-                <PricingCTA className="pr-btn-paid" />
-              )}
-            </div>
-          </div>
+            );
+          })}
         </div>
 
         {/* Soft block */}
         <div className="pr-soft">
           <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><circle cx="8" cy="8" r="6.5" /><path d="M8 5v3M8 10v1" /></svg></div>
           <div>
-            <div className="pr-soft-title">What happens when I go over my plan?</div>
-            <div className="pr-soft-desc">We want you to succeed, and not be afraid of surprise charges. If you unexpectedly go over the limits of your plan, we won&apos;t shut you down or charge you extra automatically. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor usage programmatically.</div>
+            <div className="pr-soft-title">Soft limits, not hard stops</div>
+            <div className="pr-soft-desc">If you go over your monthly post quota we won&apos;t cut you off or charge you extra automatically — sustained overage becomes an upgrade conversation, not a service interruption. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor programmatically.</div>
           </div>
         </div>
 
@@ -229,12 +273,30 @@ export default function PricingPage() {
         <div className="pr-compare">
           <h2 className="pr-compare-title">Compare plans</h2>
           <div className="pr-compare-wrap">
-            <div className="pr-compare-hdr"><div className="pr-ch">Feature</div><div className="pr-ch">Free</div><div className="pr-ch hl">Paid</div></div>
+            <div className="pr-compare-hdr">
+              <div className="pr-ch">Capability</div>
+              <div className="pr-ch">Free</div>
+              <div className="pr-ch">API</div>
+              <div className="pr-ch hl">Basic</div>
+              <div className="pr-ch">Growth</div>
+              <div className="pr-ch">Team</div>
+            </div>
             {COMPARE_ROWS.map((row) => (
               <div key={row.name} className="pr-compare-row">
-                <div className="pr-cr pr-cr-feat"><span className="pr-cr-name">{row.name}</span>{row.sub && <span className="pr-cr-sub">{row.sub}</span>}</div>
-                <div className="pr-cr">{row.free === true ? <CheckIcon className="pr-chk" /> : row.free === false ? <span className="pr-dash">—</span> : <span className="pr-cr-val" style={{ color: "var(--muted)" }}>{row.free}</span>}</div>
-                <div className="pr-cr">{row.paid === "dynamic" ? <span className="pr-cr-val" style={{ color: "var(--accent)" }}>1,000 — 200,000/mo</span> : row.paid === true ? <CheckIcon className="pr-chk" /> : row.paid === false ? <span className="pr-dash">—</span> : <span className="pr-cr-val" style={{ color: "var(--accent)" }}>{row.paid}</span>}</div>
+                <div className="pr-cr pr-cr-feat">
+                  <span className="pr-cr-name">{row.name}</span>
+                  {row.sub && <span className="pr-cr-sub">{row.sub}</span>}
+                </div>
+                {(["free", "api", "basic", "growth", "team"] as const).map((col) => {
+                  const v = row[col];
+                  return (
+                    <div key={col} className="pr-cr">
+                      {v === true ? <CheckIcon className="pr-chk" />
+                        : v === false ? <span className="pr-dash">—</span>
+                        : <span className={`pr-cr-val ${col === "basic" ? "hl" : ""}`}>{v}</span>}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -243,9 +305,9 @@ export default function PricingPage() {
         {/* Enterprise */}
         <div className="pr-ent">
           <div>
-            <div className="pr-ent-title">Need more than 200,000 posts/month?</div>
-            <div className="pr-ent-desc">Contact us for a tailored Enterprise plan with custom volume, SLA guarantees, dedicated support, and flexible contract terms.</div>
-            <div className="pr-ent-chips">{["Custom post volume", "99.9% SLA", "Dedicated support", "Custom contract", "On-premise option"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
+            <div className="pr-ent-title">Need more than 25,000 posts/month or custom terms?</div>
+            <div className="pr-ent-desc">Enterprise plans cover custom volume, dedicated support, SLA guarantees, security review, and contract flexibility. Get in touch and we&apos;ll size it to your needs.</div>
+            <div className="pr-ent-chips">{["Custom volume", "99.9% SLA", "Dedicated support", "Custom contract", "On-premise option"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
           </div>
           <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">Contact Sales →</a>
         </div>
@@ -256,7 +318,6 @@ export default function PricingPage() {
           {FAQS.map((f) => (<div key={f.q} className="pr-faq-item"><div className="pr-faq-q">{f.q}</div><div className="pr-faq-a">{f.a}</div></div>))}
         </div>
       </div>
-
     </>
   );
 }

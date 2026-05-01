@@ -1,4 +1,4 @@
-// Single source of truth for character limits across all 8 platforms.
+// Single source of truth for character limits across all 9 platforms.
 // Used by the Character Counter tool and the AgentPost web composer.
 //
 // Keep these in sync with the UniPost API's capabilities endpoint

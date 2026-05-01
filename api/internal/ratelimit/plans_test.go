@@ -10,14 +10,11 @@ func TestLimitsForPlan_KnownTiers(t *testing.T) {
 		wantDepthCap int
 	}{
 		{"free", 10, 50, 200},
-		{"p10", 20, 200, 1000},
-		{"p25", 40, 500, 3000},
-		{"p50", 60, 1000, 10000},
-		{"p75", 60, 1000, 10000},
-		{"p150", 120, 3000, 50000},
-		{"p300", 120, 3000, 50000},
-		{"p500", 120, 3000, 50000},
-		{"p1000", 120, 3000, 50000},
+		{"api", 20, 200, 1000},
+		{"basic", 40, 500, 3000},
+		{"growth", 60, 1000, 10000},
+		{"team", 120, 3000, 50000},
+		{"enterprise", 120, 3000, 50000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.planID, func(t *testing.T) {
@@ -35,8 +32,14 @@ func TestLimitsForPlan_KnownTiers(t *testing.T) {
 	}
 }
 
+// TestLimitsForPlan_UnknownFallsBackToFree — anything not explicitly
+// listed (legacy p10..p1000 IDs, garbage strings, empty) falls through
+// to FreeLimits. This is the safe-by-default behavior the May 2026
+// pricing migration relies on: even if a stale plan_id sneaks through
+// during deploy ordering, the affected workspace gets the most
+// conservative envelope rather than failing open.
 func TestLimitsForPlan_UnknownFallsBackToFree(t *testing.T) {
-	for _, id := range []string{"", "garbage", "enterprise", "p999"} {
+	for _, id := range []string{"", "garbage", "p10", "p25", "p50", "p75", "p150", "p300", "p500", "p1000", "p999"} {
 		got := LimitsForPlan(id)
 		want := FreeLimits
 		if got != want {

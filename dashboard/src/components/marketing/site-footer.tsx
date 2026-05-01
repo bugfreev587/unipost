@@ -91,7 +91,7 @@ export function SiteFooter() {
             <p className="site-footer-brand-copy">
               Unified social media API for developers.
               <br />
-              Connect, publish, and monitor across 8 platforms.
+              Connect, publish, and monitor across 9 platforms.
             </p>
           </div>
 

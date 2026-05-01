@@ -1,28 +1,36 @@
 // Zernio competitor data
-// Last verified: April 2026
-// Source: zernio.com/pricing
-// Verify quarterly before updating
+// Last verified: 2026-05-01 against zernio.com/pricing
+// Total platform count and Free-tier presence are user-confirmed.
+// Per-platform flags below are best-effort — Zernio's site advertises
+// the count but not an itemized list, so flags are based on the major
+// networks Zernio publicly supports. Verify before quoting in marketing.
 
 export const ZERNIO = {
   name: "Zernio",
   slug: "zernio",
-  tagline: "Social media management API platform",
+  tagline: "Social media platform with tiered features and add-ons",
   pricing: {
-    freeTier: false,
-    freePostsPerMonth: 0,
-    startingPrice: 39,
-    pricingModel: "Per feature tier",
+    freeTier: true,
+    freePostsPerMonth: 20, // Zernio Free: 2 social sets, 20 posts/mo, no Tools API
+    startingPrice: 19, // Build tier: $19/mo monthly billing ($16/mo billed yearly)
+    pricingModel: "Tier + add-ons (Analytics, Comments+DMs, Ads each charged separately)",
     enterprisePlan: true,
     tiers: [
-      { label: "Starter", price: 39, posts: "Included" },
-      { label: "Growth", price: 99, posts: "Higher volume" },
-      { label: "Enterprise", price: null, posts: "Custom" },
+      { label: "Free",        price: 0,    posts: "20/mo" },
+      { label: "Build",       price: 19,   posts: "120/mo" },
+      { label: "Accelerate",  price: 49,   posts: "Unlimited" },
+      { label: "Unlimited",   price: 833,  posts: "Unlimited" },
+    ],
+    addOns: [
+      "Analytics ($10/mo on Build, $50/unit on Accelerate, $1,000/mo on Unlimited)",
+      "Comments + DMs (same pricing structure as Analytics)",
+      "Ads (same pricing structure as Analytics)",
     ],
   },
   platforms: {
     total: 14,
     x: true,
-    bluesky: false,
+    bluesky: false, // not advertised on the public site as of 2026-05-01
     linkedin: true,
     instagram: true,
     threads: true,
@@ -33,7 +41,7 @@ export const ZERNIO = {
   } as Record<string, boolean | string | number>,
   features: {
     scheduledPosts: true,
-    postAnalytics: true,
+    postAnalytics: true, // available as a paid add-on, not bundled
     webhooks: true,
     mediaUpload: true,
     twitterThreads: true,
@@ -42,6 +50,8 @@ export const ZERNIO = {
     firstComment: false,
     nativeMode: true,
     quickstartMode: false,
+    inbox: true, // Comments + DMs add-on
+    dashboard: true,
   },
   developerExperience: {
     restApi: true,
@@ -54,19 +64,19 @@ export const ZERNIO = {
     soc2: true,
     gdpr: true,
   },
-  heroTitle: "UniPost vs Zernio — Which\nsocial API is right for you?",
-  heroSub: "Comparing Zernio alternatives? UniPost offers a permanent free tier, simpler per-post pricing, and developer-first design for solo devs and small teams.",
+  heroTitle: "UniPost vs Zernio —\nThe full stack without the add-on tax",
+  heroSub: "Zernio sells Analytics and Comments+DMs as separate paid add-ons on top of its tier price. UniPost bundles them into Basic at $19/mo.",
   verdict: {
     chooseUs: [
-      "You want a free tier to start",
-      "You prefer simple per-post pricing",
-      "You're a solo dev or indie hacker",
+      "You want Inbox and Analytics included, not as add-ons",
+      "You want native MCP support without an upgrade",
+      "You're a solo dev or indie hacker who wants a real free tier (100 posts vs Zernio's 20)",
       "You want Bluesky support",
     ],
     chooseThem: [
-      "You need 14+ platform coverage",
-      "You have enterprise clients (ClickUp, PwC-level)",
-      "You need a mature, battle-tested product",
+      "You need 14 platforms and use ones UniPost doesn't have yet",
+      "You need Ads management as a first-class feature",
+      "You have enterprise-scale volume needs (Unlimited tier at $833/mo)",
     ],
   },
   migrationEndpoint: {
@@ -78,18 +88,19 @@ export const ZERNIO = {
     to: 'account_ids: ["sa_instagram_xxx"]',
   },
   faqs: [
-    { q: "Can I use UniPost if I'm already using Zernio?", a: "Yes. You can run both in parallel during migration. UniPost's free tier lets you test without any financial commitment." },
-    { q: "Does UniPost support all the platforms Zernio supports?", a: "UniPost currently supports 8 platforms. Zernio supports 14. If you need Facebook or other platforms beyond Pinterest, check our roadmap or contact us." },
-    { q: "Both have MCP — what's the difference?", a: "UniPost's MCP Server is a core feature designed for developer API workflows. Zernio offers MCP as an add-on. Both let AI agents post on behalf of users." },
-    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required. X / Twitter publishing is reserved for paid plans, but every other platform is available on Free." },
-    { q: "Is Zernio better for enterprise?", a: "Zernio has more enterprise features (SOC 2, larger platform coverage, enterprise clients). UniPost is better suited for solo developers and small teams who want simple pricing and a free tier." },
+    { q: "Can I use UniPost if I'm already using Zernio?", a: "Yes. You can run both in parallel during migration. UniPost's Free plan (100 posts/mo) gives you more headroom than Zernio's Free (20 posts/mo) to evaluate." },
+    { q: "What's the real-money difference at the entry tier?", a: "Zernio Build is $19/mo and excludes Inbox and Analytics — you add those as $10/mo each, bringing the realistic total to ~$39/mo. UniPost Basic is $19/mo with both bundled in. Same price, more value." },
+    { q: "Does UniPost support all the platforms Zernio supports?", a: "UniPost supports 9 platforms (X, Instagram, Facebook, Threads, TikTok, YouTube, LinkedIn, Pinterest, Bluesky). Zernio advertises 14. If you need a network beyond UniPost's nine, check our roadmap or contact us." },
+    { q: "Both have MCP — what's the difference?", a: "UniPost ships MCP as a core feature on every plan including Free. Zernio's MCP equivalent ('Tools API') is gated by tier. Same protocol concept, different packaging." },
+    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required. Paid plans (Basic and up) include a 14-day free trial when you upgrade." },
+    { q: "Is Zernio better for enterprise?", a: "Zernio has more years of enterprise track record (SOC 2, larger customer logos, more platforms). UniPost is better suited to developers and small teams who value bundled-feature pricing and a real free tier." },
     { q: "How long does migration take?", a: "Most developers complete the switch in under an hour. The main change is the endpoint URL and field names." },
   ],
   seo: {
     title: "UniPost vs Zernio — Social API Comparison (2026) | UniPost",
-    description: "Comparing Zernio alternatives? UniPost offers a free tier, 7 platforms, simple pricing, and native MCP Server. See the full feature comparison.",
+    description: "Comparing Zernio alternatives? UniPost Basic ($19/mo) bundles Inbox and Analytics — Zernio sells them as $10/mo add-ons each. See the full comparison.",
     keywords: ["zernio alternative", "zernio competitor", "zernio vs unipost", "social media api comparison"],
     ogTitle: "UniPost vs Zernio — Social Media API Comparison",
-    ogDescription: "Free tier. 7 platforms. Simpler pricing. Compare UniPost and Zernio.",
+    ogDescription: "Inbox and Analytics included. No add-on tax. Compare UniPost and Zernio.",
   },
 };

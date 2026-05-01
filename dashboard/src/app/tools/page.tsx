@@ -74,7 +74,7 @@ export default function ToolsPage() {
           <h2 className="tl-cta-title">These tools are built on UniPost API</h2>
           <p className="tl-cta-sub">
             Need to post programmatically? UniPost gives your app a unified API
-            to post to 8 platforms with one call.
+            to post to 9 platforms with one call.
           </p>
           <div className="tl-cta-actions">
             <a href="https://app.unipost.dev" className="lp-btn lp-btn-primary lp-btn-lg">

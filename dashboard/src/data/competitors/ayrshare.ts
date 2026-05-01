@@ -1,5 +1,5 @@
 // Ayrshare competitor data
-// Last verified: April 2026
+// Last verified: 2026-05-01
 // Source: ayrshare.com/pricing
 // Verify quarterly before updating
 
@@ -42,6 +42,8 @@ export const AYRSHARE = {
     firstComment: false,
     nativeMode: true,
     quickstartMode: true,
+    inbox: true,
+    dashboard: true,
   },
   developerExperience: {
     restApi: true,
@@ -55,18 +57,18 @@ export const AYRSHARE = {
     gdpr: true,
   },
   heroTitle: "The best Ayrshare alternative\nfor developers in 2026",
-  heroSub: "Looking for an Ayrshare alternative? UniPost offers unified social media API with a free tier, simpler pricing, and native MCP Server support for AI agents.",
+  heroSub: "Looking for an Ayrshare alternative? UniPost has a permanent free tier, native MCP for AI agents, and bundles Inbox + Analytics into Basic at $19/mo.",
   verdict: {
     chooseUs: [
-      "You want a free tier to start",
-      "You're building AI agents (MCP)",
-      "You prefer simple per-post pricing",
+      "You want a permanent free tier (Ayrshare starts at $29/mo)",
+      "You're building AI agents (UniPost ships native MCP)",
+      "You want a $10/mo API-only plan (UniPost API tier)",
       "You're a solo dev or small team",
     ],
     chooseThem: [
       "You need 15+ platform coverage",
       "You have enterprise compliance needs",
-      "You need white-label reseller plan",
+      "You need a white-label reseller plan",
     ],
   },
   migrationEndpoint: {
@@ -78,18 +80,18 @@ export const AYRSHARE = {
     to: 'account_ids: ["sa_instagram_xxx"]',
   },
   faqs: [
-    { q: "Can I use UniPost if I'm already using Ayrshare?", a: "Yes. You can run both in parallel during migration. UniPost's free tier lets you test without committing." },
-    { q: "Does UniPost support all the platforms Ayrshare supports?", a: "UniPost currently supports 8 platforms. Ayrshare supports 15+. If you need Facebook or other platforms beyond Pinterest, check our roadmap or contact us." },
+    { q: "Can I use UniPost if I'm already using Ayrshare?", a: "Yes. You can run both in parallel during migration. UniPost's Free plan lets you test without committing." },
+    { q: "Does UniPost support all the platforms Ayrshare supports?", a: "UniPost currently supports 9 platforms (X, Instagram, Facebook, Threads, TikTok, YouTube, LinkedIn, Pinterest, Bluesky). Ayrshare supports 15+. If you need a network beyond UniPost's nine, check our roadmap or contact us." },
     { q: "Is UniPost's API compatible with Ayrshare?", a: "The API is similar in concept but not drop-in compatible. Field names and endpoint paths differ. See the migration guide above for the exact changes needed." },
-    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required. X / Twitter publishing requires any paid plan; the other 7 platforms are available on Free." },
-    { q: "What about Ayrshare's white-label features?", a: "UniPost supports White-label (Native mode) on all paid plans, which gives your users a branded OAuth experience. Custom-domain white-labeling is on the roadmap." },
+    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required. X publishing requires any paid plan; the other 8 platforms are available on Free." },
+    { q: "What about Ayrshare's white-label features?", a: "UniPost supports White-label (Native mode) starting at the Growth tier ($59/mo), which gives your users a branded OAuth experience. Custom-domain white-labeling is on the roadmap." },
     { q: "How long does migration take?", a: "Most developers complete the switch in under an hour. The main change is the endpoint URL and field names." },
   ],
   seo: {
     title: "Best Ayrshare Alternative for Developers (2026) | UniPost",
-    description: "Looking for an Ayrshare alternative? UniPost offers unified social media API with a free tier, 7 platforms, and native MCP Server. Compare features and pricing.",
+    description: "Looking for an Ayrshare alternative? UniPost offers a permanent free tier, native MCP Server, and bundles Inbox + Analytics. Compare features and pricing.",
     keywords: ["ayrshare alternative", "ayrshare competitor", "ayrshare vs unipost", "social media api alternative", "unified social media api"],
     ogTitle: "UniPost vs Ayrshare — Social Media API Comparison",
-    ogDescription: "Free tier. 7 platforms. Native MCP Server. Compare UniPost and Ayrshare.",
+    ogDescription: "Permanent free tier. Native MCP. Bundled Inbox + Analytics. Compare UniPost and Ayrshare.",
   },
 };

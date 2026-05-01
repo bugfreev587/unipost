@@ -210,7 +210,7 @@ export default function AlternativePage() {
           <div className="alt-hero-meta">
             <div className="alt-hero-meta-item"><CheckIcon /><span>Free 100 posts/month</span></div>
             <div className="alt-hero-meta-item"><CheckIcon /><span>No credit card</span></div>
-            <div className="alt-hero-meta-item"><CheckIcon /><span>8 platforms</span></div>
+            <div className="alt-hero-meta-item"><CheckIcon /><span>9 platforms</span></div>
           </div>
         </div>
 
@@ -286,7 +286,7 @@ export default function AlternativePage() {
             </div>
           </div>
           <p className="alt-pricing-note">
-            UniPost&apos;s pricing is per post volume only. Every plan includes all features — no feature tiers, no upgrade pressure.
+            UniPost&apos;s pricing is product-tier based. Free includes the API and dashboard. Basic ($19/mo) bundles Inbox and Analytics. Growth ($59/mo) adds white-label. Team ($149/mo) adds RBAC and team collaboration.
           </p>
         </div>
 

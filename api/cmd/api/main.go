@@ -723,15 +723,15 @@ func main() {
 // Env var naming mirrors internal/billing.Manager: STRIPE_PRICE_ID_<amount>
 // where the amount is the monthly dollar price.
 func syncStripePriceIDs(ctx context.Context, queries *db.Queries) {
+	// Migration 058 (May 2026) replaced the per-volume tier IDs
+	// (p10..p1000) with product tiers (api/basic/growth/team). The
+	// env-var token scheme follows the new names. 'enterprise' is
+	// out-of-band (no Stripe Checkout) and intentionally not synced.
 	planEnvMap := map[string]string{
-		"p10":   "STRIPE_PRICE_ID_10",
-		"p25":   "STRIPE_PRICE_ID_25",
-		"p50":   "STRIPE_PRICE_ID_50",
-		"p75":   "STRIPE_PRICE_ID_75",
-		"p150":  "STRIPE_PRICE_ID_150",
-		"p300":  "STRIPE_PRICE_ID_300",
-		"p500":  "STRIPE_PRICE_ID_500",
-		"p1000": "STRIPE_PRICE_ID_1000",
+		"api":    "STRIPE_PRICE_ID_API",
+		"basic":  "STRIPE_PRICE_ID_BASIC",
+		"growth": "STRIPE_PRICE_ID_GROWTH",
+		"team":   "STRIPE_PRICE_ID_TEAM",
 	}
 
 	for planID, envVar := range planEnvMap {

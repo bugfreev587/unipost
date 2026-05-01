@@ -8,17 +8,25 @@ import { getBilling, createCheckout, createPortal, type BillingInfo, type Plan }
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { CheckCircle2, ExternalLink } from "lucide-react";
 
+// Pricing redesign May 2026 (migration 058): tiers are now product-stage
+// based, not per-volume. IDs match plans.id.
 const PLANS: Plan[] = [
-  { id: "free", name: "Free", price_cents: 0, post_limit: 100 },
-  { id: "p10", name: "Starter", price_cents: 1000, post_limit: 1000 },
-  { id: "p25", name: "Pro", price_cents: 2500, post_limit: 2500 },
-  { id: "p50", name: "Growth", price_cents: 5000, post_limit: 5000 },
-  { id: "p75", name: "Scale", price_cents: 7500, post_limit: 10000 },
-  { id: "p150", name: "Business", price_cents: 15000, post_limit: 20000 },
-  { id: "p300", name: "Enterprise", price_cents: 30000, post_limit: 40000 },
-  { id: "p500", name: "Enterprise+", price_cents: 50000, post_limit: 100000 },
-  { id: "p1000", name: "Custom", price_cents: 100000, post_limit: 200000 },
+  { id: "free",   name: "Free",   price_cents: 0,     post_limit: 100 },
+  { id: "api",    name: "API",    price_cents: 1000,  post_limit: 1000 },
+  { id: "basic",  name: "Basic",  price_cents: 1900,  post_limit: 2500 },
+  { id: "growth", name: "Growth", price_cents: 5900,  post_limit: 7500 },
+  { id: "team",   name: "Team",   price_cents: 14900, post_limit: 25000 },
 ];
+
+// Short blurbs surfaced on the upgrade card so customers see the
+// product-stage difference instead of just a price/quota grid.
+const PLAN_BLURBS: Record<string, string> = {
+  free:   "Try the API and dashboard.",
+  api:    "API + MCP only. No dashboard.",
+  basic:  "Adds Inbox, Analytics, X.",
+  growth: "Adds white-label / native mode.",
+  team:   "Adds RBAC and team collab.",
+};
 
 // The page default export wraps the content in a Suspense boundary.
 // useSearchParams() on a statically prerenderable route (this one has
@@ -277,8 +285,8 @@ function BillingSettingsContent() {
           }}
         >
           {billing.warning === "over_limit"
-            ? "Monthly limit exceeded. Upgrade to continue posting."
-            : `${pct}% of monthly limit used. Consider upgrading.`}
+            ? "Monthly post quota exceeded. Posting continues for now — sustained overage will require an upgrade."
+            : `${pct}% of monthly post quota used. Consider upgrading.`}
         </div>
       )}
 
@@ -292,13 +300,14 @@ function BillingSettingsContent() {
           )}
         </div>
         <div className="dt-body-sm">
-          All plans include the same features. Only post volume differs.
+          Plans are product-stage tiers (Free / API / Basic / Growth / Team). See the full feature matrix at <a href="/pricing" style={{ color: "var(--daccent)", textDecoration: "underline" }}>unipost.dev/pricing</a>.
         </div>
       </div>
       <div className="plan-cards">
-        {PLANS.slice(0, 6).map((plan) => {
+        {PLANS.map((plan) => {
           const isCurrent = billing?.plan === plan.id;
           const price = plan.price_cents === 0 ? "$0" : `$${plan.price_cents / 100}`;
+          const blurb = PLAN_BLURBS[plan.id] ?? "";
           return (
             <div key={plan.id} className={`plan-card ${isCurrent ? "current" : ""}`}>
               {isCurrent && (
@@ -315,6 +324,19 @@ function BillingSettingsContent() {
                   Current Plan
                 </div>
               )}
+              <div
+                style={{
+                  fontFamily: "var(--font-geist-mono), monospace",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "var(--dtext)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  marginBottom: 4,
+                }}
+              >
+                {plan.name}
+              </div>
               <div
                 style={{
                   fontFamily: "var(--font-geist-mono), monospace",
@@ -337,6 +359,11 @@ function BillingSettingsContent() {
               <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 4 }}>
                 {plan.post_limit.toLocaleString()} posts
               </div>
+              {blurb && (
+                <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 6, lineHeight: 1.4 }}>
+                  {blurb}
+                </div>
+              )}
               {!isCurrent && plan.id !== "free" && (
                 <button
                   className="dbtn dbtn-ghost"
@@ -356,69 +383,10 @@ function BillingSettingsContent() {
           );
         })}
       </div>
-      {PLANS.length > 6 && (
-        <div className="plan-cards" style={{ marginTop: 10 }}>
-          {PLANS.slice(6).map((plan) => {
-            const isCurrent = billing?.plan === plan.id;
-            const price = `$${plan.price_cents / 100}`;
-            return (
-              <div key={plan.id} className={`plan-card ${isCurrent ? "current" : ""}`}>
-                {isCurrent && (
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: "var(--daccent)",
-                      fontWeight: 600,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.08em",
-                      marginBottom: 6,
-                    }}
-                  >
-                    Current Plan
-                  </div>
-                )}
-                <div
-                  style={{
-                    fontFamily: "var(--font-geist-mono), monospace",
-                    fontSize: 20,
-                    fontWeight: 600,
-                    color: "var(--dtext)",
-                  }}
-                >
-                  {price}
-                  <span
-                    style={{
-                      fontSize: 12,
-                      color: "var(--dmuted)",
-                      fontWeight: 400,
-                    }}
-                  >
-                    /mo
-                  </span>
-                </div>
-                <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 4 }}>
-                  {plan.post_limit.toLocaleString()} posts
-                </div>
-                {!isCurrent && (
-                  <button
-                    className="dbtn dbtn-ghost"
-                    style={{
-                      marginTop: 10,
-                      width: "100%",
-                      justifyContent: "center",
-                      fontSize: 12,
-                    }}
-                    onClick={() => handleUpgrade(plan.id)}
-                    disabled={upgrading === plan.id}
-                  >
-                    {upgrading === plan.id ? "..." : "Upgrade"}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div style={{ marginTop: 16, padding: "12px 14px", border: "1px dashed var(--dborder)", borderRadius: 8, fontSize: 12.5, color: "var(--dmuted)", lineHeight: 1.6 }}>
+        Need more than 25,000 posts/month or custom terms?{" "}
+        <a href="mailto:support@unipost.dev" style={{ color: "var(--daccent)", textDecoration: "underline" }}>Contact us about Enterprise</a>.
+      </div>
     </>
   );
 }

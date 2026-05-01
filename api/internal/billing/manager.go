@@ -96,23 +96,24 @@ type Manager struct {
 	userLookup UserLookupFunc
 }
 
-// planEnvNames maps internal plan IDs to the dollar-amount token used in
-// env-var names. The full var name format is:
+// planEnvNames maps internal plan IDs to the token used in env-var
+// names. The full var name format is:
 //
 //	STRIPE_PRICE_ID_<token>          (live)
 //	STRIPE_SANDBOX_PRICE_ID_<token>  (sandbox)
 //
 // Mirrors syncStripePriceIDs in cmd/api/main.go — keep in sync if you
 // add a plan tier.
+//
+// Migration 058 (May 2026) renamed the token scheme from dollar
+// amounts (10/25/.../1000) to plan-name (api/basic/growth/team).
+// 'enterprise' is intentionally absent — that tier is contracted
+// out-of-band, not self-serve through Stripe Checkout.
 var planEnvNames = map[string]string{
-	"p10":   "10",
-	"p25":   "25",
-	"p50":   "50",
-	"p75":   "75",
-	"p150":  "150",
-	"p300":  "300",
-	"p500":  "500",
-	"p1000": "1000",
+	"api":    "API",
+	"basic":  "BASIC",
+	"growth": "GROWTH",
+	"team":   "TEAM",
 }
 
 // NewManager reads STRIPE_*, STRIPE_SANDBOX_*, and SUPER_ADMINS from the

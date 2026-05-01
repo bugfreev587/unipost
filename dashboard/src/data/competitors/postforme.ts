@@ -1,44 +1,39 @@
 // PostForMe competitor data
-// Last verified: April 2026
-// Source: postforme.dev
-// Verify quarterly before updating
+// Last verified: 2026-05-01 against postforme.dev/pricing
+// Verify quarterly before updating — also re-verify whenever the live
+// pricing copy on UniPost references a specific PostForMe fact.
 
 export const POSTFORME = {
   name: "PostForMe",
   slug: "postforme",
-  tagline: "Open-source social media posting API",
+  tagline: "Lightweight, API-only social posting",
   pricing: {
-    freeTier: true,
-    freePostsPerMonth: 100,
+    freeTier: false,
+    freePostsPerMonth: 0,
     startingPrice: 10,
-    pricingModel: "Per post volume",
+    pricingModel: "Single per-post-volume tier",
     enterprisePlan: true,
     tiers: [
-      { label: "Free", price: 0, posts: "100/mo" },
-      { label: "Starter", price: 10, posts: "1,000/mo" },
-      { label: "Growth", price: 25, posts: "2,500/mo" },
-      { label: "Pro", price: 50, posts: "5,000/mo" },
-      { label: "Scale", price: 75, posts: "10,000/mo" },
-      { label: "Business", price: 150, posts: "20,000/mo" },
-      { label: "Enterprise", price: 1000, posts: "200,000/mo" },
+      { label: "Standard", price: 10, posts: "1,000/mo" },
+      { label: "Enterprise", price: null, posts: "Custom" },
     ],
   },
   platforms: {
-    total: 6,
-    x: false,
+    total: 9,
+    x: true,
     bluesky: true,
     linkedin: true,
     instagram: true,
     threads: true,
     tiktok: true,
     youtube: true,
-    facebook: false,
-    pinterest: false,
+    facebook: true,
+    pinterest: true,
   } as Record<string, boolean | string | number>,
   features: {
     scheduledPosts: true,
-    postAnalytics: false,
-    webhooks: false,
+    postAnalytics: true,
+    webhooks: false, // not advertised on the public pricing page
     mediaUpload: true,
     twitterThreads: false,
     bulkPublishing: false,
@@ -46,6 +41,8 @@ export const POSTFORME = {
     firstComment: false,
     nativeMode: false,
     quickstartMode: true,
+    inbox: false, // PostForMe is API-only — no DM/comments inbox
+    dashboard: false, // API-first product, no dashboard UI
   },
   developerExperience: {
     restApi: true,
@@ -58,19 +55,19 @@ export const POSTFORME = {
     soc2: false,
     gdpr: true,
   },
-  heroTitle: "UniPost vs PostForMe —\nA developer's comparison",
-  heroSub: "Evaluating PostForMe alternatives? UniPost offers more platforms, analytics, webhooks, and native MCP Server support — all without self-hosting.",
+  heroTitle: "UniPost vs PostForMe —\nWhen you outgrow API-only",
+  heroSub: "PostForMe is a lightweight posting API. UniPost is the same API plus a dashboard, Inbox, Analytics, and team workflows — and the API tier matches PostForMe at $10/mo.",
   verdict: {
     chooseUs: [
-      "You need X/Twitter support",
-      "You need analytics and webhooks",
-      "You're building AI agents (MCP)",
-      "You want a managed API with no self-hosting",
+      "You want a dashboard for manual posting",
+      "You need an Inbox for DMs and comments",
+      "You're building AI agents (UniPost ships native MCP)",
+      "You want a permanent free tier without a credit card",
     ],
     chooseThem: [
       "You want to self-host and own the code",
+      "You only need a publishing API, no dashboard",
       "You prefer open-source solutions",
-      "You have a simple posting-only use case",
     ],
   },
   migrationEndpoint: {
@@ -82,18 +79,18 @@ export const POSTFORME = {
     to: 'account_ids: ["sa_instagram_xxx"]',
   },
   faqs: [
-    { q: "Can I use UniPost if I'm already using PostForMe?", a: "Yes. You can run both in parallel during migration. UniPost's free tier lets you test without any financial commitment." },
+    { q: "Can I use UniPost if I'm already using PostForMe?", a: "Yes. You can run both in parallel during migration. UniPost's permanent Free tier lets you test without any financial commitment." },
     { q: "PostForMe is open-source. Is UniPost?", a: "No. UniPost is a managed SaaS product. You get reliability, uptime, and zero infrastructure management. If you need open-source, PostForMe is a good choice." },
-    { q: "Does UniPost support X/Twitter?", a: "Yes — on paid plans. UniPost supports X/Twitter along with 7 other platforms. The Free plan supports the other 7 (Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest); X publishing requires a paid plan starting at $10/mo. PostForMe does not currently support X/Twitter at all." },
-    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required. X / Twitter is reserved for paid plans." },
-    { q: "Is PostForMe really free?", a: "PostForMe offers a free tier with 100 posts/month, similar to UniPost. Their paid plans follow the same per-post volume pricing model. Self-hosting the open-source version is free but requires your own infrastructure." },
+    { q: "Does UniPost support X/Twitter?", a: "Yes — on paid plans (API $10/mo and up). UniPost supports all 9 platforms PostForMe supports plus a dashboard, Inbox, and full Analytics. PostForMe also supports X." },
+    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required. X publishing is reserved for paid plans." },
+    { q: "How does UniPost API ($10) compare to PostForMe ($10)?", a: "Same price, same 1,000-post quota, same 9 platforms (UniPost is on 9 too). UniPost API also includes a native MCP server for AI-agent workflows, which PostForMe does not have. Step up to UniPost Basic ($19/mo) when you also want a dashboard, Inbox, and full Analytics — features PostForMe doesn't ship." },
     { q: "How long does migration take?", a: "Most developers complete the switch in under an hour. The main change is the endpoint URL and field names." },
   ],
   seo: {
     title: "UniPost vs PostForMe — Social API Comparison (2026) | UniPost",
-    description: "Comparing PostForMe alternatives? UniPost offers 7 platforms, a free tier, analytics, webhooks, and native MCP Server. See the full comparison.",
+    description: "Comparing PostForMe alternatives? UniPost API matches PostForMe at $10/mo and adds a dashboard, Inbox, Analytics, and native MCP server on Basic and up.",
     keywords: ["postforme alternative", "postforme competitor", "postforme vs unipost", "social media api comparison"],
     ogTitle: "UniPost vs PostForMe — Social Media API Comparison",
-    ogDescription: "Free tier. 7 platforms. More features. Compare UniPost and PostForMe.",
+    ogDescription: "Same API price. Plus dashboard, Inbox, Analytics, MCP. Compare UniPost and PostForMe.",
   },
 };
