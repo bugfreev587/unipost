@@ -440,7 +440,15 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		}
 	}
 
-	oc := h.publishOneContext(ctx, pp, dbAccounts, accountMap, h.buildPerAccountTracker(ctx, post.WorkspaceID, pp.AccountID))
+	oc := h.publishOneContext(
+		ctx,
+		pp,
+		dbAccounts,
+		accountMap,
+		h.buildPerAccountTracker(ctx, post.WorkspaceID, pp.AccountID),
+		quota.NewPerPlatformDailyTracker(ctx, h.queries, dailyTargetsFor([]platform.PlatformPostInput{pp}, accountMap)),
+		h.disallowedPlatformsForDispatch(ctx, post.WorkspaceID, []platform.PlatformPostInput{pp}, accountMap),
+	)
 	if oc.err != nil {
 		return h.handleJobDispatchFailure(ctx, post, res, job, oc)
 	}

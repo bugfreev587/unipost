@@ -70,6 +70,22 @@ func TestBuildHostedURL(t *testing.T) {
 	}
 }
 
+// TestNewConnectSessionHandler_NilQuotaOK — the constructor must
+// accept a nil *quota.Checker without panic. This is the test path
+// (and the legacy boot path before the plan-gate wiring) and the
+// existing connect tests rely on this fall-open behavior. The Create
+// handler explicitly checks h.quota != nil before invoking the gate,
+// so a nil checker simply means "no plan restriction enforced here".
+func TestNewConnectSessionHandler_NilQuotaOK(t *testing.T) {
+	h := NewConnectSessionHandler(nil, "https://app.unipost.dev", nil)
+	if h == nil {
+		t.Fatal("expected non-nil handler")
+	}
+	if h.quota != nil {
+		t.Errorf("expected nil quota, got %#v", h.quota)
+	}
+}
+
 // TestConnectablePlatforms locks the Sprint 3 platform allowlist.
 func TestConnectablePlatforms(t *testing.T) {
 	for _, p := range []string{"twitter", "linkedin", "bluesky"} {

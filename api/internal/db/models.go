@@ -183,6 +183,7 @@ type Plan struct {
 	StripePriceID pgtype.Text        `json:"stripe_price_id"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	WhiteLabel    bool               `json:"white_label"`
+	AllowTwitter  bool               `json:"allow_twitter"`
 }
 
 type PlatformCredential struct {

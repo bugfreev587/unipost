@@ -61,6 +61,29 @@ func (q *Queries) CountPublishedThisMonthByAccount(ctx context.Context, socialAc
 	return count, err
 }
 
+const countPublishedTodayByAccount = `-- name: CountPublishedTodayByAccount :one
+SELECT COUNT(*)::INTEGER AS count
+FROM social_post_results
+WHERE social_account_id = $1
+  AND published_at IS NOT NULL
+  AND published_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')
+  AND published_at <  date_trunc('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day'
+`
+
+// Per-platform daily cap enforcement (Sprint 5 PR3). Counts the
+// successful posts for one social account in the current UTC day.
+// Reuses the same partial index (social_post_results_quota_count_idx)
+// as the monthly query — same WHERE shape, tighter time window.
+// platform is not part of the SQL filter because social_account_id
+// already implies a single platform; the per-platform cap lookup
+// happens in Go after this count returns.
+func (q *Queries) CountPublishedTodayByAccount(ctx context.Context, socialAccountID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countPublishedTodayByAccount, socialAccountID)
+	var count int32
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
 INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl, fb_media_type)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)

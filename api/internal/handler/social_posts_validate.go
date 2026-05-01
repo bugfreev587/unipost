@@ -236,15 +236,43 @@ func (h *SocialPostHandler) loadValidateMedia(r *http.Request, workspaceID strin
 func (h *SocialPostHandler) runPublishValidation(r *http.Request, workspaceID string, posts []platform.PlatformPostInput, scheduledAt *time.Time, accounts map[string]platform.ValidateAccount) platform.ValidationResult {
 	media := h.loadValidateMedia(r, workspaceID, posts)
 	result := platform.ValidatePlatformPosts(platform.ValidateOptions{
-		Capabilities: platform.Capabilities,
-		Accounts:     accounts,
-		Media:        media,
-		Posts:        posts,
-		ScheduledAt:  scheduledAt,
+		Capabilities:        platform.Capabilities,
+		Accounts:            accounts,
+		Media:               media,
+		Posts:               posts,
+		ScheduledAt:         scheduledAt,
+		DisallowedPlatforms: h.disallowedPlatformsFor(r, workspaceID, posts, accounts),
 	})
 	result.Errors = append(result.Errors, h.loadImageMetadataValidationIssues(r, workspaceID, posts, accounts)...)
 	result.Valid = len(result.Errors) == 0
 	return result
+}
+
+// disallowedPlatformsFor returns the set of platform names the
+// workspace's billing plan does not permit for this request. We only
+// query the plan gate for platforms the request actually targets so
+// validate stays cheap on the common path (one DB hit max, plus the
+// plan lookup per distinct platform). nil quota checker (test path)
+// returns nil — no plan-side restriction.
+func (h *SocialPostHandler) disallowedPlatformsFor(r *http.Request, workspaceID string, posts []platform.PlatformPostInput, accounts map[string]platform.ValidateAccount) map[string]bool {
+	if h.quota == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	for _, p := range posts {
+		acc, ok := accounts[p.AccountID]
+		if !ok || acc.Platform == "" {
+			continue
+		}
+		seen[acc.Platform] = struct{}{}
+	}
+	out := make(map[string]bool, len(seen))
+	for plat := range seen {
+		if !h.quota.PlanAllowsPlatform(r.Context(), workspaceID, plat) {
+			out[plat] = true
+		}
+	}
+	return out
 }
 
 func (h *SocialPostHandler) loadImageMetadataValidationIssues(r *http.Request, workspaceID string, posts []platform.PlatformPostInput, accounts map[string]platform.ValidateAccount) []platform.Issue {

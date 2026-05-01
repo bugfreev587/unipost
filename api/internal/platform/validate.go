@@ -142,6 +142,13 @@ type ValidateOptions struct {
 	// MaxScheduleAhead is the upper bound on how far in the future a
 	// post can be scheduled. Defaults to 90 days when zero.
 	MaxScheduleAhead time.Duration
+
+	// DisallowedPlatforms is the set of platform names the workspace's
+	// billing plan is NOT allowed to publish to. Caller resolves this
+	// from plans.allow_* columns (free plans set "twitter" today).
+	// Posts whose resolved account.Platform is in this set fail with
+	// CodePlanPlatformNotAllowed. nil/empty = no plan-side restriction.
+	DisallowedPlatforms map[string]bool
 }
 
 // Issue is one validation finding. PlatformPostIndex is the 0-based
@@ -199,6 +206,12 @@ const (
 	CodeEmptyPosts             = "empty_posts"
 	CodeTooManyPosts           = "too_many_posts"
 	CodeUnknown                = "unknown"
+
+	// CodePlanPlatformNotAllowed fires when a post targets a platform
+	// the workspace's billing plan disallows. Caller computes the
+	// disallowed set (typically from plans.allow_*) and passes it via
+	// ValidateOptions.DisallowedPlatforms so the validator stays pure.
+	CodePlanPlatformNotAllowed = "plan_platform_not_allowed"
 
 	// Sprint 2 thread codes.
 	CodeThreadsUnsupported           = "threads_unsupported"
@@ -711,6 +724,19 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Field:             "account_id",
 			Code:              CodeUnknownPlatform,
 			Message:           "no capability data for platform " + plat,
+			Severity:          SeverityError,
+		})
+		return
+	}
+
+	if opts.DisallowedPlatforms[plat] {
+		res.Errors = append(res.Errors, Issue{
+			PlatformPostIndex: i,
+			AccountID:         post.AccountID,
+			Platform:          plat,
+			Field:             "account_id",
+			Code:              CodePlanPlatformNotAllowed,
+			Message:           "publishing to " + plat + " is not available on your current plan — upgrade at unipost.dev/pricing",
 			Severity:          SeverityError,
 		})
 		return

@@ -90,6 +90,35 @@ func (c *Checker) PlanIDFor(ctx context.Context, workspaceID string) string {
 	return sub.PlanID
 }
 
+// PlanAllowsPlatform reports whether the workspace's plan permits
+// publishing to the given platform. Today this only encodes one rule —
+// the free plan disallows X / Twitter (migration 057) — but the helper
+// is shaped so future plan-gated platforms slot in without churning
+// every call site.
+//
+// Fail-open: any DB or lookup failure returns true. We would rather
+// occasionally let a plan-gated publish through than break publishing
+// for paying customers when subscriptions / plans tables are
+// transiently unreadable. The publish path's other safety nets
+// (validator, adapter rejection, billing usage cap) still apply.
+//
+// Unknown plan IDs and the empty string fall through to the
+// "free" plan's row in the plans table; if that row is also
+// unreadable, the helper returns true.
+func (c *Checker) PlanAllowsPlatform(ctx context.Context, workspaceID, platform string) bool {
+	planID := c.PlanIDFor(ctx, workspaceID)
+	plan, err := c.queries.GetPlan(ctx, planID)
+	if err != nil {
+		return true
+	}
+	switch platform {
+	case "twitter":
+		return plan.AllowTwitter
+	default:
+		return true
+	}
+}
+
 // Increment adds to the usage count for the current period.
 func (c *Checker) Increment(ctx context.Context, workspaceID string, count int) {
 	c.queries.IncrementUsage(ctx, db.IncrementUsageParams{

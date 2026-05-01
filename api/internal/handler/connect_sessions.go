@@ -36,6 +36,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // ConnectSessionHandler owns the Connect session lifecycle.
@@ -45,13 +46,17 @@ type ConnectSessionHandler struct {
 	// "https://app.unipost.dev"). Read once at construction time
 	// from NEXT_PUBLIC_APP_URL — same env var the preview link uses.
 	dashboardURL string
+	// quota is the plan-aware checker used to enforce the X-paid-only
+	// gate (migration 057). Optional — nil means the connect handler
+	// runs without plan checks (legacy + test path).
+	quota *quota.Checker
 }
 
-func NewConnectSessionHandler(queries *db.Queries, dashboardURL string) *ConnectSessionHandler {
+func NewConnectSessionHandler(queries *db.Queries, dashboardURL string, quotaChecker *quota.Checker) *ConnectSessionHandler {
 	if dashboardURL == "" {
 		dashboardURL = "https://app.unipost.dev"
 	}
-	return &ConnectSessionHandler{queries: queries, dashboardURL: dashboardURL}
+	return &ConnectSessionHandler{queries: queries, dashboardURL: dashboardURL, quota: quotaChecker}
 }
 
 // connectableplatforms is the allowlist for POST /v1/connect/sessions.
@@ -175,6 +180,16 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !connectablePlatforms[body.Platform] {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
 			"platform must be one of twitter, linkedin, bluesky")
+		return
+	}
+	// Plan gate (migration 057): block new X / Twitter connections on
+	// plans that disallow it. Already-connected accounts on free
+	// workspaces stay reachable; only the connect path is gated, so
+	// downgraded customers don't lose visibility into existing tokens.
+	// Falls open if the quota checker isn't wired (test path).
+	if h.quota != nil && !h.quota.PlanAllowsPlatform(r.Context(), workspaceID, body.Platform) {
+		writeError(w, http.StatusPaymentRequired, "PLAN_PLATFORM_NOT_ALLOWED",
+			"connecting "+body.Platform+" accounts requires a paid plan — upgrade at unipost.dev/pricing")
 		return
 	}
 	if body.ExternalUserID == "" {

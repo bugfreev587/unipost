@@ -224,6 +224,51 @@ func TestValidate_AccountDisconnected(t *testing.T) {
 	hasError(t, res, 0, CodeAccountDisconnected)
 }
 
+// TestValidate_PlanPlatformNotAllowed — the workspace's plan disallows
+// the resolved platform (free plan + twitter, per migration 057). The
+// validator should emit CodePlanPlatformNotAllowed and short-circuit
+// further per-post checks for that entry. Caption length etc. are
+// intentionally NOT reported alongside — once the plan blocks the
+// platform, the rest of the per-post details are noise.
+func TestValidate_PlanPlatformNotAllowed(t *testing.T) {
+	opts := validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "hi"},
+	})
+	opts.DisallowedPlatforms = map[string]bool{"twitter": true}
+	res := ValidatePlatformPosts(opts)
+	hasError(t, res, 0, CodePlanPlatformNotAllowed)
+	hasNoError(t, res, CodeExceedsMaxLength)
+}
+
+// TestValidate_PlanPlatformAllowed — when the resolved platform is
+// NOT in the disallowed set, the validator runs every other check
+// normally. Regression guard: a non-empty DisallowedPlatforms map
+// should not interfere with platforms that aren't in it.
+func TestValidate_PlanPlatformAllowed(t *testing.T) {
+	opts := validOpts([]PlatformPostInput{
+		{AccountID: "acc_linkedin", Caption: "hi linkedin"},
+	})
+	opts.DisallowedPlatforms = map[string]bool{"twitter": true}
+	res := ValidatePlatformPosts(opts)
+	if !res.Valid {
+		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
+}
+
+// TestValidate_PlanPlatformNotAllowed_NilMap — the common case where
+// the caller passes no plan restriction. Must behave identically to
+// the legacy path (every platform allowed).
+func TestValidate_PlanPlatformNotAllowed_NilMap(t *testing.T) {
+	opts := validOpts([]PlatformPostInput{
+		{AccountID: "acc_twitter", Caption: "hi"},
+	})
+	opts.DisallowedPlatforms = nil
+	res := ValidatePlatformPosts(opts)
+	if !res.Valid {
+		t.Fatalf("expected valid, got %#v", res.Errors)
+	}
+}
+
 // ─── caption length ───────────────────────────────────────────────────
 
 func TestValidate_ExceedsMaxLength(t *testing.T) {

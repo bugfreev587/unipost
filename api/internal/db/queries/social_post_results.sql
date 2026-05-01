@@ -49,6 +49,21 @@ WHERE social_account_id = $1
   AND published_at >= date_trunc('month', NOW() AT TIME ZONE 'UTC')
   AND published_at <  date_trunc('month', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 month';
 
+-- name: CountPublishedTodayByAccount :one
+-- Per-platform daily cap enforcement (Sprint 5 PR3). Counts the
+-- successful posts for one social account in the current UTC day.
+-- Reuses the same partial index (social_post_results_quota_count_idx)
+-- as the monthly query — same WHERE shape, tighter time window.
+-- platform is not part of the SQL filter because social_account_id
+-- already implies a single platform; the per-platform cap lookup
+-- happens in Go after this count returns.
+SELECT COUNT(*)::INTEGER AS count
+FROM social_post_results
+WHERE social_account_id = $1
+  AND published_at IS NOT NULL
+  AND published_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')
+  AND published_at <  date_trunc('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day';
+
 -- name: ListRecentResultsByAccount :many
 -- Most recent N results for an account, for the account health
 -- endpoint. The PR7 health derivation walks the latest 10 of these

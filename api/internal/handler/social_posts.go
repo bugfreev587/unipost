@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -545,6 +546,27 @@ func (h *SocialPostHandler) executePublishLoop(
 		uniqueAccountIDs(parsed.Posts),
 	)
 
+	// Per-platform daily safety cap (PR2). Snapshots today's published
+	// count for every (account, platform) the request will dispatch to,
+	// then decrements as publishOne fires. Caps are static per-platform
+	// constants in quota.PerPlatformDailyCap; once an account has hit
+	// its ceiling, further dispatches in this request short-circuit to
+	// ErrPerPlatformDailyCapExceeded rather than calling the adapter.
+	dailyTracker := quota.NewPerPlatformDailyTracker(
+		r.Context(),
+		h.queries,
+		dailyTargetsFor(parsed.Posts, accountMap),
+	)
+
+	// Plan-platform gate (migration 057). Validate already blocked
+	// fresh requests in fatalErrorCodes, but a draft persisted on a
+	// paid plan and published after a downgrade — or a scheduled post
+	// fired after a downgrade — won't have re-run validate. Snapshot
+	// the disallowed set once per request so the dispatch loop can
+	// short-circuit those entries with a deterministic error rather
+	// than calling the adapter and burning the API quota.
+	disallowed := h.disallowedPlatformsForDispatch(r.Context(), workspaceID, parsed.Posts, accountMap)
+
 	// Publish each platform post. Standalone posts run in parallel
 	// (one goroutine each); thread groups run serially within their
 	// group but groups are still parallel with each other. The
@@ -562,7 +584,7 @@ func (h *SocialPostHandler) executePublishLoop(
 		wg.Add(1)
 		go func(g []int) {
 			defer wg.Done()
-			h.runDispatchGroup(r, g, parsed.Posts, dbAccounts, accountMap, outcomes, tracker)
+			h.runDispatchGroup(r, g, parsed.Posts, dbAccounts, accountMap, outcomes, tracker, dailyTracker, disallowed)
 		}(group)
 	}
 	wg.Wait()
@@ -891,6 +913,8 @@ func (h *SocialPostHandler) runDispatchGroup(
 	accountMap map[string]platform.ValidateAccount,
 	outcomes []publishOneOutcome,
 	tracker *quota.PerAccountTracker,
+	dailyTracker *quota.PerPlatformDailyTracker,
+	disallowedPlatforms map[string]bool,
 ) {
 	// threadState carries per-platform thread plumbing across iterations.
 	// Twitter only needs the previous tweet id; Bluesky needs root URI+CID
@@ -921,7 +945,7 @@ func (h *SocialPostHandler) runDispatchGroup(
 			pp.PlatformOptions = clone
 		}
 
-		oc := h.publishOne(r, pp, dbAccounts, accountMap, tracker)
+		oc := h.publishOne(r, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 		outcomes[postIdx] = oc
 
 		if oc.err != nil {
@@ -963,8 +987,10 @@ func (h *SocialPostHandler) publishOne(
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
 	tracker *quota.PerAccountTracker,
+	dailyTracker *quota.PerPlatformDailyTracker,
+	disallowedPlatforms map[string]bool,
 ) (oc publishOneOutcome) {
-	return h.publishOneContext(r.Context(), pp, dbAccounts, accountMap, tracker)
+	return h.publishOneContext(r.Context(), pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 }
 
 func (h *SocialPostHandler) publishOneContext(
@@ -973,6 +999,8 @@ func (h *SocialPostHandler) publishOneContext(
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
 	tracker *quota.PerAccountTracker,
+	dailyTracker *quota.PerPlatformDailyTracker,
+	disallowedPlatforms map[string]bool,
 ) (oc publishOneOutcome) {
 	// Resolve account.
 	acc, ok := dbAccounts[pp.AccountID]
@@ -997,6 +1025,28 @@ func (h *SocialPostHandler) publishOneContext(
 
 	if acc.DisconnectedAt.Valid {
 		oc.err = fmt.Errorf("account is disconnected")
+		return
+	}
+
+	// Plan gate (migration 057, PR1). Validate already filters fresh
+	// requests targeting plan-disallowed platforms, but a draft
+	// authored on a paid plan and published after a downgrade — or a
+	// scheduled / queued job firing after a downgrade — bypasses
+	// validate entirely. Re-check here so the per-result row records
+	// a deterministic error instead of attempting a publish the
+	// adapter shouldn't be making.
+	if disallowedPlatforms[acc.Platform] {
+		oc.err = ErrPlanPlatformNotAllowed
+		return
+	}
+
+	// Per-platform daily safety cap (PR2). Cheaper than the per-
+	// account monthly check (snapshot lookup, no per-dispatch DB
+	// hit) so it runs first. Caps protect the connected account
+	// from platform-side spam flagging — the cap reset is UTC
+	// midnight, captured in the customer-facing error.
+	if !dailyTracker.Allow(acc.ID, acc.Platform) {
+		oc.err = quota.ErrPerPlatformDailyCapExceeded
 		return
 	}
 
@@ -1331,6 +1381,63 @@ func idempotencyKeyParam(key string) pgtype.Text {
 	return pgtype.Text{String: key, Valid: true}
 }
 
+// ErrPlanPlatformNotAllowed is the error written onto a per-result row
+// when the dispatch loop trips the plan gate. Mirrors the validator
+// CodePlanPlatformNotAllowed code so dashboard / SDK switches stay
+// consistent across the validate + publish surfaces.
+var ErrPlanPlatformNotAllowed = errors.New("plan_platform_not_allowed: publishing to this platform is not available on your current plan — upgrade at unipost.dev/pricing")
+
+// dailyTargetsFor builds the deduped (account, platform) target list
+// the per-platform daily tracker needs. The caller already loaded the
+// account → platform map for validation, so we just project it onto
+// the input post slice — no extra DB hits. Returns an empty (non-nil)
+// slice if no posts have a resolved platform; the tracker handles
+// that as a no-op.
+func dailyTargetsFor(posts []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount) []quota.PerPlatformDailyTarget {
+	seen := make(map[string]struct{})
+	out := make([]quota.PerPlatformDailyTarget, 0, len(posts))
+	for _, p := range posts {
+		acc, ok := accountMap[p.AccountID]
+		if !ok || acc.Platform == "" {
+			continue
+		}
+		if _, dup := seen[p.AccountID]; dup {
+			continue
+		}
+		seen[p.AccountID] = struct{}{}
+		out = append(out, quota.PerPlatformDailyTarget{
+			AccountID: p.AccountID,
+			Platform:  acc.Platform,
+		})
+	}
+	return out
+}
+
+// disallowedPlatformsForDispatch is the publish-loop counterpart of
+// disallowedPlatformsFor (validate side). Same signature without the
+// *http.Request — the queue worker calls it with a background ctx.
+// Returns nil when the quota checker is unavailable (test path).
+func (h *SocialPostHandler) disallowedPlatformsForDispatch(ctx context.Context, workspaceID string, posts []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount) map[string]bool {
+	if h.quota == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	for _, p := range posts {
+		acc, ok := accountMap[p.AccountID]
+		if !ok || acc.Platform == "" {
+			continue
+		}
+		seen[acc.Platform] = struct{}{}
+	}
+	out := make(map[string]bool, len(seen))
+	for plat := range seen {
+		if !h.quota.PlanAllowsPlatform(ctx, workspaceID, plat) {
+			out[plat] = true
+		}
+	}
+	return out
+}
+
 // fatalErrorCodes is the set of validator error codes that block
 // publish. Account-state codes (disconnected, not_in_project,
 // not_found) are intentionally excluded so the publish loop can
@@ -1368,6 +1475,12 @@ var fatalErrorCodes = map[string]bool{
 	// Sprint 4 PR3 first_comment codes.
 	platform.CodeFirstCommentUnsupported: true,
 	platform.CodeFirstCommentTooLong:     true,
+	// Plan gate (migration 057): targeting a plan-disallowed platform
+	// is fatal so the request fails fast with VALIDATION_ERROR rather
+	// than getting partway through the publish loop and recording a
+	// per-result row. Re-checked in publishOne as a defense-in-depth
+	// belt for the rare downgrade-between-validate-and-dispatch race.
+	platform.CodePlanPlatformNotAllowed: true,
 }
 
 // filterFatalIssues splits the validator's full Errors slice into
