@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { listAdminBilling, type AdminBillingListParams, type AdminBillingRow } from "@/lib/api";
+import { listAdminBilling, setAdminWorkspacePlan, type AdminBillingListParams, type AdminBillingRow } from "@/lib/api";
 
 import { AdminShell, StatCard, fmtCents, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
 const STATUS_OPTIONS = ["all", "active", "past_due", "canceled", "trialing"] as const;
-const PLAN_OPTIONS = ["all", "free", "pro", "business"] as const;
+const PLAN_OPTIONS = ["all", "free", "api", "basic", "growth", "team", "enterprise"] as const;
+const PLAN_FLIP_OPTIONS = ["free", "api", "basic", "growth", "team", "enterprise"] as const;
 const DAY_OPTIONS = [30, 90, 180] as const;
 
 export default function AdminBillingPage() {
@@ -150,6 +151,11 @@ export default function AdminBillingPage() {
                     <td>
                       <div style={{ fontWeight: 500 }}>{row.plan_name}</div>
                       <div className="ad-mono">{row.plan_id} · {fmtCents(row.price_cents)}/mo</div>
+                      <PlanFlipMenu
+                        workspaceId={row.workspace_id}
+                        currentPlan={row.plan_id}
+                        onChanged={loadBilling}
+                      />
                     </td>
                     <td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -198,5 +204,69 @@ export default function AdminBillingPage() {
         </table>
       </div>
     </AdminShell>
+  );
+}
+
+// PlanFlipMenu is a tiny inline dropdown that lets an admin change a
+// workspace's plan without going through Stripe. Used for QA of the
+// plan-feature gates (Inbox, Analytics, profile cap, daily-cap, X
+// publishing). Disabled while a request is in flight; calls onChanged
+// after success so the parent re-fetches the billing rows.
+function PlanFlipMenu({
+  workspaceId,
+  currentPlan,
+  onChanged,
+}: {
+  workspaceId: string;
+  currentPlan: string;
+  onChanged: () => void;
+}) {
+  const { getToken } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onPick = async (plan: string) => {
+    if (plan === currentPlan || busy) return;
+    if (!confirm(`Change this workspace from "${currentPlan}" to "${plan}"? This bypasses Stripe entirely.`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      await setAdminWorkspacePlan(token, workspaceId, plan);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to flip plan");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      <select
+        value={currentPlan}
+        onChange={(e) => void onPick(e.target.value)}
+        disabled={busy}
+        style={{
+          fontFamily: "var(--font-mono, ui-monospace)",
+          fontSize: 11,
+          padding: "3px 6px",
+          background: "var(--surface2)",
+          border: "1px solid var(--dborder2)",
+          borderRadius: 4,
+          color: "var(--dmuted)",
+          cursor: busy ? "wait" : "pointer",
+        }}
+        title="Flip plan (admin only — bypasses Stripe)"
+      >
+        {PLAN_FLIP_OPTIONS.map((p) => (
+          <option key={p} value={p}>
+            {p === currentPlan ? `→ ${p}` : `flip to ${p}`}
+          </option>
+        ))}
+      </select>
+      {error && <div style={{ fontSize: 10.5, color: "var(--danger)", marginTop: 2 }}>{error}</div>}
+    </div>
   );
 }

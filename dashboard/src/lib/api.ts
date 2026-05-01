@@ -1604,6 +1604,20 @@ export async function listAdminBilling(
   return request(`/v1/admin/billing${s ? `?${s}` : ""}`, token);
 }
 
+// Admin-only: flip a workspace's plan_id without going through Stripe.
+// Used to test plan-feature gates end-to-end (Inbox / Analytics /
+// profile cap). Returns 204 No Content on success.
+export async function setAdminWorkspacePlan(
+  token: string,
+  workspaceId: string,
+  planId: string,
+): Promise<void> {
+  await request<void>(`/v1/admin/workspaces/${workspaceId}/plan`, token, {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId }),
+  });
+}
+
 export async function recordLandingVisit(data: {
   path: string;
   source?: string;

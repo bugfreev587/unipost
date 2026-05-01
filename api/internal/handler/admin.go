@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -1169,6 +1170,83 @@ func (h *AdminHandler) ListPostsAggregates(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeSuccess(w, out)
+}
+
+// SetPlan flips a workspace's subscription.plan_id directly, bypassing
+// Stripe entirely. This is a developer/QA tool — there is no payment
+// flow, no proration, no Stripe webhook side effect. Used for:
+//
+//   - end-to-end testing of the plan-feature gates (Inbox, Analytics,
+//     profile-cap, daily-cap) without going through Stripe Checkout
+//   - rescuing a customer whose Stripe webhook missed
+//   - manually granting comp / Enterprise access ahead of contract sign
+//
+// The admin middleware (RequireAdminMiddleware in cmd/api/main.go)
+// protects this endpoint — only ADMIN_USERS / SUPER_ADMINS can reach
+// it. The route is also intentionally unmentioned in any docs page.
+//
+// Body: {plan_id: "free|api|basic|growth|team|enterprise"}
+// Response: 204 No Content on success.
+func (h *AdminHandler) SetPlan(w http.ResponseWriter, r *http.Request) {
+	workspaceID := chi.URLParam(r, "workspaceID")
+	if workspaceID == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "workspace ID required")
+		return
+	}
+
+	var body struct {
+		PlanID string `json:"plan_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "invalid request body: "+err.Error())
+		return
+	}
+
+	// Allowlist mirrors plans.id rows from migration 058 + 057's free.
+	// Hardcoded so a typo in the plans table doesn't open up the gate;
+	// when adding a new tier, update this list AND the migration.
+	allowed := map[string]bool{
+		"free":       true,
+		"api":        true,
+		"basic":      true,
+		"growth":     true,
+		"team":       true,
+		"enterprise": true,
+	}
+	if !allowed[body.PlanID] {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+			"plan_id must be one of: free, api, basic, growth, team, enterprise")
+		return
+	}
+
+	// Workspace existence check — surface 404 instead of silently
+	// upserting against a non-existent workspace.
+	var exists bool
+	if err := h.pool.QueryRow(r.Context(),
+		`SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1)`,
+		workspaceID).Scan(&exists); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check workspace: "+err.Error())
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "workspace not found")
+		return
+	}
+
+	// Upsert: create the subscription row if missing, otherwise flip
+	// plan_id + reset status to active. status='active' matches the
+	// shape Stripe webhooks would produce on a successful change.
+	if _, err := h.pool.Exec(r.Context(),
+		`INSERT INTO subscriptions (workspace_id, plan_id, status)
+		 VALUES ($1, $2, 'active')
+		 ON CONFLICT (workspace_id) DO UPDATE
+		 SET plan_id = EXCLUDED.plan_id, status = 'active', updated_at = NOW()`,
+		workspaceID, body.PlanID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update subscription: "+err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *AdminHandler) ListBilling(w http.ResponseWriter, r *http.Request) {

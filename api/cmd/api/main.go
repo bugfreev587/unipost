@@ -512,6 +512,11 @@ func main() {
 		r.Get("/v1/admin/posts", adminHandler.ListPosts)
 		r.Get("/v1/admin/posts/aggregates", adminHandler.ListPostsAggregates)
 		r.Get("/v1/admin/billing", adminHandler.ListBilling)
+		// Dev / QA: flip a workspace's plan_id directly without going
+		// through Stripe Checkout. Useful for testing the plan-feature
+		// gates end-to-end. Already protected by the admin middleware
+		// guarding this group.
+		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
 		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
