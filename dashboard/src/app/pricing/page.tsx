@@ -19,7 +19,7 @@ const TIERS = [
 ];
 const FEATURES_FREE = [
   { text: "100 posts per month", included: true }, { text: "Unlimited social accounts", included: true },
-  { text: "All 8 platforms", included: true }, { text: "Webhooks", included: true },
+  { text: "7 platforms (X requires paid plan)", included: true }, { text: "Webhooks", included: true },
   { text: "Analytics", included: true }, { text: "Scheduled posts", included: true },
   { text: "MCP Server (AI Agent)", included: true }, { text: "Unlimited API keys", included: true },
   { text: "Unlimited team members", included: true }, { text: "Quickstart mode", included: true },
@@ -35,7 +35,8 @@ const FEATURES_PAID = [
 ];
 const COMPARE_ROWS = [
   { name: "Post volume", sub: null, free: "100/mo", paid: "dynamic" },
-  { name: "All 8 platforms", sub: "X, Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest", free: true, paid: true },
+  { name: "Platform coverage", sub: "X requires paid plan; Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest available on Free", free: "7 of 8", paid: "All 8" },
+  { name: "Per-account daily safety caps", sub: "Protects connected accounts from spam flags — X 20/day, IG 100/day, FB 100/day, Threads 250/day, others 50/day", free: true, paid: true },
   { name: "Unlimited social accounts", sub: null, free: true, paid: true },
   { name: "Unlimited API keys", sub: null, free: true, paid: true },
   { name: "Unlimited team members", sub: null, free: true, paid: true },
@@ -50,9 +51,11 @@ const FAQS = [
   { q: "What counts as a post?", a: "One successful publish to a single social account. Posting the same content to 3 platforms counts as 3 posts. Failed or cancelled posts are never counted." },
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
   { q: "What's the difference between Quickstart and White-label?", a: "Quickstart uses UniPost's platform credentials so you can start immediately — users see 'UniPost' during OAuth. White-label (called Native mode in API docs) lets you bring your own credentials so users see your app name. White-label requires a paid plan." },
+  { q: "Why is X (Twitter) not on the Free plan?", a: "The X API has the highest per-call cost of any platform we support, and the Free plan's 100-post quota isn't large enough to absorb that cost without distorting our pricing for everyone else. Free workspaces can connect and read existing X accounts, but new X publishes and new X connections require any paid plan ($10/mo and up)." },
+  { q: "Why are there per-account daily limits?", a: "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, and 50/day for Bluesky, LinkedIn, TikTok, YouTube, and Pinterest. Limits reset at 00:00 UTC and apply per connected account, so adding more accounts gives you more headroom. Failed posts never count toward the cap." },
   { q: "Do unused posts roll over to the next month?", a: "No, post quotas reset at the start of each billing cycle. However, if you exceed your limit we won't cut you off — we'll reach out about upgrading instead." },
   { q: "What happens if I go over my plan?", a: "We won't shut you down or block your posts. If your usage consistently exceeds the limit, we'll reach out about upgrading. You'll never experience a hard stop that breaks your users' experience." },
-  { q: "Is there a free trial for paid plans?", a: "The Free plan is your trial — 100 posts/month with no credit card required. Upgrade when you need more volume. There's no time limit on the free tier." },
+  { q: "Is there a free trial for paid plans?", a: "The Free plan is your trial — 100 posts/month with no credit card required. Upgrade when you need more volume (and to publish to X). There's no time limit on the free tier." },
   { q: "How does UniPost compare to Ayrshare or Zernio?", a: "UniPost offers a permanent free tier, simpler per-post pricing, and native MCP Server support. See our full comparisons at unipost.dev/compare." },
 ];
 
@@ -231,7 +234,7 @@ export default function PricingPage() {
               <div key={row.name} className="pr-compare-row">
                 <div className="pr-cr pr-cr-feat"><span className="pr-cr-name">{row.name}</span>{row.sub && <span className="pr-cr-sub">{row.sub}</span>}</div>
                 <div className="pr-cr">{row.free === true ? <CheckIcon className="pr-chk" /> : row.free === false ? <span className="pr-dash">—</span> : <span className="pr-cr-val" style={{ color: "var(--muted)" }}>{row.free}</span>}</div>
-                <div className="pr-cr">{row.paid === "dynamic" ? <span className="pr-cr-val" style={{ color: "var(--accent)" }}>1,000 — 200,000/mo</span> : row.paid === true ? <CheckIcon className="pr-chk" /> : <span className="pr-dash">—</span>}</div>
+                <div className="pr-cr">{row.paid === "dynamic" ? <span className="pr-cr-val" style={{ color: "var(--accent)" }}>1,000 — 200,000/mo</span> : row.paid === true ? <CheckIcon className="pr-chk" /> : row.paid === false ? <span className="pr-dash">—</span> : <span className="pr-cr-val" style={{ color: "var(--accent)" }}>{row.paid}</span>}</div>
               </div>
             ))}
           </div>

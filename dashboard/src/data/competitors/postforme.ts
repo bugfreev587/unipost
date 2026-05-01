@@ -84,8 +84,8 @@ export const POSTFORME = {
   faqs: [
     { q: "Can I use UniPost if I'm already using PostForMe?", a: "Yes. You can run both in parallel during migration. UniPost's free tier lets you test without any financial commitment." },
     { q: "PostForMe is open-source. Is UniPost?", a: "No. UniPost is a managed SaaS product. You get reliability, uptime, and zero infrastructure management. If you need open-source, PostForMe is a good choice." },
-    { q: "Does UniPost support X/Twitter?", a: "Yes. UniPost supports X/Twitter along with 6 other platforms. PostForMe does not currently support X/Twitter." },
-    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required." },
+    { q: "Does UniPost support X/Twitter?", a: "Yes — on paid plans. UniPost supports X/Twitter along with 7 other platforms. The Free plan supports the other 7 (Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest); X publishing requires a paid plan starting at $10/mo. PostForMe does not currently support X/Twitter at all." },
+    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required. X / Twitter is reserved for paid plans." },
     { q: "Is PostForMe really free?", a: "PostForMe offers a free tier with 100 posts/month, similar to UniPost. Their paid plans follow the same per-post volume pricing model. Self-hosting the open-source version is free but requires your own infrastructure." },
     { q: "How long does migration take?", a: "Most developers complete the switch in under an hour. The main change is the endpoint URL and field names." },
   ],

@@ -428,7 +428,7 @@ response = requests.post(
     type: "dual",
     quickstartDesc: "Use UniPost's Twitter developer credentials. No approval process, no waiting.",
     nativeDesc: "Use your own Twitter developer app. Users see your app name during OAuth.",
-    quickstartFeats: ["Instant access, no approval needed", "OAuth shows \"UniPost\" branding", "Available on Free plan"],
+    quickstartFeats: ["Instant access, no approval needed", "OAuth shows \"UniPost\" branding", "Requires any paid plan ($10/mo and up)"],
     nativeFeats: ["OAuth shows your app name", "Complete credential ownership", "Paid plans only"],
   },
 
@@ -447,7 +447,8 @@ response = requests.post(
     { q: "Do I need my own Twitter developer account?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Twitter app credentials." },
     { q: "How does UniPost handle rate limits?", a: "UniPost queues requests and retries automatically when rate limits are hit. You don't need to build any retry logic." },
     { q: "What happens when my token expires?", a: "UniPost refreshes Twitter tokens automatically in the background. No action needed on your end." },
-    { q: "Is Twitter included in the free plan?", a: "Yes. The free plan includes 100 posts/month across all 8 platforms including Twitter." },
+    { q: "Is Twitter included in the free plan?", a: "No. X / Twitter publishing requires any paid plan ($10/mo and up). Free workspaces can use the other 7 platforms (Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest) up to 100 posts/month." },
+    { q: "Are there daily posting limits per Twitter account?", a: "Yes — 20 publishes per day per connected X account. The cap protects accounts from being flagged for spam, resets at 00:00 UTC, and only counts successful posts. Failed posts never count toward the limit." },
   ],
 
   seo: {

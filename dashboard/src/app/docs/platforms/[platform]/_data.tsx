@@ -125,6 +125,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Inbox / DMs", no, "Not part of the UniPost inbox today"],
     ],
     requirements: [
+      ["Plan", "Required", "Any paid plan", "Free plans cannot publish to or newly connect X accounts. Existing connections on Free workspaces remain visible (read-only) until the workspace upgrades."],
       ["caption", "Optional", "280 chars", "Required unless media-only flow is valid"],
       ["media_urls or media_ids", "Optional", "1-4 images OR 1 video OR 1 GIF", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. Do not mix media types."],
       ["thread_position", "Optional", "1-indexed", "Use on each thread entry"],
@@ -211,9 +212,11 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["thread_unsupported", "Invalid thread shape or missing `thread_position` ordering"],
     ],
     limitations: [
+      ["Daily safety cap", "20 publishes/day per connected X account (UTC reset). Protects accounts from being flagged for spam — failed posts do not count."],
+      ["Paid plan required", "X publishing and new connections require any paid plan ($10/mo and up); the Free plan covers the other 7 platforms."],
       ["No shared Quickstart app", "X removed the managed developer path — every workspace connects with its own keys"],
       ["Inbox is not supported", "UniPost inbox covers Meta and Threads today"],
-      ["Rate limits follow your X tier", "Free tier is not enough for production publish volume"],
+      ["Rate limits follow your X tier", "Free X-API tier is not enough for production publish volume"],
     ],
   },
 
@@ -323,6 +326,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["too_many_media", "More than 4 images or more than 1 video supplied"],
     ],
     limitations: [
+      ["Daily safety cap", "50 publishes/day per connected Bluesky account (UTC reset). Failed posts do not count toward the cap."],
       ["No OAuth", "Authentication is via app password — generate one in Bluesky settings"],
       ["Engagement only in analytics", "Bluesky API does not expose impressions, reach, or views"],
       ["No inbox surface", "Replies are not synced into UniPost inbox today"],
@@ -453,6 +457,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["mixed_media_unsupported", "LinkedIn does not accept image and video in the same share"],
     ],
     limitations: [
+      ["Daily safety cap", "50 publishes/day per connected LinkedIn account (UTC reset). Failed posts do not count toward the cap."],
       ["No thread-style posting", "LinkedIn is a single-post surface — use longer copy instead"],
       ["Mixed media not allowed", "Either images OR video, never both in one share"],
       ["No inbox surface", "DMs and comment moderation are not in UniPost inbox today"],
@@ -660,6 +665,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["mixed_media_unsupported", "Mixed media outside a valid Instagram carousel flow"],
     ],
     limitations: [
+      ["Daily safety cap", "100 publishes/day per connected Instagram account (UTC reset). Protects accounts from being flagged for spam — failed posts do not count."],
       ["Text-only posts not supported", "Instagram requires media on every post"],
       ["Impressions removed", "Graph API v22 no longer exposes impressions for image or carousel"],
       ["Requires Business or Creator account", "Personal IG accounts cannot publish via the Graph API"],
@@ -781,6 +787,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["too_many_media", "More than 20 carousel items supplied"],
     ],
     limitations: [
+      ["Daily safety cap", "250 publishes/day per connected Threads account (UTC reset). Failed posts do not count toward the cap."],
       ["No first-comment flow", "Use `thread_position` for follow-up content"],
       ["No DMs", "Threads API does not expose direct messages today"],
     ],
@@ -908,6 +915,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["invalid_upload_mode", "TikTok upload mode is not recognized"],
     ],
     limitations: [
+      ["Daily safety cap", "50 publishes/day per connected TikTok account (UTC reset). Failed posts do not count toward the cap."],
       ["Audit required for public use", "TikTok Content Posting API apps must pass audit before posting to non-allowlisted accounts"],
       ["No text-only posts", "TikTok is strictly media-led"],
       ["Inbox is not supported", "Comments and DMs are not in UniPost inbox today"],
@@ -1080,6 +1088,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["invalid_license", "YouTube license value is not recognized"],
     ],
     limitations: [
+      ["Daily safety cap", "50 publishes/day per connected YouTube channel (UTC reset). Failed uploads do not count toward the cap."],
       ["Title is required and does not fall back to caption", "`platform_options.youtube.title` must be set explicitly"],
       ["`made_for_kids` must be explicit", "YouTube refuses uploads without an audience choice"],
       ["No inbox surface", "Comment moderation is not in UniPost inbox today"],
@@ -1263,6 +1272,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["facebook_reels_unsupported", "Reels publishing requires `FEATURE_FACEBOOK_REELS` to be enabled"],
     ],
     limitations: [
+      ["Daily safety cap", "100 publishes/day per connected Facebook Page (UTC reset). Protects pages from being flagged for spam — failed posts do not count."],
       ["No carousels in v1", "Facebook `batch_publish` is on the roadmap"],
       ["No resumable uploads yet", "Videos must be ≤ 1 GB until Phase 2.5"],
       ["Analytics ship in Phase 2", "Engagement and reach metrics are roadmapped — not yet surfaced"],
