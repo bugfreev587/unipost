@@ -529,12 +529,19 @@ func main() {
 
 		// Workspace info.
 		r.Get("/v1/workspace", workspaceHandler.Get)
-		r.Patch("/v1/workspace", workspaceHandler.Update)
+		// Workspace settings (per_account_monthly_limit, name) — admin+
+		// only. Owner-only would also be defensible; using admin to
+		// match the pattern of "operational settings = admin".
+		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/workspace", workspaceHandler.Update)
 
 		// API keys.
+		// API keys. List is workspace-wide; create/revoke is admin+ to
+		// keep rogue editors from minting bearer tokens. Future invite
+		// flow may relax this to "editors create their own keys" once
+		// keys carry created_by_user_id (RBAC Phase 4+).
 		r.Get("/v1/api-keys", apiKeyHandler.List)
-		r.Post("/v1/api-keys", apiKeyHandler.Create)
-		r.Delete("/v1/api-keys/{keyID}", apiKeyHandler.Revoke)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/api-keys", apiKeyHandler.Create)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/api-keys/{keyID}", apiKeyHandler.Revoke)
 
 		// Profiles.
 		r.Get("/v1/profiles", profileHandler.APIList)
@@ -586,10 +593,12 @@ func main() {
 		r.Post("/v1/connect/sessions", connectSessionHandler.Create)
 		r.Get("/v1/connect/sessions/{id}", connectSessionHandler.Get)
 
-		// White-label platform credentials.
-		r.Post("/v1/platform-credentials", platformCredHandler.Create)
+		// White-label platform credentials. Mutations are admin+ —
+		// rotating client secrets is a privileged operation, list
+		// stays readable by any role.
 		r.Get("/v1/platform-credentials", platformCredHandler.List)
-		r.Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/platform-credentials", platformCredHandler.Create)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
 
 		// Posts.
 		r.Get("/v1/posts", socialPostHandler.List)
@@ -621,13 +630,13 @@ func main() {
 		r.Get("/v1/users", managedUsersHandler.List)
 		r.Get("/v1/users/{external_user_id}", managedUsersHandler.Get)
 
-		// Webhooks.
-		r.Post("/v1/webhooks", webhookSubHandler.Create)
+		// Webhooks. Read OK for any role; mutations require admin+.
 		r.Get("/v1/webhooks", webhookSubHandler.List)
 		r.Get("/v1/webhooks/{id}", webhookSubHandler.Get)
-		r.Patch("/v1/webhooks/{id}", webhookSubHandler.Update)
-		r.Delete("/v1/webhooks/{id}", webhookSubHandler.Delete)
-		r.Post("/v1/webhooks/{id}/rotate", webhookSubHandler.Rotate)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/webhooks", webhookSubHandler.Create)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/webhooks/{id}", webhookSubHandler.Update)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/webhooks/{id}", webhookSubHandler.Delete)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/webhooks/{id}/rotate", webhookSubHandler.Rotate)
 
 		// Analytics. Plan-gated (migration 059): Free returns 402.
 		r.Group(func(r chi.Router) {
@@ -643,10 +652,11 @@ func main() {
 		r.Get("/v1/api-metrics/trend", apiMetricsHandler.Trend)
 		r.Get("/v1/api-metrics/overall", apiMetricsHandler.Overall)
 
-		// Billing.
+		// Billing. Read is workspace-wide (any role); checkout / portal
+		// are owner-only because they touch the payment method.
 		r.Get("/v1/billing", billingHandler.GetBilling)
-		r.Post("/v1/billing/checkout", billingHandler.CreateCheckout)
-		r.Post("/v1/billing/portal", billingHandler.CreatePortal)
+		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)
+		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/portal", billingHandler.CreatePortal)
 		r.Get("/v1/usage", billingHandler.GetUsage)
 
 		// Rate-limit / queue-admission visibility — public-facing

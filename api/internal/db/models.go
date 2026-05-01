@@ -404,3 +404,15 @@ type Workspace struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	UsageModes             []string           `json:"usage_modes"`
 }
+
+type WorkspaceMember struct {
+	WorkspaceID string             `json:"workspace_id"`
+	UserID      string             `json:"user_id"`
+	Role        string             `json:"role"`
+	Status      string             `json:"status"`
+	InvitedBy   pgtype.Text        `json:"invited_by"`
+	InvitedAt   pgtype.Timestamptz `json:"invited_at"`
+	AcceptedAt  pgtype.Timestamptz `json:"accepted_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}

@@ -93,6 +93,15 @@ func authenticateAPIKey(w http.ResponseWriter, r *http.Request, queries *db.Quer
 	}()
 	ctx := context.WithValue(r.Context(), WorkspaceIDKey, ak.WorkspaceID)
 	ctx = context.WithValue(ctx, APIKeyIDKey, ak.ID)
+	// RBAC Phase 2 (May 2026): stamp owner role for API-key-auth
+	// requests. Today the api_keys table doesn't track which user
+	// created the key, and every key was implicitly created by the
+	// workspace owner (1 user per workspace pre-invite-flow). When
+	// the invite flow ships and api_keys gains a created_by_user_id
+	// column, this becomes a real membership lookup; until then,
+	// API keys universally carry owner privileges. Documenting the
+	// assumption here so the security model is auditable.
+	ctx = context.WithValue(ctx, RoleKey, RoleOwner)
 	return ctx, true
 }
 
@@ -113,7 +122,14 @@ func authenticateClerk(w http.ResponseWriter, r *http.Request, queries *db.Queri
 	}
 	ctx := context.WithValue(r.Context(), UserIDKey, claims.Subject)
 
-	ws, err := queries.GetDefaultWorkspaceForUser(ctx, claims.Subject)
+	// RBAC Phase 2 (May 2026): resolve workspace + role from the
+	// membership table instead of the legacy "default workspace
+	// for this user" lookup. The migration 060 backfill ensures
+	// every existing user has an active 'owner' membership for
+	// their workspace, so behavior is unchanged for existing users
+	// — but additional members invited later will resolve to their
+	// invited role automatically.
+	mem, err := queries.GetActiveMembership(ctx, claims.Subject)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			writeJSON(w, http.StatusForbidden, map[string]any{
@@ -126,7 +142,8 @@ func authenticateClerk(w http.ResponseWriter, r *http.Request, queries *db.Queri
 		})
 		return nil, false
 	}
-	ctx = context.WithValue(ctx, WorkspaceIDKey, ws.ID)
+	ctx = context.WithValue(ctx, WorkspaceIDKey, mem.WorkspaceID)
+	ctx = context.WithValue(ctx, RoleKey, mem.Role)
 	return ctx, true
 }
 

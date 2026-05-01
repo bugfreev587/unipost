@@ -13,6 +13,48 @@ import (
 )
 
 const WorkspaceIDKey contextKey = "workspaceID"
+const RoleKey contextKey = "role"
+
+// Role constants — match plans.workspace_members.role CHECK values.
+// RoleLevel uses these for >= comparisons in the RequireRole middleware.
+const (
+	RoleOwner  = "owner"
+	RoleAdmin  = "admin"
+	RoleEditor = "editor"
+)
+
+// RoleLevel returns a numeric level for the given role string so role
+// gates can compare with `>=`. Unknown / empty roles get level 0 (the
+// "no role" floor) which fails any RequireRole(min) check unless the
+// minimum is also 0.
+//
+// To add a viewer role later: add the constant + a new case here +
+// relax the workspace_members CHECK constraint. Existing call sites
+// keep working because they use named constants, not numeric levels.
+func RoleLevel(role string) int {
+	switch role {
+	case RoleOwner:
+		return 3
+	case RoleAdmin:
+		return 2
+	case RoleEditor:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// SetRole / GetRole mirror the WorkspaceID context plumbing. Auth
+// middleware stamps the role at the same time it stamps workspace_id;
+// downstream RequireRole middleware reads it back.
+func SetRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, RoleKey, role)
+}
+
+func GetRole(ctx context.Context) string {
+	role, _ := ctx.Value(RoleKey).(string)
+	return role
+}
 
 // APIKeyMiddleware verifies API keys by hashing the presented key and looking up
 // the hash in the database. It checks revocation and expiration, updates last_used_at

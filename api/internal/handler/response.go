@@ -73,6 +73,9 @@ var normalizedErrorCodeMap = map[string]string{
 	// the per-plan profile cap. 402 with the cap value in the
 	// message so clients can render an exact upgrade prompt.
 	"PROFILE_LIMIT_REACHED": "profile_limit_reached",
+	// RBAC role gate (migration 060, PR-C): the authenticated user's
+	// workspace role is below the minimum the endpoint requires. 403.
+	"INSUFFICIENT_ROLE": "insufficient_role",
 	"PLATFORM_ERROR":            "platform_error",
 	// Per-platform daily safety cap (PR2): one social_account_id has
 	// hit its UTC-day publish ceiling. Surfaces on the per-result
