@@ -60,7 +60,18 @@ var normalizedErrorCodeMap = map[string]string{
 	"NOT_FOUND":                     "not_found",
 	"NO_PAGES_SELECTED":             "no_pages_selected",
 	"PAGE_LACKS_PUBLISH_PERMISSION": "page_lacks_publish_permission",
-	"PLATFORM_ERROR":                "platform_error",
+	// Plan gate (migration 057, PR1): X / Twitter publishing and
+	// connect attempts on plans that disallow it. 402 from
+	// /v1/connect/sessions; surfaced as a fatal validator code on
+	// the publish path.
+	"PLAN_PLATFORM_NOT_ALLOWED": "plan_platform_not_allowed",
+	"PLATFORM_ERROR":            "platform_error",
+	// Per-platform daily safety cap (PR2): one social_account_id has
+	// hit its UTC-day publish ceiling. Surfaces on the per-result
+	// row's error_message (publish path is partial-success, so the
+	// HTTP status is still 200 — clients switch on this code in the
+	// per-result error_message string).
+	"PER_PLATFORM_DAILY_CAP_EXCEEDED": "per_platform_daily_cap_exceeded",
 	"QUEUE_JOB_ACTIVE":              "queue_job_active",
 	"RESULT_NOT_RETRYABLE":          "result_not_retryable",
 	"STORAGE_NOT_CONFIGURED":        "storage_not_configured",

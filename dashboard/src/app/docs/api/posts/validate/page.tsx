@@ -244,6 +244,28 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
+    label: "200 (plan-gated)",
+    code: `{
+  "data": {
+    "valid": false,
+    "errors": [
+      {
+        "platform_post_index": 0,
+        "account_id": "sa_twitter_1",
+        "platform": "twitter",
+        "field": "account_id",
+        "code": "plan_platform_not_allowed",
+        "message": "publishing to twitter is not available on your current plan — upgrade at unipost.dev/pricing",
+        "severity": "error"
+      }
+    ],
+    "warnings": []
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
     label: "422",
     code: `{
   "error": {

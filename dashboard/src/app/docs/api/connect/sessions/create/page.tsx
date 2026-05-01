@@ -136,6 +136,18 @@ const RESPONSE_SNIPPETS = [
   "request_id": "req_123"
 }`,
   },
+  {
+    lang: "json",
+    label: "402",
+    code: `{
+  "error": {
+    "code": "PLAN_PLATFORM_NOT_ALLOWED",
+    "normalized_code": "plan_platform_not_allowed",
+    "message": "connecting twitter accounts requires a paid plan — upgrade at unipost.dev/pricing"
+  },
+  "request_id": "req_123"
+}`,
+  },
 ];
 
 export default function CreateConnectSessionPage() {
@@ -153,6 +165,7 @@ export default function CreateConnectSessionPage() {
       responses={[
         { code: "201", fields: RESPONSE_201_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
+        { code: "402", fields: ERROR_FIELDS },
         { code: "422", fields: ERROR_FIELDS },
         { code: "500", fields: ERROR_FIELDS },
       ]}
