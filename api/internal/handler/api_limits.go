@@ -82,6 +82,11 @@ type apiLimitsResponse struct {
 	// from this pair.
 	MaxProfiles     int `json:"max_profiles"`
 	CurrentProfiles int `json:"current_profiles"`
+
+	// MaxMembers / CurrentMembers — same shape as profiles, gates
+	// the Members invite form. -1 = unlimited (Team / Enterprise).
+	MaxMembers     int `json:"max_members"`
+	CurrentMembers int `json:"current_members"`
 }
 
 // Get handles GET /v1/limits. Auth comes from DualAuthMiddleware
@@ -116,6 +121,12 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	currentProfiles, _ := h.queries.CountProfilesByWorkspace(r.Context(), workspaceID)
 
+	maxMembers := -1
+	if cap, hasCap := h.quota.MaxMembersForPlan(r.Context(), workspaceID); hasCap {
+		maxMembers = cap
+	}
+	currentMembers, _ := h.queries.CountActiveMembersByWorkspace(r.Context(), workspaceID)
+
 	writeSuccess(w, apiLimitsResponse{
 		PlanID:              planID,
 		RequestRatePerMin:   requestPerMin,
@@ -131,6 +142,8 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		PlanAllowsAnalytics: h.quota.PlanAllowsAnalytics(r.Context(), workspaceID),
 		MaxProfiles:         maxProfiles,
 		CurrentProfiles:     int(currentProfiles),
+		MaxMembers:          maxMembers,
+		CurrentMembers:      int(currentMembers),
 	})
 }
 

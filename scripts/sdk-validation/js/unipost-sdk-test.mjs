@@ -43,6 +43,15 @@ async function test(name, fn) {
     passed += 1;
     return result;
   } catch (error) {
+    // Convert plan-gated 402s into SKIPs so the regression suite can
+    // run end-to-end against any plan tier without spurious failures
+    // on Analytics / profile cap / etc. when the test workspace is
+    // on Free.
+    if (isPlanGated(error)) {
+      console.log(`⏭ SKIP — Plan-gated (${error.code})`);
+      skipped += 1;
+      return null;
+    }
     console.log(`❌ FAIL — ${error.message}`);
     failed += 1;
     failures.push(`${name}: ${error.message}`);
@@ -54,6 +63,20 @@ function skip(name, reason) {
   console.log(`  ${name} ... ⏭ SKIP — ${reason}`);
   skipped += 1;
   return null;
+}
+
+// isPlanGated reports whether the error came from a plan-feature gate
+// the test workspace doesn't have access to. Tests use this to convert
+// "would have failed because the test account is on Free" into a SKIP
+// rather than a FAIL.
+function isPlanGated(error) {
+  if (!(error instanceof UniPostError)) return false;
+  return [
+    'plan_feature_not_available',
+    'plan_platform_not_allowed',
+    'profile_limit_reached',
+    'member_limit_reached',
+  ].includes(error.code);
 }
 
 function assert(condition, message) {

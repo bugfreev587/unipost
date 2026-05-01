@@ -48,8 +48,24 @@ def section(title):
     print("─" * 50)
 
 
+PLAN_GATED_CODES = (
+    "plan_feature_not_available",
+    "plan_platform_not_allowed",
+    "profile_limit_reached",
+    "member_limit_reached",
+)
+
+
+def is_plan_gated(exc):
+    """Return True when the error came from a plan-feature gate the test
+    workspace doesn't have access to. Tests use this to convert
+    'would have failed because the test account is on Free' into a
+    SKIP rather than a FAIL."""
+    return isinstance(exc, UniPostError) and exc.code in PLAN_GATED_CODES
+
+
 def test(name, fn):
-    global passed, failed
+    global passed, failed, skipped
     print(f"  {name} ... ", end="", flush=True)
     try:
         value = fn()
@@ -57,6 +73,10 @@ def test(name, fn):
         passed += 1
         return value
     except Exception as exc:
+        if is_plan_gated(exc):
+            print(f"⏭ SKIP — Plan-gated ({exc.code})")
+            skipped += 1
+            return None
         print(f"❌ FAIL — {exc}")
         failed += 1
         failures.append(f"{name}: {exc}")

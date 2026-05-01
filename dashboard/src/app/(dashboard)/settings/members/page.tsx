@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import {
   listMembers,
@@ -10,11 +11,12 @@ import {
   removeMember,
   transferOwnership,
   getMe,
+  getApiLimits,
   type Member,
   type PendingInvite,
   type MeResponse,
 } from "@/lib/api";
-import { ArrowUpRight, Mail, Trash2, UserPlus } from "lucide-react";
+import { ArrowUpRight, Lock, Mail, Trash2, UserPlus } from "lucide-react";
 
 // /settings/members — RBAC Phase 5 dashboard view.
 //
@@ -48,6 +50,7 @@ export default function MembersPage() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [pending, setPending] = useState<PendingInvite[]>([]);
+  const [maxMembers, setMaxMembers] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,10 +60,15 @@ export default function MembersPage() {
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      const [meRes, listRes] = await Promise.all([getMe(token), listMembers(token)]);
+      const [meRes, listRes, limitsRes] = await Promise.all([
+        getMe(token),
+        listMembers(token),
+        getApiLimits(token),
+      ]);
       setMe(meRes.data);
       setMembers(listRes.data.members);
       setPending(listRes.data.pending_invites);
+      setMaxMembers(limitsRes.data.max_members);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load members");
     } finally {
@@ -75,6 +83,11 @@ export default function MembersPage() {
   const myRole = me?.role ?? "";
   const canManage = myRole === "owner" || myRole === "admin";
   const canTransferOwnership = myRole === "owner";
+  // Plan supports inviting additional members? -1 = unlimited (Team /
+  // Enterprise), >1 = capped (Growth = 3), <=1 = solo only (Free / API /
+  // Basic). max_members === null means /v1/limits failed — show
+  // members list but hide invite form (defensive, not punitive).
+  const canInvite = maxMembers === -1 || (maxMembers != null && maxMembers > 1);
 
   if (loading && members.length === 0) {
     return <div style={{ color: "var(--dmuted)" }}>Loading members…</div>;
@@ -84,13 +97,14 @@ export default function MembersPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 820 }}>
       <p style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.6, margin: 0 }}>
         Add team members to share access to this workspace. Each member signs in with their own
-        account and acts under one of three roles. Available on the Team plan; lower tiers cap
-        members at 1 (just you).
+        account and acts under one of three roles. Available on Growth and Team plans; lower
+        tiers are solo-only.
       </p>
 
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
-      {canManage && <InviteForm onInvited={load} />}
+      {canManage && canInvite && <InviteForm onInvited={load} />}
+      {canManage && !canInvite && <InviteUpsell />}
 
       <Section title="Active members" count={members.length}>
         {members.length === 0 ? (
@@ -198,6 +212,54 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
       >
         ×
       </button>
+    </div>
+  );
+}
+
+function InviteUpsell() {
+  return (
+    <div
+      style={{
+        background: "var(--dcard, transparent)",
+        border: "1px solid var(--dborder)",
+        borderRadius: 8,
+        padding: "20px 22px",
+        display: "flex",
+        gap: 16,
+        alignItems: "flex-start",
+      }}
+    >
+      <div
+        style={{
+          width: 38,
+          height: 38,
+          flexShrink: 0,
+          borderRadius: 9,
+          background: "color-mix(in srgb, var(--daccent) 14%, transparent)",
+          color: "var(--daccent)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Lock size={18} />
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--dtext)", marginBottom: 4 }}>
+          Inviting team members is a paid plan feature
+        </div>
+        <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.6 }}>
+          Your current plan is solo-only. Upgrade to Growth ($59/mo, up to 3 members) or Team
+          ($149/mo, unlimited members) to invite teammates with role-based access.
+        </div>
+      </div>
+      <Link
+        href="/settings/billing"
+        className="dbtn dbtn-primary"
+        style={{ fontSize: 13, padding: "8px 16px", whiteSpace: "nowrap", flexShrink: 0 }}
+      >
+        Upgrade plan
+      </Link>
     </div>
   );
 }

@@ -795,6 +795,8 @@ export interface ApiLimits {
   plan_allows_analytics: boolean;
   max_profiles: number; // -1 = unlimited
   current_profiles: number;
+  max_members: number; // -1 = unlimited
+  current_members: number;
 }
 
 export async function getApiLimits(token: string): Promise<ApiResponse<ApiLimits>> {

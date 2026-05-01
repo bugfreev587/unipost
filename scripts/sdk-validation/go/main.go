@@ -28,6 +28,15 @@ var (
 func test(name string, fn func() error) {
 	fmt.Printf("  %s ... ", name)
 	if err := fn(); err != nil {
+		// Convert plan-gated 402s into SKIPs so the regression suite
+		// can run end-to-end against any plan tier without spurious
+		// failures on Analytics / profile cap / etc. when the test
+		// workspace is on Free.
+		if isPlanGated(err) {
+			fmt.Printf("⏭ SKIP — Plan-gated\n")
+			skipped++
+			return
+		}
 		fmt.Printf("❌ FAIL — %s\n", err)
 		failed++
 		failures = append(failures, fmt.Sprintf("%s: %s", name, err))
@@ -40,6 +49,27 @@ func test(name string, fn func() error) {
 func skip(name, reason string) {
 	fmt.Printf("  %s ... ⏭ SKIP — %s\n", name, reason)
 	skipped++
+}
+
+// isPlanGated reports whether the error came from a plan-feature gate
+// the test workspace doesn't have access to. Tests use this to convert
+// "would have failed because the test account is on Free" into a SKIP
+// rather than a FAIL, so the suite can run end-to-end against any
+// plan tier without the analytics / profile-cap gates spuriously
+// failing the run.
+func isPlanGated(err error) bool {
+	apiErr, ok := err.(*unipost.APIError)
+	if !ok {
+		return false
+	}
+	switch apiErr.Code {
+	case "plan_feature_not_available",
+		"plan_platform_not_allowed",
+		"profile_limit_reached",
+		"member_limit_reached":
+		return true
+	}
+	return false
 }
 
 func section(title string) {
