@@ -34,12 +34,21 @@ type meResponse struct {
 	// to gate in-development features (currently just the Facebook
 	// Pages entry in Connections) without a second env var.
 	IsSuperAdmin bool `json:"is_super_admin"`
+	// WorkspaceID / WorkspaceName surface the user's single workspace
+	// so the dashboard can display its name without a separate API
+	// round-trip. The Apr 27 "Remove workspace_id from the API surface"
+	// refactor took the standalone /v1/workspaces list endpoint away —
+	// this is the workspace-aware view that replaces it for Clerk-auth
+	// callers. Empty strings when the user has no workspace yet (fresh
+	// signup before /v1/me/bootstrap fires).
+	WorkspaceID   string `json:"workspace_id,omitempty"`
+	WorkspaceName string `json:"workspace_name,omitempty"`
 	// Intent-collection fields. The frontend uses OnboardingShownAt to
 	// decide whether to pop the Welcome modal on first dashboard load.
 	// OnboardingIntent is one of: "exploring", "own_accounts",
 	// "building_api", "skipped", or nil (never answered).
-	OnboardingIntent   *string `json:"onboarding_intent,omitempty"`
-	OnboardingShownAt  *string `json:"onboarding_shown_at,omitempty"`
+	OnboardingIntent  *string `json:"onboarding_intent,omitempty"`
+	OnboardingShownAt *string `json:"onboarding_shown_at,omitempty"`
 }
 
 func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +74,13 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Name:         user.Name.String,
 		IsAdmin:      h.adminChecker.IsAdmin(r.Context(), userID),
 		IsSuperAdmin: h.superAdminChecker.IsSuperAdminByUser(userID, user.Email),
+	}
+	// Best-effort workspace lookup. A failure here shouldn't block the
+	// rest of the /v1/me response — the dashboard tolerates an empty
+	// workspace name (falls back to the user's first name).
+	if workspaces, wsErr := h.queries.ListWorkspacesByUser(r.Context(), userID); wsErr == nil && len(workspaces) > 0 {
+		resp.WorkspaceID = workspaces[0].ID
+		resp.WorkspaceName = workspaces[0].Name
 	}
 	if user.OnboardingIntent.Valid {
 		v := user.OnboardingIntent.String

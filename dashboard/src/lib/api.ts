@@ -168,12 +168,6 @@ export interface Workspace {
   updated_at: string;
 }
 
-export async function listWorkspaces(
-  token: string
-): Promise<ApiResponse<Workspace[]>> {
-  return request("/v1/workspaces", token);
-}
-
 export async function getWorkspace(
   token: string
 ): Promise<ApiResponse<Workspace>> {
@@ -1341,6 +1335,12 @@ export interface MeResponse {
   // uses it to gate in-development features (currently the Facebook
   // Pages entry in Connections) without a second env var.
   is_super_admin?: boolean;
+  // Workspace shortcut for Clerk-auth surfaces. The standalone
+  // /v1/workspaces list endpoint was retired in the Apr 2026
+  // workspace_id-removal refactor; the hook in
+  // src/lib/use-current-workspace.ts reads these instead.
+  workspace_id?: string;
+  workspace_name?: string;
   // Intent-collection redesign: the dashboard uses these to decide
   // whether to pop the Welcome modal on first load.
   onboarding_intent?: OnboardingIntent;
