@@ -350,7 +350,7 @@ func main() {
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
 	webhookHandler := handler.NewWebhookHandler(queries)
-	profileHandler := handler.NewProfileHandler(queries)
+	profileHandler := handler.NewProfileHandler(queries, quotaChecker)
 	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus)
@@ -606,7 +606,7 @@ func main() {
 		r.Post("/v1/posts/{id}/publish", socialPostHandler.PublishDraft)
 		r.Post("/v1/posts/{id}/preview-link", previewHandler.CreateLink)
 		r.Get("/v1/posts/{id}/queue", socialPostHandler.GetPostQueue)
-		r.Get("/v1/posts/{id}/analytics", analyticsHandler.GetAnalytics)
+		r.With(handler.RequirePlanAnalytics(quotaChecker)).Get("/v1/posts/{id}/analytics", analyticsHandler.GetAnalytics)
 		r.Post("/v1/posts/{id}/results/{resultID}/retry", socialPostHandler.RetryResult)
 
 		// Post delivery jobs.
@@ -629,11 +629,14 @@ func main() {
 		r.Delete("/v1/webhooks/{id}", webhookSubHandler.Delete)
 		r.Post("/v1/webhooks/{id}/rotate", webhookSubHandler.Rotate)
 
-		// Analytics.
-		r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)
-		r.Get("/v1/analytics/trend", analyticsHandler.GetTrend)
-		r.Get("/v1/analytics/by-platform", analyticsHandler.GetByPlatform)
-		r.Get("/v1/analytics/rollup", analyticsRollupHandler.GetRollup)
+		// Analytics. Plan-gated (migration 059): Free returns 402.
+		r.Group(func(r chi.Router) {
+			r.Use(handler.RequirePlanAnalytics(quotaChecker))
+			r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)
+			r.Get("/v1/analytics/trend", analyticsHandler.GetTrend)
+			r.Get("/v1/analytics/by-platform", analyticsHandler.GetByPlatform)
+			r.Get("/v1/analytics/rollup", analyticsRollupHandler.GetRollup)
+		})
 
 		// API metrics.
 		r.Get("/v1/api-metrics/summary", apiMetricsHandler.Summary)
@@ -666,8 +669,10 @@ func main() {
 		})
 
 		// Inbox — unified Instagram comments/DMs and Threads replies.
+		// Plan-gated (migration 059): Free + API plans get 402.
 		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool)
 		r.Route("/v1/inbox", func(r chi.Router) {
+			r.Use(handler.RequirePlanInbox(quotaChecker))
 			r.Get("/", inboxHandler.List)
 			r.Get("/unread-count", inboxHandler.UnreadCount)
 			r.Post("/mark-all-read", inboxHandler.MarkAllRead)

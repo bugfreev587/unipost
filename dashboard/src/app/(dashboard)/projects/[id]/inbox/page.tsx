@@ -22,6 +22,7 @@ import {
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { useInboxWebSocket } from "@/lib/use-inbox-ws";
 import { buildContactPageHref } from "@/lib/support";
+import { PlanGate } from "@/components/dashboard/plan-gate";
 import { PlatformIcon } from "@/components/platform-icons";
 import {
   AlertTriangle,
@@ -625,6 +626,17 @@ function SyncStateCard({
 }
 
 export default function InboxPage() {
+  // Plan-gate (migration 059): Free + API workspaces see an upgrade
+  // card instead of the inbox UI. Server-side enforcement is the
+  // source of truth — this gate just shortcuts the UX.
+  return (
+    <PlanGate feature="inbox">
+      <InboxPageInner />
+    </PlanGate>
+  );
+}
+
+function InboxPageInner() {
   const params = useParams<{ id: string }>();
   const profileId = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const { getToken } = useAuth();

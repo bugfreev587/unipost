@@ -12,7 +12,7 @@ import (
 )
 
 const getPlan = `-- name: GetPlan :one
-SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter FROM plans WHERE id = $1
+SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles FROM plans WHERE id = $1
 `
 
 func (q *Queries) GetPlan(ctx context.Context, id string) (Plan, error) {
@@ -27,12 +27,15 @@ func (q *Queries) GetPlan(ctx context.Context, id string) (Plan, error) {
 		&i.CreatedAt,
 		&i.WhiteLabel,
 		&i.AllowTwitter,
+		&i.AllowInbox,
+		&i.AllowAnalytics,
+		&i.MaxProfiles,
 	)
 	return i, err
 }
 
 const getPlanByStripePriceID = `-- name: GetPlanByStripePriceID :one
-SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter FROM plans WHERE stripe_price_id = $1
+SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles FROM plans WHERE stripe_price_id = $1
 `
 
 func (q *Queries) GetPlanByStripePriceID(ctx context.Context, stripePriceID pgtype.Text) (Plan, error) {
@@ -47,12 +50,15 @@ func (q *Queries) GetPlanByStripePriceID(ctx context.Context, stripePriceID pgty
 		&i.CreatedAt,
 		&i.WhiteLabel,
 		&i.AllowTwitter,
+		&i.AllowInbox,
+		&i.AllowAnalytics,
+		&i.MaxProfiles,
 	)
 	return i, err
 }
 
 const listPlans = `-- name: ListPlans :many
-SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter FROM plans ORDER BY price_cents ASC
+SELECT id, name, price_cents, post_limit, stripe_price_id, created_at, white_label, allow_twitter, allow_inbox, allow_analytics, max_profiles FROM plans ORDER BY price_cents ASC
 `
 
 func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
@@ -73,6 +79,9 @@ func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
 			&i.CreatedAt,
 			&i.WhiteLabel,
 			&i.AllowTwitter,
+			&i.AllowInbox,
+			&i.AllowAnalytics,
+			&i.MaxProfiles,
 		); err != nil {
 			return nil, err
 		}

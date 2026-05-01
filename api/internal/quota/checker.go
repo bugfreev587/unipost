@@ -119,6 +119,50 @@ func (c *Checker) PlanAllowsPlatform(ctx context.Context, workspaceID, platform 
 	}
 }
 
+// PlanAllowsInbox reports whether the workspace's plan unlocks the
+// Inbox surface (DMs + comments). Migration 059 sets this true on
+// Basic and up; Free + API are gated. Same fail-open rule as
+// PlanAllowsPlatform.
+func (c *Checker) PlanAllowsInbox(ctx context.Context, workspaceID string) bool {
+	planID := c.PlanIDFor(ctx, workspaceID)
+	plan, err := c.queries.GetPlan(ctx, planID)
+	if err != nil {
+		return true
+	}
+	return plan.AllowInbox
+}
+
+// PlanAllowsAnalytics reports whether the workspace's plan unlocks
+// the Analytics endpoints. Migration 059 sets this true on API and
+// up; Free is gated. The "API tier is read-only" framing on the
+// pricing page is a dashboard-side label — the API endpoints are all
+// read-only anyway, so the server-side gate is a single boolean.
+func (c *Checker) PlanAllowsAnalytics(ctx context.Context, workspaceID string) bool {
+	planID := c.PlanIDFor(ctx, workspaceID)
+	plan, err := c.queries.GetPlan(ctx, planID)
+	if err != nil {
+		return true
+	}
+	return plan.AllowAnalytics
+}
+
+// MaxProfilesForPlan returns (limit, true) when the workspace's plan
+// caps the number of profiles, or (0, false) when the plan permits
+// unlimited profiles (Team / Enterprise) or when the plan row can't
+// be loaded (fail-open).
+//
+// Used by the profile-create handler to reject a CREATE that would
+// push the workspace over its cap. Existing profiles are NEVER
+// retroactively pruned — a downgrade just blocks new creation.
+func (c *Checker) MaxProfilesForPlan(ctx context.Context, workspaceID string) (int, bool) {
+	planID := c.PlanIDFor(ctx, workspaceID)
+	plan, err := c.queries.GetPlan(ctx, planID)
+	if err != nil || !plan.MaxProfiles.Valid {
+		return 0, false
+	}
+	return int(plan.MaxProfiles.Int32), true
+}
+
 // Increment adds to the usage count for the current period.
 func (c *Checker) Increment(ctx context.Context, workspaceID string, count int) {
 	c.queries.IncrementUsage(ctx, db.IncrementUsageParams{

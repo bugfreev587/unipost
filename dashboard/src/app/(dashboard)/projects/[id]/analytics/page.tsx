@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
+import { PlanGate } from "@/components/dashboard/plan-gate";
 import {
   listSocialPosts,
   getPostAnalytics,
@@ -171,6 +172,17 @@ const TREND_METRICS: { key: "posts" | "impressions" | "likes" | "comments" | "sh
 type SortField = "published_at" | "impressions" | "likes" | "engagement";
 
 export default function AnalyticsPage() {
+  // Plan-gate (migration 059): Free workspaces see an upgrade card
+  // instead of the analytics UI. Server-side enforcement is the
+  // source of truth — this gate just shortcuts the UX.
+  return (
+    <PlanGate feature="analytics">
+      <AnalyticsPageInner />
+    </PlanGate>
+  );
+}
+
+function AnalyticsPageInner() {
   const { id: profileId } = useParams<{ id: string }>();
   const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -16,14 +17,18 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 type ProfileHandler struct {
 	queries *db.Queries
+	// quota is used by Create to enforce the per-plan max_profiles cap
+	// (migration 059). Optional — nil disables the cap (test path).
+	quota *quota.Checker
 }
 
-func NewProfileHandler(queries *db.Queries) *ProfileHandler {
-	return &ProfileHandler{queries: queries}
+func NewProfileHandler(queries *db.Queries, quotaChecker *quota.Checker) *ProfileHandler {
+	return &ProfileHandler{queries: queries, quota: quotaChecker}
 }
 
 // resolveWorkspaceID reads the workspace ID stamped into the request
@@ -177,6 +182,22 @@ func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if h.profileNameTaken(r.Context(), workspaceID, body.Name, "") {
 		writeError(w, http.StatusConflict, "PROFILE_NAME_TAKEN", "A profile with that name already exists in this workspace")
 		return
+	}
+	// Plan cap (migration 059, PR-B). Reject when the workspace is
+	// already at its per-plan max_profiles. Existing profiles are
+	// never retroactively pruned by a downgrade — only new creation
+	// is blocked. Best-effort: a count failure logs and lets the
+	// create through, matching the rest of the file's "fail-open
+	// on transient DB error" pattern.
+	if h.quota != nil {
+		if cap, hasCap := h.quota.MaxProfilesForPlan(r.Context(), workspaceID); hasCap {
+			count, countErr := h.queries.CountProfilesByWorkspace(r.Context(), workspaceID)
+			if countErr == nil && int(count) >= cap {
+				writeError(w, http.StatusPaymentRequired, "PROFILE_LIMIT_REACHED",
+					fmt.Sprintf("Profile limit reached (%d). Upgrade at unipost.dev/pricing for more profiles.", cap))
+				return
+			}
+		}
 	}
 	if body.BrandingLogoURL != nil && *body.BrandingLogoURL != "" {
 		if err := validateBrandingLogoURL(*body.BrandingLogoURL); err != nil {

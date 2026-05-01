@@ -1,6 +1,12 @@
 -- name: ListProfilesByWorkspace :many
 SELECT * FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC;
 
+-- name: CountProfilesByWorkspace :one
+-- Used by the profile-create gate (migration 059) to enforce
+-- max_profiles per plan. Cheap — workspaces have at most a few dozen
+-- profiles even on Growth, so a sequential count is fine.
+SELECT COUNT(*)::INTEGER AS count FROM profiles WHERE workspace_id = $1;
+
 -- name: GetProfile :one
 SELECT * FROM profiles WHERE id = $1;
 

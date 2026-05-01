@@ -176,14 +176,17 @@ type PendingConnection struct {
 }
 
 type Plan struct {
-	ID            string             `json:"id"`
-	Name          string             `json:"name"`
-	PriceCents    int32              `json:"price_cents"`
-	PostLimit     int32              `json:"post_limit"`
-	StripePriceID pgtype.Text        `json:"stripe_price_id"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	WhiteLabel    bool               `json:"white_label"`
-	AllowTwitter  bool               `json:"allow_twitter"`
+	ID             string             `json:"id"`
+	Name           string             `json:"name"`
+	PriceCents     int32              `json:"price_cents"`
+	PostLimit      int32              `json:"post_limit"`
+	StripePriceID  pgtype.Text        `json:"stripe_price_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	WhiteLabel     bool               `json:"white_label"`
+	AllowTwitter   bool               `json:"allow_twitter"`
+	AllowInbox     bool               `json:"allow_inbox"`
+	AllowAnalytics bool               `json:"allow_analytics"`
+	MaxProfiles    pgtype.Int4        `json:"max_profiles"`
 }
 
 type PlatformCredential struct {

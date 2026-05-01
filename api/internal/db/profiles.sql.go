@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countProfilesByWorkspace = `-- name: CountProfilesByWorkspace :one
+SELECT COUNT(*)::INTEGER AS count FROM profiles WHERE workspace_id = $1
+`
+
+// Used by the profile-create gate (migration 059) to enforce
+// max_profiles per plan. Cheap — workspaces have at most a few dozen
+// profiles even on Growth, so a sequential count is fine.
+func (q *Queries) CountProfilesByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countProfilesByWorkspace, workspaceID)
+	var count int32
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createProfile = `-- name: CreateProfile :one
 INSERT INTO profiles (workspace_id, name)
 VALUES ($1, $2)

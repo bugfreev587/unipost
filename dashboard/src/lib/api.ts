@@ -791,6 +791,10 @@ export interface ApiLimits {
   queue_depth_current: number;
   per_platform_daily_cap: Record<string, number>;
   plan_allows_twitter: boolean;
+  plan_allows_inbox: boolean;
+  plan_allows_analytics: boolean;
+  max_profiles: number; // -1 = unlimited
+  current_profiles: number;
 }
 
 export async function getApiLimits(token: string): Promise<ApiResponse<ApiLimits>> {

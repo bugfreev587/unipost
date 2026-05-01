@@ -69,12 +69,19 @@ type apiLimitsResponse struct {
 	// frontend. Mirrors quota.PerPlatformDailyCap exactly.
 	PerPlatformDailyCap map[string]int `json:"per_platform_daily_cap"`
 
-	// PlanAllowsTwitter is the boolean from plans.allow_twitter for
-	// the workspace's plan (migration 057). Surfaces here so the
-	// dashboard can grey out the X connect tile and the X publish
-	// path in the compose UI without needing a separate "what
-	// platforms am I allowed to use?" endpoint.
-	PlanAllowsTwitter bool `json:"plan_allows_twitter"`
+	// Plan-feature gate flags (migration 057 + 059). The dashboard
+	// uses these to render upgrade gates / grey out tiles instead of
+	// letting the user click into a feature only to hit a 402.
+	PlanAllowsTwitter   bool `json:"plan_allows_twitter"`
+	PlanAllowsInbox     bool `json:"plan_allows_inbox"`
+	PlanAllowsAnalytics bool `json:"plan_allows_analytics"`
+
+	// MaxProfiles is the per-plan profile cap (NULL/unlimited = -1).
+	// CurrentProfiles is the live count for this workspace. The
+	// dashboard renders "5 of 5 profiles used — upgrade for more"
+	// from this pair.
+	MaxProfiles     int `json:"max_profiles"`
+	CurrentProfiles int `json:"current_profiles"`
 }
 
 // Get handles GET /v1/limits. Auth comes from DualAuthMiddleware
@@ -103,6 +110,12 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// have more headroom than they do.
 	requestPerMin := int(limits.RequestRatePerSec * 60)
 
+	maxProfiles := -1
+	if cap, hasCap := h.quota.MaxProfilesForPlan(r.Context(), workspaceID); hasCap {
+		maxProfiles = cap
+	}
+	currentProfiles, _ := h.queries.CountProfilesByWorkspace(r.Context(), workspaceID)
+
 	writeSuccess(w, apiLimitsResponse{
 		PlanID:              planID,
 		RequestRatePerMin:   requestPerMin,
@@ -114,6 +127,10 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		QueueDepthCurrent:   int(depth),
 		PerPlatformDailyCap: copyDailyCapMap(),
 		PlanAllowsTwitter:   h.quota.PlanAllowsPlatform(r.Context(), workspaceID, "twitter"),
+		PlanAllowsInbox:     h.quota.PlanAllowsInbox(r.Context(), workspaceID),
+		PlanAllowsAnalytics: h.quota.PlanAllowsAnalytics(r.Context(), workspaceID),
+		MaxProfiles:         maxProfiles,
+		CurrentProfiles:     int(currentProfiles),
 	})
 }
 

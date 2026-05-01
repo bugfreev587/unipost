@@ -65,6 +65,14 @@ var normalizedErrorCodeMap = map[string]string{
 	// /v1/connect/sessions; surfaced as a fatal validator code on
 	// the publish path.
 	"PLAN_PLATFORM_NOT_ALLOWED": "plan_platform_not_allowed",
+	// Plan gate (migration 059, PR-B): Inbox / Analytics endpoints on
+	// plans that don't unlock those features. 402 — clients should
+	// surface an upgrade CTA rather than retrying.
+	"PLAN_FEATURE_NOT_AVAILABLE": "plan_feature_not_available",
+	// Profile-create cap (migration 059, PR-B): workspace already at
+	// the per-plan profile cap. 402 with the cap value in the
+	// message so clients can render an exact upgrade prompt.
+	"PROFILE_LIMIT_REACHED": "profile_limit_reached",
 	"PLATFORM_ERROR":            "platform_error",
 	// Per-platform daily safety cap (PR2): one social_account_id has
 	// hit its UTC-day publish ceiling. Surfaces on the per-result
