@@ -793,6 +793,7 @@ export interface ApiLimits {
   plan_allows_twitter: boolean;
   plan_allows_inbox: boolean;
   plan_allows_analytics: boolean;
+  plan_allows_white_label: boolean;
   max_profiles: number; // -1 = unlimited
   current_profiles: number;
   max_members: number; // -1 = unlimited

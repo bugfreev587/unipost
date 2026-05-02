@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Lock } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { WhiteLabelStats } from "@/components/dashboard/connection-stats";
 import {
@@ -11,6 +12,7 @@ import {
   listPlatformCredentials,
   createPlatformCredential,
   deletePlatformCredential,
+  getApiLimits,
   type PlatformCredential,
 } from "@/lib/api";
 
@@ -32,13 +34,20 @@ export default function NativeModePage() {
   const [credSaving, setCredSaving] = useState<string | null>(null);
   const [credError, setCredError] = useState("");
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  // null = limits not loaded yet (don't render the upgrade banner
+  // prematurely); true = plan permits white-label; false = needs upgrade.
+  const [planAllowsWhiteLabel, setPlanAllowsWhiteLabel] = useState<boolean | null>(null);
 
   const loadCreds = useCallback(async () => {
     try {
       const token = await getToken();
       if (!token) return;
-      const credsRes = await listPlatformCredentials(token);
+      const [credsRes, limitsRes] = await Promise.all([
+        listPlatformCredentials(token),
+        getApiLimits(token).catch(() => null),
+      ]);
       setCreds(credsRes.data ?? []);
+      if (limitsRes) setPlanAllowsWhiteLabel(limitsRes.data.plan_allows_white_label);
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, [getToken]);
@@ -94,6 +103,54 @@ export default function NativeModePage() {
           </div>
         </div>
       </div>
+
+      {planAllowsWhiteLabel === false && (
+        <div
+          style={{
+            display: "flex",
+            gap: 14,
+            alignItems: "flex-start",
+            padding: "16px 18px",
+            marginBottom: 20,
+            background: "color-mix(in srgb, var(--daccent) 9%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--daccent) 30%, transparent)",
+            borderRadius: 10,
+          }}
+        >
+          <div
+            style={{
+              width: 34,
+              height: 34,
+              flexShrink: 0,
+              borderRadius: 8,
+              background: "color-mix(in srgb, var(--daccent) 18%, transparent)",
+              color: "var(--daccent)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Lock size={16} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--dtext)", marginBottom: 3 }}>
+              White-label requires the Growth plan or higher
+            </div>
+            <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.55 }}>
+              Your current plan uses UniPost&apos;s shared OAuth credentials (Quickstart mode).
+              Upgrade to Growth ($59/mo) or Team ($149/mo) to plug in your own platform apps —
+              users will see <em>your</em> app name during OAuth instead of &quot;UniPost&quot;.
+            </div>
+          </div>
+          <Link
+            href="/settings/billing"
+            className="dbtn dbtn-primary"
+            style={{ fontSize: 13, padding: "8px 16px", whiteSpace: "nowrap", flexShrink: 0 }}
+          >
+            Upgrade plan
+          </Link>
+        </div>
+      )}
 
       <WhiteLabelStats configuredCount={configuredPlatforms.size} totalPlatforms={CRED_PLATFORMS.length} />
 

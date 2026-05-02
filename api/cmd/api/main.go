@@ -613,12 +613,15 @@ func main() {
 		r.Post("/v1/connect/sessions", connectSessionHandler.Create)
 		r.Get("/v1/connect/sessions/{id}", connectSessionHandler.Get)
 
-		// White-label platform credentials. Mutations are admin+ —
-		// rotating client secrets is a privileged operation, list
-		// stays readable by any role.
+		// White-label platform credentials. List is open to any role;
+		// mutations require admin+ AND a plan that unlocks white-label
+		// (Growth+, migration 013 sets plans.white_label). Free / API /
+		// Basic get a 402 with an upgrade message.
 		r.Get("/v1/platform-credentials", platformCredHandler.List)
-		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/platform-credentials", platformCredHandler.Create)
-		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
+		r.With(auth.RequireRole(auth.RoleAdmin), handler.RequirePlanWhiteLabel(quotaChecker)).
+			Post("/v1/platform-credentials", platformCredHandler.Create)
+		r.With(auth.RequireRole(auth.RoleAdmin), handler.RequirePlanWhiteLabel(quotaChecker)).
+			Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
 
 		// Posts.
 		r.Get("/v1/posts", socialPostHandler.List)

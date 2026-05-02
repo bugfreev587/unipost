@@ -146,6 +146,19 @@ func (c *Checker) PlanAllowsAnalytics(ctx context.Context, workspaceID string) b
 	return plan.AllowAnalytics
 }
 
+// PlanAllowsWhiteLabel reports whether the workspace's plan unlocks
+// white-label / native-mode platform credentials. Migration 013
+// added the plans.white_label column; the May 2026 ladder (058)
+// sets this true on Growth and up. Free / API / Basic are gated.
+func (c *Checker) PlanAllowsWhiteLabel(ctx context.Context, workspaceID string) bool {
+	planID := c.PlanIDFor(ctx, workspaceID)
+	plan, err := c.queries.GetPlan(ctx, planID)
+	if err != nil {
+		return true
+	}
+	return plan.WhiteLabel
+}
+
 // MaxProfilesForPlan returns (limit, true) when the workspace's plan
 // caps the number of profiles, or (0, false) when the plan permits
 // unlimited profiles (Team / Enterprise) or when the plan row can't
