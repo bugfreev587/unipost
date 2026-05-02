@@ -655,9 +655,9 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
         }
         if (o?.pinterest) {
           const pinOptions: Record<string, string> = {};
-          const boardId = o.pinterest.boardId.trim();
-          const title = o.pinterest.title.trim();
-          const link = o.pinterest.link.trim();
+          const boardId = (o.pinterest.boardId || "").trim();
+          const title = (o.pinterest.title || "").trim();
+          const link = (o.pinterest.link || "").trim();
           if (boardId) pinOptions.board_id = boardId;
           if (title) pinOptions.title = title;
           if (link) pinOptions.link = link;

@@ -294,7 +294,7 @@ func (a *PinterestAdapter) RefreshToken(ctx context.Context, refreshToken string
 }
 
 func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) ([]PinterestBoard, error) {
-	var boards []PinterestBoard
+	boards := []PinterestBoard{}
 	bookmark := ""
 
 	for {

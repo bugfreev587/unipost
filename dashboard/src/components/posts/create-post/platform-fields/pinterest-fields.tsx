@@ -72,10 +72,16 @@ export function PinterestFields({
             borderColor: boardIssue ? "var(--danger)" : "var(--dborder)",
             color: "var(--dtext)",
           }}
-          disabled={loading || !!error}
+          disabled={loading || !!error || (!loading && !error && boards.length === 0)}
         >
           <option value="">
-            {loading ? "Loading boards..." : error ? "Couldn't load boards" : "Select a Pinterest board"}
+            {loading
+              ? "Loading boards..."
+              : error
+                ? "Couldn't load boards"
+                : boards.length === 0
+                  ? "No boards on this Pinterest account"
+                  : "Select a Pinterest board"}
           </option>
           {boards.map((board) => (
             <option key={board.id} value={board.id}>
@@ -84,7 +90,11 @@ export function PinterestFields({
           ))}
         </select>
         <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: boardIssue ? "color-mix(in srgb, var(--danger) 45%, white)" : "var(--dmuted)" }}>
-          {boardIssue?.message || error || "Every Pinterest Pin must be saved to a board."}
+          {boardIssue?.message
+            || error
+            || (!loading && boards.length === 0
+              ? <>This account has no Pinterest boards yet. <a href="https://www.pinterest.com/board/create/" target="_blank" rel="noreferrer" className="underline">Create one on Pinterest</a>, then reopen this drawer.</>
+              : "Every Pinterest Pin must be saved to a board.")}
         </p>
       </div>
 
