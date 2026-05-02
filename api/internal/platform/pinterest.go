@@ -17,10 +17,32 @@ import (
 )
 
 const (
-	pinterestOAuthEndpoint = "https://www.pinterest.com/oauth/"
-	pinterestTokenEndpoint = "https://api.pinterest.com/v5/oauth/token"
-	pinterestAPIBase       = "https://api.pinterest.com/v5"
+	pinterestOAuthEndpoint     = "https://www.pinterest.com/oauth/"
+	pinterestTokenEndpoint     = "https://api.pinterest.com/v5/oauth/token"
+	pinterestProductionAPIBase = "https://api.pinterest.com/v5"
 )
+
+// pinterestAPIBase returns the host to call for v5 API requests
+// (boards, pins, user_account). Production by default; trial-access
+// apps must point at the sandbox via PINTEREST_API_BASE because
+// production rejects pin writes with HTTP 403 code 29:
+//
+//	"Apps with Trial access may not create Pins in production
+//	 https://api.pinterest.com - use API Sandbox
+//	 https://api-sandbox.pinterest.com instead."
+//
+// Once the app is granted Standard access in the Pinterest developer
+// portal, unset PINTEREST_API_BASE so traffic returns to production.
+//
+// OAuth endpoints (authorize + token exchange) are intentionally NOT
+// env-configurable — Pinterest serves them from the production host
+// in both trial and standard access.
+func pinterestAPIBase() string {
+	if base := strings.TrimRight(os.Getenv("PINTEREST_API_BASE"), "/"); base != "" {
+		return base
+	}
+	return pinterestProductionAPIBase
+}
 
 var pinterestScopes = []string{
 	"boards:read",
@@ -183,7 +205,7 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	}
 
 	payload, _ := json.Marshal(reqBody)
-	req, err := http.NewRequestWithContext(ctx, "POST", pinterestAPIBase+"/pins", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", pinterestAPIBase()+"/pins", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +240,7 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 }
 
 func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", pinterestAPIBase+"/pins/"+url.PathEscape(externalID), nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", pinterestAPIBase()+"/pins/"+url.PathEscape(externalID), nil)
 	if err != nil {
 		return err
 	}
@@ -304,7 +326,7 @@ func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) 
 		if bookmark != "" {
 			q.Set("bookmark", bookmark)
 		}
-		req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBase+"/boards?"+q.Encode(), nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBase()+"/boards?"+q.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -346,7 +368,7 @@ type pinterestUserAccount struct {
 }
 
 func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken string) (*pinterestUserAccount, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBase+"/user_account", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBase()+"/user_account", nil)
 	if err != nil {
 		return nil, err
 	}
