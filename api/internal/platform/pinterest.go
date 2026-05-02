@@ -24,6 +24,7 @@ const (
 
 var pinterestScopes = []string{
 	"boards:read",
+	"boards:write",
 	"pins:read",
 	"pins:write",
 	"user_accounts:read",
