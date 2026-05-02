@@ -292,10 +292,12 @@ export default function AlternativePage() {
 
         {/* MCP SECTION */}
         <div className="alt-mcp">
-          <div className="alt-section-eyebrow">UniPost Exclusive</div>
+          <div className="alt-section-eyebrow">{comp.features.mcpServer ? "MCP Comparison" : "UniPost Exclusive"}</div>
           <h2 className="alt-table-title">Built for the AI agent era</h2>
           <p className="alt-hero-sub" style={{ textAlign: "center", margin: "0 auto 48px" }}>
-            UniPost is the only social media API with native MCP Server support. Let Claude, GPT, or any AI agent post on behalf of your users — no code required.
+            {comp.features.mcpServer
+              ? `Both UniPost and ${comp.name} ship a native MCP server so Claude, GPT, or any MCP-compatible agent can post on behalf of your users — no custom integration code.`
+              : `UniPost ships a native MCP server so Claude, GPT, or any MCP-compatible agent can post on behalf of your users — no custom integration code.`}
           </p>
           <div className="alt-mcp-grid">
             <div>
@@ -312,7 +314,7 @@ export default function AlternativePage() {
               </ul>
               <div className="alt-mcp-note">
                 {comp.features.mcpServer
-                  ? `${comp.name} also has MCP support, but UniPost's is designed as a core developer API feature.`
+                  ? `${comp.name} also ships an MCP server. Compare the rest of the stack — pricing, free tier, bundled features — to decide which one fits.`
                   : `${comp.name} has no MCP Server support.`
                 }
               </div>

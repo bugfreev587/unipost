@@ -148,7 +148,7 @@ const FAQS = [
   { q: "What's the difference between API and Basic?", a: "API is for developers who only consume the REST API and MCP server — no dashboard, no Inbox. Basic is the same plus a full dashboard, Inbox for DMs/comments, and full Analytics. Same publishing API on both." },
   { q: "When do I need Growth?", a: "When you're embedding UniPost into your own product and need to bring your own platform credentials so end users see your app name during OAuth (white-label / native mode), or you need higher quota and more profiles." },
   { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
-  { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost bundles dashboard + Inbox + Analytics into Basic at $19/mo with no add-ons (Zernio sells those as $10/each add-ons). PostForMe is API-only at $10 — UniPost API matches that price. See full comparisons at unipost.dev/alternatives." },
+  { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost bundles Inbox + Analytics into Basic at $19/mo with no add-ons (Zernio sells Analytics and Comments+DMs as $9/mo each on its Build tier). PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." },
 ];
 
 // ── Icons ──
