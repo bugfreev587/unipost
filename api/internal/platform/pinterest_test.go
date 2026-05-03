@@ -1,6 +1,13 @@
 package platform
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestPinterestEndpointsDefaultToProduction(t *testing.T) {
 	t.Setenv("PINTEREST_USE_SANDBOX", "")
@@ -50,5 +57,49 @@ func TestPinterestEndpointsHonorExplicitOverrides(t *testing.T) {
 	}
 	if got := pinterestAuthURL(); got != "https://example.test/oauth/" {
 		t.Fatalf("auth url = %q, want explicit override", got)
+	}
+}
+
+func TestPinterestCreateBoardUsesBoardsEndpoint(t *testing.T) {
+	var gotMethod, gotAuth string
+	var gotBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("Authorization")
+		if r.URL.Path != "/v5/boards" {
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		gotBody = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"board-123","name":"Sandbox test board"}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+	adapter := &PinterestAdapter{client: srv.Client()}
+
+	board, err := adapter.CreateBoard(context.Background(), "token-123", "Sandbox test board")
+	if err != nil {
+		t.Fatalf("CreateBoard failed: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotAuth != "Bearer token-123" {
+		t.Fatalf("auth = %q, want bearer token", gotAuth)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(gotBody, &payload); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if payload["name"] != "Sandbox test board" {
+		t.Fatalf("payload name = %q", payload["name"])
+	}
+	if board.ID != "board-123" || board.Name != "Sandbox test board" {
+		t.Fatalf("unexpected board: %#v", board)
 	}
 }

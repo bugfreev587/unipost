@@ -579,6 +579,7 @@ func main() {
 		r.Get("/v1/accounts/{id}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
+		r.Post("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
 			Get("/v1/accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
 		// FB webhook subscription diagnose / repair. Read endpoint
@@ -596,6 +597,7 @@ func main() {
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
+		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
 			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
 		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)

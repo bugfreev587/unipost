@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	pinterestOAuthEndpoint = "https://www.pinterest.com/oauth/"
-	pinterestTokenEndpoint = "https://api.pinterest.com/v5/oauth/token"
-	pinterestAPIBase       = "https://api.pinterest.com/v5"
+	pinterestOAuthEndpoint  = "https://www.pinterest.com/oauth/"
+	pinterestTokenEndpoint  = "https://api.pinterest.com/v5/oauth/token"
+	pinterestAPIBase        = "https://api.pinterest.com/v5"
 	pinterestSandboxAPIBase = "https://api-sandbox.pinterest.com/v5"
 )
 
@@ -236,6 +236,40 @@ func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, e
 		return fmt.Errorf("pinterest delete pin (%d): %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+func (a *PinterestAdapter) CreateBoard(ctx context.Context, accessToken string, name string) (*PinterestBoard, error) {
+	reqBody := map[string]any{
+		"name": strings.TrimSpace(name),
+	}
+	payload, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", pinterestAPIBaseURL()+"/boards", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("pinterest create board: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("pinterest create board (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var board PinterestBoard
+	if err := json.Unmarshal(body, &board); err != nil {
+		return nil, fmt.Errorf("pinterest create board decode: %w", err)
+	}
+	if board.ID == "" {
+		return nil, fmt.Errorf("pinterest create board returned empty id")
+	}
+	return &board, nil
 }
 
 func (a *PinterestAdapter) RefreshToken(ctx context.Context, refreshToken string) (newAccess, newRefresh string, expiresAt time.Time, err error) {

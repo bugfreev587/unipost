@@ -449,6 +449,19 @@ export interface PinterestBoard {
   name: string;
 }
 
+export async function createPinterestBoard(
+  token: string,
+  profileId: string,
+  accountId: string,
+  name: string
+): Promise<ApiResponse<{ board: PinterestBoard }>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/pinterest/boards`,
+    token,
+    { method: "POST", body: JSON.stringify({ name }) }
+  );
+}
+
 export async function listPinterestBoards(
   token: string,
   profileId: string,
