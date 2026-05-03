@@ -103,3 +103,46 @@ func TestPinterestCreateBoardUsesBoardsEndpoint(t *testing.T) {
 		t.Fatalf("unexpected board: %#v", board)
 	}
 }
+
+func TestPinterestGetAnalyticsParsesSummaryAndLifetimeMetrics(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v5/pins/1107111520928571145/analytics" {
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
+		}
+		if got := r.URL.Query().Get("metric_types"); got == "" {
+			http.Error(w, "missing metric_types", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"ALL": {
+				"summary_metrics": {
+					"IMPRESSION": 120,
+					"OUTBOUND_CLICK": 4,
+					"SAVE": 7
+				},
+				"lifetime_metrics": {
+					"TOTAL_COMMENTS": 3,
+					"TOTAL_REACTIONS": 9
+				}
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+	adapter := &PinterestAdapter{client: srv.Client()}
+
+	metrics, err := adapter.GetAnalytics(context.Background(), "token-123", "1107111520928571145")
+	if err != nil {
+		t.Fatalf("GetAnalytics failed: %v", err)
+	}
+	if metrics.Impressions != 120 || metrics.Clicks != 4 || metrics.Saves != 7 {
+		t.Fatalf("unexpected summary metrics: %#v", metrics)
+	}
+	if metrics.Comments != 3 || metrics.Likes != 9 {
+		t.Fatalf("unexpected lifetime metrics: %#v", metrics)
+	}
+}

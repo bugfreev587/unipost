@@ -8,6 +8,7 @@ export type Platform =
   | "bluesky"
   | "linkedin"
   | "instagram"
+  | "pinterest"
   | "threads"
   | "tiktok"
   | "twitter"
@@ -46,6 +47,16 @@ export const PLATFORM_METRICS: Record<Platform, Caps> = {
     comments: true,
     shares: true,
     saves: false,
+    clicks: true,
+    video_views: false,
+  },
+  pinterest: {
+    impressions: true,
+    reach: false,
+    likes: true,
+    comments: true,
+    shares: false,
+    saves: true,
     clicks: true,
     video_views: false,
   },
@@ -145,8 +156,20 @@ export function unsupportedReason(platform: string, metric: MetricKey): string {
         return "TikTok exposes view_count (video plays), not display impressions";
       case "facebook":
         return "Meta dropped post-level impressions in Graph API v22.0 — use the Page Insights tab for Page-level reach";
+      case "pinterest":
+        return "Pinterest analytics are unavailable in API sandbox; production access is required";
       default:
         return `${Pname} doesn't expose impressions via API`;
+    }
+  }
+  if (p === "pinterest") {
+    switch (metric) {
+      case "reach":
+        return "Pinterest doesn't expose reach for individual Pins via this integration";
+      case "shares":
+        return "Pinterest doesn't expose share counts for individual Pins via this integration";
+      default:
+        return `Pinterest analytics are unavailable in API sandbox; production access is required`;
     }
   }
   if (metric === "reach" && p === "facebook") {

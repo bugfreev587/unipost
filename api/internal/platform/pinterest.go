@@ -40,6 +40,11 @@ type PinterestBoard struct {
 	Name string `json:"name"`
 }
 
+type pinterestPinAnalyticsMetrics struct {
+	SummaryMetrics  map[string]float64 `json:"summary_metrics"`
+	LifetimeMetrics map[string]int64   `json:"lifetime_metrics"`
+}
+
 func NewPinterestAdapter() *PinterestAdapter {
 	return &PinterestAdapter{client: debugrt.NewClient(60 * time.Second)}
 }
@@ -371,6 +376,63 @@ func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) 
 	}
 
 	return boards, nil
+}
+
+func (a *PinterestAdapter) GetAnalytics(ctx context.Context, accessToken string, externalID string) (*PostMetrics, error) {
+	if pinterestUseSandbox() {
+		return nil, fmt.Errorf("pinterest analytics endpoint is disabled in API sandbox; analytics require production access")
+	}
+
+	q := url.Values{}
+	q.Set("start_date", time.Now().UTC().AddDate(0, 0, -90).Format("2006-01-02"))
+	q.Set("end_date", time.Now().UTC().Format("2006-01-02"))
+	q.Set("app_types", "ALL")
+	q.Set("metric_types", strings.Join([]string{
+		"IMPRESSION",
+		"OUTBOUND_CLICK",
+		"SAVE",
+		"TOTAL_COMMENTS",
+		"TOTAL_REACTIONS",
+	}, ","))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBaseURL()+"/pins/"+url.PathEscape(externalID)+"/analytics?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("pinterest pin analytics: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("pinterest pin analytics (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var raw map[string]pinterestPinAnalyticsMetrics
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("pinterest pin analytics decode: %w", err)
+	}
+	if len(raw) == 0 {
+		return &PostMetrics{}, nil
+	}
+
+	var bucket pinterestPinAnalyticsMetrics
+	for _, metrics := range raw {
+		bucket = metrics
+		break
+	}
+
+	return &PostMetrics{
+		Impressions: int64(bucket.SummaryMetrics["IMPRESSION"]),
+		Clicks:      int64(bucket.SummaryMetrics["OUTBOUND_CLICK"]),
+		Saves:       int64(bucket.SummaryMetrics["SAVE"]),
+		Likes:       bucket.LifetimeMetrics["TOTAL_REACTIONS"],
+		Comments:    bucket.LifetimeMetrics["TOTAL_COMMENTS"],
+	}, nil
 }
 
 type pinterestUserAccount struct {
