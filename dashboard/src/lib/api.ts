@@ -466,7 +466,7 @@ export async function listPinterestBoards(
   token: string,
   profileId: string,
   accountId: string
-): Promise<ApiResponse<{ boards: PinterestBoard[] }>> {
+): Promise<ApiResponse<{ boards: PinterestBoard[]; sandbox_mode?: boolean }>> {
   return request(
     `/v1/profiles/${profileId}/accounts/${accountId}/pinterest/boards`,
     token

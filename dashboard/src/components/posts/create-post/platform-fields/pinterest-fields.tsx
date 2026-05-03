@@ -29,6 +29,7 @@ export function PinterestFields({
   const [newBoardName, setNewBoardName] = useState("");
   const [creatingBoard, setCreatingBoard] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [sandboxMode, setSandboxMode] = useState(false);
 
   async function loadBoards() {
     setLoading(true);
@@ -41,6 +42,7 @@ export function PinterestFields({
       }
       const res = await listPinterestBoards(token, profileId, accountId);
       setBoards(res.data.boards || []);
+      setSandboxMode(!!res.data.sandbox_mode);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Pinterest boards.");
     } finally {
@@ -62,6 +64,7 @@ export function PinterestFields({
         const res = await listPinterestBoards(token, profileId, accountId);
         if (cancelled) return;
         setBoards(res.data.boards || []);
+        setSandboxMode(!!res.data.sandbox_mode);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load Pinterest boards.");
@@ -156,7 +159,9 @@ export function PinterestFields({
           {boardIssue?.message
             || error
             || (!loading && boards.length === 0
-              ? <>This account has no Pinterest boards yet. <a href="https://www.pinterest.com/board/create/" target="_blank" rel="noreferrer" className="underline">Create one on Pinterest</a>, then reopen this drawer.</>
+              ? (sandboxMode
+                ? "Sandbox mode is enabled. Pinterest boards created on pinterest.com may not appear here; create the board below inside UniPost so it exists in the same API environment."
+                : <>This account has no Pinterest boards yet. <a href="https://www.pinterest.com/board/create/" target="_blank" rel="noreferrer" className="underline">Create one on Pinterest</a>, then reopen this drawer.</>)
               : "Every Pinterest Pin must be saved to a board.")}
         </p>
       </div>
@@ -200,7 +205,9 @@ export function PinterestFields({
           </button>
         </div>
         <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: createError ? "color-mix(in srgb, var(--danger) 45%, white)" : "var(--dmuted)" }}>
-          {createError || "Creates a board using the currently connected Pinterest account and token."}
+          {createError || (sandboxMode
+            ? "Sandbox mode is enabled. Create boards here so they are available to the same Pinterest API environment UniPost uses."
+            : "Creates a board using the currently connected Pinterest account and token.")}
         </p>
       </div>
 

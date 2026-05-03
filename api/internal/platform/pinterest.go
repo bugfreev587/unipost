@@ -453,3 +453,7 @@ func pinterestUseSandbox() bool {
 		return false
 	}
 }
+
+func PinterestUsesSandbox() bool {
+	return pinterestUseSandbox()
+}

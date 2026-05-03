@@ -15,7 +15,8 @@ import (
 )
 
 type pinterestBoardsResponse struct {
-	Boards []platform.PinterestBoard `json:"boards"`
+	Boards      []platform.PinterestBoard `json:"boards"`
+	SandboxMode bool                      `json:"sandbox_mode"`
 }
 
 type pinterestBoardResponse struct {
@@ -102,7 +103,10 @@ func (h *SocialAccountHandler) PinterestBoards(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	writeSuccess(w, pinterestBoardsResponse{Boards: boards})
+	writeSuccess(w, pinterestBoardsResponse{
+		Boards:      boards,
+		SandboxMode: platform.PinterestUsesSandbox(),
+	})
 }
 
 func (h *SocialAccountHandler) CreatePinterestBoard(w http.ResponseWriter, r *http.Request) {
