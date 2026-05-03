@@ -20,6 +20,7 @@
 // bearer for the public session lookup endpoint.
 
 import Link from "next/link";
+import { humanizeConnectError } from "@/lib/connect-errors";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev";
 
@@ -100,7 +101,7 @@ export default async function ConnectPage({ params, searchParams }: PageProps) {
     return (
       <ErrorPage
         title="Connection failed"
-        body={`Something went wrong: ${reason || "unknown error"}. Please try the link again.`}
+        body={humanizeConnectError(reason || "unknown error")}
       />
     );
   }

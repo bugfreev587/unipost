@@ -20,6 +20,7 @@ import { PlatformIcon } from "@/components/platform-icons";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { QuickstartStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
+import { humanizeConnectError } from "@/lib/connect-errors";
 
 // BASE_PLATFORMS is the always-available set. Feature-flagged platforms
 // (currently just Facebook during audit) are appended at render time
@@ -84,6 +85,7 @@ export default function AccountsPage() {
   const workspaceId = useWorkspaceId();
   const callbackStatus = searchParams.get("status");
   const callbackAccount = searchParams.get("account_name");
+  const callbackError = humanizeConnectError(searchParams.get("error") || searchParams.get("reason"));
   // Facebook detour lands here with ?pending=<id>; mount the picker
   // when present, clear the URL param on close so a refresh doesn't
   // re-open an already-finalized pending row.
@@ -273,7 +275,7 @@ export default function AccountsPage() {
       )}
       {callbackStatus === "error" && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderRadius: 8, background: "color-mix(in srgb, var(--danger-soft) 82%, white)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", fontSize: 13, fontWeight: 500, color: "color-mix(in srgb, var(--danger) 86%, var(--dtext))", marginBottom: 20 }}>
-          <XCircle style={{ width: 14, height: 14 }} /> Failed to connect. Please try again.
+          <XCircle style={{ width: 14, height: 14 }} /> {callbackError}
         </div>
       )}
 
