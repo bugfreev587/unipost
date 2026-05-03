@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -126,24 +127,34 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	profile, err := h.queries.GetProfile(r.Context(), profileID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load profile")
+		return
+	}
+
+	if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, profile.WorkspaceID, body.Platform, result.ExternalAccountID); shareErr != nil {
+		slog.Warn("connect: free-plan sharing check failed", "platform", body.Platform, "external_id", result.ExternalAccountID, "workspace_id", profile.WorkspaceID, "err", shareErr)
+	} else if blocked {
+		writeError(w, http.StatusConflict, "ACCOUNT_NOT_AVAILABLE_ON_FREE_PLAN", accountNotAvailableOnFreePlanMessage)
+		return
+	}
+
 	// Dedup: check if this platform account is already connected in the workspace
 	if result.ExternalAccountID != "" {
-		profile, err := h.queries.GetProfile(r.Context(), profileID)
-		if err == nil {
-			existing, err := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{
-				Platform:          body.Platform,
-				ExternalAccountID: result.ExternalAccountID,
-				WorkspaceID:       profile.WorkspaceID,
-			})
-			if err == nil && existing.ID != "" {
-				existingName := ""
-				if existing.AccountName.Valid {
-					existingName = existing.AccountName.String
-				}
-				writeError(w, http.StatusConflict, "ACCOUNT_ALREADY_CONNECTED",
-					"This "+body.Platform+" account ("+existingName+") is already connected in your workspace. Disconnect the existing one first if you want to reconnect.")
-				return
+		existing, err := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{
+			Platform:          body.Platform,
+			ExternalAccountID: result.ExternalAccountID,
+			WorkspaceID:       profile.WorkspaceID,
+		})
+		if err == nil && existing.ID != "" {
+			existingName := ""
+			if existing.AccountName.Valid {
+				existingName = existing.AccountName.String
 			}
+			writeError(w, http.StatusConflict, "ACCOUNT_ALREADY_CONNECTED",
+				"This "+body.Platform+" account ("+existingName+") is already connected in your workspace. Disconnect the existing one first if you want to reconnect.")
+			return
 		}
 	}
 
@@ -180,9 +191,7 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	writeCreated(w, toSocialAccountResponse(account))
 
 	wsID := profileID
-	if prof, pErr := h.queries.GetProfile(r.Context(), profileID); pErr == nil {
-		wsID = prof.WorkspaceID
-	}
+	wsID = profile.WorkspaceID
 	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
 		"social_account_id": account.ID,
 		"profile_id":        profileID,

@@ -18,9 +18,9 @@ import (
 )
 
 type OAuthHandler struct {
-	queries           *db.Queries
-	encryptor         *crypto.AESEncryptor
-	baseRedirectURL   string
+	queries         *db.Queries
+	encryptor       *crypto.AESEncryptor
+	baseRedirectURL string
 	// superAdminChecker gates the Facebook Pages detour. A nil checker
 	// behaves as "no super admins configured" — every FB attempt
 	// returns 403. Non-FB platforms ignore it.
@@ -88,8 +88,8 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 
 	// Store state for verification on callback
 	_, err = h.queries.CreateOAuthState(r.Context(), db.CreateOAuthStateParams{
-		State:     state,
-		ProfileID: profileID,
+		State:       state,
+		ProfileID:   profileID,
 		Platform:    platformName,
 		RedirectUrl: pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
 	})
@@ -205,9 +205,18 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	profile, profErr := h.queries.GetProfile(r.Context(), oauthState.ProfileID)
+	if profErr == nil {
+		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, profile.WorkspaceID, platformName, result.ExternalAccountID); shareErr != nil {
+			slog.Warn("oauth callback: free-plan sharing check failed", "platform", platformName, "external_id", result.ExternalAccountID, "workspace_id", profile.WorkspaceID, "err", shareErr)
+		} else if blocked {
+			h.redirectWithError(w, r, oauthState.RedirectUrl.String, accountNotAvailableOnFreePlanMessage)
+			return
+		}
+	}
+
 	// Dedup: check if this platform account is already connected in the workspace
 	if result.ExternalAccountID != "" {
-		profile, profErr := h.queries.GetProfile(r.Context(), oauthState.ProfileID)
 		if profErr == nil {
 			existing, dupErr := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{
 				Platform:          platformName,
@@ -293,7 +302,7 @@ func (h *OAuthHandler) getOAuthConfigForProfile(r *http.Request, profileID, plat
 	// Check for White Label credentials
 	creds, err := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
 		WorkspaceID: profileID,
-		Platform:  platformName,
+		Platform:    platformName,
 	})
 	if err == nil {
 		config.ClientID = creds.ClientID
@@ -394,4 +403,3 @@ func (h *OAuthHandler) redirectWithError(w http.ResponseWriter, r *http.Request,
 	}
 	http.Redirect(w, r, redirectURL+sep+"status=error&error="+errMsg, http.StatusFound)
 }
-

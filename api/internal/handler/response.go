@@ -44,22 +44,23 @@ func requestIDFromResponse(w http.ResponseWriter) string {
 }
 
 var normalizedErrorCodeMap = map[string]string{
-	"ACCOUNT_ALREADY_CONNECTED":     "account_already_connected",
-	"BAD_REQUEST":                   "bad_request",
-	"CONFLICT":                      "conflict",
-	"DEFAULT_PROFILE_PROTECTED":     "default_profile_protected",
-	"DELIVERY_FAILED":               "delivery_failed",
-	"FACEBOOK_DISABLED":             "facebook_disabled",
-	"FORBIDDEN":                     "forbidden",
-	"INTERNAL_ERROR":                "internal_error",
-	"INVALID_REQUEST":               "invalid_request",
-	"INVALID_SIGNATURE":             "invalid_signature",
-	"INVALID_TOKEN":                 "invalid_token",
-	"NEEDS_RECONNECT":               "needs_reconnect",
-	"NOT_CONFIGURED":                "not_configured",
-	"NOT_FOUND":                     "not_found",
-	"NO_PAGES_SELECTED":             "no_pages_selected",
-	"PAGE_LACKS_PUBLISH_PERMISSION": "page_lacks_publish_permission",
+	"ACCOUNT_ALREADY_CONNECTED":          "account_already_connected",
+	"ACCOUNT_NOT_AVAILABLE_ON_FREE_PLAN": "account_not_available_on_free_plan",
+	"BAD_REQUEST":                        "bad_request",
+	"CONFLICT":                           "conflict",
+	"DEFAULT_PROFILE_PROTECTED":          "default_profile_protected",
+	"DELIVERY_FAILED":                    "delivery_failed",
+	"FACEBOOK_DISABLED":                  "facebook_disabled",
+	"FORBIDDEN":                          "forbidden",
+	"INTERNAL_ERROR":                     "internal_error",
+	"INVALID_REQUEST":                    "invalid_request",
+	"INVALID_SIGNATURE":                  "invalid_signature",
+	"INVALID_TOKEN":                      "invalid_token",
+	"NEEDS_RECONNECT":                    "needs_reconnect",
+	"NOT_CONFIGURED":                     "not_configured",
+	"NOT_FOUND":                          "not_found",
+	"NO_PAGES_SELECTED":                  "no_pages_selected",
+	"PAGE_LACKS_PUBLISH_PERMISSION":      "page_lacks_publish_permission",
 	// Plan gate (migration 057, PR1): X / Twitter publishing and
 	// connect attempts on plans that disallow it. 402 from
 	// /v1/connect/sessions; surfaced as a fatal validator code on
@@ -76,22 +77,22 @@ var normalizedErrorCodeMap = map[string]string{
 	// RBAC role gate (migration 060, PR-C): the authenticated user's
 	// workspace role is below the minimum the endpoint requires. 403.
 	"INSUFFICIENT_ROLE": "insufficient_role",
-	"PLATFORM_ERROR":            "platform_error",
+	"PLATFORM_ERROR":    "platform_error",
 	// Per-platform daily safety cap (PR2): one social_account_id has
 	// hit its UTC-day publish ceiling. Surfaces on the per-result
 	// row's error_message (publish path is partial-success, so the
 	// HTTP status is still 200 — clients switch on this code in the
 	// per-result error_message string).
 	"PER_PLATFORM_DAILY_CAP_EXCEEDED": "per_platform_daily_cap_exceeded",
-	"QUEUE_JOB_ACTIVE":              "queue_job_active",
-	"RESULT_NOT_RETRYABLE":          "result_not_retryable",
-	"STORAGE_NOT_CONFIGURED":        "storage_not_configured",
-	"TIKTOK_ERROR":                  "tiktok_error",
-	"UNAUTHORIZED":                  "unauthorized",
-	"UNKNOWN_PAGE":                  "unknown_page",
-	"UPSTREAM_ERROR":                "upstream_error",
-	"VALIDATION_ERROR":              "validation_error",
-	"WRONG_PLATFORM":                "wrong_platform",
+	"QUEUE_JOB_ACTIVE":                "queue_job_active",
+	"RESULT_NOT_RETRYABLE":            "result_not_retryable",
+	"STORAGE_NOT_CONFIGURED":          "storage_not_configured",
+	"TIKTOK_ERROR":                    "tiktok_error",
+	"UNAUTHORIZED":                    "unauthorized",
+	"UNKNOWN_PAGE":                    "unknown_page",
+	"UPSTREAM_ERROR":                  "upstream_error",
+	"VALIDATION_ERROR":                "validation_error",
+	"WRONG_PLATFORM":                  "wrong_platform",
 }
 
 func normalizeErrorCode(code string) string {

@@ -226,6 +226,16 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	prof, profErr := h.queries.GetProfile(r.Context(), session.ProfileID)
+	if profErr == nil {
+		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, prof.WorkspaceID, platformName, profile.ExternalAccountID); shareErr != nil {
+			slog.Warn("connect.callback: free-plan sharing check failed", "platform", platformName, "external_id", profile.ExternalAccountID, "workspace_id", prof.WorkspaceID, "err", shareErr)
+		} else if blocked {
+			renderConnectError(w, http.StatusConflict, accountNotAvailableOnFreePlanMessage)
+			return
+		}
+	}
+
 	encAccess, err := h.encryptor.Encrypt(tokens.AccessToken)
 	if err != nil {
 		renderConnectError(w, http.StatusInternalServerError, "Internal error encrypting token.")
@@ -273,7 +283,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 
 	// Webhooks are workspace-scoped; resolve workspace_id from profile.
 	wsID := session.ProfileID
-	if prof, pErr := h.queries.GetProfile(r.Context(), session.ProfileID); pErr == nil {
+	if profErr == nil {
 		wsID = prof.WorkspaceID
 	}
 	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
