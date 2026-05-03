@@ -20,6 +20,7 @@ const (
 	pinterestOAuthEndpoint = "https://www.pinterest.com/oauth/"
 	pinterestTokenEndpoint = "https://api.pinterest.com/v5/oauth/token"
 	pinterestAPIBase       = "https://api.pinterest.com/v5"
+	pinterestSandboxAPIBase = "https://api-sandbox.pinterest.com/v5"
 )
 
 var pinterestScopes = []string{
@@ -57,8 +58,8 @@ func (a *PinterestAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfi
 	return OAuthConfig{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		AuthURL:      pinterestOAuthEndpoint,
-		TokenURL:     pinterestTokenEndpoint,
+		AuthURL:      pinterestAuthURL(),
+		TokenURL:     pinterestTokenURL(),
 		RedirectURL:  strings.TrimRight(baseRedirectURL, "/") + "/v1/oauth/callback/pinterest",
 		Scopes:       pinterestScopes,
 	}
@@ -183,7 +184,7 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	}
 
 	payload, _ := json.Marshal(reqBody)
-	req, err := http.NewRequestWithContext(ctx, "POST", pinterestAPIBase+"/pins", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", pinterestAPIBaseURL()+"/pins", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +219,7 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 }
 
 func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", pinterestAPIBase+"/pins/"+url.PathEscape(externalID), nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", pinterestAPIBaseURL()+"/pins/"+url.PathEscape(externalID), nil)
 	if err != nil {
 		return err
 	}
@@ -254,7 +255,7 @@ func (a *PinterestAdapter) RefreshToken(ctx context.Context, refreshToken string
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", pinterestTokenEndpoint, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", pinterestTokenURL(), strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
@@ -304,7 +305,7 @@ func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) 
 		if bookmark != "" {
 			q.Set("bookmark", bookmark)
 		}
-		req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBase+"/boards?"+q.Encode(), nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBaseURL()+"/boards?"+q.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -346,7 +347,7 @@ type pinterestUserAccount struct {
 }
 
 func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken string) (*pinterestUserAccount, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBase+"/user_account", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBaseURL()+"/user_account", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -380,4 +381,41 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func pinterestAuthURL() string {
+	if v := strings.TrimSpace(os.Getenv("PINTEREST_AUTH_URL")); v != "" {
+		return v
+	}
+	return pinterestOAuthEndpoint
+}
+
+func pinterestTokenURL() string {
+	if v := strings.TrimSpace(os.Getenv("PINTEREST_TOKEN_URL")); v != "" {
+		return v
+	}
+	if pinterestUseSandbox() {
+		return pinterestSandboxAPIBase + "/oauth/token"
+	}
+	return pinterestTokenEndpoint
+}
+
+func pinterestAPIBaseURL() string {
+	if v := strings.TrimSpace(os.Getenv("PINTEREST_API_BASE_URL")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	if pinterestUseSandbox() {
+		return pinterestSandboxAPIBase
+	}
+	return pinterestAPIBase
+}
+
+func pinterestUseSandbox() bool {
+	v := strings.TrimSpace(os.Getenv("PINTEREST_USE_SANDBOX"))
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
