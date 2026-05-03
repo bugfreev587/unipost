@@ -17,33 +17,37 @@ import (
 )
 
 const (
-	pinterestOAuthEndpoint     = "https://www.pinterest.com/oauth/"
-	pinterestTokenEndpoint     = "https://api.pinterest.com/v5/oauth/token"
-	pinterestProductionAPIBase = "https://api.pinterest.com/v5"
+	pinterestOAuthEndpoint            = "https://www.pinterest.com/oauth/"
+	pinterestProductionTokenEndpoint  = "https://api.pinterest.com/v5/oauth/token"
+	pinterestProductionAPIBase        = "https://api.pinterest.com/v5"
 )
 
-// pinterestWriteAPIBase returns the host for write endpoints (pin
-// create, pin delete). Production by default; trial-access apps set
-// PINTEREST_API_BASE to the sandbox because production rejects pin
-// writes with HTTP 403 code 29:
+// pinterestAPIBase returns the host for v5 API requests (boards,
+// pins, user_account). Production by default; set PINTEREST_API_BASE
+// to a sandbox host (https://api-sandbox.pinterest.com/v5) for
+// recording demos against Pinterest's sandbox dataset.
 //
-//	"Apps with Trial access may not create Pins in production
-//	 https://api.pinterest.com - use API Sandbox
-//	 https://api-sandbox.pinterest.com instead."
-//
-// Once the app is granted Standard access in the Pinterest developer
-// portal, unset PINTEREST_API_BASE so writes return to production.
-//
-// Reads (boards, user_account) and OAuth (authorize + token) are
-// intentionally NOT env-configurable — trial-mode only restricts pin
-// creation; reads work fine against production, and routing them to
-// the sandbox 401s because sandbox does not honor production tokens
-// for reads (which broke the OAuth callback's user_account fetch).
-func pinterestWriteAPIBase() string {
+// IMPORTANT: sandbox is all-or-nothing. Setting only this without
+// also setting PINTEREST_TOKEN_ENDPOINT 401s the OAuth callback's
+// user_account fetch, because production-issued OAuth tokens are not
+// valid against sandbox reads. To run end-to-end on sandbox, set
+// BOTH env vars and re-OAuth so a sandbox-issued token is stored.
+func pinterestAPIBase() string {
 	if base := strings.TrimRight(os.Getenv("PINTEREST_API_BASE"), "/"); base != "" {
 		return base
 	}
 	return pinterestProductionAPIBase
+}
+
+// pinterestTokenURL returns the OAuth token endpoint. Production by
+// default; set PINTEREST_TOKEN_ENDPOINT to sandbox
+// (https://api-sandbox.pinterest.com/v5/oauth/token) when running a
+// sandbox demo so the resulting access token is sandbox-issued.
+func pinterestTokenURL() string {
+	if endpoint := strings.TrimSpace(os.Getenv("PINTEREST_TOKEN_ENDPOINT")); endpoint != "" {
+		return endpoint
+	}
+	return pinterestProductionTokenEndpoint
 }
 
 var pinterestScopes = []string{
@@ -82,7 +86,7 @@ func (a *PinterestAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfi
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		AuthURL:      pinterestOAuthEndpoint,
-		TokenURL:     pinterestTokenEndpoint,
+		TokenURL:     pinterestTokenURL(),
 		RedirectURL:  strings.TrimRight(baseRedirectURL, "/") + "/v1/oauth/callback/pinterest",
 		Scopes:       pinterestScopes,
 	}
@@ -207,7 +211,7 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	}
 
 	payload, _ := json.Marshal(reqBody)
-	req, err := http.NewRequestWithContext(ctx, "POST", pinterestWriteAPIBase()+"/pins", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", pinterestAPIBase()+"/pins", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +246,7 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 }
 
 func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", pinterestWriteAPIBase()+"/pins/"+url.PathEscape(externalID), nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", pinterestAPIBase()+"/pins/"+url.PathEscape(externalID), nil)
 	if err != nil {
 		return err
 	}
@@ -278,7 +282,7 @@ func (a *PinterestAdapter) RefreshToken(ctx context.Context, refreshToken string
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", pinterestTokenEndpoint, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", pinterestTokenURL(), strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
@@ -328,7 +332,7 @@ func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) 
 		if bookmark != "" {
 			q.Set("bookmark", bookmark)
 		}
-		req, err := http.NewRequestWithContext(ctx, "GET", pinterestProductionAPIBase+"/boards?"+q.Encode(), nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBase()+"/boards?"+q.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -370,7 +374,7 @@ type pinterestUserAccount struct {
 }
 
 func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken string) (*pinterestUserAccount, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", pinterestProductionAPIBase+"/user_account", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBase()+"/user_account", nil)
 	if err != nil {
 		return nil, err
 	}
