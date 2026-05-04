@@ -1,4 +1,4 @@
-// Platform landing page configs — single source of truth for all 7 pages.
+// Platform landing page configs — single source of truth for all 8 pages.
 // Analytics metrics validated against dashboard/src/lib/platform-capabilities.ts.
 
 export interface PlatformConfig {
@@ -714,6 +714,154 @@ response = requests.post(
 };
 
 // ────────────────────────────────────────────────────────────────────
+// Pinterest
+// ────────────────────────────────────────────────────────────────────
+export const pinterest: PlatformConfig = {
+  name: "Pinterest",
+  slug: "pinterest",
+  icon: "📌",
+  brandColor: "#E60023",
+  heroTitle: "Pinterest API\nfor Developers",
+  heroSub:
+    "Publish image Pins to Pinterest programmatically. Connect via OAuth, select or create boards, and send publicly hosted media URLs directly. UniPost handles board lookup, token refresh, and analytics retrieval in production access environments.",
+  contentTypes: ["Image Pins"],
+
+  capabilities: [
+    { icon: "📌", title: "Publish Pins", desc: "Create Pinterest Pins with titles, descriptions, destination links, and board selection through a single API request." },
+    { icon: "🗂️", title: "Boards Included", desc: "List existing boards or create a new board directly inside UniPost before publishing a Pin." },
+    { icon: "📊", title: "Pin Analytics", desc: "Fetch Pinterest Pin analytics automatically when the connected app has production analytics access." },
+  ],
+
+  codeExample: {
+    js: `const response = await fetch(
+  'https://api.unipost.dev/v1/posts',
+  {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer up_live_xxx',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      caption: 'Fresh studio setup ideas',
+      account_ids: ['sa_pinterest_404'],
+      media_urls: ['https://example.com/pin-cover.jpg'],
+      platform_overrides: {
+        pinterest: {
+          board_id: '9876543210',
+          title: 'Studio inspiration',
+          link: 'https://example.com/blog/studio'
+        }
+      }
+    })
+  }
+);`,
+    python: `import requests
+
+response = requests.post(
+    'https://api.unipost.dev/v1/posts',
+    headers={
+        'Authorization': 'Bearer up_live_xxx',
+        'Content-Type': 'application/json',
+    },
+    json={
+        'caption': 'Fresh studio setup ideas',
+        'account_ids': ['sa_pinterest_404'],
+        'media_urls': ['https://example.com/pin-cover.jpg'],
+        'platform_overrides': {
+            'pinterest': {
+                'board_id': '9876543210',
+                'title': 'Studio inspiration',
+                'link': 'https://example.com/blog/studio',
+            }
+        },
+    }
+)`,
+    curl: `curl -X POST https://api.unipost.dev/v1/posts \\
+  -H "Authorization: Bearer up_live_xxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "caption": "Fresh studio setup ideas",
+    "account_ids": ["sa_pinterest_404"],
+    "media_urls": ["https://example.com/pin-cover.jpg"],
+    "platform_overrides": {
+      "pinterest": {
+        "board_id": "9876543210",
+        "title": "Studio inspiration",
+        "link": "https://example.com/blog/studio"
+      }
+    }
+  }'`,
+  },
+
+  alternatingFeatures: [
+    {
+      num: "01",
+      title: "Board-aware Publishing",
+      desc: "Every Pinterest Pin must be saved to a board. UniPost lets you fetch boards during compose or create a new board in the same flow, so your API client never needs Pinterest-specific board setup screens.",
+      placeholderIcon: "🗂️",
+      placeholderLabel: "Pinterest board picker inside UniPost compose flow",
+    },
+    {
+      num: "02",
+      title: "Trial and Production Ready",
+      desc: "Use Pinterest Sandbox while your app is in trial access, then switch to production endpoints later without changing your publishing workflow. UniPost handles the environment-specific endpoint behavior.",
+      placeholderIcon: "🔁",
+      placeholderLabel: "Pinterest Pin published successfully from UniPost",
+    },
+  ],
+
+  whyNot: {
+    without: [
+      "Implement Pinterest OAuth and token refresh",
+      "Learn board requirements before every Pin publish",
+      "Build separate board listing and board creation UI",
+      "Handle Sandbox vs Production endpoint differences",
+      "Normalize Pinterest API errors into your own schema",
+      "Add another analytics integration later",
+    ],
+    with: [
+      "Connect Pinterest in minutes",
+      "Create Pins and boards through one workflow",
+      "Sandbox and production behavior handled for you",
+      "Unified payload format with every other platform",
+      "Consistent errors across all supported platforms",
+      "Production analytics available through the same API",
+    ],
+  },
+
+  modes: {
+    type: "dual",
+    quickstartDesc: "Use UniPost's managed Pinterest app to connect quickly while keeping the same posting workflow and board controls.",
+    nativeDesc: "Use your own Pinterest app for full branding and direct ownership of credentials, scopes, and access level.",
+    quickstartFeats: ["Fastest path to Pinterest OAuth", "Same board and posting workflow", "Good for early integrations"],
+    nativeFeats: ["Your own Pinterest app branding", "Credential ownership stays with your team", "Best fit for production rollout"],
+  },
+
+  metrics: [
+    { label: "Impressions", sampleValue: "12.4k" },
+    { label: "Saves", sampleValue: "843" },
+    { label: "Pin Clicks", sampleValue: "318" },
+    { label: "Outbound Clicks", sampleValue: "91" },
+  ],
+
+  faq: [
+    { q: "Does Pinterest require a board for every Pin?", a: "Yes. Pinterest Pins must be saved to a board. UniPost lets you fetch or create boards before publishing so you can keep using one unified API." },
+    { q: "Can UniPost create Pinterest boards for me?", a: "Yes. If the connected Pinterest account has permission, UniPost can create a new board directly from the compose flow and then publish the Pin into it." },
+    { q: "Can I publish a local image file to Pinterest?", a: "If the image already has a public URL, send it in media_urls. If it lives on disk, upload it with POST /v1/media first, then publish with media_ids." },
+    { q: "Does Pinterest work in Sandbox?", a: "Yes for publishing and board workflows while your Pinterest app has trial access. Some Pinterest analytics endpoints are production-only, so trial apps may not return metrics." },
+    { q: "What analytics can I get from Pinterest?", a: "With production Pinterest analytics access, UniPost can fetch Pin-level metrics like impressions, saves, and clicks through the same analytics flow used by other platforms." },
+    { q: "How long does setup take?", a: "Usually a few minutes. Connect the Pinterest account via OAuth, pick a board, and send your first Pin through the API." },
+    { q: "Is Pinterest included in the free plan?", a: "Yes. Pinterest publishing is available on the free plan, subject to the connected app's Pinterest access level and environment." },
+  ],
+
+  seo: {
+    title: "Pinterest API for Developers — Publish Pins & Manage Boards | UniPost",
+    description: "Publish Pinterest Pins programmatically, choose or create boards, and fetch Pin analytics in production access environments. Sandbox and production flows supported.",
+    keywords: ["pinterest api for developers", "publish pinterest pins api", "pinterest boards api", "pinterest api python", "pinterest api nodejs"],
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────
 // Bluesky
 // ────────────────────────────────────────────────────────────────────
 export const bluesky: PlatformConfig = {
@@ -973,7 +1121,7 @@ response = requests.post(
 // All platforms (ordered for display / launch priority)
 // ────────────────────────────────────────────────────────────────────
 export const ALL_PLATFORMS: PlatformConfig[] = [
-  instagram, linkedin, twitter, tiktok, youtube, bluesky, threads,
+  instagram, linkedin, twitter, tiktok, youtube, pinterest, bluesky, threads,
 ];
 
 export function getPlatformBySlug(slug: string): PlatformConfig | undefined {
