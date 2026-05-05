@@ -771,59 +771,10 @@ body{
   font-family:var(--font-fira-code),monospace;
   font-weight:600;
 }
-.lp-flow-grid{
-  display:grid;
-  grid-template-columns:1.08fr .92fr;
-  gap:22px;
-  align-items:start;
-}
-.lp-flow-panel{
-  padding:28px;
-  border-radius:28px;
-  background:linear-gradient(180deg, rgba(56,189,248,.10), rgba(52,211,153,.06));
-  border:1px solid var(--lp-border);
-  box-shadow:var(--lp-soft-shadow);
-}
-.lp-flow-visual{
-  display:grid;
-  gap:14px;
-}
-.lp-flow-node{
-  display:grid;
-  grid-template-columns:auto 1fr;
-  gap:14px;
-  align-items:start;
-  padding:16px;
-  border-radius:18px;
-  background:var(--lp-surface);
-  border:1px solid var(--lp-border);
-}
-.lp-flow-node-step{
-  width:40px;
-  height:40px;
-  border-radius:14px;
-  background:rgba(52,211,153,.14);
-  color:var(--lp-emerald);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:13px;
-  font-weight:800;
-  font-family:var(--font-fira-code),monospace;
-}
-.lp-flow-node strong{
-  display:block;
-  font-size:15px;
-  margin-bottom:4px;
-}
-.lp-flow-node span{
-  color:var(--lp-muted);
-  font-size:13px;
-  line-height:1.6;
-}
 .lp-step-list{
   display:grid;
-  gap:14px;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:18px;
 }
 .lp-flow-step{
   padding:22px;
@@ -1048,8 +999,7 @@ body{
 @media (max-width:1200px){
   :root{--lp-pad:24px}
   .lp-hero-shell,
-  .lp-code-shell,
-  .lp-flow-grid{
+  .lp-code-shell{
     grid-template-columns:1fr;
   }
   .lp-hero-visual{
@@ -1064,7 +1014,8 @@ body{
   .lp-usecase-grid,
   .lp-modes-grid,
   .lp-faq-grid,
-  .lp-stats{
+  .lp-stats,
+  .lp-step-list{
     grid-template-columns:1fr 1fr;
   }
   .lp-hero-proof{
@@ -1110,7 +1061,8 @@ body{
   .lp-usecase-grid,
   .lp-modes-grid,
   .lp-faq-grid,
-  .lp-stats{
+  .lp-stats,
+  .lp-step-list{
     grid-template-columns:1fr;
   }
   .lp-section-head h2{
@@ -1364,29 +1316,14 @@ export default function LandingPage() {
                 validating the payload, then publishing with visibility into what happened next.
               </p>
             </div>
-            <div className="lp-flow-grid">
-              <div className="lp-flow-panel">
-                <div className="lp-flow-visual">
-                  {FLOW_STEPS.map((step) => (
-                    <div key={step.step} className="lp-flow-node">
-                      <div className="lp-flow-node-step">{step.step}</div>
-                      <div>
-                        <strong>{step.title}</strong>
-                        <span>{step.body}</span>
-                      </div>
-                    </div>
-                  ))}
+            <div className="lp-step-list">
+              {FLOW_STEPS.map((step) => (
+                <div key={step.step} className="lp-flow-step">
+                  <span className="lp-flow-step-number">{step.step}</span>
+                  <h3>{step.title}</h3>
+                  <p>{step.body}</p>
                 </div>
-              </div>
-              <div className="lp-step-list">
-                {FLOW_STEPS.map((step) => (
-                  <div key={step.step} className="lp-flow-step">
-                    <span className="lp-flow-step-number">{step.step}</span>
-                    <h3>{step.title}</h3>
-                    <p>{step.body}</p>
-                  </div>
-                ))}
-              </div>
+              ))}
             </div>
           </section>
 
