@@ -41,6 +41,9 @@ func TestNilClient(t *testing.T) {
 	if _, err := c.PresignGet(ctx, "k", 0); err != ErrNotConfigured {
 		t.Errorf("PresignGet on nil: want ErrNotConfigured, got %v", err)
 	}
+	if _, err := c.StageObjectForPull(ctx, "k"); err != ErrNotConfigured {
+		t.Errorf("StageObjectForPull on nil: want ErrNotConfigured, got %v", err)
+	}
 	if _, err := c.Head(ctx, "k"); err != ErrNotConfigured {
 		t.Errorf("Head on nil: want ErrNotConfigured, got %v", err)
 	}

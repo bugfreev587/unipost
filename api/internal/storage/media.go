@@ -17,7 +17,11 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/url"
+	"path"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -73,11 +77,11 @@ func (c *Client) PresignPut(ctx context.Context, key, contentType string, ttl ti
 // the first time a media_id is referenced (the "poll-on-attach"
 // pattern that replaces R2-side webhooks).
 type HeadResult struct {
-	Exists      bool
-	ContentType string
-	SizeBytes   int64
+	Exists       bool
+	ContentType  string
+	SizeBytes    int64
 	LastModified time.Time
-	ETag        string
+	ETag         string
 }
 
 // Head fetches object metadata without downloading the body. Returns
@@ -140,6 +144,30 @@ func (c *Client) PresignGet(ctx context.Context, key string, ttl time.Duration) 
 		return "", fmt.Errorf("storage: presign get: %w", err)
 	}
 	return req.URL, nil
+}
+
+// StageObjectForPull copies an existing object in this bucket to a stable
+// public URL under a content-addressed "pull/" prefix. This avoids giving
+// pull-by-URL platforms a short-lived presigned GET when we already own the
+// bytes in R2 and can expose them through the bucket's public domain.
+func (c *Client) StageObjectForPull(ctx context.Context, key string) (string, error) {
+	if c == nil {
+		return "", ErrNotConfigured
+	}
+	sum := sha256.Sum256([]byte(key))
+	dstKey := path.Join("pull", hex.EncodeToString(sum[:])+path.Ext(key))
+	copySource := url.PathEscape(c.bucket + "/" + key)
+
+	_, err := c.s3.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:       aws.String(c.bucket),
+		Key:          aws.String(dstKey),
+		CopySource:   aws.String(copySource),
+		CacheControl: aws.String("public, max-age=86400, immutable"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("storage: stage object for pull: %w", err)
+	}
+	return c.publicBase + "/" + dstKey, nil
 }
 
 // Delete removes an object from R2. Used by the media sweeper for

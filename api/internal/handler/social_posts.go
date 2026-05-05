@@ -1110,7 +1110,7 @@ func (h *SocialPostHandler) publishOneContext(
 	// the media), so we surface them as the post's err.
 	mediaURLs := append([]string(nil), pp.MediaURLs...)
 	if len(pp.MediaIDs) > 0 {
-		extra, mediaErr := h.resolveMediaIDsToURLs(ctx, pp.MediaIDs)
+		extra, mediaErr := h.resolveMediaIDsToURLs(ctx, acc.Platform, pp.MediaIDs)
 		if mediaErr != nil {
 			oc.err = mediaErr
 			return
@@ -1238,7 +1238,11 @@ func (h *SocialPostHandler) scheduleLargeMediaCleanup(ctx context.Context, media
 //
 // Returns the URLs in the same order as the input media_ids so the
 // caller can interleave them with the per-post media_urls list.
-func (h *SocialPostHandler) resolveMediaIDsToURLs(ctx context.Context, mediaIDs []string) ([]string, error) {
+//
+// Some pull-by-URL platforms need a stable public fetch target rather than a
+// short-lived presigned GET. Pinterest is one of them, so media_ids for that
+// platform are staged to a public R2 URL here before dispatch.
+func (h *SocialPostHandler) resolveMediaIDsToURLs(ctx context.Context, platformName string, mediaIDs []string) ([]string, error) {
 	if len(mediaIDs) == 0 {
 		return nil, nil
 	}
@@ -1261,6 +1265,14 @@ func (h *SocialPostHandler) resolveMediaIDsToURLs(ctx context.Context, mediaIDs 
 				return nil, fmt.Errorf("media_id %s: not yet uploaded", id)
 			}
 			row = hydrated
+		}
+		if platformName == "pinterest" {
+			stagedURL, err := h.storage.StageObjectForPull(ctx, row.StorageKey)
+			if err != nil {
+				return nil, fmt.Errorf("media_id %s: stage object for pull: %w", id, err)
+			}
+			out = append(out, stagedURL)
+			continue
 		}
 		dlURL, err := h.storage.PresignGet(ctx, row.StorageKey, 15*time.Minute)
 		if err != nil {
