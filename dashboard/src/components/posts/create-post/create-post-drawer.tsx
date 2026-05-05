@@ -436,8 +436,8 @@ function ValidationPanel({
   return (
     <section className="mb-5 space-y-3">
       {errors.length > 0 && (
-        <div className="rounded-xl border px-4 py-3.5" style={{ borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)", background: "color-mix(in srgb, var(--danger) 12%, var(--surface-raised))" }}>
-          <div className="mb-2 flex items-center gap-2" style={{ color: "color-mix(in srgb, var(--danger) 26%, white)" }}>
+        <div className="rounded-xl border px-4 py-3.5" style={{ borderColor: "color-mix(in srgb, var(--danger) 55%, transparent)", background: "color-mix(in srgb, var(--danger) 16%, var(--surface-raised))" }}>
+          <div className="mb-2 flex items-center gap-2" style={{ color: "var(--danger)" }}>
             <AlertTriangle className="w-4 h-4" />
             <div className="text-[12px] font-mono uppercase tracking-[0.12em]">
               {errors.length} blocking issue{errors.length === 1 ? "" : "s"}
@@ -450,12 +450,12 @@ function ValidationPanel({
                 type="button"
                 onClick={() => onSelectIssue(issue)}
                 className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors"
-                style={{ borderColor: "color-mix(in srgb, var(--danger) 35%, transparent)", background: "color-mix(in srgb, var(--danger) 16%, var(--surface-raised))" }}
+                style={{ borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)", background: "color-mix(in srgb, var(--danger) 22%, var(--surface-raised))" }}
               >
-                <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.12em]" style={{ color: "color-mix(in srgb, var(--danger) 45%, white)" }}>
+                <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.12em]" style={{ color: "var(--danger)" }}>
                   {issueTargetLabel(issue, accounts)}
                 </div>
-                <div className="text-[13px] leading-relaxed" style={{ color: "color-mix(in srgb, var(--danger) 26%, white)" }}>{issueSummary(issue)}</div>
+                <div className="text-[13px] leading-relaxed" style={{ color: "var(--text)" }}>{issueSummary(issue)}</div>
               </button>
             ))}
           </div>
@@ -463,8 +463,8 @@ function ValidationPanel({
       )}
 
       {warnings.length > 0 && (
-        <div className="rounded-xl border px-4 py-3.5" style={{ borderColor: "color-mix(in srgb, var(--warning) 45%, transparent)", background: "color-mix(in srgb, var(--warning) 12%, var(--surface-raised))" }}>
-          <div className="mb-2 flex items-center gap-2" style={{ color: "color-mix(in srgb, var(--warning) 32%, white)" }}>
+        <div className="rounded-xl border px-4 py-3.5" style={{ borderColor: "color-mix(in srgb, var(--warning) 55%, transparent)", background: "color-mix(in srgb, var(--warning) 16%, var(--surface-raised))" }}>
+          <div className="mb-2 flex items-center gap-2" style={{ color: "var(--warning)" }}>
             <AlertTriangle className="w-4 h-4" />
             <div className="text-[12px] font-mono uppercase tracking-[0.12em]">
               {warnings.length} warning{warnings.length === 1 ? "" : "s"}
@@ -477,12 +477,12 @@ function ValidationPanel({
                 type="button"
                 onClick={() => onSelectIssue(issue)}
                 className="w-full rounded-lg border px-3 py-2.5 text-left transition-colors"
-                style={{ borderColor: "color-mix(in srgb, var(--warning) 35%, transparent)", background: "color-mix(in srgb, var(--warning) 16%, var(--surface-raised))" }}
+                style={{ borderColor: "color-mix(in srgb, var(--warning) 45%, transparent)", background: "color-mix(in srgb, var(--warning) 22%, var(--surface-raised))" }}
               >
-                <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.12em]" style={{ color: "color-mix(in srgb, var(--warning) 48%, white)" }}>
+                <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.12em]" style={{ color: "var(--warning)" }}>
                   {issueTargetLabel(issue, accounts)}
                 </div>
-                <div className="text-[13px] leading-relaxed" style={{ color: "color-mix(in srgb, var(--warning) 28%, white)" }}>{issueSummary(issue)}</div>
+                <div className="text-[13px] leading-relaxed" style={{ color: "var(--text)" }}>{issueSummary(issue)}</div>
               </button>
             ))}
           </div>

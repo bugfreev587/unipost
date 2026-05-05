@@ -143,7 +143,7 @@ export function PlatformEditorBlock({
                 </span>
               )}
               {hasWarnings && (
-                <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "color-mix(in srgb, var(--warning) 70%, white)" }}>
+                <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--warning)" }}>
                   {warningIssues.length} warning{warningIssues.length === 1 ? "" : "s"}
                 </span>
               )}
@@ -167,13 +167,13 @@ export function PlatformEditorBlock({
             <div
               className="rounded-lg border px-3 py-2.5"
               style={{
-                borderColor: hasErrors ? "color-mix(in srgb, var(--danger) 35%, transparent)" : "color-mix(in srgb, var(--warning) 35%, transparent)",
-                background: hasErrors ? "color-mix(in srgb, var(--danger) 10%, var(--surface-raised))" : "color-mix(in srgb, var(--warning) 10%, var(--surface-raised))",
+                borderColor: hasErrors ? "color-mix(in srgb, var(--danger) 45%, transparent)" : "color-mix(in srgb, var(--warning) 45%, transparent)",
+                background: hasErrors ? "color-mix(in srgb, var(--danger) 16%, var(--surface-raised))" : "color-mix(in srgb, var(--warning) 16%, var(--surface-raised))",
               }}
             >
               <div
                 className="mb-1.5 font-mono text-[11px] uppercase tracking-[0.12em]"
-                style={{ color: hasErrors ? "color-mix(in srgb, var(--danger) 45%, white)" : "color-mix(in srgb, var(--warning) 70%, white)" }}
+                style={{ color: hasErrors ? "var(--danger)" : "var(--warning)" }}
               >
                 {hasErrors ? "Needs attention" : "Review before publish"}
               </div>
@@ -182,7 +182,7 @@ export function PlatformEditorBlock({
                   <div
                     key={`${issue.code}-${issue.field}-${issueIndex}`}
                     className="text-[12px] leading-relaxed"
-                    style={{ color: issue.severity === "error" ? "color-mix(in srgb, var(--danger) 26%, white)" : "color-mix(in srgb, var(--warning) 28%, white)" }}
+                    style={{ color: "var(--text)" }}
                   >
                     {issue.message}
                   </div>
