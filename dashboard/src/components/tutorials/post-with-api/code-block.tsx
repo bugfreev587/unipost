@@ -2,12 +2,16 @@
 
 // Language-tabbed code block for the post_with_api tutorial.
 //
-// Mirrors the Resend-style "run this to send your first post" widget:
-// tabs for curl / Node.js / Python / Go, each rendering a snippet
-// templated with the user's newly-created API key and one of their
-// connected account IDs. Includes a copy button; the live "Send post"
-// button is a separate component (send-button.tsx) since the code
-// block is static while the send result has its own state machine.
+// Visual parity with the docs API reference (e.g.
+// /docs/api/profiles/list): rounded card + tabs header + inset code
+// surface, fully theme-aware in light/dark. We don't pull in the
+// docs' Monaco-backed component because it brings a multi-MB bundle
+// for what's a small, read-only snippet inside a modal — instead we
+// match the docs styling using project-wide theme tokens
+// (--surface, --surface-inset, --text, --primary, etc.) so light
+// theme renders dark text on a light surface and dark theme renders
+// light text on a dark surface, instead of the previous hardcoded
+// dark code block that was unreadable on light theme.
 
 import { useState, useMemo } from "react";
 import { Copy, Check } from "lucide-react";
@@ -55,20 +59,22 @@ export function CodeBlock({
       width: "100%",
       minWidth: 0,
       boxSizing: "border-box",
-      border: "1px solid var(--dborder)",
-      borderRadius: 10,
+      border: "1px solid var(--border-soft)",
+      borderRadius: 14,
       overflow: "hidden",
-      background: "#0a0a0c",
+      background: "var(--surface)",
+      boxShadow: "var(--marketing-shadow-soft, 0 1px 2px rgba(15, 23, 42, 0.04))",
     }}>
-      {/* Tabs */}
+      {/* Tabs + copy header */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 12,
         width: "100%",
         minWidth: 0,
-        borderBottom: "1px solid var(--dborder)",
-        padding: "0 8px",
+        padding: "10px 12px",
+        background: "var(--surface)",
       }}>
-        <div style={{ display: "flex", minWidth: 0 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
           {LANGUAGES.map((l) => {
             const active = l.id === lang;
             return (
@@ -78,15 +84,21 @@ export function CodeBlock({
                 onClick={() => setLang(l.id)}
                 className="dt-body-sm"
                 style={{
-                  padding: "10px 14px",
-                  border: "none",
-                  background: "transparent",
-                  color: active ? "var(--dtext)" : "var(--dmuted)",
-                  borderBottom: active ? "2px solid var(--daccent)" : "2px solid transparent",
-                  marginBottom: -1,
+                  padding: "6px 11px",
+                  borderRadius: 8,
+                  border: "1px solid",
+                  borderColor: active
+                    ? "color-mix(in srgb, var(--primary) 32%, var(--border-soft))"
+                    : "var(--border-soft)",
+                  background: active
+                    ? "color-mix(in srgb, var(--primary) 10%, var(--surface))"
+                    : "var(--surface)",
+                  color: active ? "var(--primary)" : "var(--text-muted)",
+                  fontFamily: "var(--font-fira-code), var(--font-geist-mono), monospace",
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 500,
                   cursor: "pointer",
-                  fontFamily: "inherit",
-                  fontWeight: active ? 600 : 400,
+                  transition: "all 0.12s",
                 }}
               >
                 {l.label}
@@ -97,32 +109,42 @@ export function CodeBlock({
         <button
           type="button"
           onClick={handleCopy}
-          className="dt-body-sm"
+          aria-label="Copy code to clipboard"
           style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            padding: "6px 10px", borderRadius: 6,
-            border: "1px solid var(--dborder)",
-            background: "transparent",
-            color: copied ? "var(--daccent)" : "var(--dmuted)",
-            cursor: "pointer", fontFamily: "inherit", fontSize: 12,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            border: "1px solid var(--border-soft)",
+            background: "var(--surface)",
+            color: copied ? "var(--primary)" : "var(--text-muted)",
+            cursor: "pointer",
+            transition: "all 0.12s",
           }}
         >
-          {copied ? <Check style={{ width: 12, height: 12 }} /> : <Copy style={{ width: 12, height: 12 }} />}
-          {copied ? "Copied" : "Copy"}
+          {copied ? <Check style={{ width: 14, height: 14 }} /> : <Copy style={{ width: 14, height: 14 }} />}
         </button>
       </div>
-      {/* Snippet */}
-      <pre style={{
-        width: "100%",
-        minWidth: 0,
-        boxSizing: "border-box",
-        margin: 0, padding: 14,
-        fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-        fontSize: 12, lineHeight: 1.55,
-        color: "#d6d6de",
+      {/* Code surface */}
+      <div style={{
+        margin: "0 12px 12px",
+        padding: "14px 16px",
+        background: "var(--surface-inset)",
+        borderRadius: 10,
         overflowX: "auto",
-        whiteSpace: "pre",
-      }}>{snippet}</pre>
+      }}>
+        <pre style={{
+          margin: 0,
+          fontFamily: "var(--font-fira-code), var(--font-geist-mono), monospace",
+          fontSize: 12.5,
+          lineHeight: 1.7,
+          color: "var(--text)",
+          whiteSpace: "pre",
+        }}>{snippet}</pre>
+      </div>
     </div>
   );
 }
