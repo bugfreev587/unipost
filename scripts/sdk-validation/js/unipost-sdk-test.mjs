@@ -499,30 +499,10 @@ async function main() {
   });
   firstPost = postsPage?.data?.[0];
 
-  if (firstPost) {
-    await test('posts.get()', async () => {
-      const res = await client.posts.get(firstPost.id);
-      assert(res.id === firstPost.id, 'Expected matching post');
-    });
-
-    await test('posts.getQueue()', async () => {
-      const res = await client.posts.getQueue(firstPost.id);
-      assert(res.post?.id === firstPost.id, 'Expected queue snapshot');
-      assert(Array.isArray(res.jobs), 'Expected job list');
-    });
-
-    await test('posts.analytics()', async () => {
-      const res = await client.posts.analytics(firstPost.id);
-      const items = Array.isArray(res) ? res : res?.data;
-      assert(Array.isArray(items), 'Expected analytics array');
-    });
-  } else {
-    skip('posts.get()', 'No posts available');
-    skip('posts.getQueue()', 'No posts available');
-    skip('posts.analytics()', 'No posts available');
-  }
-
   if (!testAccountId) {
+    skip('posts.get()', 'No TEST_ACCOUNT_ID available');
+    skip('posts.getQueue()', 'No TEST_ACCOUNT_ID available');
+    skip('posts.analytics()', 'No TEST_ACCOUNT_ID available');
     skip('posts.create()/update()/preview/archive/restore/cancel/delete()', 'No TEST_ACCOUNT_ID available');
     skip('posts.bulkCreate()', 'No TEST_ACCOUNT_ID available');
     skip('posts.publish()', 'No TEST_ACCOUNT_ID available');
@@ -541,6 +521,27 @@ async function main() {
     });
 
     if (draftPost?.id) {
+      // Read-back tests use the draft we just created, not data[0]
+      // from posts.list(). The latter can be deleted between list()
+      // and the next call (concurrent run, cleanup job, archive
+      // race) and produced ~5% flake on the hourly regression.
+      await test('posts.get()', async () => {
+        const res = await client.posts.get(draftPost.id);
+        assert(res.id === draftPost.id, 'Expected matching post');
+      });
+
+      await test('posts.getQueue()', async () => {
+        const res = await client.posts.getQueue(draftPost.id);
+        assert(res.post?.id === draftPost.id, 'Expected queue snapshot');
+        assert(Array.isArray(res.jobs), 'Expected job list');
+      });
+
+      await test('posts.analytics()', async () => {
+        const res = await client.posts.analytics(draftPost.id);
+        const items = Array.isArray(res) ? res : res?.data;
+        assert(Array.isArray(items), 'Expected analytics array');
+      });
+
       await test('posts.update() — draft', async () => {
         const res = await client.posts.update(draftPost.id, {
           caption: `${draftPost.caption || 'SDK JS draft'} updated`,

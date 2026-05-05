@@ -263,19 +263,18 @@ def main():
     posts = posts_page.get("data", []) if posts_page else []
     first_post = posts[0] if posts else None
 
-    if first_post:
-        test("posts.get()", lambda: _test_posts_get(client, first_post.id))
-        test("posts.get_queue()", lambda: _test_posts_queue(client, first_post.id))
-        test("posts.analytics()", lambda: _test_posts_analytics(client, first_post.id))
-    else:
-        skip("posts.get()", "No posts available")
-        skip("posts.get_queue()", "No posts available")
-        skip("posts.analytics()", "No posts available")
-
     if TEST_ACCOUNT_ID:
         draft = test("posts.create() — draft", lambda: _test_create_draft(client))
         if draft:
             created_post_ids.append(draft.id)
+            # Read-back tests use the draft we just created, not
+            # posts[0] from posts.list(). The latter can be deleted
+            # between list() and the next call (concurrent run,
+            # cleanup job, archive race) and produced ~5% flake on
+            # the hourly regression.
+            test("posts.get()", lambda: _test_posts_get(client, draft.id))
+            test("posts.get_queue()", lambda: _test_posts_queue(client, draft.id))
+            test("posts.analytics()", lambda: _test_posts_analytics(client, draft.id))
             test("posts.update() — draft", lambda: _test_update_draft(client, draft.id))
             test("posts.preview_link()", lambda: _test_preview_link(client, draft.id))
             test("posts.archive()", lambda: _test_archive(client, draft.id))
@@ -294,6 +293,9 @@ def main():
         else:
             skip("posts.publish() — live publish", "Opt-in only (set TEST_PUBLISH_NOW=true)")
     else:
+        skip("posts.get()", "No TEST_ACCOUNT_ID available")
+        skip("posts.get_queue()", "No TEST_ACCOUNT_ID available")
+        skip("posts.analytics()", "No TEST_ACCOUNT_ID available")
         skip("posts.create()/update()/preview/archive/restore/cancel/delete()", "No TEST_ACCOUNT_ID available")
         skip("posts.bulk_create()", "No TEST_ACCOUNT_ID available")
         skip("posts.publish() — live publish", "No TEST_ACCOUNT_ID available")
