@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { getMe } from "@/lib/api";
 
 export const fmtCents = (cents: number) => {
@@ -49,12 +50,7 @@ function AdminSidebar() {
   return (
     <aside className="ad-sidebar">
       <Link href="/" className="ad-sb-logo">
-        <div className="ad-sb-mark">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" />
-          </svg>
-        </div>
-        <span className="ad-sb-name">UniPost</span>
+        <UniPostLogo markSize={22} wordmarkColor="currentColor" />
         <span className="ad-sb-badge">ADMIN</span>
       </Link>
 
@@ -230,9 +226,7 @@ export const adminCss = `
 .ad-sb-logo { display: flex; align-items: center; gap: 8px; padding: 14px 14px 12px; border-bottom: 1px solid var(--dborder); color: inherit; text-decoration: none; transition: background-color 120ms ease, color 120ms ease; }
 .ad-sb-logo:hover { background: var(--sidebar-accent); }
 .ad-sb-logo:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-.ad-sb-mark { width: 22px; height: 22px; background: #10b981; border-radius: 5px; display: flex; align-items: center; justify-content: center; }
-.ad-sb-mark svg { width: 11px; height: 11px; color: var(--primary-foreground); }
-.ad-sb-name { font-size: 13px; font-weight: 700; letter-spacing: -0.3px; }
+.ad-sb-logo .unipost-wordmark { font-size: 16px; font-weight: 700; letter-spacing: -0.045em; }
 .ad-sb-badge { font-size: 9px; font-weight: 700; background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent); border-radius: 3px; padding: 1px 5px; font-family: var(--font-geist-mono), monospace; letter-spacing: 0.05em; }
 .ad-nav { padding: 10px 8px; flex: 1; }
 .ad-nav-label { font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dmuted2); padding: 0 6px; margin: 10px 0 3px; }

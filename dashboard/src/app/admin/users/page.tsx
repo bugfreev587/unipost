@@ -144,6 +144,7 @@ export default function AdminUsersPage() {
           <thead>
             <tr>
               <th>User</th>
+              <th>Sign Up</th>
               <th>Plan</th>
               <th>MRR</th>
               <th>Workspaces</th>
@@ -156,9 +157,9 @@ export default function AdminUsersPage() {
           </thead>
           <tbody>
             {loading && users.length === 0 ? (
-              <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
+              <tr><td colSpan={10} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
+              <tr><td colSpan={10} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
             ) : (
               users.map((u) => {
                 const usagePct = u.post_limit > 0 ? Math.min(100, (u.posts_used / u.post_limit) * 100) : 0;
@@ -168,6 +169,10 @@ export default function AdminUsersPage() {
                     <td>
                       <div style={{ fontWeight: 500 }}>{u.email}</div>
                       <div className="ad-mono">{u.id.slice(0, 16)}</div>
+                    </td>
+                    <td style={{ color: "var(--dmuted)", fontSize: 11.5 }}>
+                      <div>{fmtDate(u.created_at)}</div>
+                      <div style={{ fontSize: 11, color: "var(--dmuted2)" }}>{fmtRelative(u.created_at)}</div>
                     </td>
                     <td>
                       {u.is_paid ? (
