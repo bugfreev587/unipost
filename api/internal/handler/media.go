@@ -170,8 +170,28 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ContentHash: pgtype.Text{String: body.ContentHash, Valid: true},
 		})
 		if err == nil && existing.ID != "" {
-			h.writeExistingMediaResponse(w, r, existing)
-			return
+			// Self-heal: bucket lifecycle rules can sweep an R2 object
+			// out from under an 'uploaded' row. Without this check,
+			// dedup keeps handing back a media_id whose storage_key
+			// 404s at publish time. HEAD the object; if it's gone,
+			// soft-delete the orphan and fall through to a fresh row.
+			orphaned := false
+			if h.storage != nil && existing.Status == "uploaded" {
+				head, headErr := h.storage.Head(r.Context(), existing.StorageKey)
+				if headErr == nil && !head.Exists {
+					slog.Warn("media.Create: orphaned uploaded row, self-healing",
+						"media_id", existing.ID, "storage_key", existing.StorageKey)
+					_ = h.queries.SoftDeleteMedia(r.Context(), db.SoftDeleteMediaParams{
+						ID:          existing.ID,
+						WorkspaceID: workspaceID,
+					})
+					orphaned = true
+				}
+			}
+			if !orphaned {
+				h.writeExistingMediaResponse(w, r, existing)
+				return
+			}
 		}
 	}
 
