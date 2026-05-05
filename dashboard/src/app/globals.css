@@ -303,6 +303,17 @@
       color 160ms ease,
       box-shadow 160ms ease;
   }
+  /* Override the browser/OS default selection (which can be red on
+     accent-color = red systems) with a neutral dim grey that stays
+     readable over both light backgrounds and dark code surfaces. */
+  ::selection {
+    background-color: color-mix(in srgb, var(--text) 22%, transparent);
+    color: inherit;
+  }
+  ::-moz-selection {
+    background-color: color-mix(in srgb, var(--text) 22%, transparent);
+    color: inherit;
+  }
 }
 
 .dashboard-typography {
