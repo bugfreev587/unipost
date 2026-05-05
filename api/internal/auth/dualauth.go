@@ -145,15 +145,46 @@ func authenticateClerk(w http.ResponseWriter, r *http.Request, queries *db.Queri
 	mem, err := queries.GetActiveMembership(ctx, claims.Subject)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error": map[string]any{"code": "NO_WORKSPACE", "message": "No workspace exists for this user"},
+			// Self-heal: a regression in the RBAC migration 060 rollout
+			// (May 2026) and a webhook delivery race could both leave a
+			// user with a workspace row but no workspace_members row,
+			// blocking every authenticated request with NO_WORKSPACE.
+			// If a workspace exists for this user, grant them owner
+			// membership now and proceed; otherwise fall through to the
+			// genuine NO_WORKSPACE error.
+			workspaces, wsErr := queries.ListWorkspacesByUser(ctx, claims.Subject)
+			if wsErr == nil && len(workspaces) > 0 {
+				ws := workspaces[0]
+				// Best-effort. If the row was just inserted by another
+				// concurrent request, the unique key will reject this
+				// one and the follow-up GetActiveMembership succeeds
+				// for both callers.
+				_, _ = queries.CreateMembership(ctx, db.CreateMembershipParams{
+					WorkspaceID: ws.ID,
+					UserID:      claims.Subject,
+					Role:        "owner",
+				})
+				slog.Warn("auth self-heal: created missing owner membership", "user_id", claims.Subject, "workspace_id", ws.ID)
+				mem, err = queries.GetActiveMembership(ctx, claims.Subject)
+			}
+			if err != nil {
+				if err == pgx.ErrNoRows {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error": map[string]any{"code": "NO_WORKSPACE", "message": "No workspace exists for this user"},
+					})
+					return nil, false
+				}
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error": map[string]any{"code": "INTERNAL_ERROR", "message": "Failed to resolve workspace"},
+				})
+				return nil, false
+			}
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": map[string]any{"code": "INTERNAL_ERROR", "message": "Failed to resolve workspace"},
 			})
 			return nil, false
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error": map[string]any{"code": "INTERNAL_ERROR", "message": "Failed to resolve workspace"},
-		})
-		return nil, false
 	}
 	ctx = context.WithValue(ctx, WorkspaceIDKey, mem.WorkspaceID)
 	ctx = context.WithValue(ctx, RoleKey, mem.Role)

@@ -220,6 +220,20 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			workspaceID = ws.ID
+
+			// RBAC migration 060 — pair the new workspace with an owner
+			// membership row so dualauth.GetActiveMembership succeeds on
+			// the next request. Best-effort: if the row already exists
+			// (race or partial prior bootstrap), the auth self-heal
+			// recovers it on the subsequent call.
+			if _, memErr := h.queries.CreateMembership(r.Context(), db.CreateMembershipParams{
+				WorkspaceID: ws.ID,
+				UserID:      userID,
+				Role:        "owner",
+				InvitedBy:   pgtype.Text{},
+			}); memErr != nil {
+				slog.Error("bootstrap: failed to create owner membership", "user_id", userID, "workspace_id", ws.ID, "error", memErr)
+			}
 		} else {
 			workspaceID = workspaces[0].ID
 		}

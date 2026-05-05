@@ -139,6 +139,22 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 		if wsErr != nil {
 			log.Printf("Failed to create workspace for %s: %v", userData.ID, wsErr)
 		} else {
+			// RBAC migration 060 added workspace_members; the auth path
+			// resolves the user's role from this table on every Clerk
+			// session. Without an owner row here, GetActiveMembership
+			// returns ErrNoRows and the dashboard renders NO_WORKSPACE
+			// even though the workspace itself was created. Best-effort:
+			// log on failure but keep going so we still create the
+			// profile (the dualauth self-heal can recover the row).
+			if _, memErr := h.queries.CreateMembership(r.Context(), db.CreateMembershipParams{
+				WorkspaceID: ws.ID,
+				UserID:      userData.ID,
+				Role:        "owner",
+				InvitedBy:   pgtype.Text{},
+			}); memErr != nil {
+				log.Printf("Failed to create owner membership for %s in %s: %v", userData.ID, ws.ID, memErr)
+			}
+
 			prof, profErr := h.queries.CreateProfile(r.Context(), db.CreateProfileParams{
 				WorkspaceID: ws.ID,
 				Name:        "Default",
