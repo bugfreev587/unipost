@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 const (
@@ -32,7 +34,9 @@ var pinterestScopes = []string{
 }
 
 type PinterestAdapter struct {
-	client *http.Client
+	client       *http.Client
+	mediaProxy   *storage.Client
+	stageFromURL func(context.Context, string) (string, error)
 }
 
 type PinterestBoard struct {
@@ -47,6 +51,20 @@ type pinterestPinAnalyticsMetrics struct {
 
 func NewPinterestAdapter() *PinterestAdapter {
 	return &PinterestAdapter{client: debugrt.NewClient(60 * time.Second)}
+}
+
+// SetMediaProxy attaches an R2-backed media proxy. Pinterest's create-pin
+// endpoint fetches `image_url`/`video_url` server-side, and presigned source
+// URLs are brittle there: they may be validated or fetched from a different
+// network path than our immediate dispatch call. Staging ephemeral URLs onto
+// our public R2 domain gives Pinterest a stable fetch target.
+func (a *PinterestAdapter) SetMediaProxy(c *storage.Client) {
+	a.mediaProxy = c
+	if c == nil {
+		a.stageFromURL = nil
+		return
+	}
+	a.stageFromURL = c.UploadFromURL
 }
 
 func (a *PinterestAdapter) Platform() string { return "pinterest" }
@@ -166,6 +184,15 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	if kind == MediaKindUnknown {
 		kind = SniffMediaKind(item.URL)
 	}
+	sourceURL := item.URL
+	if a.stageFromURL != nil && looksEphemeralFetchURL(sourceURL) {
+		stagedURL, err := a.stageFromURL(ctx, sourceURL)
+		if err != nil {
+			return nil, fmt.Errorf("pinterest media stage: %w", err)
+		}
+		slog.Info("pinterest media: staged ephemeral source URL", "source_url", sourceURL, "staged_url", stagedURL)
+		sourceURL = stagedURL
+	}
 
 	reqBody := map[string]any{
 		"board_id":    boardID,
@@ -179,12 +206,12 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	case MediaKindVideo:
 		reqBody["media_source"] = map[string]any{
 			"source_type": "video_url",
-			"url":         item.URL,
+			"url":         sourceURL,
 		}
 	default:
 		reqBody["media_source"] = map[string]any{
 			"source_type": "image_url",
-			"url":         item.URL,
+			"url":         sourceURL,
 		}
 	}
 
@@ -241,6 +268,21 @@ func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, e
 		return fmt.Errorf("pinterest delete pin (%d): %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+func looksEphemeralFetchURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	q := u.Query()
+	if q.Get("X-Amz-Algorithm") != "" || q.Get("X-Amz-Signature") != "" || q.Get("X-Amz-Credential") != "" {
+		return true
+	}
+	if q.Get("AWSAccessKeyId") != "" || q.Get("Signature") != "" || q.Get("Expires") != "" {
+		return true
+	}
+	return false
 }
 
 func (a *PinterestAdapter) CreateBoard(ctx context.Context, accessToken string, name string) (*PinterestBoard, error) {

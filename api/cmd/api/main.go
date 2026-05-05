@@ -89,7 +89,6 @@ func main() {
 	platform.Register(platform.NewLinkedInAdapter())
 	platform.Register(platform.NewInstagramAdapter())
 	platform.Register(platform.NewThreadsAdapter())
-	platform.Register(platform.NewPinterestAdapter())
 
 	platform.Register(platform.NewTwitterAdapter()) // Native mode only — requires user's own API credentials
 
@@ -118,6 +117,11 @@ func main() {
 	} else {
 		slog.Info("R2_ACCOUNT_ID not set; tiktok photo posts will be disabled")
 	}
+
+	pinterestAdapter := platform.NewPinterestAdapter()
+	pinterestAdapter.SetMediaProxy(storageClient)
+	platform.Register(pinterestAdapter)
+	slog.Info("pinterest adapter registered", "media_proxy", storageClient != nil)
 
 	// Conditionally register adapters that need credentials
 	if os.Getenv("TIKTOK_CLIENT_KEY") != "" {

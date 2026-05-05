@@ -146,3 +146,63 @@ func TestPinterestGetAnalyticsParsesSummaryAndLifetimeMetrics(t *testing.T) {
 		t.Fatalf("unexpected lifetime metrics: %#v", metrics)
 	}
 }
+
+func TestPinterestPostStagesEphemeralImageURL(t *testing.T) {
+	var gotMediaURL string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v5/pins" {
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
+		}
+		var payload struct {
+			MediaSource struct {
+				URL string `json:"url"`
+			} `json:"media_source"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		gotMediaURL = payload.MediaSource.URL
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"pin-123","url":"https://www.pinterest.com/pin/pin-123/"}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+
+	staged := "https://public.example/media/staged.jpg"
+	adapter := &PinterestAdapter{
+		client: srv.Client(),
+		stageFromURL: func(_ context.Context, sourceURL string) (string, error) {
+			if !looksEphemeralFetchURL(sourceURL) {
+				t.Fatalf("expected ephemeral source URL, got %q", sourceURL)
+			}
+			return staged, nil
+		},
+	}
+
+	_, err := adapter.Post(context.Background(), "token-123", "caption", []MediaItem{{
+		URL:  "https://example.r2.cloudflarestorage.com/media/a.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc",
+		Kind: MediaKindImage,
+	}}, map[string]any{
+		"board_id": "board-123",
+		"title":    "Hello Pinterest",
+	})
+	if err != nil {
+		t.Fatalf("Post failed: %v", err)
+	}
+	if gotMediaURL != staged {
+		t.Fatalf("media_source.url = %q, want %q", gotMediaURL, staged)
+	}
+}
+
+func TestLooksEphemeralFetchURL(t *testing.T) {
+	if !looksEphemeralFetchURL("https://example.com/a.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc") {
+		t.Fatal("expected aws-signed URL to be detected as ephemeral")
+	}
+	if looksEphemeralFetchURL("https://cdn.example.com/a.jpg") {
+		t.Fatal("expected plain public URL to not be treated as ephemeral")
+	}
+}
