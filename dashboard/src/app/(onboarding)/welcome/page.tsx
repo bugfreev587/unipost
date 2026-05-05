@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { completeOnboarding } from "@/lib/api";
+import { completeOnboarding, getBootstrap } from "@/lib/api";
 
 // Welcome onboarding page for new signups.
 //
@@ -44,6 +44,15 @@ export default function WelcomePage() {
         setSubmitting(false);
         return;
       }
+      // Ensure server-side provisioning (users + workspaces +
+      // profiles + workspace_members rows + default_profile_id) is
+      // complete before completeOnboarding tries to UPDATE the user
+      // row. Without this, a Clerk webhook delivery race lets the
+      // welcome submit silently no-op and the dashboard falls back
+      // to /projects empty state, which on Free plan dead-ends at
+      // the 1-profile cap when the user clicks "Create your first
+      // profile".
+      await getBootstrap(token);
       await completeOnboarding(token, {
         first_name: trimmedFirst,
         org_name: orgName.trim() || undefined,

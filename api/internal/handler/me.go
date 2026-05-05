@@ -190,10 +190,51 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.queries.GetUser(r.Context(), userID)
 	if err == pgx.ErrNoRows {
-		writeSuccess(w, bootstrapResponse{})
-		return
-	}
-	if err != nil {
+		// Self-provision: the Clerk user.created webhook hasn't landed
+		// yet (delivery race) or it failed silently. Fetch the user
+		// from Clerk synchronously and insert the users row so the
+		// rest of Bootstrap can proceed and stamp default_profile_id.
+		// Without this, /welcome → / falls back to /projects empty
+		// state, which on Free plan dead-ends at the 1-profile cap
+		// when the user clicks "Create your first profile".
+		clerk.SetKey(os.Getenv("CLERK_SECRET_KEY"))
+		cu, cerr := clerkuser.Get(r.Context(), userID)
+		if cerr != nil {
+			slog.Error("bootstrap: clerk user fetch failed", "user_id", userID, "error", cerr)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch user from auth provider")
+			return
+		}
+		email := ""
+		for _, e := range cu.EmailAddresses {
+			if cu.PrimaryEmailAddressID != nil && e.ID == *cu.PrimaryEmailAddressID {
+				email = e.EmailAddress
+				break
+			}
+		}
+		if email == "" && len(cu.EmailAddresses) > 0 {
+			email = cu.EmailAddresses[0].EmailAddress
+		}
+		name := ""
+		if cu.FirstName != nil {
+			name = *cu.FirstName
+		}
+		if cu.LastName != nil && *cu.LastName != "" {
+			if name != "" {
+				name += " "
+			}
+			name += *cu.LastName
+		}
+		user, err = h.queries.UpsertUser(r.Context(), db.UpsertUserParams{
+			ID:    userID,
+			Email: email,
+			Name:  pgtype.Text{String: name, Valid: name != ""},
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create user row: "+err.Error())
+			return
+		}
+		slog.Info("bootstrap: self-provisioned missing user row", "user_id", userID, "email", email)
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load user: "+err.Error())
 		return
 	}
