@@ -35,6 +35,19 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteUserByEmail = `-- name: DeleteUserByEmail :exec
+DELETE FROM users WHERE email = $1
+`
+
+// Used by Bootstrap recovery when a Clerk-deleted user's row outlived
+// the user.deleted webhook (delivery failure or replay race) and the
+// email's unique constraint blocks the new signup. Cascades through
+// workspaces / profiles / etc. via existing FK ON DELETE CASCADE.
+func (q *Queries) DeleteUserByEmail(ctx context.Context, email string) error {
+	_, err := q.db.Exec(ctx, deleteUserByEmail, email)
+	return err
+}
+
 const getUser = `-- name: GetUser :one
 SELECT id, email, name, created_at, updated_at, default_profile_id, last_profile_id, onboarding_completed, onboarding_intent, onboarding_shown_at, onboarding_completed_at, activation_completed_at, activation_guide_dismissed_at FROM users WHERE id = $1
 `

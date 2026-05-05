@@ -2,11 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"os"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	svix "github.com/svix/svix-webhooks/go"
 
@@ -118,9 +120,31 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 		Name:  pgtype.Text{String: name, Valid: name != ""},
 	})
 	if err != nil {
-		log.Printf("Failed to upsert user: %v", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to sync user")
-		return
+		// Same email-conflict recovery as me.go Bootstrap: if the email
+		// is locked by an orphan row from a prior Clerk-deleted account
+		// whose user.deleted webhook was never delivered, drop it and
+		// retry with the new id. Without this, every "delete account
+		// then sign up again" flow fails until someone manually clears
+		// the row.
+		var pgErr *pgconn.PgError
+		if email != "" && errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_email_key" {
+			if delErr := h.queries.DeleteUserByEmail(r.Context(), email); delErr != nil {
+				log.Printf("Failed to clear orphaned user row for %s: %v", email, delErr)
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to sync user")
+				return
+			}
+			log.Printf("Cleared orphaned user row for email %s before re-syncing as %s", email, userData.ID)
+			_, err = h.queries.UpsertUser(r.Context(), db.UpsertUserParams{
+				ID:    userData.ID,
+				Email: email,
+				Name:  pgtype.Text{String: name, Valid: name != ""},
+			})
+		}
+		if err != nil {
+			log.Printf("Failed to upsert user: %v", err)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to sync user")
+			return
+		}
 	}
 
 	// On user.created: seed a "{name} Workspace" with a "Default" profile

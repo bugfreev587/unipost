@@ -11,6 +11,13 @@ SELECT * FROM users WHERE id = $1;
 -- name: DeleteUser :exec
 DELETE FROM users WHERE id = $1;
 
+-- name: DeleteUserByEmail :exec
+-- Used by Bootstrap recovery when a Clerk-deleted user's row outlived
+-- the user.deleted webhook (delivery failure or replay race) and the
+-- email's unique constraint blocks the new signup. Cascades through
+-- workspaces / profiles / etc. via existing FK ON DELETE CASCADE.
+DELETE FROM users WHERE email = $1;
+
 -- name: SetUserDefaultProfile :exec
 UPDATE users SET default_profile_id = $2, updated_at = NOW()
 WHERE id = $1;

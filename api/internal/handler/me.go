@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkuser "github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -230,8 +232,28 @@ func (h *MeHandler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 			Name:  pgtype.Text{String: name, Valid: name != ""},
 		})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create user row: "+err.Error())
-			return
+			// users.email is UNIQUE; ON CONFLICT (id) doesn't help if
+			// the conflict is on email (a stale row from a previously
+			// deleted Clerk account whose user.deleted webhook never
+			// landed). Detect that one specific case, drop the
+			// orphaned row, and retry the insert with the new id.
+			var pgErr *pgconn.PgError
+			if email != "" && errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_email_key" {
+				if delErr := h.queries.DeleteUserByEmail(r.Context(), email); delErr != nil {
+					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to clear orphaned user row: "+delErr.Error())
+					return
+				}
+				slog.Warn("bootstrap: dropped orphaned user row to claim email for new Clerk id", "new_user_id", userID, "email", email)
+				user, err = h.queries.UpsertUser(r.Context(), db.UpsertUserParams{
+					ID:    userID,
+					Email: email,
+					Name:  pgtype.Text{String: name, Valid: name != ""},
+				})
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create user row: "+err.Error())
+				return
+			}
 		}
 		slog.Info("bootstrap: self-provisioned missing user row", "user_id", userID, "email", email)
 	} else if err != nil {
