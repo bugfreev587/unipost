@@ -2,13 +2,24 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import { PlatformIcon } from "@/components/platform-icons";
 import {
+  getAdminUserSignups,
   getAdminUser,
   getAdminUserPostFailures,
   listAdminUsers,
   type AdminUserDetail,
+  type AdminUserSignupTrend,
   type AdminUserListParams,
   type AdminUserPostFailure,
   type AdminUserRow,
@@ -19,6 +30,7 @@ import { AdminShell, PanelRow, fmtCents, fmtDate, fmtNumber, fmtRelative } from 
 export default function AdminUsersPage() {
   const { getToken } = useAuth();
   const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [signups, setSignups] = useState<AdminUserSignupTrend | null>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,9 +53,13 @@ export default function AdminUsersPage() {
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      const usersRes = await listAdminUsers(token, { search, plan, sort, limit, offset });
+      const [usersRes, signupsRes] = await Promise.all([
+        listAdminUsers(token, { search, plan, sort, limit, offset }),
+        getAdminUserSignups(token, 30),
+      ]);
       setUsers(usersRes.data);
       setTotal(usersRes.meta?.total ?? usersRes.data.length);
+      setSignups(signupsRes.data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -117,6 +133,58 @@ export default function AdminUsersPage() {
       <div className="ad-section-header">
         <div className="ad-section-title">Users</div>
         <div className="ad-section-meta">Cross-tenant customer listing</div>
+      </div>
+
+      <div
+        style={{
+          background: "var(--surface-raised)",
+          border: "1px solid var(--dborder)",
+          borderRadius: 12,
+          padding: 16,
+          height: 280,
+          marginBottom: 16,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Signups per day</div>
+          <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
+            Last {signups?.range_days ?? 30} days
+            {signups ? ` · ${fmtNumber(signups.total)} total` : ""}
+          </div>
+        </div>
+        {signups && signups.rows.length > 0 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={signups.rows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--dborder)" />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11, fill: "var(--dmuted)" }}
+                tickFormatter={(v: string) => v.slice(5)}
+                stroke="var(--dborder)"
+              />
+              <YAxis
+                allowDecimals={false}
+                tick={{ fontSize: 11, fill: "var(--dmuted)" }}
+                stroke="var(--dborder)"
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "var(--surface-raised)",
+                  border: "1px solid var(--dborder)",
+                  borderRadius: 8,
+                  fontSize: 12,
+                }}
+                labelStyle={{ color: "var(--dtext)" }}
+                formatter={(value) => [fmtNumber(Number(value ?? 0)), "Signups"]}
+              />
+              <Bar dataKey="count" name="Signups" fill="var(--daccent)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <div style={{ height: "calc(100% - 28px)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dmuted)", fontSize: 13 }}>
+            {loading ? "Loading chart…" : "No signup data yet"}
+          </div>
+        )}
       </div>
 
       <div className="ad-filter-bar">

@@ -1198,6 +1198,17 @@ export interface AdminUserRow {
   last_post_at: string | null;
 }
 
+export interface AdminUserSignupDailyRow {
+  date: string;
+  count: number;
+}
+
+export interface AdminUserSignupTrend {
+  range_days: number;
+  total: number;
+  rows: AdminUserSignupDailyRow[];
+}
+
 export interface AdminUserWorkspace {
   id: string;
   name: string;
@@ -1662,6 +1673,13 @@ export async function listAdminUsers(
   if (params?.offset != null) qs.set("offset", String(params.offset));
   const s = qs.toString();
   return request(`/v1/admin/users${s ? `?${s}` : ""}`, token);
+}
+
+export async function getAdminUserSignups(
+  token: string,
+  days = 30
+): Promise<ApiResponse<AdminUserSignupTrend>> {
+  return request(`/v1/admin/users/signups?days=${days}`, token);
 }
 
 export async function getAdminUser(

@@ -171,6 +171,17 @@ type adminUserRow struct {
 	LastPostAt     *time.Time `json:"last_post_at"`
 }
 
+type adminUserSignupDailyRow struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
+type adminUserSignupTrendResponse struct {
+	RangeDays int                       `json:"range_days"`
+	Total     int64                     `json:"total"`
+	Rows      []adminUserSignupDailyRow `json:"rows"`
+}
+
 var adminUserSortOrders = map[string]string{
 	"newest":      "created_at DESC",
 	"mrr":         "mrr_cents DESC, created_at DESC",
@@ -311,6 +322,68 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 	).Scan(&total)
 
 	writeSuccessWithListMeta(w, out, int(total), limit)
+}
+
+func (h *AdminHandler) GetUserSignups(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	if days <= 0 {
+		days = 30
+	}
+	if days > 365 {
+		days = 365
+	}
+
+	excluded, err := h.excludedUserIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve excluded users: "+err.Error())
+		return
+	}
+
+	const sql = `
+WITH days AS (
+  SELECT generate_series(
+    current_date - ($1::int - 1),
+    current_date,
+    interval '1 day'
+  )::date AS day
+)
+SELECT
+  to_char(d.day, 'YYYY-MM-DD') AS date,
+  COALESCE(COUNT(u.id), 0)::bigint AS count
+FROM days d
+LEFT JOIN users u
+  ON u.created_at >= d.day::timestamptz
+ AND u.created_at < (d.day + 1)::timestamptz
+ AND u.id != ALL($2)
+GROUP BY d.day
+ORDER BY d.day ASC`
+
+	rows, err := h.pool.Query(r.Context(), sql, days, excluded)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load signup trend: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	resp := adminUserSignupTrendResponse{
+		RangeDays: days,
+		Rows:      make([]adminUserSignupDailyRow, 0, days),
+	}
+	for rows.Next() {
+		var item adminUserSignupDailyRow
+		if err := rows.Scan(&item.Date, &item.Count); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan signup trend row: "+err.Error())
+			return
+		}
+		resp.Total += item.Count
+		resp.Rows = append(resp.Rows, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to iterate signup trend rows: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, resp)
 }
 
 // ── User detail ──────────────────────────────────────────────────────

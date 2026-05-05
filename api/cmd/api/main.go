@@ -534,6 +534,7 @@ func main() {
 		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
 		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
+		r.Get("/v1/admin/users/signups", adminHandler.GetUserSignups)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
 		r.Get("/v1/admin/users/{id}/post-failures", adminHandler.ListUserPostFailures)
 	})
