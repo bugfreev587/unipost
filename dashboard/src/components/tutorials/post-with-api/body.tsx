@@ -30,14 +30,16 @@ import { CodeBlock } from "./code-block";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 const APP_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const DEFAULT_CAPTION = "Hello from UniPost API!";
-const VERIFIED_TUTORIAL_MEDIA_URL = "https://media.unipost.dev/media/e7920ed2-3ffc-4493-a467-3c3fa3457e08.jpg";
+const TUTORIAL_ASSET_BASE = "https://pub-2f07de189e1a4b3690d15ffbd8c556b6.r2.dev";
+const TUTORIAL_IMAGE_URL = `${TUTORIAL_ASSET_BASE}/Disneyland-public-photo.jpg`;
+const TUTORIAL_VIDEO_URL = `${TUTORIAL_ASSET_BASE}/TT-Post-Marketing-Demo.mp4`;
 const TUTORIAL_MEDIA_URLS: Partial<Record<SocialAccount["platform"], string>> = {
-  instagram: VERIFIED_TUTORIAL_MEDIA_URL,
-  threads: VERIFIED_TUTORIAL_MEDIA_URL,
-  linkedin: VERIFIED_TUTORIAL_MEDIA_URL,
-  tiktok: "https://media.unipost.dev/media/fa71b6ea-15c5-4234-8e9b-f7f53a6d4dc2.mp4",
+  instagram: TUTORIAL_IMAGE_URL,
+  threads: TUTORIAL_IMAGE_URL,
+  linkedin: TUTORIAL_IMAGE_URL,
+  tiktok: TUTORIAL_VIDEO_URL,
   twitter: `${APP_BASE}/brand/unipost-icon-light.png`,
-  bluesky: VERIFIED_TUTORIAL_MEDIA_URL,
+  bluesky: TUTORIAL_IMAGE_URL,
 };
 
 export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyProps) {
