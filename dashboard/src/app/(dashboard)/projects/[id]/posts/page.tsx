@@ -693,6 +693,7 @@ export default function PostsPage() {
                               <MetaCard label="Mode" value={post.scheduled_at ? "Scheduled" : post.status === "draft" ? "Draft" : "Immediate"} />
                               <MetaCard label="Status" value={post.status} />
                               <MetaCard label="Created" value={formatLongDate(post.created_at)} />
+                              <MetaCard label="Scheduled" value={post.scheduled_at ? formatLongDate(post.scheduled_at) : "—"} />
                               <MetaCard label="Published" value={post.published_at ? formatLongDate(post.published_at) : "—"} />
                             </div>
                             <div>
