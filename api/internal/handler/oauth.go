@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -159,7 +160,11 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	result, err := oauthAdapter.ExchangeCode(r.Context(), config, code)
 	if err != nil {
 		slog.Error("oauth callback: code exchange failed", "platform", platformName, "error", err)
-		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to exchange authorization code")
+		userMsg := "Failed to exchange authorization code"
+		if errors.Is(err, platform.ErrYouTubeNoChannel) {
+			userMsg = "Connected Google account has no YouTube channel. Visit youtube.com to create one, then try again."
+		}
+		h.redirectWithError(w, r, oauthState.RedirectUrl.String, userMsg)
 		return
 	}
 

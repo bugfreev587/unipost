@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,12 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 )
+
+// ErrYouTubeNoChannel is returned by ExchangeCode when the authenticated
+// Google account has no YouTube channel attached. The OAuth handler
+// special-cases this so the dashboard can show an actionable message
+// instead of a generic "code exchange failed" error.
+var ErrYouTubeNoChannel = errors.New("youtube account has no channel")
 
 type YouTubeAdapter struct {
 	client *http.Client
@@ -526,7 +533,7 @@ func (a *YouTubeAdapter) getChannel(ctx context.Context, accessToken string) (*y
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	if len(result.Items) == 0 {
-		return nil, fmt.Errorf("no YouTube channel found")
+		return nil, ErrYouTubeNoChannel
 	}
 
 	item := result.Items[0]
