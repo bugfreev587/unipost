@@ -966,6 +966,10 @@ body{
   background:linear-gradient(135deg, rgba(52,211,153,.11), rgba(56,189,248,.10) 45%, var(--lp-surface) 100%);
   padding:44px 40px;
   box-shadow:var(--lp-shadow);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  text-align:center;
 }
 .lp-cta-panel h2{
   max-width:760px;
@@ -985,6 +989,7 @@ body{
   display:flex;
   gap:12px;
   flex-wrap:wrap;
+  justify-content:center;
   margin-top:28px;
 }
 .lp-footnote{
