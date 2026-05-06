@@ -21,6 +21,7 @@ import { ConfirmModal } from "@/components/confirm-modal";
 import { QuickstartStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { humanizeConnectError } from "@/lib/connect-errors";
+import { readStoredReplay } from "@/components/tutorials/replay-storage";
 
 // BASE_PLATFORMS is the always-available set. Feature-flagged platforms
 // (currently just Facebook during audit) are appended at render time
@@ -106,6 +107,14 @@ export default function AccountsPage() {
   // skip the redirect and let the user stay on the accounts page.
   useEffect(() => {
     if (callbackStatus !== "success") return;
+    // If the user is replaying a tutorial, the connect was triggered from
+    // the tutorial modal and we want to bounce back to the dashboard so
+    // the host can restore the modal with the next step active. Skip the
+    // activation round-trip in that case — replay marker takes priority.
+    if (readStoredReplay()) {
+      router.replace(`/projects/${profileId}`);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {

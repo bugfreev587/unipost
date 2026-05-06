@@ -22,23 +22,36 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { Check, Lock, X, ArrowRight } from "lucide-react";
+import type { TutorialsCounts } from "@/lib/api";
 import {
   stepCompleted,
   type TutorialContext,
   type TutorialDefinition,
+  type TutorialStepSignal,
 } from "./registry";
 
 export function TutorialShell({
   tutorial,
   ctx,
   replayMode = false,
+  countsSnapshot,
   onRequestClose,
+  onStepCtaClick,
   onRequestComplete,
 }: {
   tutorial: TutorialDefinition;
   ctx: TutorialContext;
   replayMode?: boolean;
+  // Counts at the moment the replay started. In replay mode, a step is
+  // shown as "completed" only when its signal count has advanced past
+  // the snapshot during this replay session — i.e. the user re-did the
+  // action. Without a snapshot, replay falls back to "all steps active".
+  countsSnapshot?: TutorialsCounts;
   onRequestClose: () => void;
+  // Fires when the user clicks a step's CTA Link (which navigates the
+  // page). The host distinguishes this from onRequestClose so a replay
+  // session's persisted marker isn't cleared on a CTA-driven nav.
+  onStepCtaClick?: () => void;
   onRequestComplete: () => void;
 }) {
   // Esc key closes the modal.
@@ -55,7 +68,7 @@ export function TutorialShell({
 
   const stepsWithState = tutorial.steps.map((s) => ({
     ...s,
-    completed: replayMode ? false : stepCompleted(s.signal, ctx.counts),
+    completed: stepCompletedForView(s.signal, ctx.counts, replayMode, countsSnapshot),
   }));
   const completedCount = stepsWithState.filter((s) => s.completed).length;
   const total = stepsWithState.length;
@@ -124,12 +137,29 @@ export function TutorialShell({
             ctx={ctx}
             replayMode={replayMode}
             stepsWithState={stepsWithState}
-            onStepCtaClick={onRequestClose}
+            onStepCtaClick={onStepCtaClick ?? onRequestClose}
           />
         )}
       </div>
     </Backdrop>
   );
+}
+
+// stepCompletedForView decides whether to render a step as "completed".
+// Live mode uses the raw signal. Replay mode uses the snapshot taken at
+// replay start so that a step ticks ✓ exactly when the user re-does the
+// action during this replay (rather than appearing pre-completed because
+// the user did it on a prior pass).
+function stepCompletedForView(
+  signal: TutorialStepSignal,
+  counts: TutorialsCounts,
+  replayMode: boolean,
+  snapshot: TutorialsCounts | undefined,
+): boolean {
+  if (!replayMode) return stepCompleted(signal, counts);
+  if (!snapshot || signal.kind !== "count") return false;
+  const threshold = signal.threshold ?? 1;
+  return counts[signal.name] > snapshot[signal.name] && counts[signal.name] >= threshold;
 }
 
 function DefaultStepList({
@@ -156,8 +186,10 @@ function DefaultStepList({
   // First incomplete step is active, rest are locked.
   const firstIncompleteIdx = stepsWithState.findIndex((s) => !s.completed);
   const stepState = (idx: number, completed: boolean): "completed" | "active" | "locked" => {
-    if (replayMode) return "active";
     if (completed) return "completed";
+    // In replay we never "lock" later steps — the user can re-do any step
+    // out of order. In live mode we surface only the next step as active.
+    if (replayMode) return "active";
     return idx === firstIncompleteIdx ? "active" : "locked";
   };
 
