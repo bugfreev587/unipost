@@ -29,6 +29,41 @@ export const fmtRelative = (iso: string | null | undefined) => {
 export const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
+const localDayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+// bucketByLocalDay groups raw event timestamps into the last `days`
+// calendar days ending today, in the viewer's local timezone. Reducer
+// runs once per event that lands inside the window. Events outside the
+// window are silently dropped (server returns a small buffer).
+export function bucketByLocalDay<E, R extends { date: string }>(
+  events: E[],
+  days: number,
+  initBucket: (date: string) => R,
+  reduce: (bucket: R, event: E) => void,
+  getTimestamp: (event: E) => string,
+): R[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const rows: R[] = [];
+  const indexByDate = new Map<string, number>();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const key = localDayKey(d);
+    indexByDate.set(key, rows.length);
+    rows.push(initBucket(key));
+  }
+  for (const e of events) {
+    const ts = getTimestamp(e);
+    if (!ts) continue;
+    const idx = indexByDate.get(localDayKey(new Date(ts)));
+    if (idx === undefined) continue;
+    reduce(rows[idx], e);
+  }
+  return rows;
+}
+
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/admin", section: "Overview", enabled: true },
   { label: "Users", href: "/admin/users", section: "Overview", enabled: true },

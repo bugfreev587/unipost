@@ -25,7 +25,7 @@ import {
   type AdminUserRow,
 } from "@/lib/api";
 
-import { AdminShell, PanelRow, fmtCents, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
+import { AdminShell, PanelRow, bucketByLocalDay, fmtCents, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
 export default function AdminUsersPage() {
   const { getToken } = useAuth();
@@ -122,6 +122,24 @@ export default function AdminUsersPage() {
     return `${offset + 1}–${offset + users.length}`;
   }, [offset, users.length]);
 
+  // Bucket the raw signup timestamps into local-day buckets so a 11pm
+  // PT signup shows up under the same day a Pacific viewer would expect,
+  // not the next UTC calendar day.
+  const signupRows = useMemo(() => {
+    if (!signups) return [] as { date: string; count: number }[];
+    return bucketByLocalDay(
+      signups.events,
+      signups.range_days,
+      (date) => ({ date, count: 0 }),
+      (b) => { b.count += 1; },
+      (iso) => iso,
+    );
+  }, [signups]);
+  const signupTotal = useMemo(
+    () => signupRows.reduce((sum, r) => sum + r.count, 0),
+    [signupRows],
+  );
+
   return (
     <AdminShell title="Users" loading={loading} onRefresh={loadUsers}>
       {error && (
@@ -149,12 +167,12 @@ export default function AdminUsersPage() {
           <div style={{ fontSize: 14, fontWeight: 600 }}>Signups per day</div>
           <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
             Last {signups?.range_days ?? 30} days
-            {signups ? ` · ${fmtNumber(signups.total)} total` : ""}
+            {signups ? ` · ${fmtNumber(signupTotal)} total` : ""}
           </div>
         </div>
-        {signups && signups.rows.length > 0 ? (
+        {signups && signupRows.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={signups.rows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+            <BarChart data={signupRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--dborder)" />
               <XAxis
                 dataKey="date"

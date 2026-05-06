@@ -1302,15 +1302,12 @@ export interface AdminUserRow {
   last_post_at: string | null;
 }
 
-export interface AdminUserSignupDailyRow {
-  date: string;
-  count: number;
-}
-
 export interface AdminUserSignupTrend {
   range_days: number;
-  total: number;
-  rows: AdminUserSignupDailyRow[];
+  // ISO timestamps — bucket on the client in the viewer's local timezone.
+  // Server returns events for a slightly wider window (range_days + 2)
+  // to cover any IANA timezone offset.
+  events: string[];
 }
 
 export interface AdminUserWorkspace {
@@ -1415,11 +1412,9 @@ export interface AdminPostsPlatformAggregate {
   total: number;
 }
 
-export interface AdminPostsDailyAggregate {
-  date: string; // YYYY-MM-DD UTC
-  published: number;
-  failed: number;
-  total: number;
+export interface AdminPostsEvent {
+  created_at: string;
+  status: "published" | "failed";
 }
 
 export interface AdminPostsAggregates {
@@ -1427,7 +1422,9 @@ export interface AdminPostsAggregates {
   unique_users: number;
   by_status: Record<string, number>;
   by_platform: AdminPostsPlatformAggregate[];
-  daily: AdminPostsDailyAggregate[];
+  // Per-post events (published + failed only) — bucket on the client by
+  // local day so late-evening posts don't slide to the next UTC date.
+  events: AdminPostsEvent[];
 }
 
 export interface AdminBillingRow {

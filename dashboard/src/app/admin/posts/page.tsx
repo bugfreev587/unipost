@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -21,7 +21,7 @@ import {
   type AdminPostsAggregates,
 } from "@/lib/api";
 
-import { AdminShell, StatCard, fmtNumber, fmtRelative } from "../_components/admin-ui";
+import { AdminShell, StatCard, bucketByLocalDay, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
 const STATUS_OPTIONS = ["all", "draft", "scheduled", "publishing", "published", "failed", "canceled", "archived"] as const;
 const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky", "facebook"] as const;
@@ -128,6 +128,22 @@ export default function AdminPostsPage() {
   const failed = aggregates?.by_status?.failed ?? 0;
   const scheduled = aggregates?.by_status?.scheduled ?? 0;
   const uniqueUsers = aggregates?.unique_users ?? 0;
+
+  // Bucket the raw published/failed events into local-day buckets so a
+  // late-evening publish doesn't land on the next UTC date in the chart.
+  const dailyRows = useMemo(() => {
+    if (!aggregates) return [] as { date: string; published: number; failed: number }[];
+    return bucketByLocalDay(
+      aggregates.events,
+      days,
+      (date) => ({ date, published: 0, failed: 0 }),
+      (b, e) => {
+        if (e.status === "published") b.published += 1;
+        else if (e.status === "failed") b.failed += 1;
+      },
+      (e) => e.created_at,
+    );
+  }, [aggregates, days]);
 
   return (
     <AdminShell title="Posts" loading={loading} onRefresh={loadAll}>
@@ -260,7 +276,7 @@ export default function AdminPostsPage() {
       {/* Time series — published vs failed by day. Counts come from the
           parent post status (matches the headline cards) so totals
           reconcile across the page. */}
-      {aggregates && aggregates.daily.length > 0 && (
+      {aggregates && dailyRows.length > 0 && (
         <>
           <div className="ad-section-header" style={{ marginTop: 24 }}>
             <div className="ad-section-title" style={{ fontSize: 14 }}>Posts per day</div>
@@ -276,7 +292,7 @@ export default function AdminPostsPage() {
             }}
           >
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={aggregates.daily} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+              <LineChart data={dailyRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--dborder)" />
                 <XAxis
                   dataKey="date"

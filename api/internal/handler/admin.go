@@ -171,15 +171,13 @@ type adminUserRow struct {
 	LastPostAt     *time.Time `json:"last_post_at"`
 }
 
-type adminUserSignupDailyRow struct {
-	Date  string `json:"date"`
-	Count int64  `json:"count"`
-}
-
+// adminUserSignupTrendResponse returns raw signup timestamps so the
+// dashboard can bucket them in the viewer's local timezone. Server-side
+// bucketing was using the DB session timezone (UTC) which shifted late-
+// evening signups in the Americas to the next calendar day.
 type adminUserSignupTrendResponse struct {
-	RangeDays int                       `json:"range_days"`
-	Total     int64                     `json:"total"`
-	Rows      []adminUserSignupDailyRow `json:"rows"`
+	RangeDays int         `json:"range_days"`
+	Events    []time.Time `json:"events"`
 }
 
 var adminUserSortOrders = map[string]string{
@@ -339,24 +337,16 @@ func (h *AdminHandler) GetUserSignups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pull signups from a slightly wider server-side window than the
+	// caller asked for: viewers in far timezones may bucket events into
+	// a "today" that extends past UTC NOW(), and into a "30 days ago"
+	// that starts before UTC NOW() - 30d. +2 days covers any IANA TZ.
 	const sql = `
-WITH days AS (
-  SELECT generate_series(
-    current_date - ($1::int - 1),
-    current_date,
-    interval '1 day'
-  )::date AS day
-)
-SELECT
-  to_char(d.day, 'YYYY-MM-DD') AS date,
-  COALESCE(COUNT(u.id), 0)::bigint AS count
-FROM days d
-LEFT JOIN users u
-  ON u.created_at >= d.day::timestamptz
- AND u.created_at < (d.day + 1)::timestamptz
- AND u.id != ALL($2)
-GROUP BY d.day
-ORDER BY d.day ASC`
+SELECT u.created_at
+FROM users u
+WHERE u.created_at >= NOW() - (($1::int + 2) * INTERVAL '1 day')
+  AND u.id != ALL($2)
+ORDER BY u.created_at ASC`
 
 	rows, err := h.pool.Query(r.Context(), sql, days, excluded)
 	if err != nil {
@@ -367,19 +357,18 @@ ORDER BY d.day ASC`
 
 	resp := adminUserSignupTrendResponse{
 		RangeDays: days,
-		Rows:      make([]adminUserSignupDailyRow, 0, days),
+		Events:    []time.Time{},
 	}
 	for rows.Next() {
-		var item adminUserSignupDailyRow
-		if err := rows.Scan(&item.Date, &item.Count); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan signup trend row: "+err.Error())
+		var t time.Time
+		if err := rows.Scan(&t); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan signup event: "+err.Error())
 			return
 		}
-		resp.Total += item.Count
-		resp.Rows = append(resp.Rows, item)
+		resp.Events = append(resp.Events, t)
 	}
 	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to iterate signup trend rows: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to iterate signup events: "+err.Error())
 		return
 	}
 
@@ -490,11 +479,15 @@ type adminPostsQuery struct {
 // and fails on LinkedIn shows up as +1 success / +1 failure split
 // across the two cards rather than getting hidden under "partial".
 type adminPostsAggregatesResponse struct {
-	TotalPosts     int64                          `json:"total_posts"`
-	UniqueUsers    int64                          `json:"unique_users"`
-	ByStatus       map[string]int64               `json:"by_status"`
-	ByPlatform     []adminPostsPlatformAggregate  `json:"by_platform"`
-	Daily          []adminPostsDailyAggregate     `json:"daily"`
+	TotalPosts  int64                         `json:"total_posts"`
+	UniqueUsers int64                         `json:"unique_users"`
+	ByStatus    map[string]int64              `json:"by_status"`
+	ByPlatform  []adminPostsPlatformAggregate `json:"by_platform"`
+	// Events: raw per-post timestamps for the chart, filtered to
+	// status IN ('published', 'failed') so the dashboard can bucket by
+	// the viewer's local day. Server bucketing here used UTC and was
+	// off by up to 24h for viewers outside UTC.
+	Events []adminPostsEvent `json:"events"`
 }
 
 type adminPostsPlatformAggregate struct {
@@ -504,11 +497,9 @@ type adminPostsPlatformAggregate struct {
 	Total     int64  `json:"total"`
 }
 
-type adminPostsDailyAggregate struct {
-	Date      string `json:"date"` // YYYY-MM-DD UTC
-	Published int64  `json:"published"`
-	Failed    int64  `json:"failed"`
-	Total     int64  `json:"total"`
+type adminPostsEvent struct {
+	CreatedAt time.Time `json:"created_at"`
+	Status    string    `json:"status"`
 }
 
 type adminBillingRow struct {
@@ -846,7 +837,7 @@ func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPosts
 	out := &adminPostsAggregatesResponse{
 		ByStatus:   map[string]int64{},
 		ByPlatform: []adminPostsPlatformAggregate{},
-		Daily:      []adminPostsDailyAggregate{},
+		Events:     []adminPostsEvent{},
 	}
 
 	// 1) Headline: total posts + status breakdown + unique users.
@@ -922,48 +913,30 @@ ORDER BY sa.platform`, args...)
 		return nil, err
 	}
 
-	// 3) Daily series — one row per day in the window even if zero,
-	// produced by a generate_series so the chart doesn't have gaps.
-	// Counts come from the parent post (`sp.status`), not result-level,
-	// so the line matches the headline cards.
-	dailyRows, err := h.pool.Query(ctx, `
-WITH days AS (
-  SELECT generate_series(
-    date_trunc('day', NOW() - ($2::INT - 1) * INTERVAL '1 day'),
-    date_trunc('day', NOW()),
-    INTERVAL '1 day'
-  ) AS day
-),
-matching AS (
-  SELECT
-    date_trunc('day', sp.created_at) AS day,
-    sp.status
-  FROM social_posts sp
-  JOIN workspaces w ON w.id = sp.workspace_id
-  JOIN users u ON u.id = w.user_id
-  `+commonWhere+`
-)
-SELECT
-  to_char(d.day, 'YYYY-MM-DD') AS date,
-  COUNT(*) FILTER (WHERE m.status = 'published')::BIGINT AS published,
-  COUNT(*) FILTER (WHERE m.status = 'failed')::BIGINT    AS failed,
-  COUNT(m.day)::BIGINT                                    AS total
-FROM days d
-LEFT JOIN matching m ON m.day = d.day
-GROUP BY d.day
-ORDER BY d.day`, args...)
+	// 3) Raw events for the chart — published/failed parent posts only,
+	// since those are the two lines rendered. Caller buckets these into
+	// local-time days so late-evening posts don't shift to the next UTC
+	// calendar day.
+	eventRows, err := h.pool.Query(ctx, `
+SELECT sp.created_at, sp.status
+FROM social_posts sp
+JOIN workspaces w ON w.id = sp.workspace_id
+JOIN users u ON u.id = w.user_id
+`+commonWhere+`
+  AND sp.status IN ('published', 'failed')
+ORDER BY sp.created_at ASC`, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer dailyRows.Close()
-	for dailyRows.Next() {
-		var item adminPostsDailyAggregate
-		if err := dailyRows.Scan(&item.Date, &item.Published, &item.Failed, &item.Total); err != nil {
+	defer eventRows.Close()
+	for eventRows.Next() {
+		var item adminPostsEvent
+		if err := eventRows.Scan(&item.CreatedAt, &item.Status); err != nil {
 			return nil, err
 		}
-		out.Daily = append(out.Daily, item)
+		out.Events = append(out.Events, item)
 	}
-	if err := dailyRows.Err(); err != nil {
+	if err := eventRows.Err(); err != nil {
 		return nil, err
 	}
 
