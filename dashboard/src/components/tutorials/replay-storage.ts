@@ -13,6 +13,7 @@ const REPLAY_STORAGE_KEY = "unipost.tutorial_replay";
 export type StoredReplay = {
   id: TutorialId;
   countsSnapshot: TutorialsCounts;
+  selectedAccountId?: string;
 };
 
 export function readStoredReplay(): StoredReplay | null {

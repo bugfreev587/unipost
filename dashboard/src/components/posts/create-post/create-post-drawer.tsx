@@ -506,6 +506,7 @@ interface CreatePostDrawerProps {
   // so a first-time user just clicks Publish.
   initialCaption?: string;
   preselectAllAccounts?: boolean;
+  preselectedAccountIds?: string[];
 }
 
 export function CreatePostDrawer({
@@ -518,6 +519,7 @@ export function CreatePostDrawer({
   onCreated,
   initialCaption,
   preselectAllAccounts,
+  preselectedAccountIds,
 }: CreatePostDrawerProps) {
   // Profile management
   const [previewFile, setPreviewFile] = useState<File | null>(null);
@@ -602,9 +604,10 @@ export function CreatePostDrawer({
     }
   }, [form.publishMode, queuesLoaded]);
 
-  // Apply activation-guide prefill: caption + preselect all connected
-  // accounts when the drawer opens from ?action=new&template=welcome.
-  // Runs only on open transition so subsequent edits aren't overwritten.
+  // Apply activation/replay prefill when the drawer opens from the
+  // tutorial handoff. Replay prefers the exact account reconnected in
+  // step 1; first-time activation falls back to selecting every account
+  // in the current profile so the user can publish immediately.
   const appliedPrefillRef = useRef(false);
   useEffect(() => {
     if (!open) {
@@ -615,12 +618,18 @@ export function CreatePostDrawer({
     if (initialCaption) {
       form.setMainContent(initialCaption);
     }
-    if (preselectAllAccounts && profileAccounts.length > 0) {
-      profileAccounts.forEach((a) => form.toggleAccount(a.id));
+    if (preselectedAccountIds && preselectedAccountIds.length > 0) {
+      const available = new Set(profileAccounts.map((account) => account.id));
+      const matching = preselectedAccountIds.filter((id) => available.has(id));
+      if (matching.length > 0) {
+        form.replaceSelectedAccounts(matching);
+      }
+    } else if (preselectAllAccounts && profileAccounts.length > 0) {
+      form.replaceSelectedAccounts(profileAccounts.map((a) => a.id));
     }
     appliedPrefillRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialCaption, preselectAllAccounts, profileAccounts.length]);
+  }, [open, initialCaption, preselectAllAccounts, preselectedAccountIds, profileAccounts]);
 
   // Reset form when drawer closes
   useEffect(() => {

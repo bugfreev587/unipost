@@ -21,7 +21,7 @@ import { ConfirmModal } from "@/components/confirm-modal";
 import { QuickstartStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { humanizeConnectError } from "@/lib/connect-errors";
-import { readStoredReplay } from "@/components/tutorials/replay-storage";
+import { readStoredReplay, writeStoredReplay } from "@/components/tutorials/replay-storage";
 
 // BASE_PLATFORMS is the always-available set. Feature-flagged platforms
 // (currently just Facebook during audit) are appended at render time
@@ -112,7 +112,6 @@ export default function AccountsPage() {
     // the host can restore the modal with the next step active. Skip the
     // activation round-trip in that case — replay marker takes priority.
     if (readStoredReplay()) {
-      router.replace(`/projects/${profileId}`);
       return;
     }
     let cancelled = false;
@@ -133,6 +132,26 @@ export default function AccountsPage() {
     })();
     return () => { cancelled = true; };
   }, [callbackStatus, getToken, profileId, router]);
+
+  useEffect(() => {
+    if (callbackStatus !== "success") return;
+    const stored = readStoredReplay();
+    if (!stored) return;
+    if (loading) return;
+
+    const activeProfileAccounts = accounts
+      .filter((account) => account.profile_id === profileId && account.status === "active")
+      .sort((a, b) => Date.parse(b.connected_at || "") - Date.parse(a.connected_at || ""));
+
+    const matchedByName = callbackAccount
+      ? activeProfileAccounts.find((account) => account.account_name?.trim() === callbackAccount.trim())
+      : undefined;
+    const selected = matchedByName || activeProfileAccounts[0];
+    if (selected && stored.selectedAccountId !== selected.id) {
+      writeStoredReplay({ ...stored, selectedAccountId: selected.id });
+    }
+    router.replace(`/projects/${profileId}`);
+  }, [accounts, callbackAccount, callbackStatus, loading, profileId, router]);
 
   const loadAccounts = useCallback(async () => {
     try {

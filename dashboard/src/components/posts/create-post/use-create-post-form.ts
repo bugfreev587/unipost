@@ -335,6 +335,10 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     });
   }, [activeAccounts]);
 
+  const replaceSelectedAccounts = useCallback((ids: string[]) => {
+    setSelectedAccountIds(new Set(ids));
+  }, []);
+
   const toggleBlockCollapse = useCallback((accountId: string) => {
     setCollapsedBlocks((prev) => {
       const next = new Set(prev);
@@ -723,6 +727,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     // Actions
     toggleAccount,
     toggleAll,
+    replaceSelectedAccounts,
     toggleBlockCollapse,
     expandBlock,
     updateOverrideCaption,

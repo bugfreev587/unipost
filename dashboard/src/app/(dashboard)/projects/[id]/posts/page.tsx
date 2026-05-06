@@ -13,6 +13,7 @@ import {
 import { Plus, Search, MoreHorizontal, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
+import { readStoredReplay } from "@/components/tutorials/replay-storage";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft" | "archived";
 
@@ -232,6 +233,7 @@ export default function PostsPage() {
   const searchParams = useSearchParams();
   const [showCreateModal, setShowCreateModal] = useState(searchParams.get("action") === "new");
   const initialCaption = searchParams.get("template") === "welcome" ? "Hello from UniPost 👋" : "";
+  const replaySelectedAccountId = initialCaption ? readStoredReplay()?.selectedAccountId : undefined;
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -778,7 +780,8 @@ export default function PostsPage() {
           } catch { /* silent */ }
         }}
         initialCaption={initialCaption}
-        preselectAllAccounts={initialCaption !== ""}
+        preselectAllAccounts={initialCaption !== "" && !replaySelectedAccountId}
+        preselectedAccountIds={replaySelectedAccountId ? [replaySelectedAccountId] : undefined}
       />
 
       {confirmAction ? (
