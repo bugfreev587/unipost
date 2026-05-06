@@ -11,8 +11,9 @@
 //
 // Auto-open behavior:
 //   - Mandatory tutorials (required=true) auto-pop on the profile page
-//     until completed. Dismissing temporarily hides the modal until the
-//     next profile visit (the host clears dismissed_at on mount).
+//     until the user explicitly dismisses them or completes them.
+//     Dismissal is respected across refreshes; we do not force the user
+//     back into an unfinished tutorial on the next mount.
 //   - Optional tutorials only open when explicitly started.
 
 import {
@@ -30,7 +31,6 @@ import {
   getTutorials,
   completeTutorial,
   dismissTutorial,
-  reopenTutorial,
   type TutorialId,
   type TutorialsCounts,
   type TutorialState,
@@ -172,8 +172,8 @@ export function TutorialHostProvider({
     return () => window.removeEventListener("focus", onFocus);
   }, [load]);
 
-  // Auto-open the mandatory tutorial on the profile page if it's not
-  // complete. Clears any prior dismissal so the modal pops fresh.
+  // Auto-open the mandatory tutorial on the profile page only when it
+  // has never been dismissed and is not yet complete.
   useEffect(() => {
     if (!state || !profileId || autoOpenedRef.current || activeSession) return;
     if (celebratingId) return;
@@ -182,24 +182,17 @@ export function TutorialHostProvider({
     if (!quickstart) return;
     const quickstartState = state.byId.get("quickstart");
     if (quickstartState?.completed_at) return;
+    if (quickstartState?.dismissed_at) return;
 
-    // Clear dismissal on profile visit so the mandatory modal re-pops.
-    (async () => {
-      if (quickstartState?.dismissed_at) {
-        try {
-          const token = await getToken();
-          if (token) await reopenTutorial(token, "quickstart");
-        } catch { /* silent */ }
-      }
-      autoOpenedRef.current = true;
-      setActiveSession({ id: "quickstart", replay: false });
-      track("tutorial_opened", { tutorial_id: "quickstart", trigger: "auto" });
-    })();
-  }, [state, profileId, activeSession, celebratingId, getToken]);
+    autoOpenedRef.current = true;
+    setActiveSession({ id: "quickstart", replay: false });
+    track("tutorial_opened", { tutorial_id: "quickstart", trigger: "auto" });
+  }, [state, profileId, activeSession, celebratingId]);
 
   // Restore a replay session that was started before a CTA navigation
   // (e.g. user clicked Connect, did OAuth, came back). The replay marker
-  // lives in sessionStorage; we re-open the modal once per mount.
+  // lives in sessionStorage; we restore it once, then clear the marker
+  // so a later refresh does not keep forcing the replay back open.
   useEffect(() => {
     if (!state || replayRestoredRef.current || activeSession || celebratingId) return;
     const stored = readStoredReplay();
@@ -209,6 +202,7 @@ export function TutorialHostProvider({
       return;
     }
     replayRestoredRef.current = true;
+    clearStoredReplay();
     // Defer the setState off the effect body to match the auto-open
     // pattern below and avoid the react-hooks/set-state-in-effect lint.
     void Promise.resolve().then(() => {
