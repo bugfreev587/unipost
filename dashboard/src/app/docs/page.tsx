@@ -10,11 +10,11 @@ export default function DocsHomePage() {
     >
       <div className="docs-grid">
         <Link href="/docs/dashboard-quickstart" className="docs-card" style={{ textDecoration: "none" }}>
-          <div className="docs-card-title">Use the Dashboard</div>
+          <div className="docs-card-title">Dashboard Quickstart</div>
           <p>Connect accounts, open the compose flow, and publish your first post from the UniPost UI.</p>
         </Link>
         <Link href="/docs/quickstart" className="docs-card" style={{ textDecoration: "none" }}>
-          <div className="docs-card-title">Use the API</div>
+          <div className="docs-card-title">API Quickstart</div>
           <p>Create an API key, connect accounts, and publish programmatically with SDKs, CLI, or MCP.</p>
         </Link>
       </div>

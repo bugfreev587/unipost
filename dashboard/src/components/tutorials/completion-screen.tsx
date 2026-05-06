@@ -57,7 +57,7 @@ export function CompletionScreen({
             Congratulations!
           </div>
           <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginTop: 6 }}>
-            You finished the <strong style={{ color: "var(--dtext)" }}>{tutorial.title}</strong> tutorial.
+            You finished the <strong style={{ color: "var(--dtext)" }}>{tutorial.title}</strong>.
           </div>
         </div>
 
@@ -96,7 +96,7 @@ export function CompletionScreen({
         {remaining.length > 0 && (
           <div style={{ marginBottom: 18, position: "relative", zIndex: 1 }}>
             <div className="dt-mono" style={{ fontSize: 10, fontWeight: 600, color: "var(--dmuted2)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
-              Up next — optional
+              Up next
             </div>
             {handoffTarget && tutorial.handoff && (
               <div style={{ marginBottom: 10 }}>

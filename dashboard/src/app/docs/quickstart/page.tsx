@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 import { ApiInlineLink } from "../api/_components/doc-components";
+import { DocsQuickstartCard } from "@/components/tutorials/docs-quickstart-card";
 
 const INSTALL_SNIPPETS = [
   { label: "Node.js", code: "npm install @unipost/sdk" },
@@ -366,6 +367,7 @@ export default function QuickstartPage() {
       lead="Create an API key, connect an account, and publish your first post — in about five minutes."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
+      <DocsQuickstartCard tutorialId="post_with_api" fallbackHref="/docs/dashboard-quickstart" />
 
       <div className="qs-badges">
         <span className="qs-badge">~5 min</span>

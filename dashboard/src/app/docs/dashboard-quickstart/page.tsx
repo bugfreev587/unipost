@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { DocsPage } from "../_components/docs-shell";
+import { DocsQuickstartCard } from "@/components/tutorials/docs-quickstart-card";
 
 export default function DashboardQuickstartPage() {
   return (
@@ -8,6 +9,8 @@ export default function DashboardQuickstartPage() {
       title="Dashboard Quickstart"
       lead="Use the UniPost dashboard to connect social accounts, draft content, customize per platform, and publish your first post without writing code."
     >
+      <DocsQuickstartCard tutorialId="quickstart" />
+
       <h2 id="what-youll-do">What you&apos;ll do</h2>
       <ul className="docs-checklist">
         <li>Connect at least one social account</li>

@@ -222,7 +222,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     source: "sidebar",
   });
   const tutorialTotal = TUTORIAL_REGISTRY.length;
-  const tutorialsActive = pathname.startsWith("/tutorials");
+  const quickstartsActive = pathname.startsWith("/docs");
   const settingsActive = pathname.startsWith("/settings");
   const themeIsDark = resolvedTheme === "dark";
   const ThemeIcon = themeIsDark ? Moon : Sun;
@@ -489,7 +489,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </Link>
         </div>
 
-        {/* ── Bottom actions: docs + tutorials + settings ── */}
+        {/* ── Bottom actions: docs + quickstarts + settings ── */}
         <div style={{ padding: "4px 10px 10px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
           <a
             href="https://unipost.dev/docs"
@@ -533,10 +533,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <span>Docs</span>
           </a>
           <Link
-            href="/tutorials"
-            title="Open tutorials"
-            aria-label="Open tutorials"
-            data-active={pathname.startsWith("/tutorials")}
+            href="/docs"
+            title="Open quickstarts"
+            aria-label="Open quickstarts"
+            data-active={pathname.startsWith("/docs")}
             style={{
               display: "flex",
               alignItems: "center",
@@ -547,18 +547,18 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               height: 36,
               padding: "0 14px",
               borderRadius: 12,
-              border: tutorialsActive
+              border: quickstartsActive
                 ? "1px solid color-mix(in srgb, var(--daccent) 42%, var(--dborder))"
                 : "1px solid color-mix(in srgb, var(--daccent) 14%, var(--dborder))",
-              background: tutorialsActive
+              background: quickstartsActive
                 ? "color-mix(in srgb, var(--daccent) 12%, var(--surface))"
                 : "color-mix(in srgb, var(--surface) 86%, transparent)",
-              color: tutorialsActive ? "var(--daccent)" : "var(--dtext)",
+              color: quickstartsActive ? "var(--daccent)" : "var(--dtext)",
               textDecoration: "none",
               fontSize: 13,
               fontWeight: 600,
               transition: "transform 0.12s ease, background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease",
-              boxShadow: tutorialsActive ? "0 0 0 1px color-mix(in srgb, var(--daccent) 18%, transparent), 0 10px 24px rgba(13, 148, 136, 0.14)" : "0 0 0 rgba(0,0,0,0)",
+              boxShadow: quickstartsActive ? "0 0 0 1px color-mix(in srgb, var(--daccent) 18%, transparent), 0 10px 24px rgba(13, 148, 136, 0.14)" : "0 0 0 rgba(0,0,0,0)",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = "translateY(-1px)";
@@ -568,19 +568,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.background = tutorialsActive
+              e.currentTarget.style.background = quickstartsActive
                 ? "color-mix(in srgb, var(--daccent) 12%, var(--surface))"
                 : "color-mix(in srgb, var(--surface) 86%, transparent)";
-              e.currentTarget.style.borderColor = tutorialsActive
+              e.currentTarget.style.borderColor = quickstartsActive
                 ? "color-mix(in srgb, var(--daccent) 42%, var(--dborder))"
                 : "color-mix(in srgb, var(--daccent) 14%, var(--dborder))";
-              e.currentTarget.style.boxShadow = tutorialsActive
+              e.currentTarget.style.boxShadow = quickstartsActive
                 ? "0 0 0 1px color-mix(in srgb, var(--daccent) 18%, transparent), 0 10px 24px rgba(13, 148, 136, 0.14)"
                 : "0 0 0 rgba(0,0,0,0)";
             }}
           >
             <GraduationCap style={{ width: 16, height: 16 }} strokeWidth={1.75} />
-            <span>Tutorials</span>
+            <span>Quickstarts</span>
             <span
               className="dt-mono"
               style={{
@@ -589,7 +589,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 borderRadius: 999,
                 border: "1px solid color-mix(in srgb, var(--daccent) 24%, transparent)",
                 background: "color-mix(in srgb, var(--daccent) 10%, transparent)",
-                color: tutorialsActive ? "var(--daccent)" : "var(--dmuted)",
+                color: quickstartsActive ? "var(--daccent)" : "var(--dmuted)",
                 fontSize: 10,
                 fontWeight: 700,
                 letterSpacing: "0.04em",

@@ -90,8 +90,8 @@ export function stepCompleted(signal: TutorialStepSignal, counts: TutorialsCount
 export const TUTORIAL_REGISTRY: TutorialDefinition[] = [
   {
     id: "quickstart",
-    title: "Tutorial 1: Quickstart",
-    description: "Connect your first account and send your first post.",
+    title: "Dashboard Quickstart",
+    description: "Connect your first account and publish your first post from the dashboard.",
     required: true,
     completeOn: "all_steps_done",
     steps: [
@@ -117,14 +117,14 @@ export const TUTORIAL_REGISTRY: TutorialDefinition[] = [
     ],
     handoff: {
       tutorialId: "post_with_api",
-      prompt: "Want to send a post via the API next?",
-      ctaLabel: "Try API tutorial",
+      prompt: "Ready to publish programmatically next?",
+      ctaLabel: "Start API Quickstart",
     },
   },
   {
     id: "post_with_api",
-    title: "Tutorial 2: Send a post via the API",
-    description: "Create an API key and post programmatically.",
+    title: "API Quickstart",
+    description: "Create an API key and send your first post programmatically.",
     required: false,
     prerequisites: ["quickstart"],
     completeOn: "done_button",
