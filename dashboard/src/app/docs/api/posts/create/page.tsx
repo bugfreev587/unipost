@@ -3,7 +3,7 @@ import { CreatePostContent } from "./content";
 
 export const metadata: Metadata = {
   title: "POST /v1/posts — Create Social Post | UniPost API Docs",
-  description: "Publish content to Instagram, LinkedIn, Twitter, TikTok, YouTube, Bluesky, and Threads with a single API call. Full reference with code examples in JavaScript, Python, Go, and cURL.",
+  description: "Publish content to Instagram, LinkedIn, Twitter, TikTok, YouTube, Bluesky, and Threads with a single API call. Full reference with code examples in JavaScript, Python, Go, Java, and cURL.",
   keywords: [
     "unipost api post",
     "social media api post endpoint",
