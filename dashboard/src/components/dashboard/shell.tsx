@@ -490,7 +490,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* ── Bottom actions: docs + tutorials + settings ── */}
-        <div style={{ padding: "4px 10px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ padding: "4px 10px 10px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
           <a
             href="https://unipost.dev/docs"
             target="_blank"
@@ -498,11 +498,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             title="Open docs"
             aria-label="Open docs"
             style={{
-              display: "inline-flex",
+              display: "flex",
               alignItems: "center",
-              justifyContent: "center",
+              justifyContent: "flex-start",
               gap: 8,
               minWidth: 0,
+              width: "100%",
               height: 36,
               padding: "0 14px",
               borderRadius: 12,
@@ -537,11 +538,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             aria-label="Open tutorials"
             data-active={pathname.startsWith("/tutorials")}
             style={{
-              display: "inline-flex",
+              display: "flex",
               alignItems: "center",
-              justifyContent: "center",
+              justifyContent: "flex-start",
               gap: 8,
               minWidth: 0,
+              width: "100%",
               height: 36,
               padding: "0 14px",
               borderRadius: 12,
@@ -582,7 +584,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <span
               className="dt-mono"
               style={{
-                marginLeft: 2,
+                marginLeft: "auto",
                 padding: "1px 6px",
                 borderRadius: 999,
                 border: "1px solid color-mix(in srgb, var(--daccent) 24%, transparent)",
@@ -596,16 +598,18 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               {completedTutorialCount}/{tutorialTotal}
             </span>
           </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
           <Link
             href="/settings"
             title="Open settings"
             aria-label="Open settings"
             style={{
-              display: "inline-flex",
+              display: "flex",
               alignItems: "center",
-              justifyContent: "center",
+              justifyContent: "flex-start",
               gap: 8,
               minWidth: 0,
+              flex: 1,
               height: 36,
               padding: "0 14px",
               borderRadius: 12,
@@ -655,6 +659,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
+              flexShrink: 0,
               width: 36,
               height: 36,
               borderRadius: 12,
@@ -682,6 +687,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           >
             <ThemeIcon style={{ width: 16, height: 16 }} strokeWidth={1.75} />
           </button>
+          </div>
         </div>
 
         {/* ── Bottom: Workspace ── */}
