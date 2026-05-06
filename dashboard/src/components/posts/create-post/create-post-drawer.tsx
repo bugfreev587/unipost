@@ -55,11 +55,91 @@ import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 const MIN_DRAWER_WIDTH = 880;
 const MAX_DRAWER_WIDTH = 1680;
 const AI_DRAWER_WIDTH = 1480;
+const COMPOSE_MIN_LEFT_PANE_WIDTH = 520;
+const COMPOSE_MIN_RIGHT_PANE_WIDTH = 360;
+const COMPOSE_MIN_AI_PANE_WIDTH = 320;
+const COMPOSE_DEFAULT_RIGHT_PANE_WIDTH = 560;
+const COMPOSE_DEFAULT_AI_PANE_WIDTH = 400;
+const COMPOSE_RESIZER_WIDTH = 12;
 
 function clampDrawerWidth(width: number) {
   if (typeof window === "undefined") return width;
   const viewportMax = Math.max(MIN_DRAWER_WIDTH, window.innerWidth - 160);
   return Math.min(Math.max(width, MIN_DRAWER_WIDTH), Math.min(MAX_DRAWER_WIDTH, viewportMax));
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function clampComposePaneWidths({
+  totalWidth,
+  rightPaneWidth,
+  aiPaneWidth,
+  aiOpen,
+}: {
+  totalWidth: number;
+  rightPaneWidth: number;
+  aiPaneWidth: number;
+  aiOpen: boolean;
+}) {
+  const handleCount = aiOpen ? 2 : 1;
+  const minRequiredWidth =
+    COMPOSE_MIN_LEFT_PANE_WIDTH +
+    COMPOSE_MIN_RIGHT_PANE_WIDTH +
+    (aiOpen ? COMPOSE_MIN_AI_PANE_WIDTH : 0) +
+    handleCount * COMPOSE_RESIZER_WIDTH;
+  const usableWidth = Math.max(totalWidth, minRequiredWidth);
+
+  if (!aiOpen) {
+    return {
+      rightPaneWidth: clampNumber(
+        rightPaneWidth,
+        COMPOSE_MIN_RIGHT_PANE_WIDTH,
+        usableWidth - COMPOSE_MIN_LEFT_PANE_WIDTH - COMPOSE_RESIZER_WIDTH
+      ),
+      aiPaneWidth,
+    };
+  }
+
+  const maxAIPaneWidth = usableWidth - COMPOSE_MIN_LEFT_PANE_WIDTH - COMPOSE_MIN_RIGHT_PANE_WIDTH - handleCount * COMPOSE_RESIZER_WIDTH;
+  const clampedAIPaneWidth = clampNumber(aiPaneWidth, COMPOSE_MIN_AI_PANE_WIDTH, maxAIPaneWidth);
+  const maxRightPaneWidth = usableWidth - COMPOSE_MIN_LEFT_PANE_WIDTH - clampedAIPaneWidth - handleCount * COMPOSE_RESIZER_WIDTH;
+  const clampedRightPaneWidth = clampNumber(rightPaneWidth, COMPOSE_MIN_RIGHT_PANE_WIDTH, maxRightPaneWidth);
+  const finalMaxAIPaneWidth = usableWidth - COMPOSE_MIN_LEFT_PANE_WIDTH - clampedRightPaneWidth - handleCount * COMPOSE_RESIZER_WIDTH;
+
+  return {
+    rightPaneWidth: clampedRightPaneWidth,
+    aiPaneWidth: clampNumber(clampedAIPaneWidth, COMPOSE_MIN_AI_PANE_WIDTH, finalMaxAIPaneWidth),
+  };
+}
+
+function ColumnResizeHandle({
+  label,
+  onMouseDown,
+}: {
+  label: string;
+  onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      onMouseDown={onMouseDown}
+      className="group relative h-full shrink-0 cursor-col-resize"
+      style={{ width: COMPOSE_RESIZER_WIDTH }}
+    >
+      <div
+        className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors"
+        style={{ background: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))" }}
+      />
+      <div
+        className="pointer-events-none absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full opacity-0 transition-opacity group-hover:opacity-100"
+        style={{ background: "color-mix(in srgb, var(--primary) 40%, transparent)" }}
+      />
+    </div>
+  );
 }
 
 // ── Stable-URL media thumbnail (prevents flicker on re-render) ──────
@@ -493,8 +573,8 @@ function AIAssistPanel({
 
   return (
     <aside
-      className="flex min-w-0 flex-[1.05] flex-col border-l"
-      style={{ borderLeftColor: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))", background: "color-mix(in srgb, var(--surface2) 52%, var(--surface-raised))" }}
+      className="flex h-full min-w-0 flex-col"
+      style={{ background: "color-mix(in srgb, var(--surface2) 52%, var(--surface-raised))" }}
     >
       <div className="border-b px-6 py-5" style={{ borderBottomColor: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))" }}>
         <div className="mb-2 flex items-center gap-2">
@@ -1535,10 +1615,17 @@ export function CreatePostDrawer({
   const mediaSectionRef = useRef<HTMLDivElement | null>(null);
   const publishPanelRef = useRef<HTMLDivElement | null>(null);
   const platformBlockRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const bodyLayoutRef = useRef<HTMLDivElement | null>(null);
   const [drawerWidth, setDrawerWidth] = useState(() =>
     typeof window === "undefined" ? 1080 : clampDrawerWidth(window.innerWidth * 0.75)
   );
+  const [rightPaneWidth, setRightPaneWidth] = useState(COMPOSE_DEFAULT_RIGHT_PANE_WIDTH);
+  const [aiPaneWidth, setAIPaneWidth] = useState(COMPOSE_DEFAULT_AI_PANE_WIDTH);
   const isDraggingWidthRef = useRef(false);
+
+  const getComposeBodyWidth = useCallback(() => {
+    return bodyLayoutRef.current?.getBoundingClientRect().width ?? 0;
+  }, []);
 
   // Load profiles when drawer opens
   useEffect(() => {
@@ -1674,6 +1761,24 @@ export function CreatePostDrawer({
     setDrawerWidth((current) => clampDrawerWidth(Math.max(current, AI_DRAWER_WIDTH)));
   }, [open, aiAssistEnabled, isAIPanelOpen]);
 
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      const totalWidth = getComposeBodyWidth();
+      if (!totalWidth) return;
+      const next = clampComposePaneWidths({
+        totalWidth,
+        rightPaneWidth,
+        aiPaneWidth,
+        aiOpen: aiAssistEnabled && isAIPanelOpen,
+      });
+      setRightPaneWidth((current) => (current === next.rightPaneWidth ? current : next.rightPaneWidth));
+      setAIPaneWidth((current) => (current === next.aiPaneWidth ? current : next.aiPaneWidth));
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, drawerWidth, rightPaneWidth, aiPaneWidth, aiAssistEnabled, isAIPanelOpen, getComposeBodyWidth]);
+
   // Stable per-account blocker setter. We merge into a dict so each
   // TikTok field component only reports its own account's state, and
   // we prune cleared blockers instead of storing "" so the any-blocker
@@ -1784,6 +1889,72 @@ export function CreatePostDrawer({
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
   }, []);
+
+  const handleContentSidebarResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startRightPaneWidth = rightPaneWidth;
+    const startAIPaneWidth = aiPaneWidth;
+
+    function onMouseMove(moveEvent: MouseEvent) {
+      const totalWidth = getComposeBodyWidth();
+      if (!totalWidth) return;
+      const delta = moveEvent.clientX - startX;
+      const next = clampComposePaneWidths({
+        totalWidth,
+        rightPaneWidth: startRightPaneWidth - delta,
+        aiPaneWidth: startAIPaneWidth,
+        aiOpen: aiAssistEnabled && isAIPanelOpen,
+      });
+      setRightPaneWidth(next.rightPaneWidth);
+      setAIPaneWidth(next.aiPaneWidth);
+    }
+
+    function onMouseUp() {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [rightPaneWidth, aiPaneWidth, getComposeBodyWidth, aiAssistEnabled, isAIPanelOpen]);
+
+  const handleSidebarAIResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startRightPaneWidth = rightPaneWidth;
+    const startAIPaneWidth = aiPaneWidth;
+
+    function onMouseMove(moveEvent: MouseEvent) {
+      const totalWidth = getComposeBodyWidth();
+      if (!totalWidth) return;
+      const delta = moveEvent.clientX - startX;
+      const next = clampComposePaneWidths({
+        totalWidth,
+        rightPaneWidth: startRightPaneWidth + delta,
+        aiPaneWidth: startAIPaneWidth - delta,
+        aiOpen: true,
+      });
+      setRightPaneWidth(next.rightPaneWidth);
+      setAIPaneWidth(next.aiPaneWidth);
+    }
+
+    function onMouseUp() {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [rightPaneWidth, aiPaneWidth, getComposeBodyWidth]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -2388,14 +2559,11 @@ export function CreatePostDrawer({
         </header>
 
         {/* Body: default two columns, expands to three when AI assist is active */}
-        <div className="flex-1 flex min-h-0">
+        <div ref={bodyLayoutRef} className="flex min-h-0 flex-1">
           {/* LEFT: Content + per-platform editors */}
           <div
-            className={cn(
-              "overflow-y-auto border-r px-8 py-7",
-              isAIPanelOpen ? "flex-[2.15]" : "flex-[3]"
-            )}
-            style={{ borderRightColor: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))" }}
+            className="min-w-0 flex-1 overflow-y-auto px-8 py-7"
+            style={{ minWidth: COMPOSE_MIN_LEFT_PANE_WIDTH }}
           >
             {/* Main content */}
             <section>
@@ -2519,13 +2687,19 @@ export function CreatePostDrawer({
             </section>
           </div>
 
+          <ColumnResizeHandle
+            label="Resize content and composer sidebar panels"
+            onMouseDown={handleContentSidebarResizeStart}
+          />
+
           {/* RIGHT: Profile + Connected Accounts + Post To + Publish */}
           <aside
-            className={cn(
-              "overflow-y-auto px-6 py-7",
-              isAIPanelOpen ? "flex-[1.45]" : "flex-[2]"
-            )}
-            style={{ background: "color-mix(in srgb, var(--surface2) 58%, transparent)" }}
+            className="shrink-0 overflow-y-auto px-6 py-7"
+            style={{
+              width: rightPaneWidth,
+              minWidth: COMPOSE_MIN_RIGHT_PANE_WIDTH,
+              background: "color-mix(in srgb, var(--surface2) 58%, transparent)",
+            }}
           >
 
             {/* 1. Profile selector */}
@@ -2687,36 +2861,47 @@ export function CreatePostDrawer({
             </div>
           </aside>
           {aiAssistEnabled && isAIPanelOpen ? (
-            <AIAssistPanel
-              mode={aiMode}
-              onModeChange={setAIMode}
-              onGenerate={handleGenerateAISuggestion}
-              brief={aiBrief}
-              onBriefChange={setAIBrief}
-              objective={aiObjective}
-              onObjectiveChange={setAIObjective}
-              tone={aiTone}
-              onToneChange={setAITone}
-              includeCTA={aiIncludeCTA}
-              onIncludeCTAChange={setAIIncludeCTA}
-              onApplyMainCaption={handleApplyAISuggestion}
-              onApplyPlatformCaption={handleApplyPlatformAISuggestion}
-              onApplyAllPlatformCaptions={handleApplyAllPlatformAISuggestions}
-              onApplyFirstCommentSuggestion={handleApplyAIFirstCommentSuggestion}
-              onApplyAllFirstCommentSuggestions={handleApplyAllAIFirstCommentSuggestions}
-              selectedPlatformsCount={form.selectedAccountIds.size}
-              mediaCount={form.mediaItems.length}
-              hasMainContent={!!form.mainContent.trim()}
-              loading={aiLoading}
-              error={aiError}
-              suggestion={aiSuggestion}
-              accountLabels={aiAccountLabels}
-              accountPlatforms={aiAccountPlatforms}
-              platformCapabilities={platformCapabilities}
-              currentMainCaption={form.mainContent}
-              currentPlatformCaptions={aiCurrentPlatformCaptions}
-              currentFirstComments={aiCurrentFirstComments}
-            />
+            <>
+              <ColumnResizeHandle
+                label="Resize composer sidebar and AI assist panels"
+                onMouseDown={handleSidebarAIResizeStart}
+              />
+              <div
+                className="min-w-0 shrink-0"
+                style={{ width: aiPaneWidth, minWidth: COMPOSE_MIN_AI_PANE_WIDTH }}
+              >
+                <AIAssistPanel
+                  mode={aiMode}
+                  onModeChange={setAIMode}
+                  onGenerate={handleGenerateAISuggestion}
+                  brief={aiBrief}
+                  onBriefChange={setAIBrief}
+                  objective={aiObjective}
+                  onObjectiveChange={setAIObjective}
+                  tone={aiTone}
+                  onToneChange={setAITone}
+                  includeCTA={aiIncludeCTA}
+                  onIncludeCTAChange={setAIIncludeCTA}
+                  onApplyMainCaption={handleApplyAISuggestion}
+                  onApplyPlatformCaption={handleApplyPlatformAISuggestion}
+                  onApplyAllPlatformCaptions={handleApplyAllPlatformAISuggestions}
+                  onApplyFirstCommentSuggestion={handleApplyAIFirstCommentSuggestion}
+                  onApplyAllFirstCommentSuggestions={handleApplyAllAIFirstCommentSuggestions}
+                  selectedPlatformsCount={form.selectedAccountIds.size}
+                  mediaCount={form.mediaItems.length}
+                  hasMainContent={!!form.mainContent.trim()}
+                  loading={aiLoading}
+                  error={aiError}
+                  suggestion={aiSuggestion}
+                  accountLabels={aiAccountLabels}
+                  accountPlatforms={aiAccountPlatforms}
+                  platformCapabilities={platformCapabilities}
+                  currentMainCaption={form.mainContent}
+                  currentPlatformCaptions={aiCurrentPlatformCaptions}
+                  currentFirstComments={aiCurrentFirstComments}
+                />
+              </div>
+            </>
           ) : null}
         </div>
 
