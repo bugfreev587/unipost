@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { UniPostMark } from "@/components/brand/unipost-logo";
+import { useTheme } from "@/components/theme-provider";
 // useClerk kept for signOut
 import {
   DropdownMenu,
@@ -14,9 +14,10 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { listProfiles, getWorkspace, getBilling, getMe, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
+import { listProfiles, getWorkspace, getBilling, getMe, getTutorials, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
 import { useGlobalInboxUnreadCount } from "@/lib/use-inbox-unread";
 import { buildContactPageHref } from "@/lib/support";
+import { TUTORIAL_REGISTRY } from "@/components/tutorials/registry";
 import {
   Key,
   Webhook,
@@ -35,6 +36,8 @@ import {
   PanelLeftOpen,
   GraduationCap,
   BookOpen,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 // Feature flag: NEXT_PUBLIC_FEATURE_INBOX controls Inbox visibility.
@@ -107,9 +110,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { getToken } = useAuth();
   const { user } = useUser();
   const { signOut } = useClerk();
+  const { resolvedTheme, setTheme } = useTheme();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [completedTutorialCount, setCompletedTutorialCount] = useState(0);
   // Only one submenu should be expanded at a time.
   const [expandedMenu, setExpandedMenu] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -220,6 +225,27 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     topic: "dashboard-help",
     source: "sidebar",
   });
+  const tutorialTotal = TUTORIAL_REGISTRY.length;
+  const tutorialsActive = pathname.startsWith("/tutorials");
+  const settingsActive = pathname.startsWith("/settings");
+  const themeIsDark = resolvedTheme === "dark";
+  const ThemeIcon = themeIsDark ? Moon : Sun;
+  const nextTheme = themeIsDark ? "light" : "dark";
+  const themeLabel = themeIsDark ? "Switch to light theme" : "Switch to dark theme";
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await getTutorials(token);
+        if (cancelled) return;
+        setCompletedTutorialCount(res.data.tutorials.filter((t) => t.completed_at).length);
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [getToken]);
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
@@ -281,6 +307,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               */}
               <DropdownMenuItem onClick={() => router.push("/contact")} style={{ padding: "10px 14px" }}>
                 <Mail style={{ width: 14, height: 14 }} /><span>Contact us</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTheme(nextTheme)} style={{ padding: "10px 14px" }}>
+                <ThemeIcon style={{ width: 14, height: 14 }} /><span>{themeLabel}</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => signOut({ redirectUrl: "https://unipost.dev" })} style={{ padding: "10px 14px" }}>
@@ -467,53 +496,163 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </Link>
         </div>
 
-        {/* ── Bottom actions: tutorials + theme ── */}
-        <div style={{ padding: "4px 10px", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
+        {/* ── Bottom actions: docs + tutorials + settings ── */}
+        <div style={{ padding: "4px 10px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <a
             href="https://unipost.dev/docs"
             target="_blank"
             rel="noopener noreferrer"
-            title="Docs"
-            aria-label="Docs"
+            title="Open docs"
+            aria-label="Open docs"
             style={{
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 30, height: 30, borderRadius: 8,
-              border: "1px solid var(--dborder)",
-              background: "transparent",
-              color: "var(--dmuted)",
-              transition: "background 0.1s, color 0.1s",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              minWidth: 0,
+              height: 36,
+              padding: "0 14px",
+              borderRadius: 12,
+              border: "1px solid color-mix(in srgb, var(--daccent) 12%, var(--dborder))",
+              background: "color-mix(in srgb, var(--surface) 86%, transparent)",
+              color: "var(--dtext)",
+              textDecoration: "none",
+              fontSize: 13,
+              fontWeight: 600,
+              transition: "transform 0.12s ease, background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease",
+              boxShadow: "0 0 0 rgba(0,0,0,0)",
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--sidebar-accent)"; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.background = "color-mix(in srgb, var(--daccent) 10%, var(--surface))";
+              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--daccent) 34%, var(--dborder))";
+              e.currentTarget.style.boxShadow = "0 10px 24px rgba(0,0,0,.22)";
+            }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = "var(--dmuted)";
-              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.background = "color-mix(in srgb, var(--surface) 86%, transparent)";
+              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--daccent) 12%, var(--dborder))";
+              e.currentTarget.style.boxShadow = "0 0 0 rgba(0,0,0,0)";
             }}
           >
-            <BookOpen style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+            <BookOpen style={{ width: 16, height: 16, color: "var(--dmuted)" }} strokeWidth={1.75} />
+            <span>Docs</span>
           </a>
           <Link
             href="/tutorials"
-            title="Tutorials"
-            aria-label="Tutorials"
+            title="Open tutorials"
+            aria-label="Open tutorials"
             data-active={pathname.startsWith("/tutorials")}
             style={{
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 30, height: 30, borderRadius: 8,
-              border: "1px solid var(--dborder)",
-              background: pathname.startsWith("/tutorials") ? "var(--sidebar-accent)" : "transparent",
-              color: pathname.startsWith("/tutorials") ? "var(--daccent)" : "var(--dmuted)",
-              transition: "background 0.1s, color 0.1s",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              minWidth: 0,
+              height: 36,
+              padding: "0 14px",
+              borderRadius: 12,
+              border: tutorialsActive
+                ? "1px solid color-mix(in srgb, var(--daccent) 42%, var(--dborder))"
+                : "1px solid color-mix(in srgb, var(--daccent) 14%, var(--dborder))",
+              background: tutorialsActive
+                ? "color-mix(in srgb, var(--daccent) 12%, var(--surface))"
+                : "color-mix(in srgb, var(--surface) 86%, transparent)",
+              color: tutorialsActive ? "var(--daccent)" : "var(--dtext)",
+              textDecoration: "none",
+              fontSize: 13,
+              fontWeight: 600,
+              transition: "transform 0.12s ease, background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease",
+              boxShadow: tutorialsActive ? "0 0 0 1px color-mix(in srgb, var(--daccent) 18%, transparent), 0 10px 24px rgba(13, 148, 136, 0.14)" : "0 0 0 rgba(0,0,0,0)",
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--dtext)"; e.currentTarget.style.background = "var(--sidebar-accent)"; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.background = "color-mix(in srgb, var(--daccent) 12%, var(--surface))";
+              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--daccent) 38%, var(--dborder))";
+              e.currentTarget.style.boxShadow = "0 10px 24px rgba(13, 148, 136, 0.14)";
+            }}
             onMouseLeave={(e) => {
-              const active = pathname.startsWith("/tutorials");
-              e.currentTarget.style.color = active ? "var(--daccent)" : "var(--dmuted)";
-              e.currentTarget.style.background = active ? "var(--sidebar-accent)" : "transparent";
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.background = tutorialsActive
+                ? "color-mix(in srgb, var(--daccent) 12%, var(--surface))"
+                : "color-mix(in srgb, var(--surface) 86%, transparent)";
+              e.currentTarget.style.borderColor = tutorialsActive
+                ? "color-mix(in srgb, var(--daccent) 42%, var(--dborder))"
+                : "color-mix(in srgb, var(--daccent) 14%, var(--dborder))";
+              e.currentTarget.style.boxShadow = tutorialsActive
+                ? "0 0 0 1px color-mix(in srgb, var(--daccent) 18%, transparent), 0 10px 24px rgba(13, 148, 136, 0.14)"
+                : "0 0 0 rgba(0,0,0,0)";
             }}
           >
             <GraduationCap style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+            <span>Tutorials</span>
+            <span
+              className="dt-mono"
+              style={{
+                marginLeft: 2,
+                padding: "1px 6px",
+                borderRadius: 999,
+                border: "1px solid color-mix(in srgb, var(--daccent) 24%, transparent)",
+                background: "color-mix(in srgb, var(--daccent) 10%, transparent)",
+                color: tutorialsActive ? "var(--daccent)" : "var(--dmuted)",
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: "0.04em",
+              }}
+            >
+              {completedTutorialCount}/{tutorialTotal}
+            </span>
           </Link>
-          <ThemeToggle />
+          <Link
+            href="/settings"
+            title="Open settings"
+            aria-label="Open settings"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              minWidth: 0,
+              height: 36,
+              padding: "0 14px",
+              borderRadius: 12,
+              border: settingsActive
+                ? "1px solid color-mix(in srgb, var(--daccent) 32%, var(--dborder))"
+                : "1px solid var(--dborder)",
+              background: settingsActive
+                ? "color-mix(in srgb, var(--daccent) 10%, var(--surface))"
+                : "color-mix(in srgb, var(--surface) 82%, transparent)",
+              color: settingsActive ? "var(--daccent)" : "var(--dmuted)",
+              textDecoration: "none",
+              fontSize: 13,
+              fontWeight: 600,
+              transition: "transform 0.12s ease, background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, color 0.12s ease",
+              boxShadow: settingsActive ? "0 0 0 1px color-mix(in srgb, var(--daccent) 14%, transparent), 0 10px 22px rgba(13, 148, 136, 0.12)" : "0 0 0 rgba(0,0,0,0)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.background = "color-mix(in srgb, var(--daccent) 8%, var(--surface))";
+              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--daccent) 28%, var(--dborder))";
+              e.currentTarget.style.color = settingsActive ? "var(--daccent)" : "var(--dtext)";
+              e.currentTarget.style.boxShadow = "0 10px 22px rgba(0,0,0,.18)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.background = settingsActive
+                ? "color-mix(in srgb, var(--daccent) 10%, var(--surface))"
+                : "color-mix(in srgb, var(--surface) 82%, transparent)";
+              e.currentTarget.style.borderColor = settingsActive
+                ? "color-mix(in srgb, var(--daccent) 32%, var(--dborder))"
+                : "var(--dborder)";
+              e.currentTarget.style.color = settingsActive ? "var(--daccent)" : "var(--dmuted)";
+              e.currentTarget.style.boxShadow = settingsActive
+                ? "0 0 0 1px color-mix(in srgb, var(--daccent) 14%, transparent), 0 10px 22px rgba(13, 148, 136, 0.12)"
+                : "0 0 0 rgba(0,0,0,0)";
+            }}
+          >
+            <Settings style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+            <span>Settings</span>
+          </Link>
         </div>
 
         {/* ── Bottom: Workspace ── */}
@@ -536,19 +675,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             >
               {workspace.name}
             </span>
-            <Link
-              href="/settings"
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: 28, height: 28, borderRadius: 6,
-                color: "var(--dmuted)", transition: "background 0.1s, color 0.1s", flexShrink: 0,
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--sidebar-accent)"; e.currentTarget.style.color = "var(--dtext)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--dmuted)"; }}
-              title="Settings"
-            >
-              <Settings style={{ width: 14, height: 14 }} strokeWidth={1.75} />
-            </Link>
           </div>
         )}
       </aside>
