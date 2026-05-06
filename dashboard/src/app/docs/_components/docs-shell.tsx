@@ -666,21 +666,40 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const headingNodes = collectObservedNodes();
+    if (headingNodes.length === 0) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible[0]?.target instanceof HTMLElement) {
-          setActiveHeading(visible[0].target.id);
+    let frame = 0;
+
+    const syncActiveHeading = () => {
+      const activationOffset = 132;
+      let nextActive = headingNodes[0]?.id || "";
+
+      for (const node of headingNodes) {
+        const top = node.getBoundingClientRect().top;
+        if (top <= activationOffset) {
+          nextActive = node.id;
+        } else {
+          break;
         }
-      },
-      { rootMargin: "-100px 0px -60% 0px", threshold: [0.1, 1] }
-    );
+      }
 
-    headingNodes.forEach((node) => observer.observe(node));
-    return () => observer.disconnect();
+      setActiveHeading((prev) => (prev === nextActive ? prev : nextActive));
+    };
+
+    const scheduleSync = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(syncActiveHeading);
+    };
+
+    scheduleSync();
+    window.addEventListener("scroll", scheduleSync, { passive: true });
+    window.addEventListener("resize", scheduleSync);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", scheduleSync);
+      window.removeEventListener("resize", scheduleSync);
+    };
   }, [pathname, headings]);
 
   useEffect(() => {
