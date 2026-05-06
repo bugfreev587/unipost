@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -292,7 +292,12 @@ export default function AdminPostsPage() {
             }}
           >
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={dailyRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+              <BarChart
+                data={dailyRows}
+                margin={{ top: 8, right: 16, left: 0, bottom: 4 }}
+                barGap={4}
+                barCategoryGap="24%"
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--dborder)" />
                 <XAxis
                   dataKey="date"
@@ -314,23 +319,19 @@ export default function AdminPostsPage() {
                   }}
                   labelStyle={{ color: "var(--dtext)" }}
                 />
-                <Line
-                  type="monotone"
+                <Bar
                   dataKey="published"
-                  stroke="var(--success)"
-                  strokeWidth={2}
-                  dot={false}
+                  fill="var(--success)"
+                  radius={[4, 4, 0, 0]}
                   name="Published"
                 />
-                <Line
-                  type="monotone"
+                <Bar
                   dataKey="failed"
-                  stroke="var(--danger)"
-                  strokeWidth={2}
-                  dot={false}
+                  fill="var(--danger)"
+                  radius={[4, 4, 0, 0]}
                   name="Failed"
                 />
-              </LineChart>
+              </BarChart>
             </ResponsiveContainer>
           </div>
         </>
