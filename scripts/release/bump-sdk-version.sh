@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Bump the version of all three SDKs in /Users/xiaoboyu/unipost-dev/.
+# Bump the version of all SDKs in /Users/xiaoboyu/unipost-dev/.
 # Operates on the working tree only — no git commit/tag/push.
 #
 # Usage:
@@ -24,7 +24,7 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
   exit 64
 fi
 
-for repo in sdk-js sdk-python sdk-go; do
+for repo in sdk-js sdk-python sdk-go sdk-java; do
   if [[ ! -d "$SDKS_ROOT/$repo" ]]; then
     echo "missing repo: $SDKS_ROOT/$repo" >&2
     exit 1
@@ -94,6 +94,43 @@ replace(
     r'^\s*sdkVersion\s*=\s*"[^"]+"$',
     f'\tsdkVersion     = "{version}"',
 )
+
+# --- Java ---
+replace(
+    root / "sdk-java/build.gradle.kts",
+    r'^version = "[^"]+"$',
+    f'version = "{version}"',
+)
+
+replace(
+    root / "sdk-java/README.md",
+    r'<version>[^<]+</version>',
+    f'<version>{version}</version>',
+)
+
+replace(
+    root / "sdk-java/README.md",
+    r'implementation\("dev\.unipost:sdk-java:[^"]+"\)',
+    f'implementation("dev.unipost:sdk-java:{version}")',
+)
+
+replace(
+    root / "sdk-java/src/main/java/dev/unipost/UniPost.java",
+    r'^    public static final String SDK_VERSION = "[^"]+";$',
+    f'    public static final String SDK_VERSION = "{version}";',
+)
+
+replace(
+    root / "sdk-java/src/main/java/dev/unipost/ApiHttpClient.java",
+    r'"unipost-java/[^"]+"',
+    f'"unipost-java/{version}"',
+)
+
+replace(
+    root / "sdk-java/pom.xml",
+    r'<version>[^<]+</version>',
+    f'<version>{version}</version>',
+)
 PY
 
-echo "Updated SDK source versions to ${VERSION} in ${SDKS_ROOT}/{sdk-js,sdk-python,sdk-go}"
+echo "Updated SDK source versions to ${VERSION} in ${SDKS_ROOT}/{sdk-js,sdk-python,sdk-go,sdk-java}"

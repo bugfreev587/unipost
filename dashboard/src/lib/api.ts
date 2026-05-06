@@ -114,6 +114,83 @@ export interface SocialPostValidationResult {
   warnings: SocialPostValidationIssue[];
 }
 
+export type AIPostAssistMode =
+  | "brief"
+  | "improve"
+  | "adapt"
+  | "media"
+  | "fix_validation";
+
+export interface AIPostAssistSuggestion {
+  request_id: string;
+  mode: AIPostAssistMode;
+  summary?: string;
+  main_caption?: string;
+  platform_captions?: Array<{
+    account_id: string;
+    platform: string;
+    caption: string;
+    reason?: string;
+  }>;
+  hashtags?: string[];
+  warnings?: string[];
+  first_comment_suggestions?: Array<{
+    account_id: string;
+    text: string;
+  }>;
+}
+
+export interface AIPostAssistRequest {
+  mode: AIPostAssistMode;
+  profile_id?: string;
+  main_caption?: string;
+  selected_account_ids?: string[];
+  platform_posts?: Array<{
+    account_id: string;
+    caption: string;
+  }>;
+  validation_issues?: SocialPostValidationIssue[];
+  media_context?: Array<{
+    media_id?: string;
+    filename: string;
+    content_type: string;
+    duration_sec?: number | null;
+    width?: number | null;
+    height?: number | null;
+  }>;
+  objective?: "awareness" | "engagement" | "clicks" | "sales";
+  tone?: "professional" | "friendly" | "bold" | "playful";
+  brief?: string;
+  include_cta?: boolean;
+  media_ids?: string[];
+}
+
+export interface PlatformPublishCapability {
+  display_name: string;
+  text: {
+    max_length: number;
+    min_length: number;
+    required: boolean;
+    supports_threads?: boolean;
+  };
+  thread: {
+    supported: boolean;
+    max_items?: number;
+  };
+  scheduling: {
+    supported: boolean;
+  };
+  first_comment: {
+    supported: boolean;
+    max_length?: number;
+  };
+}
+
+export interface PlatformCapabilitiesEnvelope {
+  schema_version: string;
+  platforms: Record<string, PlatformPublishCapability>;
+}
+
 // Client
 
 async function request<T>(
@@ -157,6 +234,19 @@ async function request<T>(
   return res.json();
 }
 
+async function requestPublic<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, options);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = body as ApiError;
+    throw new Error(err.error?.message || `Request failed: ${res.status}`);
+  }
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  return res.json();
+}
+
 // Workspaces
 
 export interface Workspace {
@@ -190,6 +280,10 @@ export async function listProfiles(
   token: string
 ): Promise<ApiResponse<Profile[]>> {
   return request("/v1/profiles", token);
+}
+
+export async function getPlatformCapabilities(): Promise<ApiResponse<PlatformCapabilitiesEnvelope>> {
+  return requestPublic("/v1/platforms/capabilities");
 }
 
 export async function getProfile(
@@ -854,6 +948,16 @@ export async function validateSocialPost(
   data: CreateSocialPostPayload
 ): Promise<ApiResponse<SocialPostValidationResult>> {
   return request(`/v1/posts/validate`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function postAssistAIDraft(
+  token: string,
+  data: AIPostAssistRequest
+): Promise<ApiResponse<AIPostAssistSuggestion>> {
+  return request(`/v1/ai/post-assist`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });

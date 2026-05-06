@@ -7,7 +7,7 @@ SUITE="${1:-}"
 LOG_DIR="${LOG_DIR:-${ROOT_DIR}/artifacts/regression}"
 
 if [[ -z "$SUITE" ]]; then
-  echo "usage: $0 <smoke|sdk-js|sdk-python|sdk-go>" >&2
+  echo "usage: $0 <smoke|sdk-js|sdk-python|sdk-go|sdk-java>" >&2
   exit 64
 fi
 
@@ -67,6 +67,15 @@ case "$SUITE" in
       TEST_PUBLISH_NOW="$TEST_PUBLISH_NOW" \
       LOG_DIR="$LOG_DIR" \
       bash "$ROOT_DIR/scripts/sdk-published-regression/run-suite.sh" sdk-go
+    ;;
+  sdk-java)
+    run_and_log env \
+      UNIPOST_API_KEY="$UNIPOST_API_KEY" \
+      BASE_URL="$BASE_URL" \
+      TEST_ACCOUNT_ID="$TEST_ACCOUNT_ID" \
+      TEST_PUBLISH_NOW="$TEST_PUBLISH_NOW" \
+      LOG_DIR="$LOG_DIR" \
+      bash "$ROOT_DIR/scripts/sdk-published-regression/run-suite.sh" sdk-java
     ;;
   *)
     echo "unknown suite: $SUITE" >&2

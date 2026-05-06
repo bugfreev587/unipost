@@ -10,6 +10,10 @@ export type PublishMode = "now" | "schedule" | "queue" | "draft";
 
 export interface PlatformOverride {
   caption: string;
+  firstComment?: string;
+  inReplyTo?: string;
+  threadPosition?: string;
+  threadReplies?: string[];
   // YouTube-specific
   youtube?: {
     title: string;
@@ -364,6 +368,51 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     }));
   }, []);
 
+  const updateOverrideFirstComment = useCallback((accountId: string, firstComment: string) => {
+    setOverrides((prev) => ({
+      ...prev,
+      [accountId]: { ...prev[accountId], firstComment },
+    }));
+  }, []);
+
+  const updateOverrideThreadFields = useCallback((accountId: string, fields: Partial<Pick<PlatformOverride, "inReplyTo" | "threadPosition">>) => {
+    setOverrides((prev) => ({
+      ...prev,
+      [accountId]: { ...prev[accountId], ...fields },
+    }));
+  }, []);
+
+  const addOverrideThreadReply = useCallback((accountId: string) => {
+    setOverrides((prev) => {
+      const currentReplies = prev[accountId]?.threadReplies || [];
+      return {
+        ...prev,
+        [accountId]: { ...prev[accountId], threadReplies: [...currentReplies, ""] },
+      };
+    });
+  }, []);
+
+  const updateOverrideThreadReply = useCallback((accountId: string, index: number, value: string) => {
+    setOverrides((prev) => {
+      const currentReplies = [...(prev[accountId]?.threadReplies || [])];
+      currentReplies[index] = value;
+      return {
+        ...prev,
+        [accountId]: { ...prev[accountId], threadReplies: currentReplies },
+      };
+    });
+  }, []);
+
+  const removeOverrideThreadReply = useCallback((accountId: string, index: number) => {
+    setOverrides((prev) => {
+      const currentReplies = (prev[accountId]?.threadReplies || []).filter((_, replyIndex) => replyIndex !== index);
+      return {
+        ...prev,
+        [accountId]: { ...prev[accountId], threadReplies: currentReplies },
+      };
+    });
+  }, []);
+
   const updateOverridePlatformField = useCallback(
     <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook" | "pinterest">(
       accountId: string,
@@ -499,7 +548,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   const hasUnsavedContent = useMemo(() => {
     if (mainContent.trim()) return true;
     if (mediaItems.length > 0) return true;
-    return Object.entries(overrides).some(([accountId, o]) => o.caption?.trim() || hasPlatformOnlyContent(accountId));
+    return Object.entries(overrides).some(([accountId, o]) => o.caption?.trim() || o.firstComment?.trim() || o.inReplyTo?.trim() || o.threadPosition?.trim() || o.threadReplies?.some((reply) => reply.trim()) || hasPlatformOnlyContent(accountId));
   }, [mainContent, mediaItems, overrides, hasPlatformOnlyContent]);
 
   const hasOverLimit = useMemo(() => {
@@ -566,7 +615,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     // (link / title / etc.) get dropped and the backend sees an
     // empty request — the user's input is silently lost.
     const hasOverrides = accountIds.some(
-      (id) => overrides[id]?.caption?.trim() || hasPlatformOnlyContent(id)
+      (id) => overrides[id]?.caption?.trim() || overrides[id]?.firstComment?.trim() || overrides[id]?.inReplyTo?.trim() || overrides[id]?.threadPosition?.trim() || overrides[id]?.threadReplies?.some((reply) => reply.trim()) || hasPlatformOnlyContent(id)
     );
 
     const payload: CreateSocialPostPayload = {};
@@ -578,13 +627,21 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     console.log("[buildPayload] latestMediaItems:", latestMediaItems.length, "currentMediaIds:", currentMediaIds);
 
     if (hasOverrides || mediaIds) {
-      payload.platform_posts = accountIds.map((id) => {
+      payload.platform_posts = accountIds.flatMap((id) => {
         const o = overrides[id];
         const account = uniqueSelectedAccounts.find((candidate) => candidate.id === id);
         const entry: NonNullable<CreateSocialPostPayload["platform_posts"]>[number] = {
           account_id: id,
           caption: o?.caption?.trim() || mainContent.trim(),
         };
+        if (o?.firstComment?.trim()) entry.first_comment = o.firstComment.trim();
+        if (o?.inReplyTo?.trim()) entry.in_reply_to = o.inReplyTo.trim();
+        if (o?.threadPosition?.trim()) {
+          const parsedThreadPosition = Number.parseInt(o.threadPosition, 10);
+          if (Number.isFinite(parsedThreadPosition) && parsedThreadPosition > 0) {
+            entry.thread_position = parsedThreadPosition;
+          }
+        }
         if (mediaIds) entry.media_ids = mediaIds;
         if (account?.platform === "youtube") {
           const youtube = { ...DEFAULT_YOUTUBE_FIELDS, ...o?.youtube };
@@ -669,7 +726,21 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
             entry.platform_options = pinOptions;
           }
         }
-        return entry;
+        const threadReplies = (o?.threadReplies || []).map((reply) => reply.trim()).filter(Boolean);
+        if (threadReplies.length === 0) {
+          return [entry];
+        }
+
+        const startPosition = entry.thread_position && entry.thread_position > 0 ? entry.thread_position : 1;
+        entry.thread_position = startPosition;
+        return [
+          entry,
+          ...threadReplies.map((reply, replyIndex) => ({
+            account_id: id,
+            caption: reply,
+            thread_position: startPosition + replyIndex + 1,
+          })),
+        ];
       });
     } else {
       payload.caption = mainContent.trim();
@@ -731,6 +802,11 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     toggleBlockCollapse,
     expandBlock,
     updateOverrideCaption,
+    updateOverrideFirstComment,
+    updateOverrideThreadFields,
+    addOverrideThreadReply,
+    updateOverrideThreadReply,
+    removeOverrideThreadReply,
     updateOverridePlatformField,
     addMediaItem,
     updateMediaItem,

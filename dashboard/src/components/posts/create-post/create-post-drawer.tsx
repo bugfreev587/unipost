@@ -2,13 +2,27 @@
 
 import { useEffect, useCallback, useState, useRef, useMemo, memo } from "react";
 import Link from "next/link";
-import { AlertTriangle, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, Loader2, PanelRightClose, PanelRightOpen, Plus, Sparkles, Wand2 } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ConnectedAccountsGrid, PostToGrid } from "./account-card-grid";
 import { PlatformEditorBlock } from "./platform-editor-block";
 import { EmptyPlatformState } from "./empty-platform-state";
 import { PublishModePanel } from "./publish-mode-panel";
+import {
+  buildAIAssistAccountLabels,
+  buildAIAssistCurrentFirstComments,
+  buildAIAssistCurrentPlatformCaptions,
+  buildAIPostAssistRequest,
+  canGenerateAIAssist,
+  getFirstCommentMaxLength,
+  getPlatformCaptionLimit,
+  supportsFirstComment,
+  supportsScheduling,
+  supportsThreads,
+  type AIAssistObjective,
+  type AIAssistTone,
+} from "./ai-assist";
 import {
   useCreatePostForm,
   PRIMARY_BUTTON_LABELS,
@@ -18,22 +32,29 @@ import {
 import { ChevronDown } from "lucide-react";
 import type { SocialAccount, Profile } from "@/lib/api";
 import {
+  postAssistAIDraft,
   createSocialPost,
   friendlyRateLimitMessage,
   createMedia,
+  type AIPostAssistSuggestion,
+  getPlatformCapabilities,
+  getMe,
   getMedia,
   listProfiles,
   listSocialAccounts,
+  type PlatformCapabilitiesEnvelope,
   validateSocialPost,
   type CreateSocialPostPayload,
   type SocialPostValidationIssue,
   type SocialPostValidationResult,
 } from "@/lib/api";
+import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
 import { cn } from "@/lib/utils";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 
 const MIN_DRAWER_WIDTH = 880;
-const MAX_DRAWER_WIDTH = 1440;
+const MAX_DRAWER_WIDTH = 1680;
+const AI_DRAWER_WIDTH = 1480;
 
 function clampDrawerWidth(width: number) {
   if (typeof window === "undefined") return width;
@@ -373,6 +394,925 @@ function MediaPreviewDialog({
   );
 }
 
+type AIAssistMode = "brief" | "improve" | "adapt" | "media" | "fix_validation";
+
+function AIAssistPanel({
+  mode,
+  onModeChange,
+  onGenerate,
+  brief,
+  onBriefChange,
+  objective,
+  onObjectiveChange,
+  tone,
+  onToneChange,
+  includeCTA,
+  onIncludeCTAChange,
+  onApplyMainCaption,
+  onApplyPlatformCaption,
+  onApplyAllPlatformCaptions,
+  onApplyFirstCommentSuggestion,
+  onApplyAllFirstCommentSuggestions,
+  selectedPlatformsCount,
+  mediaCount,
+  hasMainContent,
+  loading,
+  error,
+  suggestion,
+  accountLabels,
+  accountPlatforms,
+  platformCapabilities,
+  currentMainCaption,
+  currentPlatformCaptions,
+  currentFirstComments,
+}: {
+  mode: AIAssistMode | null;
+  onModeChange: (mode: AIAssistMode) => void;
+  onGenerate: () => void;
+  brief: string;
+  onBriefChange: (value: string) => void;
+  objective: "awareness" | "engagement" | "clicks" | "sales";
+  onObjectiveChange: (value: "awareness" | "engagement" | "clicks" | "sales") => void;
+  tone: "professional" | "friendly" | "bold" | "playful";
+  onToneChange: (value: "professional" | "friendly" | "bold" | "playful") => void;
+  includeCTA: boolean;
+  onIncludeCTAChange: (value: boolean) => void;
+  onApplyMainCaption: () => void;
+  onApplyPlatformCaption: (accountId: string, caption: string) => void;
+  onApplyAllPlatformCaptions: () => void;
+  onApplyFirstCommentSuggestion: (accountId: string, text: string) => void;
+  onApplyAllFirstCommentSuggestions: () => void;
+  selectedPlatformsCount: number;
+  mediaCount: number;
+  hasMainContent: boolean;
+  loading: boolean;
+  error: string | null;
+  suggestion: AIPostAssistSuggestion | null;
+  accountLabels: Record<string, string>;
+  accountPlatforms: Record<string, string>;
+  platformCapabilities: PlatformCapabilitiesEnvelope["platforms"] | null;
+  currentMainCaption: string;
+  currentPlatformCaptions: Record<string, string>;
+  currentFirstComments: Record<string, string>;
+}) {
+  const actions: Array<{
+    id: AIAssistMode;
+    title: string;
+    description: string;
+    disabled?: boolean;
+  }> = [
+    {
+      id: "brief",
+      title: "Generate from brief",
+      description: "Start from a product brief, campaign angle, or promotion goal.",
+    },
+    {
+      id: "improve",
+      title: "Improve current draft",
+      description: "Tighten wording, strengthen CTA, and make the copy clearer.",
+      disabled: !hasMainContent,
+    },
+    {
+      id: "adapt",
+      title: "Adapt per platform",
+      description: "Turn one draft into platform-specific variants for selected accounts.",
+      disabled: !hasMainContent || selectedPlatformsCount === 0,
+    },
+    {
+      id: "media",
+      title: "Write from media",
+      description: "Use uploaded images or video as context for hooks, captions, and CTA ideas.",
+      disabled: mediaCount === 0,
+    },
+    {
+      id: "fix_validation",
+      title: "Fix validation issues",
+      description: "Repair caption-style issues before you run publish again.",
+    },
+  ];
+
+  return (
+    <aside
+      className="flex min-w-0 flex-[1.05] flex-col border-l"
+      style={{ borderLeftColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 40%, var(--surface-raised))" }}
+    >
+      <div className="border-b px-6 py-5" style={{ borderBottomColor: "var(--dborder)" }}>
+        <div className="mb-2 flex items-center gap-2">
+          <div
+            className="flex h-8 w-8 items-center justify-center rounded-lg"
+            style={{ background: "color-mix(in srgb, var(--primary) 16%, transparent)", color: "var(--primary)" }}
+          >
+            <Sparkles className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-[15px] font-semibold" style={{ color: "var(--dtext)" }}>AI Assist</div>
+            <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+              In development
+            </div>
+          </div>
+        </div>
+        <p className="text-[13px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+          Generate, refine, and compare post suggestions without leaving the compose flow.
+        </p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-6 py-5">
+        <section className="mb-5">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+            Quick actions
+          </div>
+          <div className="space-y-2.5">
+            {actions.map((action) => {
+              const active = mode === action.id;
+              return (
+                <button
+                  key={action.id}
+                  type="button"
+                  disabled={action.disabled}
+                  onClick={() => onModeChange(action.id)}
+                  className="w-full rounded-xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{
+                    borderColor: active ? "color-mix(in srgb, var(--primary) 55%, transparent)" : "var(--dborder)",
+                    background: active ? "color-mix(in srgb, var(--primary) 10%, var(--surface-raised))" : "var(--surface-raised)",
+                  }}
+                >
+                  <div className="mb-1 flex items-center gap-2">
+                    <Wand2 className="h-3.5 w-3.5" style={{ color: active ? "var(--primary)" : "var(--dmuted2)" }} />
+                    <span className="text-[13.5px] font-medium" style={{ color: "var(--dtext)" }}>{action.title}</span>
+                  </div>
+                  <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                    {action.description}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="mb-5 rounded-xl border px-4 py-4" style={{ borderColor: "var(--dborder)", background: "var(--surface-raised)" }}>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+            Current context
+          </div>
+          <div className="space-y-2 text-[12.5px]" style={{ color: "var(--dmuted)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <span>Selected platforms</span>
+              <span className="font-mono text-[11px]" style={{ color: "var(--dtext)" }}>{selectedPlatformsCount}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span>Uploaded media</span>
+              <span className="font-mono text-[11px]" style={{ color: "var(--dtext)" }}>{mediaCount}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span>Main caption</span>
+              <span className="font-mono text-[11px]" style={{ color: "var(--dtext)" }}>
+                {hasMainContent ? "ready" : "empty"}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-xl border px-4 py-4" style={{ borderColor: "var(--dborder)", background: "var(--surface-raised)" }}>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+            Preview
+          </div>
+          <div className="mb-3 text-[13px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+            {mode === "brief" && "AI will turn a campaign brief into a first-pass caption and platform-specific variants."}
+            {mode === "improve" && "AI will refine your current draft for clarity, energy, and conversion intent."}
+            {mode === "adapt" && "AI will create separate versions for each selected destination account."}
+            {mode === "media" && "AI will use your uploaded media as context for hooks, captions, and CTA ideas."}
+            {mode === "fix_validation" && "AI will target text-related problems while leaving compliance-sensitive settings alone."}
+            {!mode && "Choose a mode to see generated suggestions, apply controls, and side-by-side comparisons here."}
+          </div>
+          {mode === "brief" ? (
+            <div className="space-y-3">
+              <div className="space-y-3 rounded-lg border px-3.5 py-3.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 42%, transparent)" }}>
+                <div>
+                  <label className="mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                    Campaign brief
+                  </label>
+                  <textarea
+                    value={brief}
+                    onChange={(event) => onBriefChange(event.target.value)}
+                    rows={5}
+                    placeholder="Describe the launch, offer, audience, and the angle you want to emphasize."
+                    className="w-full rounded-lg border px-3 py-2.5 text-[13px] leading-relaxed outline-none transition-colors"
+                    style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                      Objective
+                    </label>
+                    <select
+                      value={objective}
+                      onChange={(event) => onObjectiveChange(event.target.value as "awareness" | "engagement" | "clicks" | "sales")}
+                      className="w-full rounded-lg border px-3 py-2.5 text-[13px] outline-none transition-colors"
+                      style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}
+                    >
+                      <option value="awareness">Awareness</option>
+                      <option value="engagement">Engagement</option>
+                      <option value="clicks">Clicks</option>
+                      <option value="sales">Sales</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                      Tone
+                    </label>
+                    <select
+                      value={tone}
+                      onChange={(event) => onToneChange(event.target.value as "professional" | "friendly" | "bold" | "playful")}
+                      className="w-full rounded-lg border px-3 py-2.5 text-[13px] outline-none transition-colors"
+                      style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}
+                    >
+                      <option value="professional">Professional</option>
+                      <option value="friendly">Friendly</option>
+                      <option value="bold">Bold</option>
+                      <option value="playful">Playful</option>
+                    </select>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-[12.5px]" style={{ color: "var(--dmuted)" }}>
+                  <input
+                    type="checkbox"
+                    checked={includeCTA}
+                    onChange={(event) => onIncludeCTAChange(event.target.checked)}
+                  />
+                  Include a stronger CTA in the first draft
+                </label>
+              </div>
+              <button
+                type="button"
+                onClick={onGenerate}
+                disabled={!brief.trim() || loading}
+                className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+              >
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {loading ? "Generating..." : "Generate from brief"}
+              </button>
+              {error ? (
+                <div className="rounded-lg border px-3 py-3 text-[12.5px] leading-relaxed" style={{ borderColor: "color-mix(in srgb, var(--danger) 55%, transparent)", color: "var(--danger)" }}>
+                  {error}
+                </div>
+              ) : null}
+              {suggestion?.main_caption || (suggestion?.platform_captions && suggestion.platform_captions.length > 0) ? (
+                <div className="space-y-3">
+                  {suggestion.summary ? (
+                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                      {suggestion.summary}
+                    </div>
+                  ) : null}
+                  {suggestion.main_caption ? (
+                    <div className="rounded-lg border px-4 py-4" style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}>
+                      <div className="mb-2 text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
+                        Main caption from brief
+                      </div>
+                      <div className="mb-3 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          Current
+                        </div>
+                        <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                          {currentMainCaption || "(empty)"}
+                        </div>
+                      </div>
+                      <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+                        {suggestion.main_caption}
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={onApplyMainCaption}
+                          className="rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors"
+                          style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        >
+                          Apply to main caption
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {suggestion.platform_captions && suggestion.platform_captions.length > 1 ? (
+                    <div className="flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={onApplyAllPlatformCaptions}
+                        className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                        style={{ background: "var(--surface1)", color: "var(--dtext)", border: "1px solid var(--dborder)" }}
+                      >
+                        Apply all platform variants
+                      </button>
+                    </div>
+                  ) : null}
+                  {suggestion.platform_captions?.map((item) => (
+                    <div
+                      key={`${item.account_id}-${item.platform}-brief`}
+                      className="rounded-lg border px-4 py-4"
+                      style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
+                            {accountLabels[item.account_id] || item.platform}
+                          </div>
+                          <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            {item.platform}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onApplyPlatformCaption(item.account_id, item.caption)}
+                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                          style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                      <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+                        <div className="mb-2 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+                          <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            Current
+                          </div>
+                          <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                            {currentPlatformCaptions[item.account_id] || currentMainCaption || "(empty)"}
+                          </div>
+                        </div>
+                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          Suggested
+                        </div>
+                        {item.caption}
+                      </div>
+                      {item.reason ? (
+                        <div className="mt-2 text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                          {item.reason}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {suggestion.warnings && suggestion.warnings.length > 0 ? (
+                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                      {suggestion.warnings[0]}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div
+                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                >
+                  Add a short campaign brief to generate a first-pass caption and optional per-platform variants for the selected accounts.
+                </div>
+              )}
+            </div>
+          ) : mode === "improve" ? (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={onGenerate}
+                disabled={!hasMainContent || loading}
+                className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+              >
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {loading ? "Generating..." : "Generate suggestion"}
+              </button>
+              {error ? (
+                <div className="rounded-lg border px-3 py-3 text-[12.5px] leading-relaxed" style={{ borderColor: "color-mix(in srgb, var(--danger) 55%, transparent)", color: "var(--danger)" }}>
+                  {error}
+                </div>
+              ) : null}
+              {suggestion?.main_caption ? (
+                <div className="rounded-lg border px-4 py-4" style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}>
+                  {suggestion.summary ? (
+                    <div className="mb-2 text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                      {suggestion.summary}
+                    </div>
+                  ) : null}
+                  <div className="mb-3 grid gap-2">
+                    <div className="rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+                      <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                        Current
+                      </div>
+                      <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                        {currentMainCaption || "(empty)"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+                    {suggestion.main_caption}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={onApplyMainCaption}
+                      className="rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors"
+                      style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                    >
+                      Apply to main caption
+                    </button>
+                  </div>
+                  <div className="mt-3">
+                    <AIFirstCommentSuggestions
+                      suggestion={suggestion}
+                      accountLabels={accountLabels}
+                      accountPlatforms={accountPlatforms}
+                      platformCapabilities={platformCapabilities}
+                      currentFirstComments={currentFirstComments}
+                      onApplyFirstCommentSuggestion={onApplyFirstCommentSuggestion}
+                      onApplyAllFirstCommentSuggestions={onApplyAllFirstCommentSuggestions}
+                    />
+                  </div>
+                  {suggestion.warnings && suggestion.warnings.length > 0 ? (
+                    <div className="mt-3 text-[12px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                      {suggestion.warnings[0]}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div
+                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                >
+                  Generate a suggestion to preview an improved version of the main caption and apply it back into the compose flow.
+                </div>
+              )}
+            </div>
+          ) : mode === "adapt" ? (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={onGenerate}
+                disabled={!hasMainContent || selectedPlatformsCount === 0 || loading}
+                className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+              >
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {loading ? "Generating..." : "Generate platform variants"}
+              </button>
+              {error ? (
+                <div className="rounded-lg border px-3 py-3 text-[12.5px] leading-relaxed" style={{ borderColor: "color-mix(in srgb, var(--danger) 55%, transparent)", color: "var(--danger)" }}>
+                  {error}
+                </div>
+              ) : null}
+              {suggestion?.platform_captions && suggestion.platform_captions.length > 0 ? (
+                <div className="space-y-3">
+                  {suggestion.summary ? (
+                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                      {suggestion.summary}
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={onApplyAllPlatformCaptions}
+                      className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                      style={{ background: "var(--surface1)", color: "var(--dtext)", border: "1px solid var(--dborder)" }}
+                    >
+                      Apply all
+                    </button>
+                  </div>
+                  {suggestion.platform_captions.map((item) => (
+                    <div
+                      key={`${item.account_id}-${item.platform}`}
+                      className="rounded-lg border px-4 py-4"
+                      style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
+                            {accountLabels[item.account_id] || item.platform}
+                          </div>
+                          <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            {item.platform}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onApplyPlatformCaption(item.account_id, item.caption)}
+                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                          style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                      <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+                        <div className="mb-2 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+                          <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            Current
+                          </div>
+                          <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                            {currentPlatformCaptions[item.account_id] || currentMainCaption || "(empty)"}
+                          </div>
+                        </div>
+                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          Suggested
+                        </div>
+                        {item.caption}
+                      </div>
+                      {item.reason ? (
+                        <div className="mt-2 text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                          {item.reason}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {suggestion.warnings && suggestion.warnings.length > 0 ? (
+                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                      {suggestion.warnings[0]}
+                    </div>
+                  ) : null}
+                  <AIFirstCommentSuggestions
+                    suggestion={suggestion}
+                    accountLabels={accountLabels}
+                    accountPlatforms={accountPlatforms}
+                    platformCapabilities={platformCapabilities}
+                    currentFirstComments={currentFirstComments}
+                    onApplyFirstCommentSuggestion={onApplyFirstCommentSuggestion}
+                    onApplyAllFirstCommentSuggestions={onApplyAllFirstCommentSuggestions}
+                  />
+                </div>
+              ) : (
+                <div
+                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                >
+                  Generate per-platform variants to preview account-specific captions and apply them into the platform override editors.
+                </div>
+              )}
+            </div>
+          ) : mode === "media" ? (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={onGenerate}
+                disabled={mediaCount === 0 || loading}
+                className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+              >
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {loading ? "Generating..." : "Generate from media"}
+              </button>
+              {error ? (
+                <div className="rounded-lg border px-3 py-3 text-[12.5px] leading-relaxed" style={{ borderColor: "color-mix(in srgb, var(--danger) 55%, transparent)", color: "var(--danger)" }}>
+                  {error}
+                </div>
+              ) : null}
+              {suggestion?.main_caption || (suggestion?.platform_captions && suggestion.platform_captions.length > 0) ? (
+                <div className="space-y-3">
+                  {suggestion.summary ? (
+                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                      {suggestion.summary}
+                    </div>
+                  ) : null}
+                  {suggestion.main_caption ? (
+                    <div className="rounded-lg border px-4 py-4" style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}>
+                      <div className="mb-2 text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
+                        Main caption from media
+                      </div>
+                      <div className="mb-3 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          Current
+                        </div>
+                        <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                          {currentMainCaption || "(empty)"}
+                        </div>
+                      </div>
+                      <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+                        {suggestion.main_caption}
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={onApplyMainCaption}
+                          className="rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors"
+                          style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        >
+                          Apply to main caption
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {suggestion.platform_captions && suggestion.platform_captions.length > 1 ? (
+                    <div className="flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={onApplyAllPlatformCaptions}
+                        className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                        style={{ background: "var(--surface1)", color: "var(--dtext)", border: "1px solid var(--dborder)" }}
+                      >
+                        Apply all platform variants
+                      </button>
+                    </div>
+                  ) : null}
+                  {suggestion.platform_captions?.map((item) => (
+                    <div
+                      key={`${item.account_id}-${item.platform}-media`}
+                      className="rounded-lg border px-4 py-4"
+                      style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
+                            {accountLabels[item.account_id] || item.platform}
+                          </div>
+                          <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            {item.platform}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onApplyPlatformCaption(item.account_id, item.caption)}
+                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                          style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                      <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+                        <div className="mb-2 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+                          <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            Current
+                          </div>
+                          <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                            {currentPlatformCaptions[item.account_id] || currentMainCaption || "(empty)"}
+                          </div>
+                        </div>
+                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          Suggested
+                        </div>
+                        {item.caption}
+                      </div>
+                      {item.reason ? (
+                        <div className="mt-2 text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                          {item.reason}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {suggestion.warnings && suggestion.warnings.length > 0 ? (
+                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                      {suggestion.warnings[0]}
+                    </div>
+                  ) : null}
+                  <AIFirstCommentSuggestions
+                    suggestion={suggestion}
+                    accountLabels={accountLabels}
+                    accountPlatforms={accountPlatforms}
+                    platformCapabilities={platformCapabilities}
+                    currentFirstComments={currentFirstComments}
+                    onApplyFirstCommentSuggestion={onApplyFirstCommentSuggestion}
+                    onApplyAllFirstCommentSuggestions={onApplyAllFirstCommentSuggestions}
+                  />
+                </div>
+              ) : (
+                <div
+                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                >
+                  Generate a caption from your uploaded images or video, then apply the main draft or per-platform variants back into the compose flow.
+                </div>
+              )}
+            </div>
+          ) : mode === "fix_validation" ? (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={onGenerate}
+                disabled={loading}
+                className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+              >
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {loading ? "Generating..." : "Suggest fixes"}
+              </button>
+              {error ? (
+                <div className="rounded-lg border px-3 py-3 text-[12.5px] leading-relaxed" style={{ borderColor: "color-mix(in srgb, var(--danger) 55%, transparent)", color: "var(--danger)" }}>
+                  {error}
+                </div>
+              ) : null}
+              {suggestion?.main_caption || (suggestion?.platform_captions && suggestion.platform_captions.length > 0) ? (
+                <div className="space-y-3">
+                  {suggestion.summary ? (
+                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                      {suggestion.summary}
+                    </div>
+                  ) : null}
+                  {suggestion.main_caption ? (
+                    <div className="rounded-lg border px-4 py-4" style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}>
+                      <div className="mb-2 text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
+                        Main caption fix
+                      </div>
+                      <div className="mb-3 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          Current
+                        </div>
+                        <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                          {currentMainCaption || "(empty)"}
+                        </div>
+                      </div>
+                      <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+                        {suggestion.main_caption}
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={onApplyMainCaption}
+                          className="rounded-lg px-3.5 py-2 text-[12.5px] font-medium transition-colors"
+                          style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        >
+                          Apply to main caption
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {suggestion.platform_captions && suggestion.platform_captions.length > 1 ? (
+                    <div className="flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={onApplyAllPlatformCaptions}
+                        className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                        style={{ background: "var(--surface1)", color: "var(--dtext)", border: "1px solid var(--dborder)" }}
+                      >
+                        Apply all platform fixes
+                      </button>
+                    </div>
+                  ) : null}
+                  {suggestion.platform_captions?.map((item) => (
+                    <div
+                      key={`${item.account_id}-${item.platform}-fix`}
+                      className="rounded-lg border px-4 py-4"
+                      style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
+                            {accountLabels[item.account_id] || item.platform}
+                          </div>
+                          <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            {item.platform}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onApplyPlatformCaption(item.account_id, item.caption)}
+                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                          style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                      <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+                        <div className="mb-2 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+                          <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            Current
+                          </div>
+                          <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                            {currentPlatformCaptions[item.account_id] || currentMainCaption || "(empty)"}
+                          </div>
+                        </div>
+                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          Suggested
+                        </div>
+                        {item.caption}
+                      </div>
+                      {item.reason ? (
+                        <div className="mt-2 text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                          {item.reason}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {suggestion.warnings && suggestion.warnings.length > 0 ? (
+                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                      {suggestion.warnings[0]}
+                    </div>
+                  ) : null}
+                  <AIFirstCommentSuggestions
+                    suggestion={suggestion}
+                    accountLabels={accountLabels}
+                    accountPlatforms={accountPlatforms}
+                    platformCapabilities={platformCapabilities}
+                    currentFirstComments={currentFirstComments}
+                    onApplyFirstCommentSuggestion={onApplyFirstCommentSuggestion}
+                    onApplyAllFirstCommentSuggestions={onApplyAllFirstCommentSuggestions}
+                  />
+                </div>
+              ) : (
+                <div
+                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                >
+                  Suggest targeted text fixes for the current validation issues and apply them back into the compose flow.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div
+              className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+              style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+            >
+              Suggestion results, per-platform apply actions, and compare views will appear here as each AI mode is implemented.
+            </div>
+          )}
+        </section>
+      </div>
+    </aside>
+  );
+}
+
+function AIFirstCommentSuggestions({
+  suggestion,
+  accountLabels,
+  accountPlatforms,
+  platformCapabilities,
+  currentFirstComments,
+  onApplyFirstCommentSuggestion,
+  onApplyAllFirstCommentSuggestions,
+}: {
+  suggestion: AIPostAssistSuggestion;
+  accountLabels: Record<string, string>;
+  accountPlatforms: Record<string, string>;
+  platformCapabilities: PlatformCapabilitiesEnvelope["platforms"] | null;
+  currentFirstComments: Record<string, string>;
+  onApplyFirstCommentSuggestion: (accountId: string, text: string) => void;
+  onApplyAllFirstCommentSuggestions: () => void;
+}) {
+  const supportedSuggestions = (suggestion.first_comment_suggestions || []).filter((item) =>
+    supportsFirstComment(accountPlatforms[item.account_id] || "", platformCapabilities)
+  );
+  const unsupportedSuggestions = (suggestion.first_comment_suggestions || []).filter((item) =>
+    !supportsFirstComment(accountPlatforms[item.account_id] || "", platformCapabilities)
+  );
+  if (supportedSuggestions.length === 0 && unsupportedSuggestions.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[12px] font-medium" style={{ color: "var(--dtext)" }}>
+          First comment suggestions
+        </div>
+        {supportedSuggestions.length > 1 ? (
+          <button
+            type="button"
+            onClick={onApplyAllFirstCommentSuggestions}
+            className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+            style={{ background: "var(--surface1)", color: "var(--dtext)", border: "1px solid var(--dborder)" }}
+          >
+            Apply all
+          </button>
+        ) : null}
+      </div>
+      {supportedSuggestions.map((item) => (
+        <div
+          key={`${item.account_id}-first-comment`}
+          className="rounded-lg border px-4 py-4"
+          style={{ borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)", background: "color-mix(in srgb, var(--primary) 8%, var(--surface-raised))" }}
+        >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
+              {accountLabels[item.account_id] || item.account_id}
+            </div>
+            <button
+              type="button"
+              onClick={() => onApplyFirstCommentSuggestion(item.account_id, item.text)}
+              className="rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+              style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+            >
+              Apply
+            </button>
+          </div>
+          <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
+            <div className="mb-2 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
+              <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                Current
+              </div>
+              <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                {currentFirstComments[item.account_id] || "(empty)"}
+              </div>
+            </div>
+            <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+              Suggested
+            </div>
+            {item.text}
+          </div>
+        </div>
+      ))}
+      {unsupportedSuggestions.length > 0 ? (
+        <div
+          className="rounded-lg border px-3 py-3 text-[12.5px] leading-relaxed"
+          style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 55%, transparent)", color: "var(--dmuted)" }}
+        >
+          {unsupportedSuggestions.map((item) => (
+            <div key={`${item.account_id}-unsupported`}>
+              {accountLabels[item.account_id] || item.account_id} does not support first comments, so this suggestion was not made editable.
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const ISSUE_COPY: Record<string, string> = {
   exceeds_max_length: "Shorten the caption for this destination.",
   below_min_length: "Add more content before publishing.",
@@ -492,6 +1432,39 @@ function ValidationPanel({
   );
 }
 
+function CapabilitySummary({
+  selectedAccounts,
+  platformCapabilities,
+}: {
+  selectedAccounts: SocialAccount[];
+  platformCapabilities: PlatformCapabilitiesEnvelope["platforms"] | null;
+}) {
+  if (selectedAccounts.length === 0) return null;
+
+  const firstCommentCount = selectedAccounts.filter((account) =>
+    supportsFirstComment(account.platform, platformCapabilities)
+  ).length;
+  const threadCount = selectedAccounts.filter((account) =>
+    supportsThreads(account.platform, platformCapabilities)
+  ).length;
+  const schedulingCount = selectedAccounts.filter((account) =>
+    supportsScheduling(account.platform, platformCapabilities)
+  ).length;
+
+  return (
+    <section className="mb-5 rounded-xl border px-4 py-3.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 45%, transparent)" }}>
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+        Capability summary
+      </div>
+      <div className="space-y-1.5 text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+        <div>{firstCommentCount} of {selectedAccounts.length} selected accounts support first comments.</div>
+        <div>{threadCount} of {selectedAccounts.length} selected accounts support native threads.</div>
+        <div>{schedulingCount} of {selectedAccounts.length} selected accounts support scheduled publishing.</div>
+      </div>
+    </section>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────
 
 interface CreatePostDrawerProps {
@@ -538,6 +1511,17 @@ export function CreatePostDrawer({
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
   const [submitError, setSubmitError] = useState<{ message: string; mailto: string; contactHref: string } | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<{ message: string; tiktokURL?: string } | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
+  const [aiMode, setAIMode] = useState<AIAssistMode | null>(null);
+  const [aiSuggestion, setAISuggestion] = useState<AIPostAssistSuggestion | null>(null);
+  const [aiLoading, setAILoading] = useState(false);
+  const [aiError, setAIError] = useState<string | null>(null);
+  const [aiBrief, setAIBrief] = useState("");
+  const [aiObjective, setAIObjective] = useState<AIAssistObjective>("engagement");
+  const [aiTone, setAITone] = useState<AIAssistTone>("friendly");
+  const [aiIncludeCTA, setAIIncludeCTA] = useState(true);
+  const [platformCapabilities, setPlatformCapabilities] = useState<PlatformCapabilitiesEnvelope["platforms"] | null>(null);
   // Per-account runtime blockers reported by platform-specific panels
   // (e.g., TikTok creator_info failed, video too long for the creator).
   // These aren't derivable from form state, so we collect them here and
@@ -647,11 +1631,48 @@ export function CreatePostDrawer({
       setWarningsAcknowledged(false);
       setSubmitError(null);
       setSubmitSuccess(null);
+      setIsAIPanelOpen(false);
+      setAIMode(null);
+      setAISuggestion(null);
+      setAILoading(false);
+      setAIError(null);
       setTiktokBlockers({});
       setTiktokMaxByAccount({});
       pendingCloseRef.current = false;
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await getMe(token);
+        if (!cancelled) setIsSuperAdmin(!!res.data.is_super_admin);
+      } catch {
+        if (!cancelled) setIsSuperAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, getToken]);
+
+  const aiAssistEnabled = isFeatureInDevEnabledForMe("ai_assist_create_post_drawer", isSuperAdmin);
+
+  useEffect(() => {
+    if (!aiAssistEnabled && isAIPanelOpen) {
+      setIsAIPanelOpen(false);
+      setAIMode(null);
+    }
+  }, [aiAssistEnabled, isAIPanelOpen]);
+
+  useEffect(() => {
+    if (!open || !aiAssistEnabled || !isAIPanelOpen) return;
+    setDrawerWidth((current) => clampDrawerWidth(Math.max(current, AI_DRAWER_WIDTH)));
+  }, [open, aiAssistEnabled, isAIPanelOpen]);
 
   // Stable per-account blocker setter. We merge into a dict so each
   // TikTok field component only reports its own account's state, and
@@ -706,6 +1727,27 @@ export function CreatePostDrawer({
     form.scheduledAt,
     form.queueId,
   ]);
+
+  useEffect(() => {
+    setAISuggestion(null);
+    setAIError(null);
+  }, [aiMode, form.mainContent, form.selectedAccountIds, form.mediaItems, aiBrief, aiObjective, aiTone, aiIncludeCTA]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!open) return;
+    (async () => {
+      try {
+        const res = await getPlatformCapabilities();
+        if (!cancelled) setPlatformCapabilities(res.data.platforms);
+      } catch {
+        if (!cancelled) setPlatformCapabilities(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const attemptClose = useCallback(() => {
     if (form.hasUnsavedContent) {
@@ -1182,6 +2224,112 @@ export function CreatePostDrawer({
     oversizeVideos.length,
   ]);
 
+  const handleGenerateAISuggestion = useCallback(async () => {
+    if (!aiAssistEnabled) return;
+    if (!canGenerateAIAssist({
+      mode: aiMode,
+      mainContent: form.mainContent,
+      brief: aiBrief,
+      mediaCount: form.mediaItems.length,
+    })) return;
+    if (!aiMode) return;
+    setAILoading(true);
+    setAIError(null);
+    try {
+      const token = await getToken();
+      if (!token) {
+        setAIError("You need to be signed in to use AI assist.");
+        return;
+      }
+      const res = await postAssistAIDraft(token, buildAIPostAssistRequest({
+        mode: aiMode,
+        selectedProfileId,
+        mainContent: form.mainContent,
+        selectedAccounts: form.uniqueSelectedAccounts,
+        overrides: form.overrides,
+        mediaItems: form.mediaItems,
+        validationResult,
+        brief: aiBrief,
+        objective: aiObjective,
+        tone: aiTone,
+        includeCTA: aiIncludeCTA,
+      }));
+      setAISuggestion(res.data);
+    } catch (err) {
+      setAIError(err instanceof Error ? err.message : "Failed to generate AI suggestion");
+    } finally {
+      setAILoading(false);
+    }
+  }, [aiAssistEnabled, aiMode, aiBrief, aiObjective, aiTone, aiIncludeCTA, form.mainContent, form.mediaItems, form.selectedAccountIds, form.uniqueSelectedAccounts, form.overrides, getToken, selectedProfileId, validationResult]);
+
+  const handleApplyAISuggestion = useCallback(() => {
+    if (!aiSuggestion?.main_caption) return;
+    form.setMainContent(aiSuggestion.main_caption);
+  }, [aiSuggestion, form]);
+
+  const handleApplyPlatformAISuggestion = useCallback((accountId: string, caption: string) => {
+    form.updateOverrideCaption(accountId, caption);
+    form.expandBlock(accountId);
+  }, [form]);
+
+  const handleApplyAIFirstCommentSuggestion = useCallback((accountId: string, text: string) => {
+    form.updateOverrideFirstComment(accountId, text);
+    form.expandBlock(accountId);
+  }, [form]);
+
+  const handleApplyAllPlatformAISuggestions = useCallback(() => {
+    if (!aiSuggestion?.platform_captions?.length) return;
+    for (const item of aiSuggestion.platform_captions) {
+      form.updateOverrideCaption(item.account_id, item.caption);
+      form.expandBlock(item.account_id);
+    }
+  }, [aiSuggestion, form]);
+
+  const handleApplyAllAIFirstCommentSuggestions = useCallback(() => {
+    if (!aiSuggestion?.first_comment_suggestions?.length) return;
+    for (const item of aiSuggestion.first_comment_suggestions) {
+      const account = form.uniqueSelectedAccounts.find((candidate) => candidate.id === item.account_id);
+      if (!account || !supportsFirstComment(account.platform, platformCapabilities)) continue;
+      form.updateOverrideFirstComment(item.account_id, item.text);
+      form.expandBlock(item.account_id);
+    }
+  }, [aiSuggestion, form, platformCapabilities]);
+
+  const aiAccountLabels = useMemo(() => {
+    return buildAIAssistAccountLabels(form.uniqueSelectedAccounts);
+  }, [form.uniqueSelectedAccounts]);
+
+  const aiAccountPlatforms = useMemo(() => {
+    const platforms: Record<string, string> = {};
+    for (const account of form.uniqueSelectedAccounts) {
+      platforms[account.id] = account.platform;
+    }
+    return platforms;
+  }, [form.uniqueSelectedAccounts]);
+
+  const aiFirstCommentSupport = useMemo(() => {
+    const support: Record<string, boolean> = {};
+    for (const account of form.uniqueSelectedAccounts) {
+      support[account.id] = supportsFirstComment(account.platform, platformCapabilities);
+    }
+    return support;
+  }, [form.uniqueSelectedAccounts, platformCapabilities]);
+
+  const aiCurrentPlatformCaptions = useMemo(() => {
+    return buildAIAssistCurrentPlatformCaptions({
+      accounts: form.uniqueSelectedAccounts,
+      overrides: form.overrides,
+      mainContent: form.mainContent,
+    });
+  }, [form.uniqueSelectedAccounts, form.overrides, form.mainContent]);
+
+  const aiCurrentFirstComments = useMemo(() => {
+    return buildAIAssistCurrentFirstComments({
+      accounts: form.uniqueSelectedAccounts,
+      overrides: form.overrides,
+    });
+  }, [form.uniqueSelectedAccounts, form.overrides]);
+
   return (
     <Sheet open={open} onOpenChange={handleOpenChange} modal>
       <SheetContent
@@ -1209,22 +2357,46 @@ export function CreatePostDrawer({
               Compose once, publish to any platform you&apos;ve connected.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={attemptClose}
-            className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-            style={{ color: "var(--dmuted)" }}
-          >
-            <svg width="16" height="16" viewBox="0 0 15 15" fill="none">
-              <path d="M11.25 3.75l-7.5 7.5M3.75 3.75l7.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-2.5">
+            {aiAssistEnabled ? (
+              <button
+                type="button"
+                onClick={() => setIsAIPanelOpen((openNow) => !openNow)}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] font-medium transition-colors"
+                style={{
+                  color: isAIPanelOpen ? "var(--primary)" : "var(--dtext)",
+                  borderColor: isAIPanelOpen ? "color-mix(in srgb, var(--primary) 50%, transparent)" : "var(--dborder)",
+                  background: isAIPanelOpen ? "color-mix(in srgb, var(--primary) 10%, var(--surface-raised))" : "var(--surface1)",
+                }}
+              >
+                {isAIPanelOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
+                <Sparkles className="h-3.5 w-3.5" />
+                AI Assist
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={attemptClose}
+              className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+              style={{ color: "var(--dmuted)" }}
+            >
+              <svg width="16" height="16" viewBox="0 0 15 15" fill="none">
+                <path d="M11.25 3.75l-7.5 7.5M3.75 3.75l7.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
         </header>
 
-        {/* Body: two columns */}
+        {/* Body: default two columns, expands to three when AI assist is active */}
         <div className="flex-1 flex min-h-0">
-          {/* LEFT: Content + per-platform editors (3:2 ratio) */}
-          <div className="flex-[3] overflow-y-auto border-r px-8 py-7" style={{ borderRightColor: "var(--dborder)" }}>
+          {/* LEFT: Content + per-platform editors */}
+          <div
+            className={cn(
+              "overflow-y-auto border-r px-8 py-7",
+              isAIPanelOpen ? "flex-[2.15]" : "flex-[3]"
+            )}
+            style={{ borderRightColor: "var(--dborder)" }}
+          >
             {/* Main content */}
             <section>
               <div className="flex items-center justify-between mb-2.5">
@@ -1306,6 +2478,7 @@ export function CreatePostDrawer({
                           override={override}
                           collapsed={form.collapsedBlocks.has(account.id)}
                           charCount={charCount}
+                          captionLimit={getPlatformCaptionLimit(account.platform, charCount.limit, platformCapabilities)}
                           issues={accountIssues}
                           mediaKind={mediaKind}
                           mediaFile={primaryVideoFile}
@@ -1316,6 +2489,22 @@ export function CreatePostDrawer({
                           onTiktokMaxDurationChange={(sec) => setTiktokMaxDuration(account.id, sec)}
                           onCaptionChange={(caption) =>
                             form.updateOverrideCaption(account.id, caption)
+                          }
+                          onFirstCommentChange={(firstComment) =>
+                            form.updateOverrideFirstComment(account.id, firstComment)
+                          }
+                          firstCommentSupported={aiFirstCommentSupport[account.id] ?? supportsFirstComment(account.platform, platformCapabilities)}
+                          firstCommentMaxLength={getFirstCommentMaxLength(account.platform, platformCapabilities)}
+                          threadSupported={supportsThreads(account.platform, platformCapabilities)}
+                          onThreadFieldsChange={(fields) =>
+                            form.updateOverrideThreadFields(account.id, fields)
+                          }
+                          onAddThreadReply={() => form.addOverrideThreadReply(account.id)}
+                          onUpdateThreadReply={(replyIndex, value) =>
+                            form.updateOverrideThreadReply(account.id, replyIndex, value)
+                          }
+                          onRemoveThreadReply={(replyIndex) =>
+                            form.removeOverrideThreadReply(account.id, replyIndex)
                           }
                           onPlatformFieldChange={(platform, fields) =>
                             form.updateOverridePlatformField(account.id, platform, fields)
@@ -1331,7 +2520,13 @@ export function CreatePostDrawer({
           </div>
 
           {/* RIGHT: Profile + Connected Accounts + Post To + Publish */}
-          <aside className="flex-[2] overflow-y-auto px-6 py-7" style={{ background: "color-mix(in srgb, var(--surface2) 45%, transparent)" }}>
+          <aside
+            className={cn(
+              "overflow-y-auto px-6 py-7",
+              isAIPanelOpen ? "flex-[1.45]" : "flex-[2]"
+            )}
+            style={{ background: "color-mix(in srgb, var(--surface2) 45%, transparent)" }}
+          >
 
             {/* 1. Profile selector */}
             {profiles.length > 0 && (
@@ -1475,6 +2670,10 @@ export function CreatePostDrawer({
             )}
 
             {/* 4. Publish */}
+            <CapabilitySummary
+              selectedAccounts={form.uniqueSelectedAccounts}
+              platformCapabilities={platformCapabilities}
+            />
             <div ref={publishPanelRef}>
               <PublishModePanel
                 mode={form.publishMode}
@@ -1487,6 +2686,38 @@ export function CreatePostDrawer({
               />
             </div>
           </aside>
+          {aiAssistEnabled && isAIPanelOpen ? (
+            <AIAssistPanel
+              mode={aiMode}
+              onModeChange={setAIMode}
+              onGenerate={handleGenerateAISuggestion}
+              brief={aiBrief}
+              onBriefChange={setAIBrief}
+              objective={aiObjective}
+              onObjectiveChange={setAIObjective}
+              tone={aiTone}
+              onToneChange={setAITone}
+              includeCTA={aiIncludeCTA}
+              onIncludeCTAChange={setAIIncludeCTA}
+              onApplyMainCaption={handleApplyAISuggestion}
+              onApplyPlatformCaption={handleApplyPlatformAISuggestion}
+              onApplyAllPlatformCaptions={handleApplyAllPlatformAISuggestions}
+              onApplyFirstCommentSuggestion={handleApplyAIFirstCommentSuggestion}
+              onApplyAllFirstCommentSuggestions={handleApplyAllAIFirstCommentSuggestions}
+              selectedPlatformsCount={form.selectedAccountIds.size}
+              mediaCount={form.mediaItems.length}
+              hasMainContent={!!form.mainContent.trim()}
+              loading={aiLoading}
+              error={aiError}
+              suggestion={aiSuggestion}
+              accountLabels={aiAccountLabels}
+              accountPlatforms={aiAccountPlatforms}
+              platformCapabilities={platformCapabilities}
+              currentMainCaption={form.mainContent}
+              currentPlatformCaptions={aiCurrentPlatformCaptions}
+              currentFirstComments={aiCurrentFirstComments}
+            />
+          ) : null}
         </div>
 
         {/* Footer */}

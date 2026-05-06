@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-# Cut a release across all three SDKs in /Users/xiaoboyu/unipost-dev/:
+# Cut a release across all SDKs in /Users/xiaoboyu/unipost-dev/:
 #   - bumps version files in each repo
 #   - rebuilds the JS dist so it ships the new SDK_VERSION header
 #   - runs basic local checks (Go test, Python import, JS dist node --check)
-#   - runs the three source-validation suites before it will tag a release
+#   - runs the source-validation suites before it will tag a release
 #   - commits and tags v<version> in each repo
 #   - optionally pushes commit + tag to origin/main
 #
@@ -20,7 +20,7 @@ VERSION="${1:-}"
 PUSH="${2:-}"
 TAG="v${VERSION}"
 SDKS_ROOT="${UNIPOST_DEV_ROOT:-/Users/xiaoboyu/unipost-dev}"
-REPOS=(sdk-js sdk-python sdk-go)
+REPOS=(sdk-js sdk-python sdk-go sdk-java)
 UNIPOST_API_KEY="${UNIPOST_API_KEY:-}"
 BASE_URL="${BASE_URL:-https://api.unipost.dev}"
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID:-}"
@@ -48,6 +48,15 @@ EOF
     sdk-go)
       cat <<'EOF'
 unipost/client.go
+EOF
+      ;;
+    sdk-java)
+      cat <<'EOF'
+build.gradle.kts
+README.md
+pom.xml
+src/main/java/dev/unipost/UniPost.java
+src/main/java/dev/unipost/ApiHttpClient.java
 EOF
       ;;
   esac
@@ -161,7 +170,7 @@ python3 -c "import sys; sys.path.insert(0, '${SDKS_ROOT}/sdk-python'); import un
   go test ./... >/dev/null
 )
 
-# Hard gate: all three source-validation suites must pass before we tag.
+# Hard gate: all source-validation suites must pass before we tag.
 LOG_DIR="${SOURCE_VALIDATION_LOG_DIR}" \
 UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
 UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
@@ -186,6 +195,14 @@ TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
   bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-go
 
+LOG_DIR="${SOURCE_VALIDATION_LOG_DIR}" \
+UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
+UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
+BASE_URL="${BASE_URL}" \
+TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
+TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
+  bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-java
+
 # Commit + tag in each repo.
 for repo in "${REPOS[@]}"; do
   dir="${SDKS_ROOT}/${repo}"
@@ -199,6 +216,9 @@ for repo in "${REPOS[@]}"; do
       ;;
     sdk-go)
       git -C "$dir" add unipost/client.go
+      ;;
+    sdk-java)
+      git -C "$dir" add build.gradle.kts README.md pom.xml src/main/java/dev/unipost/UniPost.java src/main/java/dev/unipost/ApiHttpClient.java
       ;;
   esac
   if [[ -z "$(git -C "$dir" diff --cached --name-only)" ]]; then

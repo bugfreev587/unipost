@@ -375,6 +375,7 @@ func main() {
 	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
 	meHandler := handler.NewMeHandler(queries, adminChecker, superAdminChecker)
+	aiPostAssistHandler := handler.NewAIPostAssistHandler(queries, superAdminChecker)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
@@ -615,6 +616,13 @@ func main() {
 		r.Post("/v1/media", mediaHandler.Create)
 		r.Get("/v1/media/{id}", mediaHandler.Get)
 		r.Delete("/v1/media/{id}", mediaHandler.Delete)
+
+		// AI compose assist — currently super-admin-only while the
+		// drawer workflow is in development. Ships as a workspace-scoped
+		// route so it can later reuse existing publish context
+		// (accounts, profiles, media, validation) without a second auth
+		// surface.
+		r.Post("/v1/ai/post-assist", aiPostAssistHandler.PostAssist)
 
 		// Connect sessions.
 		r.Post("/v1/connect/sessions", connectSessionHandler.Create)

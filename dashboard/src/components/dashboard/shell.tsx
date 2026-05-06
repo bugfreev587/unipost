@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { useTheme } from "@/components/theme-provider";
+import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
 // useClerk kept for signOut
 import {
   DropdownMenu,
@@ -74,13 +75,8 @@ const FEATURE_FLAGS: Record<string, string | undefined> = {
   INBOX: process.env.NEXT_PUBLIC_FEATURE_INBOX,
 };
 
-// Facebook Pages is in-development and only exposed to SUPER_ADMINS
-// (internal team). The authoritative check lives server-side via the
-// /v1/me response's is_super_admin field — consumers read that rather
-// than consult an env var, so the allowlist stays in one place
-// (SUPER_ADMINS) on the API.
 export function isFacebookEnabledForMe(isSuperAdmin: boolean | undefined): boolean {
-  return !!isSuperAdmin;
+  return isFeatureInDevEnabledForMe("facebook_pages", isSuperAdmin);
 }
 
 // Filter nav items based only on feature flags.

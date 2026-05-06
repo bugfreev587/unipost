@@ -28,6 +28,12 @@ jobs:
           repository: unipost-dev/sdk-go
           path: .sdk-sources/sdk-go
 
+      - name: Checkout sdk-java
+        uses: actions/checkout@v4
+        with:
+          repository: unipost-dev/sdk-java
+          path: .sdk-sources/sdk-java
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -41,6 +47,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: scripts/sdk-validation/go/go.mod
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
 
       - name: Prepare scripts
         run: chmod +x scripts/sdk-source-validation/run-suite.sh
@@ -71,6 +82,15 @@ jobs:
           BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
           LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
         run: scripts/sdk-source-validation/run-suite.sh sdk-go
+
+      - name: Validate Java SDK source
+        env:
+          UNIPOST_DEV_ROOT: ${{ github.workspace }}/.sdk-sources
+          UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
+          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
+          BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
+          LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
+        run: scripts/sdk-source-validation/run-suite.sh sdk-java
 
       - name: Upload source validation logs
         if: always()

@@ -51,8 +51,8 @@ export default function AccountsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const { getToken } = useAuth();
-  // isSuperAdmin comes from /v1/me and authoritatively gates the
-  // Facebook Pages entry during in-development lockdown. Starts
+  // isSuperAdmin comes from /v1/me and authoritatively gates
+  // in-development features. Starts
   // undefined so we don't flash the Facebook button before the
   // /me round-trip resolves — the splice below only runs when the
   // value lands true.

@@ -26,6 +26,7 @@ interface PlatformEditorBlockProps {
   override: PlatformOverride;
   collapsed: boolean;
   charCount: CharCountInfo;
+  captionLimit?: number;
   issues?: SocialPostValidationIssue[];
   // mediaKind is "video" when any selected media item is a video, "photo"
   // when all items are images, "none" when there are no media items. TikTok
@@ -57,6 +58,14 @@ interface PlatformEditorBlockProps {
   // account's creator cap and can gate R2 uploads accordingly.
   onTiktokMaxDurationChange: (sec: number | null) => void;
   onCaptionChange: (caption: string) => void;
+  onFirstCommentChange: (firstComment: string) => void;
+  firstCommentSupported: boolean;
+  firstCommentMaxLength?: number | null;
+  threadSupported: boolean;
+  onThreadFieldsChange: (fields: Partial<Pick<PlatformOverride, "inReplyTo" | "threadPosition">>) => void;
+  onAddThreadReply: () => void;
+  onUpdateThreadReply: (index: number, value: string) => void;
+  onRemoveThreadReply: (index: number) => void;
   onPlatformFieldChange: <K extends "youtube" | "tiktok" | "instagram" | "linkedin" | "facebook" | "pinterest">(
     platform: K,
     fields: Partial<NonNullable<PlatformOverride[K]>>
@@ -70,6 +79,7 @@ export function PlatformEditorBlock({
   override,
   collapsed,
   charCount,
+  captionLimit,
   issues = [],
   mediaKind,
   mediaFile,
@@ -79,12 +89,20 @@ export function PlatformEditorBlock({
   onTiktokBlockerChange,
   onTiktokMaxDurationChange,
   onCaptionChange,
+  onFirstCommentChange,
+  firstCommentSupported,
+  firstCommentMaxLength,
+  threadSupported,
+  onThreadFieldsChange,
+  onAddThreadReply,
+  onUpdateThreadReply,
+  onRemoveThreadReply,
   onPlatformFieldChange,
   onToggleCollapse,
 }: PlatformEditorBlockProps) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "#888";
   const label = PLATFORM_LABELS[account.platform] || account.platform;
-  const limit = PLATFORM_CHAR_LIMITS[account.platform] || 5000;
+  const limit = captionLimit || PLATFORM_CHAR_LIMITS[account.platform] || 5000;
   const errorIssues = issues.filter((issue) => issue.severity === "error");
   const warningIssues = issues.filter((issue) => issue.severity === "warning");
   const hasErrors = errorIssues.length > 0;
@@ -92,6 +110,11 @@ export function PlatformEditorBlock({
   const captionIssues = issues.filter((issue) => issue.field === "caption");
   const hasCaptionError = captionIssues.some((issue) => issue.severity === "error");
   const captionMessage = captionIssues[0]?.message;
+  const firstCommentIssues = issues.filter((issue) => issue.field === "first_comment");
+  const hasFirstCommentError = firstCommentIssues.some((issue) => issue.severity === "error");
+  const firstCommentMessage = firstCommentIssues[0]?.message;
+  const threadIssues = issues.filter((issue) => issue.field === "thread_position" || issue.field === "in_reply_to");
+  const threadMessage = threadIssues[0]?.message;
 
   const youtubeFields = override.youtube || DEFAULT_YOUTUBE_FIELDS;
   const tiktokFields = override.tiktok || DEFAULT_TIKTOK_FIELDS;
@@ -99,7 +122,6 @@ export function PlatformEditorBlock({
   const linkedinFields = override.linkedin || { visibility: "anyone" as const };
   const facebookFields = override.facebook || { link: "", mediaType: "feed" as const };
   const pinterestFields = override.pinterest || { boardId: "", title: "", link: "" };
-
   return (
     <div
       className={cn(
@@ -222,6 +244,137 @@ export function PlatformEditorBlock({
               </p>
             )}
           </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                First comment
+              </label>
+              <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
+                optional
+              </span>
+            </div>
+            <textarea
+              rows={2}
+              placeholder={firstCommentSupported ? "Optional follow-up comment for supported platforms" : "This platform does not support first comments"}
+              value={override.firstComment || ""}
+              onChange={(e) => onFirstCommentChange(e.target.value)}
+              disabled={!firstCommentSupported}
+              className="w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
+              style={{
+                background: firstCommentSupported ? "var(--surface1)" : "color-mix(in srgb, var(--surface2) 70%, transparent)",
+                color: firstCommentSupported ? "var(--dtext)" : "var(--dmuted2)",
+                borderColor: hasFirstCommentError ? "var(--danger)" : hasWarnings ? "var(--warning)" : "var(--dborder)",
+              }}
+            />
+            <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+              {firstCommentSupported
+                ? `Used only on supported destinations${firstCommentMaxLength ? `. Max ${firstCommentMaxLength} chars.` : "."} AI-generated first comments will appear here after you apply them.`
+                : "Use the main caption or native thread tools instead. This destination rejects first_comment."}
+            </p>
+            {firstCommentMessage && (
+              <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "color-mix(in srgb, var(--danger) 45%, white)" }}>
+                {firstCommentMessage}
+              </p>
+            )}
+          </div>
+
+          {threadSupported && (
+            <div className="rounded-lg border px-3 py-3" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 35%, transparent)" }}>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                Thread options
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                    Thread position
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    placeholder="1"
+                    value={override.threadPosition || ""}
+                    onChange={(e) => onThreadFieldsChange({ threadPosition: e.target.value })}
+                    className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                    style={{ background: "var(--surface1)", color: "var(--dtext)", borderColor: threadMessage ? "var(--danger)" : "var(--dborder)" }}
+                  />
+                  <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                    Use `1` for the first post in a native thread, `2` for the next, and so on.
+                  </p>
+                </div>
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between gap-3">
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                      Reply chain
+                    </label>
+                    <button
+                      type="button"
+                      onClick={onAddThreadReply}
+                      className="rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors"
+                      style={{ borderColor: "var(--dborder)", color: "var(--dtext)", background: "var(--surface1)" }}
+                    >
+                      Add reply
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {(override.threadReplies || []).length === 0 ? (
+                      <p className="text-[11px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                        Add follow-up posts for the same account. They will publish as thread positions `2, 3, 4...` after the main caption.
+                      </p>
+                    ) : (
+                      (override.threadReplies || []).map((reply, replyIndex) => (
+                        <div key={replyIndex} className="rounded-md border px-3 py-3" style={{ borderColor: "var(--dborder)", background: "var(--surface1)" }}>
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                              Reply {replyIndex + 2}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onRemoveThreadReply(replyIndex)}
+                              className="text-[11px] underline"
+                              style={{ color: "var(--dmuted)" }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <textarea
+                            rows={2}
+                            placeholder="Write the next post in this thread"
+                            value={reply}
+                            onChange={(e) => onUpdateThreadReply(replyIndex, e.target.value)}
+                            className="w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                            style={{ background: "var(--surface-raised)", color: "var(--dtext)", borderColor: "var(--dborder)" }}
+                          />
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                    Reply target
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Optional external post ID"
+                    value={override.inReplyTo || ""}
+                    onChange={(e) => onThreadFieldsChange({ inReplyTo: e.target.value })}
+                    className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                    style={{ background: "var(--surface1)", color: "var(--dtext)", borderColor: threadMessage ? "var(--danger)" : "var(--dborder)" }}
+                  />
+                  <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                    Leave blank for a standalone thread. Use this only when replying to an existing platform post.
+                  </p>
+                </div>
+                {threadMessage ? (
+                  <p className="text-[11px] leading-relaxed" style={{ color: "color-mix(in srgb, var(--danger) 45%, white)" }}>
+                    {threadMessage}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          )}
 
           {/* Platform-specific fields */}
           {account.platform === "youtube" && (
