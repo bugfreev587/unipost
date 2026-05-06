@@ -494,9 +494,9 @@ function AIAssistPanel({
   return (
     <aside
       className="flex min-w-0 flex-[1.05] flex-col border-l"
-      style={{ borderLeftColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 40%, var(--surface-raised))" }}
+      style={{ borderLeftColor: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))", background: "color-mix(in srgb, var(--surface2) 52%, var(--surface-raised))" }}
     >
-      <div className="border-b px-6 py-5" style={{ borderBottomColor: "var(--dborder)" }}>
+      <div className="border-b px-6 py-5" style={{ borderBottomColor: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))" }}>
         <div className="mb-2 flex items-center gap-2">
           <div
             className="flex h-8 w-8 items-center justify-center rounded-lg"
@@ -506,19 +506,19 @@ function AIAssistPanel({
           </div>
           <div>
             <div className="text-[15px] font-semibold" style={{ color: "var(--dtext)" }}>AI Assist</div>
-            <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+            <div className="compose-meta-text font-mono text-[10.5px] uppercase tracking-[0.12em]">
               In development
             </div>
           </div>
         </div>
-        <p className="text-[13px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+        <p className="compose-support-text text-[13px] leading-relaxed">
           Generate, refine, and compare post suggestions without leaving the compose flow.
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <section className="mb-5">
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+          <div className="compose-panel-label mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]">
             Quick actions
           </div>
           <div className="space-y-2.5">
@@ -530,7 +530,7 @@ function AIAssistPanel({
                   type="button"
                   disabled={action.disabled}
                   onClick={() => onModeChange(action.id)}
-                  className="w-full rounded-xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  className="compose-action-card w-full rounded-xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                   style={{
                     borderColor: active ? "color-mix(in srgb, var(--primary) 55%, transparent)" : "var(--dborder)",
                     background: active ? "color-mix(in srgb, var(--primary) 10%, var(--surface-raised))" : "var(--surface-raised)",
@@ -540,7 +540,7 @@ function AIAssistPanel({
                     <Wand2 className="h-3.5 w-3.5" style={{ color: active ? "var(--primary)" : "var(--dmuted2)" }} />
                     <span className="text-[13.5px] font-medium" style={{ color: "var(--dtext)" }}>{action.title}</span>
                   </div>
-                  <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                  <div className="compose-support-text text-[12.5px] leading-relaxed">
                     {action.description}
                   </div>
                 </button>
@@ -549,11 +549,11 @@ function AIAssistPanel({
           </div>
         </section>
 
-        <section className="mb-5 rounded-xl border px-4 py-4" style={{ borderColor: "var(--dborder)", background: "var(--surface-raised)" }}>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+        <section className="compose-surface-panel mb-5 rounded-xl border px-4 py-4">
+          <div className="compose-panel-label mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]">
             Current context
           </div>
-          <div className="space-y-2 text-[12.5px]" style={{ color: "var(--dmuted)" }}>
+          <div className="compose-support-text space-y-2 text-[12.5px]">
             <div className="flex items-center justify-between gap-3">
               <span>Selected platforms</span>
               <span className="font-mono text-[11px]" style={{ color: "var(--dtext)" }}>{selectedPlatformsCount}</span>
@@ -571,11 +571,11 @@ function AIAssistPanel({
           </div>
         </section>
 
-        <section className="rounded-xl border px-4 py-4" style={{ borderColor: "var(--dborder)", background: "var(--surface-raised)" }}>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+        <section className="compose-surface-panel rounded-xl border px-4 py-4">
+          <div className="compose-panel-label mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]">
             Preview
           </div>
-          <div className="mb-3 text-[13px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+          <div className="compose-support-text mb-3 text-[13px] leading-relaxed">
             {mode === "brief" && "AI will turn a campaign brief into a first-pass caption and platform-specific variants."}
             {mode === "improve" && "AI will refine your current draft for clarity, energy, and conversion intent."}
             {mode === "adapt" && "AI will create separate versions for each selected destination account."}
@@ -585,9 +585,9 @@ function AIAssistPanel({
           </div>
           {mode === "brief" ? (
             <div className="space-y-3">
-              <div className="space-y-3 rounded-lg border px-3.5 py-3.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 42%, transparent)" }}>
+              <div className="compose-surface-subtle space-y-3 rounded-lg border px-3.5 py-3.5">
                 <div>
-                  <label className="mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                  <label className="compose-panel-label mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]">
                     Campaign brief
                   </label>
                   <textarea
@@ -595,19 +595,19 @@ function AIAssistPanel({
                     onChange={(event) => onBriefChange(event.target.value)}
                     rows={5}
                     placeholder="Describe the launch, offer, audience, and the angle you want to emphasize."
-                    className="w-full rounded-lg border px-3 py-2.5 text-[13px] leading-relaxed outline-none transition-colors"
+                    className="compose-field w-full rounded-lg border px-3 py-2.5 text-[13px] leading-relaxed outline-none transition-colors"
                     style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                    <label className="compose-panel-label mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]">
                       Objective
                     </label>
                     <select
                       value={objective}
                       onChange={(event) => onObjectiveChange(event.target.value as "awareness" | "engagement" | "clicks" | "sales")}
-                      className="w-full rounded-lg border px-3 py-2.5 text-[13px] outline-none transition-colors"
+                      className="compose-field w-full rounded-lg border px-3 py-2.5 text-[13px] outline-none transition-colors"
                       style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}
                     >
                       <option value="awareness">Awareness</option>
@@ -617,13 +617,13 @@ function AIAssistPanel({
                     </select>
                   </div>
                   <div>
-                    <label className="mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                    <label className="compose-panel-label mb-1 block font-mono text-[10.5px] uppercase tracking-[0.12em]">
                       Tone
                     </label>
                     <select
                       value={tone}
                       onChange={(event) => onToneChange(event.target.value as "professional" | "friendly" | "bold" | "playful")}
-                      className="w-full rounded-lg border px-3 py-2.5 text-[13px] outline-none transition-colors"
+                      className="compose-field w-full rounded-lg border px-3 py-2.5 text-[13px] outline-none transition-colors"
                       style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}
                     >
                       <option value="professional">Professional</option>
@@ -633,7 +633,7 @@ function AIAssistPanel({
                     </select>
                   </div>
                 </div>
-                <label className="flex items-center gap-2 text-[12.5px]" style={{ color: "var(--dmuted)" }}>
+                <label className="compose-support-text flex items-center gap-2 text-[12.5px]">
                   <input
                     type="checkbox"
                     checked={includeCTA}
@@ -660,7 +660,7 @@ function AIAssistPanel({
               {suggestion?.main_caption || (suggestion?.platform_captions && suggestion.platform_captions.length > 0) ? (
                 <div className="space-y-3">
                   {suggestion.summary ? (
-                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                    <div className="compose-support-text text-[12px] leading-relaxed">
                       {suggestion.summary}
                     </div>
                   ) : null}
@@ -670,12 +670,12 @@ function AIAssistPanel({
                         Main caption from brief
                       </div>
                       <div className="mb-3 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
-                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
-                          Current
-                        </div>
-                        <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
-                          {currentMainCaption || "(empty)"}
-                        </div>
+                          <div className="compose-panel-label mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]">
+                            Current
+                          </div>
+                          <div className="compose-support-text text-[12.5px] leading-relaxed">
+                            {currentMainCaption || "(empty)"}
+                          </div>
                       </div>
                       <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
                         {suggestion.main_caption}
@@ -715,7 +715,7 @@ function AIAssistPanel({
                           <div className="text-[13px] font-medium" style={{ color: "var(--dtext)" }}>
                             {accountLabels[item.account_id] || item.platform}
                           </div>
-                          <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          <div className="compose-panel-label font-mono text-[10.5px] uppercase tracking-[0.12em]">
                             {item.platform}
                           </div>
                         </div>
@@ -730,35 +730,35 @@ function AIAssistPanel({
                       </div>
                       <div className="rounded-md border px-3 py-3 text-[13px] leading-relaxed" style={{ borderColor: "var(--dborder)", background: "var(--surface1)", color: "var(--dtext)" }}>
                         <div className="mb-2 rounded-md border px-3 py-2.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 60%, transparent)" }}>
-                          <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                          <div className="compose-panel-label mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]">
                             Current
                           </div>
-                          <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                          <div className="compose-support-text text-[12.5px] leading-relaxed">
                             {currentPlatformCaptions[item.account_id] || currentMainCaption || "(empty)"}
                           </div>
                         </div>
-                        <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                        <div className="compose-panel-label mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em]">
                           Suggested
                         </div>
                         {item.caption}
                       </div>
                       {item.reason ? (
-                        <div className="mt-2 text-[12px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
+                        <div className="compose-support-text mt-2 text-[12px] leading-relaxed">
                           {item.reason}
                         </div>
                       ) : null}
                     </div>
                   ))}
                   {suggestion.warnings && suggestion.warnings.length > 0 ? (
-                    <div className="text-[12px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                    <div className="compose-meta-text text-[12px] leading-relaxed">
                       {suggestion.warnings[0]}
                     </div>
                   ) : null}
                 </div>
               ) : (
                 <div
-                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
-                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                  className="compose-support-text rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)" }}
                 >
                   Add a short campaign brief to generate a first-pass caption and optional per-platform variants for the selected accounts.
                 </div>
@@ -823,15 +823,15 @@ function AIAssistPanel({
                     />
                   </div>
                   {suggestion.warnings && suggestion.warnings.length > 0 ? (
-                    <div className="mt-3 text-[12px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                    <div className="compose-meta-text mt-3 text-[12px] leading-relaxed">
                       {suggestion.warnings[0]}
                     </div>
                   ) : null}
                 </div>
               ) : (
                 <div
-                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
-                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                  className="compose-support-text rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)" }}
                 >
                   Generate a suggestion to preview an improved version of the main caption and apply it back into the compose flow.
                 </div>
@@ -933,8 +933,8 @@ function AIAssistPanel({
                 </div>
               ) : (
                 <div
-                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
-                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                  className="compose-support-text rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)" }}
                 >
                   Generate per-platform variants to preview account-specific captions and apply them into the platform override editors.
                 </div>
@@ -1066,8 +1066,8 @@ function AIAssistPanel({
                 </div>
               ) : (
                 <div
-                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
-                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                  className="compose-support-text rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)" }}
                 >
                   Generate a caption from your uploaded images or video, then apply the main draft or per-platform variants back into the compose flow.
                 </div>
@@ -1199,8 +1199,8 @@ function AIAssistPanel({
                 </div>
               ) : (
                 <div
-                  className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
-                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+                  className="compose-support-text rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+                  style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)" }}
                 >
                   Suggest targeted text fixes for the current validation issues and apply them back into the compose flow.
                 </div>
@@ -1208,8 +1208,8 @@ function AIAssistPanel({
             </div>
           ) : (
             <div
-              className="rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
-              style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)", color: "var(--dmuted2)" }}
+              className="compose-support-text rounded-lg border border-dashed px-4 py-5 text-[12.5px] leading-relaxed"
+              style={{ borderColor: "color-mix(in srgb, var(--dborder) 80%, transparent)" }}
             >
               Suggestion results, per-platform apply actions, and compare views will appear here as each AI mode is implemented.
             </div>
@@ -2335,7 +2335,7 @@ export function CreatePostDrawer({
       <SheetContent
         showCloseButton={false}
         className="border-l"
-        style={{ width: drawerWidth, maxWidth: "calc(100vw - 32px)", background: "var(--surface-raised)", borderLeftColor: "var(--dborder)" }}
+        style={{ width: drawerWidth, maxWidth: "calc(100vw - 32px)", background: "color-mix(in srgb, var(--surface-raised) 94%, black)", borderLeftColor: "color-mix(in srgb, var(--dborder2) 80%, var(--dborder))" }}
       >
         <div
           role="separator"
@@ -2348,12 +2348,12 @@ export function CreatePostDrawer({
           onMouseLeave={(e) => { if (!isDraggingWidthRef.current) e.currentTarget.style.background = "transparent"; }}
         />
         {/* Header */}
-        <header className="flex flex-shrink-0 items-start justify-between border-b px-8 pb-5 pt-7" style={{ borderBottomColor: "var(--dborder)" }}>
+        <header className="flex flex-shrink-0 items-start justify-between border-b px-8 pb-5 pt-7" style={{ borderBottomColor: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))" }}>
           <div>
             <h2 className="mb-2 font-serif text-[2.15rem] leading-[1.02] tracking-[-0.035em]" style={{ color: "var(--dtext)", fontWeight: 650 }}>
               Create post
             </h2>
-            <p className="text-[14.5px] leading-[1.65]" style={{ color: "var(--dmuted)" }}>
+            <p className="compose-support-text text-[14.5px] leading-[1.65]">
               Compose once, publish to any platform you&apos;ve connected.
             </p>
           </div>
@@ -2365,8 +2365,8 @@ export function CreatePostDrawer({
                 className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] font-medium transition-colors"
                 style={{
                   color: isAIPanelOpen ? "var(--primary)" : "var(--dtext)",
-                  borderColor: isAIPanelOpen ? "color-mix(in srgb, var(--primary) 50%, transparent)" : "var(--dborder)",
-                  background: isAIPanelOpen ? "color-mix(in srgb, var(--primary) 10%, var(--surface-raised))" : "var(--surface1)",
+                  borderColor: isAIPanelOpen ? "color-mix(in srgb, var(--primary) 50%, transparent)" : "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))",
+                  background: isAIPanelOpen ? "color-mix(in srgb, var(--primary) 10%, var(--surface-raised))" : "color-mix(in srgb, var(--surface1) 96%, var(--surface2))",
                 }}
               >
                 {isAIPanelOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
@@ -2395,15 +2395,15 @@ export function CreatePostDrawer({
               "overflow-y-auto border-r px-8 py-7",
               isAIPanelOpen ? "flex-[2.15]" : "flex-[3]"
             )}
-            style={{ borderRightColor: "var(--dborder)" }}
+            style={{ borderRightColor: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))" }}
           >
             {/* Main content */}
             <section>
               <div className="flex items-center justify-between mb-2.5">
-                <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                <label className="compose-panel-label text-[11px] font-semibold uppercase tracking-[0.11em]">
                   Content
                 </label>
-                <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>optional</span>
+                <span className="compose-meta-text font-mono text-[10.5px] tracking-[0.02em]">optional</span>
               </div>
               <textarea
                 ref={mainContentRef}
@@ -2412,14 +2412,14 @@ export function CreatePostDrawer({
                 value={form.mainContent}
                 onChange={(e) => form.setMainContent(e.target.value)}
                 autoFocus
-                className="w-full resize-none rounded-lg border px-4 py-3 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
-                style={{ background: "var(--surface1)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
+                className="compose-field w-full resize-none rounded-lg border px-4 py-3 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                style={{ color: "var(--dtext)" }}
               />
               <div className="flex items-center justify-between mt-2">
-                <p className="text-[12.5px] leading-[1.55]" style={{ color: "var(--dmuted2)" }}>
+                <p className="compose-support-text text-[12.5px] leading-[1.55]">
                   Used as the default for every selected platform unless overridden below.
                 </p>
-                <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
+                <span className="compose-meta-text font-mono text-[10.5px] tracking-[0.02em]">
                   {form.mainContent.length} chars
                 </span>
               </div>
@@ -2445,10 +2445,10 @@ export function CreatePostDrawer({
             {/* Per-platform overrides */}
             <section className="mt-8">
               <div className="flex items-center justify-between mb-3">
-                <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                <label className="compose-panel-label text-[11px] font-semibold uppercase tracking-[0.11em]">
                   Per-platform customization
                 </label>
-                <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
+                <span className="compose-meta-text font-mono text-[10.5px] tracking-[0.02em]">
                   {form.selectedAccountIds.size} selected
                 </span>
               </div>
@@ -2525,27 +2525,27 @@ export function CreatePostDrawer({
               "overflow-y-auto px-6 py-7",
               isAIPanelOpen ? "flex-[1.45]" : "flex-[2]"
             )}
-            style={{ background: "color-mix(in srgb, var(--surface2) 45%, transparent)" }}
+            style={{ background: "color-mix(in srgb, var(--surface2) 58%, transparent)" }}
           >
 
             {/* 1. Profile selector */}
             {profiles.length > 0 && (
               <div className="mb-5">
-                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                <label className="compose-panel-label mb-2 block text-[11px] font-semibold uppercase tracking-[0.11em]">
                   Profile
                 </label>
                 <div className="relative">
                   <select
                     value={selectedProfileId}
                     onChange={(e) => setSelectedProfileId(e.target.value)}
-                    className="w-full appearance-none rounded-lg border px-3 py-2.5 pr-8 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                    className="compose-field w-full appearance-none rounded-lg border px-3 py-2.5 pr-8 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
                     style={{ background: "var(--surface2)", borderColor: "var(--dborder)", color: "var(--dtext)" }}
                   >
                     {profiles.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                   </select>
-                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: "var(--dmuted2)" }} />
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: "color-mix(in srgb, var(--dtext) 58%, transparent)" }} />
                 </div>
               </div>
             )}

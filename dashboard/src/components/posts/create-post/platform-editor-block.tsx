@@ -134,16 +134,16 @@ export function PlatformEditorBlock({
       )}
       style={{
         animationDelay: `${index * 40}ms`,
-        background: "color-mix(in srgb, var(--surface-raised) 78%, var(--surface2))",
-        borderColor: hasErrors ? "color-mix(in srgb, var(--danger) 70%, transparent)" : hasWarnings ? "color-mix(in srgb, var(--warning) 60%, transparent)" : "var(--dborder)",
+        background: "color-mix(in srgb, var(--surface-raised) 84%, var(--surface2))",
+        borderColor: hasErrors ? "color-mix(in srgb, var(--danger) 70%, transparent)" : hasWarnings ? "color-mix(in srgb, var(--warning) 60%, transparent)" : "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))",
       }}
     >
       {/* Header */}
       <div
         className="flex items-center justify-between border-b px-4 py-3"
         style={{
-          background: "color-mix(in srgb, var(--surface2) 62%, var(--surface-raised))",
-          borderBottomColor: hasErrors ? "color-mix(in srgb, var(--danger) 40%, transparent)" : hasWarnings ? "color-mix(in srgb, var(--warning) 35%, transparent)" : "var(--dborder)",
+          background: "color-mix(in srgb, var(--surface2) 76%, var(--surface-raised))",
+          borderBottomColor: hasErrors ? "color-mix(in srgb, var(--danger) 40%, transparent)" : hasWarnings ? "color-mix(in srgb, var(--warning) 35%, transparent)" : "color-mix(in srgb, var(--dborder2) 76%, var(--dborder))",
         }}
       >
         <div className="flex items-center gap-2.5">
@@ -156,7 +156,7 @@ export function PlatformEditorBlock({
           <div>
             <div className="text-[13.5px] leading-[1.25]" style={{ color: "var(--dtext)", fontWeight: 600 }}>{label}</div>
             <div className="flex items-center gap-2 flex-wrap">
-              <div className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
+              <div className="compose-meta-text font-mono text-[10.5px] tracking-[0.02em]">
                 {account.account_name || account.external_user_email || account.platform}
               </div>
               {hasErrors && (
@@ -175,7 +175,7 @@ export function PlatformEditorBlock({
         <button
           type="button"
           className="font-mono text-[10.5px] tracking-[0.02em] transition-colors"
-          style={{ color: "var(--dmuted2)" }}
+          style={{ color: "color-mix(in srgb, var(--dtext) 58%, transparent)" }}
           onClick={onToggleCollapse}
         >
           toggle
@@ -216,7 +216,7 @@ export function PlatformEditorBlock({
           {/* Caption */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-                <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                <label className="compose-panel-label text-[11px] font-semibold uppercase tracking-[0.11em]">
                   Custom caption
                 </label>
               <span
@@ -231,9 +231,9 @@ export function PlatformEditorBlock({
               placeholder="Leave blank to use main content"
               value={override.caption || ""}
               onChange={(e) => onCaptionChange(e.target.value)}
-              className="w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
+              className="compose-field w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
               style={{
-                background: "var(--surface1)",
+                background: undefined,
                 color: "var(--dtext)",
                 borderColor: hasCaptionError || charCount.status === "over" ? "var(--danger)" : hasWarnings ? "var(--warning)" : "var(--dborder)",
               }}
@@ -247,10 +247,10 @@ export function PlatformEditorBlock({
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+              <label className="compose-panel-label text-[11px] font-semibold uppercase tracking-[0.11em]">
                 First comment
               </label>
-              <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: "var(--dmuted2)" }}>
+              <span className="compose-meta-text font-mono text-[10.5px] tracking-[0.02em]">
                 optional
               </span>
             </div>
@@ -260,14 +260,14 @@ export function PlatformEditorBlock({
               value={override.firstComment || ""}
               onChange={(e) => onFirstCommentChange(e.target.value)}
               disabled={!firstCommentSupported}
-              className="w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
+              className="compose-field w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
               style={{
-                background: firstCommentSupported ? "var(--surface1)" : "color-mix(in srgb, var(--surface2) 70%, transparent)",
-                color: firstCommentSupported ? "var(--dtext)" : "var(--dmuted2)",
+                background: firstCommentSupported ? undefined : "color-mix(in srgb, var(--surface2) 70%, transparent)",
+                color: firstCommentSupported ? "var(--dtext)" : "color-mix(in srgb, var(--dtext) 50%, transparent)",
                 borderColor: hasFirstCommentError ? "var(--danger)" : hasWarnings ? "var(--warning)" : "var(--dborder)",
               }}
             />
-            <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+            <p className="compose-support-text mt-1.5 text-[11px] leading-relaxed">
               {firstCommentSupported
                 ? `Used only on supported destinations${firstCommentMaxLength ? `. Max ${firstCommentMaxLength} chars.` : "."} AI-generated first comments will appear here after you apply them.`
                 : "Use the main caption or native thread tools instead. This destination rejects first_comment."}
@@ -280,13 +280,13 @@ export function PlatformEditorBlock({
           </div>
 
           {threadSupported && (
-            <div className="rounded-lg border px-3 py-3" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 35%, transparent)" }}>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+            <div className="compose-surface-subtle rounded-lg border px-3 py-3">
+              <div className="compose-panel-label mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]">
                 Thread options
               </div>
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                  <label className="compose-panel-label mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]">
                     Thread position
                   </label>
                   <input
@@ -296,37 +296,37 @@ export function PlatformEditorBlock({
                     placeholder="1"
                     value={override.threadPosition || ""}
                     onChange={(e) => onThreadFieldsChange({ threadPosition: e.target.value })}
-                    className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
-                    style={{ background: "var(--surface1)", color: "var(--dtext)", borderColor: threadMessage ? "var(--danger)" : "var(--dborder)" }}
+                    className="compose-field w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                    style={{ color: "var(--dtext)", borderColor: threadMessage ? "var(--danger)" : "var(--dborder)" }}
                   />
-                  <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                  <p className="compose-support-text mt-1.5 text-[11px] leading-relaxed">
                     Use `1` for the first post in a native thread, `2` for the next, and so on.
                   </p>
                 </div>
                 <div>
                   <div className="mb-1.5 flex items-center justify-between gap-3">
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                    <label className="compose-panel-label text-[11px] font-semibold uppercase tracking-[0.11em]">
                       Reply chain
                     </label>
                     <button
                       type="button"
                       onClick={onAddThreadReply}
                       className="rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors"
-                      style={{ borderColor: "var(--dborder)", color: "var(--dtext)", background: "var(--surface1)" }}
+                      style={{ borderColor: "color-mix(in srgb, var(--dborder2) 78%, var(--dborder))", color: "var(--dtext)", background: "color-mix(in srgb, var(--surface1) 96%, var(--surface2))" }}
                     >
                       Add reply
                     </button>
                   </div>
                   <div className="space-y-2">
                     {(override.threadReplies || []).length === 0 ? (
-                      <p className="text-[11px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                      <p className="compose-support-text text-[11px] leading-relaxed">
                         Add follow-up posts for the same account. They will publish as thread positions `2, 3, 4...` after the main caption.
                       </p>
                     ) : (
                       (override.threadReplies || []).map((reply, replyIndex) => (
-                        <div key={replyIndex} className="rounded-md border px-3 py-3" style={{ borderColor: "var(--dborder)", background: "var(--surface1)" }}>
+                        <div key={replyIndex} className="compose-surface-panel rounded-md border px-3 py-3">
                           <div className="mb-2 flex items-center justify-between gap-3">
-                            <div className="font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "var(--dmuted2)" }}>
+                            <div className="compose-meta-text font-mono text-[10.5px] uppercase tracking-[0.12em]">
                               Reply {replyIndex + 2}
                             </div>
                             <button
@@ -343,8 +343,8 @@ export function PlatformEditorBlock({
                             placeholder="Write the next post in this thread"
                             value={reply}
                             onChange={(e) => onUpdateThreadReply(replyIndex, e.target.value)}
-                            className="w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
-                            style={{ background: "var(--surface-raised)", color: "var(--dtext)", borderColor: "var(--dborder)" }}
+                            className="compose-field w-full resize-none rounded-md border px-3 py-2 text-sm leading-relaxed outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                            style={{ color: "var(--dtext)", borderColor: "var(--dborder)" }}
                           />
                         </div>
                       ))
@@ -352,7 +352,7 @@ export function PlatformEditorBlock({
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
+                  <label className="compose-panel-label mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.11em]">
                     Reply target
                   </label>
                   <input
@@ -360,10 +360,10 @@ export function PlatformEditorBlock({
                     placeholder="Optional external post ID"
                     value={override.inReplyTo || ""}
                     onChange={(e) => onThreadFieldsChange({ inReplyTo: e.target.value })}
-                    className="w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
-                    style={{ background: "var(--surface1)", color: "var(--dtext)", borderColor: threadMessage ? "var(--danger)" : "var(--dborder)" }}
+                    className="compose-field w-full rounded-md border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-[140ms]"
+                    style={{ color: "var(--dtext)", borderColor: threadMessage ? "var(--danger)" : "var(--dborder)" }}
                   />
-                  <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "var(--dmuted2)" }}>
+                  <p className="compose-support-text mt-1.5 text-[11px] leading-relaxed">
                     Leave blank for a standalone thread. Use this only when replying to an existing platform post.
                   </p>
                 </div>

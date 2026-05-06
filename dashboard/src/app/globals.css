@@ -928,3 +928,66 @@ textarea:focus-visible, input:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
+
+.compose-panel-label {
+  color: color-mix(in srgb, var(--dtext) 74%, white);
+}
+
+.compose-meta-text {
+  color: color-mix(in srgb, var(--dtext) 78%, white);
+}
+
+.compose-support-text {
+  color: color-mix(in srgb, var(--dtext) 86%, white);
+}
+
+.compose-surface-subtle {
+  background: color-mix(in srgb, var(--surface2) 72%, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--dborder2) 70%, var(--dborder));
+}
+
+.compose-surface-panel {
+  background: color-mix(in srgb, var(--surface-raised) 88%, var(--surface2));
+  border-color: color-mix(in srgb, var(--dborder2) 78%, var(--dborder));
+}
+
+.compose-action-card {
+  background: color-mix(in srgb, var(--surface-raised) 92%, var(--surface2));
+  border-color: color-mix(in srgb, var(--dborder2) 82%, var(--dborder));
+}
+
+.compose-field::placeholder {
+  color: color-mix(in srgb, var(--dtext) 46%, white);
+  opacity: 1;
+}
+
+.compose-field {
+  background: color-mix(in srgb, var(--surface1) 94%, var(--surface2));
+  border-color: color-mix(in srgb, var(--dborder2) 82%, var(--dborder));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 3%, transparent);
+}
+
+.compose-field:disabled::placeholder {
+  color: color-mix(in srgb, var(--dtext) 34%, white);
+  opacity: 1;
+}
+
+.dark .compose-panel-label {
+  color: color-mix(in srgb, var(--dtext) 58%, transparent);
+}
+
+.dark .compose-meta-text {
+  color: color-mix(in srgb, var(--dtext) 64%, transparent);
+}
+
+.dark .compose-support-text {
+  color: color-mix(in srgb, var(--dtext) 74%, transparent);
+}
+
+.dark .compose-field::placeholder {
+  color: color-mix(in srgb, var(--dtext) 42%, transparent);
+}
+
+.dark .compose-field:disabled::placeholder {
+  color: color-mix(in srgb, var(--dtext) 30%, transparent);
+}
