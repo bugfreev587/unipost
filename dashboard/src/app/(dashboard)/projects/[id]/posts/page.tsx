@@ -6,7 +6,7 @@ import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
-  listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost, retrySocialPostResult,
+  listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost, retrySocialPostResult, rescheduleSocialPost,
   getActivation, getSocialPostQueue, listProfiles,
   type SocialAccount, type SocialPost, type Profile, type PostDeliveryJob,
 } from "@/lib/api";
@@ -185,6 +185,11 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-dialog{width:min(100%,440px);background:var(--surface-raised);border:1px solid var(--dborder);border-radius:18px;padding:24px;box-shadow:0 28px 70px color-mix(in srgb,var(--shadow-color) 120%,transparent)}
 .posts-dialog-title{font-size:20px;font-weight:700;color:var(--dtext);margin-bottom:10px;letter-spacing:-.02em}
 .posts-dialog-body{font-size:15px;color:var(--dmuted);line-height:1.7;margin-bottom:20px}
+.posts-dialog-field{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}
+.posts-dialog-label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dmuted2)}
+.posts-dialog-input{height:44px;border-radius:12px;border:1px solid var(--dborder);background:var(--surface2);padding:0 12px;color:var(--dtext);font-size:14px;font-family:inherit;outline:none}
+.posts-dialog-input:focus{border-color:var(--daccent)}
+.posts-dialog-error{margin:-6px 0 16px;font-size:12.5px;color:var(--danger);line-height:1.55}
 .posts-dialog-actions{display:flex;justify-content:flex-end;gap:10px}
 @media (max-width: 900px){.posts-expand-cell{padding:14px 16px}.posts-results-grid{grid-template-columns:1fr}}
 `;
@@ -193,6 +198,18 @@ type ConfirmAction =
   | { kind: "archive"; ids: string[] }
   | { kind: "delete"; ids: string[] }
   | { kind: "restore"; ids: string[] };
+
+function toDateTimeLocalValue(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function minScheduleTimeLocal() {
+  return toDateTimeLocalValue(new Date(Date.now() + 60 * 1000).toISOString());
+}
 
 export default function PostsPage() {
   const { id: profileId } = useParams<{ id: string }>();
@@ -218,6 +235,10 @@ export default function PostsPage() {
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const [reschedulePost, setReschedulePost] = useState<SocialPost | null>(null);
+  const [rescheduleValue, setRescheduleValue] = useState("");
+  const [rescheduleBusy, setRescheduleBusy] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
@@ -285,6 +306,52 @@ export default function PostsPage() {
       loadData();
     } catch (err) { console.error("Cancel failed:", err); }
     setMenuOpen(null);
+  }
+
+  function openRescheduleDialog(post: SocialPost) {
+    setReschedulePost(post);
+    setRescheduleValue(toDateTimeLocalValue(post.scheduled_at));
+    setRescheduleError("");
+    setMenuOpen(null);
+  }
+
+  function closeRescheduleDialog() {
+    if (rescheduleBusy) return;
+    setReschedulePost(null);
+    setRescheduleValue("");
+    setRescheduleError("");
+  }
+
+  async function submitReschedule() {
+    if (!reschedulePost) return;
+    if (!rescheduleValue) {
+      setRescheduleError("Pick a new scheduled time.");
+      return;
+    }
+    const nextTime = new Date(rescheduleValue);
+    if (Number.isNaN(nextTime.getTime())) {
+      setRescheduleError("Enter a valid scheduled time.");
+      return;
+    }
+    if (nextTime.getTime() < Date.now() + 60 * 1000) {
+      setRescheduleError("Choose a time at least 60 seconds in the future.");
+      return;
+    }
+    try {
+      const token = await getToken();
+      if (!token) return;
+      setRescheduleBusy(true);
+      setRescheduleError("");
+      await rescheduleSocialPost(token, reschedulePost.id, nextTime.toISOString());
+      await loadData();
+      setReschedulePost(null);
+      setRescheduleValue("");
+    } catch (err) {
+      console.error("Reschedule failed:", err);
+      setRescheduleError(err instanceof Error ? err.message : "Failed to reschedule post.");
+    } finally {
+      setRescheduleBusy(false);
+    }
   }
 
   async function runConfirmAction(action: ConfirmAction) {
@@ -407,7 +474,7 @@ export default function PostsPage() {
       items.push({ icon: <Calendar />, label: "Schedule", action: () => { setMenuOpen(null); } });
     }
     if (post.status === "scheduled") {
-      items.push({ icon: <Calendar />, label: "Edit scheduled time", action: () => { setMenuOpen(null); } });
+      items.push({ icon: <Calendar />, label: "Edit scheduled time", action: () => openRescheduleDialog(post) });
       items.push({ icon: <XCircle />, label: "Cancel", action: () => handleCancel(post.id), danger: true });
     }
     items.push({
@@ -649,6 +716,38 @@ export default function PostsPage() {
           </table>
         </div>
       )}
+
+      {reschedulePost ? (
+        <div className="posts-dialog-backdrop" onClick={closeRescheduleDialog}>
+          <div className="posts-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="posts-dialog-title">Edit Scheduled Time</div>
+            <div className="posts-dialog-body">
+              Update when <span style={{ color: "var(--dtext)", fontWeight: 600 }}>{reschedulePost.caption || "this post"}</span> should be published.
+            </div>
+            <div className="posts-dialog-field">
+              <label className="posts-dialog-label" htmlFor="reschedule-at">Scheduled Time</label>
+              <input
+                id="reschedule-at"
+                className="posts-dialog-input"
+                type="datetime-local"
+                value={rescheduleValue}
+                min={minScheduleTimeLocal()}
+                onChange={(e) => setRescheduleValue(e.target.value)}
+                disabled={rescheduleBusy}
+              />
+            </div>
+            {rescheduleError ? <div className="posts-dialog-error">{rescheduleError}</div> : null}
+            <div className="posts-dialog-actions">
+              <button className="dbtn dbtn-ghost" onClick={closeRescheduleDialog} disabled={rescheduleBusy}>
+                Cancel
+              </button>
+              <button className="dbtn dbtn-primary" onClick={() => { void submitReschedule(); }} disabled={rescheduleBusy || !rescheduleValue}>
+                {rescheduleBusy ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Create post drawer */}
       <CreatePostDrawer
