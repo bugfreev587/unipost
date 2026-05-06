@@ -4,7 +4,7 @@ This guide documents the current release flow for UniPost SDKs after source chan
 
 ## Fast path
 
-After one-time GitHub secret setup, the release path for JavaScript, Python, and Java can be nearly one command:
+After one-time GitHub secret setup, the release path for JavaScript, Python, Go, and Java can be nearly one command:
 
 ```bash
 UNIPOST_API_KEY=up_live_xxx \
@@ -19,7 +19,7 @@ That command:
 - rebuilds the JS dist bundle
 - force-stages the ignored `sdk-js/dist/` release artifacts before commit
 - runs lightweight local validation
-- runs all three source-validation suites against the updated SDK source
+- runs all source-validation suites against the updated SDK source
 - creates the release commit
 - creates the git tag
 - pushes `main`
@@ -98,7 +98,7 @@ TEST_ACCOUNT_ID=sa_xxx \
 scripts/release/create-sdk-release.sh 0.2.1
 ```
 
-`UNIPOST_API_KEY` is required because the release script hard-gates on the three source-validation suites before it will commit or tag a release.
+`UNIPOST_API_KEY` is required because the release script hard-gates on the source-validation suites before it will commit or tag a release.
 
 ## 4. Manual release steps
 

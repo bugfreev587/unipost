@@ -55,7 +55,7 @@ This keeps the hourly checks deterministic and makes failures easier to diagnose
 The hourly monitor currently verifies:
 
 - public REST API smoke coverage
-- released JavaScript, Python, and Go SDK compatibility against the live API
+- released JavaScript, Python, Go, and Java SDK compatibility against the live API
 - whether the packages customers actually install still work against production
 
 It does not yet synthetically verify outbound webhook delivery to a real public receiver.

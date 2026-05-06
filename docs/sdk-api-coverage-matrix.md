@@ -83,5 +83,5 @@ These are convenience methods that exist in the SDK surface but are not 1:1 publ
 
 ## Notes
 
-- `oauth.connect` is implemented in all three SDKs because the route is public, but current backend behavior still appears to require profile context and often returns `unauthorized` on the API-key path. Validation treats that response as a known server-side limitation rather than an SDK defect.
+- `oauth.connect` is implemented in all four SDKs because the route is public, but current backend behavior still appears to require profile context and often returns `unauthorized` on the API-key path. Validation treats that response as a known server-side limitation rather than an SDK defect.
 - `facebook/page-insights`, `platform-credentials`, `retryResult`, `deliveryJobs.retry`, `deliveryJobs.cancel`, and live publish are environment-sensitive. Validation covers them conditionally or via safe negative-path checks so the scripts remain runnable in normal workspaces.
