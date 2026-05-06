@@ -22,6 +22,7 @@ import { QuickstartStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { humanizeConnectError } from "@/lib/connect-errors";
 import { readStoredReplay, writeStoredReplay } from "@/components/tutorials/replay-storage";
+import { writeStoredQuickstartSelectedAccountId } from "@/components/tutorials/quickstart-selection-storage";
 
 // BASE_PLATFORMS is the always-available set. Feature-flagged platforms
 // (currently just Facebook during audit) are appended at render time
@@ -100,43 +101,8 @@ export default function AccountsPage() {
     router.replace(url.pathname + (url.search ? url.search : ""));
   }, [router]);
 
-  // Activation flow: if this success is the user's FIRST-ever connection
-  // (activation modal was the origin), bounce them back to the dashboard
-  // so the Welcome modal re-pops with step 1 checked and step 2 ready.
-  // The check queries the activation API — if completed or dismissed we
-  // skip the redirect and let the user stay on the accounts page.
   useEffect(() => {
     if (callbackStatus !== "success") return;
-    // If the user is replaying a tutorial, the connect was triggered from
-    // the tutorial modal and we want to bounce back to the dashboard so
-    // the host can restore the modal with the next step active. Skip the
-    // activation round-trip in that case — replay marker takes priority.
-    if (readStoredReplay()) {
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const token = await getToken();
-        if (!token || cancelled) return;
-        const res = await getActivation(token);
-        if (cancelled) return;
-        // Only redirect when the activation guide is still active
-        // (not completed and not dismissed). This covers the first-time
-        // connect case and avoids yanking power users off the accounts
-        // page after reconnecting a second/third account.
-        if (!res.data.completed && !res.data.dismissed) {
-          router.replace(`/projects/${profileId}`);
-        }
-      } catch { /* silent — stay on accounts page */ }
-    })();
-    return () => { cancelled = true; };
-  }, [callbackStatus, getToken, profileId, router]);
-
-  useEffect(() => {
-    if (callbackStatus !== "success") return;
-    const stored = readStoredReplay();
-    if (!stored) return;
     if (loading) return;
 
     const activeProfileAccounts = accounts
@@ -147,11 +113,39 @@ export default function AccountsPage() {
       ? activeProfileAccounts.find((account) => account.account_name?.trim() === callbackAccount.trim())
       : undefined;
     const selected = matchedByName || activeProfileAccounts[0];
-    if (selected && stored.selectedAccountId !== selected.id) {
-      writeStoredReplay({ ...stored, selectedAccountId: selected.id });
+    if (!selected) return;
+
+    const stored = readStoredReplay();
+    if (stored) {
+      if (stored.selectedAccountId !== selected.id) {
+        writeStoredReplay({ ...stored, selectedAccountId: selected.id });
+      }
+      router.replace(`/projects/${profileId}`);
+      return;
     }
-    router.replace(`/projects/${profileId}`);
-  }, [accounts, callbackAccount, callbackStatus, loading, profileId, router]);
+
+    if (!firstTimeMode) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token || cancelled) return;
+        const res = await getActivation(token);
+        if (cancelled) return;
+        if (!res.data.completed && !res.data.dismissed) {
+          writeStoredQuickstartSelectedAccountId(selected.id);
+          router.replace(`/projects/${profileId}`);
+        }
+      } catch {
+        /* silent — stay on accounts page */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts, callbackAccount, callbackStatus, firstTimeMode, getToken, loading, profileId, router]);
 
   const loadAccounts = useCallback(async () => {
     try {

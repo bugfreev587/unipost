@@ -14,6 +14,7 @@ import { Plus, Search, MoreHorizontal, Copy, Pencil, Send, XCircle, Calendar, Ch
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 import { readStoredReplay } from "@/components/tutorials/replay-storage";
+import { consumeStoredQuickstartSelectedAccountId } from "@/components/tutorials/quickstart-selection-storage";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft" | "archived";
 
@@ -234,6 +235,11 @@ export default function PostsPage() {
   const [showCreateModal, setShowCreateModal] = useState(searchParams.get("action") === "new");
   const initialCaption = searchParams.get("template") === "welcome" ? "Hello from UniPost 👋" : "";
   const replaySelectedAccountId = initialCaption ? readStoredReplay()?.selectedAccountId : undefined;
+  const [quickstartSelectedAccountId] = useState<string | undefined>(() =>
+    initialCaption && !replaySelectedAccountId
+      ? consumeStoredQuickstartSelectedAccountId() ?? undefined
+      : undefined
+  );
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -780,8 +786,14 @@ export default function PostsPage() {
           } catch { /* silent */ }
         }}
         initialCaption={initialCaption}
-        preselectAllAccounts={initialCaption !== "" && !replaySelectedAccountId}
-        preselectedAccountIds={replaySelectedAccountId ? [replaySelectedAccountId] : undefined}
+        preselectAllAccounts={false}
+        preselectedAccountIds={
+          replaySelectedAccountId
+            ? [replaySelectedAccountId]
+            : quickstartSelectedAccountId
+              ? [quickstartSelectedAccountId]
+              : undefined
+        }
       />
 
       {confirmAction ? (
