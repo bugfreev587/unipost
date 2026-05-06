@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { CheckCircle2, Lock, Play, RefreshCw } from "lucide-react";
+import { CheckCircle2, Lock, Play, RefreshCw, Sparkles } from "lucide-react";
 import { getBootstrap, type TutorialId } from "@/lib/api";
 import { TutorialHostProvider, useTutorialHost } from "./tutorial-host";
 import { getTutorial, prerequisitesMet, stepCompleted } from "./registry";
@@ -135,60 +135,204 @@ function DocsQuickstartCardInner({
 
   const ctaLabel = completed ? "Replay interactive quickstart" : completedSteps > 0 ? "Resume interactive quickstart" : "Start interactive quickstart";
   const CtaIcon = completed ? RefreshCw : Play;
+  const StateIcon = completed ? CheckCircle2 : locked ? Lock : Sparkles;
+  const stateLabel = completed ? "Completed" : locked ? "Locked" : completedSteps > 0 ? "In progress" : "Interactive";
 
   return (
     <div
-      className="docs-callout"
       style={{
         marginBottom: 24,
-        border: "1px solid var(--docs-border)",
-        background: "color-mix(in srgb, var(--docs-surface) 84%, var(--docs-accent) 16%)",
+        borderRadius: 28,
+        border: locked
+          ? "1px solid color-mix(in srgb, var(--docs-border) 88%, white 12%)"
+          : "1px solid color-mix(in srgb, var(--docs-accent) 28%, var(--docs-border))",
+        background: locked
+          ? "linear-gradient(135deg, color-mix(in srgb, var(--docs-surface) 94%, white 6%), color-mix(in srgb, var(--docs-surface) 98%, transparent))"
+          : "linear-gradient(135deg, color-mix(in srgb, var(--docs-accent) 13%, white 87%), color-mix(in srgb, var(--docs-accent) 5%, var(--docs-surface)))",
+        boxShadow: locked
+          ? "0 10px 30px rgba(15, 23, 42, 0.04)"
+          : "0 18px 50px rgba(15, 23, 42, 0.08)",
+        overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
+      <div
+        style={{
+          padding: 24,
+          display: "flex",
+          alignItems: "stretch",
+          justifyContent: "space-between",
+          gap: 24,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ minWidth: 0, flex: "1 1 520px" }}>
           <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 8,
-              marginBottom: 10,
-              padding: "4px 10px",
+              marginBottom: 14,
+              padding: "6px 12px",
               borderRadius: 999,
-              background: completed
-                ? "rgba(16,185,129,.10)"
-                : locked
-                  ? "rgba(255,255,255,.05)"
-                  : "rgba(59,130,246,.10)",
-              border: completed
-                ? "1px solid rgba(16,185,129,.18)"
-                : locked
-                  ? "1px solid var(--docs-border)"
-                  : "1px solid rgba(59,130,246,.18)",
-              color: completed ? "#10b981" : locked ? "var(--docs-text-muted)" : "#60a5fa",
-              fontSize: 12,
-              fontWeight: 700,
-              letterSpacing: "0.04em",
+              background: "rgba(255,255,255,.72)",
+              border: "1px solid color-mix(in srgb, var(--docs-accent) 14%, var(--docs-border))",
+              color: "var(--docs-text)",
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: "0.1em",
               textTransform: "uppercase",
+              boxShadow: "0 6px 18px rgba(15, 23, 42, 0.05)",
             }}
           >
-            {completed ? <CheckCircle2 style={{ width: 13, height: 13 }} /> : locked ? <Lock style={{ width: 13, height: 13 }} /> : <Play style={{ width: 13, height: 13 }} />}
-            {completed ? "Completed" : locked ? "Locked" : completedSteps > 0 ? "In progress" : "Interactive"}
+            <Sparkles style={{ width: 13, height: 13, color: "var(--docs-accent)" }} />
+            Interactive quickstart
           </div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "var(--docs-text)", marginBottom: 8 }}>
-            {tutorial.title}
-          </div>
-          <div style={{ color: "var(--docs-text-soft)", lineHeight: 1.7, marginBottom: 10 }}>
-            {tutorial.description}
-          </div>
-          <div style={{ color: "var(--docs-text-muted)", fontSize: 14 }}>
-            Progress: {completedSteps} / {tutorial.steps.length} steps
+
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+            <div
+              style={{
+                width: 58,
+                height: 58,
+                flexShrink: 0,
+                borderRadius: 18,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: locked
+                  ? "rgba(148, 163, 184, 0.10)"
+                  : "linear-gradient(135deg, color-mix(in srgb, var(--docs-accent) 18%, white 82%), color-mix(in srgb, var(--docs-accent) 10%, white 90%))",
+                border: locked
+                  ? "1px solid color-mix(in srgb, var(--docs-border) 80%, white 20%)"
+                  : "1px solid color-mix(in srgb, var(--docs-accent) 22%, var(--docs-border))",
+                boxShadow: locked
+                  ? "none"
+                  : "0 12px 28px rgba(15, 23, 42, 0.08)",
+              }}
+            >
+              <StateIcon
+                style={{
+                  width: 26,
+                  height: 26,
+                  color: completed
+                    ? "#10b981"
+                    : locked
+                      ? "var(--docs-text-muted)"
+                      : "var(--docs-accent)",
+                }}
+              />
+            </div>
+
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 10,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  background: completed
+                    ? "rgba(16,185,129,.10)"
+                    : locked
+                      ? "rgba(255,255,255,.58)"
+                      : "rgba(59,130,246,.10)",
+                  border: completed
+                    ? "1px solid rgba(16,185,129,.18)"
+                    : locked
+                      ? "1px solid var(--docs-border)"
+                      : "1px solid rgba(59,130,246,.18)",
+                  color: completed ? "#10b981" : locked ? "var(--docs-text-muted)" : "#3b82f6",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                }}
+              >
+                {stateLabel}
+              </div>
+              <div
+                style={{
+                  fontSize: 32,
+                  lineHeight: 1.05,
+                  fontWeight: 800,
+                  color: "var(--docs-text)",
+                  marginBottom: 10,
+                  letterSpacing: "-0.03em",
+                }}
+              >
+                {tutorial.title}
+              </div>
+              <div
+                style={{
+                  color: "var(--docs-text-soft)",
+                  lineHeight: 1.7,
+                  marginBottom: 14,
+                  fontSize: 18,
+                  maxWidth: 760,
+                }}
+              >
+                {tutorial.description}
+              </div>
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 12px",
+                  borderRadius: 14,
+                  background: "rgba(255,255,255,.72)",
+                  border: "1px dashed color-mix(in srgb, var(--docs-accent) 26%, var(--docs-border))",
+                  color: "var(--docs-text)",
+                  fontSize: 14,
+                  fontWeight: 600,
+                }}
+              >
+                <span style={{ color: "var(--docs-text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 11 }}>
+                  Progress
+                </span>
+                <span>{completedSteps} / {tutorial.steps.length} steps</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 10 }}>
+        <div
+          style={{
+            flex: "0 0 380px",
+            minWidth: 300,
+            alignSelf: "stretch",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            gap: 16,
+            padding: 20,
+            borderRadius: 24,
+            border: "1px solid color-mix(in srgb, var(--docs-accent) 16%, var(--docs-border))",
+            background: "rgba(255,255,255,.78)",
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,.65)",
+          }}
+        >
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "4px 0",
+              color: "var(--docs-text-muted)",
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+            }}
+          >
+            <Play style={{ width: 13, height: 13, color: "var(--docs-accent)" }} />
+            Launch module
+          </div>
+          <div style={{ color: "var(--docs-text)", fontSize: 18, fontWeight: 700, lineHeight: 1.35 }}>
+            Open the live quickstart and complete it step by step inside your workspace.
+          </div>
           {locked && fallbackHref ? (
-            <Link href={fallbackHref} style={docsButtonLinkStyle}>
+            <Link href={fallbackHref} style={{ ...docsButtonLinkStyle, width: "100%", justifyContent: "center", marginTop: 4 }}>
               Complete prerequisite first
             </Link>
           ) : (
@@ -198,41 +342,51 @@ function DocsQuickstartCardInner({
               style={{
                 display: "inline-flex",
                 alignItems: "center",
+                justifyContent: "center",
                 gap: 8,
-                borderRadius: 12,
+                width: "100%",
+                borderRadius: 16,
                 border: "1px solid color-mix(in srgb, var(--docs-accent) 32%, var(--docs-border))",
                 background: "var(--docs-accent)",
                 color: "white",
-                padding: "10px 14px",
-                fontWeight: 600,
+                padding: "16px 18px",
+                fontWeight: 700,
                 cursor: "pointer",
                 fontFamily: "inherit",
-                fontSize: 14,
+                fontSize: 17,
+                boxShadow: "0 14px 30px color-mix(in srgb, var(--docs-accent) 22%, transparent)",
               }}
             >
-              <CtaIcon style={{ width: 14, height: 14 }} />
+              <CtaIcon style={{ width: 18, height: 18 }} />
               {ctaLabel}
             </button>
           )}
-          <div style={{ color: "var(--docs-text-muted)", fontSize: 13, maxWidth: 280 }}>
-            Runs the live quickstart flow inside your workspace without leaving this page.
+          <div
+            style={{
+              paddingTop: 4,
+              color: "var(--docs-text-soft)",
+              fontSize: 15,
+              lineHeight: 1.65,
+            }}
+          >
+            This is a live, playable quickstart. It opens the real walkthrough modal, keeps progress, and can be replayed anytime.
           </div>
         </div>
       </div>
 
       {locked && fallbackHref && (
-        <div style={{ marginTop: 14, color: "var(--docs-text-muted)", fontSize: 14 }}>
+        <div style={{ padding: "0 24px 24px", color: "var(--docs-text-muted)", fontSize: 14 }}>
           This quickstart unlocks after you complete the Dashboard Quickstart.
         </div>
       )}
 
       {!locked && tutorialId === "post_with_api" && (
-        <div style={{ marginTop: 14, color: "var(--docs-text-muted)", fontSize: 14 }}>
+        <div style={{ padding: "0 24px 24px", color: "var(--docs-text-muted)", fontSize: 14 }}>
           The API Quickstart creates a key, picks a real connected account, and sends a live test post.
         </div>
       )}
       {!locked && tutorialId === "quickstart" && (
-        <div style={{ marginTop: 14, color: "var(--docs-text-muted)", fontSize: 14 }}>
+        <div style={{ padding: "0 24px 24px", color: "var(--docs-text-muted)", fontSize: 14 }}>
           The Dashboard Quickstart walks through connecting an account and publishing your first post from the UI.
         </div>
       )}
