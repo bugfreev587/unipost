@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
@@ -180,60 +181,59 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 
 	metadataJSON, _ := json.Marshal(connectResult.Metadata)
 
-	// Bluesky upsert path: look up by (profile_id, external_account_id).
-	// If a row exists for this DID we update in place so historical
-	// post_results FKs stay intact (Sprint 3 decision #1). Otherwise
-	// insert a fresh managed row.
-	existing, lookupErr := h.queries.GetManagedBlueskyAccount(r.Context(), db.GetManagedBlueskyAccountParams{
+	// Reuse an existing managed row for this DID inside the profile.
+	// BYO Bluesky rows stay independent so Quickstart / white-label and
+	// managed developer users do not overwrite each other.
+	existing, lookupErr := h.queries.FindActiveManagedSocialAccountByExternalAccount(r.Context(), db.FindActiveManagedSocialAccountByExternalAccountParams{
 		ProfileID:         session.ProfileID,
+		Platform:          "bluesky",
 		ExternalAccountID: connectResult.ExternalAccountID,
 	})
 
+	accountName := pgtype.Text{String: connectResult.AccountName, Valid: connectResult.AccountName != ""}
+	accountAvatarURL := pgtype.Text{String: connectResult.AvatarURL, Valid: connectResult.AvatarURL != ""}
+	refreshToken := pgtype.Text{String: encRefresh, Valid: encRefresh != ""}
+	tokenExpiresAt := pgtype.Timestamptz{Time: connectResult.TokenExpiresAt, Valid: !connectResult.TokenExpiresAt.IsZero()}
+	connectSessionID := pgtype.Text{String: session.ID, Valid: true}
+	externalUserID := pgtype.Text{String: session.ExternalUserID, Valid: true}
+
 	var savedID string
 	if lookupErr == nil {
-		// Refresh in place. Note we DO update the JWT (access_token)
-		// here even though UpdateManagedBlueskyAccount's signature is
-		// "access_token" — for Bluesky that's the JWT.
-		updated, err := h.queries.UpdateManagedBlueskyAccount(r.Context(), db.UpdateManagedBlueskyAccountParams{
+		updated, err := h.queries.RefreshConnectedSocialAccount(r.Context(), db.RefreshConnectedSocialAccountParams{
 			ID:                existing.ID,
 			AccessToken:       encAccess,
-			AccountName:       pgtype.Text{String: connectResult.AccountName, Valid: connectResult.AccountName != ""},
-			AccountAvatarUrl:  pgtype.Text{String: connectResult.AvatarURL, Valid: connectResult.AvatarURL != ""},
-			ExternalUserID:    pgtype.Text{String: session.ExternalUserID, Valid: true},
+			RefreshToken:      refreshToken,
+			TokenExpiresAt:    tokenExpiresAt,
+			ExternalAccountID: connectResult.ExternalAccountID,
+			AccountName:       accountName,
+			AccountAvatarUrl:  accountAvatarURL,
+			Metadata:          metadataJSON,
+			Scope:             nil,
+			ConnectionType:    "managed",
+			ConnectSessionID:  connectSessionID,
+			ExternalUserID:    externalUserID,
 			ExternalUserEmail: session.ExternalUserEmail,
-			ConnectSessionID:  pgtype.Text{String: session.ID, Valid: true},
 		})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			renderBlueskyResult(w, blueskyTplData{Error: "Internal error saving account."})
 			return
 		}
-		// Re-stash the refresh JWT alongside the access JWT. Reuse
-		// the existing token-update query so we don't need a new
-		// sqlc method just for Bluesky.
-		_ = h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
-			ID:             updated.ID,
-			AccessToken:    encAccess,
-			RefreshToken:   pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
-			TokenExpiresAt: pgtype.Timestamptz{Time: connectResult.TokenExpiresAt, Valid: !connectResult.TokenExpiresAt.IsZero()},
-		})
 		savedID = updated.ID
-	} else {
-		// Fresh insert. Mirrors the BYO Connect handler with the
-		// managed-flow extras populated.
-		created, err := h.queries.UpsertManagedSocialAccount(r.Context(), db.UpsertManagedSocialAccountParams{
+	} else if lookupErr == pgx.ErrNoRows {
+		created, err := h.queries.CreateManagedSocialAccount(r.Context(), db.CreateManagedSocialAccountParams{
 			ProfileID:         session.ProfileID,
 			Platform:          "bluesky",
 			AccessToken:       encAccess,
-			RefreshToken:      pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
-			TokenExpiresAt:    pgtype.Timestamptz{Time: connectResult.TokenExpiresAt, Valid: !connectResult.TokenExpiresAt.IsZero()},
+			RefreshToken:      refreshToken,
+			TokenExpiresAt:    tokenExpiresAt,
 			ExternalAccountID: connectResult.ExternalAccountID,
-			AccountName:       pgtype.Text{String: connectResult.AccountName, Valid: connectResult.AccountName != ""},
-			AccountAvatarUrl:  pgtype.Text{String: connectResult.AvatarURL, Valid: connectResult.AvatarURL != ""},
+			AccountName:       accountName,
+			AccountAvatarUrl:  accountAvatarURL,
 			Metadata:          metadataJSON,
 			Scope:             nil,
-			ConnectSessionID:  pgtype.Text{String: session.ID, Valid: true},
-			ExternalUserID:    pgtype.Text{String: session.ExternalUserID, Valid: true},
+			ConnectSessionID:  connectSessionID,
+			ExternalUserID:    externalUserID,
 			ExternalUserEmail: session.ExternalUserEmail,
 		})
 		if err != nil {
@@ -242,6 +242,10 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		savedID = created.ID
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+		renderBlueskyResult(w, blueskyTplData{Error: "Internal error saving account."})
+		return
 	}
 
 	// Mark the session completed and link to the saved account.

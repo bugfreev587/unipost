@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/connect"
@@ -255,23 +256,60 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		"display_name": profile.DisplayName,
 	})
 
-	saved, err := h.queries.UpsertManagedSocialAccount(r.Context(), db.UpsertManagedSocialAccountParams{
+	activeAccount, lookupErr := h.queries.FindActiveManagedSocialAccountByExternalAccount(r.Context(), db.FindActiveManagedSocialAccountByExternalAccountParams{
 		ProfileID:         session.ProfileID,
 		Platform:          platformName,
-		AccessToken:       encAccess,
-		RefreshToken:      pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
-		TokenExpiresAt:    pgtype.Timestamptz{Time: tokens.ExpiresAt, Valid: !tokens.ExpiresAt.IsZero()},
 		ExternalAccountID: profile.ExternalAccountID,
-		AccountName:       pgtype.Text{String: nonEmpty(profile.Username, profile.DisplayName), Valid: profile.Username != "" || profile.DisplayName != ""},
-		AccountAvatarUrl:  pgtype.Text{String: profile.AvatarURL, Valid: profile.AvatarURL != ""},
-		Metadata:          metadata,
-		Scope:             tokens.Scopes,
-		ConnectSessionID:  pgtype.Text{String: session.ID, Valid: true},
-		ExternalUserID:    pgtype.Text{String: session.ExternalUserID, Valid: true},
-		ExternalUserEmail: session.ExternalUserEmail,
 	})
+
+	accountName := pgtype.Text{String: nonEmpty(profile.Username, profile.DisplayName), Valid: profile.Username != "" || profile.DisplayName != ""}
+	accountAvatarURL := pgtype.Text{String: profile.AvatarURL, Valid: profile.AvatarURL != ""}
+	refreshToken := pgtype.Text{String: encRefresh, Valid: encRefresh != ""}
+	tokenExpiresAt := pgtype.Timestamptz{Time: tokens.ExpiresAt, Valid: !tokens.ExpiresAt.IsZero()}
+	connectSessionID := pgtype.Text{String: session.ID, Valid: true}
+	externalUserID := pgtype.Text{String: session.ExternalUserID, Valid: true}
+
+	var saved db.SocialAccount
+	switch {
+	case lookupErr == nil:
+		saved, err = h.queries.RefreshConnectedSocialAccount(r.Context(), db.RefreshConnectedSocialAccountParams{
+			ID:                activeAccount.ID,
+			AccessToken:       encAccess,
+			RefreshToken:      refreshToken,
+			TokenExpiresAt:    tokenExpiresAt,
+			ExternalAccountID: profile.ExternalAccountID,
+			AccountName:       accountName,
+			AccountAvatarUrl:  accountAvatarURL,
+			Metadata:          metadata,
+			Scope:             tokens.Scopes,
+			ConnectionType:    "managed",
+			ConnectSessionID:  connectSessionID,
+			ExternalUserID:    externalUserID,
+			ExternalUserEmail: session.ExternalUserEmail,
+		})
+	case lookupErr == pgx.ErrNoRows:
+		saved, err = h.queries.CreateManagedSocialAccount(r.Context(), db.CreateManagedSocialAccountParams{
+			ProfileID:         session.ProfileID,
+			Platform:          platformName,
+			AccessToken:       encAccess,
+			RefreshToken:      refreshToken,
+			TokenExpiresAt:    tokenExpiresAt,
+			ExternalAccountID: profile.ExternalAccountID,
+			AccountName:       accountName,
+			AccountAvatarUrl:  accountAvatarURL,
+			Metadata:          metadata,
+			Scope:             tokens.Scopes,
+			ConnectSessionID:  connectSessionID,
+			ExternalUserID:    externalUserID,
+			ExternalUserEmail: session.ExternalUserEmail,
+		})
+	default:
+		slog.Error("connect.callback: lookup failed", "platform", platformName, "err", lookupErr)
+		renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
+		return
+	}
 	if err != nil {
-		slog.Error("connect.callback: upsert failed", "platform", platformName, "err", err)
+		slog.Error("connect.callback: save failed", "platform", platformName, "err", err)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
 		return
 	}

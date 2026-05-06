@@ -47,6 +47,51 @@ SET access_token = $2,
     disconnected_at = NULL
 WHERE id = $1;
 
+-- name: FindActiveManagedSocialAccountByExternalAccount :one
+SELECT *
+FROM social_accounts
+WHERE profile_id = $1
+  AND platform = $2
+  AND external_account_id = $3
+  AND connection_type = 'managed'
+  AND disconnected_at IS NULL
+LIMIT 1;
+
+-- name: CreateManagedSocialAccount :one
+INSERT INTO social_accounts (
+  profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, metadata, scope,
+  connection_type, connect_session_id, external_user_id, external_user_email,
+  status, last_refreshed_at
+)
+VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8, $9, $10,
+  'managed', $11, $12, $13,
+  'active', NOW()
+)
+RETURNING *;
+
+-- name: RefreshConnectedSocialAccount :one
+UPDATE social_accounts
+SET access_token        = $2,
+    refresh_token       = $3,
+    token_expires_at    = $4,
+    external_account_id = $5,
+    account_name        = $6,
+    account_avatar_url  = $7,
+    metadata            = $8,
+    scope               = $9,
+    connection_type     = $10,
+    connect_session_id  = $11,
+    external_user_id    = $12,
+    external_user_email = $13,
+    status              = 'active',
+    disconnected_at     = NULL,
+    last_refreshed_at   = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: UpsertManagedSocialAccount :one
 INSERT INTO social_accounts (
   profile_id, platform, access_token, refresh_token, token_expires_at,
