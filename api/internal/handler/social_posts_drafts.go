@@ -332,11 +332,15 @@ func (h *SocialPostHandler) applyLifecyclePatch(w http.ResponseWriter, r *http.R
 // carry a future RFC3339 timestamp. Optimistic-locked: if the row
 // already flipped to 'publishing' between the read and the write
 // the UPDATE returns no rows and we 409.
-func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Request, workspaceID string, postID string) {
+//
+// The caller (UpdateDraft) has already consumed r.Body via io.ReadAll
+// to drive the lifecycle / draft branches, so we decode from rawBody
+// here rather than re-reading r.Body (which is now exhausted).
+func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Request, workspaceID string, postID string, rawBody []byte) {
 	var body struct {
 		ScheduledAt *string `json:"scheduled_at"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(rawBody, &body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
 		return
 	}
@@ -447,7 +451,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	// Sprint 3 PR8: scheduled-post reschedule branch. Only scheduled_at
 	// is editable; all other fields are ignored.
 	if existing.Status == "scheduled" {
-		h.reschedulePost(w, r, workspaceID, postID)
+		h.reschedulePost(w, r, workspaceID, postID, rawBody)
 		return
 	}
 	if existing.Status != "draft" {
