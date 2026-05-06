@@ -304,9 +304,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuItem onClick={() => router.push("/contact")} style={{ padding: "10px 14px" }}>
                 <Mail style={{ width: 14, height: 14 }} /><span>Contact us</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setTheme(nextTheme)} style={{ padding: "10px 14px" }}>
-                <ThemeIcon style={{ width: 14, height: 14 }} /><span>{themeLabel}</span>
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => signOut({ redirectUrl: "https://unipost.dev" })} style={{ padding: "10px 14px" }}>
                 <LogOut style={{ width: 14, height: 14 }} /><span>Log out</span>
@@ -649,6 +646,42 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <Settings style={{ width: 16, height: 16 }} strokeWidth={1.75} />
             <span>Settings</span>
           </Link>
+          <button
+            type="button"
+            onClick={() => setTheme(nextTheme)}
+            title={themeLabel}
+            aria-label={themeLabel}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 36,
+              height: 36,
+              borderRadius: 12,
+              border: "1px solid var(--dborder)",
+              background: "color-mix(in srgb, var(--surface) 82%, transparent)",
+              color: "var(--dmuted)",
+              cursor: "pointer",
+              transition: "transform 0.12s ease, background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease",
+              boxShadow: "0 0 0 rgba(0,0,0,0)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.background = "color-mix(in srgb, var(--daccent) 8%, var(--surface))";
+              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--daccent) 28%, var(--dborder))";
+              e.currentTarget.style.color = "var(--dtext)";
+              e.currentTarget.style.boxShadow = "0 10px 22px rgba(0,0,0,.18)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.background = "color-mix(in srgb, var(--surface) 82%, transparent)";
+              e.currentTarget.style.borderColor = "var(--dborder)";
+              e.currentTarget.style.color = "var(--dmuted)";
+              e.currentTarget.style.boxShadow = "0 0 0 rgba(0,0,0,0)";
+            }}
+          >
+            <ThemeIcon style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+          </button>
         </div>
 
         {/* ── Bottom: Workspace ── */}
