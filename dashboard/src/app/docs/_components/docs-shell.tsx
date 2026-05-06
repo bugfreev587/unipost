@@ -3,7 +3,7 @@
 import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -48,6 +48,8 @@ const API_SIDEBAR_DEFAULT_WIDTH = 336;
 const API_SIDEBAR_MIN_WIDTH = 280;
 const API_SIDEBAR_MAX_WIDTH = 520;
 const API_SIDEBAR_STORAGE_KEY = "unipost-docs-api-sidebar-width";
+const DOCS_USER_PATH_KEY = "unipost-docs-user-path";
+const DOCS_USER_CHOOSER_HIDE_KEY = "unipost-docs-user-chooser-hide";
 
 function clampApiSidebarWidth(value: number) {
   return Math.min(API_SIDEBAR_MAX_WIDTH, Math.max(API_SIDEBAR_MIN_WIDTH, Math.round(value)));
@@ -163,12 +165,23 @@ const DOCS_PRIMARY_NAV: DocsPrimaryNav[] = [
 const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
   overview: [
     {
-      title: "Overview",
+      title: "Using the Dashboard",
       items: [
-        { label: "Quickstart", href: "/docs/quickstart" },
+        { label: "Dashboard Quickstart", href: "/docs/dashboard-quickstart" },
+      ],
+    },
+    {
+      title: "Using the API",
+      items: [
+        { label: "API Quickstart", href: "/docs/quickstart" },
         { label: "SDKs", href: "/docs/sdk" },
-        { label: "MCP", href: "/docs/mcp" },
         { label: "CLI", href: "/docs/cli" },
+        { label: "MCP", href: "/docs/mcp" },
+      ],
+    },
+    {
+      title: "Advanced",
+      items: [
         { label: "White-label", href: "/docs/white-label" },
       ],
     },
@@ -550,8 +563,22 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 @media (max-width:960px){.docs-checklist.docs-checklist-2col{grid-template-columns:1fr}}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
+.docs-chooser-overlay{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(10,14,20,.42);backdrop-filter:blur(12px)}
+.docs-chooser-card{width:min(640px,100%);background:var(--docs-bg-elevated);border:1px solid var(--docs-border);border-radius:24px;box-shadow:var(--docs-shadow);padding:28px}
+.docs-chooser-title{font-size:28px;line-height:1.1;letter-spacing:-.04em;font-weight:760;color:var(--docs-text);margin:0 0 10px}
+.docs-chooser-sub{font-size:15px;line-height:1.72;color:var(--docs-text-soft);margin:0 0 20px}
+.docs-chooser-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:18px}
+.docs-chooser-option{display:flex;flex-direction:column;gap:8px;text-align:left;padding:18px 18px 16px;border-radius:18px;border:1px solid var(--docs-border);background:var(--docs-bg-muted);color:inherit;cursor:pointer;transition:border-color .14s ease,transform .14s ease,box-shadow .14s ease,background .14s ease}
+.docs-chooser-option:hover{border-color:color-mix(in srgb, var(--docs-link) 34%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);background:color-mix(in srgb, var(--docs-bg-elevated) 84%, var(--docs-bg-muted))}
+.docs-chooser-option-title{font-size:17px;font-weight:720;letter-spacing:-.02em;color:var(--docs-text)}
+.docs-chooser-option-body{font-size:14px;line-height:1.68;color:var(--docs-text-soft)}
+.docs-chooser-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.docs-chooser-checkbox{display:inline-flex;align-items:center;gap:10px;font-size:13px;line-height:1.5;color:var(--docs-text-soft)}
+.docs-chooser-checkbox input{width:15px;height:15px;accent-color:var(--docs-link)}
+.docs-chooser-skip{border:none;background:transparent;color:var(--docs-link);font-size:13px;font-weight:700;cursor:pointer;padding:0}
+.docs-chooser-skip:hover{text-decoration:underline}
 @media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,1fr);gap:26px}.docs-toc{display:none}.docs-layout-api{grid-template-columns:var(--docs-api-sidebar-width, 312px) 14px minmax(0,1fr)}.docs-layout-platforms{grid-template-columns:220px minmax(0,1fr)}}
-@media (max-width:960px){.docs-topbar-inner{padding:12px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-left,.docs-topbar-right{width:100%}.docs-topbar-left{gap:14px}.docs-primary-nav{gap:14px;overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.docs-topbar-right{align-items:flex-start;justify-content:flex-start;flex-direction:row}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar,.docs-sidebar-resizer{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page-api{padding:32px 24px 38px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}}
+@media (max-width:960px){.docs-topbar-inner{padding:12px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-left,.docs-topbar-right{width:100%}.docs-topbar-left{gap:14px}.docs-primary-nav{gap:14px;overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.docs-topbar-right{align-items:flex-start;justify-content:flex-start;flex-direction:row}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar,.docs-sidebar-resizer{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page-api{padding:32px 24px 38px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid,.docs-chooser-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}.docs-chooser-card{padding:22px 18px}}
 `;
 
 function isLeafActive(current: string, href: string) {
@@ -630,11 +657,14 @@ function collectObservedNodes() {
 
 export function DocsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { isLoaded, isSignedIn } = useAuth();
   const [headings, setHeadings] = useState<HeadingItem[]>([]);
   const [activeHeading, setActiveHeading] = useState("");
   const [apiSidebarWidth, setApiSidebarWidth] = useState(API_SIDEBAR_DEFAULT_WIDTH);
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
+  const [showUserChooser, setShowUserChooser] = useState(false);
+  const [dontShowChooserAgain, setDontShowChooserAgain] = useState(false);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(API_SIDEBAR_DEFAULT_WIDTH);
   const activePrimaryNav = getActivePrimaryNav(pathname);
@@ -735,7 +765,50 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     window.localStorage.setItem(API_SIDEBAR_STORAGE_KEY, String(apiSidebarWidth));
   }, [apiSidebarWidth]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (pathname !== "/docs") {
+      setShowUserChooser(false);
+      return;
+    }
+
+    const hideChooser = window.localStorage.getItem(DOCS_USER_CHOOSER_HIDE_KEY) === "true";
+    const preferredPath = window.localStorage.getItem(DOCS_USER_PATH_KEY);
+
+    if (hideChooser && preferredPath) {
+      router.replace(preferredPath);
+      return;
+    }
+
+    setDontShowChooserAgain(hideChooser);
+    setShowUserChooser(true);
+  }, [pathname, router]);
+
   const topLinks = useMemo(() => DOCS_PRIMARY_NAV, []);
+
+  const handleChooseDocsPath = (href: string) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(DOCS_USER_PATH_KEY, href);
+      if (dontShowChooserAgain) {
+        window.localStorage.setItem(DOCS_USER_CHOOSER_HIDE_KEY, "true");
+      } else {
+        window.localStorage.removeItem(DOCS_USER_CHOOSER_HIDE_KEY);
+      }
+    }
+    setShowUserChooser(false);
+    router.push(href);
+  };
+
+  const handleSkipChooser = () => {
+    if (typeof window !== "undefined") {
+      if (dontShowChooserAgain) {
+        window.localStorage.setItem(DOCS_USER_CHOOSER_HIDE_KEY, "true");
+      } else {
+        window.localStorage.removeItem(DOCS_USER_CHOOSER_HIDE_KEY);
+      }
+    }
+    setShowUserChooser(false);
+  };
 
   return (
     <div className="docs-shell">
@@ -909,6 +982,39 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
           </aside>
         ) : null}
       </div>
+      {showUserChooser ? (
+        <div className="docs-chooser-overlay" role="dialog" aria-modal="true" aria-labelledby="docs-user-chooser-title">
+          <div className="docs-chooser-card">
+            <h2 id="docs-user-chooser-title" className="docs-chooser-title">How do you want to use UniPost?</h2>
+            <p className="docs-chooser-sub">
+              Choose the onboarding path that matches how you want to publish first. You can still browse the full docs either way.
+            </p>
+            <div className="docs-chooser-grid">
+              <button type="button" className="docs-chooser-option" onClick={() => handleChooseDocsPath("/docs/dashboard-quickstart")}>
+                <span className="docs-chooser-option-title">Use the Dashboard</span>
+                <span className="docs-chooser-option-body">Connect accounts and publish from the UniPost UI.</span>
+              </button>
+              <button type="button" className="docs-chooser-option" onClick={() => handleChooseDocsPath("/docs/quickstart")}>
+                <span className="docs-chooser-option-title">Use the API</span>
+                <span className="docs-chooser-option-body">Publish programmatically with API keys, SDKs, CLI, or MCP.</span>
+              </button>
+            </div>
+            <div className="docs-chooser-footer">
+              <label className="docs-chooser-checkbox">
+                <input
+                  type="checkbox"
+                  checked={dontShowChooserAgain}
+                  onChange={(event) => setDontShowChooserAgain(event.target.checked)}
+                />
+                <span>Don&apos;t show this again</span>
+              </label>
+              <button type="button" className="docs-chooser-skip" onClick={handleSkipChooser}>
+                Skip for now
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

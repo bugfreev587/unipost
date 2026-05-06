@@ -361,8 +361,8 @@ export default function QuickstartPage() {
   return (
     <DocsPage
       className="docs-page-wide"
-      eyebrow="Get Started"
-      title="Quickstart"
+      eyebrow="API Quickstart"
+      title="API Quickstart"
       lead="Create an API key, connect an account, and publish your first post — in about five minutes."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
