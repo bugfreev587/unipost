@@ -7,7 +7,7 @@ SUITE="${1:-}"
 LOG_DIR="${LOG_DIR:-${ROOT_DIR}/artifacts/sdk-published-regression}"
 
 if [[ -z "$SUITE" ]]; then
-  echo "usage: $0 <sdk-js|sdk-python|sdk-go>" >&2
+  echo "usage: $0 <sdk-js|sdk-python|sdk-go|sdk-java>" >&2
   exit 64
 fi
 
@@ -18,6 +18,7 @@ TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW:-false}"
 JS_SDK_SPEC="${JS_SDK_SPEC:-@unipost/sdk@latest}"
 PYTHON_SDK_SPEC="${PYTHON_SDK_SPEC:-unipost}"
 GO_SDK_SPEC="${GO_SDK_SPEC:-github.com/unipost-dev/sdk-go@latest}"
+JAVA_SDK_VERSION="${JAVA_SDK_VERSION:-0.2.5}"
 
 if [[ -z "$UNIPOST_API_KEY" ]]; then
   echo "UNIPOST_API_KEY is required" >&2
@@ -67,6 +68,12 @@ EOF
       go get "$1"
       GOCACHE="${RUNNER_TEMP:-/tmp}/unipost-go-cache" UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" go run main.go
     ' _ "$GO_SDK_SPEC" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+    ;;
+  sdk-java)
+    run_and_log bash -lc '
+      cd scripts/sdk-validation/java
+      UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" ./gradlew run -PunipostJavaSdkVersion="$1"
+    ' _ "$JAVA_SDK_VERSION" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
     ;;
   *)
     echo "unknown suite: $SUITE" >&2

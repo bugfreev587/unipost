@@ -8,7 +8,7 @@ LOG_DIR="${LOG_DIR:-${ROOT_DIR}/artifacts/sdk-source-validation}"
 UNIPOST_DEV_ROOT="${UNIPOST_DEV_ROOT:-/Users/xiaoboyu/unipost-dev}"
 
 if [[ -z "$SUITE" ]]; then
-  echo "usage: $0 <sdk-js|sdk-python|sdk-go>" >&2
+  echo "usage: $0 <sdk-js|sdk-python|sdk-go|sdk-java>" >&2
   exit 64
 fi
 
@@ -67,6 +67,15 @@ EOF
       cd "$TMP_DIR"
       GOCACHE="${RUNNER_TEMP:-/tmp}/unipost-go-cache" UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" go run main.go
     ' _ "$UNIPOST_DEV_ROOT" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+    ;;
+  sdk-java)
+    run_and_log bash -lc '
+      SDK_VERSION="$(sed -n '\''s/^version = "\(.*\)"$/\1/p'\'' "$1/sdk-java/build.gradle.kts" | head -n 1)"
+      cd "$1/sdk-java"
+      ./gradlew publishToMavenLocal
+      cd "$2/scripts/sdk-validation/java"
+      UNIPOST_API_KEY="$3" BASE_URL="$4" TEST_ACCOUNT_ID="$5" TEST_PUBLISH_NOW="$6" ./gradlew run -PunipostJavaSdkVersion="$SDK_VERSION" -PuseLocalSdk=true
+    ' _ "$UNIPOST_DEV_ROOT" "$ROOT_DIR" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
     ;;
   *)
     echo "unknown suite: $SUITE" >&2
