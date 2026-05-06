@@ -6,6 +6,7 @@ const INSTALL_SNIPPETS = [
   { label: "Node.js", code: "npm install @unipost/sdk" },
   { label: "Python", code: "pip install unipost" },
   { label: "Go", code: "go get github.com/unipost-dev/sdk-go" },
+  { label: "Java", code: "implementation(\"dev.unipost:sdk-java:0.2.5\")" },
 ];
 
 const INIT_SNIPPETS = [
@@ -25,6 +26,12 @@ client = UniPost()`,
     label: "Go",
     code: `client := unipost.NewClient()`,
   },
+  {
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();`,
+  },
 ];
 
 const CONNECT_SNIPPETS = [
@@ -41,6 +48,22 @@ const session = await client.connect.createSession({
 });
 
 console.log(session.url);`,
+  },
+  {
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var session = client.connect().createSession(Map.of(
+    "platform", "bluesky",
+    "external_user_id", "user_123",
+    "return_url", "https://app.acme.com/integrations/done"
+));
+
+System.out.println(session.get("url").asText());`,
   },
 ];
 
@@ -85,6 +108,15 @@ func main() {
   accountID := accounts[0].ID
   _ = accountID
 }`,
+  },
+  {
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var accounts = client.accounts().list().getData();
+String accountId = accounts.get(0).get("id").asText();`,
   },
 ];
 
@@ -165,6 +197,31 @@ func main() {
   _ = post.ID
 }`,
   },
+  {
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.List;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var post = client.posts().create(Map.of(
+    "platform_posts", List.of(
+        Map.of(
+            "account_id", "sa_twitter_123",
+            "caption", "Shipping on every platform with one API."
+        ),
+        Map.of(
+            "account_id", "sa_linkedin_456",
+            "caption", "We shipped a new release today. Here is what changed."
+        )
+    ),
+    "idempotency_key", "launch-2026-04-13-001"
+));
+
+System.out.println(post.get("id").asText());`,
+  },
 ];
 
 const VALIDATE_SNIPPETS = [
@@ -229,6 +286,24 @@ func main() {
   _ = validation
 }`,
   },
+  {
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.List;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var validation = client.posts().validate(Map.of(
+    "platform_posts", List.of(
+        Map.of(
+            "account_id", "sa_twitter_123",
+            "caption", draftForX
+        )
+    )
+));`,
+  },
 ];
 
 const DRAFT_SNIPPETS = [
@@ -268,6 +343,18 @@ const DRAFT_SNIPPETS = [
   Status: "draft",
 })`,
   },
+  {
+    label: "Java",
+    code: `var draft = client.posts().create(Map.of(
+    "platform_posts", List.of(
+        Map.of(
+            "account_id", "sa_bluesky_123",
+            "caption", "Review this before publish"
+        )
+    ),
+    "status", "draft"
+));`,
+  },
 ];
 
 export default function QuickstartPage() {
@@ -282,7 +369,7 @@ export default function QuickstartPage() {
 
       <div className="qs-badges">
         <span className="qs-badge">~5 min</span>
-        <span className="qs-badge">Node · Python · Go</span>
+        <span className="qs-badge">Node · Python · Go · Java</span>
         <span className="qs-badge">REST · SDK · MCP</span>
         <span className="qs-badge">Free tier</span>
       </div>
@@ -293,7 +380,7 @@ export default function QuickstartPage() {
         rows={[
           ["Time to first post", "~5 minutes"],
           ["You'll need", "A UniPost account and one connected social account"],
-          ["Languages", "Node.js, Python, or Go (or call the REST API directly)"],
+          ["Languages", "Node.js, Python, Go, or Java (or call the REST API directly)"],
           ["What you'll have at the end", "A live post and an account ID you can publish to"],
           ["Cost", "Free — the free tier covers the quickstart"],
         ]}

@@ -23,6 +23,13 @@ const SDKS = [
     href: "https://github.com/unipost-dev/sdk-go",
     install: "go get github.com/unipost-dev/sdk-go",
   },
+  {
+    name: "Java",
+    language: "Java 11+",
+    repo: "github.com/unipost-dev/sdk-java",
+    href: "https://github.com/unipost-dev/sdk-java",
+    install: "implementation(\"dev.unipost:sdk-java:0.2.5\")",
+  },
 ] as const;
 
 function GithubGlyph() {
@@ -45,7 +52,7 @@ export default function SdkPage() {
       className="docs-page-wide"
       eyebrow="SDKs"
       title="SDKs"
-      lead="Official UniPost client libraries for JavaScript, Python, and Go. Publish to every connected platform with one typed interface."
+      lead="Official UniPost client libraries for JavaScript, Python, Go, and Java. Publish to every connected platform with one typed interface."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 

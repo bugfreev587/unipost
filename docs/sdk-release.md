@@ -4,7 +4,7 @@ This guide documents the current release flow for UniPost SDKs after source chan
 
 ## Fast path
 
-After one-time GitHub secret setup, the release path for JavaScript and Python can be nearly one command:
+After one-time GitHub secret setup, the release path for JavaScript, Python, and Java can be nearly one command:
 
 ```bash
 UNIPOST_API_KEY=up_live_xxx \
@@ -29,6 +29,7 @@ Once the tags land on GitHub:
 
 - `sdk-js` publishes through `/Users/xiaoboyu/unipost-dev/sdk-js/.github/workflows/publish.yml`
 - `sdk-python` publishes through `/Users/xiaoboyu/unipost-dev/sdk-python/.github/workflows/publish.yml`
+- `sdk-java` publishes through `/Users/xiaoboyu/unipost-dev/sdk-java/.github/workflows/publish.yml`
 
 Go still needs a separate release step unless you later align the public module path with this repo.
 
@@ -37,11 +38,13 @@ Go still needs a separate release step unless you later align the public module 
 - JavaScript SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-js`
 - Python SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-python`
 - Go SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-go`
+- Java SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-java`
 
 That means:
 
 - JavaScript can be published directly from this repo
 - Python can now be packaged and published directly from this repo
+- Java can be packaged and published directly from its dedicated SDK repo
 - Go should be released through the repo that actually serves `github.com/unipost-dev/sdk-go`, or the module path must be changed before public release
 
 ## 1. Bump the SDK version
@@ -53,6 +56,8 @@ Update the version string in these files:
 - `/Users/xiaoboyu/unipost-dev/sdk-python/pyproject.toml`
 - `/Users/xiaoboyu/unipost-dev/sdk-python/unipost/__init__.py`
 - `/Users/xiaoboyu/unipost-dev/sdk-go/unipost/client.go`
+- `/Users/xiaoboyu/unipost-dev/sdk-java/build.gradle.kts`
+- `/Users/xiaoboyu/unipost-dev/sdk-java/src/main/java/dev/unipost/UniPost.java`
 
 Example target version:
 
@@ -66,6 +71,7 @@ From repo root:
 scripts/sdk-source-validation/run-suite.sh sdk-js
 scripts/sdk-source-validation/run-suite.sh sdk-python
 scripts/sdk-source-validation/run-suite.sh sdk-go
+scripts/sdk-source-validation/run-suite.sh sdk-java
 ```
 
 Recommended extra safety check:
@@ -106,6 +112,7 @@ Example:
 git -C /Users/xiaoboyu/unipost-dev/sdk-js status
 git -C /Users/xiaoboyu/unipost-dev/sdk-python status
 git -C /Users/xiaoboyu/unipost-dev/sdk-go status
+git -C /Users/xiaoboyu/unipost-dev/sdk-java status
 ```
 
 ### Create and push the Git tag
@@ -116,6 +123,7 @@ If you are using one shared SDK version across languages, create a repo tag afte
 git -C /Users/xiaoboyu/unipost-dev/sdk-js tag v0.2.1
 git -C /Users/xiaoboyu/unipost-dev/sdk-python tag v0.2.1
 git -C /Users/xiaoboyu/unipost-dev/sdk-go tag v0.2.1
+git -C /Users/xiaoboyu/unipost-dev/sdk-java tag v0.2.1
 ```
 
 This is useful for release history and is required if you later align the Go module release with Git tags.
@@ -126,7 +134,7 @@ If you want a GitHub-hosted pre-release check from the `unipost` repo, run:
 
 - `/Users/xiaoboyu/unipost/.github/workflows/sdk-source-validation.yml`
 
-That workflow checks out the `sdk-js`, `sdk-python`, and `sdk-go` repos into the runner, then runs the same source-validation suites against them before release.
+That workflow checks out the `sdk-js`, `sdk-python`, `sdk-go`, and `sdk-java` repos into the runner, then runs the same source-validation suites against them before release.
 
 ## 6. Publish the JavaScript SDK manually
 
@@ -177,7 +185,40 @@ Verify:
 python3 -m pip index versions unipost
 ```
 
-## 8. Release the Go SDK
+## 8. Publish the Java SDK
+
+The Java SDK is configured for signed Maven publishing via Gradle.
+
+Required repo secrets:
+
+- `MAVEN_CENTRAL_DEPLOY_URL`
+- `MAVEN_CENTRAL_USERNAME`
+- `MAVEN_CENTRAL_PASSWORD`
+- `MAVEN_SIGNING_KEY`
+- `MAVEN_SIGNING_PASSWORD`
+
+Local verification:
+
+```bash
+cd /Users/xiaoboyu/unipost-dev/sdk-java
+./gradlew test
+./gradlew publishToMavenLocal
+cd /Users/xiaoboyu/unipost
+scripts/sdk-source-validation/run-suite.sh sdk-java
+```
+
+Release:
+
+```bash
+cd /Users/xiaoboyu/unipost-dev/sdk-java
+git tag v0.2.1
+git push origin main
+git push origin v0.2.1
+```
+
+The publish workflow validates that the git tag matches the `build.gradle.kts` version and then runs `./gradlew publish`.
+
+## 9. Release the Go SDK
 
 The Go module currently declares:
 
@@ -209,12 +250,13 @@ If you do not have a separate `sdk-go` repo yet, that is the missing piece befor
 ## Release checklist
 
 - Version strings updated everywhere
-- JS, Python, Go regression suites green
+- JS, Python, Go, Java regression suites green
 - Optional smoke suite green
 - Release commit pushed
 - Git tag pushed
 - npm package published
 - PyPI package built and uploaded
+- Maven Central package uploaded
 - Go module released from the correct repository
 
 ## Notes
