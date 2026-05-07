@@ -13,6 +13,7 @@ export type JsonViewerSnippet = {
 };
 
 type MonacoLanguage = "javascript" | "python" | "go" | "json" | "shell" | "plaintext";
+type ViewerThemeVariant = "default" | "api";
 
 function tryFormatJson(value: string) {
   try {
@@ -82,10 +83,12 @@ export function JsonMonacoViewer({
   code,
   height,
   maxHeight = 468,
+  themeVariant = "default",
 }: {
   code: string;
   height?: number;
   maxHeight?: number;
+  themeVariant?: ViewerThemeVariant;
 }) {
   const formatted = useMemo(() => tryFormatJson(code), [code]);
   const [themeName, setThemeName] = useState("unipost-json-dark");
@@ -94,7 +97,9 @@ export function JsonMonacoViewer({
     const isDark = document.documentElement.classList.contains("dark");
     const name = isDark ? "unipost-json-dark" : "unipost-json-light";
     const styles = getComputedStyle(document.documentElement);
-    const editorBackground = styles.getPropertyValue("--docs-code-surface-bg").trim() || styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
+    const editorBackground = themeVariant === "api"
+      ? (isDark ? "#11161f" : "#ffffff")
+      : (styles.getPropertyValue("--docs-code-surface-bg").trim() || styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39");
     const editorForeground = styles.getPropertyValue("--docs-tech-text-soft").trim() || "#d6d9e5";
     const lineNumber = styles.getPropertyValue("--docs-tech-muted").trim() || "#9aa0b5";
     const borderColor = styles.getPropertyValue("--docs-tech-border").trim() || "#3a3d4f";
@@ -120,8 +125,8 @@ export function JsonMonacoViewer({
         "editorGutter.background": editorBackground,
         "editorIndentGuide.background1": borderColor,
         "editorIndentGuide.activeBackground1": lineNumber,
-        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.24)" : "rgba(96,165,250,0.26)",
-        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.14)" : "rgba(96,165,250,0.16)",
+        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.28)" : "rgba(96,165,250,0.24)",
+        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.16)" : "rgba(96,165,250,0.14)",
       },
     });
     setThemeName(name);
@@ -148,7 +153,7 @@ export function JsonMonacoViewer({
         border: "1px solid var(--docs-border)",
         borderRadius: 16,
         overflow: "hidden",
-        background: "var(--docs-code-surface-bg, var(--docs-tech-bg))",
+        background: themeVariant === "api" ? (typeof document !== "undefined" && document.documentElement.classList.contains("dark") ? "#11161f" : "#ffffff") : "var(--docs-code-surface-bg, var(--docs-tech-bg))",
       }}
     >
       <MonacoEditor
@@ -195,11 +200,13 @@ export function MonacoCodeViewer({
   language,
   height,
   maxHeight = 468,
+  themeVariant = "default",
 }: {
   code: string;
   language?: string;
   height?: number;
   maxHeight?: number;
+  themeVariant?: ViewerThemeVariant;
 }) {
   const normalizedLanguage = useMemo(() => normalizeMonacoLanguage(language, code), [code, language]);
   const value = useMemo(() => getViewerValue(code, normalizedLanguage), [code, normalizedLanguage]);
@@ -209,7 +216,9 @@ export function MonacoCodeViewer({
     const isDark = document.documentElement.classList.contains("dark");
     const name = isDark ? "unipost-snippet-dark" : "unipost-snippet-light";
     const styles = getComputedStyle(document.documentElement);
-    const editorBackground = styles.getPropertyValue("--docs-code-surface-bg").trim() || styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
+    const editorBackground = themeVariant === "api"
+      ? (isDark ? "#11161f" : "#ffffff")
+      : (styles.getPropertyValue("--docs-code-surface-bg").trim() || styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39");
     const editorForeground = styles.getPropertyValue("--docs-tech-text-soft").trim() || "#d6d9e5";
     const lineNumber = styles.getPropertyValue("--docs-tech-muted").trim() || "#9aa0b5";
     const borderColor = styles.getPropertyValue("--docs-tech-border").trim() || "#3a3d4f";
@@ -244,8 +253,8 @@ export function MonacoCodeViewer({
         "editorGutter.background": editorBackground,
         "editorIndentGuide.background1": borderColor,
         "editorIndentGuide.activeBackground1": lineNumber,
-        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.24)" : "rgba(96,165,250,0.26)",
-        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.14)" : "rgba(96,165,250,0.16)",
+        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.28)" : "rgba(96,165,250,0.24)",
+        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.16)" : "rgba(96,165,250,0.14)",
         "editor.lineHighlightBackground": "transparent",
       },
     });
@@ -269,7 +278,7 @@ export function MonacoCodeViewer({
         border: "1px solid var(--docs-border)",
         borderRadius: 16,
         overflow: "hidden",
-        background: "var(--docs-code-surface-bg, var(--docs-tech-bg))",
+        background: themeVariant === "api" ? (typeof document !== "undefined" && document.documentElement.classList.contains("dark") ? "#11161f" : "#ffffff") : "var(--docs-code-surface-bg, var(--docs-tech-bg))",
       }}
     >
       <MonacoEditor
@@ -314,9 +323,11 @@ export function MonacoCodeViewer({
 export function JsonMonacoTabs({
   snippets,
   maxHeight = 468,
+  themeVariant = "default",
 }: {
   snippets: JsonViewerSnippet[];
   maxHeight?: number;
+  themeVariant?: ViewerThemeVariant;
 }) {
   const validSnippets = useMemo(
     () => snippets.filter((snippet) => tryFormatJson(snippet.code)),
@@ -351,7 +362,7 @@ export function JsonMonacoTabs({
         </div>
         <CopyButton code={formatted} />
       </div>
-      <JsonMonacoViewer code={formatted} maxHeight={maxHeight} />
+      <JsonMonacoViewer code={formatted} maxHeight={maxHeight} themeVariant={themeVariant} />
     </div>
   );
 }
@@ -359,9 +370,11 @@ export function JsonMonacoTabs({
 export function MonacoTabs({
   snippets,
   maxHeight = 468,
+  themeVariant = "default",
 }: {
   snippets: JsonViewerSnippet[];
   maxHeight?: number;
+  themeVariant?: ViewerThemeVariant;
 }) {
   const [active, setActive] = useState(0);
   const current = snippets[Math.min(active, snippets.length - 1)];
@@ -384,7 +397,7 @@ export function MonacoTabs({
         </div>
         <CopyButton code={copyValue} />
       </div>
-      <MonacoCodeViewer code={current.code} language={current.lang || current.label} maxHeight={maxHeight} />
+      <MonacoCodeViewer code={current.code} language={current.lang || current.label} maxHeight={maxHeight} themeVariant={themeVariant} />
     </div>
   );
 }

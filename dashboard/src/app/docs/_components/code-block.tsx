@@ -117,16 +117,18 @@ export function CodeBlock({
 export function CodeTabs({
   snippets,
   viewerMaxHeight,
+  themeVariant = "default",
 }: {
   snippets: CodeSnippet[];
   viewerMaxHeight?: number;
+  themeVariant?: "default" | "api";
 }) {
   const allJson = snippets.length > 0 && snippets.every((snippet) => normalizeLanguage(snippet.lang || snippet.label, snippet.code) === "json");
 
   if (allJson) {
-    return <JsonMonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} />;
+    return <JsonMonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} themeVariant={themeVariant} />;
   }
-  return <MonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} />;
+  return <MonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} themeVariant={themeVariant} />;
 }
 
 export function codeBlockStyles() {

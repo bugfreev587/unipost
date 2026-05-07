@@ -234,19 +234,18 @@ export function CodeTabs({ snippets }: { snippets: { lang: string; label: string
             .docs-api-code-tabs{
               --docs-code-frame-bg: var(--docs-tech-bg);
               --docs-code-header-bg: var(--docs-tech-bg);
-              --docs-code-surface-bg: var(--docs-bg-elevated);
               --docs-code-tab-bg: var(--docs-bg-elevated);
             }
-            .docs-api-code-tabs .monaco-editor *::selection,
-            .docs-api-code-tabs .monaco-editor *::-moz-selection{
-              background: rgba(96, 165, 250, 0.26) !important;
+            .docs-api-code-tabs ::selection,
+            .docs-api-code-tabs ::-moz-selection{
+              background: rgba(96, 165, 250, 0.24) !important;
               color: inherit !important;
             }
           `,
         }}
       />
       <div className="docs-api-code-tabs" style={{ minWidth: 0 }}>
-        <SharedCodeTabs snippets={snippets} viewerMaxHeight={1600} />
+        <SharedCodeTabs snippets={snippets} viewerMaxHeight={1600} themeVariant="api" />
       </div>
     </>
   );
