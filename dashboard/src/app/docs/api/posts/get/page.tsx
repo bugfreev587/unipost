@@ -1,6 +1,7 @@
 "use client";
 
 import type { ApiFieldItem } from "../../_components/doc-components";
+import { CodeTabs } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -14,15 +15,15 @@ const PATH_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "UniPost post ID." },
   { name: "caption", type: "string | null", description: "Top-level caption when one exists." },
-  { name: "status", type: "string", description: "Derived lifecycle status." },
-  { name: "source", type: "string", description: 'Origin such as "api" or "ui".' },
+  { name: "status", type: "string", description: 'Derived lifecycle status. Current values are "draft", "scheduled", "publishing", "published", "partial", "failed", and "cancelled". For multi-platform posts, this is the aggregate parent status.' },
+  { name: "source", type: "string", description: 'Origin of the post. Current values are "api" and "ui".' },
   { name: "profile_ids", type: "string[]", description: "Distinct profile IDs targeted by the post." },
   { name: "results", type: "array", description: "Per-account publish results." },
   { name: "results[].id", type: "string", description: "Result row ID used for retries and diagnostics." },
   { name: "results[].social_account_id", type: "string", description: "Destination account ID." },
-  { name: "results[].platform", type: "string", description: "Destination platform." },
+  { name: "results[].platform", type: "string", description: 'Destination platform. Current values include "twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", and "pinterest".' },
   { name: "results[].account_name", type: "string", description: "Resolved handle or account display name when available." },
-  { name: "results[].status", type: "string", description: "Per-account publish status." },
+  { name: "results[].status", type: "string", description: 'Per-account publish status. Current values used by clients are "queued", "publishing", "processing", "published", and "failed".' },
   { name: "results[].url", type: "string | null", description: "Canonical public post URL when available." },
   { name: "results[].debug_curl", type: "string | null", description: "Redacted failing curl trace for debugging, only on failed results." },
 ];
@@ -128,6 +129,87 @@ const RESPONSE_SNIPPETS = [
   },
 ];
 
+const POLLING_EXAMPLE_SNIPPETS = [
+  {
+    lang: "json",
+    label: "Single destination success",
+    code: `{
+  "data": {
+    "id": "post_single_123",
+    "status": "published",
+    "results": [
+      {
+        "id": "spr_1",
+        "social_account_id": "sa_twitter_789",
+        "platform": "twitter",
+        "account_name": "@unipost",
+        "status": "published",
+        "external_id": "191234567890",
+        "url": "https://x.com/unipost/status/191234567890",
+        "published_at": "2026-04-22T10:00:02Z"
+      }
+    ]
+  }
+}`,
+  },
+  {
+    lang: "json",
+    label: "Multi-destination partial",
+    code: `{
+  "data": {
+    "id": "post_multi_123",
+    "status": "partial",
+    "results": [
+      {
+        "id": "spr_ok",
+        "social_account_id": "sa_twitter_789",
+        "platform": "twitter",
+        "account_name": "@unipost",
+        "status": "published",
+        "external_id": "191234567890",
+        "url": "https://x.com/unipost/status/191234567890",
+        "published_at": "2026-04-22T10:00:02Z"
+      },
+      {
+        "id": "spr_fail",
+        "social_account_id": "sa_linkedin_456",
+        "platform": "linkedin",
+        "account_name": "UniPost",
+        "status": "failed",
+        "error_message": "LinkedIn rejected the caption because it exceeded the platform limit."
+      }
+    ]
+  }
+}`,
+  },
+  {
+    lang: "json",
+    label: "All destinations failed",
+    code: `{
+  "data": {
+    "id": "post_failed_123",
+    "status": "failed",
+    "results": [
+      {
+        "id": "spr_a",
+        "social_account_id": "sa_instagram_123",
+        "platform": "instagram",
+        "status": "failed",
+        "error_message": "Instagram rejected the media because the aspect ratio was unsupported."
+      },
+      {
+        "id": "spr_b",
+        "social_account_id": "sa_threads_456",
+        "platform": "threads",
+        "status": "failed",
+        "error_message": "Threads rejected the request because the token was expired."
+      }
+    ]
+  }
+}`,
+  },
+];
+
 export default function GetPostPage() {
   return (
     <SingleEndpointReferencePage
@@ -148,6 +230,38 @@ export default function GetPostPage() {
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
-    />
+    >
+      <div style={{ borderTop: "1px solid var(--docs-border)", paddingTop: 20 }}>
+        <div style={{ border: "1px solid var(--docs-border)", borderRadius: 12, background: "var(--docs-bg-elevated)", overflow: "hidden", marginBottom: 18 }}>
+          <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>
+            How to use this endpoint from a client
+          </div>
+          <div style={{ padding: "18px", display: "grid", gap: 12 }}>
+            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+              <strong style={{ color: "var(--docs-text)" }}>Use the parent status for the big picture.</strong> This is the fastest way to know whether the post is done, partially successful, or fully failed.
+            </div>
+            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+              <strong style={{ color: "var(--docs-text)" }}>Use <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> for the truth per destination.</strong> Each result row is independent and tells you which account published, which one failed, and which public URL or error belongs to that account.
+            </div>
+            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+              <strong style={{ color: "var(--docs-text)" }}>Stop polling when the parent status is final.</strong> In most clients that means polling until the post becomes <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>partial</code>, or <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>failed</code>.
+            </div>
+          </div>
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 12 }}>Polling examples users can compare against</div>
+          <CodeTabs snippets={POLLING_EXAMPLE_SNIPPETS} />
+        </div>
+        <div style={{ border: "1px solid var(--docs-border)", borderRadius: 12, background: "var(--docs-bg-elevated)", padding: "16px 18px" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 10 }}>Rule of thumb</div>
+          <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+            <strong style={{ color: "var(--docs-text)" }}>Single-platform posts:</strong> the parent post status usually matches the only result row.
+          </div>
+          <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 8 }}>
+            <strong style={{ color: "var(--docs-text)" }}>Multi-platform posts:</strong> read the parent post status as the aggregate outcome, then read <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> to know what happened on each destination account.
+          </div>
+        </div>
+      </div>
+    </SingleEndpointReferencePage>
   );
 }

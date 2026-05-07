@@ -18,7 +18,7 @@ const QUERY_FIELDS: ApiFieldItem[] = [
   {
     name: "platform?",
     type: "string",
-    description: <>Only return accounts for one platform. <Link href="/docs/platforms#platform-names">[available platforms]</Link></>,
+    description: <>Only return accounts for one platform. Current values include <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>twitter</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>linkedin</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>instagram</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>facebook</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>threads</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>youtube</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>tiktok</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>bluesky</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>pinterest</code>. <Link href="/docs/platforms#platform-names">[available platforms]</Link></>,
   },
   {
     name: "external_user_id?",
@@ -41,7 +41,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
     name: "data[].platform",
     type: "string",
-    description: "Normalized platform name.",
+    description: 'Normalized platform name. Current values include "twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", and "pinterest".',
   },
   {
     name: "data[].account_name",
@@ -51,12 +51,12 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   {
     name: "data[].status",
     type: "string",
-    description: 'Connection state such as "active" or "reconnect_required".',
+    description: 'Connection state. Current values are "active", "reconnect_required", and "disconnected" (the list endpoint normally returns non-deleted rows, so most callers see "active" or "reconnect_required").',
   },
   {
     name: "data[].connection_type",
     type: "string",
-    description: '"byo" or "managed".',
+    description: 'Connection origin. Current values are "byo" and "managed".',
   },
   {
     name: "data[].connected_at",

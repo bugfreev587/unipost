@@ -45,6 +45,62 @@ const PUBLISHED_PAYLOAD = `{
   }
 }`;
 
+const PARTIAL_PAYLOAD = `{
+  "event": "post.partial",
+  "timestamp": "2026-04-23T18:00:00Z",
+  "data": {
+    "id": "post_partial_123",
+    "status": "partial",
+    "execution_mode": "async",
+    "created_at": "2026-04-23T17:59:48Z",
+    "results": [
+      {
+        "id": "spr_ok",
+        "social_account_id": "sa_twitter_789",
+        "platform": "twitter",
+        "status": "published",
+        "external_id": "191234567890",
+        "url": "https://x.com/unipost/status/191234567890",
+        "published_at": "2026-04-23T18:00:00Z"
+      },
+      {
+        "id": "spr_fail",
+        "social_account_id": "sa_linkedin_456",
+        "platform": "linkedin",
+        "status": "failed",
+        "error_message": "LinkedIn rejected the caption because it exceeded the platform limit."
+      }
+    ]
+  }
+}`;
+
+const FAILED_PAYLOAD = `{
+  "event": "post.failed",
+  "timestamp": "2026-04-23T18:00:00Z",
+  "data": {
+    "id": "post_failed_123",
+    "status": "failed",
+    "execution_mode": "async",
+    "created_at": "2026-04-23T17:59:48Z",
+    "results": [
+      {
+        "id": "spr_a",
+        "social_account_id": "sa_instagram_123",
+        "platform": "instagram",
+        "status": "failed",
+        "error_message": "Instagram rejected the media because the aspect ratio was unsupported."
+      },
+      {
+        "id": "spr_b",
+        "social_account_id": "sa_threads_456",
+        "platform": "threads",
+        "status": "failed",
+        "error_message": "Threads rejected the request because the token was expired."
+      }
+    ]
+  }
+}`;
+
 const VERIFY_SNIPPETS = [
   {
     lang: "curl",
@@ -201,6 +257,10 @@ export default function WebhooksPage() {
           <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 12 }}>Payload example</div>
             <ResponseBlock title="post.published" code={PUBLISHED_PAYLOAD} />
+            <div style={{ marginTop: 18 }} />
+            <ResponseBlock title="post.partial" code={PARTIAL_PAYLOAD} />
+            <div style={{ marginTop: 18 }} />
+            <ResponseBlock title="post.failed" code={FAILED_PAYLOAD} />
           </div>
           <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 12 }}>Signature verification</div>
@@ -213,6 +273,9 @@ export default function WebhooksPage() {
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 12 }}>Retry behavior</div>
             <InfoBox>
               UniPost currently retries failed webhook deliveries up to 3 attempts total. In the current backend, retries are scheduled at approximately 1 minute, 5 minutes, and 30 minutes, and the outbound HTTP timeout is 5 seconds.
+            </InfoBox>
+            <InfoBox>
+              <strong style={{ color: "var(--docs-text)" }}>How to read webhook results:</strong> the <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>data</code> object is the same aggregate post shape your client would receive from <ApiInlineLink endpoint="GET /v1/posts/:post_id" />. Use the top-level status for the summary, then inspect <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> for destination-by-destination detail.
             </InfoBox>
           </div>
         </ApiEndpointCard>

@@ -67,7 +67,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "status?",
     type: '"draft"',
-    description: <>Set to <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code> to save without dispatching any platform jobs. Drafts are published later via <ApiInlineLink endpoint="POST /v1/posts/:post_id/publish" />.</>,
+    description: <>Only one request value is currently supported: <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code>. Set it to save without dispatching any platform jobs. Omit the field entirely for immediate publish. Drafts are published later via <ApiInlineLink endpoint="POST /v1/posts/:post_id/publish" />.</>,
   },
 ];
 
@@ -118,7 +118,7 @@ const RESPONSE_202_FIELDS: ApiFieldItem[] = [
   {
     name: "execution_mode",
     type: "string",
-    description: 'Immediate publish returns "async" because the request enqueues delivery jobs and returns before platform dispatch finishes.',
+    description: 'Current value is always "async" for immediate publish because the request enqueues delivery jobs and returns before platform dispatch finishes.',
   },
   {
     name: "caption",
@@ -128,7 +128,7 @@ const RESPONSE_202_FIELDS: ApiFieldItem[] = [
   {
     name: "status",
     type: "string",
-    description: 'Initial lifecycle state for the accepted post. Immediate creates usually return "queued" or "publishing", not final success/failure.',
+    description: 'Initial lifecycle state for the accepted post. Immediate creates usually start as "queued" or "publishing". Final values later converge to "published", "partial", or "failed" when all destinations finish. Other lifecycle values used elsewhere on the same resource are "draft", "scheduled", and "cancelled".',
   },
   {
     name: "queued_results_count",
@@ -168,12 +168,12 @@ const RESPONSE_202_FIELDS: ApiFieldItem[] = [
   {
     name: "results[].platform",
     type: "string",
-    description: "Normalized platform name.",
+    description: 'Normalized platform name. Current values include "twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", and "pinterest".',
   },
   {
     name: "results[].status",
     type: "string",
-    description: 'Initial per-account state, usually "queued" or another pre-final status until workers finish dispatch.',
+    description: 'Initial per-account state, usually "queued". Result rows later move through values such as "publishing" or "processing", then settle on final values like "published" or "failed".',
   },
   {
     name: "results[].external_id",
@@ -201,7 +201,7 @@ const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   {
     name: "status",
     type: "string",
-    description: 'Created resource state such as "scheduled" or "draft".',
+    description: 'Created resource state. Current values here are "scheduled" for future publish and "draft" for saved-but-not-dispatched content.',
   },
   {
     name: "created_at",
@@ -440,6 +440,55 @@ export function CreatePostContent() {
         <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: "0 0 18px" }}>
           To observe final outcome, poll <ApiInlineLink endpoint="GET /v1/posts/:post_id" />. If you need queue-level progress, use <ApiInlineLink endpoint="GET /v1/posts/:post_id/queue" />. For push delivery, subscribe to webhook events such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.partial</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.failed</code>.
         </p>
+        <div style={{ border: "1px solid var(--docs-border)", borderRadius: 12, background: "var(--docs-bg-elevated)", overflow: "hidden", marginBottom: 18 }}>
+          <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>
+            How clients should receive final results
+          </div>
+          <div style={{ padding: "18px", display: "grid", gap: 12 }}>
+            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+              <strong style={{ color: "var(--docs-text)" }}>1. Save the post ID from the create response.</strong> The initial <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>202</code> tells you the request was accepted, not that every destination has already published.
+            </div>
+            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+              <strong style={{ color: "var(--docs-text)" }}>2. Choose push or pull.</strong> Use developer webhooks if your backend wants final publish events pushed automatically. Use polling if your client prefers to check <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> until the post reaches a final status.
+            </div>
+            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+              <strong style={{ color: "var(--docs-text)" }}>3. Read both the parent status and the per-account results.</strong> The top-level post status tells you the aggregate outcome, while <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> tells you what happened on each destination account.
+            </div>
+          </div>
+        </div>
+        <div style={{ border: "1px solid var(--docs-border)", borderRadius: 12, background: "var(--docs-bg-elevated)", overflow: "hidden", marginBottom: 18 }}>
+          <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>
+            How to interpret the final aggregate status
+          </div>
+          <div style={{ padding: "0 18px 18px" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em" }}>Parent status</th>
+                  <th style={{ textAlign: "left", padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em" }}>What it means to your client</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 600 }}>published</td>
+                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-soft)" }}>Every destination result finished successfully.</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 600 }}>partial</td>
+                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-soft)" }}>At least one destination succeeded and at least one destination failed or is still unresolved. Check <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> to know exactly which accounts need attention.</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 600 }}>failed</td>
+                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-soft)" }}>Every destination result ended in failure.</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: "12px 0", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 600 }}>queued / publishing</td>
+                  <td style={{ padding: "12px 0", color: "var(--docs-text-soft)" }}>The request is still in flight. Keep polling or wait for the webhook event.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
         <RelatedEndpoints
           items={[
             { method: "POST", path: "/v1/posts/validate", label: "Validate post", href: "/docs/api/posts/validate" },

@@ -13,8 +13,8 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "external_user_id", type: "string", description: "Your stable user identifier." },
   { name: "accounts", type: "array", description: "Connected social accounts for that user." },
   { name: "accounts[].id", type: "string", description: "Publishable account ID." },
-  { name: "accounts[].platform", type: "string", description: "Normalized platform name." },
-  { name: "accounts[].status", type: "string", description: "Connection health for that account." },
+  { name: "accounts[].platform", type: "string", description: 'Normalized platform name. Current values include "twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", and "pinterest".' },
+  { name: "accounts[].status", type: "string", description: 'Connection health for that account. Current values are "active", "reconnect_required", and "disconnected".' },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED" or "NOT_FOUND".' },

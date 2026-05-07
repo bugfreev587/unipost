@@ -9,7 +9,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
-  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow. <Link href="/docs/platforms#platform-names">[available platforms]</Link></> },
+  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow. Current values for managed Connect are <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>twitter</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>linkedin</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>bluesky</code>. <Link href="/docs/platforms#platform-names">[available platforms]</Link></> },
   { name: "profile_id?", type: "string", description: "Profile that should own the resulting connected account. Required when the workspace has multiple profiles." },
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
@@ -19,7 +19,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Connect session ID." },
   { name: "url", type: "string", description: "Hosted onboarding URL to redirect the user to." },
-  { name: "status", type: "string", description: 'Initial status, usually "pending".' },
+  { name: "status", type: "string", description: 'Session lifecycle state. Current values are "pending", "completed", "expired", and "cancelled". Create responses start as "pending".' },
   { name: "expires_at", type: "string | null", description: "Expiration timestamp for the hosted session." },
 ];
 

@@ -8,7 +8,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const QUERY_FIELDS: ApiFieldItem[] = [
-  { name: "status?", type: "string", description: 'Comma-separated status filter such as "draft,published".' },
+  { name: "status?", type: "string", description: 'Comma-separated status filter. Current values are "draft", "scheduled", "publishing", "published", "partial", "failed", and "cancelled". Example: "published,partial".' },
   { name: "from?", type: "string", description: "Inclusive RFC-3339 lower bound on created_at." },
   { name: "to?", type: "string", description: "Exclusive RFC-3339 upper bound on created_at." },
   { name: "limit?", type: "integer", description: "Page size. Default 25, max 100." },
@@ -18,11 +18,11 @@ const QUERY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data", type: "array", description: "List of posts in reverse chronological order." },
   { name: "data[].id", type: "string", description: "UniPost post ID." },
-  { name: "data[].status", type: "string", description: "Derived lifecycle status for the post." },
+  { name: "data[].status", type: "string", description: 'Derived lifecycle status for the post. Current values are "draft", "scheduled", "publishing", "published", "partial", "failed", and "cancelled".' },
   { name: "data[].created_at", type: "string", description: "Creation timestamp." },
   { name: "data[].scheduled_at", type: "string | null", description: "Scheduled publish time when present." },
   { name: "data[].published_at", type: "string | null", description: "Publish time when available." },
-  { name: "data[].target_platforms", type: "string[]", description: "Platforms inferred from stored metadata." },
+  { name: "data[].target_platforms", type: "string[]", description: 'Platforms inferred from stored metadata. Current values include "twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", and "pinterest".' },
   { name: "meta.limit", type: "integer", description: "Applied page size for this cursor page." },
   { name: "meta.has_more", type: "boolean", description: "Whether another page is available." },
   { name: "meta.next_cursor", type: "string", description: "Cursor to fetch the next page. Empty string means no more results." },

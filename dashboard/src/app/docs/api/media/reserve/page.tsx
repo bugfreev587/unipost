@@ -14,7 +14,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "media_id", type: "string", description: "Media library ID to use in later publish calls." },
   { name: "upload_url", type: "string", description: "Presigned storage URL for the raw file bytes." },
-  { name: "status", type: "string", description: 'Initial state, usually "pending".' },
+  { name: "status", type: "string", description: 'Media lifecycle state. Current values are "pending", "uploaded", "attached", and "deleted". Reserve responses start as "pending".' },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED".' },
