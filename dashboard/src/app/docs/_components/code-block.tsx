@@ -114,13 +114,19 @@ export function CodeBlock({
   );
 }
 
-export function CodeTabs({ snippets }: { snippets: CodeSnippet[] }) {
+export function CodeTabs({
+  snippets,
+  viewerMaxHeight,
+}: {
+  snippets: CodeSnippet[];
+  viewerMaxHeight?: number;
+}) {
   const allJson = snippets.length > 0 && snippets.every((snippet) => normalizeLanguage(snippet.lang || snippet.label, snippet.code) === "json");
 
   if (allJson) {
-    return <JsonMonacoTabs snippets={snippets} />;
+    return <JsonMonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} />;
   }
-  return <MonacoTabs snippets={snippets} />;
+  return <MonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} />;
 }
 
 export function codeBlockStyles() {

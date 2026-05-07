@@ -24,11 +24,12 @@ function tryFormatJson(value: string) {
 
 function estimateHeight(text: string, opts?: { min?: number; max?: number; lineHeight?: number; extraLines?: number; padding?: number }) {
   const lines = text.split("\n").length;
-  const max = opts?.max ?? 460;
+  const max = opts?.max ?? Number.POSITIVE_INFINITY;
+  const min = opts?.min ?? 0;
   const lineHeight = opts?.lineHeight ?? 20;
   const extraLines = opts?.extraLines ?? 1;
   const padding = opts?.padding ?? 18;
-  return Math.min((lines + extraLines) * lineHeight + padding, max);
+  return Math.max(min, Math.min((lines + extraLines) * lineHeight + padding, max));
 }
 
 function normalizeMonacoLanguage(value?: string, code?: string): MonacoLanguage {
@@ -80,9 +81,11 @@ function CopyButton({ code }: { code: string }) {
 export function JsonMonacoViewer({
   code,
   height,
+  maxHeight = 468,
 }: {
   code: string;
   height?: number;
+  maxHeight?: number;
 }) {
   const formatted = useMemo(() => tryFormatJson(code), [code]);
   const [themeName, setThemeName] = useState("unipost-json-dark");
@@ -149,7 +152,7 @@ export function JsonMonacoViewer({
       }}
     >
       <MonacoEditor
-        height={height ?? estimateHeight(formatted, { max: 468, lineHeight: 20, extraLines: 1, padding: 28 })}
+        height={height ?? estimateHeight(formatted, { max: maxHeight, lineHeight: 20, extraLines: 1, padding: 28 })}
         defaultLanguage="json"
         theme={themeName}
         value={formatted}
@@ -191,10 +194,12 @@ export function MonacoCodeViewer({
   code,
   language,
   height,
+  maxHeight = 468,
 }: {
   code: string;
   language?: string;
   height?: number;
+  maxHeight?: number;
 }) {
   const normalizedLanguage = useMemo(() => normalizeMonacoLanguage(language, code), [code, language]);
   const value = useMemo(() => getViewerValue(code, normalizedLanguage), [code, normalizedLanguage]);
@@ -268,7 +273,7 @@ export function MonacoCodeViewer({
       }}
     >
       <MonacoEditor
-        height={height ?? estimateHeight(value, { max: 468, lineHeight: 20, extraLines: 1, padding: 28 })}
+        height={height ?? estimateHeight(value, { max: maxHeight, lineHeight: 20, extraLines: 1, padding: 28 })}
         defaultLanguage={normalizedLanguage}
         theme={themeName}
         value={value}
@@ -306,7 +311,13 @@ export function MonacoCodeViewer({
   );
 }
 
-export function JsonMonacoTabs({ snippets }: { snippets: JsonViewerSnippet[] }) {
+export function JsonMonacoTabs({
+  snippets,
+  maxHeight = 468,
+}: {
+  snippets: JsonViewerSnippet[];
+  maxHeight?: number;
+}) {
   const validSnippets = useMemo(
     () => snippets.filter((snippet) => tryFormatJson(snippet.code)),
     [snippets]
@@ -340,12 +351,18 @@ export function JsonMonacoTabs({ snippets }: { snippets: JsonViewerSnippet[] }) 
         </div>
         <CopyButton code={formatted} />
       </div>
-      <JsonMonacoViewer code={formatted} />
+      <JsonMonacoViewer code={formatted} maxHeight={maxHeight} />
     </div>
   );
 }
 
-export function MonacoTabs({ snippets }: { snippets: JsonViewerSnippet[] }) {
+export function MonacoTabs({
+  snippets,
+  maxHeight = 468,
+}: {
+  snippets: JsonViewerSnippet[];
+  maxHeight?: number;
+}) {
   const [active, setActive] = useState(0);
   const current = snippets[Math.min(active, snippets.length - 1)];
   const copyValue = getViewerValue(current.code, normalizeMonacoLanguage(current.lang || current.label, current.code));
@@ -367,7 +384,7 @@ export function MonacoTabs({ snippets }: { snippets: JsonViewerSnippet[] }) {
         </div>
         <CopyButton code={copyValue} />
       </div>
-      <MonacoCodeViewer code={current.code} language={current.lang || current.label} />
+      <MonacoCodeViewer code={current.code} language={current.lang || current.label} maxHeight={maxHeight} />
     </div>
   );
 }

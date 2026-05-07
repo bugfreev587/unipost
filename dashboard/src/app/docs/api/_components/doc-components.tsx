@@ -235,7 +235,7 @@ export function CodeTabs({ snippets }: { snippets: { lang: string; label: string
         }}
       />
       <div className="docs-api-code-tabs" style={{ minWidth: 0 }}>
-        <SharedCodeTabs snippets={snippets} />
+        <SharedCodeTabs snippets={snippets} viewerMaxHeight={1600} />
       </div>
     </>
   );
