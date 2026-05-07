@@ -237,18 +237,28 @@ export function CodeTabs({ snippets }: { snippets: { lang: string; label: string
               --docs-code-tab-bg: var(--docs-bg-elevated);
             }
             .docs-api-code-tabs ::selection,
-            .docs-api-code-tabs ::-moz-selection,
-            .docs-api-code-tabs .monaco-editor ::selection,
-            .docs-api-code-tabs .monaco-editor ::-moz-selection,
-            .docs-api-code-tabs .monaco-editor .view-line ::selection,
-            .docs-api-code-tabs .monaco-editor .view-line ::-moz-selection,
-            .docs-api-code-tabs .monaco-editor .view-lines ::selection,
-            .docs-api-code-tabs .monaco-editor .view-lines ::-moz-selection,
-            .docs-api-code-tabs .monaco-editor span::selection,
-            .docs-api-code-tabs .monaco-editor span::-moz-selection{
+            .docs-api-code-tabs ::-moz-selection{
               background: rgba(96, 165, 250, 0.24) !important;
               background-color: rgba(96, 165, 250, 0.24) !important;
               color: inherit !important;
+            }
+            .docs-api-code-tabs .monaco-editor{
+              --vscode-editor-selectionBackground: rgba(96, 165, 250, 0.32) !important;
+              --vscode-editor-inactiveSelectionBackground: rgba(96, 165, 250, 0.18) !important;
+              --vscode-editor-selectionHighlightBackground: rgba(96, 165, 250, 0.16) !important;
+            }
+            html.dark .docs-api-code-tabs .monaco-editor{
+              --vscode-editor-selectionBackground: rgba(124, 178, 255, 0.36) !important;
+              --vscode-editor-inactiveSelectionBackground: rgba(124, 178, 255, 0.2) !important;
+              --vscode-editor-selectionHighlightBackground: rgba(124, 178, 255, 0.18) !important;
+            }
+            .docs-api-code-tabs .monaco-editor .focused .selected-text,
+            .docs-api-code-tabs .monaco-editor .selected-text{
+              background-color: rgba(96, 165, 250, 0.32) !important;
+            }
+            html.dark .docs-api-code-tabs .monaco-editor .focused .selected-text,
+            html.dark .docs-api-code-tabs .monaco-editor .selected-text{
+              background-color: rgba(124, 178, 255, 0.36) !important;
             }
           `,
         }}
