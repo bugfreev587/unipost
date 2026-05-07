@@ -453,25 +453,49 @@ export function CreatePostContent() {
       responseSnippets={RESPONSE_SNIPPETS}
     >
       <div style={{ borderTop: "1px solid var(--docs-border)", paddingTop: 20 }}>
-        <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: "0 0 14px" }}>
-          Immediate publish is asynchronous. A successful create response means UniPost accepted the request, created per-account result rows, and enqueued delivery jobs. It does not guarantee every destination already published.
-        </p>
-        <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: "0 0 18px" }}>
-          To observe final outcome, poll <ApiInlineLink endpoint="GET /v1/posts/:post_id" />. If you need queue-level progress, use <ApiInlineLink endpoint="GET /v1/posts/:post_id/queue" />. For push delivery, subscribe to webhook events such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.partial</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.failed</code>.
-        </p>
-        <div style={{ border: "1px solid var(--docs-border)", borderRadius: 12, background: "var(--docs-bg-elevated)", overflow: "hidden", marginBottom: 18 }}>
-          <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>
-            How clients should receive final results
+        <div
+          className="create-post-results-intro"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)",
+            gap: 18,
+            alignItems: "start",
+            marginBottom: 18,
+          }}
+        >
+          <style
+            dangerouslySetInnerHTML={{
+              __html: `
+                @media (max-width: 980px){
+                  .create-post-results-intro{
+                    grid-template-columns:1fr!important;
+                  }
+                }
+              `,
+            }}
+          />
+          <div style={{ display: "grid", gap: 14 }}>
+            <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: 0 }}>
+              Immediate publish is asynchronous. A successful create response means UniPost accepted the request, created per-account result rows, and enqueued delivery jobs. It does not guarantee every destination already published.
+            </p>
+            <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: 0 }}>
+              To observe final outcome, poll <ApiInlineLink endpoint="GET /v1/posts/:post_id" />. If you need queue-level progress, use <ApiInlineLink endpoint="GET /v1/posts/:post_id/queue" />. For push delivery, subscribe to webhook events such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.partial</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.failed</code>.
+            </p>
           </div>
-          <div style={{ padding: "18px", display: "grid", gap: 12 }}>
-            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
-              <strong style={{ color: "var(--docs-text)" }}>1. Save the post ID from the create response.</strong> The initial <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>202</code> tells you the request was accepted, not that every destination has already published.
+          <div style={{ border: "1px solid var(--docs-border)", borderRadius: 12, background: "var(--docs-bg-elevated)", overflow: "hidden" }}>
+            <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>
+              How clients should receive final results
             </div>
-            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
-              <strong style={{ color: "var(--docs-text)" }}>2. Choose push or pull.</strong> Use developer webhooks if your backend wants final publish events pushed automatically. Use polling if your client prefers to check <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> until the post reaches a final status.
-            </div>
-            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
-              <strong style={{ color: "var(--docs-text)" }}>3. Read both the parent status and the per-account results.</strong> The top-level post status tells you the aggregate outcome, while <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> tells you what happened on each destination account.
+            <div style={{ padding: "18px", display: "grid", gap: 12 }}>
+              <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+                <strong style={{ color: "var(--docs-text)" }}>1. Save the post ID from the create response.</strong> The initial <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>202</code> tells you the request was accepted, not that every destination has already published.
+              </div>
+              <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+                <strong style={{ color: "var(--docs-text)" }}>2. Choose push or pull.</strong> Use developer webhooks if your backend wants final publish events pushed automatically. Use polling if your client prefers to check <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> until the post reaches a final status.
+              </div>
+              <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+                <strong style={{ color: "var(--docs-text)" }}>3. Read both the parent status and the per-account results.</strong> The top-level post status tells you the aggregate outcome, while <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> tells you what happened on each destination account.
+              </div>
             </div>
           </div>
         </div>
