@@ -142,6 +142,16 @@ func main() {
   fmt.Println(health.Status)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var health = client.accounts().health("sa_twitter_1");
+System.out.println(health.get("status").asText());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

@@ -80,6 +80,16 @@ func main() {
   _ = webhooks
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var webhooks = client.webhooks().list().getData();
+System.out.println(webhooks.size());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

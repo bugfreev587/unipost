@@ -101,6 +101,16 @@ func main() {
   fmt.Println(info["privacy_level_options"])
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var info = client.accounts().tiktokCreatorInfo("sa_tiktok_123");
+System.out.println(info.get("privacy_level_options"));`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

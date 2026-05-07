@@ -81,6 +81,16 @@ func main() {
   }
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var keys = client.apiKeys().list().getData();
+keys.forEach(key -> System.out.println(key.get("prefix").asText()));`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

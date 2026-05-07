@@ -68,6 +68,15 @@ func main() {
   }
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+client.accounts().disconnect("sa_twitter_123");`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

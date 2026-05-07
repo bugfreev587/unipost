@@ -105,6 +105,22 @@ func main() {
   fmt.Println(profile.BrandingDisplayName)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var profile = client.profiles().update("pr_brand_us", Map.of(
+    "branding_display_name", "Brand US",
+    "branding_primary_color", "#10b981"
+));
+
+System.out.println(profile.get("branding_display_name").asText());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

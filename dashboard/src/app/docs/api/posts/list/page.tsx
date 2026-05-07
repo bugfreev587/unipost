@@ -99,6 +99,23 @@ func main() {
   fmt.Println(page.Meta.NextCursor)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var page = client.posts().list(Map.of(
+    "status", "published,partial",
+    "limit", 25
+));
+
+System.out.println(page.getData().size());
+System.out.println(page.getMeta().get("next_cursor").asText());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

@@ -67,6 +67,15 @@ func main() {
   }
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+client.profiles().delete("pr_brand_us");`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

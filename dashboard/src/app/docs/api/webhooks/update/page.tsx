@@ -106,6 +106,24 @@ func main() {
   fmt.Println(webhook.Active)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.List;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var webhook = client.webhooks().update("wh_abc123", Map.of(
+    "name", "Failure-only webhook",
+    "active", false,
+    "events", List.of("post.failed")
+));
+
+System.out.println(webhook.get("active").asBoolean());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

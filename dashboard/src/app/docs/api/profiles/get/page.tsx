@@ -82,6 +82,16 @@ func main() {
   fmt.Println(profile.Name)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var profile = client.profiles().get("pr_brand_us");
+System.out.println(profile.get("name").asText());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

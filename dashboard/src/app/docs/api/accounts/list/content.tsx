@@ -164,6 +164,18 @@ func main() {
   _ = accounts
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var accounts = client.accounts().list(Map.of("platform", "instagram")).getData();
+System.out.println(accounts);`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

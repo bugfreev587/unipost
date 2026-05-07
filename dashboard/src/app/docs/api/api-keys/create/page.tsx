@@ -97,6 +97,22 @@ func main() {
   fmt.Println(created.Key) // store this now
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var created = client.apiKeys().create(Map.of(
+    "name", "Production backend",
+    "environment", "production"
+));
+
+System.out.println(created.get("key").asText()); // store this now`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

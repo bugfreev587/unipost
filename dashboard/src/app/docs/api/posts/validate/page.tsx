@@ -217,6 +217,27 @@ func main() {
   _ = validation
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.List;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var result = client.posts().validate(Map.of(
+    "platform_posts", List.of(
+        Map.of(
+            "account_id", "sa_twitter_1",
+            "caption", "Launch update for X"
+        )
+    )
+));
+
+System.out.println(result.get("valid").asBoolean());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

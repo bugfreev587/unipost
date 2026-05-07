@@ -116,6 +116,26 @@ func main() {
   fmt.Println(account.ID)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var account = client.accounts().connect(Map.of(
+    "profile_id", "pr_brand_us",
+    "platform", "bluesky",
+    "credentials", Map.of(
+        "identifier", "alex.bsky.social",
+        "password", System.getenv("BLUESKY_APP_PASSWORD")
+    )
+));
+
+System.out.println(account.get("id").asText());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

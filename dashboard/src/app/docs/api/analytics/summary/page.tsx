@@ -90,6 +90,23 @@ func main() {
   _ = rollup
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var rollup = client.analytics().rollup(Map.of(
+    "from", "2026-04-01T00:00:00Z",
+    "to", "2026-04-30T00:00:00Z",
+    "granularity", "day"
+));
+
+System.out.println(rollup.get("totals"));`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

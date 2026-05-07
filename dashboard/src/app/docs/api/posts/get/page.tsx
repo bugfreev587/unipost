@@ -89,6 +89,17 @@ func main() {
   fmt.Println(post.Results)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var post = client.posts().get("post_abc123");
+System.out.println(post.get("status").asText());
+System.out.println(post.get("results"));`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

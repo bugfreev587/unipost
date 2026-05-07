@@ -103,6 +103,40 @@ func main() {
   fmt.Println(reservation.MediaID)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.nio.file.Path;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var reservation = client.media().upload(Map.of(
+    "filename", "photo.jpg",
+    "content_type", "image/jpeg",
+    "size_bytes", 284192
+));
+
+var mediaId = reservation.get("media_id").asText();
+var uploadUrl = reservation.get("upload_url").asText();
+
+HttpClient.newHttpClient().send(
+    HttpRequest.newBuilder(URI.create(uploadUrl))
+        .header("Content-Type", "image/jpeg")
+        .PUT(BodyPublishers.ofFile(Path.of("photo.jpg")))
+        .build(),
+    BodyHandlers.discarding()
+);
+
+System.out.println(mediaId);`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

@@ -77,6 +77,16 @@ func main() {
   fmt.Println(len(users))
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var users = client.users().list().getData();
+System.out.println(users.size());`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

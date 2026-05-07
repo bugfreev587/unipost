@@ -105,6 +105,24 @@ func main() {
   fmt.Println(webhook.Secret) // store this now
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.List;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var webhook = client.webhooks().create(Map.of(
+    "name", "Publishing status webhook",
+    "url", "https://api.example.com/unipost/webhooks",
+    "events", List.of("post.published", "post.partial", "post.failed")
+));
+
+System.out.println(webhook.get("secret").asText()); // store this now`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

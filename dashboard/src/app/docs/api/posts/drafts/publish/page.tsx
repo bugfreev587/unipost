@@ -74,6 +74,16 @@ func main() {
   fmt.Println(post.Status)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var result = client.posts().publish("post_abc123");
+System.out.println(result.get("status").asText());`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

@@ -85,6 +85,16 @@ func main() {
   _ = metrics
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var analytics = client.posts().analytics("post_abc123");
+System.out.println(analytics.get("metrics").get("likes").asInt());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

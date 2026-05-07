@@ -74,6 +74,16 @@ func main() {
   fmt.Println(workspace.Name)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var workspace = client.workspace().get();
+System.out.println(workspace.get("name").asText());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

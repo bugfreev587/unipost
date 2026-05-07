@@ -73,6 +73,16 @@ func main() {
   fmt.Println(user.ExternalUserID)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var user = client.users().get("user_abc");
+System.out.println(user.get("external_user_id").asText());`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

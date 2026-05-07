@@ -109,6 +109,25 @@ func main() {
   fmt.Println(session.URL)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var session = client.connect().createSession(Map.of(
+    "platform", "twitter",
+    "profile_id", "pr_brand_us",
+    "external_user_id", "user_123",
+    "external_user_email", "alex@acme.com",
+    "return_url", "https://app.acme.com/integrations/done"
+));
+
+System.out.println(session.get("url").asText());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

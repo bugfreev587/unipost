@@ -81,6 +81,16 @@ func main() {
   fmt.Println(caps["capability"])
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var caps = client.accounts().capabilities("sa_instagram_123");
+System.out.println(caps.get("capability").get("text").get("max_length").asInt());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

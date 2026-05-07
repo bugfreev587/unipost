@@ -352,6 +352,34 @@ func main() {
   _, _, _ = post.ID, post.Status, post.ExecutionMode
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.List;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var post = client.posts().create(Map.of(
+    "idempotency_key", "launch-day-2026-04-22",
+    "platform_posts", List.of(
+        Map.of(
+            "account_id", "sa_twitter_789",
+            "caption", "v1.4 is live"
+        ),
+        Map.of(
+            "account_id", "sa_linkedin_456",
+            "caption", "We shipped v1.4 with webhooks and bulk publishing."
+        )
+    )
+));
+
+System.out.println(post.get("id").asText());
+System.out.println(post.get("status").asText()); // queued/publishing
+System.out.println(post.get("execution_mode").asText());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

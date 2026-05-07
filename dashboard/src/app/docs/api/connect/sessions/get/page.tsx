@@ -72,6 +72,16 @@ func main() {
   fmt.Println(session.Status)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var session = client.connect().getSession("cs_abc123");
+System.out.println(session.get("status").asText());`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

@@ -131,6 +131,26 @@ func main() {
   }
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+// Archive
+client.posts().update("post_abc123", Map.of("archived", true));
+
+// Cancel a scheduled post
+client.posts().update("post_sched_123", Map.of("status", "canceled"));
+
+// Reschedule
+client.posts().update("post_sched_123", Map.of(
+    "scheduled_at", "2026-04-24T18:00:00Z"
+));`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

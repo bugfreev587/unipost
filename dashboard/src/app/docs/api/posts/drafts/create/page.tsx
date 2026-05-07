@@ -100,6 +100,25 @@ func main() {
   fmt.Println(draft.ID)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.List;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var draft = client.posts().create(Map.of(
+    "status", "draft",
+    "platform_posts", List.of(
+        Map.of("account_id", "sa_twitter_1", "caption", "Work in progress")
+    )
+));
+
+System.out.println(draft.get("id").asText());`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

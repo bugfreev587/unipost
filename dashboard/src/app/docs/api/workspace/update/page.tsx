@@ -84,6 +84,18 @@ func main() {
   fmt.Println(workspace.PerAccountMonthlyLimit)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var workspace = client.workspace().update(Map.of("per_account_monthly_limit", 100));
+System.out.println(workspace.get("per_account_monthly_limit").asInt());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

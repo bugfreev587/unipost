@@ -78,6 +78,16 @@ func main() {
   _ = webhook
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var webhook = client.webhooks().get("wh_abc123");
+System.out.println(webhook.get("events"));`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

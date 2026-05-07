@@ -207,6 +207,41 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
   _, _ = w.Write([]byte(\`{"received":true}\`))
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+
+void handleWebhook(HttpExchange exchange) throws Exception {
+    byte[] body = exchange.getRequestBody().readAllBytes();
+    String signature = exchange.getRequestHeaders().getFirst("X-UniPost-Signature");
+    String secret = System.getenv("UNIPOST_WEBHOOK_SECRET");
+
+    if (!UniPost.verifyWebhookSignature(body, signature, secret)) {
+        exchange.sendResponseHeaders(401, -1);
+        return;
+    }
+
+    JsonNode payload = new ObjectMapper().readTree(body);
+    System.out.println(payload.get("event").asText() + " " + payload.get("data").get("id").asText());
+
+    byte[] response = "{\\"received\\":true}".getBytes(StandardCharsets.UTF_8);
+    exchange.getResponseHeaders().add("Content-Type", "application/json");
+    exchange.sendResponseHeaders(200, response.length);
+    try (OutputStream os = exchange.getResponseBody()) {
+        os.write(response);
+    }
+}`,
+  },
 ];
 
 export default function WebhooksPage() {

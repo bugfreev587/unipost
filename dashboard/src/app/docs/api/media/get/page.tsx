@@ -72,6 +72,16 @@ func main() {
   fmt.Println(media.Status)
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var media = client.media().get("media_123");
+System.out.println(media.get("status").asText());`,
+  },
 ];
 const RESPONSE_SNIPPETS = [
   {

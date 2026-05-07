@@ -78,6 +78,16 @@ func main() {
   fmt.Println(rotated.Secret) // store immediately
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var rotated = client.webhooks().rotate("wh_abc123");
+System.out.println(rotated.get("secret").asText()); // store immediately`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

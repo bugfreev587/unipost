@@ -109,6 +109,16 @@ client = UniPost()
 metrics = client.accounts.metrics("sa_twitter_1")
 print(metrics["data"])`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var metrics = client.accounts().metrics("sa_twitter_1");
+System.out.println(metrics.get("follower_count").asInt());`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [

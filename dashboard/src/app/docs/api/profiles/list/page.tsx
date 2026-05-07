@@ -81,6 +81,16 @@ func main() {
   }
 }`,
   },
+  {
+    lang: "java",
+    label: "Java",
+    code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var profiles = client.profiles().list().getData();
+profiles.forEach(profile -> System.out.println(profile.get("name").asText()));`,
+  },
 ];
 
 const RESPONSE_SNIPPETS = [
