@@ -13,8 +13,11 @@ import {
 import { Plus, Search, MoreHorizontal, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
-import { readStoredReplay } from "@/components/tutorials/replay-storage";
-import { consumeStoredQuickstartSelectedAccountId } from "@/components/tutorials/quickstart-selection-storage";
+import { clearStoredReplay, readStoredReplay } from "@/components/tutorials/replay-storage";
+import {
+  clearStoredQuickstartSelectedAccountId,
+  consumeStoredQuickstartSelectedAccountId,
+} from "@/components/tutorials/quickstart-selection-storage";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft" | "archived";
 
@@ -249,6 +252,13 @@ export default function PostsPage() {
   const [rescheduleError, setRescheduleError] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  const clearTutorialParams = useCallback(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("action");
+    url.searchParams.delete("template");
+    router.replace(url.pathname + (url.search ? url.search : ""));
+  }, [router]);
 
   const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!workspaceId) return; // wait for workspace resolution
@@ -761,7 +771,14 @@ export default function PostsPage() {
       {/* Create post drawer */}
       <CreatePostDrawer
         open={showCreateModal}
-        onOpenChange={setShowCreateModal}
+        onOpenChange={(open) => {
+          setShowCreateModal(open);
+          if (!open && searchParams.get("action") === "new") {
+            clearStoredReplay();
+            clearStoredQuickstartSelectedAccountId();
+            clearTutorialParams();
+          }
+        }}
         accounts={accounts}
         workspaceId={workspaceId}
         getToken={getToken}

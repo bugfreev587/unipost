@@ -21,7 +21,7 @@ import { ConfirmModal } from "@/components/confirm-modal";
 import { QuickstartStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { humanizeConnectError } from "@/lib/connect-errors";
-import { readStoredReplay, writeStoredReplay } from "@/components/tutorials/replay-storage";
+import { clearStoredReplay, readStoredReplay, writeStoredReplay } from "@/components/tutorials/replay-storage";
 import { writeStoredQuickstartSelectedAccountId } from "@/components/tutorials/quickstart-selection-storage";
 
 // BASE_PLATFORMS is the always-available set. Feature-flagged platforms
@@ -98,6 +98,14 @@ export default function AccountsPage() {
     // success banner + account list don't re-render from scratch.
     const url = new URL(window.location.href);
     url.searchParams.delete("pending");
+    router.replace(url.pathname + (url.search ? url.search : ""));
+  }, [router]);
+
+  const clearTutorialParams = useCallback(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("action");
+    url.searchParams.delete("first");
+    url.searchParams.delete("template");
     router.replace(url.pathname + (url.search ? url.search : ""));
   }, [router]);
 
@@ -327,7 +335,22 @@ export default function AccountsPage() {
             </div>
           )}
         </div>
-        <Dialog open={connectOpen} onOpenChange={(open) => { setConnectOpen(open); if (!open) { setSelectedPlatform(null); setConnectError(""); } else { setConnectProfileId(profileId); } }}>
+        <Dialog
+          open={connectOpen}
+          onOpenChange={(open) => {
+            setConnectOpen(open);
+            if (!open) {
+              setSelectedPlatform(null);
+              setConnectError("");
+              if (searchParams.get("action") === "new") {
+                clearStoredReplay();
+                clearTutorialParams();
+              }
+            } else {
+              setConnectProfileId(profileId);
+            }
+          }}
+        >
           <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
             <Plus style={{ width: 13, height: 13 }} /> Connect Account
           </DialogTrigger>
