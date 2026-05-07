@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -11,7 +11,7 @@ const PATH_FIELDS: ApiFieldItem[] = [
 ];
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Media library ID." },
-  { name: "status", type: "string", description: 'Media lifecycle state. Current values are "pending", "uploaded", "attached", and "deleted". In practice most clients poll until the row is no longer "pending".', },
+  { name: "status", type: "string", description: <>Media lifecycle state. Most clients poll until the row is no longer pending.<EnumValues values={["pending", "uploaded", "attached", "deleted"]} /></>, },
   { name: "content_type", type: "string", description: "Resolved media MIME type." },
   { name: "size_bytes", type: "number", description: "Stored file size in bytes." },
 ];

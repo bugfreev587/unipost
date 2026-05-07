@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -10,7 +10,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 const QUERY_FIELDS: ApiFieldItem[] = [
   { name: "from?", type: "string", description: "Period start in ISO-8601 format." },
   { name: "to?", type: "string", description: "Period end in ISO-8601 format." },
-  { name: "granularity?", type: "string", description: 'Time bucket for trend rows. Current values are "day", "week", and "month".' },
+  { name: "granularity?", type: "string", description: <>Time bucket for trend rows.<EnumValues values={["day", "week", "month"]} /></> },
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [

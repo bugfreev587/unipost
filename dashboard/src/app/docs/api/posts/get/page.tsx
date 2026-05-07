@@ -1,7 +1,7 @@
 "use client";
 
 import type { ApiFieldItem } from "../../_components/doc-components";
-import { CodeTabs } from "../../_components/doc-components";
+import { CodeTabs, EnumValues } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -15,15 +15,15 @@ const PATH_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "UniPost post ID." },
   { name: "caption", type: "string | null", description: "Top-level caption when one exists." },
-  { name: "status", type: "string", description: 'Derived lifecycle status. Current values are "draft", "scheduled", "publishing", "published", "partial", "failed", and "cancelled". For multi-platform posts, this is the aggregate parent status.' },
-  { name: "source", type: "string", description: 'Origin of the post. Current values are "api" and "ui".' },
+  { name: "status", type: "string", description: <>Derived lifecycle status. For multi-platform posts, this is the aggregate parent status.<EnumValues values={["draft", "scheduled", "publishing", "published", "partial", "failed", "cancelled"]} /></> },
+  { name: "source", type: "string", description: <>Origin of the post.<EnumValues values={["api", "ui"]} /></> },
   { name: "profile_ids", type: "string[]", description: "Distinct profile IDs targeted by the post." },
   { name: "results", type: "array", description: "Per-account publish results." },
   { name: "results[].id", type: "string", description: "Result row ID used for retries and diagnostics." },
   { name: "results[].social_account_id", type: "string", description: "Destination account ID." },
-  { name: "results[].platform", type: "string", description: 'Destination platform. Current values include "twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", and "pinterest".' },
+  { name: "results[].platform", type: "string", description: <>Destination platform.<EnumValues values={["twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", "pinterest"]} /></> },
   { name: "results[].account_name", type: "string", description: "Resolved handle or account display name when available." },
-  { name: "results[].status", type: "string", description: 'Per-account publish status. Current values used by clients are "queued", "publishing", "processing", "published", and "failed".' },
+  { name: "results[].status", type: "string", description: <>Per-account publish status.<EnumValues values={["queued", "publishing", "processing", "published", "failed"]} /></> },
   { name: "results[].url", type: "string | null", description: "Canonical public post URL when available." },
   { name: "results[].debug_curl", type: "string | null", description: "Redacted failing curl trace for debugging, only on failed results." },
 ];

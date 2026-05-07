@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -11,7 +11,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Workspace ID." },
   { name: "name", type: "string", description: "Human-readable workspace name." },
   { name: "per_account_monthly_limit", type: "number | null", description: "Optional per-account monthly publish quota." },
-  { name: "usage_modes", type: "string[]", description: 'Active usage modes selected during onboarding. Current values are "publishing" and "agentic".', },
+  { name: "usage_modes", type: "string[]", description: <>Active usage modes selected during onboarding.<EnumValues values={["publishing", "agentic"]} /></>, },
   { name: "created_at", type: "string", description: "Creation timestamp." },
   { name: "updated_at", type: "string", description: "Last update timestamp." },
 ];

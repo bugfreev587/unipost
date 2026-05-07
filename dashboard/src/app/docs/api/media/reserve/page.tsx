@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -14,7 +14,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "media_id", type: "string", description: "Media library ID to use in later publish calls." },
   { name: "upload_url", type: "string", description: "Presigned storage URL for the raw file bytes." },
-  { name: "status", type: "string", description: 'Media lifecycle state. Current values are "pending", "uploaded", "attached", and "deleted". Reserve responses start as "pending".' },
+  { name: "status", type: "string", description: <>Media lifecycle state. Reserve responses start as pending.<EnumValues values={["pending", "uploaded", "attached", "deleted"]} /></> },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED".' },

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -8,11 +8,11 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "platform_posts", type: "array", description: "Draft content grouped by destination account." },
-  { name: "status", type: '"draft"', description: 'Only one request value is supported here: "draft". It creates a saved draft instead of publishing immediately.' },
+  { name: "status", type: '"draft"', description: <>Creates a saved draft instead of publishing immediately.<EnumValues values={["draft"]} /></> },
 ];
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Draft post ID." },
-  { name: "status", type: "string", description: 'Current value is always "draft" on this endpoint. The post remains in that state until explicitly published or deleted.' },
+  { name: "status", type: "string", description: <>The post remains in this state until explicitly published or deleted.<EnumValues values={["draft"]} /></> },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [

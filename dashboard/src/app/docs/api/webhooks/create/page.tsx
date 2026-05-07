@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -10,7 +10,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "name", type: "string", description: "Human-readable label for this webhook subscription." },
   { name: "url", type: "string", description: "HTTPS endpoint that should receive UniPost events. Leading and trailing whitespace is trimmed." },
-  { name: "events", type: "string[]", description: 'Event names to subscribe to. Current live values are "post.published", "post.partial", "post.failed", "account.connected", and "account.disconnected".' },
+  { name: "events", type: "string[]", description: <>Event names to subscribe to.<EnumValues values={["post.published", "post.partial", "post.failed", "account.connected", "account.disconnected"]} /></> },
   { name: "active?", type: "boolean", description: "Whether delivery should start immediately. Defaults to true." },
   { name: "secret?", type: "string", description: "Optional custom HMAC signing secret. If omitted, UniPost generates one and returns it once." },
 ];
@@ -19,7 +19,7 @@ const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Webhook subscription ID." },
   { name: "name", type: "string", description: "Human-readable webhook label." },
   { name: "url", type: "string", description: "Stored destination URL." },
-  { name: "events", type: "string[]", description: 'Subscribed event names. Current live values are "post.published", "post.partial", "post.failed", "account.connected", and "account.disconnected".' },
+  { name: "events", type: "string[]", description: <>Subscribed event names.<EnumValues values={["post.published", "post.partial", "post.failed", "account.connected", "account.disconnected"]} /></> },
   { name: "active", type: "boolean", description: "Whether this subscription is currently enabled." },
   { name: "secret", type: "string", description: "Plaintext signing secret. Returned only once at creation time." },
   { name: "secret_preview", type: "string", description: "Short prefix shown on later reads so humans can identify the secret." },

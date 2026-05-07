@@ -327,6 +327,42 @@ export interface ApiFieldItem {
   meta?: string;
 }
 
+export function EnumValues({
+  values,
+  label = "Values",
+}: {
+  values: string[];
+  label?: string;
+}) {
+  return (
+    <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+      <span
+        style={{
+          fontSize: 10.5,
+          fontWeight: 700,
+          letterSpacing: ".08em",
+          textTransform: "uppercase",
+          color: "var(--docs-text-faint)",
+          fontFamily: "var(--docs-mono)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: 12.5,
+          fontWeight: 700,
+          color: "var(--docs-accent)",
+          fontFamily: "var(--docs-mono)",
+          lineHeight: 1.6,
+        }}
+      >
+        {values.join(" | ")}
+      </span>
+    </div>
+  );
+}
+
 function normalizeConfigFieldName(name: string) {
   if (name.endsWith("?")) {
     return {

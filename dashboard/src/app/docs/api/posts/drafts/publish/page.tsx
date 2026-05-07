@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -11,8 +11,8 @@ const PATH_FIELDS: ApiFieldItem[] = [
 ];
 const RESPONSE_202_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Draft post ID." },
-  { name: "execution_mode", type: "string", description: 'Current value is always "async" because draft publish enqueues delivery jobs and returns before workers finish dispatch.' },
-  { name: "status", type: "string", description: 'Initial post state after draft publish begins, typically "queued" or "publishing". Final values later converge to "published", "partial", or "failed".' },
+  { name: "execution_mode", type: "string", description: <>Draft publish enqueues delivery jobs and returns before workers finish dispatch.<EnumValues values={["async"]} /></> },
+  { name: "status", type: "string", description: <>Initial post state after draft publish begins, then later converges to a final aggregate state.<EnumValues values={["queued", "publishing", "published", "partial", "failed"]} /></> },
   { name: "queued_results_count", type: "integer", description: "How many per-account delivery results were queued." },
   { name: "active_job_count", type: "integer", description: "How many queue jobs are currently active." },
   { name: "results", type: "array", description: "Initial per-platform result rows created at enqueue time." },

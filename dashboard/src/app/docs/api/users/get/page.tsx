@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -13,8 +13,8 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "external_user_id", type: "string", description: "Your stable user identifier." },
   { name: "accounts", type: "array", description: "Connected social accounts for that user." },
   { name: "accounts[].id", type: "string", description: "Publishable account ID." },
-  { name: "accounts[].platform", type: "string", description: 'Normalized platform name. Current values include "twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", and "pinterest".' },
-  { name: "accounts[].status", type: "string", description: 'Connection health for that account. Current values are "active", "reconnect_required", and "disconnected".' },
+  { name: "accounts[].platform", type: "string", description: <>Normalized platform name.<EnumValues values={["twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", "pinterest"]} /></> },
+  { name: "accounts[].status", type: "string", description: <>Connection health for that account.<EnumValues values={["active", "reconnect_required", "disconnected"]} /></> },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED" or "NOT_FOUND".' },

@@ -2,6 +2,7 @@
 
 import {
   ApiInlineLink,
+  EnumValues,
   type ApiFieldItem,
   RelatedEndpoints,
 } from "../../_components/doc-components";
@@ -67,7 +68,10 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "status?",
     type: '"draft"',
-    description: <>Only one request value is currently supported: <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>&quot;draft&quot;</code>. Set it to save without dispatching any platform jobs. Omit the field entirely for immediate publish. Drafts are published later via <ApiInlineLink endpoint="POST /v1/posts/:post_id/publish" />.</>,
+    description: <>
+      Save without dispatching any platform jobs. Omit the field entirely for immediate publish. Drafts are published later via <ApiInlineLink endpoint="POST /v1/posts/:post_id/publish" />.
+      <EnumValues values={["draft"]} />
+    </>,
   },
 ];
 
@@ -118,7 +122,10 @@ const RESPONSE_202_FIELDS: ApiFieldItem[] = [
   {
     name: "execution_mode",
     type: "string",
-    description: 'Current value is always "async" for immediate publish because the request enqueues delivery jobs and returns before platform dispatch finishes.',
+    description: <>
+      Immediate publish enqueues delivery jobs and returns before platform dispatch finishes.
+      <EnumValues values={["async"]} />
+    </>,
   },
   {
     name: "caption",
@@ -128,7 +135,10 @@ const RESPONSE_202_FIELDS: ApiFieldItem[] = [
   {
     name: "status",
     type: "string",
-    description: 'Initial lifecycle state for the accepted post. Immediate creates usually start as "queued" or "publishing". Final values later converge to "published", "partial", or "failed" when all destinations finish. Other lifecycle values used elsewhere on the same resource are "draft", "scheduled", and "cancelled".',
+    description: <>
+      Initial lifecycle state for the accepted post. Immediate creates usually start as queued or publishing, then converge to a final aggregate state.
+      <EnumValues values={["queued", "publishing", "published", "partial", "failed", "draft", "scheduled", "cancelled"]} />
+    </>,
   },
   {
     name: "queued_results_count",
@@ -168,12 +178,18 @@ const RESPONSE_202_FIELDS: ApiFieldItem[] = [
   {
     name: "results[].platform",
     type: "string",
-    description: 'Normalized platform name. Current values include "twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", and "pinterest".',
+    description: <>
+      Normalized platform name.
+      <EnumValues values={["twitter", "linkedin", "instagram", "facebook", "threads", "youtube", "tiktok", "bluesky", "pinterest"]} />
+    </>,
   },
   {
     name: "results[].status",
     type: "string",
-    description: 'Initial per-account state, usually "queued". Result rows later move through values such as "publishing" or "processing", then settle on final values like "published" or "failed".',
+    description: <>
+      Initial per-account state. Rows move through in-flight values first, then settle on final result values.
+      <EnumValues values={["queued", "publishing", "processing", "published", "failed"]} />
+    </>,
   },
   {
     name: "results[].external_id",
@@ -201,7 +217,10 @@ const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   {
     name: "status",
     type: "string",
-    description: 'Created resource state. Current values here are "scheduled" for future publish and "draft" for saved-but-not-dispatched content.',
+    description: <>
+      Created resource state for non-immediate creates.
+      <EnumValues values={["scheduled", "draft"]} />
+    </>,
   },
   {
     name: "created_at",
