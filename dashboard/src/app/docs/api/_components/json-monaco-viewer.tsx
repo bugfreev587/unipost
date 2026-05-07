@@ -94,7 +94,7 @@ export function JsonMonacoViewer({
     const isDark = document.documentElement.classList.contains("dark");
     const name = isDark ? "unipost-json-dark" : "unipost-json-light";
     const styles = getComputedStyle(document.documentElement);
-    const editorBackground = styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
+    const editorBackground = styles.getPropertyValue("--docs-code-surface-bg").trim() || styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
     const editorForeground = styles.getPropertyValue("--docs-tech-text-soft").trim() || "#d6d9e5";
     const lineNumber = styles.getPropertyValue("--docs-tech-muted").trim() || "#9aa0b5";
     const borderColor = styles.getPropertyValue("--docs-tech-border").trim() || "#3a3d4f";
@@ -120,8 +120,8 @@ export function JsonMonacoViewer({
         "editorGutter.background": editorBackground,
         "editorIndentGuide.background1": borderColor,
         "editorIndentGuide.activeBackground1": lineNumber,
-        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.16)" : "rgba(15,86,184,0.14)",
-        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.10)" : "rgba(15,86,184,0.08)",
+        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.24)" : "rgba(96,165,250,0.26)",
+        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.14)" : "rgba(96,165,250,0.16)",
       },
     });
     setThemeName(name);
@@ -148,7 +148,7 @@ export function JsonMonacoViewer({
         border: "1px solid var(--docs-border)",
         borderRadius: 16,
         overflow: "hidden",
-        background: "var(--docs-tech-bg)",
+        background: "var(--docs-code-surface-bg, var(--docs-tech-bg))",
       }}
     >
       <MonacoEditor
@@ -209,7 +209,7 @@ export function MonacoCodeViewer({
     const isDark = document.documentElement.classList.contains("dark");
     const name = isDark ? "unipost-snippet-dark" : "unipost-snippet-light";
     const styles = getComputedStyle(document.documentElement);
-    const editorBackground = styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
+    const editorBackground = styles.getPropertyValue("--docs-code-surface-bg").trim() || styles.getPropertyValue("--docs-tech-bg").trim() || "#2c2d39";
     const editorForeground = styles.getPropertyValue("--docs-tech-text-soft").trim() || "#d6d9e5";
     const lineNumber = styles.getPropertyValue("--docs-tech-muted").trim() || "#9aa0b5";
     const borderColor = styles.getPropertyValue("--docs-tech-border").trim() || "#3a3d4f";
@@ -244,8 +244,8 @@ export function MonacoCodeViewer({
         "editorGutter.background": editorBackground,
         "editorIndentGuide.background1": borderColor,
         "editorIndentGuide.activeBackground1": lineNumber,
-        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.16)" : "rgba(15,86,184,0.14)",
-        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.10)" : "rgba(15,86,184,0.08)",
+        "editor.selectionBackground": isDark ? "rgba(124,178,255,0.24)" : "rgba(96,165,250,0.26)",
+        "editor.inactiveSelectionBackground": isDark ? "rgba(124,178,255,0.14)" : "rgba(96,165,250,0.16)",
         "editor.lineHighlightBackground": "transparent",
       },
     });
@@ -269,7 +269,7 @@ export function MonacoCodeViewer({
         border: "1px solid var(--docs-border)",
         borderRadius: 16,
         overflow: "hidden",
-        background: "var(--docs-tech-bg)",
+        background: "var(--docs-code-surface-bg, var(--docs-tech-bg))",
       }}
     >
       <MonacoEditor

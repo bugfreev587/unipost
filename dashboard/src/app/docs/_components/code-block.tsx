@@ -131,20 +131,20 @@ export function CodeTabs({
 
 export function codeBlockStyles() {
   return `
-.docs-code-block,.docs-code-tabs{margin:20px 0;border:1px solid var(--docs-border);border-radius:18px;background:var(--docs-bg-elevated);overflow:hidden;box-shadow:var(--docs-card-shadow);width:100%;min-width:0}
+.docs-code-block,.docs-code-tabs{margin:20px 0;border:1px solid var(--docs-border);border-radius:18px;background:var(--docs-code-frame-bg, var(--docs-bg-elevated));overflow:hidden;box-shadow:var(--docs-card-shadow);width:100%;min-width:0}
 .docs-code-block.compact{margin:0}
-.docs-code-toolbar,.docs-code-tabs-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:var(--docs-bg-elevated);min-width:0}
+.docs-code-toolbar,.docs-code-tabs-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:var(--docs-code-header-bg, var(--docs-bg-elevated));min-width:0}
 .docs-code-meta{display:flex;align-items:center;gap:8px;min-width:0}
 .docs-code-lang{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-text-faint);font-family:var(--docs-mono, var(--mono), monospace)}
-.docs-copy-button{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);color:var(--docs-text-muted);cursor:pointer;transition:all .12s;flex-shrink:0}
+.docs-copy-button{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-code-header-bg, var(--docs-bg-elevated));color:var(--docs-text-muted);cursor:pointer;transition:all .12s;flex-shrink:0}
 .docs-copy-button:hover{color:var(--docs-text);border-color:var(--docs-border-strong);background:var(--docs-bg-muted)}
 .docs-copy-button svg{width:16px;height:16px}
-.docs-code-surface{margin:0 14px 14px;padding:18px 20px;background:var(--docs-tech-bg);overflow:auto;border-radius:16px}
+.docs-code-surface{margin:0 14px 14px;padding:18px 20px;background:var(--docs-code-surface-bg, var(--docs-tech-bg));overflow:auto;border-radius:16px}
 .docs-code-surface.tabs{border-radius:16px}
 .docs-code-surface.bare{margin:0;padding:18px 20px;border-radius:16px}
 .docs-code-content{display:block;white-space:pre;font-family:var(--docs-mono, var(--mono), monospace);font-size:13px;line-height:1.75;color:var(--docs-tech-text-soft)}
 .docs-code-tab-list{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
-.docs-code-tab{padding:8px 12px;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);color:var(--docs-text-muted);font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
+.docs-code-tab{padding:8px 12px;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-code-tab-bg, var(--docs-bg-elevated));color:var(--docs-text-muted);font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
 .docs-code-tab:hover{color:var(--docs-text);background:var(--docs-bg-muted)}
 .docs-code-tab.active{color:var(--docs-tab-active-text);border-color:var(--docs-tab-active-border);background:var(--docs-tab-active-bg);box-shadow:var(--docs-tab-active-shadow)}
 `;
