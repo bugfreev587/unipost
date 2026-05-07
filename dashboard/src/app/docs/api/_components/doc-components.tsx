@@ -1070,9 +1070,28 @@ export function ApiReferenceGrid({
       }}
       className="api-reference-grid"
     >
-      <style dangerouslySetInnerHTML={{ __html: "@media (max-width: 1080px){.api-reference-grid{grid-template-columns:1fr!important;}}" }} />
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            .api-reference-grid-right{
+              position:sticky;
+              top:96px;
+              align-self:start;
+            }
+            @media (max-width: 1080px){
+              .api-reference-grid{
+                grid-template-columns:1fr!important;
+              }
+              .api-reference-grid-right{
+                position:static!important;
+                top:auto!important;
+              }
+            }
+          `,
+        }}
+      />
       <div style={{ minWidth: 0 }}>{left}</div>
-      <div style={{ minWidth: 0 }}>{right}</div>
+      <div className="api-reference-grid-right" style={{ minWidth: 0 }}>{right}</div>
     </div>
   );
 }
