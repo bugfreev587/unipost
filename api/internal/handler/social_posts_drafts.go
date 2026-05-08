@@ -28,6 +28,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
@@ -110,6 +111,17 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	postID := chi.URLParam(r, "id")
+	h.logPublishingEvent(r.Context(), integrationlogs.Event{
+		WorkspaceID: workspaceID,
+		Level:       integrationlogs.LevelInfo,
+		Status:      integrationlogs.StatusSuccess,
+		Action:      integrationlogs.ActionPostPublishStarted,
+		Message:     "Started draft publish workflow.",
+		PostID:      postID,
+		Metadata: map[string]any{
+			"mode": "draft_publish",
+		},
+	})
 
 	// Admission — request rate first; if accepted, also count this
 	// publish toward enqueue / depth. depthUnits is conservative at

@@ -27,6 +27,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
 	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
@@ -165,6 +166,9 @@ func main() {
 	}
 
 	queries := db.New(pool)
+	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
+		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
+	})
 
 	// Build the Stripe billing manager now that the DB is ready. The
 	// SUPER_ADMINS list may contain email addresses, which the manager
@@ -213,6 +217,8 @@ func main() {
 	// Start background workers
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
+
+	go integrationLogger.Start(workerCtx)
 
 	tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor)
 	go tokenWorker.Start(workerCtx)
@@ -270,7 +276,7 @@ func main() {
 	// Webhook delivery worker doubles as the EventBus implementation
 	// for the publish path. Constructed before the scheduler /
 	// handlers so they can be wired with it as their bus dependency.
-	webhookWorker := worker.NewWebhookDeliveryWorker(queries)
+	webhookWorker := worker.NewWebhookDeliveryWorker(queries, integrationLogger)
 	go webhookWorker.Start(workerCtx)
 
 	// User-facing notifications (migration 040). Dispatcher receives
@@ -296,7 +302,7 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher)
-	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
@@ -321,6 +327,9 @@ func main() {
 	mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
 	go mediaCleanupWorker.Start(workerCtx)
 
+	logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
+	go logRetentionWorker.Start(workerCtx)
+
 	// Facebook's /videos endpoint returns a video_id immediately and
 	// finishes asynchronously. The initial publish poll waits 60s;
 	// beyond that the row sits in `processing` until someone opens the
@@ -332,9 +341,10 @@ func main() {
 	inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor, pool)
 	go inboxSyncWorker.Start(workerCtx)
 
-	// WebSocket hub for real-time inbox delivery.
-	wsHub := ws.NewHub()
-	pgListener := ws.NewPGListener(wsHub, pool)
+	// WebSocket hubs for real-time inbox and logs delivery.
+	inboxHub := ws.NewHub()
+	logsHub := ws.NewHub()
+	pgListener := ws.NewPGListener(inboxHub, logsHub, pool)
 	go pgListener.Start(workerCtx)
 
 	r := chi.NewRouter()
@@ -379,7 +389,7 @@ func main() {
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
-	connectSessionHandler := handler.NewConnectSessionHandler(queries, os.Getenv("NEXT_PUBLIC_APP_URL"), quotaChecker)
+	connectSessionHandler := handler.NewConnectSessionHandler(queries, os.Getenv("NEXT_PUBLIC_APP_URL"), quotaChecker).SetIntegrationLogger(integrationLogger)
 	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
@@ -411,7 +421,7 @@ func main() {
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
-	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry)
+	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry).SetIntegrationLogger(integrationLogger)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
@@ -434,8 +444,10 @@ func main() {
 
 	// WebSocket — auth via ?token= query param (browser WS API
 	// doesn't support custom headers). Handler validates Clerk JWT.
-	wsHandler := ws.NewHandler(wsHub, queries)
-	r.Get("/v1/inbox/ws", wsHandler.ServeHTTP)
+	inboxWSHandler := ws.NewHandler(inboxHub, queries)
+	logsWSHandler := ws.NewHandler(logsHub, queries)
+	r.Get("/v1/inbox/ws", inboxWSHandler.ServeHTTP)
+	r.Get("/v1/logs/ws", logsWSHandler.ServeHTTP)
 
 	// OAuth callback routes (no auth — called by OAuth providers)
 	r.Get("/v1/oauth/callback/{platform}", oauthHandler.Callback)
@@ -551,6 +563,7 @@ func main() {
 	// it is never carried in the URL anymore.
 	r.Group(func(r chi.Router) {
 		r.Use(auth.DualAuthMiddleware(queries))
+		r.Use(integrationlogs.Middleware(integrationLogger))
 		r.Use(apiMetricsRecorder.Middleware)
 
 		// Workspace info.
@@ -734,6 +747,9 @@ func main() {
 		// inline at every mutation site via internal/audit.Log().
 		auditHandler := handler.NewAuditHandler(queries)
 		r.Get("/v1/audit-log", auditHandler.List)
+		logsHandler := handler.NewLogsHandler(queries)
+		r.Get("/v1/logs", logsHandler.List)
+		r.Get("/v1/logs/{id}", logsHandler.Get)
 
 		// Inbox — unified Instagram comments/DMs and Threads replies.
 		// Plan-gated (migration 059): Free + API plans get 402.

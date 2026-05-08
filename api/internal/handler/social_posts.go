@@ -22,6 +22,8 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -50,16 +52,17 @@ type SocialPostHandler struct {
 	// either RedisLimiter or NoopLimiter — so call sites do not
 	// need a nil guard.
 	limiter ratelimit.Limiter
+	ilog    *integrationlogs.Logger
 }
 
-func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter) *SocialPostHandler {
+func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter, ilog *integrationlogs.Logger) *SocialPostHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
 	if limiter == nil {
 		limiter = ratelimit.NoopLimiter{}
 	}
-	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus, storage: store, limiter: limiter}
+	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus, storage: store, limiter: limiter, ilog: ilog}
 }
 
 type postResultResponse struct {
@@ -245,6 +248,35 @@ func buildAccountSummaryMap(accounts []db.SocialAccount) map[string]accountSumma
 	return accountMap
 }
 
+func (h *SocialPostHandler) logPublishingEvent(ctx context.Context, e integrationlogs.Event) {
+	if h == nil || h.ilog == nil {
+		return
+	}
+	if e.WorkspaceID == "" {
+		e.WorkspaceID = auth.GetWorkspaceID(ctx)
+	}
+	if e.RequestID == "" {
+		e.RequestID = appmw.GetRequestID(ctx)
+	}
+	if e.ActorUserID == "" {
+		e.ActorUserID = auth.GetUserID(ctx)
+	}
+	if e.ActorAPIKeyID == "" {
+		e.ActorAPIKeyID = auth.GetAPIKeyID(ctx)
+	}
+	if e.Source == "" {
+		if auth.GetAPIKeyID(ctx) != "" {
+			e.Source = integrationlogs.SourceAPI
+		} else {
+			e.Source = integrationlogs.SourceDashboard
+		}
+	}
+	if e.Category == "" {
+		e.Category = integrationlogs.CategoryPublishing
+	}
+	h.ilog.Write(ctx, e)
+}
+
 func groupPostResultsByPostID(rows []db.SocialPostResult) map[string][]db.SocialPostResult {
 	grouped := make(map[string][]db.SocialPostResult, len(rows))
 	for _, row := range rows {
@@ -300,6 +332,15 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logPublishingEvent(r.Context(), integrationlogs.Event{
+		WorkspaceID: workspaceID,
+		Level:       integrationlogs.LevelInfo,
+		Status:      integrationlogs.StatusSuccess,
+		Action:      integrationlogs.ActionPostPublishStarted,
+		Message:     "Started post creation workflow.",
+		Metadata:    summarizePublishRequest(body, parsed),
+	})
+
 	// Idempotency replay — if this key already produced a row, return
 	// the prior response unchanged. Cheap: one indexed lookup.
 	if parsed.IdempotencyKey != "" {
@@ -348,6 +389,20 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
+		h.logPublishingEvent(r.Context(), integrationlogs.Event{
+			WorkspaceID: workspaceID,
+			Level:       integrationlogs.LevelWarn,
+			Status:      integrationlogs.StatusError,
+			Action:      integrationlogs.ActionPostValidateFailed,
+			Message:     "Post creation failed validation.",
+			ErrorCode:   "validation_error",
+			Metadata: map[string]any{
+				"error_count": len(fatal),
+			},
+			ResponsePayload: map[string]any{
+				"errors": fatal,
+			},
+		})
 		writeValidationErrors(w, fatal)
 		return
 	}
@@ -427,6 +482,21 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	h.logPublishingEvent(r.Context(), integrationlogs.Event{
+		WorkspaceID: workspaceID,
+		Level:       integrationlogs.LevelInfo,
+		Status:      integrationlogs.StatusSuccess,
+		Action:      integrationlogs.ActionPostPublishQueued,
+		Message:     "Scheduled post created.",
+		PostID:      post.ID,
+		Metadata: map[string]any{
+			"mode":            "scheduled",
+			"scheduled_at":    parsed.ScheduledAt,
+			"target_count":    len(parsed.Posts),
+			"target_accounts": uniqueAccountIDs(parsed.Posts),
+		},
+	})
+
 	var caption *string
 	if post.Caption.Valid {
 		caption = &post.Caption.String
@@ -457,6 +527,20 @@ func (h *SocialPostHandler) createImmediatePost(
 ) {
 	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap)
 	if err != nil {
+		h.logPublishingEvent(r.Context(), integrationlogs.Event{
+			WorkspaceID: workspaceID,
+			Level:       integrationlogs.LevelError,
+			Status:      integrationlogs.StatusError,
+			Action:      integrationlogs.ActionPostPublishFailedPreDispatch,
+			Message:     "Immediate post creation failed before queueing.",
+			ErrorCode:   "queue_create_failed",
+			Metadata: map[string]any{
+				"target_count": len(parsed.Posts),
+			},
+			ResponsePayload: map[string]any{
+				"error": err.Error(),
+			},
+		})
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}

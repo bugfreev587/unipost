@@ -36,6 +36,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
@@ -50,6 +51,7 @@ type ConnectSessionHandler struct {
 	// gate (migration 057). Optional — nil means the connect handler
 	// runs without plan checks (legacy + test path).
 	quota *quota.Checker
+	ilog  *integrationlogs.Logger
 }
 
 func NewConnectSessionHandler(queries *db.Queries, dashboardURL string, quotaChecker *quota.Checker) *ConnectSessionHandler {
@@ -57,6 +59,11 @@ func NewConnectSessionHandler(queries *db.Queries, dashboardURL string, quotaChe
 		dashboardURL = "https://app.unipost.dev"
 	}
 	return &ConnectSessionHandler{queries: queries, dashboardURL: dashboardURL, quota: quotaChecker}
+}
+
+func (h *ConnectSessionHandler) SetIntegrationLogger(logger *integrationlogs.Logger) *ConnectSessionHandler {
+	h.ilog = logger
+	return h
 }
 
 // connectableplatforms is the allowlist for POST /v1/connect/sessions.
@@ -249,6 +256,27 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hostedURL := h.buildHostedURL(session.Platform, session.ID, session.OauthState)
+	if h.ilog != nil {
+		h.ilog.Write(r.Context(), integrationlogs.Event{
+			WorkspaceID:   workspaceID,
+			Level:         integrationlogs.LevelInfo,
+			Status:        integrationlogs.StatusSuccess,
+			Category:      integrationlogs.CategoryOAuth,
+			Action:        integrationlogs.ActionAccountConnectSessionCreated,
+			Source:        integrationlogs.SourceAPI,
+			Message:       "Created connect session.",
+			ActorUserID:   auth.GetUserID(r.Context()),
+			ActorAPIKeyID: auth.GetAPIKeyID(r.Context()),
+			ProfileID:     profileID,
+			Platform:      body.Platform,
+			Metadata: map[string]any{
+				"connect_session_id": session.ID,
+				"external_user_id":   body.ExternalUserID,
+				"has_return_url":     body.ReturnURL != "",
+				"expires_at":         expiresAt,
+			},
+		})
+	}
 	writeCreated(w, toConnectSessionResponse(session, hostedURL))
 }
 

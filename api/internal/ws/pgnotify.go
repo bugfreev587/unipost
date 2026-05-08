@@ -10,18 +10,20 @@ import (
 )
 
 const inboxChannel = "inbox_events"
+const logsChannel = "logs_events"
 
 // PGListener subscribes to PostgreSQL LISTEN/NOTIFY and forwards
 // inbox events to the WebSocket Hub. This ensures all API replicas
 // push events to their connected clients, regardless of which
 // replica processed the webhook.
 type PGListener struct {
-	hub  *Hub
-	pool *pgxpool.Pool
+	inboxHub *Hub
+	logsHub  *Hub
+	pool     *pgxpool.Pool
 }
 
-func NewPGListener(hub *Hub, pool *pgxpool.Pool) *PGListener {
-	return &PGListener{hub: hub, pool: pool}
+func NewPGListener(inboxHub, logsHub *Hub, pool *pgxpool.Pool) *PGListener {
+	return &PGListener{inboxHub: inboxHub, logsHub: logsHub, pool: pool}
 }
 
 func (l *PGListener) Start(ctx context.Context) {
@@ -49,7 +51,11 @@ func (l *PGListener) listen(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("ws pglistener: listening", "channel", inboxChannel)
+	_, err = conn.Exec(ctx, "LISTEN "+logsChannel)
+	if err != nil {
+		return err
+	}
+	slog.Info("ws pglistener: listening", "channels", []string{inboxChannel, logsChannel})
 
 	for {
 		notification, err := conn.Conn().WaitForNotification(ctx)
@@ -65,8 +71,16 @@ func (l *PGListener) listen(ctx context.Context) error {
 			continue
 		}
 
-		// Forward the full payload to all clients in this workspace.
-		l.hub.Broadcast(envelope.WorkspaceID, []byte(notification.Payload))
+		switch notification.Channel {
+		case inboxChannel:
+			if l.inboxHub != nil {
+				l.inboxHub.Broadcast(envelope.WorkspaceID, []byte(notification.Payload))
+			}
+		case logsChannel:
+			if l.logsHub != nil {
+				l.logsHub.Broadcast(envelope.WorkspaceID, []byte(notification.Payload))
+			}
+		}
 	}
 }
 
@@ -85,5 +99,16 @@ func Notify(ctx context.Context, pool *pgxpool.Pool, workspaceID string, item an
 	_, err = pool.Exec(ctx, "SELECT pg_notify($1, $2)", inboxChannel, string(msg))
 	if err != nil {
 		slog.Warn("ws notify failed", "err", err)
+	}
+}
+
+func NotifyLog(ctx context.Context, pool *pgxpool.Pool, msg any) {
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	_, err = pool.Exec(ctx, "SELECT pg_notify($1, $2)", logsChannel, string(raw))
+	if err != nil {
+		slog.Warn("ws log notify failed", "err", err)
 	}
 }

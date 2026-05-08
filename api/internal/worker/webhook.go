@@ -16,19 +16,50 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 )
 
 // WebhookDeliveryWorker delivers webhook events in the background.
 type WebhookDeliveryWorker struct {
 	queries *db.Queries
 	client  *http.Client
+	ilog    *integrationlogs.Logger
 }
 
-func NewWebhookDeliveryWorker(queries *db.Queries) *WebhookDeliveryWorker {
+func NewWebhookDeliveryWorker(queries *db.Queries, ilog *integrationlogs.Logger) *WebhookDeliveryWorker {
 	return &WebhookDeliveryWorker{
 		queries: queries,
 		client:  &http.Client{Timeout: 5 * time.Second},
+		ilog:    ilog,
 	}
+}
+
+func (w *WebhookDeliveryWorker) logDelivery(ctx context.Context, webhook db.Webhook, delivery db.WebhookDelivery, event integrationlogs.Event) {
+	if w == nil || w.ilog == nil || webhook.WorkspaceID == "" {
+		return
+	}
+	event.WorkspaceID = webhook.WorkspaceID
+	if event.Category == "" {
+		event.Category = integrationlogs.CategoryWebhook
+	}
+	if event.Source == "" {
+		event.Source = integrationlogs.SourceWebhook
+	}
+	if event.Metadata == nil {
+		event.Metadata = map[string]any{}
+	}
+	meta, ok := event.Metadata.(map[string]any)
+	if !ok {
+		meta = map[string]any{
+			"details": event.Metadata,
+		}
+	}
+	meta["webhook_id"] = webhook.ID
+	meta["delivery_id"] = delivery.ID
+	meta["delivery_event"] = delivery.Event
+	meta["attempt"] = delivery.Attempts + 1
+	event.Metadata = meta
+	w.ilog.Write(ctx, event)
 }
 
 // Start runs the delivery loop every 10 seconds until ctx is cancelled.
@@ -110,6 +141,16 @@ func (w *WebhookDeliveryWorker) deliverPending(ctx context.Context) {
 			continue
 		}
 
+		w.logDelivery(ctx, webhook, d, integrationlogs.Event{
+			Level:   integrationlogs.LevelInfo,
+			Status:  integrationlogs.StatusSuccess,
+			Action:  integrationlogs.ActionWebhookDeliveryStarted,
+			Message: "Started webhook delivery attempt.",
+			Metadata: map[string]any{
+				"target_url": webhook.Url,
+			},
+		})
+
 		statusCode, err := w.deliver(ctx, webhook, d)
 		attempts := d.Attempts + 1
 
@@ -117,6 +158,22 @@ func (w *WebhookDeliveryWorker) deliverPending(ctx context.Context) {
 			// Schedule retry with exponential backoff (max 3 attempts)
 			if attempts >= 3 {
 				slog.Warn("webhook delivery: giving up", "delivery_id", d.ID, "attempts", attempts)
+				w.logDelivery(ctx, webhook, d, integrationlogs.Event{
+					Level:            integrationlogs.LevelError,
+					Status:           integrationlogs.StatusError,
+					Action:           integrationlogs.ActionWebhookDeliveryFailed,
+					Message:          "Webhook delivery failed permanently.",
+					ErrorCode:        "webhook_delivery_failed",
+					RemoteStatusCode: intPtr(statusCode),
+					Metadata: map[string]any{
+						"target_url":   webhook.Url,
+						"terminal":     true,
+						"max_attempts": 3,
+					},
+					ResponsePayload: map[string]any{
+						"error": errString(err),
+					},
+				})
 				// Mark delivered_at so the pending query stops picking it up.
 				// The delivery is considered terminal even though it failed.
 				w.queries.UpdateWebhookDelivery(ctx, db.UpdateWebhookDeliveryParams{
@@ -129,6 +186,22 @@ func (w *WebhookDeliveryWorker) deliverPending(ctx context.Context) {
 			} else {
 				delays := []time.Duration{1 * time.Minute, 5 * time.Minute, 30 * time.Minute}
 				nextRetry := time.Now().Add(delays[attempts-1])
+				w.logDelivery(ctx, webhook, d, integrationlogs.Event{
+					Level:            integrationlogs.LevelWarn,
+					Status:           integrationlogs.StatusError,
+					Action:           integrationlogs.ActionWebhookRetryScheduled,
+					Message:          "Webhook delivery failed and was scheduled for retry.",
+					ErrorCode:        "webhook_delivery_retry_scheduled",
+					RemoteStatusCode: intPtr(statusCode),
+					Metadata: map[string]any{
+						"target_url":    webhook.Url,
+						"next_retry_at": nextRetry,
+						"max_attempts":  3,
+					},
+					ResponsePayload: map[string]any{
+						"error": errString(err),
+					},
+				})
 				w.queries.UpdateWebhookDelivery(ctx, db.UpdateWebhookDeliveryParams{
 					ID:          d.ID,
 					StatusCode:  pgtype.Int4{Int32: int32(statusCode), Valid: statusCode > 0},
@@ -139,6 +212,16 @@ func (w *WebhookDeliveryWorker) deliverPending(ctx context.Context) {
 			}
 		} else {
 			// Success
+			w.logDelivery(ctx, webhook, d, integrationlogs.Event{
+				Level:            integrationlogs.LevelInfo,
+				Status:           integrationlogs.StatusSuccess,
+				Action:           integrationlogs.ActionWebhookDeliverySucceeded,
+				Message:          "Webhook delivery succeeded.",
+				RemoteStatusCode: intPtr(statusCode),
+				Metadata: map[string]any{
+					"target_url": webhook.Url,
+				},
+			})
 			w.queries.UpdateWebhookDelivery(ctx, db.UpdateWebhookDeliveryParams{
 				ID:          d.ID,
 				StatusCode:  pgtype.Int4{Int32: int32(statusCode), Valid: true},
@@ -174,4 +257,18 @@ func (w *WebhookDeliveryWorker) deliver(ctx context.Context, webhook db.Webhook,
 	io.Copy(io.Discard, resp.Body)
 
 	return resp.StatusCode, nil
+}
+
+func intPtr(v int) *int {
+	if v <= 0 {
+		return nil
+	}
+	return &v
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

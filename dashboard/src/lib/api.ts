@@ -191,6 +191,54 @@ export interface PlatformCapabilitiesEnvelope {
   platforms: Record<string, PlatformPublishCapability>;
 }
 
+export interface IntegrationLog {
+  id: number;
+  workspace_id: string;
+  ts: string;
+  level: "debug" | "info" | "warn" | "error";
+  status: "success" | "warning" | "error";
+  category: "publishing" | "api_request" | "oauth" | "webhook" | "system";
+  action: string;
+  source: "api" | "dashboard" | "worker" | "webhook" | "oauth";
+  message: string;
+  request_id?: string;
+  trace_id?: string;
+  actor_user_id?: string;
+  actor_api_key_id?: string;
+  profile_id?: string;
+  social_account_id?: string;
+  post_id?: string;
+  platform_post_id?: string;
+  platform?: string;
+  endpoint?: string;
+  method?: string;
+  http_status_code?: number;
+  remote_status_code?: number;
+  duration_ms?: number;
+  error_code?: string;
+  metadata?: Record<string, unknown> | null;
+  request_payload?: Record<string, unknown> | null;
+  response_payload?: Record<string, unknown> | null;
+}
+
+export interface IntegrationLogListParams {
+  q?: string;
+  category?: string;
+  action?: string;
+  source?: string;
+  level?: string;
+  status?: string;
+  platform?: string;
+  profile_id?: string;
+  social_account_id?: string;
+  post_id?: string;
+  request_id?: string;
+  error_code?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
 // Client
 
 async function request<T>(
@@ -858,6 +906,26 @@ export async function getBilling(
   token: string,
 ): Promise<ApiResponse<BillingInfo>> {
   return request(`/v1/billing`, token);
+}
+
+export async function listIntegrationLogs(
+  token: string,
+  params?: IntegrationLogListParams
+): Promise<ApiResponse<IntegrationLog[]>> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "" || value === "all") continue;
+    qs.set(key, String(value));
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request(`/v1/logs${suffix}`, token);
+}
+
+export async function getIntegrationLog(
+  token: string,
+  id: number | string
+): Promise<ApiResponse<IntegrationLog>> {
+  return request(`/v1/logs/${id}`, token);
 }
 
 export async function createCheckout(

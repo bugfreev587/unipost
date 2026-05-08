@@ -16,13 +16,14 @@ import {
   type SocialPost,
   type ApiKey,
 } from "@/lib/api";
-import { Key, Users, Send, BarChart3, CreditCard, Settings, ChevronRight } from "lucide-react";
+import { Key, Users, Send, BarChart3, CreditCard, Settings, ChevronRight, FileText } from "lucide-react";
 import { TutorialHostProvider } from "@/components/tutorials/tutorial-host";
 
 const NAV_CARDS = [
   { href: "/api-keys", label: "API Keys", desc: "Manage access tokens", icon: Key },
   { href: "/accounts", label: "Accounts", desc: "Connected platforms", icon: Users },
   { href: "/posts", label: "Posts", desc: "Send & track posts", icon: Send },
+  { href: "/logs", label: "Logs", desc: "Debug integrations and delivery", icon: FileText },
   { href: "/analytics", label: "Analytics", desc: "Post performance metrics", icon: BarChart3 },
   { href: "/billing", label: "Billing", desc: "Plan & usage", icon: CreditCard },
   { href: "/settings", label: "Settings", desc: "Configuration", icon: Settings },

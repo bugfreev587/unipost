@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -10,6 +11,10 @@ import (
 
 	"github.com/google/uuid"
 )
+
+type contextKey string
+
+const requestIDKey contextKey = "requestID"
 
 type responseWriter struct {
 	http.ResponseWriter
@@ -34,6 +39,7 @@ func Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		requestID := uuid.New().String()
+		r = r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
 
 		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 		w.Header().Set("X-Request-Id", requestID)
@@ -48,4 +54,9 @@ func Logger(next http.Handler) http.Handler {
 			"request_id", requestID,
 		)
 	})
+}
+
+func GetRequestID(ctx context.Context) string {
+	requestID, _ := ctx.Value(requestIDKey).(string)
+	return requestID
 }

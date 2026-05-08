@@ -22,6 +22,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -39,6 +40,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 )
 
 // ConnectCallbackHandler owns the OAuth dance for managed accounts.
@@ -51,6 +53,7 @@ type ConnectCallbackHandler struct {
 	bus       events.EventBus
 	registry  *connect.Registry
 	limiter   *ipLimiter // shared in-memory limiter for callback brute-force protection
+	ilog      *integrationlogs.Logger
 }
 
 func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry) *ConnectCallbackHandler {
@@ -64,6 +67,45 @@ func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncrypt
 		registry:  registry,
 		limiter:   newIPLimiter(60, time.Minute),
 	}
+}
+
+func (h *ConnectCallbackHandler) SetIntegrationLogger(logger *integrationlogs.Logger) *ConnectCallbackHandler {
+	h.ilog = logger
+	return h
+}
+
+func (h *ConnectCallbackHandler) workspaceIDForProfile(ctx context.Context, profileID string) string {
+	if profileID == "" {
+		return ""
+	}
+	profile, err := h.queries.GetProfile(ctx, profileID)
+	if err != nil {
+		return ""
+	}
+	return profile.WorkspaceID
+}
+
+func (h *ConnectCallbackHandler) logOAuthEvent(ctx context.Context, workspaceID string, event integrationlogs.Event) {
+	if h == nil || h.ilog == nil {
+		return
+	}
+	if workspaceID == "" {
+		slog.Warn("connect callback log skipped: missing workspace",
+			"action", event.Action,
+			"profile_id", event.ProfileID,
+			"platform", event.Platform,
+			"error_code", event.ErrorCode,
+		)
+		return
+	}
+	event.WorkspaceID = workspaceID
+	if event.Category == "" {
+		event.Category = integrationlogs.CategoryOAuth
+	}
+	if event.Source == "" {
+		event.Source = integrationlogs.SourceOAuth
+	}
+	h.ilog.Write(ctx, event)
 }
 
 // Authorize handles GET /v1/public/connect/sessions/{id}/authorize.
@@ -157,6 +199,26 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		// it to the right terminal state and redirect to return_url.
 		if state != "" {
 			if sess, err := h.queries.GetConnectSessionByOAuthState(r.Context(), state); err == nil {
+				workspaceID := h.workspaceIDForProfile(r.Context(), sess.ProfileID)
+				logStatus := integrationlogs.StatusError
+				if status == "cancelled" {
+					logStatus = integrationlogs.StatusWarning
+				}
+				h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+					Level:     integrationlogs.LevelWarn,
+					Status:    logStatus,
+					Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+					Message:   "OAuth callback returned an error.",
+					ProfileID: sess.ProfileID,
+					Platform:  sess.Platform,
+					ErrorCode: strings.TrimSpace(errParam),
+					Metadata: map[string]any{
+						"connect_session_id": sess.ID,
+						"external_user_id":   sess.ExternalUserID,
+						"callback_status":    status,
+						"reason":             firstNonEmptyString(errDesc, errParam),
+					},
+				})
 				if status == "cancelled" {
 					_, _ = h.queries.MarkConnectSessionCancelled(r.Context(), sess.ID)
 				}
@@ -201,6 +263,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		renderConnectError(w, http.StatusGone, "This Connect link has expired.")
 		return
 	}
+	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
 
 	connector, ok := h.registry.Get(platformName)
 	if !ok {
@@ -217,12 +280,40 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	tokens, err := connector.ExchangeCode(r.Context(), view, code)
 	if err != nil {
 		slog.Error("connect.callback: token exchange failed", "platform", platformName, "err", err)
+		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+			Level:     integrationlogs.LevelError,
+			Status:    integrationlogs.StatusError,
+			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+			Message:   "OAuth token exchange failed.",
+			ProfileID: session.ProfileID,
+			Platform:  platformName,
+			ErrorCode: "token_exchange_failed",
+			Metadata: map[string]any{
+				"connect_session_id": session.ID,
+				"external_user_id":   session.ExternalUserID,
+			},
+			ResponsePayload: map[string]any{"error": err.Error()},
+		})
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "token_exchange_failed")
 		return
 	}
 	profile, err := connector.FetchProfile(r.Context(), tokens.AccessToken)
 	if err != nil {
 		slog.Error("connect.callback: profile fetch failed", "platform", platformName, "err", err)
+		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+			Level:     integrationlogs.LevelError,
+			Status:    integrationlogs.StatusError,
+			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+			Message:   "OAuth profile fetch failed.",
+			ProfileID: session.ProfileID,
+			Platform:  platformName,
+			ErrorCode: "profile_fetch_failed",
+			Metadata: map[string]any{
+				"connect_session_id": session.ID,
+				"external_user_id":   session.ExternalUserID,
+			},
+			ResponsePayload: map[string]any{"error": err.Error()},
+		})
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed")
 		return
 	}
@@ -310,6 +401,20 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	}
 	if err != nil {
 		slog.Error("connect.callback: save failed", "platform", platformName, "err", err)
+		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+			Level:     integrationlogs.LevelError,
+			Status:    integrationlogs.StatusError,
+			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+			Message:   "Failed to persist connected account.",
+			ProfileID: session.ProfileID,
+			Platform:  platformName,
+			ErrorCode: "account_save_failed",
+			Metadata: map[string]any{
+				"connect_session_id": session.ID,
+				"external_user_id":   session.ExternalUserID,
+			},
+			ResponsePayload: map[string]any{"error": err.Error()},
+		})
 		renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
 		return
 	}
@@ -339,6 +444,21 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		"external_user_id", session.ExternalUserID,
 		"account_id", saved.ID,
 	)
+	h.logOAuthEvent(r.Context(), wsID, integrationlogs.Event{
+		Level:           integrationlogs.LevelInfo,
+		Status:          integrationlogs.StatusSuccess,
+		Action:          integrationlogs.ActionAccountConnectCallbackOK,
+		Message:         "OAuth callback completed and account connected.",
+		ProfileID:       session.ProfileID,
+		SocialAccountID: saved.ID,
+		Platform:        platformName,
+		Metadata: map[string]any{
+			"connect_session_id": session.ID,
+			"external_user_id":   session.ExternalUserID,
+			"account_name":       profile.Username,
+			"connection_type":    "managed",
+		},
+	})
 
 	h.redirectWithStatus(w, r, session.ReturnUrl.String, "success", "")
 }
@@ -375,6 +495,16 @@ func nonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // Server-rendered HTML for the no-return_url cases.

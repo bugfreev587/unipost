@@ -217,6 +217,37 @@ type PlatformCredential struct {
 	WorkspaceID  string             `json:"workspace_id"`
 }
 
+type IntegrationLog struct {
+	ID               int64              `json:"id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	Ts               pgtype.Timestamptz `json:"ts"`
+	Level            string             `json:"level"`
+	Status           string             `json:"status"`
+	Category         string             `json:"category"`
+	Action           string             `json:"action"`
+	Source           string             `json:"source"`
+	Message          string             `json:"message"`
+	RequestID        pgtype.Text        `json:"request_id"`
+	TraceID          pgtype.Text        `json:"trace_id"`
+	ActorUserID      pgtype.Text        `json:"actor_user_id"`
+	ActorApiKeyID    pgtype.Text        `json:"actor_api_key_id"`
+	ProfileID        pgtype.Text        `json:"profile_id"`
+	SocialAccountID  pgtype.Text        `json:"social_account_id"`
+	PostID           pgtype.Text        `json:"post_id"`
+	PlatformPostID   pgtype.Text        `json:"platform_post_id"`
+	Platform         pgtype.Text        `json:"platform"`
+	Endpoint         pgtype.Text        `json:"endpoint"`
+	Method           pgtype.Text        `json:"method"`
+	HTTPStatusCode   pgtype.Int4        `json:"http_status_code"`
+	RemoteStatusCode pgtype.Int4        `json:"remote_status_code"`
+	DurationMs       pgtype.Int4        `json:"duration_ms"`
+	ErrorCode        pgtype.Text        `json:"error_code"`
+	Metadata         []byte             `json:"metadata"`
+	RequestPayload   []byte             `json:"request_payload"`
+	ResponsePayload  []byte             `json:"response_payload"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type PostAnalytic struct {
 	ID                  string             `json:"id"`
 	SocialPostResultID  string             `json:"social_post_result_id"`

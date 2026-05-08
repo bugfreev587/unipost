@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -295,6 +296,21 @@ func (h *SocialPostHandler) queueImmediatePost(
 	if err != nil {
 		return socialPostResponse{}, err
 	}
+	h.logPublishingEvent(ctx, integrationlogs.Event{
+		WorkspaceID: workspaceID,
+		Level:       integrationlogs.LevelInfo,
+		Status:      integrationlogs.StatusSuccess,
+		Action:      integrationlogs.ActionPostPublishQueued,
+		Message:     "Queued post deliveries for publishing.",
+		PostID:      post.ID,
+		Metadata: map[string]any{
+			"mode":            "immediate",
+			"target_count":    len(parsed.Posts),
+			"queued_jobs":     len(jobs),
+			"result_count":    len(results),
+			"target_accounts": uniqueAccountIDs(parsed.Posts),
+		},
+	})
 	return h.socialPostResponseFromData(post, results, jobs, "async"), nil
 }
 
@@ -308,6 +324,21 @@ func (h *SocialPostHandler) enqueueExistingPostDeliveries(
 	if err != nil {
 		return socialPostResponse{}, err
 	}
+	h.logPublishingEvent(ctx, integrationlogs.Event{
+		WorkspaceID: post.WorkspaceID,
+		Level:       integrationlogs.LevelInfo,
+		Status:      integrationlogs.StatusSuccess,
+		Action:      integrationlogs.ActionPostPublishQueued,
+		Message:     "Queued draft deliveries for publishing.",
+		PostID:      post.ID,
+		Metadata: map[string]any{
+			"mode":            "draft_publish",
+			"target_count":    len(parsed),
+			"queued_jobs":     len(jobs),
+			"result_count":    len(results),
+			"target_accounts": uniqueAccountIDs(parsed),
+		},
+	})
 	return h.socialPostResponseFromData(post, results, jobs, "async"), nil
 }
 
@@ -414,6 +445,22 @@ func retryBackoff(attempt int32) time.Duration {
 }
 
 func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.PostDeliveryJob) error {
+	h.logPublishingEvent(ctx, integrationlogs.Event{
+		WorkspaceID:     job.WorkspaceID,
+		Level:           integrationlogs.LevelInfo,
+		Status:          integrationlogs.StatusSuccess,
+		Action:          integrationlogs.ActionPostPublishPlatformStarted,
+		Message:         "Started platform delivery job.",
+		PostID:          job.PostID,
+		SocialAccountID: job.SocialAccountID,
+		Platform:        job.Platform,
+		Metadata: map[string]any{
+			"job_id":           job.ID,
+			"attempt":          job.Attempts,
+			"post_input_index": job.PostInputIndex,
+		},
+	})
+
 	post, err := h.queries.GetSocialPostByID(ctx, job.PostID)
 	if err != nil {
 		return err
@@ -487,6 +534,22 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if updated.Status == "published" {
 		h.quota.Increment(ctx, post.WorkspaceID, 1)
 	}
+	h.logPublishingEvent(ctx, integrationlogs.Event{
+		WorkspaceID:     post.WorkspaceID,
+		Level:           integrationlogs.LevelInfo,
+		Status:          integrationlogs.StatusSuccess,
+		Action:          integrationlogs.ActionPostPublishPlatformSucceeded,
+		Message:         "Platform delivery job succeeded.",
+		PostID:          post.ID,
+		SocialAccountID: res.SocialAccountID,
+		Platform:        job.Platform,
+		PlatformPostID:  externalID.String,
+		Metadata: map[string]any{
+			"job_id":    job.ID,
+			"result_id": res.ID,
+			"status":    updated.Status,
+		},
+	})
 	return nil
 }
 
@@ -513,6 +576,25 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 	h.recordPostFailure(ctx, postfailures.BuildParams(
 		post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, job.Platform, "dispatch_prepare", msg, msg,
 	))
+	h.logPublishingEvent(ctx, integrationlogs.Event{
+		WorkspaceID:     post.WorkspaceID,
+		Level:           integrationlogs.LevelError,
+		Status:          integrationlogs.StatusError,
+		Action:          integrationlogs.ActionPostPublishPlatformFailed,
+		Message:         "Platform delivery job failed before dispatch.",
+		PostID:          post.ID,
+		SocialAccountID: res.SocialAccountID,
+		Platform:        job.Platform,
+		ErrorCode:       "validation_error",
+		Metadata: map[string]any{
+			"job_id":    job.ID,
+			"result_id": res.ID,
+			"stage":     "dispatch_prepare",
+		},
+		ResponsePayload: map[string]any{
+			"error": msg,
+		},
+	})
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
 	return nil
@@ -628,6 +710,35 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
+	logLevel := integrationlogs.LevelWarn
+	if !failure.IsRetriable || (job.Kind == "retry" && job.Attempts >= job.MaxAttempts) {
+		logLevel = integrationlogs.LevelError
+	}
+	h.logPublishingEvent(ctx, integrationlogs.Event{
+		WorkspaceID:     post.WorkspaceID,
+		Level:           logLevel,
+		Status:          integrationlogs.StatusError,
+		Action:          integrationlogs.ActionPostPublishPlatformFailed,
+		Message:         "Platform delivery job failed.",
+		PostID:          post.ID,
+		SocialAccountID: res.SocialAccountID,
+		Platform:        postfailures.FirstNonEmpty(oc.platform, job.Platform),
+		ErrorCode:       failure.ErrorCode,
+		Metadata: map[string]any{
+			"job_id":          job.ID,
+			"result_id":       res.ID,
+			"failure_stage":   failure.FailureStage,
+			"retriable":       failure.IsRetriable,
+			"another_attempt": anotherAttempt,
+			"job_kind":        job.Kind,
+			"attempts":        job.Attempts,
+			"max_attempts":    job.MaxAttempts,
+		},
+		ResponsePayload: map[string]any{
+			"error":      errMsg,
+			"debug_curl": oc.debugCurl,
+		},
+	})
 	return nil
 }
 

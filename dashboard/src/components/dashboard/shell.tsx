@@ -33,6 +33,7 @@ import {
   Cable,
   Layers,
   MessageSquare,
+  FileText,
   PanelLeftClose,
   PanelLeftOpen,
   GraduationCap,
@@ -65,6 +66,7 @@ const ALL_NAV_ITEMS = [
   { href: "/inbox", label: "Inbox", icon: MessageSquare, featureFlag: "INBOX" },
   { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/webhooks", label: "Webhooks", icon: Webhook },
+  { href: "/logs", label: "Logs", icon: FileText },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
     { href: "/analytics/api", label: "API" },

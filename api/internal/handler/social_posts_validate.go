@@ -16,9 +16,11 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
@@ -80,6 +82,19 @@ type parsedRequest struct {
 	// either immediate publish or scheduled publish based on
 	// ScheduledAt.
 	Status string
+}
+
+func summarizePublishRequest(body publishRequestBody, parsed parsedRequest) map[string]any {
+	return map[string]any{
+		"legacy_account_count": len(body.AccountIDs),
+		"platform_post_count":  len(body.PlatformPosts),
+		"post_count":           len(parsed.Posts),
+		"scheduled":            parsed.ScheduledAt != nil,
+		"draft":                parsed.Status == "draft",
+		"has_idempotency":      parsed.IdempotencyKey != "",
+		"has_legacy_caption":   strings.TrimSpace(body.Caption) != "",
+		"has_media_urls":       len(body.MediaURLs) > 0,
+	}
 }
 
 // parsePublishRequest is the single entry point for converting the
@@ -369,6 +384,14 @@ func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logPublishingEvent(r.Context(), integrationlogs.Event{
+		WorkspaceID: workspaceID,
+		Level:       integrationlogs.LevelInfo,
+		Status:      integrationlogs.StatusSuccess,
+		Action:      integrationlogs.ActionPostValidateStarted,
+		Message:     "Started post validation.",
+	})
+
 	var body publishRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "invalid request body: "+err.Error())
@@ -388,6 +411,25 @@ func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accounts)
+	if len(result.Errors) > 0 {
+		h.logPublishingEvent(r.Context(), integrationlogs.Event{
+			WorkspaceID: workspaceID,
+			Level:       integrationlogs.LevelWarn,
+			Status:      integrationlogs.StatusError,
+			Action:      integrationlogs.ActionPostValidateFailed,
+			Message:     "Post validation returned errors.",
+			ErrorCode:   "validation_error",
+			Metadata: map[string]any{
+				"error_count":   len(result.Errors),
+				"warning_count": len(result.Warnings),
+				"request":       summarizePublishRequest(body, parsed),
+			},
+			ResponsePayload: map[string]any{
+				"valid":  result.Valid,
+				"errors": result.Errors,
+			},
+		})
+	}
 
 	// Always 200 even on validation failures — the body carries the
 	// outcome. Treating /validate as a 200-only endpoint is what
