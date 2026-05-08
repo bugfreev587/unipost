@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -152,6 +153,276 @@ func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSuccess(w, s)
+}
+
+type adminIntegrationLogResponse struct {
+	ID               int64           `json:"id"`
+	WorkspaceID      string          `json:"workspace_id"`
+	WorkspaceName    string          `json:"workspace_name,omitempty"`
+	OwnerEmail       string          `json:"owner_email,omitempty"`
+	PlanID           string          `json:"plan_id,omitempty"`
+	TS               time.Time       `json:"ts"`
+	Level            string          `json:"level"`
+	Status           string          `json:"status"`
+	Category         string          `json:"category"`
+	Action           string          `json:"action"`
+	Source           string          `json:"source"`
+	Message          string          `json:"message"`
+	RequestID        string          `json:"request_id,omitempty"`
+	TraceID          string          `json:"trace_id,omitempty"`
+	ActorUserID      string          `json:"actor_user_id,omitempty"`
+	ActorAPIKeyID    string          `json:"actor_api_key_id,omitempty"`
+	ProfileID        string          `json:"profile_id,omitempty"`
+	SocialAccountID  string          `json:"social_account_id,omitempty"`
+	PostID           string          `json:"post_id,omitempty"`
+	PlatformPostID   string          `json:"platform_post_id,omitempty"`
+	Platform         string          `json:"platform,omitempty"`
+	Endpoint         string          `json:"endpoint,omitempty"`
+	Method           string          `json:"method,omitempty"`
+	HTTPStatusCode   *int32          `json:"http_status_code,omitempty"`
+	RemoteStatusCode *int32          `json:"remote_status_code,omitempty"`
+	DurationMs       *int32          `json:"duration_ms,omitempty"`
+	ErrorCode        string          `json:"error_code,omitempty"`
+	Metadata         json.RawMessage `json:"metadata,omitempty"`
+	RequestPayload   json.RawMessage `json:"request_payload,omitempty"`
+	ResponsePayload  json.RawMessage `json:"response_payload,omitempty"`
+}
+
+const adminLogsBaseSelect = `
+SELECT
+  l.id,
+  l.workspace_id,
+  COALESCE(w.name, '') AS workspace_name,
+  COALESCE(u.email, '') AS owner_email,
+  COALESCE(s.plan_id, 'free') AS plan_id,
+  l.ts,
+  l.level,
+  l.status,
+  l.category,
+  l.action,
+  l.source,
+  l.message,
+  l.request_id,
+  l.trace_id,
+  l.actor_user_id,
+  l.actor_api_key_id,
+  l.profile_id,
+  l.social_account_id,
+  l.post_id,
+  l.platform_post_id,
+  l.platform,
+  l.endpoint,
+  l.method,
+  l.http_status_code,
+  l.remote_status_code,
+  l.duration_ms,
+  l.error_code,
+  l.metadata,
+  l.request_payload,
+  l.response_payload
+FROM integration_logs l
+LEFT JOIN workspaces w ON w.id = l.workspace_id
+LEFT JOIN users u ON u.id = w.user_id
+LEFT JOIN subscriptions s ON s.workspace_id = w.id
+`
+
+func parseAdminLogTime(raw string, fallback time.Time) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback.UTC()
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return fallback.UTC()
+	}
+	return parsed.UTC()
+}
+
+func scanAdminIntegrationLogRow(row pgx.Row, includePayloads bool) (adminIntegrationLogResponse, error) {
+	var out adminIntegrationLogResponse
+	var requestID, traceID, actorUserID, actorAPIKeyID, profileID, socialAccountID, postID, platformPostID, platform, endpoint, method, errorCode *string
+	var httpStatusCode, remoteStatusCode, durationMs *int32
+	var requestPayload, responsePayload []byte
+	err := row.Scan(
+		&out.ID,
+		&out.WorkspaceID,
+		&out.WorkspaceName,
+		&out.OwnerEmail,
+		&out.PlanID,
+		&out.TS,
+		&out.Level,
+		&out.Status,
+		&out.Category,
+		&out.Action,
+		&out.Source,
+		&out.Message,
+		&requestID,
+		&traceID,
+		&actorUserID,
+		&actorAPIKeyID,
+		&profileID,
+		&socialAccountID,
+		&postID,
+		&platformPostID,
+		&platform,
+		&endpoint,
+		&method,
+		&httpStatusCode,
+		&remoteStatusCode,
+		&durationMs,
+		&errorCode,
+		&out.Metadata,
+		&requestPayload,
+		&responsePayload,
+	)
+	if err != nil {
+		return adminIntegrationLogResponse{}, err
+	}
+	if requestID != nil {
+		out.RequestID = *requestID
+	}
+	if traceID != nil {
+		out.TraceID = *traceID
+	}
+	if actorUserID != nil {
+		out.ActorUserID = *actorUserID
+	}
+	if actorAPIKeyID != nil {
+		out.ActorAPIKeyID = *actorAPIKeyID
+	}
+	if profileID != nil {
+		out.ProfileID = *profileID
+	}
+	if socialAccountID != nil {
+		out.SocialAccountID = *socialAccountID
+	}
+	if postID != nil {
+		out.PostID = *postID
+	}
+	if platformPostID != nil {
+		out.PlatformPostID = *platformPostID
+	}
+	if platform != nil {
+		out.Platform = *platform
+	}
+	if endpoint != nil {
+		out.Endpoint = *endpoint
+	}
+	if method != nil {
+		out.Method = *method
+	}
+	if httpStatusCode != nil {
+		out.HTTPStatusCode = httpStatusCode
+	}
+	if remoteStatusCode != nil {
+		out.RemoteStatusCode = remoteStatusCode
+	}
+	if durationMs != nil {
+		out.DurationMs = durationMs
+	}
+	if errorCode != nil {
+		out.ErrorCode = *errorCode
+	}
+	if includePayloads {
+		out.RequestPayload = requestPayload
+		out.ResponsePayload = responsePayload
+	}
+	return out, nil
+}
+
+func (h *AdminHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	from := parseAdminLogTime(q.Get("from"), time.Now().AddDate(0, 0, -7))
+	to := parseAdminLogTime(q.Get("to"), time.Now())
+
+	sql := adminLogsBaseSelect + `
+WHERE ($1::TEXT = '' OR l.workspace_id = $1)
+  AND ($2::TEXT = '' OR l.category = $2)
+  AND ($3::TEXT = '' OR l.action = $3)
+  AND ($4::TEXT = '' OR l.source = $4)
+  AND ($5::TEXT = '' OR l.level = $5)
+  AND ($6::TEXT = '' OR l.status = $6)
+  AND ($7::TEXT = '' OR l.platform = $7)
+  AND ($8::TEXT = '' OR l.profile_id = $8)
+  AND ($9::TEXT = '' OR l.social_account_id = $9)
+  AND ($10::TEXT = '' OR l.post_id = $10)
+  AND ($11::TEXT = '' OR l.request_id = $11)
+  AND ($12::TEXT = '' OR l.error_code = $12)
+  AND (
+    $13::TEXT = ''
+    OR l.message ILIKE '%' || $13 || '%'
+    OR l.action ILIKE '%' || $13 || '%'
+    OR l.request_id ILIKE '%' || $13 || '%'
+    OR l.post_id ILIKE '%' || $13 || '%'
+    OR l.error_code ILIKE '%' || $13 || '%'
+  )
+  AND l.ts >= $14
+  AND l.ts <= $15
+ORDER BY l.ts DESC, l.id DESC
+LIMIT $16`
+
+	rows, err := h.pool.Query(r.Context(), sql,
+		strings.TrimSpace(q.Get("workspace_id")),
+		strings.TrimSpace(q.Get("category")),
+		strings.TrimSpace(q.Get("action")),
+		strings.TrimSpace(q.Get("source")),
+		strings.TrimSpace(q.Get("level")),
+		strings.TrimSpace(q.Get("status")),
+		strings.TrimSpace(q.Get("platform")),
+		strings.TrimSpace(q.Get("profile_id")),
+		strings.TrimSpace(q.Get("social_account_id")),
+		strings.TrimSpace(q.Get("post_id")),
+		strings.TrimSpace(q.Get("request_id")),
+		strings.TrimSpace(q.Get("error_code")),
+		strings.TrimSpace(q.Get("q")),
+		from,
+		to,
+		limit,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load admin logs: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := make([]adminIntegrationLogResponse, 0, limit)
+	for rows.Next() {
+		item, scanErr := scanAdminIntegrationLogRow(rows, false)
+		if scanErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan admin logs: "+scanErr.Error())
+			return
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read admin logs: "+err.Error())
+		return
+	}
+	writeSuccessWithListMeta(w, out, len(out), limit)
+}
+
+func (h *AdminHandler) GetLog(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid log id")
+		return
+	}
+
+	row := h.pool.QueryRow(r.Context(), adminLogsBaseSelect+`
+WHERE l.id = $1
+LIMIT 1`, id)
+
+	item, err := scanAdminIntegrationLogRow(row, true)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Log not found")
+		return
+	}
+	writeSuccess(w, item)
 }
 
 // ── User list ────────────────────────────────────────────────────────

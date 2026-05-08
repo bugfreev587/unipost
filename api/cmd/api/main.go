@@ -544,6 +544,10 @@ func main() {
 		r.Get("/v1/admin/posts", adminHandler.ListPosts)
 		r.Get("/v1/admin/posts/aggregates", adminHandler.ListPostsAggregates)
 		r.Get("/v1/admin/billing", adminHandler.ListBilling)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin logs are restricted to super admins")).
+			Get("/v1/admin/logs", adminHandler.ListLogs)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin logs are restricted to super admins")).
+			Get("/v1/admin/logs/{id}", adminHandler.GetLog)
 		// Dev / QA: flip a workspace's plan_id directly without going
 		// through Stripe Checkout. Useful for testing the plan-feature
 		// gates end-to-end. Already protected by the admin middleware

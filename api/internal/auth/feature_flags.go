@@ -17,6 +17,23 @@ import (
 	"net/http"
 )
 
+func RequireSuperAdmin(checker *SuperAdminChecker, code, message string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			userID := GetUserID(r.Context())
+			if userID == "" || !checker.IsSuperAdmin(r.Context(), userID) {
+				slog.Info("super-admin gate: request rejected",
+					"path", r.URL.Path, "method", r.Method, "user_id", userID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"error":{"code":"` + code + `","message":"` + message + `"}}`))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireFacebookSuperAdmin is a chi-compatible middleware that
 // rejects requests when the authenticated Clerk user isn't on
 // SUPER_ADMINS. MUST be mounted inside a group that already runs
@@ -26,18 +43,5 @@ import (
 // curious direct caller can drive traffic through Meta while we're
 // still in App Review.
 func RequireFacebookSuperAdmin(checker *SuperAdminChecker) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userID := GetUserID(r.Context())
-			if userID == "" || !checker.IsSuperAdmin(r.Context(), userID) {
-				slog.Info("facebook super-admin gate: request rejected",
-					"path", r.URL.Path, "method", r.Method, "user_id", userID)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"error":{"code":"FACEBOOK_DISABLED","message":"Facebook integration is not enabled for your account"}}`))
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
+	return RequireSuperAdmin(checker, "FACEBOOK_DISABLED", "Facebook integration is not enabled for your account")
 }

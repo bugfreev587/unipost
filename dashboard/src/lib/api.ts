@@ -223,6 +223,7 @@ export interface IntegrationLog {
 
 export interface IntegrationLogListParams {
   q?: string;
+  workspace_id?: string;
   category?: string;
   action?: string;
   source?: string;
@@ -237,6 +238,12 @@ export interface IntegrationLogListParams {
   from?: string;
   to?: string;
   limit?: number;
+}
+
+export interface AdminIntegrationLog extends IntegrationLog {
+  workspace_name?: string;
+  owner_email?: string;
+  plan_id?: string;
 }
 
 // Client
@@ -926,6 +933,26 @@ export async function getIntegrationLog(
   id: number | string
 ): Promise<ApiResponse<IntegrationLog>> {
   return request(`/v1/logs/${id}`, token);
+}
+
+export async function listAdminIntegrationLogs(
+  token: string,
+  params?: IntegrationLogListParams
+): Promise<ApiResponse<AdminIntegrationLog[]>> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "" || value === "all") continue;
+    qs.set(key, String(value));
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request(`/v1/admin/logs${suffix}`, token);
+}
+
+export async function getAdminIntegrationLog(
+  token: string,
+  id: number | string
+): Promise<ApiResponse<AdminIntegrationLog>> {
+  return request(`/v1/admin/logs/${id}`, token);
 }
 
 export async function createCheckout(

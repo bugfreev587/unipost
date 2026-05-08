@@ -70,6 +70,7 @@ const NAV_ITEMS = [
   { label: "Posts", href: "/admin/posts", section: "Overview", enabled: true },
   { label: "Billing", href: "/admin/billing", section: "Revenue", enabled: true },
   { label: "MRR", href: "/admin/mrr", section: "Revenue", enabled: true },
+  { label: "Logs", href: "/admin/logs", section: "System", enabled: true },
   { label: "Errors", href: "/admin/errors", section: "System", enabled: true },
   { label: "Settings", href: "/admin/settings", section: "System", enabled: true },
 ] as const;
@@ -130,16 +131,19 @@ export function AdminShell({
   title,
   loading,
   onRefresh,
+  requireSuperAdmin,
   children,
 }: {
   title: string;
   loading?: boolean;
   onRefresh?: () => void;
+  requireSuperAdmin?: boolean;
   children: React.ReactNode;
 }) {
   const { getToken } = useAuth();
   const { isLoaded: userLoaded } = useUser();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState<boolean>(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,7 +155,10 @@ export function AdminShell({
           return;
         }
         const res = await getMe(token);
-        if (!cancelled) setIsAdmin(!!res.data.is_admin);
+        if (!cancelled) {
+          setIsAdmin(!!res.data.is_admin);
+          setIsSuperAdmin(!!res.data.is_super_admin);
+        }
       } catch {
         if (!cancelled) setIsAdmin(false);
       }
@@ -174,6 +181,15 @@ export function AdminShell({
       <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 18, fontWeight: 600 }}>403 — Not authorized</div>
         <div style={{ fontSize: 13, color: "var(--dmuted)" }}>This page is restricted to admins.</div>
+      </div>
+    );
+  }
+
+  if (requireSuperAdmin && !isSuperAdmin) {
+    return (
+      <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 18, fontWeight: 600 }}>403 — Super admin only</div>
+        <div style={{ fontSize: 13, color: "var(--dmuted)" }}>This page is restricted to users in SUPER_ADMINS.</div>
       </div>
     );
   }
