@@ -1,17 +1,24 @@
 package integrationlogs
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 )
 
+const maxCapturedBodyBytes = 64 * 1024
+
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	status int
+	body   bytes.Buffer
 }
 
 func (rw *loggingResponseWriter) WriteHeader(code int) {
@@ -19,10 +26,102 @@ func (rw *loggingResponseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+func (rw *loggingResponseWriter) Write(p []byte) (int, error) {
+	if rw.body.Len() < maxCapturedBodyBytes {
+		remaining := maxCapturedBodyBytes - rw.body.Len()
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		_, _ = rw.body.Write(p[:remaining])
+	}
+	return rw.ResponseWriter.Write(p)
+}
+
+func captureRequestBody(r *http.Request) any {
+	if r.Body == nil {
+		return nil
+	}
+	if !strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "json") {
+		return nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxCapturedBodyBytes+1))
+	if err != nil {
+		return nil
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if len(raw) == 0 {
+		return nil
+	}
+	if len(raw) > maxCapturedBodyBytes {
+		return map[string]any{
+			"truncated": true,
+			"payload":   string(raw[:maxCapturedBodyBytes]),
+		}
+	}
+	var decoded any
+	if err := jsonUnmarshal(raw, &decoded); err == nil {
+		return decoded
+	}
+	return string(raw)
+}
+
+func captureResponseBody(rw *loggingResponseWriter, contentType string) any {
+	if rw == nil || rw.body.Len() == 0 {
+		return nil
+	}
+	raw := rw.body.Bytes()
+	if strings.Contains(strings.ToLower(contentType), "json") {
+		var decoded any
+		if err := jsonUnmarshal(raw, &decoded); err == nil {
+			return decoded
+		}
+	}
+	return string(raw)
+}
+
+func sanitizeHeaders(headers http.Header) map[string]any {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(headers))
+	for key, values := range headers {
+		if len(values) == 1 {
+			out[key] = values[0]
+			continue
+		}
+		dup := make([]string, len(values))
+		copy(dup, values)
+		out[key] = dup
+	}
+	return out
+}
+
+func sanitizeQuery(values map[string][]string) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, list := range values {
+		if len(list) == 1 {
+			out[key] = list[0]
+			continue
+		}
+		dup := make([]string, len(list))
+		copy(dup, list)
+		out[key] = dup
+	}
+	return out
+}
+
+func jsonUnmarshal(raw []byte, target any) error {
+	return json.Unmarshal(raw, target)
+}
+
 func Middleware(logger *Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
+			requestBody := captureRequestBody(r)
 			rw := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
 
 			next.ServeHTTP(rw, r)
@@ -78,6 +177,20 @@ func Middleware(logger *Logger) func(http.Handler) http.Handler {
 				HTTPStatusCode: &httpStatusCode,
 				DurationMS:     &durationMs,
 				ErrorCode:      errorCode,
+				RequestPayload: map[string]any{
+					"protocol": r.Proto,
+					"method":   r.Method,
+					"path":     r.URL.Path,
+					"query":    sanitizeQuery(r.URL.Query()),
+					"headers":  sanitizeHeaders(r.Header),
+					"payload":  requestBody,
+				},
+				ResponsePayload: map[string]any{
+					"protocol":    r.Proto,
+					"status_code": rw.status,
+					"headers":     sanitizeHeaders(rw.Header()),
+					"payload":     captureResponseBody(rw, rw.Header().Get("Content-Type")),
+				},
 			})
 		})
 	}

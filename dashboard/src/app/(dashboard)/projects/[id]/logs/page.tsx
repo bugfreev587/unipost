@@ -229,6 +229,25 @@ function JSONBlock({ value }: { value: unknown }) {
   );
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function requestEnvelope(value: unknown) {
+  const obj = asObject(value);
+  if (!obj) return null;
+  return {
+    protocol: typeof obj.protocol === "string" ? obj.protocol : "",
+    method: typeof obj.method === "string" ? obj.method : "",
+    path: typeof obj.path === "string" ? obj.path : "",
+    statusCode: typeof obj.status_code === "number" ? obj.status_code : undefined,
+    query: obj.query,
+    headers: obj.headers,
+    payload: obj.payload,
+  };
+}
+
 export default function LogsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
@@ -941,13 +960,56 @@ export default function LogsPage() {
                 </section>
 
                 <section style={sectionStyle}>
-                  <div className="dt-label" style={{ marginBottom: 10 }}>Request payload</div>
-                  <JSONBlock value={selectedLog.request_payload} />
+                  <div className="dt-label" style={{ marginBottom: 10 }}>Request</div>
+                  {(() => {
+                    const envelope = requestEnvelope(selectedLog.request_payload);
+                    if (!envelope) return <JSONBlock value={selectedLog.request_payload} />;
+                    return (
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          {envelope.protocol && <KeyValue label="Protocol" value={envelope.protocol} />}
+                          {envelope.method && <KeyValue label="Method" value={envelope.method} />}
+                          {envelope.path && <KeyValue label="Path" value={envelope.path} />}
+                        </div>
+                        <div>
+                          <div className="dt-label" style={{ marginBottom: 8 }}>Headers</div>
+                          <JSONBlock value={envelope.headers} />
+                        </div>
+                        <div>
+                          <div className="dt-label" style={{ marginBottom: 8 }}>Query</div>
+                          <JSONBlock value={envelope.query} />
+                        </div>
+                        <div>
+                          <div className="dt-label" style={{ marginBottom: 8 }}>Payload</div>
+                          <JSONBlock value={envelope.payload} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </section>
 
                 <section style={sectionStyle}>
-                  <div className="dt-label" style={{ marginBottom: 10 }}>Response payload</div>
-                  <JSONBlock value={selectedLog.response_payload} />
+                  <div className="dt-label" style={{ marginBottom: 10 }}>Response</div>
+                  {(() => {
+                    const envelope = requestEnvelope(selectedLog.response_payload);
+                    if (!envelope) return <JSONBlock value={selectedLog.response_payload} />;
+                    return (
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          {envelope.protocol && <KeyValue label="Protocol" value={envelope.protocol} />}
+                          {envelope.statusCode !== undefined && <KeyValue label="Status code" value={String(envelope.statusCode)} />}
+                        </div>
+                        <div>
+                          <div className="dt-label" style={{ marginBottom: 8 }}>Headers</div>
+                          <JSONBlock value={envelope.headers} />
+                        </div>
+                        <div>
+                          <div className="dt-label" style={{ marginBottom: 8 }}>Payload</div>
+                          <JSONBlock value={envelope.payload} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </section>
 
                 {selectedLog.post_id && (

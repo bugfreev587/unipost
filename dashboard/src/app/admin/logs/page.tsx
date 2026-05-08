@@ -219,6 +219,25 @@ function JSONBlock({ value }: { value: unknown }) {
   );
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function requestEnvelope(value: unknown) {
+  const obj = asObject(value);
+  if (!obj) return null;
+  return {
+    protocol: typeof obj.protocol === "string" ? obj.protocol : "",
+    method: typeof obj.method === "string" ? obj.method : "",
+    path: typeof obj.path === "string" ? obj.path : "",
+    statusCode: typeof obj.status_code === "number" ? obj.status_code : undefined,
+    query: obj.query,
+    headers: obj.headers,
+    payload: obj.payload,
+  };
+}
+
 export default function AdminLogsPage() {
   const { getToken } = useAuth();
 
@@ -504,23 +523,53 @@ export default function AdminLogsPage() {
         </div>
 
         {selectedLogId != null ? (
-          <div style={drawerShellStyle}>
-            <div style={drawerHeaderStyle}>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>Log details</div>
-                <div style={{ color: "var(--dmuted)", marginTop: 4 }}>
-                  {selectedLog ? selectedLog.action : "Loading event…"}
+          <>
+            <button
+              type="button"
+              aria-label="Close log detail"
+              onClick={closeDetail}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.35)",
+                border: "none",
+                zIndex: 70,
+              }}
+            />
+            <aside
+              style={{
+                position: "fixed",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: 520,
+                maxWidth: "96vw",
+                background: "var(--surface-raised, var(--surface))",
+                borderLeft: "1px solid var(--dborder)",
+                zIndex: 71,
+                overflowY: "auto",
+                padding: 22,
+                display: "flex",
+                flexDirection: "column",
+                gap: 18,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>Log details</div>
+                  <div style={{ color: "var(--dmuted)", marginTop: 4 }}>
+                    {selectedLog ? selectedLog.action : "Loading event…"}
+                  </div>
                 </div>
+                <button type="button" onClick={closeDetail} style={iconButtonStyle}>
+                  <X size={16} />
+                </button>
               </div>
-              <button type="button" onClick={closeDetail} style={iconButtonStyle}>
-                <X size={16} />
-              </button>
-            </div>
 
-            {detailLoading || !selectedLog ? (
-              <div style={{ padding: 24, color: "var(--dmuted)" }}>Loading event details…</div>
-            ) : (
-              <div style={{ display: "grid", gap: 18, padding: 20 }}>
+              {detailLoading || !selectedLog ? (
+                <div style={{ color: "var(--dmuted)" }}>Loading event details…</div>
+              ) : (
+                <div style={{ display: "grid", gap: 18 }}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <FieldChip label="status" value={selectedLog.status} />
                   <FieldChip label="level" value={selectedLog.level} />
@@ -564,7 +613,7 @@ export default function AdminLogsPage() {
 
                 <div style={sectionStyle}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                    <div style={sectionTitleStyle}>Request payload</div>
+                    <div style={sectionTitleStyle}>Request</div>
                     {selectedLog.request_id ? (
                       <button type="button" onClick={() => setRequestFilter(selectedLog.request_id || "")} style={linkButtonStyle}>
                         Filter same request
@@ -572,12 +621,55 @@ export default function AdminLogsPage() {
                       </button>
                     ) : null}
                   </div>
-                  <JSONBlock value={selectedLog.request_payload} />
+                  {(() => {
+                    const envelope = requestEnvelope(selectedLog.request_payload);
+                    if (!envelope) return <JSONBlock value={selectedLog.request_payload} />;
+                    return (
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          {envelope.protocol && <KeyValue label="Protocol" value={envelope.protocol} />}
+                          {envelope.method && <KeyValue label="Method" value={envelope.method} />}
+                          {envelope.path && <KeyValue label="Path" value={envelope.path} />}
+                        </div>
+                        <div>
+                          <div style={sectionTitleStyle}>Headers</div>
+                          <JSONBlock value={envelope.headers} />
+                        </div>
+                        <div>
+                          <div style={sectionTitleStyle}>Query</div>
+                          <JSONBlock value={envelope.query} />
+                        </div>
+                        <div>
+                          <div style={sectionTitleStyle}>Payload</div>
+                          <JSONBlock value={envelope.payload} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div style={sectionStyle}>
-                  <div style={sectionTitleStyle}>Response payload</div>
-                  <JSONBlock value={selectedLog.response_payload} />
+                  <div style={sectionTitleStyle}>Response</div>
+                  {(() => {
+                    const envelope = requestEnvelope(selectedLog.response_payload);
+                    if (!envelope) return <JSONBlock value={selectedLog.response_payload} />;
+                    return (
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          {envelope.protocol && <KeyValue label="Protocol" value={envelope.protocol} />}
+                          {envelope.statusCode !== undefined && <KeyValue label="Status code" value={String(envelope.statusCode)} />}
+                        </div>
+                        <div>
+                          <div style={sectionTitleStyle}>Headers</div>
+                          <JSONBlock value={envelope.headers} />
+                        </div>
+                        <div>
+                          <div style={sectionTitleStyle}>Payload</div>
+                          <JSONBlock value={envelope.payload} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {selectedLog.workspace_id ? (
@@ -588,12 +680,29 @@ export default function AdminLogsPage() {
                     </a>
                   </div>
                 ) : null}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </aside>
+          </>
         ) : null}
       </div>
     </AdminShell>
+  );
+}
+
+function KeyValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: "1px solid var(--dborder)",
+        background: "var(--surface2)",
+      }}
+    >
+      <div style={sectionTitleStyle}>{label}</div>
+      <div style={{ color: "var(--dtext)", fontFamily: "var(--font-geist-mono), monospace", marginTop: 6 }}>{value}</div>
+    </div>
   );
 }
 
