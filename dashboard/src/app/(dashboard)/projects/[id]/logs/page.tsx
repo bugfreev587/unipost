@@ -266,7 +266,7 @@ export default function LogsPage() {
   const { getToken } = useAuth();
 
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("publishing");
+  const [category, setCategory] = useState("all");
   const [platform, setPlatform] = useState("all");
   const [accountFilter, setAccountFilter] = useState("all");
   const [requestFilter, setRequestFilter] = useState("");
@@ -291,6 +291,29 @@ export default function LogsPage() {
   const closeDetail = () => {
     setSelectedLogId(null);
     setSelectedLog(null);
+  };
+
+  const hasActiveFilter =
+    Boolean(query.trim()) ||
+    Boolean(requestFilter) ||
+    Boolean(postFilter) ||
+    Boolean(errorCodeFilter) ||
+    category !== "all" ||
+    platform !== "all" ||
+    accountFilter !== "all" ||
+    status !== "all" ||
+    source !== "all";
+
+  const resetFilters = () => {
+    setQuery("");
+    setRequestFilter("");
+    setPostFilter("");
+    setErrorCodeFilter("");
+    setCategory("all");
+    setPlatform("all");
+    setAccountFilter("all");
+    setStatus("all");
+    setSource("all");
   };
 
   const applyFieldFilter = (kind: "request" | "post" | "account" | "platform" | "error", value: string) => {
@@ -620,8 +643,8 @@ export default function LogsPage() {
         </select>
       </div>
 
-      {(query.trim() || requestFilter || postFilter || errorCodeFilter || category !== "all" || platform !== "all" || accountFilter !== "all" || status !== "all" || source !== "all") && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      {hasActiveFilter && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
           {query.trim() && <ActiveFilter label="search" value={query.trim()} onClear={() => setQuery("")} />}
           {requestFilter && <ActiveFilter label="request_id" value={requestFilter} onClear={() => setRequestFilter("")} />}
           {postFilter && <ActiveFilter label="post_id" value={postFilter} onClear={() => setPostFilter("")} />}
@@ -637,6 +660,23 @@ export default function LogsPage() {
           )}
           {status !== "all" && <ActiveFilter label="status" value={status} onClear={() => setStatus("all")} />}
           {source !== "all" && <ActiveFilter label="source" value={source} onClear={() => setSource("all")} />}
+          <button
+            type="button"
+            onClick={resetFilters}
+            style={{
+              marginLeft: 4,
+              border: "none",
+              background: "transparent",
+              color: "var(--dmuted2)",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              textDecoration: "underline",
+              padding: "2px 4px",
+            }}
+          >
+            Clear all
+          </button>
         </div>
       )}
 
