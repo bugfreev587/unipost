@@ -353,7 +353,6 @@ export default function LogsPage() {
         setAccountFilter("all");
         break;
     }
-    closeDetail();
   };
 
   const profileNameById = useMemo(
@@ -532,7 +531,7 @@ export default function LogsPage() {
   });
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div className="logs-page-fullheight">
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
         <div>
           <div className="dt-page-title">Logs</div>
@@ -680,6 +679,10 @@ export default function LogsPage() {
 
       <div
         style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
           borderRadius: 22,
           border: CONSOLE_FRAME_BORDER,
           background: CONSOLE_FRAME_BACKGROUND,
@@ -696,6 +699,7 @@ export default function LogsPage() {
             padding: "14px 18px",
             borderBottom: CONSOLE_HEADER_BORDER,
             background: CONSOLE_HEADER_BACKGROUND,
+            flexShrink: 0,
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -710,6 +714,7 @@ export default function LogsPage() {
           </div>
         </div>
 
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         {loading ? (
           <div style={emptyStateStyle}>
             <FileText style={{ width: 26, height: 26, color: "var(--dmuted2)" }} />
@@ -814,31 +819,22 @@ export default function LogsPage() {
             })}
           </div>
         )}
+        </div>
       </div>
 
       {selectedLogId !== null && (
-        <>
-          <button
-            type="button"
-            aria-label="Close log detail"
-            onClick={closeDetail}
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(0,0,0,0.35)",
-              border: "none",
-              zIndex: 70,
-            }}
-          />
-          <aside
+        <aside
+          className="logs-detail-drawer"
+          role="dialog"
+          aria-label="Log detail"
             style={{
               position: "fixed",
               top: 0,
               right: 0,
               bottom: 0,
-              width: 480,
-              maxWidth: "96vw",
-              background: "var(--surface-raised)",
+              width: "45vw",
+              minWidth: 360,
+              background: "var(--surface-raised, var(--surface))",
               borderLeft: "1px solid var(--dborder)",
               zIndex: 71,
               overflowY: "auto",
@@ -846,6 +842,7 @@ export default function LogsPage() {
               display: "flex",
               flexDirection: "column",
               gap: 18,
+              boxShadow: "-18px 0 44px color-mix(in srgb, var(--sidebar) 28%, transparent)",
             }}
           >
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -1046,7 +1043,6 @@ export default function LogsPage() {
               </>
             )}
           </aside>
-        </>
       )}
     </div>
   );

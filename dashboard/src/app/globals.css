@@ -679,6 +679,45 @@
     border-radius: 22px;
   }
 }
+
+/* ── Full-height non-scrolling page (logs) ────────────────────────── */
+main:has(.logs-page-fullheight) > div {
+  overflow: hidden !important;
+  padding: 0 !important;
+}
+main:has(.logs-page-fullheight) > div > .dashboard-page-frame {
+  height: 100%;
+  max-width: none;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  padding: 24px 32px 24px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+main:has(.logs-page-fullheight) > div > .dashboard-page-frame::before {
+  display: none;
+}
+.logs-page-fullheight {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 14px;
+}
+@media (max-width: 960px) {
+  main:has(.logs-page-fullheight) > div > .dashboard-page-frame {
+    padding: 16px 18px 18px;
+  }
+}
+@media (max-width: 720px) {
+  .logs-detail-drawer {
+    width: 100vw !important;
+    min-width: 0 !important;
+    border-left: none !important;
+  }
+}
 .dbtn-danger {
   background: transparent;
   color: var(--danger);
