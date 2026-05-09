@@ -721,6 +721,19 @@ main:has(.logs-page-fullheight) > div > .dashboard-page-frame::before {
     z-index: 71 !important;
   }
 }
+
+/* ── Full-height non-scrolling page (admin logs) ──────────────────── */
+.ad-content:has(.admin-logs-page-fullheight) {
+  overflow: hidden !important;
+  padding: 16px 20px !important;
+}
+.admin-logs-page-fullheight {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
 .dbtn-danger {
   background: transparent;
   color: var(--danger);

@@ -1,10 +1,10 @@
 "use client";
 
 import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
   Search,
-  RefreshCw,
   FileText,
   X,
   ChevronRight,
@@ -254,16 +254,19 @@ function requestEnvelope(value: unknown) {
 
 export default function AdminLogsPage() {
   const { getToken } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const [query, setQuery] = useState("");
-  const [workspaceFilter, setWorkspaceFilter] = useState("");
-  const [category, setCategory] = useState("all");
-  const [platform, setPlatform] = useState("all");
-  const [requestFilter, setRequestFilter] = useState("");
-  const [postFilter, setPostFilter] = useState("");
-  const [errorCodeFilter, setErrorCodeFilter] = useState("");
-  const [status, setStatus] = useState("all");
-  const [source, setSource] = useState("all");
+  const [workspaceFilter, setWorkspaceFilter] = useState(() => searchParams.get("workspace_id") || "");
+  const [category, setCategory] = useState(() => searchParams.get("category") || "all");
+  const [platform, setPlatform] = useState(() => searchParams.get("platform") || "all");
+  const [requestFilter, setRequestFilter] = useState(() => searchParams.get("request_id") || "");
+  const [postFilter, setPostFilter] = useState(() => searchParams.get("post_id") || "");
+  const [errorCodeFilter, setErrorCodeFilter] = useState(() => searchParams.get("error_code") || "");
+  const [status, setStatus] = useState(() => searchParams.get("status") || "all");
+  const [source, setSource] = useState(() => searchParams.get("source") || "all");
   const [timeRange, setTimeRange] = useState<TimeRangeKey>("7d");
 
   const [logs, setLogs] = useState<AdminIntegrationLog[]>([]);
@@ -278,6 +281,48 @@ export default function AdminLogsPage() {
     setSelectedLogId(null);
     setSelectedLog(null);
   };
+
+  const hasActiveFilter =
+    Boolean(query.trim()) ||
+    Boolean(workspaceFilter) ||
+    Boolean(requestFilter) ||
+    Boolean(postFilter) ||
+    Boolean(errorCodeFilter) ||
+    category !== "all" ||
+    platform !== "all" ||
+    status !== "all" ||
+    source !== "all";
+
+  const resetFilters = () => {
+    setQuery("");
+    setWorkspaceFilter("");
+    setRequestFilter("");
+    setPostFilter("");
+    setErrorCodeFilter("");
+    setCategory("all");
+    setPlatform("all");
+    setStatus("all");
+    setSource("all");
+  };
+
+  // Sync filter state into URL search params so the view is shareable.
+  // Free-text search and time range stay in-memory.
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (workspaceFilter) params.set("workspace_id", workspaceFilter);
+    if (category !== "all") params.set("category", category);
+    if (platform !== "all") params.set("platform", platform);
+    if (status !== "all") params.set("status", status);
+    if (source !== "all") params.set("source", source);
+    if (requestFilter) params.set("request_id", requestFilter);
+    if (postFilter) params.set("post_id", postFilter);
+    if (errorCodeFilter) params.set("error_code", errorCodeFilter);
+    const qs = params.toString();
+    const target = qs ? `${pathname}?${qs}` : pathname;
+    if (target !== `${pathname}${window.location.search}`) {
+      router.replace(target, { scroll: false });
+    }
+  }, [workspaceFilter, category, platform, status, source, requestFilter, postFilter, errorCodeFilter, pathname, router]);
 
   const { from, to } = useMemo(() => rangeToISO(timeRange), [timeRange]);
 
@@ -369,17 +414,11 @@ export default function AdminLogsPage() {
 
   return (
     <AdminShell title="Logs" loading={loading || refreshing} onRefresh={() => void loadLogs(true)} requireSuperAdmin>
-      <div style={{ display: "grid", gap: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>Global Logs</div>
-            <div style={{ color: "var(--dmuted)", marginTop: 4 }}>
-              Search publishing, API, OAuth, and webhook events across all workspaces.
-            </div>
-          </div>
-          <div style={{ color: "var(--dmuted)", fontSize: 12, textAlign: "right" }}>
-            <div>Super admin only</div>
-            <div>{latestLog ? `Latest event ${relativeTimeLabel(latestLog.ts)}` : "No recent events"}</div>
+      <div className="admin-logs-page-fullheight">
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>Global Logs</div>
+          <div style={{ color: "var(--dmuted2)", fontSize: 12 }}>
+            Super admin · {latestLog ? `Latest ${relativeTimeLabel(latestLog.ts)}` : "no recent events"}
           </div>
         </div>
 
@@ -430,14 +469,10 @@ export default function AdminLogsPage() {
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
-
-          <button type="button" style={iconButtonStyle} onClick={() => void loadLogs(true)} aria-label="Refresh logs">
-            <RefreshCw size={16} />
-          </button>
         </div>
 
-        {activeFilters.length > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {hasActiveFilter ? (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
             {activeFilters.map((filter) => (
               <button
                 key={`${filter.key}:${filter.label}`}
@@ -450,6 +485,23 @@ export default function AdminLogsPage() {
                 <X size={12} />
               </button>
             ))}
+            <button
+              type="button"
+              onClick={resetFilters}
+              style={{
+                marginLeft: 4,
+                border: "none",
+                background: "transparent",
+                color: "var(--dmuted2)",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+                textDecoration: "underline",
+                padding: "2px 4px",
+              }}
+            >
+              Clear all
+            </button>
           </div>
         ) : null}
 
@@ -459,27 +511,16 @@ export default function AdminLogsPage() {
             alignItems: "center",
             justifyContent: "space-between",
             gap: 12,
-            padding: "10px 14px",
-            borderRadius: 14,
-            border: "1px solid var(--dborder)",
-            background: "var(--surface)",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <MiniStat label="Errors" value={String(errorCount)} tone="error" />
             <MiniStat label="Warnings" value={String(warningCount)} tone="warning" />
             <MiniStat label="Workspaces" value={String(workspaceCount)} />
             <MiniStat label="Retention" value={retentionSummary} />
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {latestLog && !loading && (
-              <div style={{ color: "var(--dmuted2)", fontSize: 12 }}>
-                Latest event {relativeTimeLabel(latestLog.ts)}
-              </div>
-            )}
-            <div style={{ color: "var(--dmuted2)", fontSize: 12 }}>
-              {logs.length} row{logs.length === 1 ? "" : "s"}
-            </div>
+          <div style={{ color: "var(--dmuted2)", fontSize: 12 }}>
+            {logs.length} row{logs.length === 1 ? "" : "s"}
           </div>
         </div>
 
@@ -491,26 +532,27 @@ export default function AdminLogsPage() {
 
         <div
           style={{
-            ...tableShellStyle,
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
             borderRadius: 22,
             border: CONSOLE_FRAME_BORDER,
             background: CONSOLE_FRAME_BACKGROUND,
+            overflow: "hidden",
+            position: "relative",
             boxShadow: "0 18px 50px color-mix(in srgb, var(--sidebar) 18%, transparent)",
           }}
         >
-          <div style={tableHeaderStyle}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 15, fontWeight: 700 }}>Global log stream</div>
-              <div style={{ color: CONSOLE_TEXT_MUTED, fontSize: 12 }}>
-                Cross-workspace support view. Filter by workspace ID to narrow to one customer.
-              </div>
-            </div>
+          <div style={{ ...tableHeaderStyle, flexShrink: 0 }}>
+            <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 14, fontWeight: 700 }}>Global log stream</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <ConsoleBadge label="super admin only" tone="success" />
               <ConsoleBadge label={`${logs.length} rows`} tone="neutral" />
             </div>
           </div>
 
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           {loading ? (
             <div style={emptyStateStyle}>Loading logs…</div>
         ) : logs.length === 0 ? (
@@ -533,8 +575,8 @@ export default function AdminLogsPage() {
                       width: "100%",
                       display: "grid",
                       gridTemplateColumns: "170px minmax(0, 1fr)",
-                      gap: 18,
-                      padding: "14px 18px",
+                      gap: 16,
+                      padding: "10px 16px",
                       border: "none",
                       borderBottom: CONSOLE_ROW_BORDER,
                       background: selectedLogId === log.id ? CONSOLE_SELECTED_BG : "transparent",
@@ -542,45 +584,35 @@ export default function AdminLogsPage() {
                       cursor: "pointer",
                     }}
                   >
-                    <div style={{ minWidth: 0, position: "relative", paddingLeft: 16 }}>
+                    <div style={{ minWidth: 0, position: "relative", paddingLeft: 14 }}>
                       <span
                         style={{
                           position: "absolute",
                           left: 0,
                           top: 2,
                           bottom: 2,
-                          width: 4,
+                          width: 3,
                           borderRadius: 999,
                           background: tone.fg,
                         }}
                       />
-                      <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 13 }}>{formatTimestamp(log.ts)}</div>
-                      <div style={{ color: CONSOLE_TEXT_SUBTLE, fontSize: 12, marginTop: 4 }}>{relativeTimeLabel(log.ts)}</div>
+                      <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 12.5 }}>{formatTimestamp(log.ts)}</div>
+                      <div style={{ color: CONSOLE_TEXT_SUBTLE, fontSize: 11.5, marginTop: 2 }}>{relativeTimeLabel(log.ts)}</div>
                     </div>
-                    <div style={{ minWidth: 0, display: "grid", gap: 10 }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 14, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace" }}>
-                            {log.action}
-                          </div>
-                          <div style={{ color: CONSOLE_TEXT_MUTED, fontSize: 14, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {log.message}
-                          </div>
+                    <div style={{ minWidth: 0, display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                        <div style={{ minWidth: 0, color: CONSOLE_TEXT_PRIMARY, fontSize: 14, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {log.action}
                         </div>
                         <span style={{ ...statusBadgeStyle, color: tone.fg, background: tone.bg, borderColor: tone.border, flexShrink: 0 }}>
                           {log.status}
                         </span>
                       </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                         <ConsoleBadge label={workspaceLabel} tone="neutral" />
-                        <ConsoleBadge label={log.workspace_id} tone="neutral" />
                         <ConsoleBadge label={log.plan_id || "free"} tone="neutral" />
                         <ConsoleBadge label={log.platform || "workspace"} tone="neutral" />
                         <ConsoleBadge label={log.request_id || log.post_id || "—"} tone="neutral" />
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, color: CONSOLE_TEXT_SUBTLE, fontSize: 12 }}>
-                        <span>Open detail</span>
-                        <ChevronRight size={14} />
                       </div>
                     </div>
                   </button>
@@ -588,38 +620,29 @@ export default function AdminLogsPage() {
               })}
             </div>
           )}
-        </div>
+          </div>
 
-        {selectedLogId != null ? (
-          <>
-            <button
-              type="button"
-              aria-label="Close log detail"
-              onClick={closeDetail}
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.35)",
-                border: "none",
-                zIndex: 70,
-              }}
-            />
+          {selectedLogId != null ? (
             <aside
+              className="logs-detail-drawer"
+              role="dialog"
+              aria-label="Log detail"
               style={{
-                position: "fixed",
+                position: "absolute",
                 top: 0,
                 right: 0,
                 bottom: 0,
-                width: 520,
-                maxWidth: "96vw",
+                width: "45%",
+                minWidth: 360,
                 background: "var(--surface-raised, var(--surface))",
                 borderLeft: "1px solid var(--dborder)",
-                zIndex: 71,
+                zIndex: 5,
                 overflowY: "auto",
-                padding: 22,
+                padding: 18,
                 display: "flex",
                 flexDirection: "column",
-                gap: 18,
+                gap: 14,
+                boxShadow: "-18px 0 44px color-mix(in srgb, var(--sidebar) 28%, transparent)",
               }}
             >
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -751,8 +774,8 @@ export default function AdminLogsPage() {
                 </div>
               )}
             </aside>
-          </>
-        ) : null}
+          ) : null}
+        </div>
       </div>
     </AdminShell>
   );
@@ -776,21 +799,26 @@ function KeyValue({ label, value }: { label: string; value: string }) {
 
 const toolbarWrapStyle: CSSProperties = {
   display: "flex",
-  gap: 12,
+  gap: 8,
   flexWrap: "wrap",
   alignItems: "center",
+  padding: 8,
+  borderRadius: 12,
+  border: "1px solid var(--dborder)",
+  background: "var(--surface)",
 };
 
 const searchStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  gap: 10,
-  minWidth: 280,
-  padding: "0 14px",
-  height: 44,
+  gap: 8,
+  flex: "1 1 240px",
+  minWidth: 220,
+  padding: "0 10px",
+  height: 32,
   border: "1px solid var(--dborder)",
-  borderRadius: 14,
-  background: "var(--surface)",
+  borderRadius: 10,
+  background: "var(--surface2)",
   color: "var(--dmuted)",
 };
 
@@ -800,36 +828,39 @@ const inputStyle: CSSProperties = {
   background: "transparent",
   color: "var(--dtext)",
   width: "100%",
-  fontSize: 14,
+  fontSize: 13,
 };
 
 const filterInputStyle: CSSProperties = {
-  minWidth: 200,
-  height: 44,
-  padding: "0 14px",
-  borderRadius: 14,
+  flex: "1 1 180px",
+  minWidth: 160,
+  height: 32,
+  padding: "0 10px",
+  borderRadius: 10,
   border: "1px solid var(--dborder)",
-  background: "var(--surface)",
+  background: "var(--surface2)",
   color: "var(--dtext)",
-  fontSize: 14,
+  fontSize: 13,
 };
 
 const selectStyle: CSSProperties = {
-  height: 44,
-  padding: "0 14px",
-  borderRadius: 14,
+  flex: "1 1 120px",
+  minWidth: 110,
+  height: 32,
+  padding: "0 10px",
+  borderRadius: 10,
   border: "1px solid var(--dborder)",
-  background: "var(--surface)",
+  background: "var(--surface2)",
   color: "var(--dtext)",
-  fontSize: 14,
+  fontSize: 13,
 };
 
 const iconButtonStyle: CSSProperties = {
-  height: 44,
-  width: 44,
-  borderRadius: 14,
+  height: 32,
+  width: 32,
+  borderRadius: 10,
   border: "1px solid var(--dborder)",
-  background: "var(--surface)",
+  background: "var(--surface2)",
   color: "var(--dtext)",
   display: "inline-flex",
   alignItems: "center",
@@ -900,15 +931,16 @@ function MiniStat({ label, value, tone = "neutral" }: { label: string; value: st
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 8,
-        padding: "8px 10px",
+        gap: 6,
+        padding: "4px 9px",
         borderRadius: 999,
         border: `1px solid ${colors.border}`,
         background: colors.bg,
+        fontSize: 11,
       }}
     >
-      <span style={{ color: "var(--dmuted2)", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
-      <span style={{ color: colors.fg, fontFamily: "var(--font-geist-mono), monospace", fontWeight: 700 }}>{value}</span>
+      <span style={{ color: "var(--dmuted2)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
+      <span style={{ color: colors.fg, fontFamily: "var(--font-geist-mono), monospace", fontWeight: 700, fontSize: 12 }}>{value}</span>
     </div>
   );
 }
