@@ -17,6 +17,8 @@ import {
 } from "@/lib/api";
 import { useLogsWebSocket } from "@/lib/use-logs-ws";
 import {
+  Check,
+  Copy,
   FileText,
   RefreshCw,
   Search,
@@ -290,6 +292,8 @@ export default function LogsPage() {
   const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
   const [selectedLog, setSelectedLog] = useState<IntegrationLog | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
+  const [rawCopied, setRawCopied] = useState(false);
 
   const closeDetail = () => {
     setSelectedLogId(null);
@@ -524,6 +528,8 @@ export default function LogsPage() {
     try {
       setSelectedLogId(id);
       setSelectedLog(null);
+      setDrawerTab("attributes");
+      setRawCopied(false);
       setDetailLoading(true);
       const token = await getToken();
       if (!token) return;
@@ -533,6 +539,17 @@ export default function LogsPage() {
       setError(err instanceof Error ? err.message : "Failed to load log detail");
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const copyRawLog = async () => {
+    if (!selectedLog) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(selectedLog, null, 2));
+      setRawCopied(true);
+      window.setTimeout(() => setRawCopied(false), 1600);
+    } catch {
+      // ignore — clipboard permission denied or unavailable
     }
   };
 
@@ -912,6 +929,36 @@ export default function LogsPage() {
               <div className="dt-body-sm" style={{ color: "var(--dmuted)" }}>Loading detail…</div>
             ) : (
               <>
+                <DrawerTabs
+                  active={drawerTab}
+                  onChange={setDrawerTab}
+                  rightSlot={
+                    drawerTab === "raw" ? (
+                      <button
+                        type="button"
+                        onClick={copyRawLog}
+                        style={drawerCopyButtonStyle}
+                        aria-label="Copy raw JSON"
+                      >
+                        {rawCopied ? (
+                          <>
+                            <Check style={{ width: 12, height: 12 }} />
+                            Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy style={{ width: 12, height: 12 }} />
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    ) : null
+                  }
+                />
+                {drawerTab === "raw" ? (
+                  <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedLog, null, 2)}</pre>
+                ) : (
+                <>
                 <div
                   style={{
                     borderRadius: 16,
@@ -1080,6 +1127,8 @@ export default function LogsPage() {
                     <ExternalLink style={{ width: 14, height: 14 }} />
                   </a>
                 )}
+                </>
+                )}
               </>
             )}
           </aside>
@@ -1088,6 +1137,81 @@ export default function LogsPage() {
     </div>
   );
 }
+
+function DrawerTabs({
+  active,
+  onChange,
+  rightSlot,
+}: {
+  active: "attributes" | "raw";
+  onChange: (next: "attributes" | "raw") => void;
+  rightSlot?: React.ReactNode;
+}) {
+  return (
+    <div style={drawerTabBarStyle}>
+      <div style={{ display: "flex", gap: 4 }}>
+        <button type="button" onClick={() => onChange("attributes")} style={drawerTabButtonStyle(active === "attributes")}>
+          Attributes
+        </button>
+        <button type="button" onClick={() => onChange("raw")} style={drawerTabButtonStyle(active === "raw")}>
+          Raw Data
+        </button>
+      </div>
+      {rightSlot}
+    </div>
+  );
+}
+
+const drawerTabBarStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  borderBottom: "1px solid var(--dborder)",
+  paddingBottom: 8,
+};
+
+function drawerTabButtonStyle(active: boolean): CSSProperties {
+  return {
+    background: "transparent",
+    border: "none",
+    padding: "6px 4px",
+    fontSize: 13,
+    fontWeight: 600,
+    color: active ? "var(--dtext)" : "var(--dmuted2)",
+    borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
+    cursor: "pointer",
+    marginBottom: -9,
+  };
+}
+
+const drawerCopyButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "4px 10px",
+  borderRadius: 8,
+  border: "1px solid var(--dborder)",
+  background: "var(--surface)",
+  color: "var(--dtext)",
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const drawerRawJsonStyle: CSSProperties = {
+  margin: 0,
+  padding: 14,
+  borderRadius: 12,
+  border: DRAWER_PANEL_BORDER,
+  background: DRAWER_CODE_BACKGROUND,
+  color: "var(--dtext)",
+  fontSize: 12,
+  lineHeight: 1.6,
+  overflow: "auto",
+  whiteSpace: "pre",
+  fontFamily: "var(--font-geist-mono), monospace",
+};
 
 function KeyValue({ label, value }: { label: string; value: string }) {
   return (
