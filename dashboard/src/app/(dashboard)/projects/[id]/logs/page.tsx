@@ -22,7 +22,6 @@ import {
   Search,
   X,
   ExternalLink,
-  ChevronRight,
   Radio,
   PauseCircle,
 } from "lucide-react";
@@ -738,8 +737,8 @@ export default function LogsPage() {
                     width: "100%",
                     display: "grid",
                     gridTemplateColumns: "170px minmax(0, 1fr)",
-                    gap: 18,
-                    padding: "14px 18px",
+                    gap: 16,
+                    padding: "10px 16px",
                     border: "none",
                     borderBottom: CONSOLE_ROW_BORDER,
                     background: selectedLogId === log.id ? CONSOLE_SELECTED_BG : "transparent",
@@ -747,41 +746,36 @@ export default function LogsPage() {
                     cursor: "pointer",
                   }}
                 >
-                  <div style={{ minWidth: 0, position: "relative", paddingLeft: 16 }}>
+                  <div style={{ minWidth: 0, position: "relative", paddingLeft: 14 }}>
                     <span
                       style={{
                         position: "absolute",
                         left: 0,
                         top: 2,
                         bottom: 2,
-                        width: 4,
+                        width: 3,
                         borderRadius: 999,
                         background: tone.fg,
                       }}
                     />
-                    <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 13 }}>{formatTimestamp(log.ts)}</div>
-                    <div style={{ color: CONSOLE_TEXT_SUBTLE, fontSize: 12, marginTop: 4 }}>{relativeTimeLabel(log.ts)}</div>
+                    <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 12.5 }}>{formatTimestamp(log.ts)}</div>
+                    <div style={{ color: CONSOLE_TEXT_SUBTLE, fontSize: 11.5, marginTop: 2 }}>{relativeTimeLabel(log.ts)}</div>
                   </div>
-                  <div style={{ minWidth: 0, display: "grid", gap: 10 }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 14, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace" }}>
-                          {log.action}
-                        </div>
-                        <div style={{ color: CONSOLE_TEXT_MUTED, fontSize: 14, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {log.message}
-                        </div>
+                  <div style={{ minWidth: 0, display: "grid", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                      <div style={{ minWidth: 0, color: CONSOLE_TEXT_PRIMARY, fontSize: 14, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {log.action}
                       </div>
                       <span
                         style={{
                           display: "inline-flex",
                           alignItems: "center",
-                          padding: "5px 9px",
+                          padding: "4px 8px",
                           borderRadius: 999,
                           border: `1px solid ${tone.border}`,
                           background: tone.bg,
                           color: tone.fg,
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: 700,
                           textTransform: "capitalize",
                           flexShrink: 0,
@@ -790,15 +784,11 @@ export default function LogsPage() {
                         {log.status}
                       </span>
                     </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       <ConsoleBadge label={log.category.replaceAll("_", " ")} tone="neutral" />
                       <ConsoleBadge label={log.platform || "workspace"} tone="neutral" />
                       <ConsoleBadge label={accountName} tone="neutral" />
                       <ConsoleBadge label={requestRef} tone="neutral" />
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: CONSOLE_TEXT_SUBTLE, fontSize: 12 }}>
-                      <span>Open detail</span>
-                      <ChevronRight style={{ width: 14, height: 14, flexShrink: 0 }} />
                     </div>
                   </div>
                 </button>
