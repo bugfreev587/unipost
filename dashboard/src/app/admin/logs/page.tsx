@@ -129,6 +129,20 @@ function retentionDaysForPlan(planId?: string) {
   }
 }
 
+const CONSOLE_FRAME_BACKGROUND =
+  "linear-gradient(180deg, color-mix(in srgb, var(--surface-raised, var(--surface)) 88%, var(--sidebar) 12%) 0%, color-mix(in srgb, var(--surface2) 92%, var(--sidebar) 8%) 100%)";
+const CONSOLE_FRAME_BORDER = "1px solid color-mix(in srgb, var(--dborder) 76%, var(--sidebar) 24%)";
+const CONSOLE_HEADER_BACKGROUND = "color-mix(in srgb, var(--surface) 68%, var(--sidebar) 32%)";
+const CONSOLE_HEADER_BORDER = "1px solid color-mix(in srgb, var(--dborder) 66%, var(--sidebar) 34%)";
+const CONSOLE_ROW_BORDER = "1px solid color-mix(in srgb, var(--dborder) 72%, transparent)";
+const CONSOLE_SELECTED_BG = "color-mix(in srgb, var(--accent) 10%, var(--surface2))";
+const CONSOLE_TEXT_PRIMARY = "color-mix(in srgb, var(--dtext) 94%, white 6%)";
+const CONSOLE_TEXT_MUTED = "color-mix(in srgb, var(--dmuted) 92%, var(--dtext) 8%)";
+const CONSOLE_TEXT_SUBTLE = "color-mix(in srgb, var(--dmuted2) 90%, var(--dtext) 10%)";
+const DRAWER_PANEL_BACKGROUND = "color-mix(in srgb, var(--surface2) 82%, var(--sidebar) 18%)";
+const DRAWER_PANEL_BORDER = "1px solid color-mix(in srgb, var(--dborder) 74%, var(--sidebar) 26%)";
+const DRAWER_CODE_BACKGROUND = "color-mix(in srgb, var(--surface) 66%, var(--sidebar) 34%)";
+
 function toneForStatus(status: AdminIntegrationLog["status"]) {
   switch (status) {
     case "error":
@@ -204,8 +218,8 @@ function JSONBlock({ value }: { value: unknown }) {
         margin: 0,
         padding: 14,
         borderRadius: 12,
-        border: "1px solid var(--dborder)",
-        background: "color-mix(in srgb, var(--sidebar) 78%, var(--surface))",
+        border: DRAWER_PANEL_BORDER,
+        background: DRAWER_CODE_BACKGROUND,
         color: "var(--dtext)",
         fontSize: 12,
         lineHeight: 1.6,
@@ -355,36 +369,17 @@ export default function AdminLogsPage() {
 
   return (
     <AdminShell title="Logs" loading={loading || refreshing} onRefresh={() => void loadLogs(true)} requireSuperAdmin>
-      <div style={{ display: "grid", gap: 18 }}>
+      <div style={{ display: "grid", gap: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>Global Logs</div>
-            <div style={{ color: "var(--dmuted)", marginTop: 6 }}>
+            <div style={{ color: "var(--dmuted)", marginTop: 4 }}>
               Search publishing, API, OAuth, and webhook events across all workspaces.
             </div>
           </div>
           <div style={{ color: "var(--dmuted)", fontSize: 12, textAlign: "right" }}>
             <div>Super admin only</div>
             <div>{latestLog ? `Latest event ${relativeTimeLabel(latestLog.ts)}` : "No recent events"}</div>
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-          <div style={summaryCardStyle}>
-            <div style={summaryLabelStyle}>Errors</div>
-            <div style={{ ...summaryValueStyle, color: "#ef4444" }}>{errorCount}</div>
-          </div>
-          <div style={summaryCardStyle}>
-            <div style={summaryLabelStyle}>Warnings</div>
-            <div style={{ ...summaryValueStyle, color: "#f59e0b" }}>{warningCount}</div>
-          </div>
-          <div style={summaryCardStyle}>
-            <div style={summaryLabelStyle}>Workspaces</div>
-            <div style={summaryValueStyle}>{workspaceCount}</div>
-          </div>
-          <div style={summaryCardStyle}>
-            <div style={summaryLabelStyle}>Retention</div>
-            <div style={summaryValueStyle}>{retentionSummary}</div>
           </div>
         </div>
 
@@ -458,62 +453,135 @@ export default function AdminLogsPage() {
           </div>
         ) : null}
 
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "10px 14px",
+            borderRadius: 14,
+            border: "1px solid var(--dborder)",
+            background: "var(--surface)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <MiniStat label="Errors" value={String(errorCount)} tone="error" />
+            <MiniStat label="Warnings" value={String(warningCount)} tone="warning" />
+            <MiniStat label="Workspaces" value={String(workspaceCount)} />
+            <MiniStat label="Retention" value={retentionSummary} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {latestLog && !loading && (
+              <div style={{ color: "var(--dmuted2)", fontSize: 12 }}>
+                Latest event {relativeTimeLabel(latestLog.ts)}
+              </div>
+            )}
+            <div style={{ color: "var(--dmuted2)", fontSize: 12 }}>
+              {logs.length} row{logs.length === 1 ? "" : "s"}
+            </div>
+          </div>
+        </div>
+
         {error ? (
           <div style={{ ...panelStyle, borderColor: "color-mix(in srgb, #ef4444 26%, var(--dborder))", color: "#ef4444" }}>
             {error}
           </div>
         ) : null}
 
-        <div style={tableShellStyle}>
+        <div
+          style={{
+            ...tableShellStyle,
+            borderRadius: 22,
+            border: CONSOLE_FRAME_BORDER,
+            background: CONSOLE_FRAME_BACKGROUND,
+            boxShadow: "0 18px 50px color-mix(in srgb, var(--sidebar) 18%, transparent)",
+          }}
+        >
           <div style={tableHeaderStyle}>
-            <div>Event</div>
-            <div>Status</div>
-            <div>Workspace</div>
-            <div>Platform</div>
-            <div>Plan</div>
-            <div>Created</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 15, fontWeight: 700 }}>Global log stream</div>
+              <div style={{ color: CONSOLE_TEXT_MUTED, fontSize: 12 }}>
+                Cross-workspace support view. Filter by workspace ID to narrow to one customer.
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <ConsoleBadge label="super admin only" tone="success" />
+              <ConsoleBadge label={`${logs.length} rows`} tone="neutral" />
+            </div>
           </div>
 
           {loading ? (
             <div style={emptyStateStyle}>Loading logs…</div>
-          ) : logs.length === 0 ? (
-            <div style={emptyStateStyle}>
+        ) : logs.length === 0 ? (
+          <div style={emptyStateStyle}>
               <FileText size={32} color="var(--dmuted2)" />
               <div style={{ fontSize: 22, fontWeight: 600 }}>No logs found</div>
               <div style={{ color: "var(--dmuted)" }}>No matching logs in this time range.</div>
             </div>
-          ) : (
-            <div style={{ display: "grid" }}>
+        ) : (
+          <div style={{ display: "grid" }}>
               {logs.map((log) => {
                 const tone = toneForStatus(log.status);
+                const workspaceLabel = log.workspace_name || log.workspace_id;
                 return (
                   <button
                     key={log.id}
                     type="button"
                     onClick={() => setSelectedLogId(log.id)}
                     style={{
-                      ...rowButtonStyle,
-                      background: selectedLogId === log.id ? "var(--surface2)" : "transparent",
+                      width: "100%",
+                      display: "grid",
+                      gridTemplateColumns: "170px minmax(0, 1fr)",
+                      gap: 18,
+                      padding: "14px 18px",
+                      border: "none",
+                      borderBottom: CONSOLE_ROW_BORDER,
+                      background: selectedLogId === log.id ? CONSOLE_SELECTED_BG : "transparent",
+                      textAlign: "left",
+                      cursor: "pointer",
                     }}
                   >
-                    <div>
-                      <div style={{ fontWeight: 600, color: "var(--dtext)" }}>{log.action}</div>
-                      <div style={{ color: "var(--dmuted)", fontSize: 13, marginTop: 4 }}>{log.message}</div>
+                    <div style={{ minWidth: 0, position: "relative", paddingLeft: 16 }}>
+                      <span
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          top: 2,
+                          bottom: 2,
+                          width: 4,
+                          borderRadius: 999,
+                          background: tone.fg,
+                        }}
+                      />
+                      <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 13 }}>{formatTimestamp(log.ts)}</div>
+                      <div style={{ color: CONSOLE_TEXT_SUBTLE, fontSize: 12, marginTop: 4 }}>{relativeTimeLabel(log.ts)}</div>
                     </div>
-                    <div>
-                      <span style={{ ...statusBadgeStyle, color: tone.fg, background: tone.bg, borderColor: tone.border }}>
-                        {log.status}
-                      </span>
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 600, color: "var(--dtext)" }}>{log.workspace_name || log.workspace_id}</div>
-                      <div style={{ color: "var(--dmuted)", fontSize: 12, marginTop: 4 }}>{log.workspace_id}</div>
-                    </div>
-                    <div style={{ color: "var(--dtext)" }}>{log.platform || "—"}</div>
-                    <div style={{ color: "var(--dtext)" }}>{log.plan_id || "free"}</div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ color: "var(--dtext)", fontSize: 13 }}>{formatTimestamp(log.ts)}</div>
-                      <div style={{ color: "var(--dmuted)", fontSize: 11, marginTop: 4 }}>{relativeTimeLabel(log.ts)}</div>
+                    <div style={{ minWidth: 0, display: "grid", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 14, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace" }}>
+                            {log.action}
+                          </div>
+                          <div style={{ color: CONSOLE_TEXT_MUTED, fontSize: 14, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {log.message}
+                          </div>
+                        </div>
+                        <span style={{ ...statusBadgeStyle, color: tone.fg, background: tone.bg, borderColor: tone.border, flexShrink: 0 }}>
+                          {log.status}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <ConsoleBadge label={workspaceLabel} tone="neutral" />
+                        <ConsoleBadge label={log.workspace_id} tone="neutral" />
+                        <ConsoleBadge label={log.plan_id || "free"} tone="neutral" />
+                        <ConsoleBadge label={log.platform || "workspace"} tone="neutral" />
+                        <ConsoleBadge label={log.request_id || log.post_id || "—"} tone="neutral" />
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, color: CONSOLE_TEXT_SUBTLE, fontSize: 12 }}>
+                        <span>Open detail</span>
+                        <ChevronRight size={14} />
+                      </div>
                     </div>
                   </button>
                 );
@@ -696,8 +764,8 @@ function KeyValue({ label, value }: { label: string; value: string }) {
       style={{
         padding: "10px 12px",
         borderRadius: 12,
-        border: "1px solid var(--dborder)",
-        background: "var(--surface2)",
+        border: DRAWER_PANEL_BORDER,
+        background: DRAWER_PANEL_BACKGROUND,
       }}
     >
       <div style={sectionTitleStyle}>{label}</div>
@@ -705,29 +773,6 @@ function KeyValue({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
-const summaryCardStyle: CSSProperties = {
-  border: "1px solid var(--dborder)",
-  borderRadius: 18,
-  padding: 18,
-  background: "var(--surface)",
-  display: "grid",
-  gap: 10,
-};
-
-const summaryLabelStyle: CSSProperties = {
-  color: "var(--dmuted)",
-  fontSize: 12,
-  textTransform: "uppercase",
-  letterSpacing: "0.14em",
-};
-
-const summaryValueStyle: CSSProperties = {
-  fontSize: 26,
-  fontWeight: 700,
-  letterSpacing: "-0.03em",
-  color: "var(--dtext)",
-};
 
 const toolbarWrapStyle: CSSProperties = {
   display: "flex",
@@ -820,30 +865,14 @@ const tableShellStyle: CSSProperties = {
 };
 
 const tableHeaderStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "2fr 0.9fr 1.4fr 0.9fr 0.7fr 1fr",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
   gap: 16,
   padding: "16px 18px",
-  borderBottom: "1px solid var(--dborder)",
+  borderBottom: CONSOLE_HEADER_BORDER,
   color: "var(--dmuted)",
   fontSize: 12,
-  textTransform: "uppercase",
-  letterSpacing: "0.14em",
-};
-
-const rowButtonStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "2fr 0.9fr 1.4fr 0.9fr 0.7fr 1fr",
-  gap: 16,
-  padding: "14px 18px",
-  borderBottom: "1px solid color-mix(in srgb, var(--dborder) 72%, transparent)",
-  alignItems: "center",
-  textAlign: "left",
-  borderLeft: "none",
-  borderRight: "none",
-  borderTop: "none",
-  width: "100%",
-  cursor: "pointer",
 };
 
 const statusBadgeStyle: CSSProperties = {
@@ -858,6 +887,63 @@ const statusBadgeStyle: CSSProperties = {
   fontWeight: 600,
   textTransform: "capitalize",
 };
+
+function MiniStat({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "error" | "warning" }) {
+  const colors =
+    tone === "error"
+      ? { fg: "#ef4444", bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.18)" }
+      : tone === "warning"
+        ? { fg: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.18)" }
+        : { fg: "var(--dtext)", bg: "var(--surface2)", border: "var(--dborder)" };
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 10px",
+        borderRadius: 999,
+        border: `1px solid ${colors.border}`,
+        background: colors.bg,
+      }}
+    >
+      <span style={{ color: "var(--dmuted2)", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
+      <span style={{ color: colors.fg, fontFamily: "var(--font-geist-mono), monospace", fontWeight: 700 }}>{value}</span>
+    </div>
+  );
+}
+
+function ConsoleBadge({ label, tone = "neutral" }: { label: string; tone?: "neutral" | "success" }) {
+  const style =
+    tone === "success"
+      ? {
+          color: "color-mix(in srgb, #10b981 78%, var(--dtext) 22%)",
+          bg: "color-mix(in srgb, #10b981 10%, var(--surface))",
+          border: "color-mix(in srgb, #10b981 20%, var(--dborder))",
+        }
+      : {
+          color: CONSOLE_TEXT_MUTED,
+          bg: "color-mix(in srgb, var(--surface) 74%, var(--sidebar) 26%)",
+          border: "color-mix(in srgb, var(--dborder) 68%, var(--sidebar) 32%)",
+        };
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "5px 8px",
+        borderRadius: 999,
+        border: `1px solid ${style.border}`,
+        background: style.bg,
+        color: style.color,
+        fontSize: 12,
+        lineHeight: 1,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
 
 const emptyStateStyle: CSSProperties = {
   minHeight: 280,
@@ -888,6 +974,10 @@ const drawerHeaderStyle: CSSProperties = {
 const sectionStyle: CSSProperties = {
   display: "grid",
   gap: 12,
+  padding: 14,
+  borderRadius: 16,
+  border: DRAWER_PANEL_BORDER,
+  background: DRAWER_PANEL_BACKGROUND,
 };
 
 const sectionTitleStyle: CSSProperties = {

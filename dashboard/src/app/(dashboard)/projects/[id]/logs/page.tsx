@@ -138,6 +138,20 @@ function retentionDaysForPlan(planId?: string) {
   }
 }
 
+const CONSOLE_FRAME_BACKGROUND =
+  "linear-gradient(180deg, color-mix(in srgb, var(--surface-raised, var(--surface)) 88%, var(--sidebar) 12%) 0%, color-mix(in srgb, var(--surface2) 92%, var(--sidebar) 8%) 100%)";
+const CONSOLE_FRAME_BORDER = "1px solid color-mix(in srgb, var(--dborder) 76%, var(--sidebar) 24%)";
+const CONSOLE_HEADER_BACKGROUND = "color-mix(in srgb, var(--surface) 68%, var(--sidebar) 32%)";
+const CONSOLE_HEADER_BORDER = "1px solid color-mix(in srgb, var(--dborder) 66%, var(--sidebar) 34%)";
+const CONSOLE_ROW_BORDER = "1px solid color-mix(in srgb, var(--dborder) 72%, transparent)";
+const CONSOLE_SELECTED_BG = "color-mix(in srgb, var(--accent) 10%, var(--surface2))";
+const CONSOLE_TEXT_PRIMARY = "color-mix(in srgb, var(--dtext) 94%, white 6%)";
+const CONSOLE_TEXT_MUTED = "color-mix(in srgb, var(--dmuted) 92%, var(--dtext) 8%)";
+const CONSOLE_TEXT_SUBTLE = "color-mix(in srgb, var(--dmuted2) 90%, var(--dtext) 10%)";
+const DRAWER_PANEL_BACKGROUND = "color-mix(in srgb, var(--surface2) 82%, var(--sidebar) 18%)";
+const DRAWER_PANEL_BORDER = "1px solid color-mix(in srgb, var(--dborder) 74%, var(--sidebar) 26%)";
+const DRAWER_CODE_BACKGROUND = "color-mix(in srgb, var(--surface) 66%, var(--sidebar) 34%)";
+
 function toneForStatus(status: IntegrationLog["status"]) {
   switch (status) {
     case "error":
@@ -214,8 +228,8 @@ function JSONBlock({ value }: { value: unknown }) {
         margin: 0,
         padding: 14,
         borderRadius: 12,
-        border: "1px solid var(--dborder)",
-        background: "color-mix(in srgb, var(--sidebar) 78%, var(--surface))",
+        border: DRAWER_PANEL_BORDER,
+        background: DRAWER_CODE_BACKGROUND,
         color: "var(--dtext)",
         fontSize: 12,
         lineHeight: 1.6,
@@ -518,11 +532,11 @@ export default function LogsPage() {
   });
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
         <div>
           <div className="dt-page-title">Logs</div>
-          <div className="dt-body-sm" style={{ marginTop: 6, color: "var(--dmuted)" }}>
+          <div className="dt-body-sm" style={{ marginTop: 4, color: "var(--dmuted)" }}>
             Search workspace activity, publishing events, and integration failures. Results are isolated to this workspace.
           </div>
         </div>
@@ -576,8 +590,8 @@ export default function LogsPage() {
           display: "grid",
           gridTemplateColumns: "minmax(220px, 1.6fr) repeat(6, minmax(0, 1fr))",
           gap: 10,
-          padding: 14,
-          borderRadius: 16,
+          padding: 12,
+          borderRadius: 14,
           border: "1px solid var(--dborder)",
           background: "var(--surface)",
         }}
@@ -629,45 +643,23 @@ export default function LogsPage() {
         {source !== "all" && <ActiveFilter label="source" value={source} onClear={() => setSource("all")} />}
       </div>
 
-      <div className="stat-grid" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))", marginTop: -4 }}>
-        <div className="stat-card">
-          <div className="dt-label" style={{ marginBottom: 8 }}>Errors</div>
-          <div style={statValueStyle}>{errorCount}</div>
-          <div className="dt-micro" style={{ marginTop: 4 }}>Current filtered set</div>
-        </div>
-        <div className="stat-card">
-          <div className="dt-label" style={{ marginBottom: 8 }}>Warnings</div>
-          <div style={statValueStyle}>{warningCount}</div>
-          <div className="dt-micro" style={{ marginTop: 4 }}>Current filtered set</div>
-        </div>
-        <div className="stat-card">
-          <div className="dt-label" style={{ marginBottom: 8 }}>Publishing events</div>
-          <div style={statValueStyle}>{publishCount}</div>
-          <div className="dt-micro" style={{ marginTop: 4 }}>Within selected range</div>
-        </div>
-        <div className="stat-card">
-          <div className="dt-label" style={{ marginBottom: 8 }}>Retention</div>
-          <div style={statValueStyle}>{retentionDays}d</div>
-          <div className="dt-micro" style={{ marginTop: 4 }}>
-            {billing ? `${billing.plan_name} plan history window` : "Based on current workspace plan"}
-          </div>
-        </div>
-      </div>
-
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 12,
-          padding: "12px 14px",
+          padding: "10px 14px",
           borderRadius: 14,
           border: "1px solid var(--dborder)",
-          background: "color-mix(in srgb, var(--sidebar) 72%, var(--surface))",
+          background: "var(--surface)",
         }}
       >
-        <div className="dt-body-sm" style={{ color: "var(--dmuted)" }}>
-          Workspace-scoped logs only. Use field filters to narrow by category, source, platform, and time range.
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <MiniStat label="Errors" value={String(errorCount)} tone="error" />
+          <MiniStat label="Warnings" value={String(warningCount)} tone="warning" />
+          <MiniStat label="Publishing" value={String(publishCount)} />
+          <MiniStat label="Retention" value={`${retentionDays}d`} />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {latestLog && !loading && (
@@ -688,25 +680,34 @@ export default function LogsPage() {
 
       <div
         style={{
-          borderRadius: 18,
-          border: "1px solid var(--dborder)",
-          background: "var(--surface)",
+          borderRadius: 22,
+          border: CONSOLE_FRAME_BORDER,
+          background: CONSOLE_FRAME_BACKGROUND,
           overflow: "hidden",
+          boxShadow: "0 18px 50px color-mix(in srgb, var(--sidebar) 18%, transparent)",
         }}
       >
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "170px 120px 210px 110px 220px 1fr 220px",
-            gap: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
             padding: "14px 18px",
-            borderBottom: "1px solid var(--dborder)",
-            background: "color-mix(in srgb, var(--surface2) 88%, var(--surface))",
+            borderBottom: CONSOLE_HEADER_BORDER,
+            background: CONSOLE_HEADER_BACKGROUND,
           }}
         >
-          {["Time", "Category", "Action", "Status", "Account", "Summary", "Request / Post"].map((label) => (
-            <div key={label} className="dt-label">{label}</div>
-          ))}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 15, fontWeight: 700 }}>Log stream</div>
+            <div style={{ color: CONSOLE_TEXT_MUTED, fontSize: 12 }}>
+              Workspace-scoped logs only. Click a row to inspect request and response details.
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <ConsoleBadge label={liveMode ? (liveConnected ? "live connected" : "connecting…") : "history mode"} tone={liveMode && liveConnected ? "success" : "neutral"} />
+            <ConsoleBadge label={`${logs.length} rows`} tone="neutral" />
+          </div>
         </div>
 
         {loading ? (
@@ -734,6 +735,8 @@ export default function LogsPage() {
           <div>
             {logs.map((log) => {
               const tone = toneForStatus(log.status);
+              const accountName = log.social_account_id ? (accountById.get(log.social_account_id)?.account_name || log.social_account_id) : "workspace";
+              const requestRef = log.request_id || log.post_id || "—";
               return (
                 <button
                   key={log.id}
@@ -742,58 +745,69 @@ export default function LogsPage() {
                   style={{
                     width: "100%",
                     display: "grid",
-                    gridTemplateColumns: "170px 120px 210px 110px 220px 1fr 220px",
-                    gap: 12,
-                    padding: "13px 18px",
+                    gridTemplateColumns: "170px minmax(0, 1fr)",
+                    gap: 18,
+                    padding: "14px 18px",
                     border: "none",
-                    borderBottom: "1px solid var(--dborder)",
-                    background: selectedLogId === log.id ? "color-mix(in srgb, var(--accent-glow) 60%, var(--surface))" : "transparent",
+                    borderBottom: CONSOLE_ROW_BORDER,
+                    background: selectedLogId === log.id ? CONSOLE_SELECTED_BG : "transparent",
                     textAlign: "left",
                     cursor: "pointer",
                   }}
                 >
-                  <div style={{ minWidth: 0 }}>
-                    <div className="dt-body-sm" style={{ color: "var(--dtext)" }}>{formatTimestamp(log.ts)}</div>
-                    <div className="dt-micro" style={{ color: "var(--dmuted2)", marginTop: 2 }}>{relativeTimeLabel(log.ts)}</div>
-                  </div>
-                  <div className="dt-body-sm" style={{ color: "var(--dtext)", textTransform: "capitalize" }}>{log.category.replaceAll("_", " ")}</div>
-                  <div className="dt-body-sm" style={{ color: "var(--dtext)", fontFamily: "var(--font-geist-mono), monospace", fontSize: 12 }}>
-                    {log.action}
-                  </div>
-                  <div>
+                  <div style={{ minWidth: 0, position: "relative", paddingLeft: 16 }}>
                     <span
                       style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        padding: "4px 8px",
+                        position: "absolute",
+                        left: 0,
+                        top: 2,
+                        bottom: 2,
+                        width: 4,
                         borderRadius: 999,
-                        border: `1px solid ${tone.border}`,
-                        background: tone.bg,
-                        color: tone.fg,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        textTransform: "capitalize",
+                        background: tone.fg,
                       }}
-                    >
-                      {log.status}
-                    </span>
+                    />
+                    <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 13 }}>{formatTimestamp(log.ts)}</div>
+                    <div style={{ color: CONSOLE_TEXT_SUBTLE, fontSize: 12, marginTop: 4 }}>{relativeTimeLabel(log.ts)}</div>
                   </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div className="dt-body-sm" style={{ color: "var(--dtext)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {log.social_account_id ? (accountById.get(log.social_account_id)?.account_name || log.social_account_id) : "—"}
+                  <div style={{ minWidth: 0, display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 14, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace" }}>
+                          {log.action}
+                        </div>
+                        <div style={{ color: CONSOLE_TEXT_MUTED, fontSize: 14, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {log.message}
+                        </div>
+                      </div>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          padding: "5px 9px",
+                          borderRadius: 999,
+                          border: `1px solid ${tone.border}`,
+                          background: tone.bg,
+                          color: tone.fg,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          textTransform: "capitalize",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {log.status}
+                      </span>
                     </div>
-                    <div className="dt-micro" style={{ color: "var(--dmuted2)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {log.platform || accountById.get(log.social_account_id || "")?.platform || "workspace"}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <ConsoleBadge label={log.category.replaceAll("_", " ")} tone="neutral" />
+                      <ConsoleBadge label={log.platform || "workspace"} tone="neutral" />
+                      <ConsoleBadge label={accountName} tone="neutral" />
+                      <ConsoleBadge label={requestRef} tone="neutral" />
                     </div>
-                  </div>
-                  <div className="dt-body-sm" style={{ color: "var(--dmuted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {log.message}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted2)", minWidth: 0 }}>
-                    <span className="dt-body-sm" style={{ fontFamily: "var(--font-geist-mono), monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {log.request_id || log.post_id || "—"}
-                    </span>
-                    <ChevronRight style={{ width: 14, height: 14, flexShrink: 0 }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: CONSOLE_TEXT_SUBTLE, fontSize: 12 }}>
+                      <span>Open detail</span>
+                      <ChevronRight style={{ width: 14, height: 14, flexShrink: 0 }} />
+                    </div>
                   </div>
                 </button>
               );
@@ -1044,8 +1058,8 @@ function KeyValue({ label, value }: { label: string; value: string }) {
       style={{
         padding: "10px 12px",
         borderRadius: 12,
-        border: "1px solid var(--dborder)",
-        background: "var(--surface2)",
+        border: DRAWER_PANEL_BORDER,
+        background: DRAWER_PANEL_BACKGROUND,
       }}
     >
       <div className="dt-label" style={{ marginBottom: 6 }}>{label}</div>
@@ -1114,7 +1128,11 @@ const emptyStateStyle: CSSProperties = {
 const sectionStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: 8,
+  gap: 10,
+  padding: 14,
+  borderRadius: 16,
+  border: DRAWER_PANEL_BORDER,
+  background: DRAWER_PANEL_BACKGROUND,
 };
 
 const statValueStyle: CSSProperties = {
@@ -1124,3 +1142,60 @@ const statValueStyle: CSSProperties = {
   letterSpacing: -0.5,
   color: "var(--dtext)",
 };
+
+function MiniStat({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "error" | "warning" }) {
+  const colors =
+    tone === "error"
+      ? { fg: "#ef4444", bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.18)" }
+      : tone === "warning"
+        ? { fg: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.18)" }
+        : { fg: "var(--dtext)", bg: "var(--surface2)", border: "var(--dborder)" };
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 10px",
+        borderRadius: 999,
+        border: `1px solid ${colors.border}`,
+        background: colors.bg,
+      }}
+    >
+      <span style={{ color: "var(--dmuted2)", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
+      <span style={{ color: colors.fg, fontFamily: "var(--font-geist-mono), monospace", fontWeight: 700 }}>{value}</span>
+    </div>
+  );
+}
+
+function ConsoleBadge({ label, tone = "neutral" }: { label: string; tone?: "neutral" | "success" }) {
+  const style =
+    tone === "success"
+      ? {
+          color: "color-mix(in srgb, #10b981 78%, var(--dtext) 22%)",
+          bg: "color-mix(in srgb, #10b981 10%, var(--surface))",
+          border: "color-mix(in srgb, #10b981 20%, var(--dborder))",
+        }
+      : {
+          color: CONSOLE_TEXT_MUTED,
+          bg: "color-mix(in srgb, var(--surface) 74%, var(--sidebar) 26%)",
+          border: "color-mix(in srgb, var(--dborder) 68%, var(--sidebar) 32%)",
+        };
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "5px 8px",
+        borderRadius: 999,
+        border: `1px solid ${style.border}`,
+        background: style.bg,
+        color: style.color,
+        fontSize: 12,
+        lineHeight: 1,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
