@@ -532,13 +532,8 @@ export default function LogsPage() {
 
   return (
     <div className="logs-page-fullheight">
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
-        <div>
-          <div className="dt-page-title">Logs</div>
-          <div className="dt-body-sm" style={{ marginTop: 4, color: "var(--dmuted)" }}>
-            Search workspace activity, publishing events, and integration failures. Results are isolated to this workspace.
-          </div>
-        </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+        <div className="dt-page-title">Logs</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button
             type="button"
@@ -546,18 +541,19 @@ export default function LogsPage() {
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 8,
-              padding: "10px 14px",
-              borderRadius: 12,
+              gap: 6,
+              padding: "6px 12px",
+              borderRadius: 10,
               border: liveMode ? "1px solid color-mix(in srgb, #10b981 28%, var(--dborder))" : "1px solid var(--dborder)",
               background: liveMode ? "color-mix(in srgb, #10b981 12%, var(--surface))" : "var(--surface)",
               color: "var(--dtext)",
               cursor: "pointer",
+              fontSize: 13,
             }}
           >
-            {liveMode ? <PauseCircle style={{ width: 14, height: 14 }} /> : <Radio style={{ width: 14, height: 14 }} />}
-            <span className="dt-body-sm" style={{ color: "var(--dtext)", fontWeight: 600 }}>
-              {liveMode ? "Pause live tail" : "Live tail"}
+            {liveMode ? <PauseCircle style={{ width: 13, height: 13 }} /> : <Radio style={{ width: 13, height: 13 }} />}
+            <span style={{ color: "var(--dtext)", fontWeight: 600 }}>
+              {liveMode ? "Pause" : "Live tail"}
             </span>
           </button>
           <button
@@ -567,17 +563,18 @@ export default function LogsPage() {
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 8,
-              padding: "10px 14px",
-              borderRadius: 12,
+              gap: 6,
+              padding: "6px 12px",
+              borderRadius: 10,
               border: "1px solid var(--dborder)",
               background: "var(--surface)",
               color: "var(--dtext)",
               cursor: "pointer",
+              fontSize: 13,
             }}
           >
-            <RefreshCw style={{ width: 14, height: 14 }} className={refreshing ? "animate-spin" : ""} />
-            <span className="dt-body-sm" style={{ color: "var(--dtext)", fontWeight: 600 }}>
+            <RefreshCw style={{ width: 13, height: 13 }} className={refreshing ? "animate-spin" : ""} />
+            <span style={{ color: "var(--dtext)", fontWeight: 600 }}>
               Refresh
             </span>
           </button>
@@ -588,15 +585,15 @@ export default function LogsPage() {
         style={{
           display: "grid",
           gridTemplateColumns: "minmax(220px, 1.6fr) repeat(6, minmax(0, 1fr))",
-          gap: 10,
-          padding: 12,
-          borderRadius: 14,
+          gap: 8,
+          padding: 8,
+          borderRadius: 12,
           border: "1px solid var(--dborder)",
           background: "var(--surface)",
         }}
       >
         <label style={{ position: "relative" }}>
-          <Search style={{ position: "absolute", left: 12, top: 11, width: 14, height: 14, color: "var(--dmuted2)" }} />
+          <Search style={{ position: "absolute", left: 12, top: 9, width: 14, height: 14, color: "var(--dmuted2)" }} />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -624,23 +621,25 @@ export default function LogsPage() {
         </select>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        {query.trim() && <ActiveFilter label="search" value={query.trim()} onClear={() => setQuery("")} />}
-        {requestFilter && <ActiveFilter label="request_id" value={requestFilter} onClear={() => setRequestFilter("")} />}
-        {postFilter && <ActiveFilter label="post_id" value={postFilter} onClear={() => setPostFilter("")} />}
-        {errorCodeFilter && <ActiveFilter label="error_code" value={errorCodeFilter} onClear={() => setErrorCodeFilter("")} />}
-        {category !== "all" && <ActiveFilter label="category" value={category} onClear={() => setCategory("all")} />}
-        {platform !== "all" && <ActiveFilter label="platform" value={platform} onClear={() => setPlatform("all")} />}
-        {accountFilter !== "all" && (
-          <ActiveFilter
-            label="account"
-            value={accountById.get(accountFilter)?.account_name || accountFilter}
-            onClear={() => setAccountFilter("all")}
-          />
-        )}
-        {status !== "all" && <ActiveFilter label="status" value={status} onClear={() => setStatus("all")} />}
-        {source !== "all" && <ActiveFilter label="source" value={source} onClear={() => setSource("all")} />}
-      </div>
+      {(query.trim() || requestFilter || postFilter || errorCodeFilter || category !== "all" || platform !== "all" || accountFilter !== "all" || status !== "all" || source !== "all") && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {query.trim() && <ActiveFilter label="search" value={query.trim()} onClear={() => setQuery("")} />}
+          {requestFilter && <ActiveFilter label="request_id" value={requestFilter} onClear={() => setRequestFilter("")} />}
+          {postFilter && <ActiveFilter label="post_id" value={postFilter} onClear={() => setPostFilter("")} />}
+          {errorCodeFilter && <ActiveFilter label="error_code" value={errorCodeFilter} onClear={() => setErrorCodeFilter("")} />}
+          {category !== "all" && <ActiveFilter label="category" value={category} onClear={() => setCategory("all")} />}
+          {platform !== "all" && <ActiveFilter label="platform" value={platform} onClear={() => setPlatform("all")} />}
+          {accountFilter !== "all" && (
+            <ActiveFilter
+              label="account"
+              value={accountById.get(accountFilter)?.account_name || accountFilter}
+              onClear={() => setAccountFilter("all")}
+            />
+          )}
+          {status !== "all" && <ActiveFilter label="status" value={status} onClear={() => setStatus("all")} />}
+          {source !== "all" && <ActiveFilter label="source" value={source} onClear={() => setSource("all")} />}
+        </div>
+      )}
 
       <div
         style={{
@@ -648,32 +647,24 @@ export default function LogsPage() {
           alignItems: "center",
           justifyContent: "space-between",
           gap: 12,
-          padding: "10px 14px",
-          borderRadius: 14,
-          border: "1px solid var(--dborder)",
-          background: "var(--surface)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <MiniStat label="Errors" value={String(errorCount)} tone="error" />
           <MiniStat label="Warnings" value={String(warningCount)} tone="warning" />
           <MiniStat label="Publishing" value={String(publishCount)} />
           <MiniStat label="Retention" value={`${retentionDays}d`} />
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "var(--dmuted2)" }}>
           {latestLog && !loading && (
-            <div className="dt-body-sm" style={{ color: "var(--dmuted2)" }}>
-              Latest event {relativeTimeLabel(latestLog.ts)}
-            </div>
+            <span>Latest event {relativeTimeLabel(latestLog.ts)}</span>
           )}
           {liveMode && (
-            <div className="dt-body-sm" style={{ color: liveConnected ? "#10b981" : "var(--dmuted2)", fontWeight: 600 }}>
+            <span style={{ color: liveConnected ? "#10b981" : "var(--dmuted2)", fontWeight: 600 }}>
               {liveConnected ? "Live tail connected" : "Connecting live tail…"}
-            </div>
+            </span>
           )}
-          <div className="dt-body-sm" style={{ color: "var(--dmuted2)" }}>
-            {logs.length} row{logs.length === 1 ? "" : "s"}
-          </div>
+          <span>{logs.length} row{logs.length === 1 ? "" : "s"}</span>
         </div>
       </div>
 
@@ -687,6 +678,7 @@ export default function LogsPage() {
           border: CONSOLE_FRAME_BORDER,
           background: CONSOLE_FRAME_BACKGROUND,
           overflow: "hidden",
+          position: "relative",
           boxShadow: "0 18px 50px color-mix(in srgb, var(--sidebar) 18%, transparent)",
         }}
       >
@@ -702,12 +694,7 @@ export default function LogsPage() {
             flexShrink: 0,
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 15, fontWeight: 700 }}>Log stream</div>
-            <div style={{ color: CONSOLE_TEXT_MUTED, fontSize: 12 }}>
-              Workspace-scoped logs only. Click a row to inspect request and response details.
-            </div>
-          </div>
+          <div style={{ color: CONSOLE_TEXT_PRIMARY, fontSize: 14, fontWeight: 700 }}>Log stream</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <ConsoleBadge label={liveMode ? (liveConnected ? "live connected" : "connecting…") : "history mode"} tone={liveMode && liveConnected ? "success" : "neutral"} />
             <ConsoleBadge label={`${logs.length} rows`} tone="neutral" />
@@ -820,28 +807,27 @@ export default function LogsPage() {
           </div>
         )}
         </div>
-      </div>
 
-      {selectedLogId !== null && (
-        <aside
-          className="logs-detail-drawer"
-          role="dialog"
-          aria-label="Log detail"
+        {selectedLogId !== null && (
+          <aside
+            className="logs-detail-drawer"
+            role="dialog"
+            aria-label="Log detail"
             style={{
-              position: "fixed",
+              position: "absolute",
               top: 0,
               right: 0,
               bottom: 0,
-              width: "45vw",
+              width: "45%",
               minWidth: 360,
               background: "var(--surface-raised, var(--surface))",
               borderLeft: "1px solid var(--dborder)",
-              zIndex: 71,
+              zIndex: 5,
               overflowY: "auto",
-              padding: 22,
+              padding: 18,
               display: "flex",
               flexDirection: "column",
-              gap: 18,
+              gap: 14,
               boxShadow: "-18px 0 44px color-mix(in srgb, var(--sidebar) 28%, transparent)",
             }}
           >
@@ -1043,7 +1029,8 @@ export default function LogsPage() {
               </>
             )}
           </aside>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -1100,13 +1087,13 @@ function ActiveFilter({
 function inputStyle(extra?: CSSProperties): CSSProperties {
   return {
     width: "100%",
-    height: 38,
-    borderRadius: 12,
+    height: 32,
+    borderRadius: 10,
     border: "1px solid var(--dborder)",
     background: "var(--surface2)",
     color: "var(--dtext)",
-    padding: "0 12px",
-    fontSize: 14,
+    padding: "0 10px",
+    fontSize: 13,
     outline: "none",
     ...extra,
   };
@@ -1151,15 +1138,16 @@ function MiniStat({ label, value, tone = "neutral" }: { label: string; value: st
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 8,
-        padding: "8px 10px",
+        gap: 6,
+        padding: "4px 9px",
         borderRadius: 999,
         border: `1px solid ${colors.border}`,
         background: colors.bg,
+        fontSize: 11,
       }}
     >
-      <span style={{ color: "var(--dmuted2)", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
-      <span style={{ color: colors.fg, fontFamily: "var(--font-geist-mono), monospace", fontWeight: 700 }}>{value}</span>
+      <span style={{ color: "var(--dmuted2)", textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
+      <span style={{ color: colors.fg, fontFamily: "var(--font-geist-mono), monospace", fontWeight: 700, fontSize: 12 }}>{value}</span>
     </div>
   );
 }
