@@ -130,6 +130,9 @@ func Middleware(logger *Logger) func(http.Handler) http.Handler {
 			if logger == nil || workspaceID == "" {
 				return
 			}
+			if IsInternalRequestPath(r.URL.Path) {
+				return
+			}
 
 			level := LevelInfo
 			status := StatusSuccess
