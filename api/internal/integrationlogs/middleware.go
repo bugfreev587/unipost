@@ -133,6 +133,14 @@ func Middleware(logger *Logger) func(http.Handler) http.Handler {
 			if IsInternalRequestPath(r.URL.Path) {
 				return
 			}
+			// 402 is reserved for billing/plan gates (PLAN_FEATURE_NOT_AVAILABLE,
+			// PLAN_PLATFORM_NOT_ALLOWED, *_LIMIT_REACHED). The caller has already
+			// been shown the upgrade message — recording every poll just bloats
+			// the workspace logs view. Funnel/conversion signal belongs in
+			// product analytics, not the integration log.
+			if rw.status == http.StatusPaymentRequired {
+				return
+			}
 
 			level := LevelInfo
 			status := StatusSuccess
