@@ -1,7 +1,7 @@
 "use client";
 
 import { type CSSProperties, useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
   listProfiles,
@@ -264,16 +264,19 @@ function requestEnvelope(value: unknown) {
 export default function LogsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const { getToken } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("all");
-  const [platform, setPlatform] = useState("all");
-  const [accountFilter, setAccountFilter] = useState("all");
-  const [requestFilter, setRequestFilter] = useState("");
-  const [postFilter, setPostFilter] = useState("");
-  const [errorCodeFilter, setErrorCodeFilter] = useState("");
-  const [status, setStatus] = useState("all");
-  const [source, setSource] = useState("all");
+  const [category, setCategory] = useState(() => searchParams.get("category") || "all");
+  const [platform, setPlatform] = useState(() => searchParams.get("platform") || "all");
+  const [accountFilter, setAccountFilter] = useState(() => searchParams.get("account") || "all");
+  const [requestFilter, setRequestFilter] = useState(() => searchParams.get("request_id") || "");
+  const [postFilter, setPostFilter] = useState(() => searchParams.get("post_id") || "");
+  const [errorCodeFilter, setErrorCodeFilter] = useState(() => searchParams.get("error_code") || "");
+  const [status, setStatus] = useState(() => searchParams.get("status") || "all");
+  const [source, setSource] = useState(() => searchParams.get("source") || "all");
   const [timeRange, setTimeRange] = useState<TimeRangeKey>("7d");
   const [liveMode, setLiveMode] = useState(false);
 
@@ -315,6 +318,27 @@ export default function LogsPage() {
     setStatus("all");
     setSource("all");
   };
+
+  // Sync filter state into URL search params so the view is shareable
+  // and survives a page refresh. Free-text search and time range stay
+  // in-memory: search is transient input; time range is a relative value
+  // that auto-recomputes per session.
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (category !== "all") params.set("category", category);
+    if (platform !== "all") params.set("platform", platform);
+    if (accountFilter !== "all") params.set("account", accountFilter);
+    if (status !== "all") params.set("status", status);
+    if (source !== "all") params.set("source", source);
+    if (requestFilter) params.set("request_id", requestFilter);
+    if (postFilter) params.set("post_id", postFilter);
+    if (errorCodeFilter) params.set("error_code", errorCodeFilter);
+    const qs = params.toString();
+    const target = qs ? `${pathname}?${qs}` : pathname;
+    if (target !== `${pathname}${window.location.search}`) {
+      router.replace(target, { scroll: false });
+    }
+  }, [category, platform, accountFilter, status, source, requestFilter, postFilter, errorCodeFilter, pathname, router]);
 
   const applyFieldFilter = (kind: "request" | "post" | "account" | "platform" | "error", value: string) => {
     if (!value) return;
