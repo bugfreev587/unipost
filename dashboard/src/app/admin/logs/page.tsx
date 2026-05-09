@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, Suspense, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
@@ -253,6 +253,14 @@ function requestEnvelope(value: unknown) {
 }
 
 export default function AdminLogsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AdminLogsPageInner />
+    </Suspense>
+  );
+}
+
+function AdminLogsPageInner() {
   const { getToken } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
