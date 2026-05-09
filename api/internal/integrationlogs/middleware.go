@@ -141,6 +141,16 @@ func Middleware(logger *Logger) func(http.Handler) http.Handler {
 			if rw.status == http.StatusPaymentRequired {
 				return
 			}
+			// Clerk-JWT (dashboard) calls are noise in workspace logs: the
+			// customer wants to see what their SDK / bots / API-key callers
+			// did, not what they themselves clicked in the dashboard. Skip
+			// any request authenticated by user_id without an api_key_id —
+			// admin can still inspect this traffic via Railway HTTP logs.
+			actorUserID := auth.GetUserID(r.Context())
+			actorAPIKeyID := auth.GetAPIKeyID(r.Context())
+			if actorUserID != "" && actorAPIKeyID == "" {
+				return
+			}
 
 			level := LevelInfo
 			status := StatusSuccess
@@ -181,8 +191,8 @@ func Middleware(logger *Logger) func(http.Handler) http.Handler {
 				Source:         SourceAPI,
 				Message:        message,
 				RequestID:      appmw.GetRequestID(r.Context()),
-				ActorUserID:    auth.GetUserID(r.Context()),
-				ActorAPIKeyID:  auth.GetAPIKeyID(r.Context()),
+				ActorUserID:    actorUserID,
+				ActorAPIKeyID:  actorAPIKeyID,
 				Endpoint:       r.URL.Path,
 				Method:         r.Method,
 				HTTPStatusCode: &httpStatusCode,
