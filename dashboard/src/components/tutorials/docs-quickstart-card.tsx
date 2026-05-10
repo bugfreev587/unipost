@@ -165,7 +165,7 @@ function DocsQuickstartCardInner({
           flexWrap: "wrap",
         }}
       >
-        <div style={{ minWidth: 0, flex: "1 1 520px" }}>
+        <div style={{ minWidth: 0, flex: "1 1 320px" }}>
           <div
             style={{
               display: "inline-flex",
@@ -294,8 +294,8 @@ function DocsQuickstartCardInner({
 
         <div
           style={{
-            flex: "0 0 320px",
-            minWidth: 280,
+            flex: "1 1 260px",
+            maxWidth: 360,
             alignSelf: "stretch",
             display: "flex",
             flexDirection: "column",
