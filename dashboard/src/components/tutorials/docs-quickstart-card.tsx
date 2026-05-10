@@ -141,8 +141,8 @@ function DocsQuickstartCardInner({
   return (
     <div
       style={{
-        marginBottom: 24,
-        borderRadius: 28,
+        marginBottom: 18,
+        borderRadius: 20,
         border: locked
           ? "1px solid var(--docs-border)"
           : "1px solid color-mix(in srgb, var(--docs-accent) 28%, var(--docs-border))",
@@ -150,18 +150,18 @@ function DocsQuickstartCardInner({
           ? "var(--docs-bg-elevated)"
           : "linear-gradient(135deg, color-mix(in srgb, var(--docs-accent) 13%, var(--docs-bg-elevated) 87%), var(--docs-bg-elevated))",
         boxShadow: locked
-          ? "0 10px 30px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 6%, transparent)"
-          : "0 18px 50px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 10%, transparent)",
+          ? "0 6px 18px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 5%, transparent)"
+          : "0 10px 28px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 8%, transparent)",
         overflow: "hidden",
       }}
     >
       <div
         style={{
-          padding: 24,
+          padding: 18,
           display: "flex",
           alignItems: "stretch",
           justifyContent: "space-between",
-          gap: 24,
+          gap: 16,
           flexWrap: "wrap",
         }}
       >
@@ -170,31 +170,30 @@ function DocsQuickstartCardInner({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 8,
-              marginBottom: 14,
-              padding: "6px 12px",
+              gap: 6,
+              marginBottom: 10,
+              padding: "4px 10px",
               borderRadius: 999,
               background: "var(--docs-bg-elevated)",
               border: "1px solid color-mix(in srgb, var(--docs-accent) 14%, var(--docs-border))",
               color: "var(--docs-text)",
-              fontSize: 11,
+              fontSize: 10.5,
               fontWeight: 800,
               letterSpacing: "0.1em",
               textTransform: "uppercase",
-              boxShadow: "0 6px 18px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 6%, transparent)",
             }}
           >
-            <Sparkles style={{ width: 13, height: 13, color: "var(--docs-accent)" }} />
+            <Sparkles style={{ width: 12, height: 12, color: "var(--docs-accent)" }} />
             Interactive quickstart
           </div>
 
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
             <div
               style={{
-                width: 58,
-                height: 58,
+                width: 40,
+                height: 40,
                 flexShrink: 0,
-                borderRadius: 18,
+                borderRadius: 12,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -204,15 +203,12 @@ function DocsQuickstartCardInner({
                 border: locked
                   ? "1px solid var(--docs-border)"
                   : "1px solid color-mix(in srgb, var(--docs-accent) 22%, var(--docs-border))",
-                boxShadow: locked
-                  ? "none"
-                  : "0 12px 28px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 8%, transparent)",
               }}
             >
               <StateIcon
                 style={{
-                  width: 26,
-                  height: 26,
+                  width: 18,
+                  height: 18,
                   color: completed
                     ? "#10b981"
                     : locked
@@ -227,9 +223,9 @@ function DocsQuickstartCardInner({
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 8,
-                  marginBottom: 10,
-                  padding: "4px 10px",
+                  gap: 6,
+                  marginBottom: 6,
+                  padding: "2px 8px",
                   borderRadius: 999,
                   background: completed
                     ? "color-mix(in srgb, #10b981 14%, var(--docs-bg-elevated))"
@@ -242,7 +238,7 @@ function DocsQuickstartCardInner({
                       ? "1px solid var(--docs-border)"
                       : "1px solid rgba(59,130,246,.18)",
                   color: completed ? "#10b981" : locked ? "var(--docs-text-muted)" : "#3b82f6",
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: 700,
                   letterSpacing: "0.06em",
                   textTransform: "uppercase",
@@ -252,12 +248,12 @@ function DocsQuickstartCardInner({
               </div>
               <div
                 style={{
-                  fontSize: 32,
-                  lineHeight: 1.05,
+                  fontSize: 22,
+                  lineHeight: 1.15,
                   fontWeight: 800,
                   color: "var(--docs-text)",
-                  marginBottom: 10,
-                  letterSpacing: "-0.03em",
+                  marginBottom: 6,
+                  letterSpacing: "-0.025em",
                 }}
               >
                 {tutorial.title}
@@ -265,9 +261,9 @@ function DocsQuickstartCardInner({
               <div
                 style={{
                   color: "var(--docs-text-soft)",
-                  lineHeight: 1.7,
-                  marginBottom: 14,
-                  fontSize: 18,
+                  lineHeight: 1.55,
+                  marginBottom: 10,
+                  fontSize: 14,
                   maxWidth: 760,
                 }}
               >
@@ -277,17 +273,17 @@ function DocsQuickstartCardInner({
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 10,
-                  padding: "8px 12px",
-                  borderRadius: 14,
+                  gap: 8,
+                  padding: "5px 10px",
+                  borderRadius: 10,
                   background: "var(--docs-bg-elevated)",
                   border: "1px dashed color-mix(in srgb, var(--docs-accent) 26%, var(--docs-border))",
                   color: "var(--docs-text)",
-                  fontSize: 14,
+                  fontSize: 12.5,
                   fontWeight: 600,
                 }}
               >
-                <span style={{ color: "var(--docs-text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 11 }}>
+                <span style={{ color: "var(--docs-text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 10.5 }}>
                   Progress
                 </span>
                 <span>{completedSteps} / {tutorial.steps.length} steps</span>
@@ -298,15 +294,15 @@ function DocsQuickstartCardInner({
 
         <div
           style={{
-            flex: "0 0 380px",
-            minWidth: 300,
+            flex: "0 0 320px",
+            minWidth: 280,
             alignSelf: "stretch",
             display: "flex",
             flexDirection: "column",
             justifyContent: "space-between",
-            gap: 16,
-            padding: 20,
-            borderRadius: 24,
+            gap: 10,
+            padding: 14,
+            borderRadius: 16,
             border: "1px solid color-mix(in srgb, var(--docs-accent) 16%, var(--docs-border))",
             background: "var(--docs-bg-elevated)",
             boxShadow: "inset 0 1px 0 color-mix(in srgb, white 6%, transparent)",
@@ -316,23 +312,22 @@ function DocsQuickstartCardInner({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 8,
-              padding: "4px 0",
+              gap: 6,
               color: "var(--docs-text-muted)",
-              fontSize: 11,
+              fontSize: 10.5,
               fontWeight: 800,
               letterSpacing: "0.12em",
               textTransform: "uppercase",
             }}
           >
-            <Play style={{ width: 13, height: 13, color: "var(--docs-accent)" }} />
+            <Play style={{ width: 12, height: 12, color: "var(--docs-accent)" }} />
             Launch module
           </div>
-          <div style={{ color: "var(--docs-text)", fontSize: 18, fontWeight: 700, lineHeight: 1.35 }}>
+          <div style={{ color: "var(--docs-text)", fontSize: 14, fontWeight: 700, lineHeight: 1.4 }}>
             Open the live quickstart and complete it step by step inside your workspace.
           </div>
           {locked && fallbackHref ? (
-            <Link href={fallbackHref} style={{ ...docsButtonLinkStyle, width: "100%", justifyContent: "center", marginTop: 4 }}>
+            <Link href={fallbackHref} style={{ ...docsButtonLinkStyle, width: "100%", justifyContent: "center" }}>
               Complete prerequisite first
             </Link>
           ) : (
@@ -345,28 +340,27 @@ function DocsQuickstartCardInner({
                 justifyContent: "center",
                 gap: 8,
                 width: "100%",
-                borderRadius: 16,
+                borderRadius: 12,
                 border: "1px solid color-mix(in srgb, var(--docs-accent) 32%, var(--docs-border))",
                 background: "var(--docs-accent)",
                 color: "white",
-                padding: "16px 18px",
+                padding: "10px 14px",
                 fontWeight: 700,
                 cursor: "pointer",
                 fontFamily: "inherit",
-                fontSize: 17,
-                boxShadow: "0 14px 30px color-mix(in srgb, var(--docs-accent) 22%, transparent)",
+                fontSize: 14,
+                boxShadow: "0 8px 20px color-mix(in srgb, var(--docs-accent) 22%, transparent)",
               }}
             >
-              <CtaIcon style={{ width: 18, height: 18 }} />
+              <CtaIcon style={{ width: 15, height: 15 }} />
               {ctaLabel}
             </button>
           )}
           <div
             style={{
-              paddingTop: 4,
               color: "var(--docs-text-soft)",
-              fontSize: 15,
-              lineHeight: 1.65,
+              fontSize: 12.5,
+              lineHeight: 1.55,
             }}
           >
             This is a live, playable quickstart. It opens the real walkthrough modal, keeps progress, and can be replayed anytime.
@@ -375,18 +369,18 @@ function DocsQuickstartCardInner({
       </div>
 
       {locked && fallbackHref && (
-        <div style={{ padding: "0 24px 24px", color: "var(--docs-text-muted)", fontSize: 14 }}>
+        <div style={{ padding: "0 18px 14px", color: "var(--docs-text-muted)", fontSize: 13 }}>
           This quickstart unlocks after you complete the Dashboard Quickstart.
         </div>
       )}
 
       {!locked && tutorialId === "post_with_api" && (
-        <div style={{ padding: "0 24px 24px", color: "var(--docs-text-muted)", fontSize: 14 }}>
+        <div style={{ padding: "0 18px 14px", color: "var(--docs-text-muted)", fontSize: 13 }}>
           The API Quickstart creates a key, picks a real connected account, and sends a live test post.
         </div>
       )}
       {!locked && tutorialId === "quickstart" && (
-        <div style={{ padding: "0 24px 24px", color: "var(--docs-text-muted)", fontSize: 14 }}>
+        <div style={{ padding: "0 18px 14px", color: "var(--docs-text-muted)", fontSize: 13 }}>
           The Dashboard Quickstart walks through connecting an account and publishing your first post from the UI.
         </div>
       )}
