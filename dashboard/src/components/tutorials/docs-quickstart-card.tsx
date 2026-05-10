@@ -144,14 +144,14 @@ function DocsQuickstartCardInner({
         marginBottom: 24,
         borderRadius: 28,
         border: locked
-          ? "1px solid color-mix(in srgb, var(--docs-border) 88%, white 12%)"
+          ? "1px solid var(--docs-border)"
           : "1px solid color-mix(in srgb, var(--docs-accent) 28%, var(--docs-border))",
         background: locked
-          ? "linear-gradient(135deg, color-mix(in srgb, var(--docs-surface) 94%, white 6%), color-mix(in srgb, var(--docs-surface) 98%, transparent))"
-          : "linear-gradient(135deg, color-mix(in srgb, var(--docs-accent) 13%, white 87%), color-mix(in srgb, var(--docs-accent) 5%, var(--docs-surface)))",
+          ? "var(--docs-bg-elevated)"
+          : "linear-gradient(135deg, color-mix(in srgb, var(--docs-accent) 13%, var(--docs-bg-elevated) 87%), var(--docs-bg-elevated))",
         boxShadow: locked
-          ? "0 10px 30px rgba(15, 23, 42, 0.04)"
-          : "0 18px 50px rgba(15, 23, 42, 0.08)",
+          ? "0 10px 30px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 6%, transparent)"
+          : "0 18px 50px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 10%, transparent)",
         overflow: "hidden",
       }}
     >
@@ -174,14 +174,14 @@ function DocsQuickstartCardInner({
               marginBottom: 14,
               padding: "6px 12px",
               borderRadius: 999,
-              background: "rgba(255,255,255,.72)",
+              background: "var(--docs-bg-elevated)",
               border: "1px solid color-mix(in srgb, var(--docs-accent) 14%, var(--docs-border))",
               color: "var(--docs-text)",
               fontSize: 11,
               fontWeight: 800,
               letterSpacing: "0.1em",
               textTransform: "uppercase",
-              boxShadow: "0 6px 18px rgba(15, 23, 42, 0.05)",
+              boxShadow: "0 6px 18px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 6%, transparent)",
             }}
           >
             <Sparkles style={{ width: 13, height: 13, color: "var(--docs-accent)" }} />
@@ -199,14 +199,14 @@ function DocsQuickstartCardInner({
                 alignItems: "center",
                 justifyContent: "center",
                 background: locked
-                  ? "rgba(148, 163, 184, 0.10)"
-                  : "linear-gradient(135deg, color-mix(in srgb, var(--docs-accent) 18%, white 82%), color-mix(in srgb, var(--docs-accent) 10%, white 90%))",
+                  ? "var(--docs-bg-muted)"
+                  : "linear-gradient(135deg, color-mix(in srgb, var(--docs-accent) 18%, var(--docs-bg-elevated) 82%), color-mix(in srgb, var(--docs-accent) 10%, var(--docs-bg-elevated) 90%))",
                 border: locked
-                  ? "1px solid color-mix(in srgb, var(--docs-border) 80%, white 20%)"
+                  ? "1px solid var(--docs-border)"
                   : "1px solid color-mix(in srgb, var(--docs-accent) 22%, var(--docs-border))",
                 boxShadow: locked
                   ? "none"
-                  : "0 12px 28px rgba(15, 23, 42, 0.08)",
+                  : "0 12px 28px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 8%, transparent)",
               }}
             >
               <StateIcon
@@ -232,10 +232,10 @@ function DocsQuickstartCardInner({
                   padding: "4px 10px",
                   borderRadius: 999,
                   background: completed
-                    ? "rgba(16,185,129,.10)"
+                    ? "color-mix(in srgb, #10b981 14%, var(--docs-bg-elevated))"
                     : locked
-                      ? "rgba(255,255,255,.58)"
-                      : "rgba(59,130,246,.10)",
+                      ? "var(--docs-bg-muted)"
+                      : "color-mix(in srgb, #3b82f6 14%, var(--docs-bg-elevated))",
                   border: completed
                     ? "1px solid rgba(16,185,129,.18)"
                     : locked
@@ -280,7 +280,7 @@ function DocsQuickstartCardInner({
                   gap: 10,
                   padding: "8px 12px",
                   borderRadius: 14,
-                  background: "rgba(255,255,255,.72)",
+                  background: "var(--docs-bg-elevated)",
                   border: "1px dashed color-mix(in srgb, var(--docs-accent) 26%, var(--docs-border))",
                   color: "var(--docs-text)",
                   fontSize: 14,
@@ -308,8 +308,8 @@ function DocsQuickstartCardInner({
             padding: 20,
             borderRadius: 24,
             border: "1px solid color-mix(in srgb, var(--docs-accent) 16%, var(--docs-border))",
-            background: "rgba(255,255,255,.78)",
-            boxShadow: "inset 0 1px 0 rgba(255,255,255,.65)",
+            background: "var(--docs-bg-elevated)",
+            boxShadow: "inset 0 1px 0 color-mix(in srgb, white 6%, transparent)",
           }}
         >
           <div
