@@ -3,10 +3,22 @@
 import { useAuth, useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType, type SVGProps } from "react";
+import {
+  AlertTriangle,
+  CreditCard,
+  FileText,
+  LayoutDashboard,
+  Send,
+  Settings,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 
 import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { getMe } from "@/lib/api";
+
+type LucideIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
 export const fmtCents = (cents: number) => {
   const dollars = cents / 100;
@@ -64,16 +76,24 @@ export function bucketByLocalDay<E, R extends { date: string }>(
   return rows;
 }
 
-const NAV_ITEMS = [
-  { label: "Dashboard", href: "/admin", section: "Overview", enabled: true },
-  { label: "Users", href: "/admin/users", section: "Overview", enabled: true },
-  { label: "Posts", href: "/admin/posts", section: "Overview", enabled: true },
-  { label: "Billing", href: "/admin/billing", section: "Revenue", enabled: true },
-  { label: "MRR", href: "/admin/mrr", section: "Revenue", enabled: true },
-  { label: "Logs", href: "/admin/logs", section: "System", enabled: true },
-  { label: "Errors", href: "/admin/errors", section: "System", enabled: true },
-  { label: "Settings", href: "/admin/settings", section: "System", enabled: true },
-] as const;
+type NavItem = {
+  label: string;
+  href: string;
+  section: string;
+  enabled: boolean;
+  icon: LucideIcon;
+};
+
+const NAV_ITEMS: NavItem[] = [
+  { label: "Dashboard", href: "/admin", section: "Overview", enabled: true, icon: LayoutDashboard },
+  { label: "Users", href: "/admin/users", section: "Overview", enabled: true, icon: Users },
+  { label: "Posts", href: "/admin/posts", section: "Overview", enabled: true, icon: Send },
+  { label: "Billing", href: "/admin/billing", section: "Revenue", enabled: true, icon: CreditCard },
+  { label: "MRR", href: "/admin/mrr", section: "Revenue", enabled: true, icon: TrendingUp },
+  { label: "Logs", href: "/admin/logs", section: "System", enabled: true, icon: FileText },
+  { label: "Errors", href: "/admin/errors", section: "System", enabled: true, icon: AlertTriangle },
+  { label: "Settings", href: "/admin/settings", section: "System", enabled: true, icon: Settings },
+];
 
 function AdminSidebar() {
   const pathname = usePathname();
@@ -92,14 +112,16 @@ function AdminSidebar() {
 
       <nav className="ad-nav">
         {sections.map((section) => (
-          <div key={section}>
+          <div key={section} className="ad-nav-section">
             <div className="ad-nav-label">{section}</div>
             {NAV_ITEMS.filter((item) => item.section === section).map((item) => {
+              const Icon = item.icon;
               const active = item.href === "/admin" ? pathname === "/admin" : pathname.startsWith(item.href);
               if (!item.enabled) {
                 return (
                   <div key={item.label} className="ad-nav-item ad-nav-disabled">
-                    {item.label}
+                    <Icon strokeWidth={1.75} />
+                    <span>{item.label}</span>
                   </div>
                 );
               }
@@ -107,9 +129,11 @@ function AdminSidebar() {
                 <Link
                   key={item.label}
                   href={item.href}
-                  className={`ad-nav-item${active ? " ad-nav-active" : ""}`}
+                  data-active={active}
+                  className="ad-nav-item"
                 >
-                  {item.label}
+                  <Icon strokeWidth={1.75} />
+                  <span>{item.label}</span>
                 </Link>
               );
             })}
@@ -273,21 +297,95 @@ const shellStyle: React.CSSProperties = {
 };
 
 export const adminCss = `
-.ad-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--dborder); display: flex; flex-direction: column; }
-.ad-sb-logo { display: flex; align-items: center; gap: 8px; padding: 14px 14px 12px; border-bottom: 1px solid var(--dborder); color: inherit; text-decoration: none; transition: background-color 120ms ease, color 120ms ease; }
+.ad-sidebar {
+  width: 220px;
+  min-width: 220px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--sidebar) 98%, transparent), color-mix(in srgb, var(--surface2) 80%, transparent));
+  border-right: 1px solid var(--dborder);
+  display: flex;
+  flex-direction: column;
+}
+.ad-sb-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px 16px;
+  border-bottom: 1px solid var(--dborder);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
 .ad-sb-logo:hover { background: var(--sidebar-accent); }
 .ad-sb-logo:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-.ad-sb-logo .unipost-wordmark { font-size: 16px; font-weight: 700; letter-spacing: -0.045em; }
-.ad-sb-badge { font-size: 9px; font-weight: 700; background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent); border-radius: 3px; padding: 1px 5px; font-family: var(--font-geist-mono), monospace; letter-spacing: 0.05em; }
-.ad-nav { padding: 10px 8px; flex: 1; }
-.ad-nav-label { font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dmuted2); padding: 0 6px; margin: 10px 0 3px; }
-.ad-nav-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 6px; color: var(--dmuted); font-size: 12px; margin-bottom: 1px; border: 1px solid transparent; text-decoration: none; }
-.ad-nav-active { background: var(--accent-dim); color: var(--daccent); border-color: color-mix(in srgb, var(--primary) 18%, transparent); font-weight: 500; }
+.ad-sb-logo .unipost-wordmark { font-size: 17px; font-weight: 700; letter-spacing: -0.045em; }
+.ad-sb-badge {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--font-geist-mono), monospace;
+  letter-spacing: 0.06em;
+  margin-left: auto;
+}
+.ad-nav { padding: 14px 10px 8px; flex: 1; overflow-y: auto; }
+.ad-nav-section + .ad-nav-section { margin-top: 14px; }
+.ad-nav-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dmuted2);
+  padding: 0 6px;
+  margin-bottom: 6px;
+}
+.ad-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  color: color-mix(in srgb, var(--dmuted) 86%, var(--dtext));
+  font-size: 14px;
+  font-weight: 560;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  margin-bottom: 2px;
+}
+.ad-nav-item:hover {
+  background: color-mix(in srgb, var(--sidebar-accent) 90%, white);
+  color: var(--dtext);
+  border-color: color-mix(in srgb, var(--dborder) 92%, transparent);
+}
+.ad-nav-item[data-active="true"] {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-dim) 74%, white), color-mix(in srgb, var(--accent-dim) 48%, transparent));
+  color: var(--daccent);
+  border-color: color-mix(in srgb, var(--daccent) 32%, var(--dborder));
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 14%, transparent);
+}
+.ad-nav-item svg { width: 17px; height: 17px; flex-shrink: 0; opacity: 0.84; }
+.ad-nav-item[data-active="true"] svg { opacity: 1; }
 .ad-nav-disabled { color: var(--dmuted2); cursor: not-allowed; }
-.ad-sb-footer { padding: 8px; border-top: 1px solid var(--dborder); }
-.ad-sb-user { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 6px; }
-.ad-sb-ava { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: var(--primary-foreground); flex-shrink: 0; }
-.ad-sb-email { font-size: 11px; color: var(--dmuted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ad-sb-footer { padding: 10px; border-top: 1px solid var(--dborder); }
+.ad-sb-user { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; }
+.ad-sb-ava {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #10b981, #059669);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary-foreground);
+  flex-shrink: 0;
+}
+.ad-sb-email { font-size: 12px; color: var(--dmuted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ad-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 .ad-topbar { height: 44px; border-bottom: 1px solid var(--dborder); display: flex; align-items: center; padding: 0 20px; gap: 8px; flex-shrink: 0; justify-content: space-between; }
 .ad-bc { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dmuted); }
