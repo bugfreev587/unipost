@@ -270,6 +270,7 @@ function AdminLogsPageInner() {
 
   const [query, setQuery] = useState("");
   const [workspaceFilter, setWorkspaceFilter] = useState(() => searchParams.get("workspace_id") || "");
+  const [ownerEmailFilter, setOwnerEmailFilter] = useState(() => searchParams.get("owner_email") || "");
   const [category, setCategory] = useState(() => searchParams.get("category") || "all");
   const [platform, setPlatform] = useState(() => searchParams.get("platform") || "all");
   const [requestFilter, setRequestFilter] = useState(() => searchParams.get("request_id") || "");
@@ -308,6 +309,7 @@ function AdminLogsPageInner() {
   const hasActiveFilter =
     Boolean(query.trim()) ||
     Boolean(workspaceFilter) ||
+    Boolean(ownerEmailFilter) ||
     Boolean(requestFilter) ||
     Boolean(postFilter) ||
     Boolean(errorCodeFilter) ||
@@ -319,6 +321,7 @@ function AdminLogsPageInner() {
   const resetFilters = () => {
     setQuery("");
     setWorkspaceFilter("");
+    setOwnerEmailFilter("");
     setRequestFilter("");
     setPostFilter("");
     setErrorCodeFilter("");
@@ -333,6 +336,7 @@ function AdminLogsPageInner() {
   useEffect(() => {
     const params = new URLSearchParams();
     if (workspaceFilter) params.set("workspace_id", workspaceFilter);
+    if (ownerEmailFilter) params.set("owner_email", ownerEmailFilter);
     if (category !== "all") params.set("category", category);
     if (platform !== "all") params.set("platform", platform);
     if (status !== "all") params.set("status", status);
@@ -345,7 +349,7 @@ function AdminLogsPageInner() {
     if (target !== `${pathname}${window.location.search}`) {
       router.replace(target, { scroll: false });
     }
-  }, [workspaceFilter, category, platform, status, source, requestFilter, postFilter, errorCodeFilter, pathname, router]);
+  }, [workspaceFilter, ownerEmailFilter, category, platform, status, source, requestFilter, postFilter, errorCodeFilter, pathname, router]);
 
   const { from, to } = useMemo(() => rangeToISO(timeRange), [timeRange]);
 
@@ -363,6 +367,7 @@ function AdminLogsPageInner() {
       const logsRes = await listAdminIntegrationLogs(token, {
         q: query || undefined,
         workspace_id: workspaceFilter || undefined,
+        owner_email: ownerEmailFilter || undefined,
         category: category === "all" ? undefined : category,
         platform: platform === "all" ? undefined : platform,
         status: status === "all" ? undefined : status,
@@ -386,7 +391,7 @@ function AdminLogsPageInner() {
 
   useEffect(() => {
     void loadLogs();
-  }, [query, workspaceFilter, category, platform, status, source, requestFilter, postFilter, errorCodeFilter, from, to]);
+  }, [query, workspaceFilter, ownerEmailFilter, category, platform, status, source, requestFilter, postFilter, errorCodeFilter, from, to]);
 
   useEffect(() => {
     if (selectedLogId == null) return;
@@ -424,6 +429,7 @@ function AdminLogsPageInner() {
   const activeFilters = useMemo(() => {
     const entries: Array<{ key: string; label: string; clear: () => void }> = [];
     if (workspaceFilter) entries.push({ key: "workspace", label: workspaceFilter, clear: () => setWorkspaceFilter("") });
+    if (ownerEmailFilter) entries.push({ key: "owner", label: ownerEmailFilter, clear: () => setOwnerEmailFilter("") });
     if (requestFilter) entries.push({ key: "request_id", label: requestFilter, clear: () => setRequestFilter("") });
     if (postFilter) entries.push({ key: "post_id", label: postFilter, clear: () => setPostFilter("") });
     if (errorCodeFilter) entries.push({ key: "error_code", label: errorCodeFilter, clear: () => setErrorCodeFilter("") });
@@ -433,7 +439,7 @@ function AdminLogsPageInner() {
     if (source !== "all") entries.push({ key: "source", label: source, clear: () => setSource("all") });
     if (query) entries.push({ key: "search", label: query, clear: () => setQuery("") });
     return entries;
-  }, [workspaceFilter, requestFilter, postFilter, errorCodeFilter, category, platform, status, source, query]);
+  }, [workspaceFilter, ownerEmailFilter, requestFilter, postFilter, errorCodeFilter, category, platform, status, source, query]);
 
   return (
     <AdminShell title="Logs" loading={loading || refreshing} onRefresh={() => void loadLogs(true)} requireSuperAdmin>
@@ -460,6 +466,13 @@ function AdminLogsPageInner() {
             value={workspaceFilter}
             onChange={(e) => setWorkspaceFilter(e.target.value)}
             placeholder="Workspace ID"
+            style={filterInputStyle}
+          />
+
+          <input
+            value={ownerEmailFilter}
+            onChange={(e) => setOwnerEmailFilter(e.target.value)}
+            placeholder="User email"
             style={filterInputStyle}
           />
 
@@ -734,7 +747,13 @@ function AdminLogsPageInner() {
                       onClick={() => setWorkspaceFilter(selectedLog.workspace_id || "")}
                     />
                     {selectedLog.plan_id && <FieldChip label="plan" value={selectedLog.plan_id} />}
-                    {selectedLog.owner_email && <FieldChip label="owner" value={selectedLog.owner_email} />}
+                    {selectedLog.owner_email && (
+                      <FieldChip
+                        label="owner"
+                        value={selectedLog.owner_email}
+                        onClick={() => setOwnerEmailFilter(selectedLog.owner_email || "")}
+                      />
+                    )}
                     {selectedLog.platform && <FieldChip label="platform" value={selectedLog.platform} onClick={() => setPlatform(selectedLog.platform || "all")} />}
                     {selectedLog.request_id && <FieldChip label="request_id" value={selectedLog.request_id} onClick={() => setRequestFilter(selectedLog.request_id || "")} />}
                     {selectedLog.post_id && <FieldChip label="post_id" value={selectedLog.post_id} onClick={() => setPostFilter(selectedLog.post_id || "")} />}

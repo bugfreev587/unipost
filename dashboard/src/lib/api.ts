@@ -224,6 +224,7 @@ export interface IntegrationLog {
 export interface IntegrationLogListParams {
   q?: string;
   workspace_id?: string;
+  owner_email?: string;
   category?: string;
   action?: string;
   source?: string;

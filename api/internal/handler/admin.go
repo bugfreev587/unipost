@@ -342,32 +342,35 @@ func (h *AdminHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 
 	sql := adminLogsBaseSelect + `
 WHERE ($1::TEXT = '' OR l.workspace_id = $1)
-  AND ($2::TEXT = '' OR l.category = $2)
-  AND ($3::TEXT = '' OR l.action = $3)
-  AND ($4::TEXT = '' OR l.source = $4)
-  AND ($5::TEXT = '' OR l.level = $5)
-  AND ($6::TEXT = '' OR l.status = $6)
-  AND ($7::TEXT = '' OR l.platform = $7)
-  AND ($8::TEXT = '' OR l.profile_id = $8)
-  AND ($9::TEXT = '' OR l.social_account_id = $9)
-  AND ($10::TEXT = '' OR l.post_id = $10)
-  AND ($11::TEXT = '' OR l.request_id = $11)
-  AND ($12::TEXT = '' OR l.error_code = $12)
+  AND ($2::TEXT = '' OR u.email ILIKE '%' || $2 || '%')
+  AND ($3::TEXT = '' OR l.category = $3)
+  AND ($4::TEXT = '' OR l.action = $4)
+  AND ($5::TEXT = '' OR l.source = $5)
+  AND ($6::TEXT = '' OR l.level = $6)
+  AND ($7::TEXT = '' OR l.status = $7)
+  AND ($8::TEXT = '' OR l.platform = $8)
+  AND ($9::TEXT = '' OR l.profile_id = $9)
+  AND ($10::TEXT = '' OR l.social_account_id = $10)
+  AND ($11::TEXT = '' OR l.post_id = $11)
+  AND ($12::TEXT = '' OR l.request_id = $12)
+  AND ($13::TEXT = '' OR l.error_code = $13)
   AND (
-    $13::TEXT = ''
-    OR l.message ILIKE '%' || $13 || '%'
-    OR l.action ILIKE '%' || $13 || '%'
-    OR l.request_id ILIKE '%' || $13 || '%'
-    OR l.post_id ILIKE '%' || $13 || '%'
-    OR l.error_code ILIKE '%' || $13 || '%'
+    $14::TEXT = ''
+    OR l.message ILIKE '%' || $14 || '%'
+    OR l.action ILIKE '%' || $14 || '%'
+    OR l.request_id ILIKE '%' || $14 || '%'
+    OR l.post_id ILIKE '%' || $14 || '%'
+    OR l.error_code ILIKE '%' || $14 || '%'
+    OR u.email ILIKE '%' || $14 || '%'
   )
-  AND l.ts >= $14
-  AND l.ts <= $15
+  AND l.ts >= $15
+  AND l.ts <= $16
 ORDER BY l.ts DESC, l.id DESC
-LIMIT $16`
+LIMIT $17`
 
 	rows, err := h.pool.Query(r.Context(), sql,
 		strings.TrimSpace(q.Get("workspace_id")),
+		strings.TrimSpace(q.Get("owner_email")),
 		strings.TrimSpace(q.Get("category")),
 		strings.TrimSpace(q.Get("action")),
 		strings.TrimSpace(q.Get("source")),
