@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
@@ -22,6 +24,7 @@ type OAuthHandler struct {
 	queries         *db.Queries
 	encryptor       *crypto.AESEncryptor
 	baseRedirectURL string
+	ilog            *integrationlogs.Logger
 	// superAdminChecker gates the Facebook Pages detour. A nil checker
 	// behaves as "no super admins configured" — every FB attempt
 	// returns 403. Non-FB platforms ignore it.
@@ -39,6 +42,36 @@ func NewOAuthHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, superA
 		baseRedirectURL:   baseURL,
 		superAdminChecker: superAdmins,
 	}
+}
+
+func (h *OAuthHandler) SetIntegrationLogger(logger *integrationlogs.Logger) *OAuthHandler {
+	h.ilog = logger
+	return h
+}
+
+func (h *OAuthHandler) workspaceIDForProfile(ctx context.Context, profileID string) string {
+	if profileID == "" {
+		return ""
+	}
+	profile, err := h.queries.GetProfile(ctx, profileID)
+	if err != nil {
+		return ""
+	}
+	return profile.WorkspaceID
+}
+
+func (h *OAuthHandler) logOAuthEvent(ctx context.Context, workspaceID string, event integrationlogs.Event) {
+	if h == nil || h.ilog == nil || workspaceID == "" {
+		return
+	}
+	event.WorkspaceID = workspaceID
+	if event.Category == "" {
+		event.Category = integrationlogs.CategoryOAuth
+	}
+	if event.Source == "" {
+		event.Source = integrationlogs.SourceDashboard
+	}
+	h.ilog.Write(ctx, event)
 }
 
 // Connect handles GET /v1/oauth/connect/{platform}
@@ -110,6 +143,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	errorParam := r.URL.Query().Get("error")
+	workspaceID := ""
 
 	if errorParam != "" {
 		errorDesc := r.URL.Query().Get("error_description")
@@ -130,6 +164,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		h.redirectWithError(w, r, "", "Invalid or expired OAuth state")
 		return
 	}
+	workspaceID = h.workspaceIDForProfile(r.Context(), oauthState.ProfileID)
 
 	// Clean up state
 	h.queries.DeleteOAuthState(r.Context(), state)
@@ -160,6 +195,19 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	result, err := oauthAdapter.ExchangeCode(r.Context(), config, code)
 	if err != nil {
 		slog.Error("oauth callback: code exchange failed", "platform", platformName, "error", err)
+		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+			Level:     integrationlogs.LevelError,
+			Status:    integrationlogs.StatusError,
+			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+			Message:   "OAuth callback failed during code exchange.",
+			ProfileID: oauthState.ProfileID,
+			Platform:  platformName,
+			ErrorCode: "oauth_exchange_failed",
+			Metadata: map[string]any{
+				"flow":  "dashboard_oauth",
+				"state": state,
+			},
+		})
 		userMsg := "Failed to exchange authorization code"
 		if errors.Is(err, platform.ErrYouTubeNoChannel) {
 			userMsg = "Connected Google account has no YouTube channel. Visit youtube.com to create one, then try again."
@@ -180,6 +228,16 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		// super-admin check from profile → workspace.user_id instead
 		// of reading auth.GetUserID from context.
 		if !h.callerIsFacebookSuperAdmin(r, oauthState.ProfileID) {
+			h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+				Level:     integrationlogs.LevelWarn,
+				Status:    integrationlogs.StatusError,
+				Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+				Message:   "Facebook OAuth callback blocked by super-admin gate.",
+				ProfileID: oauthState.ProfileID,
+				Platform:  platformName,
+				ErrorCode: "facebook_disabled",
+				Metadata:  map[string]any{"flow": "dashboard_oauth"},
+			})
 			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Facebook integration is not enabled")
 			return
 		}
@@ -190,6 +248,16 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	// Encrypt tokens
 	encAccess, err := h.encryptor.Encrypt(result.AccessToken)
 	if err != nil {
+		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+			Level:     integrationlogs.LevelError,
+			Status:    integrationlogs.StatusError,
+			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+			Message:   "OAuth callback failed while encrypting access token.",
+			ProfileID: oauthState.ProfileID,
+			Platform:  platformName,
+			ErrorCode: "token_encrypt_failed",
+			Metadata:  map[string]any{"flow": "dashboard_oauth"},
+		})
 		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to encrypt token")
 		return
 	}
@@ -198,6 +266,16 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if result.RefreshToken != "" {
 		encRefresh, err = h.encryptor.Encrypt(result.RefreshToken)
 		if err != nil {
+			h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+				Level:     integrationlogs.LevelError,
+				Status:    integrationlogs.StatusError,
+				Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+				Message:   "OAuth callback failed while encrypting refresh token.",
+				ProfileID: oauthState.ProfileID,
+				Platform:  platformName,
+				ErrorCode: "token_encrypt_failed",
+				Metadata:  map[string]any{"flow": "dashboard_oauth"},
+			})
 			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to encrypt token")
 			return
 		}
@@ -215,6 +293,19 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, profile.WorkspaceID, platformName, result.ExternalAccountID); shareErr != nil {
 			slog.Warn("oauth callback: free-plan sharing check failed", "platform", platformName, "external_id", result.ExternalAccountID, "workspace_id", profile.WorkspaceID, "err", shareErr)
 		} else if blocked {
+			h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+				Level:     integrationlogs.LevelWarn,
+				Status:    integrationlogs.StatusError,
+				Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+				Message:   "OAuth callback blocked by free-plan sharing rules.",
+				ProfileID: oauthState.ProfileID,
+				Platform:  platformName,
+				ErrorCode: "plan_platform_not_allowed",
+				Metadata: map[string]any{
+					"flow":                "dashboard_oauth",
+					"external_account_id": result.ExternalAccountID,
+				},
+			})
 			h.redirectWithError(w, r, oauthState.RedirectUrl.String, accountNotAvailableOnFreePlanMessage)
 			return
 		}
@@ -242,6 +333,20 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 				encRefresh, rErr := h.encryptor.Encrypt(result.RefreshToken)
 				if aErr != nil || rErr != nil {
 					slog.Error("oauth callback: encrypt failed for token update", "err_a", aErr, "err_r", rErr)
+					h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+						Level:     integrationlogs.LevelError,
+						Status:    integrationlogs.StatusError,
+						Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+						Message:   "OAuth callback failed while re-encrypting tokens for an existing account.",
+						ProfileID: oauthState.ProfileID,
+						Platform:  platformName,
+						ErrorCode: "token_encrypt_failed",
+						Metadata: map[string]any{
+							"flow":                "dashboard_oauth",
+							"external_account_id": result.ExternalAccountID,
+							"account_id":          existing.ID,
+						},
+					})
 					h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to encrypt tokens")
 					return
 				}
@@ -250,6 +355,21 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					AccessToken:    encAccess,
 					RefreshToken:   pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
 					TokenExpiresAt: pgtype.Timestamptz{Time: result.TokenExpiresAt, Valid: !result.TokenExpiresAt.IsZero()},
+				})
+				h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+					Level:     integrationlogs.LevelInfo,
+					Status:    integrationlogs.StatusSuccess,
+					Action:    integrationlogs.ActionAccountConnectCallbackOK,
+					Message:   "OAuth callback completed and reactivated an existing account.",
+					ProfileID: oauthState.ProfileID,
+					Platform:  platformName,
+					Metadata: map[string]any{
+						"flow":                "dashboard_oauth",
+						"account_id":          existing.ID,
+						"external_account_id": result.ExternalAccountID,
+						"connection_type":     "byo",
+						"reactivated":         true,
+					},
 				})
 				redirectURL := oauthState.RedirectUrl.String
 				if redirectURL == "" {
@@ -279,11 +399,39 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("oauth callback: failed to save account", "error", err)
+		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+			Level:     integrationlogs.LevelError,
+			Status:    integrationlogs.StatusError,
+			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+			Message:   "OAuth callback failed while saving the social account.",
+			ProfileID: oauthState.ProfileID,
+			Platform:  platformName,
+			ErrorCode: "save_account_failed",
+			Metadata: map[string]any{
+				"flow":                "dashboard_oauth",
+				"external_account_id": result.ExternalAccountID,
+			},
+		})
 		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to save account")
 		return
 	}
 
 	slog.Info("oauth account connected", "platform", platformName, "profile_id", oauthState.ProfileID, "account", result.AccountName)
+	h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+		Level:     integrationlogs.LevelInfo,
+		Status:    integrationlogs.StatusSuccess,
+		Action:    integrationlogs.ActionAccountConnectCallbackOK,
+		Message:   "OAuth callback completed and account connected.",
+		ProfileID: oauthState.ProfileID,
+		Platform:  platformName,
+		Metadata: map[string]any{
+			"flow":                "dashboard_oauth",
+			"external_account_id": result.ExternalAccountID,
+			"account_name":        result.AccountName,
+			"connection_type":     "byo",
+			"reactivated":         false,
+		},
+	})
 
 	// Redirect back to frontend
 	redirectURL := oauthState.RedirectUrl.String

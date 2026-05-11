@@ -370,7 +370,7 @@ func main() {
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
-	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker)
+	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus)
