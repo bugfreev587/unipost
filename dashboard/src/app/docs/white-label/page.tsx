@@ -94,6 +94,9 @@ export default function WhiteLabelPage() {
           ["Required on free tier", "✓ Available", "— Paid plans only"],
         ]}
       />
+      <p className="wl-note">
+        In practical terms: Quickstart uses UniPost&apos;s own OAuth apps, so your end users will see <code>UniPost</code> on the platform consent screen. White-label uses your uploaded platform credentials instead, so the same end users see your app name and brand assets on the consent screen once that platform app is configured and approved.
+      </p>
       <div className="wl-pick">
         <div className="wl-pick-card">
           <div className="wl-pick-kicker">Pick Quickstart if</div>
@@ -114,37 +117,52 @@ export default function WhiteLabelPage() {
       </div>
 
       <h2 id="how-it-works">How it works</h2>
+      <p className="wl-note">White-label is not just &quot;paste credentials into UniPost&quot;. The real flow starts in each platform&apos;s official developer console, then comes back into UniPost after your app credentials and platform review path are in place.</p>
       <div className="wl-flow">
         <div className="wl-flow-step">
           <div className="wl-flow-num">1</div>
           <div className="wl-flow-body">
-            <div className="wl-flow-title">Register OAuth apps</div>
-            <div className="wl-flow-sub">One app per platform, in each platform's developer portal.</div>
+            <div className="wl-flow-title">Create the official platform app</div>
+            <div className="wl-flow-sub">In the platform&apos;s own developer portal, create the OAuth app your customers will authorize against. This is where the eventual consent-screen brand comes from.</div>
           </div>
         </div>
         <div className="wl-flow-step">
           <div className="wl-flow-num">2</div>
+          <div className="wl-flow-body">
+            <div className="wl-flow-title">Generate client ID and client secret</div>
+            <div className="wl-flow-sub">Finish the platform-side setup needed to mint the real OAuth credentials. Depending on the platform, this can involve enabling APIs, creating OAuth clients, and choosing the right app type.</div>
+          </div>
+        </div>
+        <div className="wl-flow-step">
+          <div className="wl-flow-num">3</div>
           <div className="wl-flow-body">
             <div className="wl-flow-title">Whitelist UniPost&apos;s callback URL</div>
             <div className="wl-flow-sub">Each platform has its own exact callback path. Use the platform-specific white-label guide below and copy the URL verbatim into that platform&apos;s developer console.</div>
           </div>
         </div>
         <div className="wl-flow-step">
-          <div className="wl-flow-num">3</div>
+          <div className="wl-flow-num">4</div>
           <div className="wl-flow-body">
             <div className="wl-flow-title">Upload credentials to UniPost</div>
             <div className="wl-flow-sub">Push your client ID and secret to UniPost, once per platform, once per workspace.</div>
           </div>
         </div>
         <div className="wl-flow-step">
-          <div className="wl-flow-num">4</div>
+          <div className="wl-flow-num">5</div>
+          <div className="wl-flow-body">
+            <div className="wl-flow-title">Complete platform verification or app review</div>
+            <div className="wl-flow-sub">Some platforms let you test before review, but branded public rollout usually still depends on the platform approving your app, scopes, or brand. Plan for that review loop instead of treating it as an optional afterthought.</div>
+          </div>
+        </div>
+        <div className="wl-flow-step">
+          <div className="wl-flow-num">6</div>
           <div className="wl-flow-body">
             <div className="wl-flow-title">Set profile branding</div>
             <div className="wl-flow-sub">Logo, display name, and primary color on the hosted Connect page.</div>
           </div>
         </div>
         <div className="wl-flow-step">
-          <div className="wl-flow-num">5</div>
+          <div className="wl-flow-num">7</div>
           <div className="wl-flow-body">
             <div className="wl-flow-title">Create a session and publish</div>
             <div className="wl-flow-sub">Call <code>POST /v1/connect/sessions</code>, send the end user to the returned URL, then publish via <code>POST /v1/posts</code>.</div>
@@ -271,6 +289,9 @@ export default function WhiteLabelPage() {
           ["Connect URL", "The public URL your backend hands to the end user", "Always required — nothing to fall back to"],
         ]}
       />
+      <p className="wl-note">
+        This is the core mental model: if you never upload your own platform credentials, the flow falls back to UniPost&apos;s app and the consent screen shows <code>UniPost</code>. If you do upload your own approved credentials, the consent screen can show your app identity instead.
+      </p>
 
       <h2 id="api-examples">API examples</h2>
 
