@@ -312,7 +312,11 @@ export default function AccountsPage() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
           <div className="dt-page-title">Quickstart Mode</div>
-          <div className="dt-subtitle" style={{ maxWidth: 520, lineHeight: 1.6 }}>Connect social accounts instantly — no developer approvals or platform credentials needed. UniPost handles OAuth so you can start posting in minutes.</div>
+          <div className="dt-subtitle" style={{ maxWidth: 620, lineHeight: 1.6 }}>
+            Connect social accounts instantly — no developer approvals or platform credentials needed.
+            UniPost handles OAuth with its shared app credentials so you can start posting in minutes.
+            White-label credentials saved under Accounts → White-label do not change this Quickstart flow.
+          </div>
           {profiles.length > 1 && (
             <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
               <button
@@ -359,6 +363,23 @@ export default function AccountsPage() {
               <DialogTitle>{selectedPlatform ? `Connect ${PLATFORMS.find((p) => p.id === selectedPlatform)?.name}` : "Connect Account"}</DialogTitle>
               <DialogDescription>{selectedPlatform === "bluesky" ? "Enter your handle and App Password." : selectedPlatform ? "Redirecting to authorize." : "Choose a platform."}</DialogDescription>
             </DialogHeader>
+
+            {!selectedPlatform && (
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "color-mix(in srgb, var(--surface2) 85%, white)",
+                  border: "1px solid var(--dborder)",
+                  fontSize: 12,
+                  lineHeight: 1.55,
+                  color: "var(--dmuted)",
+                }}
+              >
+                Quickstart always uses UniPost&apos;s shared OAuth apps. If you need your own app name on the platform consent screen,
+                configure Accounts → White-label and onboard users through Connect Sessions instead of this dialog.
+              </div>
+            )}
 
             {/* Profile selector */}
             {profiles.length > 1 && !selectedPlatform && (

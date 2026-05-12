@@ -99,8 +99,29 @@ export default function NativeModePage() {
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>White-label Credentials</div>
           <div style={{ fontSize: 14, color: "var(--dmuted)", marginTop: 6 }}>
-            Configure your own platform credentials (Native mode). Users will see your app name during OAuth instead of &quot;UniPost&quot;.
+            Configure your own platform credentials (Native mode). Users will see your app name during OAuth instead of &quot;UniPost&quot; when you onboard them through white-label Connect flows.
           </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          padding: "14px 16px",
+          marginBottom: 20,
+          borderRadius: 10,
+          background: "color-mix(in srgb, var(--surface2) 88%, white)",
+          border: "1px solid var(--dborder)",
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--dtext)", marginBottom: 4 }}>
+          White-label credentials are separate from Quickstart
+        </div>
+        <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.6 }}>
+          Quickstart always uses UniPost&apos;s shared OAuth apps. Save credentials here only if you want to onboard end users through{" "}
+          <Link href="/docs/api/connect/sessions/create" style={{ color: "var(--daccent)", textDecoration: "none" }}>
+            Connect Sessions
+          </Link>{" "}
+          or other white-label flows where the platform consent screen should show your own app name.
         </div>
       </div>
 
@@ -211,7 +232,7 @@ export default function NativeModePage() {
       <ConfirmModal
         open={!!removeTarget}
         title="Remove Credentials"
-        message="Remove these platform credentials? New account connections will use Quickstart mode (UniPost credentials) for this platform."
+        message="Remove these platform credentials? White-label Connect flows for this platform will fall back to UniPost credentials. Quickstart already uses UniPost credentials."
         confirmLabel="Remove"
         variant="danger"
         onConfirm={() => removeTarget && handleCredDelete(removeTarget)}
