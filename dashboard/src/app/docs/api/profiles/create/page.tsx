@@ -12,6 +12,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   { name: "branding_logo_url?", type: "string", description: "Optional HTTPS logo URL for hosted Connect." },
   { name: "branding_display_name?", type: "string", description: "Optional hosted Connect display name." },
   { name: "branding_primary_color?", type: "string", description: "Optional hex color such as #10b981." },
+  { name: "branding_hide_powered_by?", type: "boolean", description: "Optional. Hides the footer attribution on hosted Connect. Growth / Team only." },
 ];
 
 const RESPONSE_201_FIELDS: ApiFieldItem[] = [
@@ -22,6 +23,7 @@ const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   { name: "branding_logo_url", type: "string | null", description: "Stored hosted Connect logo URL." },
   { name: "branding_display_name", type: "string | null", description: "Stored hosted Connect display name." },
   { name: "branding_primary_color", type: "string | null", description: "Stored hosted Connect brand color." },
+  { name: "branding_hide_powered_by", type: "boolean", description: "Whether hosted Connect hides the footer attribution for this profile." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [

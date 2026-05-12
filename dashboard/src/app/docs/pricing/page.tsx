@@ -17,8 +17,8 @@ export default function DocsPricingPage() {
         rows={[
           ["Free",   "$0",     "100",    "API + dashboard + 8 platforms (no X). Try without a credit card."],
           ["API",    "$10",    "1,000",  "All 9 platforms incl. X, MCP server, read-only Analytics API. No dashboard, no Inbox — for pure-API integrations."],
-          ["Basic",  "$19",    "2,500",  "Adds dashboard, Inbox (DMs + comments), and full Analytics. Same publishing API as the API tier."],
-          ["Growth", "$59",    "7,500",  "Adds white-label / native mode (BYO platform credentials, branded OAuth). 25 profiles, 3 team members."],
+          ["Basic",  "$19",    "2,500",  "Adds dashboard, Inbox (DMs + comments), full Analytics, and white-label for 1 platform. Hosted onboarding still shows Powered by UniPost."],
+          ["Growth", "$59",    "7,500",  "Adds full white-label / native mode across supported platforms plus optional removal of Powered by UniPost. 25 profiles, 3 team members."],
           ["Team",   "$149",   "25,000", "Adds RBAC (owner/admin/editor), per-member API keys, audit log, unlimited profiles + members."],
           ["Enterprise", "Custom", "Custom", "Custom volume, SLA, dedicated support, contract flexibility. Contact us."],
         ]}
@@ -31,7 +31,8 @@ export default function DocsPricingPage() {
           ["Evaluating UniPost or building a hobby project", <span key="f">Free</span>],
           ["Building an integration where the only surface is the REST API + MCP", <span key="a">API</span>],
           ["Running UniPost as your day-to-day operating console (compose, Inbox, Analytics)", <span key="b">Basic</span>],
-          ["Embedding UniPost into your own SaaS with branded OAuth", <span key="g">Growth</span>],
+          ["Embedding UniPost into your own SaaS with one branded platform", <span key="b2">Basic</span>],
+          ["Embedding UniPost into your own SaaS across multiple platforms or without UniPost attribution", <span key="g">Growth</span>],
           ["Running an agency or multi-operator team with role-based access", <span key="t">Team</span>],
         ]}
       />

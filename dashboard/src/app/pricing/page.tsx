@@ -71,8 +71,9 @@ const TIERS: Tier[] = [
       { kind: "include", text: "All 9 platforms incl. X" },
       { kind: "include", text: "Inbox: DMs + comments" },
       { kind: "include", text: "Full Analytics suite" },
+      { kind: "include", text: "White-label for 1 platform" },
       { kind: "include", text: "5 profiles · 1 user" },
-      { kind: "exclude", text: "White-label / native mode" },
+      { kind: "exclude", text: "Hide Powered by UniPost" },
     ],
   },
   {
@@ -82,9 +83,10 @@ const TIERS: Tier[] = [
     blurb: "Embed UniPost into your own product.",
     posts: "7,500 posts/mo",
     features: [
-      { kind: "headline", text: "White-label / native mode" },
+      { kind: "headline", text: "Full white-label / native mode" },
       { kind: "include", text: "Everything in Basic" },
-      { kind: "include", text: "Bring-your-own platform credentials" },
+      { kind: "include", text: "BYO credentials on all supported platforms" },
+      { kind: "include", text: "Optional removal of Powered by UniPost" },
       { kind: "include", text: "Branded OAuth flow" },
       { kind: "include", text: "25 profiles · 3 users" },
     ],
@@ -132,7 +134,8 @@ const COMPARE_ROWS: CompareRow[] = [
   { name: "Dashboard UI", sub: "Compose, inbox, analytics in browser", free: true, api: false, basic: true, growth: true, team: true },
   { name: "Inbox", sub: "DMs and comments from connected accounts", free: false, api: false, basic: true, growth: true, team: true },
   { name: "Analytics", sub: "Reach, impressions, engagement", free: false, api: "read-only API", basic: true, growth: true, team: true },
-  { name: "White-label / native mode", sub: "Bring your own platform credentials", free: false, api: false, basic: false, growth: true, team: true },
+  { name: "White-label / native mode", sub: "Bring your own platform credentials", free: false, api: false, basic: "1 platform", growth: "All supported", team: "All supported" },
+  { name: "Hosted Connect attribution", sub: "\"Powered by UniPost\" on hosted onboarding", free: "Shown", api: "Shown", basic: "Shown", growth: "Optional", team: "Optional" },
   { name: "RBAC + per-member API keys", sub: "Roles: owner / admin / editor", free: false, api: false, basic: false, growth: false, team: true },
   { name: "Audit log", sub: "Membership and config-change history", free: false, api: false, basic: false, growth: false, team: true },
 ];
@@ -146,7 +149,7 @@ const FAQS = [
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
   { q: "What happens if I go over my monthly post quota?", a: "We won't shut you down or charge you extra automatically. Posting continues for now, but sustained overage will require an upgrade. API responses include X-UniPost-Usage and X-UniPost-Warning headers so you can monitor programmatically." },
   { q: "What's the difference between API and Basic?", a: "API is for developers who only consume the REST API and MCP server — no dashboard, no Inbox. Basic is the same plus a full dashboard, Inbox for DMs/comments, and full Analytics. Same publishing API on both." },
-  { q: "When do I need Growth?", a: "When you're embedding UniPost into your own product and need to bring your own platform credentials so end users see your app name during OAuth (white-label / native mode), or you need higher quota and more profiles." },
+  { q: "When do I need Growth?", a: "When one-platform white-label on Basic is no longer enough and you need BYO platform credentials across all supported platforms, or you want to remove \"Powered by UniPost\" from hosted onboarding." },
   { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
   { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost bundles Inbox + Analytics into Basic at $19/mo with no add-ons (Zernio sells Analytics and Comments+DMs as $9/mo each on its Build tier). PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." },
 ];
@@ -200,7 +203,7 @@ export default function PricingPage() {
           <h1 className="pr-hero-title">Start free.<br />Upgrade for visibility,<br />collaboration, and scale.</h1>
           <p className="pr-hero-sub">
             Use UniPost as an API or as a dashboard. Paid plans unlock Inbox, Analytics,
-            X publishing, white-label, and team workflows.
+            X publishing, one-platform or full white-label, and team workflows.
           </p>
           <p className="pr-hero-altlink">
             Comparing alternatives?{" "}

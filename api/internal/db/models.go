@@ -316,6 +316,7 @@ type Profile struct {
 	BrandingLogoUrl      pgtype.Text        `json:"branding_logo_url"`
 	BrandingDisplayName  pgtype.Text        `json:"branding_display_name"`
 	BrandingPrimaryColor pgtype.Text        `json:"branding_primary_color"`
+	BrandingHidePoweredBy bool              `json:"branding_hide_powered_by"`
 	WorkspaceID          string             `json:"workspace_id"`
 }
 

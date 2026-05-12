@@ -15,6 +15,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   { name: "branding_logo_url?", type: "string", description: "HTTPS logo URL for hosted Connect." },
   { name: "branding_display_name?", type: "string", description: "Display name shown on hosted Connect." },
   { name: "branding_primary_color?", type: "string", description: "Hex color such as #10b981." },
+  { name: "branding_hide_powered_by?", type: "boolean", description: "Hide footer attribution on hosted Connect. Growth / Team only." },
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
@@ -25,6 +26,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "branding_logo_url", type: "string | null", description: "Updated logo URL." },
   { name: "branding_display_name", type: "string | null", description: "Updated display name." },
   { name: "branding_primary_color", type: "string | null", description: "Updated brand color." },
+  { name: "branding_hide_powered_by", type: "boolean", description: "Updated attribution toggle for hosted Connect." },
   { name: "updated_at", type: "string", description: "Last update timestamp." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];

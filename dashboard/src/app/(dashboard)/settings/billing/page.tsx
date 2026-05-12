@@ -23,8 +23,8 @@ const PLANS: Plan[] = [
 const PLAN_BLURBS: Record<string, string> = {
   free:   "Try the API and dashboard.",
   api:    "API + MCP only. No dashboard.",
-  basic:  "Adds Inbox, Analytics, X.",
-  growth: "Adds white-label / native mode.",
+  basic:  "Adds Inbox, Analytics, X, and white-label for 1 platform.",
+  growth: "Adds full white-label and optional attribution removal.",
   team:   "Adds RBAC and team collab.",
 };
 

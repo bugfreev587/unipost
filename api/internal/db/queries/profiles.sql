@@ -25,6 +25,7 @@ UPDATE profiles
 SET branding_logo_url      = COALESCE(sqlc.narg('logo_url')::TEXT,      branding_logo_url),
     branding_display_name  = COALESCE(sqlc.narg('display_name')::TEXT,  branding_display_name),
     branding_primary_color = COALESCE(sqlc.narg('primary_color')::TEXT, branding_primary_color),
+    branding_hide_powered_by = COALESCE(sqlc.narg('hide_powered_by')::BOOLEAN, branding_hide_powered_by),
     updated_at             = NOW()
 WHERE id = $1
 RETURNING *;

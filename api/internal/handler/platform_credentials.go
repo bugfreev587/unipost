@@ -10,15 +10,17 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 type PlatformCredentialHandler struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	quota     *quota.Checker
 }
 
-func NewPlatformCredentialHandler(queries *db.Queries, encryptor *crypto.AESEncryptor) *PlatformCredentialHandler {
-	return &PlatformCredentialHandler{queries: queries, encryptor: encryptor}
+func NewPlatformCredentialHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker) *PlatformCredentialHandler {
+	return &PlatformCredentialHandler{queries: queries, encryptor: encryptor, quota: quotaChecker}
 }
 
 type platformCredentialResponse struct {
@@ -46,10 +48,13 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Native mode requires a paid plan
-	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
-	if sub.PlanID == "free" || sub.PlanID == "" {
-		writeError(w, http.StatusForbidden, "FORBIDDEN", "Native mode requires a paid plan. Please upgrade to use your own platform credentials.")
+	limit := 0
+	if h.quota != nil {
+		limit = h.quota.WhiteLabelPlatformLimit(r.Context(), workspaceID)
+	}
+	if limit == 0 {
+		writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+			"White-label credentials require the Basic plan or higher — upgrade at unipost.dev/pricing")
 		return
 	}
 
@@ -66,6 +71,26 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	if body.Platform == "" || body.ClientID == "" || body.ClientSecret == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "platform, client_id, and client_secret are required")
 		return
+	}
+
+	if limit > 0 {
+		creds, err := h.queries.ListPlatformCredentialsByWorkspace(r.Context(), workspaceID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check white-label limits")
+			return
+		}
+		alreadyConfigured := false
+		for _, cred := range creds {
+			if cred.Platform == body.Platform {
+				alreadyConfigured = true
+				break
+			}
+		}
+		if !alreadyConfigured && len(creds) >= limit {
+			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+				"Your current plan supports white-label credentials for 1 platform. Upgrade to Growth for all supported platforms.")
+			return
+		}
 	}
 
 	encSecret, err := h.encryptor.Encrypt(body.ClientSecret)

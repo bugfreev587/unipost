@@ -15,6 +15,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data[].branding_logo_url", type: "string | null", description: "Optional hosted Connect logo URL." },
   { name: "data[].branding_display_name", type: "string | null", description: "Optional hosted Connect display name." },
   { name: "data[].branding_primary_color", type: "string | null", description: "Optional hosted Connect primary brand color." },
+  { name: "data[].branding_hide_powered_by", type: "boolean", description: "Whether hosted Connect hides the footer attribution for that profile." },
   { name: "data[].account_count", type: "number", description: "Connected account count for that profile." },
   { name: "meta.total", type: "number", description: "Total number of profiles in the workspace." },
   { name: "meta.limit", type: "number", description: "Applied list size for this response." },

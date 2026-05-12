@@ -12,7 +12,7 @@ export default function PlatformCredentialsPage() {
       <p>Call this once per platform during white-label onboarding. If you never upload credentials for a platform, Connect sessions for that platform fall back to UniPost&rsquo;s global App, and the OAuth consent page shows &ldquo;UniPost&rdquo; as the requesting application. See the <Link href="/docs/white-label">white-label guide</Link> for the full integration walkthrough.</p>
 
       <h2 id="paid-plan">Paid plan required</h2>
-      <p>The Create endpoint rejects calls from free-plan workspaces with <code>403 FORBIDDEN</code>. Upgrade the workspace before attempting to upload credentials.</p>
+      <p>Basic and up can upload platform credentials. Basic supports 1 platform slot; Growth and Team support all supported platforms. Free and API stay on UniPost&apos;s shared OAuth apps.</p>
 
       <h2 id="create">Upload credentials</h2>
       <p>SDK support for platform credential management is coming soon. For now, upload credentials from the dashboard or call the REST endpoint directly.</p>
@@ -24,7 +24,7 @@ export default function PlatformCredentialsPage() {
           ["client_secret", "Yes", "Stored encrypted at rest (AES-256-GCM). Never returned in any read endpoint."],
         ]}
       />
-      <p>A successful upload replaces any previous credentials for the same platform in this workspace — uploading a second set overwrites the first.</p>
+      <p>A successful upload replaces any previous credentials for the same platform in this workspace — uploading a second set for the same platform overwrites the first. On Basic, creating a second platform row is rejected until you upgrade.</p>
 
       <h2 id="list">List configured platforms</h2>
       <p>Returns one row per platform that has credentials stored. <code>client_secret</code> is never included — there is no read endpoint that exposes it.</p>
@@ -49,7 +49,7 @@ export default function PlatformCredentialsPage() {
         columns={["Status", "Code", "When"]}
         rows={[
           ["401", "UNAUTHORIZED / unauthorized", "Missing or invalid API key / session"],
-          ["403", "FORBIDDEN / forbidden", "Workspace is on the free plan"],
+          ["402", "PLAN_FEATURE_NOT_AVAILABLE / plan_feature_not_available", "Workspace plan does not include platform credentials, or Basic has already used its 1 platform slot"],
           ["404", "NOT_FOUND / not_found", "Workspace does not belong to the caller"],
           ["422", "VALIDATION_ERROR / validation_error", "Missing platform, client_id, or client_secret"],
         ]}

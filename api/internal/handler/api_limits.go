@@ -77,6 +77,9 @@ type apiLimitsResponse struct {
 	PlanAllowsInbox      bool `json:"plan_allows_inbox"`
 	PlanAllowsAnalytics  bool `json:"plan_allows_analytics"`
 	PlanAllowsWhiteLabel bool `json:"plan_allows_white_label"`
+	PlanAllowsHostedConnectBranding bool `json:"plan_allows_hosted_connect_branding"`
+	PlanAllowsHidePoweredBy bool `json:"plan_allows_hide_powered_by"`
+	WhiteLabelPlatformLimit int `json:"white_label_platform_limit"`
 
 	// MaxProfiles is the per-plan profile cap (NULL/unlimited = -1).
 	// CurrentProfiles is the live count for this workspace. The
@@ -139,10 +142,13 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ManagedUserDepthCap: limits.ManagedUserQueueDepthCap,
 		QueueDepthCurrent:   int(depth),
 		PerPlatformDailyCap: copyDailyCapMap(),
-		PlanAllowsTwitter:    h.quota.PlanAllowsPlatform(r.Context(), workspaceID, "twitter"),
-		PlanAllowsInbox:      h.quota.PlanAllowsInbox(r.Context(), workspaceID),
-		PlanAllowsAnalytics:  h.quota.PlanAllowsAnalytics(r.Context(), workspaceID),
-		PlanAllowsWhiteLabel: h.quota.PlanAllowsWhiteLabel(r.Context(), workspaceID),
+		PlanAllowsTwitter:              h.quota.PlanAllowsPlatform(r.Context(), workspaceID, "twitter"),
+		PlanAllowsInbox:                h.quota.PlanAllowsInbox(r.Context(), workspaceID),
+		PlanAllowsAnalytics:            h.quota.PlanAllowsAnalytics(r.Context(), workspaceID),
+		PlanAllowsWhiteLabel:           h.quota.PlanAllowsWhiteLabel(r.Context(), workspaceID),
+		PlanAllowsHostedConnectBranding: h.quota.PlanAllowsHostedConnectBranding(r.Context(), workspaceID),
+		PlanAllowsHidePoweredBy:        h.quota.PlanAllowsHidePoweredBy(r.Context(), workspaceID),
+		WhiteLabelPlatformLimit:        h.quota.WhiteLabelPlatformLimit(r.Context(), workspaceID),
 		MaxProfiles:         maxProfiles,
 		CurrentProfiles:     int(currentProfiles),
 		MaxMembers:          maxMembers,

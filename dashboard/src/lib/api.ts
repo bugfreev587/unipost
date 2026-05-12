@@ -13,6 +13,7 @@ export interface Profile {
   branding_logo_url?: string;
   branding_display_name?: string;
   branding_primary_color?: string;
+  branding_hide_powered_by?: boolean;
 }
 
 export interface ApiKey {
@@ -356,6 +357,7 @@ export async function createProfile(
     branding_logo_url?: string;
     branding_display_name?: string;
     branding_primary_color?: string;
+    branding_hide_powered_by?: boolean;
   }
 ): Promise<ApiResponse<Profile>> {
   return request("/v1/profiles", token, {
@@ -372,6 +374,7 @@ export async function updateProfile(
     branding_logo_url?: string;
     branding_display_name?: string;
     branding_primary_color?: string;
+    branding_hide_powered_by?: boolean;
   }
 ): Promise<ApiResponse<Profile>> {
   return request(`/v1/profiles/${id}`, token, {
@@ -997,6 +1000,9 @@ export interface ApiLimits {
   plan_allows_inbox: boolean;
   plan_allows_analytics: boolean;
   plan_allows_white_label: boolean;
+  plan_allows_hosted_connect_branding: boolean;
+  plan_allows_hide_powered_by: boolean;
+  white_label_platform_limit: number;
   max_profiles: number; // -1 = unlimited
   current_profiles: number;
   max_members: number; // -1 = unlimited

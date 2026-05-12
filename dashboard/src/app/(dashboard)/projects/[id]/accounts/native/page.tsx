@@ -34,9 +34,9 @@ export default function NativeModePage() {
   const [credSaving, setCredSaving] = useState<string | null>(null);
   const [credError, setCredError] = useState("");
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
-  // null = limits not loaded yet (don't render the upgrade banner
-  // prematurely); true = plan permits white-label; false = needs upgrade.
   const [planAllowsWhiteLabel, setPlanAllowsWhiteLabel] = useState<boolean | null>(null);
+  const [whiteLabelPlatformLimit, setWhiteLabelPlatformLimit] = useState<number | null>(null);
+  const [planAllowsHidePoweredBy, setPlanAllowsHidePoweredBy] = useState<boolean | null>(null);
 
   const loadCreds = useCallback(async () => {
     try {
@@ -47,7 +47,11 @@ export default function NativeModePage() {
         getApiLimits(token).catch(() => null),
       ]);
       setCreds(credsRes.data ?? []);
-      if (limitsRes) setPlanAllowsWhiteLabel(limitsRes.data.plan_allows_white_label);
+      if (limitsRes) {
+        setPlanAllowsWhiteLabel(limitsRes.data.white_label_platform_limit !== 0);
+        setWhiteLabelPlatformLimit(limitsRes.data.white_label_platform_limit);
+        setPlanAllowsHidePoweredBy(limitsRes.data.plan_allows_hide_powered_by);
+      }
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, [getToken]);
@@ -99,7 +103,7 @@ export default function NativeModePage() {
         <div>
           <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>White-label Credentials</div>
           <div style={{ fontSize: 14, color: "var(--dmuted)", marginTop: 6 }}>
-            Configure your own platform credentials (Native mode). Users will see your app name during OAuth instead of &quot;UniPost&quot; when you onboard them through white-label Connect flows.
+            Configure your own platform credentials. Basic supports one branded platform with UniPost attribution still visible on hosted onboarding. Growth and Team unlock all supported platforms and optional attribution removal.
           </div>
         </div>
       </div>
@@ -121,9 +125,32 @@ export default function NativeModePage() {
           <Link href="/docs/api/connect/sessions/create" style={{ color: "var(--daccent)", textDecoration: "none" }}>
             Connect Sessions
           </Link>{" "}
-          or other white-label flows where the platform consent screen should show your own app name.
+          or other white-label flows where the platform consent screen should show your own app name. Hosted onboarding keeps <em>Powered by UniPost</em> on Basic and makes it optional on Growth / Team.
         </div>
       </div>
+
+      {whiteLabelPlatformLimit !== null && (
+        <div
+          style={{
+            padding: "14px 16px",
+            marginBottom: 20,
+            borderRadius: 10,
+            background: "color-mix(in srgb, var(--surface2) 88%, white)",
+            border: "1px solid var(--dborder)",
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--dtext)", marginBottom: 4 }}>
+            White-label capacity
+          </div>
+          <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.6 }}>
+            {whiteLabelPlatformLimit === 0 && "Your current plan uses UniPost's shared OAuth apps only."}
+            {whiteLabelPlatformLimit === 1 && `Your current plan includes white-label for 1 platform. ${configuredPlatforms.size}/1 platform slot configured.`}
+            {whiteLabelPlatformLimit === -1 && "Your current plan includes white-label across all supported platforms."}
+            {" "}
+            {planAllowsHidePoweredBy ? "This plan can also hide “Powered by UniPost” from hosted onboarding." : "“Powered by UniPost” remains visible on hosted onboarding at this tier."}
+          </div>
+        </div>
+      )}
 
       {planAllowsWhiteLabel === false && (
         <div
@@ -155,12 +182,11 @@ export default function NativeModePage() {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: "var(--dtext)", marginBottom: 3 }}>
-              White-label requires the Growth plan or higher
+              White-label starts on Basic
             </div>
             <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.55 }}>
               Your current plan uses UniPost&apos;s shared OAuth credentials (Quickstart mode).
-              Upgrade to Growth ($59/mo) or Team ($149/mo) to plug in your own platform apps —
-              users will see <em>your</em> app name during OAuth instead of &quot;UniPost&quot;.
+              Upgrade to Basic ($19/mo) for 1 branded platform, or Growth ($59/mo) / Team ($149/mo) for all supported platforms plus optional attribution removal.
             </div>
           </div>
           <Link

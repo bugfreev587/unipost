@@ -143,6 +143,7 @@ type publicBrandingPayload struct {
 	LogoURL      string `json:"logo_url,omitempty"`
 	DisplayName  string `json:"display_name,omitempty"`
 	PrimaryColor string `json:"primary_color,omitempty"`
+	HidePoweredBy bool  `json:"hide_powered_by,omitempty"`
 }
 
 // Create handles POST /v1/connect/sessions.
@@ -381,10 +382,16 @@ func (h *ConnectSessionHandler) PublicGet(w http.ResponseWriter, r *http.Request
 		resp.ReturnURL = session.ReturnUrl.String
 	}
 
-	// Sprint 4 PR4: surface white-label branding from the profile's
-	// branding_* columns. Only emit the Branding field if at least
-	// one column is set — otherwise the page falls back to defaults.
-	if profile.BrandingLogoUrl.Valid || profile.BrandingDisplayName.Valid || profile.BrandingPrimaryColor.Valid {
+	planID := "free"
+	if sub, subErr := h.queries.GetSubscriptionByWorkspace(r.Context(), profile.WorkspaceID); subErr == nil && sub.PlanID != "" {
+		planID = sub.PlanID
+	}
+
+	// Hosted Connect branding is Basic+; the attribution-removal toggle
+	// is Growth+. Older branding values may remain in the DB after a
+	// downgrade, so we gate what the public page sees here instead of
+	// trying to retroactively scrub stored values.
+	if planAllowsHostedConnectBranding(planID) && (profile.BrandingLogoUrl.Valid || profile.BrandingDisplayName.Valid || profile.BrandingPrimaryColor.Valid || profile.BrandingHidePoweredBy) {
 		resp.Branding = &publicBrandingPayload{}
 		if profile.BrandingLogoUrl.Valid {
 			resp.Branding.LogoURL = profile.BrandingLogoUrl.String
@@ -394,6 +401,9 @@ func (h *ConnectSessionHandler) PublicGet(w http.ResponseWriter, r *http.Request
 		}
 		if profile.BrandingPrimaryColor.Valid {
 			resp.Branding.PrimaryColor = profile.BrandingPrimaryColor.String
+		}
+		if planAllowsHidePoweredBy(planID) && profile.BrandingHidePoweredBy {
+			resp.Branding.HidePoweredBy = true
 		}
 	}
 
@@ -456,6 +466,24 @@ type httpError struct {
 	status int
 	code   string
 	msg    string
+}
+
+func planAllowsHostedConnectBranding(planID string) bool {
+	switch planID {
+	case "basic", "growth", "team":
+		return true
+	default:
+		return false
+	}
+}
+
+func planAllowsHidePoweredBy(planID string) bool {
+	switch planID {
+	case "growth", "team":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveProfileForWorkspace figures out which profile row a

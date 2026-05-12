@@ -232,7 +232,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 				if reason == "" {
 					reason = errParam
 				}
-				h.redirectWithStatus(w, r, sess.ReturnUrl.String, status, reason)
+				h.redirectWithStatus(w, r, sess.ReturnUrl.String, status, reason, false)
 				return
 			}
 		}
@@ -297,7 +297,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			},
 			ResponsePayload: map[string]any{"error": err.Error()},
 		})
-		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "token_exchange_failed")
+		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "token_exchange_failed", false)
 		return
 	}
 	profile, err := connector.FetchProfile(r.Context(), tokens.AccessToken)
@@ -317,11 +317,17 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			},
 			ResponsePayload: map[string]any{"error": err.Error()},
 		})
-		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed")
+		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed", false)
 		return
 	}
 
 	prof, profErr := h.queries.GetProfile(r.Context(), session.ProfileID)
+	hidePoweredBy := false
+	if profErr == nil {
+		if sub, subErr := h.queries.GetSubscriptionByWorkspace(r.Context(), prof.WorkspaceID); subErr == nil {
+			hidePoweredBy = planAllowsHidePoweredBy(sub.PlanID) && prof.BrandingHidePoweredBy
+		}
+	}
 	if profErr == nil {
 		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, h.superAdminChecker, prof.WorkspaceID, platformName, profile.ExternalAccountID); shareErr != nil {
 			slog.Warn("connect.callback: free-plan sharing check failed", "platform", platformName, "external_id", profile.ExternalAccountID, "workspace_id", prof.WorkspaceID, "err", shareErr)
@@ -463,21 +469,21 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		},
 	})
 
-	h.redirectWithStatus(w, r, session.ReturnUrl.String, "success", "")
+	h.redirectWithStatus(w, r, session.ReturnUrl.String, "success", "", hidePoweredBy)
 }
 
 // redirectWithStatus 302s to return_url with ?connect_status=... +
 // optional ?reason=... query params. When return_url is empty we
 // render the success / error page in place.
-func (h *ConnectCallbackHandler) redirectWithStatus(w http.ResponseWriter, r *http.Request, returnURL, status, reason string) {
+func (h *ConnectCallbackHandler) redirectWithStatus(w http.ResponseWriter, r *http.Request, returnURL, status, reason string, hidePoweredBy bool) {
 	if returnURL == "" {
 		switch status {
 		case "success":
-			renderConnectSuccess(w)
+			renderConnectSuccess(w, hidePoweredBy)
 		case "cancelled":
-			renderConnectError(w, http.StatusOK, "Connection cancelled.")
+			renderConnectError(w, http.StatusOK, "Connection cancelled.", hidePoweredBy)
 		default:
-			renderConnectError(w, http.StatusBadRequest, "Connection failed: "+reason)
+			renderConnectError(w, http.StatusBadRequest, "Connection failed: "+reason, hidePoweredBy)
 		}
 		return
 	}
@@ -525,9 +531,9 @@ h1{font-size:22px;margin-bottom:8px}
 </style>
 </head><body>
 <h1>Connect</h1>
-<div class="err">{{.}}</div>
+<div class="err">{{.Message}}</div>
 <p>If you reached this page by mistake, contact the developer who sent you the link.</p>
-<p class="small">Powered by UniPost</p>
+{{if .ShowPoweredBy}}<p class="small">Powered by UniPost</p>{{end}}
 </body></html>`
 
 const connectSuccessTplSrc = `<!doctype html>
@@ -545,7 +551,7 @@ h1{font-size:24px;margin-bottom:8px;color:#166534}
 <div class="ok">✓</div>
 <h1>Connected!</h1>
 <p>You can close this window now.</p>
-<p class="small">Powered by UniPost</p>
+{{if .ShowPoweredBy}}<p class="small">Powered by UniPost</p>{{end}}
 </body></html>`
 
 var (
@@ -553,17 +559,21 @@ var (
 	connectSuccessTpl = template.Must(template.New("connect_success").Parse(connectSuccessTplSrc))
 )
 
-func renderConnectError(w http.ResponseWriter, status int, msg string) {
+func renderConnectError(w http.ResponseWriter, status int, msg string, hidePoweredBy ...bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	if err := connectErrorTpl.Execute(w, msg); err != nil {
+	showPoweredBy := true
+	if len(hidePoweredBy) > 0 && hidePoweredBy[0] {
+		showPoweredBy = false
+	}
+	if err := connectErrorTpl.Execute(w, map[string]any{"Message": msg, "ShowPoweredBy": showPoweredBy}); err != nil {
 		fmt.Fprintf(w, "render error: %v", err)
 	}
 }
 
-func renderConnectSuccess(w http.ResponseWriter) {
+func renderConnectSuccess(w http.ResponseWriter, hidePoweredBy bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := connectSuccessTpl.Execute(w, nil); err != nil {
+	if err := connectSuccessTpl.Execute(w, map[string]any{"ShowPoweredBy": !hidePoweredBy}); err != nil {
 		fmt.Fprintf(w, "render error: %v", err)
 	}
 }

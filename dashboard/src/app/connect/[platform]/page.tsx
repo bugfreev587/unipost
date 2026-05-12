@@ -38,6 +38,7 @@ type PublicConnectSession = {
     logo_url?: string;
     display_name?: string;
     primary_color?: string;
+    hide_powered_by?: boolean;
   };
 };
 
@@ -201,12 +202,14 @@ function Layout({ children, branding }: { children: React.ReactNode; branding?: 
           </div>
         )}
         {children}
-        <div className="footer">
-          Powered by{" "}
-          <Link href="/" style={{ color: "#888", textDecoration: "none" }}>
-            UniPost
-          </Link>
-        </div>
+        {!branding?.hide_powered_by && (
+          <div className="footer">
+            Powered by{" "}
+            <Link href="/" style={{ color: "#888", textDecoration: "none" }}>
+              UniPost
+            </Link>
+          </div>
+        )}
       </div>
     </>
   );

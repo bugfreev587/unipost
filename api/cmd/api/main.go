@@ -374,7 +374,7 @@ func main() {
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
-	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor)
+	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
@@ -653,9 +653,9 @@ func main() {
 		// (Growth+, migration 013 sets plans.white_label). Free / API /
 		// Basic get a 402 with an upgrade message.
 		r.Get("/v1/platform-credentials", platformCredHandler.List)
-		r.With(auth.RequireRole(auth.RoleAdmin), handler.RequirePlanWhiteLabel(quotaChecker)).
+		r.With(auth.RequireRole(auth.RoleAdmin)).
 			Post("/v1/platform-credentials", platformCredHandler.Create)
-		r.With(auth.RequireRole(auth.RoleAdmin), handler.RequirePlanWhiteLabel(quotaChecker)).
+		r.With(auth.RequireRole(auth.RoleAdmin)).
 			Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
 
 		// Posts.

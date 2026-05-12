@@ -50,6 +50,7 @@ type profileResponse struct {
 	BrandingLogoURL      *string `json:"branding_logo_url,omitempty"`
 	BrandingDisplayName  *string `json:"branding_display_name,omitempty"`
 	BrandingPrimaryColor *string `json:"branding_primary_color,omitempty"`
+	BrandingHidePoweredBy bool   `json:"branding_hide_powered_by"`
 }
 
 func toProfileResponse(p db.Profile) profileResponse {
@@ -72,6 +73,7 @@ func toProfileResponse(p db.Profile) profileResponse {
 		v := p.BrandingPrimaryColor.String
 		resp.BrandingPrimaryColor = &v
 	}
+	resp.BrandingHidePoweredBy = p.BrandingHidePoweredBy
 	return resp
 }
 
@@ -168,6 +170,7 @@ func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		BrandingLogoURL      *string `json:"branding_logo_url"`
 		BrandingDisplayName  *string `json:"branding_display_name"`
 		BrandingPrimaryColor *string `json:"branding_primary_color"`
+		BrandingHidePoweredBy *bool  `json:"branding_hide_powered_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -215,6 +218,18 @@ func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 			"branding_primary_color must be a 6-digit hex color (e.g. #10b981)")
 		return
 	}
+	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
+		if h.quota != nil && !h.quota.PlanAllowsHostedConnectBranding(r.Context(), workspaceID) {
+			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+				"Hosted Connect branding requires the Basic plan or higher — upgrade at unipost.dev/pricing")
+			return
+		}
+		if body.BrandingHidePoweredBy != nil && *body.BrandingHidePoweredBy && h.quota != nil && !h.quota.PlanAllowsHidePoweredBy(r.Context(), workspaceID) {
+			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+				"Removing \"Powered by UniPost\" requires the Growth plan or higher — upgrade at unipost.dev/pricing")
+			return
+		}
+	}
 
 	profile, err := h.queries.CreateProfile(r.Context(), db.CreateProfileParams{
 		WorkspaceID: workspaceID,
@@ -224,12 +239,13 @@ func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create profile")
 		return
 	}
-	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil {
+	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
 		profile, err = h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
 			ID:           profile.ID,
 			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
 			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
 			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
+			HidePoweredBy: pgBoolFromPtr(body.BrandingHidePoweredBy),
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update branding")
@@ -289,6 +305,7 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 		BrandingLogoURL      *string `json:"branding_logo_url"`
 		BrandingDisplayName  *string `json:"branding_display_name"`
 		BrandingPrimaryColor *string `json:"branding_primary_color"`
+		BrandingHidePoweredBy *bool  `json:"branding_hide_powered_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -331,6 +348,18 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
+		if h.quota != nil && !h.quota.PlanAllowsHostedConnectBranding(r.Context(), profile.WorkspaceID) {
+			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+				"Hosted Connect branding requires the Basic plan or higher — upgrade at unipost.dev/pricing")
+			return
+		}
+		if body.BrandingHidePoweredBy != nil && *body.BrandingHidePoweredBy && h.quota != nil && !h.quota.PlanAllowsHidePoweredBy(r.Context(), profile.WorkspaceID) {
+			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+				"Removing \"Powered by UniPost\" requires the Growth plan or higher — upgrade at unipost.dev/pricing")
+			return
+		}
+	}
 
 	if body.Name != nil {
 		if _, err := h.queries.UpdateProfile(r.Context(), db.UpdateProfileParams{
@@ -342,12 +371,13 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil {
+	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
 		if _, err := h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
 			ID:           profileID,
 			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
 			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
 			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
+			HidePoweredBy: pgBoolFromPtr(body.BrandingHidePoweredBy),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update branding")
 			return
@@ -367,6 +397,13 @@ func pgTextFromPtr(p *string) pgtype.Text {
 		return pgtype.Text{}
 	}
 	return pgtype.Text{String: *p, Valid: true}
+}
+
+func pgBoolFromPtr(p *bool) pgtype.Bool {
+	if p == nil {
+		return pgtype.Bool{}
+	}
+	return pgtype.Bool{Bool: *p, Valid: true}
 }
 
 func validateBrandingLogoURL(raw string) error {
@@ -527,6 +564,7 @@ func (h *ProfileHandler) APIUpdate(w http.ResponseWriter, r *http.Request) {
 		BrandingLogoURL      *string `json:"branding_logo_url"`
 		BrandingDisplayName  *string `json:"branding_display_name"`
 		BrandingPrimaryColor *string `json:"branding_primary_color"`
+		BrandingHidePoweredBy *bool  `json:"branding_hide_powered_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -564,6 +602,18 @@ func (h *ProfileHandler) APIUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
+		if h.quota != nil && !h.quota.PlanAllowsHostedConnectBranding(r.Context(), workspaceID) {
+			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+				"Hosted Connect branding requires the Basic plan or higher — upgrade at unipost.dev/pricing")
+			return
+		}
+		if body.BrandingHidePoweredBy != nil && *body.BrandingHidePoweredBy && h.quota != nil && !h.quota.PlanAllowsHidePoweredBy(r.Context(), workspaceID) {
+			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+				"Removing \"Powered by UniPost\" requires the Growth plan or higher — upgrade at unipost.dev/pricing")
+			return
+		}
+	}
 
 	if body.Name != nil {
 		if _, err := h.queries.UpdateProfile(r.Context(), db.UpdateProfileParams{
@@ -575,12 +625,13 @@ func (h *ProfileHandler) APIUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil {
+	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
 		if _, err := h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
 			ID:           profileID,
 			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
 			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
 			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
+			HidePoweredBy: pgBoolFromPtr(body.BrandingHidePoweredBy),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update branding")
 			return

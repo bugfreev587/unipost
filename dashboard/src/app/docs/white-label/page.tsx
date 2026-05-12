@@ -73,9 +73,9 @@ export default function WhiteLabelPage() {
           ["Who is it for", "Developers and product teams onboarding customer accounts"],
           ["Who pays the platform API cost", "You — your OAuth app, your platform tier"],
           ["Setup complexity", "Medium — one-time per platform, ~30 min"],
-          ["Control level", "Full — your app name, your branding, your quotas"],
+          ["Control level", "Basic: 1 branded platform with UniPost attribution. Growth+: full multi-platform control with optional attribution removal."],
           ["Best use case", "SaaS products where customers bring their own social accounts"],
-          ["Tier", "Paid plans only — Quickstart is free"],
+          ["Tier", "Basic and up — Quickstart is free"],
         ]}
       />
 
@@ -87,7 +87,8 @@ export default function WhiteLabelPage() {
           ["Setup time", "Minutes", "~30 min per platform (one-time)"],
           ["OAuth app", "UniPost-managed", "Your own — uploaded per workspace"],
           ["Platform consent screen", "Shows “UniPost”", "Shows your app name + logo"],
-          ["Connect page branding", "UniPost's default", "Your logo, name, and brand color"],
+          ["Connect page branding", "UniPost's default", "Your logo, name, and brand color (Basic+)"],
+          ["Hosted onboarding attribution", "Always shown", "Shown on Basic, optional on Growth / Team"],
           ["Platform API rate limits", "Shared across all UniPost workspaces", "Your own — scales with your tier"],
           ["Platform API cost", "Included in UniPost plan", "Billed to you by each platform"],
           ["Best for", "Your own accounts, prototypes, internal tools", "Customer-facing SaaS onboarding"],
@@ -95,7 +96,7 @@ export default function WhiteLabelPage() {
         ]}
       />
       <p className="wl-note">
-        In practical terms: Quickstart uses UniPost&apos;s own OAuth apps, so your end users will see <code>UniPost</code> on the platform consent screen. White-label uses your uploaded platform credentials instead, so the same end users see your app name and brand assets on the consent screen once that platform app is configured and approved.
+        In practical terms: Quickstart uses UniPost&apos;s own OAuth apps, so your end users will see <code>UniPost</code> on the platform consent screen. White-label uses your uploaded platform credentials instead, so the same end users see your app name and brand assets on the consent screen once that platform app is configured and approved. Basic unlocks that for one platform while still keeping <code>Powered by UniPost</code> on the hosted Connect page; Growth and Team remove the one-platform cap and can hide that attribution.
       </p>
       <div className="wl-pick">
         <div className="wl-pick-card">
@@ -143,8 +144,8 @@ export default function WhiteLabelPage() {
         <div className="wl-flow-step">
           <div className="wl-flow-num">4</div>
           <div className="wl-flow-body">
-            <div className="wl-flow-title">Upload credentials to UniPost</div>
-            <div className="wl-flow-sub">Push your client ID and secret to UniPost, once per platform, once per workspace.</div>
+          <div className="wl-flow-title">Upload credentials to UniPost</div>
+            <div className="wl-flow-sub">Push your client ID and secret to UniPost. Basic supports one platform; Growth and Team support all supported platforms.</div>
           </div>
         </div>
         <div className="wl-flow-step">
@@ -157,8 +158,8 @@ export default function WhiteLabelPage() {
         <div className="wl-flow-step">
           <div className="wl-flow-num">6</div>
           <div className="wl-flow-body">
-            <div className="wl-flow-title">Set profile branding</div>
-            <div className="wl-flow-sub">Logo, display name, and primary color on the hosted Connect page.</div>
+          <div className="wl-flow-title">Set profile branding</div>
+            <div className="wl-flow-sub">Logo, display name, and primary color on the hosted Connect page. Growth and Team can also hide the UniPost attribution footer.</div>
           </div>
         </div>
         <div className="wl-flow-step">
@@ -250,8 +251,9 @@ export default function WhiteLabelPage() {
           ["Publishing to connected accounts", "Yes", "Yes"],
           ["Scheduling", "Yes", "Yes"],
           ["Analytics + webhooks", "Yes", "Yes"],
-          ["Your brand on Connect page", "No", "Yes"],
-          ["Your app on platform consent", "No", "Yes"],
+          ["Your brand on Connect page", "No", "Yes (Basic+)"],
+          ["Your app on platform consent", "No", "Yes (Basic+ for 1 platform, Growth+ for all supported platforms)"],
+          ["Remove Powered by UniPost", "No", "Growth / Team only"],
           ["Onboard customers at scale", "No", "Yes"],
           ["Own platform rate-limit tier", "No", "Yes"],
           ["`external_user_id` mapping", "No", "Yes"],

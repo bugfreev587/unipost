@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { getProfile, updateProfile, deleteProfile, getBootstrap, type Profile } from "@/lib/api";
+import { getProfile, updateProfile, deleteProfile, getBootstrap, getApiLimits, type Profile } from "@/lib/api";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function SettingsPage() {
@@ -13,19 +13,31 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [brandingSaving, setBrandingSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [defaultProfileId, setDefaultProfileId] = useState<string | null>(null);
+  const [planAllowsBranding, setPlanAllowsBranding] = useState(false);
+  const [planAllowsHidePoweredBy, setPlanAllowsHidePoweredBy] = useState(false);
+  const [hidePoweredBy, setHidePoweredBy] = useState(false);
 
   useEffect(() => {
     async function load() {
       try {
         const token = await getToken();
         if (!token) return;
-        const res = await getProfile(token, profileId);
+        const [res, limits] = await Promise.all([
+          getProfile(token, profileId),
+          getApiLimits(token).catch(() => null),
+        ]);
         setProfile(res.data); setName(res.data.name);
+        setHidePoweredBy(Boolean(res.data.branding_hide_powered_by));
         const bootstrap = await getBootstrap(token);
         setDefaultProfileId(bootstrap.data.default_profile_id);
+        if (limits) {
+          setPlanAllowsBranding(limits.data.plan_allows_hosted_connect_branding);
+          setPlanAllowsHidePoweredBy(limits.data.plan_allows_hide_powered_by);
+        }
       } catch (err) { console.error("Failed:", err); }
     }
     load();
@@ -51,6 +63,17 @@ export default function SettingsPage() {
       await deleteProfile(token, profileId);
       router.push("/");
     } catch (err) { console.error("Failed:", err); } finally { setDeleting(false); setShowDeleteConfirm(false); }
+  }
+
+  async function handleAttributionSave() {
+    setBrandingSaving(true);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await updateProfile(token, profileId, { branding_hide_powered_by: hidePoweredBy });
+      setProfile(res.data);
+      setHidePoweredBy(Boolean(res.data.branding_hide_powered_by));
+    } catch (err) { console.error("Failed:", err); } finally { setBrandingSaving(false); }
   }
 
   if (!profile) return <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>;
@@ -98,6 +121,50 @@ export default function SettingsPage() {
           <div className="settings-row">
             <span style={{ fontSize: 12, lineHeight: "16px", fontWeight: 600, color: "var(--dmuted)" }}>Connected Accounts</span>
             <span style={{ fontSize: 13, lineHeight: "18px", color: "var(--dtext)" }}>{profile.account_count || 0}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-header">Hosted Connect Branding</div>
+        <div className="settings-section-body">
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4, color: "var(--dtext)" }}>
+                Powered by UniPost
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--dmuted)" }}>
+                Basic keeps attribution visible on the hosted Connect page. Growth and Team can optionally hide it. Default stays on.
+              </div>
+              {!planAllowsBranding && (
+                <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 10 }}>
+                  Hosted Connect branding starts on the Basic plan.
+                </div>
+              )}
+              {planAllowsBranding && !planAllowsHidePoweredBy && (
+                <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 10 }}>
+                  Your plan includes branded onboarding, but hiding attribution requires Growth or Team.
+                </div>
+              )}
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--dtext)", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={hidePoweredBy}
+                disabled={!planAllowsHidePoweredBy || brandingSaving}
+                onChange={(e) => setHidePoweredBy(e.target.checked)}
+              />
+              Hide attribution
+            </label>
+          </div>
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+            <button
+              className="dbtn dbtn-primary"
+              onClick={handleAttributionSave}
+              disabled={!planAllowsHidePoweredBy || brandingSaving || hidePoweredBy === Boolean(profile.branding_hide_powered_by)}
+            >
+              {brandingSaving ? "Saving..." : "Save branding"}
+            </button>
           </div>
         </div>
       </div>

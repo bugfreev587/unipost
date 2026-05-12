@@ -19,6 +19,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "branding_logo_url", type: "string | null", description: "Optional hosted Connect logo URL." },
   { name: "branding_display_name", type: "string | null", description: "Optional hosted Connect display name." },
   { name: "branding_primary_color", type: "string | null", description: "Optional hosted Connect primary brand color." },
+  { name: "branding_hide_powered_by", type: "boolean", description: "Whether hosted Connect hides the footer attribution for this profile." },
   { name: "created_at", type: "string", description: "Creation timestamp." },
   { name: "updated_at", type: "string", description: "Last update timestamp." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },

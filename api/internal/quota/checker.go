@@ -159,6 +159,54 @@ func (c *Checker) PlanAllowsWhiteLabel(ctx context.Context, workspaceID string) 
 	return plan.WhiteLabel
 }
 
+// PlanAllowsHostedConnectBranding reports whether the workspace may
+// customize the hosted Connect surface (logo, display name, primary
+// color). Basic and up are allowed; Free and API stay on UniPost's
+// default branding. Fail-open on lookup errors, matching the rest of
+// the package.
+func (c *Checker) PlanAllowsHostedConnectBranding(ctx context.Context, workspaceID string) bool {
+	planID := c.PlanIDFor(ctx, workspaceID)
+	switch planID {
+	case "basic", "growth", "team":
+		return true
+	default:
+		return false
+	}
+}
+
+// WhiteLabelPlatformLimit returns how many BYO platform credential rows
+// the workspace may actively configure. -1 means unlimited.
+//
+// Product packaging:
+//   - Free / API: 0
+//   - Basic:      1
+//   - Growth+:    unlimited
+//
+// Existing rows are not retroactively pruned on downgrade; handlers use
+// this helper to block new additions when the plan is at capacity.
+func (c *Checker) WhiteLabelPlatformLimit(ctx context.Context, workspaceID string) int {
+	switch c.PlanIDFor(ctx, workspaceID) {
+	case "basic":
+		return 1
+	case "growth", "team":
+		return -1
+	default:
+		return 0
+	}
+}
+
+// PlanAllowsHidePoweredBy reports whether the workspace may remove the
+// "Powered by UniPost" attribution on hosted Connect pages. Growth and
+// up are allowed.
+func (c *Checker) PlanAllowsHidePoweredBy(ctx context.Context, workspaceID string) bool {
+	switch c.PlanIDFor(ctx, workspaceID) {
+	case "growth", "team":
+		return true
+	default:
+		return false
+	}
+}
+
 // MaxProfilesForPlan returns (limit, true) when the workspace's plan
 // caps the number of profiles, or (0, false) when the plan permits
 // unlimited profiles (Team / Enterprise) or when the plan row can't
