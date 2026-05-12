@@ -264,6 +264,9 @@ func main() {
 			connectors = append(connectors, th)
 		}
 	}
+	if yt := connect.NewYouTubeConnector(os.Getenv("YOUTUBE_CLIENT_ID"), os.Getenv("YOUTUBE_CLIENT_SECRET"), apiBaseURL); yt != nil {
+		connectors = append(connectors, yt)
+	}
 	connectRegistry := connect.NewRegistry(connectors...)
 
 	// Sprint 3 PR7: managed token refresh worker. Runs every 5 min,

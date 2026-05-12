@@ -66,13 +66,13 @@ func (h *ConnectSessionHandler) SetIntegrationLogger(logger *integrationlogs.Log
 	return h
 }
 
-// connectableplatforms is the allowlist for POST /v1/connect/sessions.
-// Sprint 3 ships Twitter, LinkedIn, Bluesky. Meta / Google / TikTok
-// are deferred until App Review unlocks production traffic.
+// connectablePlatforms is the allowlist for POST /v1/connect/sessions.
+// Keep this in sync with the connectors actually registered in main.go.
 var connectablePlatforms = map[string]bool{
 	"twitter":  true,
 	"linkedin": true,
 	"bluesky":  true,
+	"youtube":  true,
 }
 
 // connectSessionTTL is the wall-clock window during which a hosted
@@ -186,7 +186,7 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if !connectablePlatforms[body.Platform] {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
-			"platform must be one of twitter, linkedin, bluesky")
+			"platform must be one of twitter, linkedin, bluesky, youtube")
 		return
 	}
 	// Plan gate (migration 057): block new X / Twitter connections on

@@ -86,16 +86,16 @@ func TestNewConnectSessionHandler_NilQuotaOK(t *testing.T) {
 	}
 }
 
-// TestConnectablePlatforms locks the Sprint 3 platform allowlist.
+// TestConnectablePlatforms locks the currently supported platform allowlist.
 func TestConnectablePlatforms(t *testing.T) {
-	for _, p := range []string{"twitter", "linkedin", "bluesky"} {
+	for _, p := range []string{"twitter", "linkedin", "bluesky", "youtube"} {
 		if !connectablePlatforms[p] {
-			t.Errorf("%s should be connectable in Sprint 3", p)
+			t.Errorf("%s should be connectable", p)
 		}
 	}
-	for _, p := range []string{"instagram", "tiktok", "youtube", "threads", "facebook"} {
+	for _, p := range []string{"instagram", "tiktok", "threads", "facebook"} {
 		if connectablePlatforms[p] {
-			t.Errorf("%s should NOT be connectable until App Review unlocks it", p)
+			t.Errorf("%s should NOT be connectable yet", p)
 		}
 	}
 }
