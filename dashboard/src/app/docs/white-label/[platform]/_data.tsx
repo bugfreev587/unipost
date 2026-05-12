@@ -12,7 +12,16 @@ export type WhiteLabelGuide = {
   bestFor: string;
   appReview: string;
   beforeYouStart: string[];
-  screenshotSteps?: Array<{ title: string; caption?: string; image: string }>;
+  screenshotWalkthroughs?: Array<{
+    title: string;
+    intro?: string;
+    steps: Array<{ title: string; caption?: string; image: string }>;
+  }>;
+  verificationWorkflow?: {
+    title: string;
+    intro: string;
+    steps: Array<{ title: string; body: string }>;
+  };
   apiWorkflow?: {
     title: string;
     intro: string;
@@ -238,39 +247,75 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       "A consent-screen brand name and support email you are comfortable shipping.",
       "A plan for how your team will handle Google verification if the project grows beyond internal use.",
     ],
-    screenshotSteps: [
+    screenshotWalkthroughs: [
       {
-        title: "Step 1: pick or create a Google Cloud project",
-        image: "/docs/white-label/youtube/step1.png",
+        title: "Generate Google app creds",
+        intro: "This first pass gets you to a working `Client ID` and `Client Secret` so you can save them in UniPost.",
+        steps: [
+          {
+            title: "Step 1: pick or create a Google Cloud project",
+            image: "/docs/white-label/youtube/step1.png",
+          },
+          {
+            title: "Step 2: search `YouTube Data API v3` and enable it",
+            image: "/docs/white-label/youtube/step2.png",
+          },
+          {
+            title: "Step 3a: open the OAuth consent screen from APIs & Services",
+            image: "/docs/white-label/youtube/step3-1.png",
+          },
+          {
+            title: "Step 3b: finish the initial app setup in Google Auth Platform",
+            image: "/docs/white-label/youtube/step3-2.png",
+          },
+          {
+            title: "Step 4: go to Clients and click `Create client`",
+            image: "/docs/white-label/youtube/step4.png",
+          },
+          {
+            title: "Step 5: choose `Web application` and add UniPost's redirect URI",
+            caption: "Authorized redirect URI: `https://api.unipost.dev/v1/oauth/callback/youtube`",
+            image: "/docs/white-label/youtube/step5.png",
+          },
+          {
+            title: "Step 6: copy the Google `Client ID` and `Client Secret`",
+            image: "/docs/white-label/youtube/step6.png",
+          },
+          {
+            title: "Step 7: paste them into UniPost's YouTube row and click `Save`",
+            image: "/docs/white-label/youtube/step7.png",
+          },
+        ],
       },
       {
-        title: "Step 2: search `YouTube Data API v3` and enable it",
-        image: "/docs/white-label/youtube/step2.png",
-      },
-      {
-        title: "Step 3a: open the OAuth consent screen from APIs & Services",
-        image: "/docs/white-label/youtube/step3-1.png",
-      },
-      {
-        title: "Step 3b: finish the initial app setup in Google Auth Platform",
-        image: "/docs/white-label/youtube/step3-2.png",
-      },
-      {
-        title: "Step 4: go to Clients and click `Create client`",
-        image: "/docs/white-label/youtube/step4.png",
-      },
-      {
-        title: "Step 5: choose `Web application` and add UniPost's redirect URI",
-        caption: "Authorized redirect URI: `https://api.unipost.dev/v1/oauth/callback/youtube`",
-        image: "/docs/white-label/youtube/step5.png",
-      },
-      {
-        title: "Step 6: copy the Google `Client ID` and `Client Secret`",
-        image: "/docs/white-label/youtube/step6.png",
-      },
-      {
-        title: "Step 7: paste them into UniPost's YouTube row and click `Save`",
-        image: "/docs/white-label/youtube/step7.png",
+        title: "Google app verification",
+        intro: "After the credentials are saved in UniPost, this is the next Google-side flow to capture if you want your app name and logo to show properly and remove the unverified warning for broader rollout.",
+        steps: [
+          {
+            title: "Step 1: open Google Auth Platform and go to `Branding`",
+            image: "/docs/white-label/youtube/google-verification/step1.png",
+          },
+          {
+            title: "Step 2: fill in app name, logo, homepage, privacy policy, terms, and authorized domains",
+            image: "/docs/white-label/youtube/google-verification/step2.png",
+          },
+          {
+            title: "Step 3: run branding verification and publish the approved branding",
+            image: "/docs/white-label/youtube/google-verification/step3.png",
+          },
+          {
+            title: "Step 4: go to `Data Access` and confirm the YouTube scopes your app is requesting",
+            image: "/docs/white-label/youtube/google-verification/step4.png",
+          },
+          {
+            title: "Step 5: open `Verification Center` and prepare the submission",
+            image: "/docs/white-label/youtube/google-verification/step5.png",
+          },
+          {
+            title: "Step 6: submit scope justification and demo video for review",
+            image: "/docs/white-label/youtube/google-verification/step6.png",
+          },
+        ],
       },
     ],
     consoleSteps: [
@@ -331,6 +376,36 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       ["OAuth Client Secret", "Client Secret", "Keep in your secrets system; UniPost stores it encrypted."],
       ["Authorized redirect URI", "Callback URL below", "Must match exactly or Google rejects the callback."],
     ],
+    verificationWorkflow: {
+      title: "Apply for Google verification after saving the credentials",
+      intro: "Once the YouTube `Client ID` and `Client Secret` are saved in UniPost, move back into Google Auth Platform and finish the verification track. This is the piece that usually stands between 'my test account can connect' and 'real customers can connect without unverified-app friction'.",
+      steps: [
+        {
+          title: "Step 1: finish and publish `Branding`",
+          body: "In `Branding`, make sure your app name, logo, homepage, privacy policy, terms, and authorized domains are complete. Google requires a published branding status before you can request data-access verification.",
+        },
+        {
+          title: "Step 2: switch the app to `Production` in `Audience`",
+          body: "Google's verification submission flow expects the app to be published to production first. If the app is still in testing mode, you are not at the real verification step yet.",
+        },
+        {
+          title: "Step 3: confirm the YouTube scopes in `Data Access`",
+          body: "Open `Data Access`, click `Add or remove scopes`, and make sure the scopes requested by your app match the scopes UniPost will use: `https://www.googleapis.com/auth/youtube.readonly` and `https://www.googleapis.com/auth/youtube.upload`.",
+        },
+        {
+          title: "Step 4: open `Verification Center` and click `Prepare for Verification`",
+          body: "Read through the configuration summary carefully. This is where Google starts evaluating whether the public-facing app details, requested scopes, and user-facing explanations line up.",
+        },
+        {
+          title: "Step 5: provide scope justification and a demo video",
+          body: "For YouTube, your submission should explain why you need `youtube.readonly` and `youtube.upload`, and the demo video should show a real user starting the OAuth flow, authorizing the app, returning to UniPost, and then using the connected account in a real product flow.",
+        },
+        {
+          title: "Step 6: submit and monitor the project owner/editor email inbox",
+          body: "After `Submit for Verification`, Google will use the project contacts to ask follow-up questions or request fixes. Keep that inbox monitored until the review is complete.",
+        },
+      ],
+    },
     apiWorkflow: {
       title: "After the account connects: verify the API flow",
       intro: "Once your YouTube account is connected in the dashboard, the next job is to prove your API path is wired correctly too. The sequence below starts from the dashboard, then moves into the API calls you will keep using in your own backend.",

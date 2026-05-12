@@ -87,25 +87,28 @@ export default function WhiteLabelPlatformGuidePage() {
         ))}
       </div>
 
-      {guide.screenshotSteps ? (
+      {guide.screenshotWalkthroughs ? (
         <>
           <h2 id="developer-console-walkthrough">Screenshot walkthrough</h2>
-          <p className="wlp-note">
-            Follow the screenshots in order. The goal is simple: get the Google `Client ID` and `Client Secret`, then paste them into UniPost.
-          </p>
-          <div className="wlp-shot-list">
-            {guide.screenshotSteps.map((step) => (
-              <div key={step.title} className="wlp-shot-card">
-                <div className="wlp-shot-title">{step.title}</div>
-                {step.caption ? <div className="wlp-shot-caption">{step.caption}</div> : null}
-                <img src={step.image} alt={step.title} className="wlp-shot-image" />
+          {guide.screenshotWalkthroughs.map((group) => (
+            <div key={group.title} className="wlp-shot-group">
+              <h3 className="wlp-shot-group-title">{group.title}</h3>
+              {group.intro ? <p className="wlp-note">{group.intro}</p> : null}
+              <div className="wlp-shot-list">
+                {group.steps.map((step) => (
+                  <div key={step.title} className="wlp-shot-card">
+                    <div className="wlp-shot-title">{step.title}</div>
+                    {step.caption ? <div className="wlp-shot-caption">{step.caption}</div> : null}
+                    <img src={step.image} alt={step.title} className="wlp-shot-image" />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </>
       ) : null}
 
-      {!guide.screenshotSteps ? (
+      {!guide.screenshotWalkthroughs ? (
         <>
           <h2 id="first-working-setup">First working setup</h2>
           <div className="wlp-steps">
@@ -130,6 +133,26 @@ export default function WhiteLabelPlatformGuidePage() {
       <p className="wlp-note">
         Save the credentials first, then start a fresh connection attempt. Troubleshooting an OAuth flow against stale credentials usually creates false leads.
       </p>
+
+      {guide.verificationWorkflow ? (
+        <>
+          <h2 id="google-verification">{guide.verificationWorkflow.title}</h2>
+          <p className="wlp-note">
+            {guide.verificationWorkflow.intro}
+          </p>
+          <div className="wlp-steps">
+            {guide.verificationWorkflow.steps.map((step, index) => (
+              <div key={step.title} className="wlp-step-card">
+                <div className="wlp-step-num">{index + 1}</div>
+                <div className="wlp-step-body">
+                  <div className="wlp-step-title">{step.title}</div>
+                  <div className="wlp-step-copy">{renderDocsRichContent(step.body)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       {guide.apiWorkflow ? (
         <>
@@ -208,6 +231,8 @@ const styles = `
 .wlp-copy-btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--docs-border);background:var(--docs-bg-muted);color:var(--docs-text-soft);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;transition:border-color .15s ease,background .15s ease,color .15s ease}
 .wlp-copy-btn:hover{border-color:color-mix(in srgb, var(--docs-link) 28%, var(--docs-border));color:var(--docs-text)}
 .wlp-copy-btn.copied{color:var(--docs-link);border-color:color-mix(in srgb, var(--docs-link) 36%, var(--docs-border));background:color-mix(in srgb, var(--docs-link) 8%, var(--docs-bg-muted))}
+.wlp-shot-group{margin:14px 0 22px}
+.wlp-shot-group-title{font-size:20px;line-height:1.3;letter-spacing:-.02em;color:var(--docs-text);margin:0 0 8px}
 .wlp-shot-list{display:grid;gap:18px;margin:14px 0 8px}
 .wlp-shot-card{padding:16px 16px 18px;border-radius:18px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
 .wlp-shot-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:8px}
