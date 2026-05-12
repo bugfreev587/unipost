@@ -451,10 +451,14 @@ func (h *OAuthHandler) getOAuthConfig(r *http.Request, profileID, platformName s
 
 func (h *OAuthHandler) getOAuthConfigForProfile(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
 	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
+	workspaceID := h.workspaceIDForProfile(r.Context(), profileID)
+	if workspaceID == "" {
+		return config
+	}
 
 	// Check for White Label credentials
 	creds, err := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
-		WorkspaceID: profileID,
+		WorkspaceID: workspaceID,
 		Platform:    platformName,
 	})
 	if err == nil {
