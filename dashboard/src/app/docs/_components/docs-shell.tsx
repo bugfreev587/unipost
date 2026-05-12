@@ -546,7 +546,8 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-toc-link{display:block;padding:7px 8px;border-radius:10px;font-size:12.5px;line-height:1.45;color:var(--docs-nav-text);text-decoration:none;transition:all .12s}
 .docs-toc-link:hover{color:var(--docs-nav-text-strong);background:var(--docs-nav-hover)}
 .docs-toc-link.active{color:var(--docs-nav-text-strong);background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
-.docs-toc-link.level-h3{padding-left:18px;color:var(--docs-nav-text-faint)}
+.docs-toc-link.level-h3{position:relative;margin-left:12px;padding-left:22px;color:var(--docs-nav-text-faint)}
+.docs-toc-link.level-h3::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:1px;background:var(--docs-border-strong);border-radius:999px}
 .docs-empty-toc{padding:8px;color:var(--docs-nav-text-faint);font-size:12.5px;line-height:1.6}
 .docs-home-section{margin-top:46px}
 .docs-home-section:first-of-type{margin-top:10px}

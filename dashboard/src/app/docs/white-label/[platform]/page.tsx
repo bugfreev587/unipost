@@ -7,6 +7,13 @@ import { Check, Copy } from "lucide-react";
 import { DocsCodeTabs, DocsPage, DocsTable, renderDocsRichContent } from "../../_components/docs-shell";
 import { WHITE_LABEL_GUIDES } from "./_data";
 
+function slugifyHeading(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function CallbackUrlCard({ callback }: { callback: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -92,7 +99,7 @@ export default function WhiteLabelPlatformGuidePage() {
           <h2 id="developer-console-walkthrough">Screenshot walkthrough</h2>
           {guide.screenshotWalkthroughs.map((group) => (
             <div key={group.title} className="wlp-shot-group">
-              <h3 className="wlp-shot-group-title">{group.title}</h3>
+              <h3 id={slugifyHeading(group.title)} className="wlp-shot-group-title">{group.title}</h3>
               {group.intro ? <p className="wlp-note">{group.intro}</p> : null}
               <div className="wlp-shot-list">
                 {group.steps.map((step) => (
