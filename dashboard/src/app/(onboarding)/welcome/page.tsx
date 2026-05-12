@@ -79,16 +79,16 @@ export default function WelcomePage() {
         U
       </div>
 
-      <h1 style={{ fontSize: 32, fontWeight: 700, color: "#ededed", letterSpacing: -0.5, marginBottom: 8 }}>
+      <h1 style={{ fontSize: 32, fontWeight: 700, color: "var(--clerk-text, #0f172a)", letterSpacing: -0.5, marginBottom: 8 }}>
         Welcome to UniPost
       </h1>
-      <p style={{ fontSize: 15, color: "#888", lineHeight: 1.6, marginBottom: 40 }}>
+      <p style={{ fontSize: 15, color: "var(--clerk-text-secondary, #667085)", lineHeight: 1.6, marginBottom: 40 }}>
         Publish to every social platform in one click.<br />
         Let&apos;s get you set up.
       </p>
 
       <form onSubmit={handleContinue} style={{ textAlign: "left" }}>
-        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--clerk-text-secondary, #667085)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
           First Name <span style={{ color: "#ef4444" }}>*</span>
         </label>
         <input
@@ -108,7 +108,7 @@ export default function WelcomePage() {
           onBlur={(e) => e.target.style.borderColor = "#22222a"}
         />
 
-        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--clerk-text-secondary, #667085)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
           Organization Name <span style={{ color: "#555", fontSize: 10, fontWeight: 400 }}>optional</span>
         </label>
         <input
