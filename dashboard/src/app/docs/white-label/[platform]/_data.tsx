@@ -13,6 +13,15 @@ export type WhiteLabelGuide = {
   appReview: string;
   beforeYouStart: string[];
   screenshotSteps?: Array<{ title: string; caption?: string; image: string }>;
+  apiWorkflow?: {
+    title: string;
+    intro: string;
+    steps: Array<{
+      title: string;
+      body: string;
+      snippets?: Array<{ lang: string; label: string; code: string }>;
+    }>;
+  };
   consoleSteps?: Array<{ title: string; body: string }>;
   steps: Array<{ title: string; body: string }>;
   fieldMap: Array<[string, string, string]>;
@@ -322,6 +331,62 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       ["OAuth Client Secret", "Client Secret", "Keep in your secrets system; UniPost stores it encrypted."],
       ["Authorized redirect URI", "Callback URL below", "Must match exactly or Google rejects the callback."],
     ],
+    apiWorkflow: {
+      title: "After the account connects: verify the API flow",
+      intro: "Once your YouTube account is connected in the dashboard, the next job is to prove your API path is wired correctly too. The sequence below starts from the dashboard, then moves into the API calls you will keep using in your own backend.",
+      steps: [
+        {
+          title: "Step 1: create your first API key in the dashboard",
+          body: "Open UniPost in the same workspace where you saved the YouTube credentials, create an API key, and store it immediately. The first key must be created in the dashboard because there is no API key available yet to call `POST /v1/api-keys`.",
+        },
+        {
+          title: "Step 2: list profiles and copy the `profile_id` you will use for branding",
+          body: "Every workspace gets at least one profile. Start by listing profiles so you can grab the `id` for the profile that should own your hosted Connect branding.",
+          snippets: [
+            {
+              lang: "curl",
+              label: "cURL",
+              code: `curl "https://api.unipost.dev/v1/profiles" \\
+  -H "Authorization: Bearer <API_KEY>"`,
+            },
+          ],
+        },
+        {
+          title: "Step 3: patch the profile branding that should show on hosted Connect",
+          body: "With the `profile_id` in hand, update the logo, display name, and primary color. This is the fastest way to confirm your hosted Connect surface is reading your own branding instead of UniPost defaults.",
+          snippets: [
+            {
+              lang: "curl",
+              label: "cURL",
+              code: `curl -X PATCH "https://api.unipost.dev/v1/profiles/<PROFILE_ID>" \\
+  -H "Authorization: Bearer <API_KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "branding_logo_url": "https://yourcdn.com/logo.png",
+    "branding_display_name": "Your Brand",
+    "branding_primary_color": "#10b981"
+  }'`,
+            },
+          ],
+        },
+        {
+          title: "Step 4: confirm the connected YouTube account is visible through the API",
+          body: "Now verify that the same workspace can see the YouTube connection over API. This is the handoff point between 'the dashboard connect worked' and 'my backend can rely on this account now'.",
+          snippets: [
+            {
+              lang: "curl",
+              label: "cURL",
+              code: `curl "https://api.unipost.dev/v1/accounts?platform=youtube" \\
+  -H "Authorization: Bearer <API_KEY>"`,
+            },
+          ],
+        },
+        {
+          title: "Step 5: use that account and profile in your first real API workflow",
+          body: "At this point you have the three values you need most often: `API_KEY`, `profile_id`, and the connected YouTube `account_id`. From here, the natural next move is a small end-to-end publish test so you know the connection is usable, not just visible.",
+        },
+      ],
+    },
     gotchas: [
       ["No channel on the test account", "A Google login can succeed even when the account has no YouTube channel. Use a real channel owner for the first test."],
       ["Wrong Cloud project", "Creating the client in the wrong Google Cloud project is a common source of later operational pain. Pick the production owner early."],

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { DocsPage, DocsTable } from "../../_components/docs-shell";
+import { DocsCodeTabs, DocsPage, DocsTable, renderDocsRichContent } from "../../_components/docs-shell";
 import { WHITE_LABEL_GUIDES } from "./_data";
 
 function CallbackUrlCard({ callback }: { callback: string }) {
@@ -131,6 +131,31 @@ export default function WhiteLabelPlatformGuidePage() {
         Save the credentials first, then start a fresh connection attempt. Troubleshooting an OAuth flow against stale credentials usually creates false leads.
       </p>
 
+      {guide.apiWorkflow ? (
+        <>
+          <h2 id="api-flow">{guide.apiWorkflow.title}</h2>
+          <p className="wlp-note">
+            {guide.apiWorkflow.intro}
+          </p>
+          <div className="wlp-steps">
+            {guide.apiWorkflow.steps.map((step, index) => (
+              <div key={step.title} className="wlp-step-card">
+                <div className="wlp-step-num">{index + 1}</div>
+                <div className="wlp-step-body">
+                  <div className="wlp-step-title">{step.title}</div>
+                  <div className="wlp-step-copy">{renderDocsRichContent(step.body)}</div>
+                  {step.snippets?.length ? (
+                    <div className="wlp-step-code">
+                      <DocsCodeTabs snippets={step.snippets} />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+
       <h2 id="common-blockers">Common blockers</h2>
       <DocsTable
         columns={["Blocker", "What to do about it"]}
@@ -194,6 +219,7 @@ const styles = `
 .wlp-step-num{width:30px;height:30px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border));color:var(--docs-link);font-size:13px;font-weight:700}
 .wlp-step-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:4px}
 .wlp-step-copy{font-size:14px;line-height:1.68;color:var(--docs-text-soft)}
+.wlp-step-code{margin-top:14px}
 .wlp-next{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .wlp-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .wlp-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
