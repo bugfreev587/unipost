@@ -182,7 +182,17 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Advanced",
       items: [
-        { label: "White-label", href: "/docs/white-label" },
+        {
+          label: "White-label",
+          children: [
+            { label: "Overview", href: "/docs/white-label" },
+            { label: "Meta", href: "/docs/white-label/meta" },
+            { label: "LinkedIn", href: "/docs/white-label/linkedin" },
+            { label: "TikTok", href: "/docs/white-label/tiktok" },
+            { label: "YouTube", href: "/docs/white-label/youtube" },
+            { label: "X / Twitter", href: "/docs/white-label/twitter" },
+          ],
+        },
       ],
     },
   ],

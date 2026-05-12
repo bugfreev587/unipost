@@ -125,8 +125,8 @@ export default function WhiteLabelPage() {
         <div className="wl-flow-step">
           <div className="wl-flow-num">2</div>
           <div className="wl-flow-body">
-            <div className="wl-flow-title">Whitelist UniPost's redirect</div>
-            <div className="wl-flow-sub">Add <code>https://api.unipost.dev/v1/oauth/callback/&#123;platform&#125;</code> as an authorized redirect.</div>
+            <div className="wl-flow-title">Whitelist UniPost&apos;s callback URL</div>
+            <div className="wl-flow-sub">Each platform has its own exact callback path. Use the platform-specific white-label guide below and copy the URL verbatim into that platform&apos;s developer console.</div>
           </div>
         </div>
         <div className="wl-flow-step">
@@ -157,31 +157,31 @@ export default function WhiteLabelPage() {
         columns={["Platform", "White-label", "Developer portal", "App review"]}
         rows={[
           [
-            "Meta (Facebook + Instagram + Threads)",
+            <Link key="meta-guide" href="/docs/white-label/meta">Meta (Facebook + Instagram + Threads)</Link>,
             "Yes",
             <a key="meta" href="https://developers.facebook.com" target="_blank" rel="noreferrer noopener">developers.facebook.com</a>,
             "Required for public use",
           ],
           [
-            "LinkedIn",
+            <Link key="linkedin-guide" href="/docs/white-label/linkedin">LinkedIn</Link>,
             "Yes",
             <a key="li" href="https://www.linkedin.com/developers" target="_blank" rel="noreferrer noopener">linkedin.com/developers</a>,
             "Products auto-approve",
           ],
           [
-            "TikTok",
+            <Link key="tiktok-guide" href="/docs/white-label/tiktok">TikTok</Link>,
             "Yes",
             <a key="tt" href="https://developers.tiktok.com" target="_blank" rel="noreferrer noopener">developers.tiktok.com</a>,
             "Audit required",
           ],
           [
-            "YouTube",
+            <Link key="youtube-guide" href="/docs/white-label/youtube">YouTube</Link>,
             "Yes",
             <a key="yt" href="https://console.cloud.google.com" target="_blank" rel="noreferrer noopener">console.cloud.google.com</a>,
             "Scope verification recommended",
           ],
           [
-            "X / Twitter",
+            <Link key="twitter-guide" href="/docs/white-label/twitter">X / Twitter</Link>,
             "Yes",
             <a key="x" href="https://developer.x.com" target="_blank" rel="noreferrer noopener">developer.x.com</a>,
             "Tier-dependent",
@@ -194,6 +194,36 @@ export default function WhiteLabelPage() {
           ],
         ]}
       />
+
+      <h2 id="platform-setup-guides">Platform setup guides</h2>
+      <p className="wl-note">These pages are written from the white-label customer&apos;s point of view: where to create the app, which callback URL to allow-list, what to paste into UniPost, and how to know the setup is actually done.</p>
+      <div className="wl-next">
+        <Link href="/docs/white-label/meta" className="wl-next-card">
+          <div className="wl-next-kicker">Meta</div>
+          <div className="wl-next-title">Instagram, Threads, and Facebook</div>
+          <div className="wl-next-body">One Meta app, multiple UniPost callback paths, and the quickest route to a working branded consent flow.</div>
+        </Link>
+        <Link href="/docs/white-label/linkedin" className="wl-next-card">
+          <div className="wl-next-kicker">LinkedIn</div>
+          <div className="wl-next-title">Fastest enterprise rollout</div>
+          <div className="wl-next-body">A low-friction first white-label setup with exact redirect guidance and first-test criteria.</div>
+        </Link>
+        <Link href="/docs/white-label/tiktok" className="wl-next-card">
+          <div className="wl-next-kicker">TikTok</div>
+          <div className="wl-next-title">Creator onboarding setup</div>
+          <div className="wl-next-body">How to get one creator-account smoke test working before you tackle broader review and rollout.</div>
+        </Link>
+        <Link href="/docs/white-label/youtube" className="wl-next-card">
+          <div className="wl-next-kicker">YouTube</div>
+          <div className="wl-next-title">Google Cloud checklist</div>
+          <div className="wl-next-body">The exact OAuth pieces UniPost needs from Google Cloud, without extra Console wandering.</div>
+        </Link>
+        <Link href="/docs/white-label/twitter" className="wl-next-card">
+          <div className="wl-next-kicker">X / Twitter</div>
+          <div className="wl-next-title">Tier-aware app setup</div>
+          <div className="wl-next-body">Callback wiring, credential storage, and the operational checkpoints that matter before launch.</div>
+        </Link>
+      </div>
 
       <h2 id="capabilities">Capabilities unlocked</h2>
       <DocsTable
@@ -286,9 +316,9 @@ export default function WhiteLabelPage() {
           <div className="wl-next-body">Validation rules for logo, name, and color.</div>
         </Link>
         <Link href="/docs/platforms" className="wl-next-card">
-          <div className="wl-next-kicker">Per-platform</div>
+          <div className="wl-next-kicker">Publishing details</div>
           <div className="wl-next-title">Platform guides</div>
-          <div className="wl-next-body">Content rules, media limits, and connection modes per platform.</div>
+          <div className="wl-next-body">Content rules, media limits, and post behavior after the white-label setup is done.</div>
         </Link>
       </div>
     </DocsPage>
