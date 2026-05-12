@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
-import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, Copy, X } from "lucide-react";
 import { DocsCodeTabs, DocsPage, DocsTable, renderDocsRichContent } from "../../_components/docs-shell";
 import { WHITE_LABEL_GUIDES } from "./_data";
 
@@ -46,7 +46,21 @@ function CallbackUrlCard({ callback }: { callback: string }) {
 export default function WhiteLabelPlatformGuidePage() {
   const params = useParams<{ platform: string }>();
   const guide = WHITE_LABEL_GUIDES[params.platform];
+  const [zoomedImage, setZoomedImage] = useState<{ src: string; alt: string } | null>(null);
   if (!guide) notFound();
+
+  useEffect(() => {
+    if (!zoomedImage) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setZoomedImage(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [zoomedImage]);
 
   return (
     <DocsPage
@@ -106,7 +120,14 @@ export default function WhiteLabelPlatformGuidePage() {
                   <div key={step.title} className="wlp-shot-card">
                     <div className="wlp-shot-title">{step.title}</div>
                     {step.caption ? <div className="wlp-shot-caption">{step.caption}</div> : null}
-                    <img src={step.image} alt={step.title} className="wlp-shot-image" />
+                    <button
+                      type="button"
+                      className="wlp-shot-trigger"
+                      onClick={() => setZoomedImage({ src: step.image, alt: step.title })}
+                      aria-label={`Open enlarged screenshot for ${step.title}`}
+                    >
+                      <img src={step.image} alt={step.title} className="wlp-shot-image" />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -223,6 +244,28 @@ export default function WhiteLabelPlatformGuidePage() {
           </div>
         </Link>
       </div>
+
+      {zoomedImage ? (
+        <div
+          className="wlp-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={zoomedImage.alt}
+          onClick={() => setZoomedImage(null)}
+        >
+          <button
+            type="button"
+            className="wlp-lightbox-close"
+            aria-label="Close enlarged screenshot"
+            onClick={() => setZoomedImage(null)}
+          >
+            <X size={18} />
+          </button>
+          <div className="wlp-lightbox-inner" onClick={(event) => event.stopPropagation()}>
+            <img src={zoomedImage.src} alt={zoomedImage.alt} className="wlp-lightbox-image" />
+          </div>
+        </div>
+      ) : null}
     </DocsPage>
   );
 }
@@ -242,6 +285,7 @@ const styles = `
 .wlp-shot-group-title{font-size:20px;line-height:1.3;letter-spacing:-.02em;color:var(--docs-text);margin:0 0 8px}
 .wlp-shot-list{display:grid;gap:18px;margin:14px 0 8px}
 .wlp-shot-card{padding:16px 16px 18px;border-radius:18px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
+.wlp-shot-trigger{display:block;width:100%;padding:0;border:none;background:transparent;cursor:zoom-in}
 .wlp-shot-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:8px}
 .wlp-shot-caption{font-size:13px;line-height:1.6;color:var(--docs-text-soft);margin-bottom:12px}
 .wlp-shot-caption code{font-family:var(--docs-mono);font-size:12px}
@@ -258,6 +302,11 @@ const styles = `
 .wlp-next-kicker{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint)}
 .wlp-next-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text)}
 .wlp-next-body{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
+.wlp-lightbox{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:28px;background:rgba(5,10,18,.82);backdrop-filter:blur(10px)}
+.wlp-lightbox-inner{max-width:min(1480px,100%);max-height:100%;display:flex;align-items:center;justify-content:center}
+.wlp-lightbox-image{display:block;max-width:100%;max-height:calc(100vh - 56px);border-radius:18px;border:1px solid var(--docs-border-strong);box-shadow:0 30px 80px rgba(0,0,0,.4);background:#111}
+.wlp-lightbox-close{position:absolute;top:18px;right:18px;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:999px;border:1px solid color-mix(in srgb, #fff 14%, transparent);background:rgba(17,22,31,.82);color:#fff;cursor:pointer}
+.wlp-lightbox-close:hover{background:rgba(24,30,42,.92)}
 @media (max-width:960px){
   .wlp-callback-card{flex-direction:column;align-items:stretch}
   .wlp-copy-btn{justify-content:center}
