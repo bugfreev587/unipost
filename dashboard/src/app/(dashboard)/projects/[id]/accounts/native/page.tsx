@@ -17,12 +17,12 @@ import {
 } from "@/lib/api";
 
 const CRED_PLATFORMS = [
-  { id: "instagram", name: "Meta (Instagram / Threads)", idLabel: "App ID", secretLabel: "App Secret", docs: "https://developers.facebook.com" },
-  { id: "linkedin", name: "LinkedIn", idLabel: "Client ID", secretLabel: "Client Secret", docs: "https://developer.linkedin.com" },
-  { id: "pinterest", name: "Pinterest", idLabel: "App ID", secretLabel: "App Secret", docs: "https://developers.pinterest.com" },
-  { id: "tiktok", name: "TikTok", idLabel: "Client Key", secretLabel: "Client Secret", docs: "https://developers.tiktok.com" },
-  { id: "youtube", name: "YouTube", idLabel: "Client ID", secretLabel: "Client Secret", docs: "https://console.cloud.google.com" },
-  { id: "twitter", name: "X / Twitter", idLabel: "Client ID", secretLabel: "Client Secret", docs: "https://developer.x.com" },
+  { id: "instagram", name: "Meta (Instagram / Threads)", idLabel: "App ID", secretLabel: "App Secret", whiteLabelDocs: "/docs/white-label/meta", developerPortal: "https://developers.facebook.com" },
+  { id: "linkedin", name: "LinkedIn", idLabel: "Client ID", secretLabel: "Client Secret", whiteLabelDocs: "/docs/white-label/linkedin", developerPortal: "https://developer.linkedin.com" },
+  { id: "pinterest", name: "Pinterest", idLabel: "App ID", secretLabel: "App Secret", whiteLabelDocs: null, developerPortal: "https://developers.pinterest.com" },
+  { id: "tiktok", name: "TikTok", idLabel: "Client Key", secretLabel: "Client Secret", whiteLabelDocs: "/docs/white-label/tiktok", developerPortal: "https://developers.tiktok.com" },
+  { id: "youtube", name: "YouTube", idLabel: "Client ID", secretLabel: "Client Secret", whiteLabelDocs: "/docs/white-label/youtube", developerPortal: "https://console.cloud.google.com" },
+  { id: "twitter", name: "X / Twitter", idLabel: "Client ID", secretLabel: "Client Secret", whiteLabelDocs: "/docs/white-label/twitter", developerPortal: "https://developer.x.com" },
 ];
 
 export default function NativeModePage() {
@@ -175,8 +175,13 @@ export default function NativeModePage() {
                   )}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <a href={p.docs} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--dmuted)", textDecoration: "none" }}>
-                    Docs <ExternalLink style={{ width: 11, height: 11 }} />
+                  {p.whiteLabelDocs && (
+                    <Link href={p.whiteLabelDocs} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--dmuted)", textDecoration: "none" }}>
+                      Docs
+                    </Link>
+                  )}
+                  <a href={p.developerPortal} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--dmuted)", textDecoration: "none" }}>
+                    Developer Portal <ExternalLink style={{ width: 11, height: 11 }} />
                   </a>
                   {configured && (
                     <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 11 }} onClick={() => setRemoveTarget(p.id)}>Remove</button>
