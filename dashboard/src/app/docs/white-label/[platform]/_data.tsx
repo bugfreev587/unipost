@@ -12,6 +12,7 @@ export type WhiteLabelGuide = {
   bestFor: string;
   appReview: string;
   beforeYouStart: string[];
+  consoleSteps?: Array<{ title: string; body: string }>;
   steps: Array<{ title: string; body: string }>;
   fieldMap: Array<[string, string, string]>;
   gotchas: Array<[string, string]>;
@@ -226,6 +227,36 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       "The YouTube channel owner account you will use for the first smoke test.",
       "A consent-screen brand name and support email you are comfortable shipping.",
       "A plan for how your team will handle Google verification if the project grows beyond internal use.",
+    ],
+    consoleSteps: [
+      {
+        title: "Pick or create the Google Cloud project",
+        body: "From the Google Cloud home page, click `Select a project` in the top bar. If you do not already have the project you want, click `New Project`, create it, and switch into that project before doing anything else.",
+      },
+      {
+        title: "Enable YouTube Data API v3",
+        body: "Open the top-left navigation menu, go to `APIs & Services` → `Library`, search for `YouTube Data API v3`, open that API, and click `Enable`. Do this before creating the OAuth client so the project is clearly configured for YouTube.",
+      },
+      {
+        title: "Open Google Auth Platform and complete the initial app setup",
+        body: "In the same project, go to `Google Auth Platform`. If Google shows a `Get started` flow, complete the minimum setup: app name, support email, and audience. Use the customer-facing brand name you want people to see during consent.",
+      },
+      {
+        title: "Create the OAuth client",
+        body: "Inside `Google Auth Platform`, open `Clients`, click `Create client`, and choose `Web application` as the application type. Name it something obvious such as `UniPost YouTube OAuth` so teammates can find it later.",
+      },
+      {
+        title: "Add UniPost's redirect URI",
+        body: "In the `Authorized redirect URIs` section, add the exact UniPost callback URL shown below: `https://api.unipost.dev/v1/oauth/callback/youtube`. Copy and paste it exactly; a redirect typo will break the flow even if the rest of the setup is correct.",
+      },
+      {
+        title: "Create and copy the credentials immediately",
+        body: "Click `Create`. Google will show the `Client ID` and `Client Secret` in the confirmation dialog. Copy both immediately and store them safely. Google may only show the full secret at creation time.",
+      },
+      {
+        title: "Paste both values into UniPost",
+        body: "Return to UniPost, open the White-label Credentials screen, find the YouTube row, paste the `Client ID` and `Client Secret`, and click `Save`. After that, start a fresh YouTube connection test with a real channel owner account.",
+      },
     ],
     steps: [
       {

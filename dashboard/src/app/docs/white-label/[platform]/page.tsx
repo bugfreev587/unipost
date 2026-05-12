@@ -58,6 +58,26 @@ export default async function WhiteLabelPlatformGuidePage({
         ))}
       </div>
 
+      {guide.consoleSteps ? (
+        <>
+          <h2 id="developer-console-walkthrough">Developer console walkthrough</h2>
+          <p className="wlp-note">
+            Follow this exact click path in the platform console to get the credential pair UniPost needs. This section is intentionally written for the first-time setup path, not for people who already know where everything lives.
+          </p>
+          <div className="wlp-steps">
+            {guide.consoleSteps.map((step, index) => (
+              <div key={step.title} className="wlp-step-card">
+                <div className="wlp-step-num">{index + 1}</div>
+                <div className="wlp-step-body">
+                  <div className="wlp-step-title">{step.title}</div>
+                  <div className="wlp-step-copy">{step.body}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+
       <h2 id="first-working-setup">First working setup</h2>
       <div className="wlp-steps">
         {guide.steps.map((step, index) => (
