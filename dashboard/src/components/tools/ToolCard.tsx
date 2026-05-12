@@ -19,7 +19,7 @@ export function ToolCard({ tool }: { tool: ToolCardData }) {
     <Tag
       href={tool.href}
       className="tl-card"
-      style={!isLive ? { opacity: 0.5, cursor: "default" } : undefined}
+      style={!isLive ? { opacity: 0.72, cursor: "default" } : undefined}
     >
       <span className="tl-card-icon">{tool.icon}</span>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
