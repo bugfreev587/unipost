@@ -31,7 +31,8 @@ WHERE workspace_id = $1;
 -- name: UpdateSubscriptionStripe :exec
 UPDATE subscriptions
 SET stripe_customer_id = $2, stripe_subscription_id = $3, plan_id = $4, status = $5,
-    current_period_start = $6, current_period_end = $7, updated_at = NOW()
+    current_period_start = $6, current_period_end = $7,
+    cancel_at_period_end = $8, updated_at = NOW()
 WHERE workspace_id = $1;
 
 -- name: UpdateSubscriptionStatus :exec

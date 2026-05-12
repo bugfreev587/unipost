@@ -195,7 +195,8 @@ func (q *Queries) UpdateSubscriptionStatus(ctx context.Context, arg UpdateSubscr
 const updateSubscriptionStripe = `-- name: UpdateSubscriptionStripe :exec
 UPDATE subscriptions
 SET stripe_customer_id = $2, stripe_subscription_id = $3, plan_id = $4, status = $5,
-    current_period_start = $6, current_period_end = $7, updated_at = NOW()
+    current_period_start = $6, current_period_end = $7,
+    cancel_at_period_end = $8, updated_at = NOW()
 WHERE workspace_id = $1
 `
 
@@ -207,6 +208,7 @@ type UpdateSubscriptionStripeParams struct {
 	Status               string             `json:"status"`
 	CurrentPeriodStart   pgtype.Timestamptz `json:"current_period_start"`
 	CurrentPeriodEnd     pgtype.Timestamptz `json:"current_period_end"`
+	CancelAtPeriodEnd    pgtype.Bool        `json:"cancel_at_period_end"`
 }
 
 func (q *Queries) UpdateSubscriptionStripe(ctx context.Context, arg UpdateSubscriptionStripeParams) error {
@@ -218,6 +220,7 @@ func (q *Queries) UpdateSubscriptionStripe(ctx context.Context, arg UpdateSubscr
 		arg.Status,
 		arg.CurrentPeriodStart,
 		arg.CurrentPeriodEnd,
+		arg.CancelAtPeriodEnd,
 	)
 	return err
 }

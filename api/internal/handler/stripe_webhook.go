@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stripe/stripe-go/v82"
@@ -112,13 +113,51 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 		return
 	}
 
-	status := string(sub.Status)
-	h.queries.UpdateSubscriptionStatus(r.Context(), db.UpdateSubscriptionStatusParams{
-		StripeSubscriptionID: pgtype.Text{String: sub.ID, Valid: true},
-		Status:               status,
-	})
+	localSub, err := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
+	if err != nil {
+		slog.Error("stripe webhook: subscription row not found", "subscription_id", sub.ID, "error", err)
+		return
+	}
 
-	slog.Info("stripe webhook: subscription updated", "subscription_id", sub.ID, "status", status)
+	if isTrialCancellation(sub) {
+		if err := h.queries.CancelSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true}); err != nil {
+			slog.Error("stripe webhook: failed to stop trialing subscription immediately", "subscription_id", sub.ID, "error", err)
+			return
+		}
+		slog.Info("stripe webhook: trialing subscription canceled immediately", "subscription_id", sub.ID, "workspace_id", localSub.WorkspaceID)
+		return
+	}
+
+	planID := localSub.PlanID
+	if resolvedPlanID, ok := h.resolvePlanIDFromStripeSubscription(r, &sub); ok {
+		planID = resolvedPlanID
+		if h.shouldKeepCurrentPlanForDowngrade(r, localSub, resolvedPlanID, &sub) {
+			planID = localSub.PlanID
+		}
+	}
+
+	status := string(sub.Status)
+	if err := h.queries.UpdateSubscriptionStripe(r.Context(), db.UpdateSubscriptionStripeParams{
+		WorkspaceID:          localSub.WorkspaceID,
+		StripeCustomerID:     stripeCustomerID(sub.Customer),
+		StripeSubscriptionID: pgtype.Text{String: sub.ID, Valid: true},
+		PlanID:               planID,
+		Status:               status,
+		CurrentPeriodStart:   stripeUnixToTimestamptz(subscriptionCurrentPeriodStart(&sub)),
+		CurrentPeriodEnd:     stripeUnixToTimestamptz(subscriptionCurrentPeriodEnd(&sub)),
+		CancelAtPeriodEnd:    pgtype.Bool{Bool: sub.CancelAtPeriodEnd, Valid: true},
+	}); err != nil {
+		slog.Error("stripe webhook: failed to sync subscription state", "subscription_id", sub.ID, "error", err)
+		return
+	}
+
+	slog.Info(
+		"stripe webhook: subscription updated",
+		"subscription_id", sub.ID,
+		"status", status,
+		"plan_id", planID,
+		"cancel_at_period_end", sub.CancelAtPeriodEnd,
+	)
 }
 
 func (h *StripeWebhookHandler) handleSubscriptionDeleted(r *http.Request, event stripe.Event) {
@@ -179,4 +218,88 @@ func (h *StripeWebhookHandler) getSubIDFromInvoice(invoice *stripe.Invoice) stri
 		return invoice.Parent.SubscriptionDetails.Subscription.ID
 	}
 	return ""
+}
+
+func isTrialCancellation(sub stripe.Subscription) bool {
+	return sub.Status == stripe.SubscriptionStatusTrialing && sub.CancelAtPeriodEnd
+}
+
+func stripeUnixToTimestamptz(ts int64) pgtype.Timestamptz {
+	if ts <= 0 {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: time.Unix(ts, 0).UTC(), Valid: true}
+}
+
+func stripeCustomerID(customer *stripe.Customer) pgtype.Text {
+	if customer == nil || customer.ID == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: customer.ID, Valid: true}
+}
+
+func (h *StripeWebhookHandler) resolvePlanIDFromStripeSubscription(r *http.Request, sub *stripe.Subscription) (string, bool) {
+	if sub == nil || sub.Items == nil || len(sub.Items.Data) == 0 || sub.Items.Data[0] == nil || sub.Items.Data[0].Price == nil {
+		return "", false
+	}
+	priceID := sub.Items.Data[0].Price.ID
+	if priceID == "" {
+		return "", false
+	}
+	plan, err := h.queries.GetPlanByStripePriceID(r.Context(), pgtype.Text{String: priceID, Valid: true})
+	if err != nil {
+		slog.Warn("stripe webhook: unknown stripe price id on subscription update", "subscription_id", sub.ID, "price_id", priceID, "error", err)
+		return "", false
+	}
+	return plan.ID, true
+}
+
+func (h *StripeWebhookHandler) shouldKeepCurrentPlanForDowngrade(r *http.Request, current db.Subscription, nextPlanID string, sub *stripe.Subscription) bool {
+	if sub == nil || current.PlanID == "" || current.PlanID == "free" || nextPlanID == "" || nextPlanID == current.PlanID {
+		return false
+	}
+	currentPlan, err := h.queries.GetPlan(r.Context(), current.PlanID)
+	if err != nil {
+		return false
+	}
+	nextPlan, err := h.queries.GetPlan(r.Context(), nextPlanID)
+	if err != nil {
+		return false
+	}
+	if nextPlan.PriceCents >= currentPlan.PriceCents {
+		return false
+	}
+	return shouldKeepCurrentPlanForScheduledDowngrade(
+		currentPlan.PriceCents,
+		nextPlan.PriceCents,
+		current,
+		time.Unix(subscriptionCurrentPeriodStart(sub), 0).UTC(),
+	)
+}
+
+func shouldKeepCurrentPlanForScheduledDowngrade(currentPriceCents, nextPriceCents int32, current db.Subscription, nextPeriodStart time.Time) bool {
+	if current.PlanID == "" || current.PlanID == "free" {
+		return false
+	}
+	if nextPriceCents >= currentPriceCents {
+		return false
+	}
+	if !current.CurrentPeriodEnd.Valid || nextPeriodStart.IsZero() {
+		return false
+	}
+	return nextPeriodStart.Before(current.CurrentPeriodEnd.Time)
+}
+
+func subscriptionCurrentPeriodStart(sub *stripe.Subscription) int64 {
+	if sub == nil || sub.Items == nil || len(sub.Items.Data) == 0 || sub.Items.Data[0] == nil {
+		return 0
+	}
+	return sub.Items.Data[0].CurrentPeriodStart
+}
+
+func subscriptionCurrentPeriodEnd(sub *stripe.Subscription) int64 {
+	if sub == nil || sub.Items == nil || len(sub.Items.Data) == 0 || sub.Items.Data[0] == nil {
+		return 0
+	}
+	return sub.Items.Data[0].CurrentPeriodEnd
 }
