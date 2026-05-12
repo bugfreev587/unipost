@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
@@ -16,11 +17,29 @@ func workspacePlanID(ctx context.Context, queries *db.Queries, workspaceID strin
 	return sub.PlanID
 }
 
-func freePlanSharingBlocked(ctx context.Context, queries *db.Queries, workspaceID, platformName, externalAccountID string) (bool, error) {
+func workspaceIsSuperAdmin(ctx context.Context, queries *db.Queries, checker *auth.SuperAdminChecker, workspaceID string) bool {
+	if checker == nil || workspaceID == "" {
+		return false
+	}
+	workspace, err := queries.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return false
+	}
+	user, err := queries.GetUser(ctx, workspace.UserID)
+	if err != nil {
+		return checker.IsSuperAdmin(ctx, workspace.UserID)
+	}
+	return checker.IsSuperAdminByUser(workspace.UserID, user.Email)
+}
+
+func freePlanSharingBlocked(ctx context.Context, queries *db.Queries, checker *auth.SuperAdminChecker, workspaceID, platformName, externalAccountID string) (bool, error) {
 	if workspaceID == "" || platformName == "" || externalAccountID == "" {
 		return false, nil
 	}
 	if workspacePlanID(ctx, queries, workspaceID) != "free" {
+		return false, nil
+	}
+	if workspaceIsSuperAdmin(ctx, queries, checker, workspaceID) {
 		return false, nil
 	}
 

@@ -290,7 +290,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	profile, profErr := h.queries.GetProfile(r.Context(), oauthState.ProfileID)
 	if profErr == nil {
-		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, profile.WorkspaceID, platformName, result.ExternalAccountID); shareErr != nil {
+		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, h.superAdminChecker, profile.WorkspaceID, platformName, result.ExternalAccountID); shareErr != nil {
 			slog.Warn("oauth callback: free-plan sharing check failed", "platform", platformName, "external_id", result.ExternalAccountID, "workspace_id", profile.WorkspaceID, "err", shareErr)
 		} else if blocked {
 			h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{

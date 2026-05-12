@@ -19,16 +19,17 @@ import (
 )
 
 type SocialAccountHandler struct {
-	queries   *db.Queries
-	encryptor *crypto.AESEncryptor
-	bus       events.EventBus
+	queries           *db.Queries
+	encryptor         *crypto.AESEncryptor
+	bus               events.EventBus
+	superAdminChecker *auth.SuperAdminChecker
 }
 
-func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus) *SocialAccountHandler {
+func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, superAdminChecker *auth.SuperAdminChecker) *SocialAccountHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
-	return &SocialAccountHandler{queries: queries, encryptor: encryptor, bus: bus}
+	return &SocialAccountHandler{queries: queries, encryptor: encryptor, bus: bus, superAdminChecker: superAdminChecker}
 }
 
 type socialAccountResponse struct {
@@ -133,7 +134,7 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, profile.WorkspaceID, body.Platform, result.ExternalAccountID); shareErr != nil {
+	if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, h.superAdminChecker, profile.WorkspaceID, body.Platform, result.ExternalAccountID); shareErr != nil {
 		slog.Warn("connect: free-plan sharing check failed", "platform", body.Platform, "external_id", result.ExternalAccountID, "workspace_id", profile.WorkspaceID, "err", shareErr)
 	} else if blocked {
 		writeError(w, http.StatusConflict, "ACCOUNT_NOT_AVAILABLE_ON_FREE_PLAN", accountNotAvailableOnFreePlanMessage)

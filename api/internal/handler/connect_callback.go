@@ -36,6 +36,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -48,24 +49,26 @@ import (
 // Twitter + LinkedIn connectors) plus the standard db / encryptor /
 // event bus trio.
 type ConnectCallbackHandler struct {
-	queries   *db.Queries
-	encryptor *crypto.AESEncryptor
-	bus       events.EventBus
-	registry  *connect.Registry
-	limiter   *ipLimiter // shared in-memory limiter for callback brute-force protection
-	ilog      *integrationlogs.Logger
+	queries           *db.Queries
+	encryptor         *crypto.AESEncryptor
+	bus               events.EventBus
+	registry          *connect.Registry
+	limiter           *ipLimiter // shared in-memory limiter for callback brute-force protection
+	ilog              *integrationlogs.Logger
+	superAdminChecker *auth.SuperAdminChecker
 }
 
-func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry) *ConnectCallbackHandler {
+func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, superAdminChecker *auth.SuperAdminChecker) *ConnectCallbackHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
 	return &ConnectCallbackHandler{
-		queries:   queries,
-		encryptor: encryptor,
-		bus:       bus,
-		registry:  registry,
-		limiter:   newIPLimiter(60, time.Minute),
+		queries:           queries,
+		encryptor:         encryptor,
+		bus:               bus,
+		registry:          registry,
+		limiter:           newIPLimiter(60, time.Minute),
+		superAdminChecker: superAdminChecker,
 	}
 }
 
@@ -320,7 +323,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 
 	prof, profErr := h.queries.GetProfile(r.Context(), session.ProfileID)
 	if profErr == nil {
-		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, prof.WorkspaceID, platformName, profile.ExternalAccountID); shareErr != nil {
+		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, h.superAdminChecker, prof.WorkspaceID, platformName, profile.ExternalAccountID); shareErr != nil {
 			slog.Warn("connect.callback: free-plan sharing check failed", "platform", platformName, "external_id", profile.ExternalAccountID, "workspace_id", prof.WorkspaceID, "err", shareErr)
 		} else if blocked {
 			renderConnectError(w, http.StatusConflict, accountNotAvailableOnFreePlanMessage)
