@@ -58,14 +58,29 @@ export default async function WhiteLabelPlatformGuidePage({
         ))}
       </div>
 
-      {guide.consoleSteps ? (
+      {guide.screenshotSteps ? (
         <>
-          <h2 id="developer-console-walkthrough">Developer console walkthrough</h2>
+          <h2 id="developer-console-walkthrough">Screenshot walkthrough</h2>
           <p className="wlp-note">
-            Follow this exact click path in the platform console to get the credential pair UniPost needs. This section is intentionally written for the first-time setup path, not for people who already know where everything lives.
+            Follow the screenshots in order. The goal is simple: get the Google `Client ID` and `Client Secret`, then paste them into UniPost.
           </p>
+          <div className="wlp-shot-list">
+            {guide.screenshotSteps.map((step) => (
+              <div key={step.title} className="wlp-shot-card">
+                <div className="wlp-shot-title">{step.title}</div>
+                {step.caption ? <div className="wlp-shot-caption">{step.caption}</div> : null}
+                <img src={step.image} alt={step.title} className="wlp-shot-image" />
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {!guide.screenshotSteps ? (
+        <>
+          <h2 id="first-working-setup">First working setup</h2>
           <div className="wlp-steps">
-            {guide.consoleSteps.map((step, index) => (
+            {guide.steps.map((step, index) => (
               <div key={step.title} className="wlp-step-card">
                 <div className="wlp-step-num">{index + 1}</div>
                 <div className="wlp-step-body">
@@ -77,19 +92,6 @@ export default async function WhiteLabelPlatformGuidePage({
           </div>
         </>
       ) : null}
-
-      <h2 id="first-working-setup">First working setup</h2>
-      <div className="wlp-steps">
-        {guide.steps.map((step, index) => (
-          <div key={step.title} className="wlp-step-card">
-            <div className="wlp-step-num">{index + 1}</div>
-            <div className="wlp-step-body">
-              <div className="wlp-step-title">{step.title}</div>
-              <div className="wlp-step-copy">{step.body}</div>
-            </div>
-          </div>
-        ))}
-      </div>
 
       <h2 id="what-to-paste-into-unipost">What to paste into UniPost</h2>
       <DocsTable
@@ -148,6 +150,12 @@ const styles = `
 .wlp-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:8px 0 14px}
 .wlp-code-list{display:grid;gap:10px;margin:14px 0 8px}
 .wlp-code-list code{display:block;padding:14px 16px;border-radius:14px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);font-family:var(--docs-mono);font-size:13px;line-height:1.6;color:var(--docs-text-soft);overflow:auto}
+.wlp-shot-list{display:grid;gap:18px;margin:14px 0 8px}
+.wlp-shot-card{padding:16px 16px 18px;border-radius:18px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
+.wlp-shot-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:8px}
+.wlp-shot-caption{font-size:13px;line-height:1.6;color:var(--docs-text-soft);margin-bottom:12px}
+.wlp-shot-caption code{font-family:var(--docs-mono);font-size:12px}
+.wlp-shot-image{display:block;width:100%;height:auto;border-radius:14px;border:1px solid var(--docs-border-strong);background:#111}
 .wlp-steps{display:grid;gap:12px;margin:14px 0 8px}
 .wlp-step-card{display:grid;grid-template-columns:38px 1fr;gap:14px;align-items:start;padding:16px 18px;border-radius:16px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
 .wlp-step-num{width:30px;height:30px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border));color:var(--docs-link);font-size:13px;font-weight:700}

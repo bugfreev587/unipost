@@ -12,6 +12,7 @@ export type WhiteLabelGuide = {
   bestFor: string;
   appReview: string;
   beforeYouStart: string[];
+  screenshotSteps?: Array<{ title: string; caption?: string; image: string }>;
   consoleSteps?: Array<{ title: string; body: string }>;
   steps: Array<{ title: string; body: string }>;
   fieldMap: Array<[string, string, string]>;
@@ -227,6 +228,41 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       "The YouTube channel owner account you will use for the first smoke test.",
       "A consent-screen brand name and support email you are comfortable shipping.",
       "A plan for how your team will handle Google verification if the project grows beyond internal use.",
+    ],
+    screenshotSteps: [
+      {
+        title: "Step 1: pick or create a Google Cloud project",
+        image: "/docs/white-label/youtube/step1.png",
+      },
+      {
+        title: "Step 2: search `YouTube Data API v3` and enable it",
+        image: "/docs/white-label/youtube/step2.png",
+      },
+      {
+        title: "Step 3a: open the OAuth consent screen from APIs & Services",
+        image: "/docs/white-label/youtube/step3-1.png",
+      },
+      {
+        title: "Step 3b: finish the initial app setup in Google Auth Platform",
+        image: "/docs/white-label/youtube/step3-2.png",
+      },
+      {
+        title: "Step 4: go to Clients and click `Create client`",
+        image: "/docs/white-label/youtube/step4.png",
+      },
+      {
+        title: "Step 5: choose `Web application` and add UniPost's redirect URI",
+        caption: "Authorized redirect URI: `https://api.unipost.dev/v1/oauth/callback/youtube`",
+        image: "/docs/white-label/youtube/step5.png",
+      },
+      {
+        title: "Step 6: copy the Google `Client ID` and `Client Secret`",
+        image: "/docs/white-label/youtube/step6.png",
+      },
+      {
+        title: "Step 7: paste them into UniPost's YouTube row and click `Save`",
+        image: "/docs/white-label/youtube/step7.png",
+      },
     ],
     consoleSteps: [
       {
