@@ -1,15 +1,44 @@
+"use client";
+
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, useParams } from "next/navigation";
+import { useState } from "react";
+import { Check, Copy } from "lucide-react";
 import { DocsPage, DocsTable } from "../../_components/docs-shell";
 import { WHITE_LABEL_GUIDES } from "./_data";
 
-export default async function WhiteLabelPlatformGuidePage({
-  params,
-}: {
-  params: Promise<{ platform: string }>;
-}) {
-  const { platform } = await params;
-  const guide = WHITE_LABEL_GUIDES[platform];
+function CallbackUrlCard({ callback }: { callback: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(callback);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="wlp-callback-card">
+      <code>{callback}</code>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className={`wlp-copy-btn${copied ? " copied" : ""}`}
+        aria-label="Copy callback URL"
+      >
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+export default function WhiteLabelPlatformGuidePage() {
+  const params = useParams<{ platform: string }>();
+  const guide = WHITE_LABEL_GUIDES[params.platform];
   if (!guide) notFound();
 
   return (
@@ -54,7 +83,7 @@ export default async function WhiteLabelPlatformGuidePage({
       </p>
       <div className="wlp-code-list">
         {guide.callbacks.map((callback) => (
-          <code key={callback}>{callback}</code>
+          <CallbackUrlCard key={callback} callback={callback} />
         ))}
       </div>
 
@@ -149,7 +178,11 @@ const styles = `
 .wlp-top-callout a{color:var(--docs-link)}
 .wlp-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:8px 0 14px}
 .wlp-code-list{display:grid;gap:10px;margin:14px 0 8px}
-.wlp-code-list code{display:block;padding:14px 16px;border-radius:14px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated);font-family:var(--docs-mono);font-size:13px;line-height:1.6;color:var(--docs-text-soft);overflow:auto}
+.wlp-callback-card{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border-radius:14px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
+.wlp-callback-card code{display:block;min-width:0;overflow:auto;font-family:var(--docs-mono);font-size:13px;line-height:1.6;color:var(--docs-text-soft)}
+.wlp-copy-btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--docs-border);background:var(--docs-bg-muted);color:var(--docs-text-soft);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;transition:border-color .15s ease,background .15s ease,color .15s ease}
+.wlp-copy-btn:hover{border-color:color-mix(in srgb, var(--docs-link) 28%, var(--docs-border));color:var(--docs-text)}
+.wlp-copy-btn.copied{color:var(--docs-link);border-color:color-mix(in srgb, var(--docs-link) 36%, var(--docs-border));background:color-mix(in srgb, var(--docs-link) 8%, var(--docs-bg-muted))}
 .wlp-shot-list{display:grid;gap:18px;margin:14px 0 8px}
 .wlp-shot-card{padding:16px 16px 18px;border-radius:18px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
 .wlp-shot-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:8px}
@@ -168,6 +201,8 @@ const styles = `
 .wlp-next-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text)}
 .wlp-next-body{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
 @media (max-width:960px){
+  .wlp-callback-card{flex-direction:column;align-items:stretch}
+  .wlp-copy-btn{justify-content:center}
   .wlp-next{grid-template-columns:1fr}
 }
 `;
