@@ -143,7 +143,7 @@ const COMPARE_ROWS: CompareRow[] = [
 const FAQS = [
   { q: "Why Free, API, Basic, Growth, Team?", a: "Each plan corresponds to a stage of how you use UniPost — evaluating the API, running it as your only integration point, using the dashboard as your operating console, embedding it into your product, or running it as a multi-operator team. Pick by which of those describes you, not by raw post volume." },
   { q: "What counts as a post?", a: "One successful publish to a single connected social account. Posting the same content to 3 platforms counts as 3 posts. Failed or cancelled posts are never counted." },
-  { q: "Is there a free trial for paid plans?", a: "The Free plan is a permanent free tier — no card required, no time limit. Paid plans (Basic and up) include a 14-day free trial when you upgrade." },
+  { q: "Is there a free trial for paid plans?", a: "The Free plan is a permanent free tier — no card required, no time limit. All paid plans, including API, include a 14-day free trial when you upgrade." },
   { q: "Why is X (Twitter) not on the Free plan?", a: "The X API has the highest per-call cost of any platform we support, and the Free plan's 100-post quota is too small to absorb that cost without distorting our pricing for everyone else. Free workspaces can read existing X data; new X publishes and connections require any paid plan starting at $10/mo." },
   { q: "Why are there per-account daily limits?", a: "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. Limits reset at 00:00 UTC. Failed posts never count toward the cap." },
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
@@ -219,7 +219,7 @@ export default function PricingPage() {
         <div className="pr-cards">
           {TIERS.map((t) => {
             const isCurrent = currentPlan === t.id;
-            const showTrial = t.price !== null && t.price > 10 && trialEligible && !isCurrent;
+            const showTrial = t.id !== "free" && t.price !== null && trialEligible && !isCurrent;
             const buttonHref = isCurrent
               ? (profileId ? `${APP_URL}/projects/${profileId}/billing` : APP_URL)
               : profileId

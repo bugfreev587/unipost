@@ -295,7 +295,7 @@ function BillingSettingsContent() {
           <div className="dt-body" style={{ fontWeight: 600 }}>Upgrade Plan</div>
           {billing?.trial_eligible && billing?.plan === "free" && (
             <span className="dbadge dbadge-green" style={{ fontSize: 10 }}>
-              14-day free trial
+              14-day trial on any paid plan
             </span>
           )}
         </div>
