@@ -750,15 +750,19 @@ func (q *Queries) ListSocialAccountsByWorkspaceFiltered(ctx context.Context, arg
 	return items, nil
 }
 
-const markSocialAccountReconnectRequired = `-- name: MarkSocialAccountReconnectRequired :exec
+const markSocialAccountReconnectRequired = `-- name: MarkSocialAccountReconnectRequired :execrows
 UPDATE social_accounts
 SET status = 'reconnect_required'
 WHERE id = $1
+  AND status = 'active'
 `
 
-func (q *Queries) MarkSocialAccountReconnectRequired(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, markSocialAccountReconnectRequired, id)
-	return err
+func (q *Queries) MarkSocialAccountReconnectRequired(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, markSocialAccountReconnectRequired, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const reactivateSocialAccount = `-- name: ReactivateSocialAccount :one

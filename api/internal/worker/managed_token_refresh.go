@@ -224,8 +224,17 @@ func (w *ManagedTokenRefreshWorker) refreshOne(ctx context.Context, acc db.Socia
 }
 
 func (w *ManagedTokenRefreshWorker) markReconnectRequired(ctx context.Context, acc db.SocialAccount, reason string) {
-	if err := w.queries.MarkSocialAccountReconnectRequired(ctx, acc.ID); err != nil {
+	rowsAffected, err := w.queries.MarkSocialAccountReconnectRequired(ctx, acc.ID)
+	if err != nil {
 		slog.Error("managed token refresh: mark reconnect_required failed", "account_id", acc.ID, "err", err)
+		return
+	}
+	if rowsAffected == 0 {
+		slog.Info("managed token refresh: reconnect already required",
+			"account_id", acc.ID,
+			"platform", acc.Platform,
+			"reason", reason,
+		)
 		return
 	}
 

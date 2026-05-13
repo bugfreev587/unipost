@@ -161,10 +161,11 @@ SET access_token      = $2,
 WHERE id = $1
 RETURNING *;
 
--- name: MarkSocialAccountReconnectRequired :exec
+-- name: MarkSocialAccountReconnectRequired :execrows
 UPDATE social_accounts
 SET status = 'reconnect_required'
-WHERE id = $1;
+WHERE id = $1
+  AND status = 'active';
 
 -- name: UpdateManagedTokenRefresh :exec
 UPDATE social_accounts
