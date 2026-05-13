@@ -35,293 +35,187 @@ UniPost client = new UniPost();`,
   },
 ];
 
-const LIST_SNIPPETS = [
+const CREATE_PROFILE_SNIPPETS = [
   {
     label: "Node.js",
-    code: `import { UniPost } from "@unipost/sdk";
+    code: `const profile = await client.profiles.create({
+  name: "API Quickstart",
+});
 
-const client = new UniPost();
-
-const { data: accounts } = await client.accounts.list();
-const accountId = accounts[0]?.id;`,
+console.log(profile.id);`,
   },
   {
     label: "Python",
-    code: `from unipost import UniPost
+    code: `profile = client.profiles.create(
+  name="API Quickstart",
+)
 
-client = UniPost()
-
-accounts = client.accounts.list()
-account_id = accounts["data"][0]["id"]`,
+print(profile["data"]["id"])`,
   },
   {
     label: "Go",
-    code: `package main
+    code: `profile, err := client.Profiles.Create(ctx, &unipost.CreateProfileParams{
+  Name: "API Quickstart",
+})
+if err != nil {
+  log.Fatal(err)
+}
 
-import (
-  "context"
-  "log"
-
-  "github.com/unipost-dev/sdk-go/unipost"
-)
-
-func main() {
-  client := unipost.NewClient()
-
-  accounts, err := client.Accounts.List(context.Background(), nil)
-  if err != nil {
-    log.Fatal(err)
-  }
-
-  accountID := accounts[0].ID
-  _ = accountID
-}`,
+fmt.Println(profile.ID)`,
   },
   {
     label: "Java",
-    code: `import dev.unipost.UniPost;
+    code: `var profile = client.profiles().create(Map.of(
+    "name", "API Quickstart"
+));
 
-UniPost client = new UniPost();
+System.out.println(profile.get("id").asText());`,
+  },
+];
 
-var accounts = client.accounts().list().getData();
-String accountId = accounts.get(0).get("id").asText();`,
+const CONNECT_AUTH_SNIPPETS = [
+  {
+    label: "cURL",
+    code: `curl "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
+  {
+    label: "Node.js",
+    code: `const res = await fetch(
+  "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done",
+  {
+    headers: {
+      Authorization: \`Bearer \${process.env.UNIPOST_API_KEY}\`,
+    },
+  }
+);
+
+const body = await res.json();
+console.log(body.data.auth_url);`,
+  },
+  {
+    label: "Python",
+    code: `import os
+import requests
+
+res = requests.get(
+  "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin",
+  params={"redirect_url": "https://app.acme.com/integrations/done"},
+  headers={"Authorization": f"Bearer {os.environ['UNIPOST_API_KEY']}"},
+)
+
+print(res.json()["data"]["auth_url"])`,
+  },
+  {
+    label: "Go",
+    code: `req, _ := http.NewRequest(
+  http.MethodGet,
+  "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done",
+  nil,
+)
+req.Header.Set("Authorization", "Bearer "+os.Getenv("UNIPOST_API_KEY"))
+
+resp, err := http.DefaultClient.Do(req)
+if err != nil {
+  log.Fatal(err)
+}
+defer resp.Body.Close()
+
+var out struct {
+  Data struct {
+    AuthURL string \`json:"auth_url"\`
+  } \`json:"data"\`
+}
+if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+  log.Fatal(err)
+}
+
+fmt.Println(out.Data.AuthURL)`,
+  },
+  {
+    label: "Java",
+    code: `var request = java.net.http.HttpRequest.newBuilder()
+    .uri(java.net.URI.create("https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done"))
+    .header("Authorization", "Bearer " + System.getenv("UNIPOST_API_KEY"))
+    .GET()
+    .build();
+
+var response = java.net.http.HttpClient.newHttpClient()
+    .send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+System.out.println(response.body());`,
+  },
+];
+
+const LIST_SNIPPETS = [
+  {
+    label: "Node.js",
+    code: `const { data: accounts } = await client.accounts.list({
+  profileId: "pr_brand_us",
+});
+
+const accountId = accounts[0]?.id;
+console.log(accountId);`,
+  },
+  {
+    label: "Python",
+    code: `accounts = client.accounts.list(
+  profile_id="pr_brand_us"
+)
+
+account_id = accounts["data"][0]["id"]
+print(account_id)`,
+  },
+  {
+    label: "Go",
+    code: `accounts, err := client.Accounts.List(context.Background(), &unipost.ListAccountsParams{
+  ProfileID: "pr_brand_us",
+})
+if err != nil {
+  log.Fatal(err)
+}
+
+fmt.Println(accounts[0].ID)`,
+  },
+  {
+    label: "Java",
+    code: `var accounts = client.accounts().list(Map.of(
+    "profile_id", "pr_brand_us"
+)).getData();
+
+System.out.println(accounts.get(0).get("id").asText());`,
   },
 ];
 
 const CREATE_POST_SNIPPETS = [
   {
-    label: "Node.js",
-    code: `import { UniPost } from "@unipost/sdk";
-
-const client = new UniPost();
-
-const post = await client.posts.create({
+    label: "Immediate",
+    code: `const post = await client.posts.create({
   platformPosts: [
     {
-      accountId: "sa_twitter_123",
+      accountId: "sa_linkedin_123",
       caption: "Shipping on every platform with one API.",
     },
     {
-      accountId: "sa_linkedin_456",
-      caption: "We shipped a new release today. Here is what changed.",
+      accountId: "sa_twitter_456",
+      caption: "Same launch, different copy for X.",
     },
   ],
-  idempotencyKey: "launch-2026-04-13-001",
-});
-
-console.log(post.id);`,
-  },
-  {
-    label: "Python",
-    code: `from unipost import UniPost
-
-client = UniPost()
-
-post = client.posts.create(
-  platform_posts=[
-    {
-      "account_id": "sa_twitter_123",
-      "caption": "Shipping on every platform with one API.",
-    },
-    {
-      "account_id": "sa_linkedin_456",
-      "caption": "We shipped a new release today. Here is what changed.",
-    },
-  ],
-  idempotency_key="launch-2026-04-13-001",
-)`,
-  },
-  {
-    label: "Go",
-    code: `package main
-
-import (
-  "context"
-  "log"
-
-  "github.com/unipost-dev/sdk-go/unipost"
-)
-
-func main() {
-  client := unipost.NewClient()
-
-  post, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
-    PlatformPosts: []unipost.PlatformPost{
-      {
-        AccountID: "sa_twitter_123",
-        Caption:   "Shipping on every platform with one API.",
-      },
-      {
-        AccountID: "sa_linkedin_456",
-        Caption:   "We shipped a new release today. Here is what changed.",
-      },
-    },
-    IdempotencyKey: "launch-2026-04-13-001",
-  })
-  if err != nil {
-    log.Fatal(err)
-  }
-
-  _ = post.ID
-}`,
-  },
-  {
-    label: "Java",
-    code: `import dev.unipost.UniPost;
-
-import java.util.List;
-import java.util.Map;
-
-UniPost client = new UniPost();
-
-var post = client.posts().create(Map.of(
-    "platform_posts", List.of(
-        Map.of(
-            "account_id", "sa_twitter_123",
-            "caption", "Shipping on every platform with one API."
-        ),
-        Map.of(
-            "account_id", "sa_linkedin_456",
-            "caption", "We shipped a new release today. Here is what changed."
-        )
-    ),
-    "idempotency_key", "launch-2026-04-13-001"
-));
-
-System.out.println(post.get("id").asText());`,
-  },
-];
-
-const VALIDATE_SNIPPETS = [
-  {
-    label: "Node.js",
-    code: `import { UniPost } from "@unipost/sdk";
-
-const client = new UniPost();
-
-const result = await client.posts.validate({
-  platformPosts: [
-    {
-      accountId: "sa_twitter_123",
-      caption: draftForX,
-    },
-  ],
-});
-
-console.log(result);`,
-  },
-  {
-    label: "Python",
-    code: `from unipost import UniPost
-
-client = UniPost()
-
-result = client.posts.validate(
-  platform_posts=[
-    {
-      "account_id": "sa_twitter_123",
-      "caption": draft_for_x,
-    }
-  ]
-)`,
-  },
-  {
-    label: "Go",
-    code: `package main
-
-import (
-  "context"
-  "log"
-
-  "github.com/unipost-dev/sdk-go/unipost"
-)
-
-func main() {
-  client := unipost.NewClient()
-
-  validation, err := client.Posts.Validate(context.Background(), &unipost.ValidatePostParams{
-    PlatformPosts: []unipost.PlatformPost{
-      {
-        AccountID: "sa_twitter_123",
-        Caption:   draftForX,
-      },
-    },
-  })
-  if err != nil {
-    log.Fatal(err)
-  }
-
-  _ = validation
-}`,
-  },
-  {
-    label: "Java",
-    code: `import dev.unipost.UniPost;
-
-import java.util.List;
-import java.util.Map;
-
-UniPost client = new UniPost();
-
-var validation = client.posts().validate(Map.of(
-    "platform_posts", List.of(
-        Map.of(
-            "account_id", "sa_twitter_123",
-            "caption", draftForX
-        )
-    )
-));`,
-  },
-];
-
-const DRAFT_SNIPPETS = [
-  {
-    label: "Node.js",
-    code: `const draft = await client.posts.create({
-  platformPosts: [
-    {
-      accountId: "sa_bluesky_123",
-      caption: "Review this before publish",
-    },
-  ],
-  status: "draft",
+  idempotencyKey: "launch-2026-05-12-001",
 });`,
   },
   {
-    label: "Python",
-    code: `draft = client.posts.create(
-  platform_posts=[
+    label: "Scheduled",
+    code: `const post = await client.posts.create({
+  platformPosts: [
     {
-      "account_id": "sa_bluesky_123",
-      "caption": "Review this before publish",
+      accountId: "sa_linkedin_123",
+      caption: "This will publish later today.",
     },
   ],
-  status="draft",
-)`,
-  },
-  {
-    label: "Go",
-    code: `draft, err := client.Posts.Create(ctx, &unipost.CreatePostParams{
-  PlatformPosts: []unipost.PlatformPost{
-    {
-      AccountID: "sa_bluesky_123",
-      Caption:   "Review this before publish",
-    },
-  },
-  Status: "draft",
-})`,
-  },
-  {
-    label: "Java",
-    code: `var draft = client.posts().create(Map.of(
-    "platform_posts", List.of(
-        Map.of(
-            "account_id", "sa_bluesky_123",
-            "caption", "Review this before publish"
-        )
-    ),
-    "status", "draft"
-));`,
+  publishAt: "2026-05-12T18:30:00Z",
+  idempotencyKey: "launch-2026-05-12-002",
+});`,
   },
 ];
 
@@ -331,171 +225,159 @@ export default function QuickstartPage() {
       className="docs-page-wide"
       eyebrow="API Quickstart"
       title="API Quickstart"
-      lead="Create an API key, connect an account, and publish your first post — in about five minutes."
+      lead="Create an API key, create a profile, connect your first social account, and publish your first post."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
       <DocsQuickstartCard tutorialId="post_with_api" fallbackHref="/docs/dashboard-quickstart" />
 
       <div className="qs-badges">
-        <span className="qs-badge">~5 min</span>
+        <span className="qs-badge">API-first</span>
+        <span className="qs-badge">Self-owned accounts</span>
         <span className="qs-badge">Node · Python · Go · Java</span>
-        <span className="qs-badge">REST · SDK · MCP</span>
         <span className="qs-badge">Free tier</span>
       </div>
 
-      <h2 id="at-a-glance">At a glance</h2>
-      <DocsTable
-        columns={["Question", "Answer"]}
-        rows={[
-          ["Time to first post", "~5 minutes"],
-          ["You'll need", "A UniPost account and one connected social account"],
-          ["Languages", "Node.js, Python, Go, or Java (or call the REST API directly)"],
-          ["What you'll have at the end", "A live post and an account ID from Dashboard → Accounts → Quickstart"],
-          ["Cost", "Free — the free tier covers the quickstart"],
-        ]}
-      />
+      <h2 id="prerequisite">Prerequisite</h2>
+      <p className="qs-note">Create an API key in the dashboard and store it in <code>UNIPOST_API_KEY</code>. The SDKs read it automatically.</p>
+      <ul className="docs-checklist">
+        <li>Open Dashboard → API Keys</li>
+        <li>Click <strong>Create API Key</strong></li>
+        <li>Save it as <code>UNIPOST_API_KEY</code> in your environment</li>
+      </ul>
 
       <h2 id="steps">The four steps</h2>
       <div className="qs-flow">
         <a href="#install" className="qs-flow-step">
           <div className="qs-flow-num">1</div>
           <div className="qs-flow-body">
-            <div className="qs-flow-title">Install the SDK</div>
-            <div className="qs-flow-sub">One command in your language of choice.</div>
-          </div>
-        </a>
-        <a href="#authentication" className="qs-flow-step">
-          <div className="qs-flow-num">2</div>
-          <div className="qs-flow-body">
-            <div className="qs-flow-title">Get your API key</div>
-            <div className="qs-flow-sub">Create one in the dashboard, store as <code>UNIPOST_API_KEY</code>.</div>
+            <div className="qs-flow-title">Create a profile</div>
+            <div className="qs-flow-sub">Call <code>POST /v1/profiles</code> and keep the returned <code>profile_id</code>.</div>
           </div>
         </a>
         <a href="#connect-account" className="qs-flow-step">
-          <div className="qs-flow-num">3</div>
+          <div className="qs-flow-num">2</div>
           <div className="qs-flow-body">
             <div className="qs-flow-title">Connect an account</div>
-            <div className="qs-flow-sub">Use the same Quickstart flow as the dashboard UI.</div>
+            <div className="qs-flow-sub">Call the OAuth connect endpoint and open the returned <code>auth_url</code> in a browser.</div>
+          </div>
+        </a>
+        <a href="#get-account-id" className="qs-flow-step">
+          <div className="qs-flow-num">3</div>
+          <div className="qs-flow-body">
+            <div className="qs-flow-title">List connected accounts</div>
+            <div className="qs-flow-sub">Fetch your new UniPost <code>account_id</code>.</div>
           </div>
         </a>
         <a href="#first-post" className="qs-flow-step">
           <div className="qs-flow-num">4</div>
           <div className="qs-flow-body">
-            <div className="qs-flow-title">Publish your first post</div>
-            <div className="qs-flow-sub">One <code>POST /v1/posts</code> call.</div>
+            <div className="qs-flow-title">Publish or schedule</div>
+            <div className="qs-flow-sub">Send one post immediately or schedule one for later.</div>
           </div>
         </a>
       </div>
 
-      <h2 id="key-concepts">Key concepts</h2>
+      <h2 id="at-a-glance">At a glance</h2>
       <DocsTable
-        columns={["Object", "What it means"]}
+        columns={["Question", "Answer"]}
         rows={[
-          ["Profiles", "Containers for accounts and branding. Every workspace starts with one Default profile."],
-          ["Accounts", "Connected social accounts you can publish to"],
-          ["Posts", "One publish request, with one or more platform payloads"],
-          ["Webhooks", "Async status updates for publish and account events"],
+          ["Account owner", "You or your team — not your customers"],
+          ["OAuth style", "Self-owned account connection via auth_url"],
+          ["What you get back", "A profile_id, then an auth_url, then one or more account IDs"],
+          ["Best for", "Prototypes, internal tools, your own brand accounts"],
+          ["Need customer onboarding?", <Link key="quickstart-wl" href="/docs/white-label">Use White-label / Connect Sessions instead</Link>],
         ]}
       />
 
-      <h2 id="install">1. Install the SDK</h2>
+      <h2 id="install">Install and initialize</h2>
       <DocsCodeTabs snippets={INSTALL_SNIPPETS} />
-
-      <h2 id="authentication">2. Get your API key</h2>
-      <p className="qs-note">Every request uses a Bearer API key. Each SDK reads <code>UNIPOST_API_KEY</code> by default.</p>
-      <ul className="docs-checklist">
-        <li>Open Dashboard → API Keys</li>
-        <li>Click <strong>Create API Key</strong></li>
-        <li>Copy the key and store it as <code>UNIPOST_API_KEY</code> in your environment</li>
-      </ul>
       <h3 id="init-client">Initialize the client</h3>
       <DocsCodeTabs snippets={INIT_SNIPPETS} />
 
-      <h2 id="connect-account">3. Connect an account</h2>
+      <h2 id="create-profile">1. Create a profile</h2>
       <p className="qs-note">
-        API Quickstart mirrors Dashboard Quickstart. Connect one of your own accounts in the dashboard first, then come back here and use the API against that same account.
+        Profiles are the container for connected accounts. Every new API-first integration should create one deliberately instead of relying on the dashboard default.
       </p>
-      <DocsTable
-        columns={["Account owner", "How to connect", "Best for"]}
-        rows={[
-          ["Your team", "Dashboard → Accounts → Connect", "Prototypes, internal tools, your own brand accounts"],
-          ["Your customer", <Link key="wl-guide" href="/docs/white-label">White-label → Connect Sessions</Link>, "SaaS products onboarding customer accounts"],
-        ]}
-      />
+      <DocsCodeTabs snippets={CREATE_PROFILE_SNIPPETS} />
+      <p className="qs-note">
+        Full schema: <ApiInlineLink endpoint="POST /v1/profiles" />.
+      </p>
+
+      <h2 id="connect-account">2. Connect an account</h2>
+      <p className="qs-note">
+        For OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, and Pinterest, call the profile-scoped connect endpoint. It returns an <code>auth_url</code>. Open that URL in a browser and complete OAuth there.
+      </p>
+      <DocsCodeTabs snippets={CONNECT_AUTH_SNIPPETS} />
       <ul className="docs-checklist">
-        <li>Open Dashboard → Accounts</li>
-        <li>Click <strong>Connect Account</strong> in Quickstart Mode</li>
-        <li>Authorize one account you control</li>
-        <li>Return here and list accounts to fetch its UniPost <code>account_id</code></li>
+        <li>Call <code>GET /v1/profiles/{"{profile_id}"}/oauth/connect/{"{platform}"}</code></li>
+        <li>Read <code>data.auth_url</code> from the response</li>
+        <li>Open it in a browser</li>
+        <li>Complete OAuth and let UniPost redirect back to your <code>redirect_url</code></li>
       </ul>
       <p className="qs-note">
-        Need to onboard customer-owned accounts instead of your own? That is a different flow. Use{" "}
-        <ApiInlineLink endpoint="POST /v1/connect/sessions" /> from the{" "}
-        <Link href="/docs/white-label">White-label guide</Link>, where <code>external_user_id</code> and <code>return_url</code> come from your own product.
+        <code>redirect_url</code> is your own app page for “OAuth finished”. It is not required for UniPost to connect the account, but it gives the user a clean place to land afterward. Endpoint reference:{" "}
+        <ApiInlineLink endpoint="GET /v1/profiles/{profile_id}/oauth/connect/{platform}" />.
+      </p>
+      <p className="qs-note">
+        Bluesky is the exception. It uses an app password, not OAuth, so connect it through <ApiInlineLink endpoint="POST /v1/accounts/connect" /> instead.
       </p>
 
-      <h3 id="supported-platforms">Supported platforms</h3>
-      <DocsTable
-        columns={["Platform", "API value", "Guide"]}
-        rows={[
-          ["X / Twitter", "`twitter`", <Link key="gd-twitter" href="/docs/platforms/twitter">Twitter/X</Link>],
-          ["LinkedIn", "`linkedin`", <Link key="gd-linkedin" href="/docs/platforms/linkedin">LinkedIn</Link>],
-          ["Instagram", "`instagram`", <Link key="gd-instagram" href="/docs/platforms/instagram">Instagram</Link>],
-          ["Threads", "`threads`", <Link key="gd-threads" href="/docs/platforms/threads">Threads</Link>],
-          ["TikTok", "`tiktok`", <Link key="gd-tiktok" href="/docs/platforms/tiktok">TikTok</Link>],
-          ["YouTube", "`youtube`", <Link key="gd-youtube" href="/docs/platforms/youtube">YouTube</Link>],
-          ["Bluesky", "`bluesky`", <Link key="gd-bluesky" href="/docs/platforms/bluesky">Bluesky</Link>],
-          ["Facebook (Beta)", "`facebook`", <Link key="gd-facebook" href="/docs/platforms/facebook">Facebook</Link>],
-        ]}
-      />
-
-      <h2 id="get-account-id">Get your account ID</h2>
-      <p className="qs-note">List accounts and grab the UniPost ID for the account you just connected in Dashboard Quickstart.</p>
+      <h2 id="get-account-id">3. Get your connected account</h2>
+      <p className="qs-note">List accounts for the profile you created and keep the returned UniPost <code>account_id</code>.</p>
       <DocsCodeTabs snippets={LIST_SNIPPETS} />
+      <p className="qs-note">
+        Reference: <ApiInlineLink endpoint="GET /v1/accounts" />.
+      </p>
 
-      <h2 id="first-post">4. Publish your first post</h2>
-      <p className="qs-note">Use <code>platform_posts[]</code> for new integrations. Add an <code>idempotency_key</code> from day one.</p>
+      <h2 id="first-post">4. Schedule your first post</h2>
+      <p className="qs-note">
+        You can publish immediately or schedule for later. You can also target one platform or multiple platforms in the same request.
+      </p>
       <DocsCodeTabs snippets={CREATE_POST_SNIPPETS} />
-
-      <h2 id="next-level">Level up</h2>
       <DocsTable
-        columns={["Capability", "What it adds", "How"]}
+        columns={["Pattern", "How it works"]}
         rows={[
-          ["Validate before publish", "Catch caption, media, and thread shape issues before they hit the platform", <ApiInlineLink key="ap-validate" endpoint="POST /v1/posts/validate" />],
-          ["Drafts + review", "Create a post in `draft` status for human approval before it goes live", "`status: \"draft\"` on create"],
-          ["Cross-post with different copy", "Send different captions per platform in one request", "Multiple entries in `platform_posts[]`"],
-          ["Idempotency", "Retries inside 24h return the original response instead of publishing twice", "`idempotency_key` on every create"],
-          ["Webhooks", "Get async publish + account events pushed to your server", <Link key="nx-wh" href="/docs/api/webhooks">Webhooks</Link>],
+          ["Immediate, single-platform", "One entry in platform_posts and no publishAt"],
+          ["Immediate, multi-platform", "Multiple entries in platform_posts with different accountId / caption values"],
+          ["Scheduled, single-platform", "Set publishAt and include one account"],
+          ["Scheduled, multi-platform", "Set publishAt and include multiple accounts in platform_posts"],
         ]}
       />
+      <p className="qs-note">
+        Reference: <ApiInlineLink endpoint="POST /v1/posts/create" />.
+      </p>
 
-      <h3 id="validate-example">Validate example</h3>
-      <DocsCodeTabs snippets={VALIDATE_SNIPPETS} />
-
-      <h3 id="draft-example">Draft example</h3>
-      <DocsCodeTabs snippets={DRAFT_SNIPPETS} />
+      <h2 id="what-this-is-not">What this quickstart is not</h2>
+      <DocsTable
+        columns={["Flow", "Use this page?", "Where to go instead"]}
+        rows={[
+          ["Connect your own accounts with OAuth auth_url", "Yes", "This page"],
+          ["Connect customer-owned accounts", "No", <Link key="wl" href="/docs/white-label">White-label / Connect Sessions</Link>],
+          ["Connect Bluesky with app password", "Partially", <Link key="acct-connect" href="/docs/api/accounts/connect">POST /v1/accounts/connect</Link>],
+        ]}
+      />
 
       <h2 id="next-steps">Next steps</h2>
       <div className="qs-next">
-        <Link href="/docs/platforms" className="qs-next-card">
-          <div className="qs-next-kicker">Per platform</div>
-          <div className="qs-next-title">Platform guides</div>
-          <div className="qs-next-body">Caption limits, media rules, analytics, and inbox support by platform.</div>
+        <Link href="/docs/api/profiles/create" className="qs-next-card">
+          <div className="qs-next-kicker">API reference</div>
+          <div className="qs-next-title">Create profile</div>
+          <div className="qs-next-body">Full request and response schema for <code>POST /v1/profiles</code>.</div>
+        </Link>
+        <Link href="/docs/api/accounts/connect" className="qs-next-card">
+          <div className="qs-next-kicker">Bluesky / direct credentials</div>
+          <div className="qs-next-title">Connect account</div>
+          <div className="qs-next-body">Use this direct-connect endpoint for Bluesky and other non-OAuth credential flows.</div>
         </Link>
         <Link href="/docs/white-label" className="qs-next-card">
           <div className="qs-next-kicker">For customer accounts</div>
           <div className="qs-next-title">White-label</div>
-          <div className="qs-next-body">Connect Sessions, external_user_id mapping, and branded onboarding on your own OAuth apps.</div>
+          <div className="qs-next-body">Customer-owned onboarding with Connect Sessions, external_user_id, and branded OAuth.</div>
         </Link>
         <Link href="/docs/api/posts/create" className="qs-next-card">
-          <div className="qs-next-kicker">API reference</div>
+          <div className="qs-next-kicker">Publish</div>
           <div className="qs-next-title">Create post</div>
-          <div className="qs-next-body">Full request / response schema for the publish endpoint.</div>
-        </Link>
-        <Link href="/docs/mcp" className="qs-next-card">
-          <div className="qs-next-kicker">For agents</div>
-          <div className="qs-next-title">MCP</div>
-          <div className="qs-next-body">Hosted MCP server so LLMs can publish through UniPost.</div>
+          <div className="qs-next-body">Full publish schema for immediate and scheduled posts.</div>
         </Link>
       </div>
     </DocsPage>
@@ -503,25 +385,26 @@ export default function QuickstartPage() {
 }
 
 const styles = `
-.qs-badges{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 24px}
+.qs-badges{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 26px}
 .qs-badge{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);color:var(--docs-text);font-size:11.5px;font-weight:600;letter-spacing:.01em}
-.qs-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:6px 0 14px;max-width:none}
-.qs-note code{font-family:var(--docs-mono);font-size:12.5px}
-.qs-flow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0 6px}
-.qs-flow-step{display:grid;grid-template-columns:36px 1fr;gap:14px;align-items:start;padding:14px 16px;border:1px solid var(--docs-border);border-radius:14px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
-.qs-flow-step:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
-.qs-flow-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));color:var(--docs-link);font-size:13px;font-weight:700;border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border))}
-.qs-flow-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:3px}
-.qs-flow-sub{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
-.qs-flow-sub code{font-family:var(--docs-mono);font-size:12px}
-.qs-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
-.qs-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
-.qs-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
-.qs-next-kicker{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint)}
-.qs-next-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text)}
-.qs-next-body{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
-@media (max-width:960px){
-  .qs-flow{grid-template-columns:1fr}
+.qs-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0 28px}
+.qs-flow-step{text-decoration:none;color:inherit;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);display:flex;gap:12px;align-items:flex-start}
+.qs-flow-step:hover{border-color:color-mix(in srgb,var(--docs-link) 34%, var(--docs-border));transform:translateY(-1px)}
+.qs-flow-num{width:28px;height:28px;border-radius:999px;background:color-mix(in srgb,var(--docs-link) 12%, var(--docs-bg-muted));color:var(--docs-link);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.qs-flow-title{font-size:14px;font-weight:700;color:var(--docs-text)}
+.qs-flow-sub{font-size:13px;line-height:1.55;color:var(--docs-text-soft);margin-top:4px}
+.qs-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:8px 0 14px;max-width:none}
+.qs-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:8px}
+.qs-next-card{padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit}
+.qs-next-card:hover{border-color:color-mix(in srgb,var(--docs-link) 34%, var(--docs-border));transform:translateY(-1px)}
+.qs-next-kicker{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:8px}
+.qs-next-title{font-size:15px;font-weight:700;color:var(--docs-text);margin-bottom:6px}
+.qs-next-body{font-size:13px;line-height:1.6;color:var(--docs-text-soft)}
+@media (max-width: 980px){
+  .qs-flow{grid-template-columns:repeat(2,minmax(0,1fr))}
   .qs-next{grid-template-columns:1fr}
+}
+@media (max-width: 640px){
+  .qs-flow{grid-template-columns:1fr}
 }
 `;
