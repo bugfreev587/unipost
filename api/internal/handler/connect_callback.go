@@ -101,7 +101,11 @@ func (h *ConnectCallbackHandler) resolveConnector(ctx context.Context, workspace
 		})
 		switch err {
 		case nil:
-			if connector := connect.NewManagedConnector(platform, cred.ClientID, cred.ClientSecret, h.callbackBaseURL); connector != nil {
+			clientSecret, decErr := h.encryptor.Decrypt(cred.ClientSecret)
+			if decErr != nil {
+				return nil, false, decErr
+			}
+			if connector := connect.NewManagedConnector(platform, cred.ClientID, clientSecret, h.callbackBaseURL); connector != nil {
 				return connector, true, nil
 			}
 		case pgx.ErrNoRows:

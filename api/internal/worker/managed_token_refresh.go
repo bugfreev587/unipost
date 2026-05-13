@@ -97,7 +97,11 @@ func (w *ManagedTokenRefreshWorker) resolveConnector(ctx context.Context, acc db
 			})
 			switch credErr {
 			case nil:
-				if connector := connect.NewManagedConnector(acc.Platform, cred.ClientID, cred.ClientSecret, w.callbackBaseURL); connector != nil {
+				clientSecret, decErr := w.encryptor.Decrypt(cred.ClientSecret)
+				if decErr != nil {
+					return nil, false, decErr
+				}
+				if connector := connect.NewManagedConnector(acc.Platform, cred.ClientID, clientSecret, w.callbackBaseURL); connector != nil {
 					return connector, true, nil
 				}
 			case pgx.ErrNoRows:
