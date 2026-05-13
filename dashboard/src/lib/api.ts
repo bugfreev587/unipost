@@ -516,11 +516,12 @@ export interface SocialAccount {
 export async function listSocialAccounts(
   token: string,
   profileId: string,
-  filters?: { external_user_id?: string; platform?: string }
+  filters?: { external_user_id?: string; platform?: string; include_disconnected?: boolean }
 ): Promise<ApiResponse<SocialAccount[]>> {
   const qs = new URLSearchParams();
   if (filters?.external_user_id) qs.set("external_user_id", filters.external_user_id);
   if (filters?.platform) qs.set("platform", filters.platform);
+  if (filters?.include_disconnected) qs.set("include_disconnected", "1");
   const suffix = qs.toString() ? `?${qs}` : "";
   return request(`/v1/profiles/${profileId}/accounts${suffix}`, token);
 }

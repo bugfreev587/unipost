@@ -3,7 +3,7 @@
 import { PlatformIcon } from "@/components/platform-icons";
 import type { SocialAccount, Profile } from "@/lib/api";
 
-// ── Quickstart Stats (BYO accounts) ──────────────────────────────────
+// ── Quickstart Stats ─────────────────────────────────────────────────
 
 interface QuickstartStatsProps {
   accounts: SocialAccount[];
@@ -11,19 +11,19 @@ interface QuickstartStatsProps {
 }
 
 export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
-  const byo = accounts.filter((a) => a.connection_type === "byo");
-  const active = byo.filter((a) => a.status === "active");
-  const needsReconnect = byo.filter((a) => a.status === "reconnect_required");
+  const active = accounts.filter((a) => a.status === "active");
+  const needsReconnect = accounts.filter((a) => a.status === "reconnect_required");
+  const disconnected = accounts.filter((a) => a.status === "disconnected");
 
   // By platform
   const byPlatform = new Map<string, number>();
-  for (const a of byo) {
+  for (const a of accounts) {
     byPlatform.set(a.platform, (byPlatform.get(a.platform) || 0) + 1);
   }
 
   // By profile
   const byProfile = new Map<string, number>();
-  for (const a of byo) {
+  for (const a of accounts) {
     byProfile.set(a.profile_id, (byProfile.get(a.profile_id) || 0) + 1);
   }
 
@@ -39,7 +39,7 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
       marginBottom: 24,
       boxShadow: "0 1px 2px color-mix(in srgb, var(--shadow-color) 58%, transparent)",
     }}>
-      <StatCard label="Total Accounts" value={byo.length} />
+      <StatCard label="Total Accounts" value={accounts.length} />
       <StatCard
         label="Health"
         custom={
@@ -54,6 +54,13 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f59e0b" }} />
                 <span style={{ color: "#f59e0b", fontWeight: 600 }}>{needsReconnect.length}</span>
                 <span style={{ color: "var(--dmuted)", fontSize: 12, fontWeight: 500 }}>reconnect</span>
+              </span>
+            )}
+            {disconnected.length > 0 && (
+              <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 14 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444" }} />
+                <span style={{ color: "#ef4444", fontWeight: 600 }}>{disconnected.length}</span>
+                <span style={{ color: "var(--dmuted)", fontSize: 12, fontWeight: 500 }}>disconnected</span>
               </span>
             )}
           </div>

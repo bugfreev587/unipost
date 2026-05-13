@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -211,6 +212,8 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	extUserID := r.URL.Query().Get("external_user_id")
 	platformFilter := r.URL.Query().Get("platform")
 	profileIDFilter := r.URL.Query().Get("profile_id")
+	includeDisconnected := strings.EqualFold(r.URL.Query().Get("include_disconnected"), "1") ||
+		strings.EqualFold(r.URL.Query().Get("include_disconnected"), "true")
 
 	var accounts []db.SocialAccount
 	var err error
@@ -221,7 +224,22 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	// /v1/profiles/{profileID}/accounts into a workspace-wide list and
 	// duplicate every account once per loaded profile in the UI.
 	if profileID := h.getProfileID(r); profileID != "" {
-		if extUserID == "" && platformFilter == "" {
+		if includeDisconnected {
+			accounts, err = h.queries.ListAllSocialAccountsByProfile(r.Context(), profileID)
+			if err == nil && (extUserID != "" || platformFilter != "") {
+				filtered := accounts[:0]
+				for _, acc := range accounts {
+					if extUserID != "" && (!acc.ExternalUserID.Valid || acc.ExternalUserID.String != extUserID) {
+						continue
+					}
+					if platformFilter != "" && acc.Platform != platformFilter {
+						continue
+					}
+					filtered = append(filtered, acc)
+				}
+				accounts = filtered
+			}
+		} else if extUserID == "" && platformFilter == "" {
 			accounts, err = h.queries.ListSocialAccountsByProfile(r.Context(), profileID)
 		} else {
 			accounts, err = h.queries.ListSocialAccountsByProfileFiltered(r.Context(), db.ListSocialAccountsByProfileFilteredParams{
