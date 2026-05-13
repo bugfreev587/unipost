@@ -274,6 +274,10 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
             image: "/docs/white-label/youtube/step3-2.png",
           },
           {
+            title: "Step 3c: switch Google audience to `Production` so any user can connect",
+            image: "/docs/white-label/youtube/step3-3.png",
+          },
+          {
             title: "Step 4: go to Clients and click `Create client`",
             image: "/docs/white-label/youtube/step4.png",
           },
