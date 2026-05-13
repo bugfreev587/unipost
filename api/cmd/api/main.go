@@ -600,6 +600,7 @@ func main() {
 		r.Get("/v1/accounts", socialAccountHandler.List)
 		r.Post("/v1/accounts/connect", socialAccountHandler.Connect)
 		r.Delete("/v1/accounts/{id}", socialAccountHandler.Disconnect)
+		r.Post("/v1/accounts/{id}/dismiss", socialAccountHandler.Dismiss)
 		r.Get("/v1/accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
 		r.Get("/v1/accounts/{id}/health", socialAccountHandler.AccountHealth)
 		r.Get("/v1/accounts/{id}/metrics", socialAccountHandler.AccountMetrics)
@@ -620,6 +621,7 @@ func main() {
 		r.Get("/v1/profiles/{profileID}/accounts", socialAccountHandler.List)
 		r.Post("/v1/profiles/{profileID}/accounts/connect", socialAccountHandler.Connect)
 		r.Delete("/v1/profiles/{profileID}/accounts/{accountID}", socialAccountHandler.Disconnect)
+		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/dismiss", socialAccountHandler.Dismiss)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
@@ -628,6 +630,7 @@ func main() {
 			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
 		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
 		r.Get("/v1/profiles/{profileID}/users/{external_user_id}", managedUsersHandler.Get)
+		r.Post("/v1/profiles/{profileID}/users/{external_user_id}/dismiss", managedUsersHandler.DismissDisconnected)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
 
 		// Media — two-step upload (POST returns presigned URL, client
@@ -687,6 +690,7 @@ func main() {
 		// Managed users.
 		r.Get("/v1/users", managedUsersHandler.List)
 		r.Get("/v1/users/{external_user_id}", managedUsersHandler.Get)
+		r.Post("/v1/users/{external_user_id}/dismiss", managedUsersHandler.DismissDisconnected)
 
 		// Webhooks. Read OK for any role; mutations require admin+.
 		r.Get("/v1/webhooks", webhookSubHandler.List)

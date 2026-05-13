@@ -11,6 +11,7 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
   getManagedUser,
+  dismissSocialAccount,
   disconnectSocialAccount,
   type ManagedUserDetail,
 } from "@/lib/api";
@@ -29,6 +30,7 @@ export default function ManagedUserDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
+  const [dismissTarget, setDismissTarget] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -57,6 +59,19 @@ export default function ManagedUserDetailPage() {
       load();
     } catch (err) {
       console.error("Disconnect failed:", err);
+    }
+  }
+
+  async function handleDismiss() {
+    if (!dismissTarget) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await dismissSocialAccount(token, profileId, dismissTarget);
+      setDismissTarget(null);
+      load();
+    } catch (err) {
+      console.error("Dismiss failed:", err);
     }
   }
 
@@ -134,13 +149,23 @@ export default function ManagedUserDetailPage() {
                 </span>
               )}
             </div>
-            <button
-              onClick={() => setDisconnectTarget(acc.id)}
-              className="p-2 text-[var(--dmuted)] hover:text-[var(--danger)]"
-              title="Disconnect"
-            >
-              <Unplug className="w-4 h-4" />
-            </button>
+            {acc.status === "disconnected" ? (
+              <button
+                onClick={() => setDismissTarget(acc.id)}
+                className="px-2 py-1 text-xs text-[var(--dmuted)] hover:text-[var(--dtext)]"
+                title="Dismiss"
+              >
+                Dismiss
+              </button>
+            ) : (
+              <button
+                onClick={() => setDisconnectTarget(acc.id)}
+                className="p-2 text-[var(--dmuted)] hover:text-[var(--danger)]"
+                title="Disconnect"
+              >
+                <Unplug className="w-4 h-4" />
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -153,6 +178,15 @@ export default function ManagedUserDetailPage() {
         variant="danger"
         onConfirm={handleDisconnect}
         onCancel={() => setDisconnectTarget(null)}
+      />
+
+      <ConfirmModal
+        open={dismissTarget !== null}
+        title="Dismiss Disconnected Account"
+        message="Hide this disconnected account from Developer App Users permanently? Historical data will be kept, but this account will no longer appear in these dashboard views."
+        confirmLabel="Dismiss"
+        onConfirm={handleDismiss}
+        onCancel={() => setDismissTarget(null)}
       />
     </div>
   );

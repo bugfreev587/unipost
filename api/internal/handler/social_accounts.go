@@ -347,6 +347,45 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	writeSuccess(w, map[string]bool{"disconnected": true})
 }
 
+// Dismiss hides an already-disconnected account from dashboard-facing
+// connection views without deleting historical data.
+func (h *SocialAccountHandler) Dismiss(w http.ResponseWriter, r *http.Request) {
+	accountID := chi.URLParam(r, "id")
+	if accountID == "" {
+		accountID = chi.URLParam(r, "accountID")
+	}
+
+	var profileID string
+	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
+		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+			ID:          accountID,
+			WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")
+			return
+		}
+		profileID = acc.ProfileID
+	} else {
+		profileID = h.getProfileID(r)
+	}
+
+	rows, err := h.queries.DismissSocialAccount(r.Context(), db.DismissSocialAccountParams{
+		ID:        accountID,
+		ProfileID: profileID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to dismiss account")
+		return
+	}
+	if rows == 0 {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Disconnected account not found")
+		return
+	}
+
+	writeSuccess(w, map[string]bool{"dismissed": true})
+}
+
 // getProfileID extracts profile ID from URL param (dashboard routes only).
 func (h *SocialAccountHandler) getProfileID(r *http.Request) string {
 	profileID := chi.URLParam(r, "profileID")

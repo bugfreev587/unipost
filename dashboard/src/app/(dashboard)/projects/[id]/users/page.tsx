@@ -11,10 +11,11 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { listManagedUsers, type ManagedUserListEntry } from "@/lib/api";
+import { dismissManagedUserDisconnected, listManagedUsers, type ManagedUserListEntry } from "@/lib/api";
 import { Users, AlertTriangle, ArrowRight } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { ManagedUsersStats } from "@/components/dashboard/connection-stats";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ManagedUsersPage() {
   const { id: profileId } = useParams<{ id: string }>();
@@ -22,6 +23,7 @@ export default function ManagedUsersPage() {
   const [users, setUsers] = useState<ManagedUserListEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [dismissTarget, setDismissTarget] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -40,6 +42,19 @@ export default function ManagedUsersPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function handleDismiss() {
+    if (!dismissTarget) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await dismissManagedUserDisconnected(token, profileId, dismissTarget);
+      setDismissTarget(null);
+      await load();
+    } catch (err) {
+      console.error("Failed to dismiss managed user accounts:", err);
+    }
+  }
 
   if (loading) {
     return <div className="p-8 text-[var(--dmuted)]">Loading…</div>;
@@ -127,12 +142,23 @@ export default function ManagedUsersPage() {
                     )}
                   </td>
                   <td className="px-4 py-4 text-right">
-                    <Link
-                      href={`/projects/${profileId}/users/${encodeURIComponent(u.external_user_id)}`}
-                      className="inline-flex items-center gap-1 text-sm text-[var(--success)] hover:opacity-80"
-                    >
-                      Detail <ArrowRight className="w-3 h-3" />
-                    </Link>
+                    <div className="inline-flex items-center gap-3">
+                      {u.disconnected_count > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setDismissTarget(u.external_user_id)}
+                          className="text-sm text-[var(--dmuted)] hover:text-[var(--dtext)]"
+                        >
+                          Dismiss
+                        </button>
+                      ) : null}
+                      <Link
+                        href={`/projects/${profileId}/users/${encodeURIComponent(u.external_user_id)}`}
+                        className="inline-flex items-center gap-1 text-sm text-[var(--success)] hover:opacity-80"
+                      >
+                        Detail <ArrowRight className="w-3 h-3" />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -140,6 +166,15 @@ export default function ManagedUsersPage() {
           </table>
         </div>
       )}
+
+      <ConfirmModal
+        open={dismissTarget !== null}
+        title="Dismiss Disconnected Accounts"
+        message="Hide the disconnected accounts for this managed user from Developer App Users? Historical data will be kept, but those disconnected accounts will no longer appear in these dashboard views."
+        confirmLabel="Dismiss"
+        onConfirm={handleDismiss}
+        onCancel={() => setDismissTarget(null)}
+      />
     </div>
   );
 }

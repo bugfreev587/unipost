@@ -17,6 +17,7 @@ SELECT
 FROM social_accounts
 WHERE profile_id = $1
   AND external_user_id IS NOT NULL
+  AND COALESCE(metadata->>'dismissed_at', '') = ''
   AND connection_type = 'managed'
 GROUP BY external_user_id
 ORDER BY MIN(connected_at) DESC, external_user_id DESC
@@ -27,6 +28,7 @@ SELECT *
 FROM social_accounts
 WHERE profile_id = $1
   AND external_user_id = $2
+  AND COALESCE(metadata->>'dismissed_at', '') = ''
   AND connection_type = 'managed'
 ORDER BY connected_at DESC;
 
@@ -35,4 +37,14 @@ SELECT COUNT(DISTINCT external_user_id)::INTEGER AS total
 FROM social_accounts
 WHERE profile_id = $1
   AND external_user_id IS NOT NULL
+  AND COALESCE(metadata->>'dismissed_at', '') = ''
   AND connection_type = 'managed';
+
+-- name: DismissDisconnectedManagedAccountsByExternalUser :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dismissed_at', NOW()::TEXT)
+WHERE profile_id = $1
+  AND external_user_id = $2
+  AND connection_type = 'managed'
+  AND (disconnected_at IS NOT NULL OR status = 'disconnected')
+  AND COALESCE(metadata->>'dismissed_at', '') = '';

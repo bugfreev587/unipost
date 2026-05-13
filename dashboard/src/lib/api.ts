@@ -598,6 +598,18 @@ export async function disconnectSocialAccount(
   );
 }
 
+export async function dismissSocialAccount(
+  token: string,
+  profileId: string,
+  accountId: string
+): Promise<ApiResponse<{ dismissed: boolean }>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/dismiss`,
+    token,
+    { method: "POST" }
+  );
+}
+
 export interface PinterestBoard {
   id: string;
   name: string;
@@ -1193,6 +1205,18 @@ export async function getManagedUser(
   return request(
     `/v1/profiles/${profileId}/users/${encodeURIComponent(externalUserId)}`,
     token
+  );
+}
+
+export async function dismissManagedUserDisconnected(
+  token: string,
+  profileId: string,
+  externalUserId: string
+): Promise<ApiResponse<{ dismissed: boolean }>> {
+  return request(
+    `/v1/profiles/${profileId}/users/${encodeURIComponent(externalUserId)}/dismiss`,
+    token,
+    { method: "POST" }
   );
 }
 

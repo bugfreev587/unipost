@@ -104,6 +104,28 @@ func (q *Queries) DisconnectSocialAccount(ctx context.Context, arg DisconnectSoc
 	return i, err
 }
 
+const dismissSocialAccount = `-- name: DismissSocialAccount :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dismissed_at', NOW()::TEXT)
+WHERE id = $1
+  AND profile_id = $2
+  AND (disconnected_at IS NOT NULL OR status = 'disconnected')
+  AND COALESCE(metadata->>'dismissed_at', '') = ''
+`
+
+type DismissSocialAccountParams struct {
+	ID        string `json:"id"`
+	ProfileID string `json:"profile_id"`
+}
+
+func (q *Queries) DismissSocialAccount(ctx context.Context, arg DismissSocialAccountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, dismissSocialAccount, arg.ID, arg.ProfileID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findSocialAccountByExternalID = `-- name: FindSocialAccountByExternalID :one
 SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
@@ -387,6 +409,7 @@ func (q *Queries) GetSocialAccountByIDAndWorkspace(ctx context.Context, arg GetS
 const listAllSocialAccountsByProfile = `-- name: ListAllSocialAccountsByProfile :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
 WHERE profile_id = $1
+  AND COALESCE(metadata->>'dismissed_at', '') = ''
 ORDER BY connected_at DESC
 `
 
@@ -538,7 +561,9 @@ func (q *Queries) ListManagedAccountsDueForRefresh(ctx context.Context) ([]Socia
 
 const listSocialAccountsByProfile = `-- name: ListSocialAccountsByProfile :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
-WHERE profile_id = $1 AND disconnected_at IS NULL
+WHERE profile_id = $1
+  AND disconnected_at IS NULL
+  AND COALESCE(metadata->>'dismissed_at', '') = ''
 ORDER BY connected_at DESC
 `
 
@@ -586,6 +611,7 @@ const listSocialAccountsByProfileFiltered = `-- name: ListSocialAccountsByProfil
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
 WHERE profile_id = $1
   AND disconnected_at IS NULL
+  AND COALESCE(metadata->>'dismissed_at', '') = ''
   AND ($2::TEXT IS NULL OR external_user_id = $2::TEXT)
   AND ($3::TEXT IS NULL OR platform = $3::TEXT)
 ORDER BY connected_at DESC
@@ -640,7 +666,9 @@ func (q *Queries) ListSocialAccountsByProfileFiltered(ctx context.Context, arg L
 const listSocialAccountsByWorkspace = `-- name: ListSocialAccountsByWorkspace :many
 SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
-WHERE p.workspace_id = $1 AND sa.disconnected_at IS NULL
+WHERE p.workspace_id = $1
+  AND sa.disconnected_at IS NULL
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = ''
 ORDER BY sa.connected_at DESC
 `
 
@@ -691,6 +719,7 @@ SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND sa.disconnected_at IS NULL
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = ''
   AND ($2::TEXT IS NULL OR sa.profile_id = $2::TEXT)
   AND ($3::TEXT IS NULL OR sa.external_user_id = $3::TEXT)
   AND ($4::TEXT IS NULL OR sa.platform = $4::TEXT)
@@ -770,6 +799,7 @@ UPDATE social_accounts
 SET access_token      = $2,
     refresh_token     = $3,
     token_expires_at  = $4,
+    metadata          = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
     status            = 'active',
     disconnected_at   = NULL,
     last_refreshed_at = NOW()
@@ -824,6 +854,7 @@ UPDATE social_accounts
 SET access_token       = $2,
     account_name       = $3,
     account_avatar_url = $4,
+    metadata           = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
     external_user_id   = $5,
     external_user_email= $6,
     connect_session_id = $7,
@@ -911,6 +942,7 @@ UPDATE social_accounts
 SET access_token = $2,
     refresh_token = $3,
     token_expires_at = $4,
+    metadata = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
     status = 'active',
     disconnected_at = NULL
 WHERE id = $1
@@ -1058,7 +1090,7 @@ SET access_token        = $2,
     external_account_id = $5,
     account_name        = $6,
     account_avatar_url  = $7,
-    metadata            = $8,
+    metadata            = COALESCE($8, '{}'::jsonb) - 'dismissed_at',
     scope               = $9,
     connection_type     = $10,
     connect_session_id  = $11,
@@ -1150,7 +1182,7 @@ DO UPDATE SET
   external_account_id= EXCLUDED.external_account_id,
   account_name       = EXCLUDED.account_name,
   account_avatar_url = EXCLUDED.account_avatar_url,
-  metadata           = EXCLUDED.metadata,
+  metadata           = COALESCE(EXCLUDED.metadata, '{}'::jsonb) - 'dismissed_at',
   scope              = EXCLUDED.scope,
   connect_session_id = EXCLUDED.connect_session_id,
   external_user_email= EXCLUDED.external_user_email,

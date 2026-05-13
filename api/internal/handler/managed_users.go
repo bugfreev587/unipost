@@ -243,3 +243,34 @@ func (h *ManagedUsersHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	writeSuccess(w, out)
 }
+
+// DismissDisconnected hides all disconnected managed accounts for one
+// external_user_id from dashboard connection views without deleting
+// historical publishing or inbox data.
+func (h *ManagedUsersHandler) DismissDisconnected(w http.ResponseWriter, r *http.Request) {
+	profileID := h.getProfileID(r)
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+		return
+	}
+	externalUserID := chi.URLParam(r, "external_user_id")
+	if externalUserID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "external_user_id is required")
+		return
+	}
+
+	rows, err := h.queries.DismissDisconnectedManagedAccountsByExternalUser(r.Context(), db.DismissDisconnectedManagedAccountsByExternalUserParams{
+		ProfileID:      profileID,
+		ExternalUserID: pgtype.Text{String: externalUserID, Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to dismiss disconnected accounts")
+		return
+	}
+	if rows == 0 {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "No disconnected accounts found for that external_user_id")
+		return
+	}
+
+	writeSuccess(w, map[string]bool{"dismissed": true})
+}
