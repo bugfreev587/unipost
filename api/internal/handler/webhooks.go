@@ -3,24 +3,37 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	svix "github.com/svix/svix-webhooks/go"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
 
 type WebhookHandler struct {
-	queries *db.Queries
+	queries    *db.Queries
+	mailer     mail.Mailer
+	appBaseURL string
 }
 
-func NewWebhookHandler(queries *db.Queries) *WebhookHandler {
-	return &WebhookHandler{queries: queries}
+func NewWebhookHandler(queries *db.Queries, mailer mail.Mailer, appBaseURL string) *WebhookHandler {
+	if mailer == nil {
+		mailer = mail.NoopMailer{}
+	}
+	return &WebhookHandler{
+		queries:    queries,
+		mailer:     mailer,
+		appBaseURL: strings.TrimRight(appBaseURL, "/"),
+	}
 }
 
 type clerkWebhookEvent struct {
@@ -80,7 +93,7 @@ func (h *WebhookHandler) HandleClerk(w http.ResponseWriter, r *http.Request) {
 
 	switch event.Type {
 	case "user.created", "user.updated":
-		h.handleUserUpsert(w, r, event.Data)
+		h.handleUserUpsert(w, r, event.Type, event.Data)
 	case "user.deleted":
 		h.handleUserDeleted(w, r, event.Data)
 	default:
@@ -88,7 +101,7 @@ func (h *WebhookHandler) HandleClerk(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request, data json.RawMessage) {
+func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request, eventType string, data json.RawMessage) {
 	var userData clerkUserData
 	if err := json.Unmarshal(data, &userData); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid user data")
@@ -151,6 +164,8 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 	// if the user doesn't already have a workspace. This ensures the
 	// dashboard has something to show on first login.
 	existing, _ := h.queries.ListWorkspacesByUser(r.Context(), userData.ID)
+	createdWorkspace := false
+	workspaceName := ""
 	if len(existing) == 0 {
 		wsName := "Default Workspace"
 		if name != "" {
@@ -196,12 +211,56 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 					LastProfileID: pgtype.Text{String: prof.ID, Valid: true},
 				})
 				log.Printf("Created workspace '%s' + Default profile for user %s", wsName, userData.ID)
+				createdWorkspace = true
+				workspaceName = wsName
 			}
+		}
+	}
+
+	if eventType == "user.created" && createdWorkspace && email != "" {
+		if err := h.mailer.Send(r.Context(), renderWelcomeEmail(email, name, workspaceName, h.appBaseURL)); err != nil {
+			log.Printf("Failed to send welcome email to %s: %v", email, err)
 		}
 	}
 
 	log.Printf("Synced user %s (%s)", userData.ID, email)
 	w.WriteHeader(http.StatusOK)
+}
+
+func renderWelcomeEmail(to, userName, workspaceName, appBaseURL string) mail.Message {
+	if strings.TrimSpace(userName) == "" {
+		userName = "there"
+	}
+	if strings.TrimSpace(workspaceName) == "" {
+		workspaceName = "your workspace"
+	}
+	if strings.TrimSpace(appBaseURL) == "" {
+		appBaseURL = "https://app.unipost.dev"
+	}
+
+	subject := "[UniPost] Welcome aboard"
+	htmlBody := fmt.Sprintf(
+		`<p>Hi %s,</p>
+<p>Welcome to UniPost. We created <strong>%s</strong> for you so you can start connecting accounts and publishing right away.</p>
+<p>If you want setup help or product support, join our Discord support channel: <a href="https://discord.gg/HDBAhYpuQu">https://discord.gg/HDBAhYpuQu</a></p>
+<p><a href="%s">Open UniPost →</a></p>`,
+		html.EscapeString(userName),
+		html.EscapeString(workspaceName),
+		appBaseURL,
+	)
+	textBody := fmt.Sprintf(
+		"Hi %s,\n\nWelcome to UniPost. We created %s for you so you can start connecting accounts and publishing right away.\n\nNeed help? Join our Discord support channel: https://discord.gg/HDBAhYpuQu\n\nOpen UniPost: %s\n",
+		userName,
+		workspaceName,
+		appBaseURL,
+	)
+
+	return mail.Message{
+		To:      to,
+		Subject: subject,
+		HTML:    htmlBody,
+		Text:    textBody,
+	}
 }
 
 func (h *WebhookHandler) handleUserDeleted(w http.ResponseWriter, r *http.Request, data json.RawMessage) {

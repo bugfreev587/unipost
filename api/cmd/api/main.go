@@ -366,7 +366,7 @@ func main() {
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
-	webhookHandler := handler.NewWebhookHandler(queries)
+	webhookHandler := handler.NewWebhookHandler(queries, mailer, os.Getenv("APP_BASE_URL"))
 	profileHandler := handler.NewProfileHandler(queries, quotaChecker)
 	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
