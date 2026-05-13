@@ -95,7 +95,7 @@ func (a *ThreadsAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 }
 
 func (a *ThreadsAdapter) Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error) {
-	return nil, fmt.Errorf("threads requires OAuth flow, use /v1/oauth/connect/threads")
+	return nil, fmt.Errorf("threads requires OAuth flow, use POST /v1/oauth/connect")
 }
 
 // Post publishes a text post (with optional image) to Threads.

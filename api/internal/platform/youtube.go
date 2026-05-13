@@ -105,7 +105,7 @@ func (a *YouTubeAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 }
 
 func (a *YouTubeAdapter) Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error) {
-	return nil, fmt.Errorf("youtube requires OAuth flow, use /v1/oauth/connect/youtube")
+	return nil, fmt.Errorf("youtube requires OAuth flow, use POST /v1/oauth/connect")
 }
 
 // YouTubePrivacyValues is the set of allowed values for opts["privacy_status"].

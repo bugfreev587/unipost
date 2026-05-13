@@ -161,7 +161,7 @@ func (a *PinterestAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 }
 
 func (a *PinterestAdapter) Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error) {
-	return nil, fmt.Errorf("pinterest requires OAuth flow, use /v1/oauth/connect/pinterest")
+	return nil, fmt.Errorf("pinterest requires OAuth flow, use POST /v1/oauth/connect")
 }
 
 func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text string, media []MediaItem, opts map[string]any) (*PostResult, error) {

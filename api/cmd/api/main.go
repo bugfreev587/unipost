@@ -725,7 +725,7 @@ func main() {
 		r.Get("/v1/limits", apiLimitsHandler.Get)
 
 		// OAuth (workspace-scoped, non-profile entry).
-		r.Get("/v1/oauth/connect/{platform}", oauthHandler.Connect)
+		r.Post("/v1/oauth/connect", oauthHandler.Connect)
 
 		// Facebook Page picker — pending-connection read + finalize.
 		// Still gated by ENABLE_FACEBOOK_PAGES super-admin while the

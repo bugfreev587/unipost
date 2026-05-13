@@ -172,7 +172,7 @@ func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, co
 }
 
 func (a *TikTokAdapter) Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error) {
-	return nil, fmt.Errorf("tiktok requires OAuth flow, use /v1/oauth/connect/tiktok")
+	return nil, fmt.Errorf("tiktok requires OAuth flow, use POST /v1/oauth/connect")
 }
 
 // TikTokPrivacyValues is the set of allowed values for opts["privacy_level"].

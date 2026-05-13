@@ -100,7 +100,7 @@ func (a *LinkedInAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, 
 
 // Connect is not used for OAuth platforms — use the OAuth flow instead.
 func (a *LinkedInAdapter) Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error) {
-	return nil, fmt.Errorf("linkedin requires OAuth flow, use /v1/oauth/connect/linkedin")
+	return nil, fmt.Errorf("linkedin requires OAuth flow, use POST /v1/oauth/connect")
 }
 
 // Post publishes a text post to LinkedIn.

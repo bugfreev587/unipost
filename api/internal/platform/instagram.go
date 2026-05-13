@@ -104,7 +104,7 @@ func (a *InstagramAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 }
 
 func (a *InstagramAdapter) Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error) {
-	return nil, fmt.Errorf("instagram requires OAuth flow, use /v1/oauth/connect/instagram")
+	return nil, fmt.Errorf("instagram requires OAuth flow, use POST /v1/oauth/connect")
 }
 
 // Post publishes to Instagram using the two-step container flow.

@@ -356,7 +356,7 @@ func (a *FacebookAdapter) fetchMetaUserIdentity(ctx context.Context, userAccessT
 
 // Connect — OAuth-only, same pattern as Instagram/Threads.
 func (a *FacebookAdapter) Connect(ctx context.Context, credentials map[string]string) (*ConnectResult, error) {
-	return nil, fmt.Errorf("facebook requires OAuth flow, use /v1/oauth/connect/facebook")
+	return nil, fmt.Errorf("facebook requires OAuth flow, use POST /v1/oauth/connect")
 }
 
 // Post publishes text, a link, a single photo, or a single video to

@@ -74,11 +74,34 @@ func (h *OAuthHandler) logOAuthEvent(ctx context.Context, workspaceID string, ev
 	h.ilog.Write(ctx, event)
 }
 
-// Connect handles GET /v1/oauth/connect/{platform}
+type oauthConnectRequest struct {
+	ProfileID   string `json:"profile_id"`
+	Platform    string `json:"platform"`
+	RedirectURL string `json:"redirect_url"`
+}
+
+// Connect handles POST /v1/oauth/connect with JSON body.
 // Returns the authorization URL for the user to redirect to.
 func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	platformName := chi.URLParam(r, "platform")
 	redirectURL := r.URL.Query().Get("redirect_url")
+	requestedProfileID := ""
+
+	if platformName == "" {
+		var body oauthConnectRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+			return
+		}
+		platformName = strings.TrimSpace(body.Platform)
+		redirectURL = strings.TrimSpace(body.RedirectURL)
+		requestedProfileID = strings.TrimSpace(body.ProfileID)
+	}
+
+	if platformName == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "platform is required")
+		return
+	}
 
 	// Super-admin-only gate for Facebook during App Review — only
 	// users on SUPER_ADMINS can kick off OAuth so the app never mints
@@ -92,9 +115,9 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	profileID := h.getProfileID(r)
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+	profileID, profileErr := h.resolveProfileID(r, requestedProfileID)
+	if profileErr != nil {
+		writeError(w, profileErr.status, profileErr.code, profileErr.msg)
 		return
 	}
 
@@ -468,7 +491,7 @@ func (h *OAuthHandler) getOAuthConfigForProfile(r *http.Request, profileID, plat
 	return config
 }
 
-// getProfileID resolves the profile_id this OAuth Connect call
+// resolveProfileID resolves the profile_id this OAuth Connect call
 // should attach the resulting social_account to.
 //
 // Resolution order (each step falls through on miss):
@@ -478,11 +501,13 @@ func (h *OAuthHandler) getOAuthConfigForProfile(r *http.Request, profileID, plat
 //     owns it (ownership check tied to the auth flavor — Clerk
 //     user vs API-key workspace) before honoring it.
 //
-//  2. user.default_profile_id — the bare /v1/oauth/connect/:platform
-//     route doesn't carry a profile id, so we fall back to the
-//     dashboard's default profile for the signed-in user.
+//  2. Request body profile_id — the workspace-scoped POST route can
+//     carry an explicit profile target in JSON.
 //
-//  3. workspace's first profile — last-resort path for API-key
+//  3. user.default_profile_id — callers without an explicit profile
+//     fall back to the signed-in user's default profile.
+//
+//  4. workspace's first profile — last-resort path for API-key
 //     callers hitting the bare route. The workspace always seeds
 //     at least one profile at signup (see webhooks.go), so this
 //     should never be empty for live workspaces.
@@ -494,7 +519,7 @@ func (h *OAuthHandler) getOAuthConfigForProfile(r *http.Request, profileID, plat
 // id happened to equal a profile id from migration 025's data
 // reshuffle, and silently broke for every fresh signup made
 // after the refactor.
-func (h *OAuthHandler) getProfileID(r *http.Request) string {
+func (h *OAuthHandler) resolveProfileID(r *http.Request, requestedID string) (string, *httpError) {
 	ctx := r.Context()
 	urlProfileID := chi.URLParam(r, "profileID")
 	userID := auth.GetUserID(ctx)
@@ -508,27 +533,63 @@ func (h *OAuthHandler) getProfileID(r *http.Request) string {
 				ID:     urlProfileID,
 				UserID: userID,
 			}); err == nil {
-				return urlProfileID
+				return urlProfileID, nil
 			}
-			return ""
+			return "", &httpError{
+				status: http.StatusUnprocessableEntity,
+				code:   "VALIDATION_ERROR",
+				msg:    "profile_id does not belong to this workspace",
+			}
 		}
 		// API-key callers: verify the profile lives in the
 		// workspace the key is scoped to.
 		if workspaceID == "" {
-			return ""
+			return "", &httpError{
+				status: http.StatusUnauthorized,
+				code:   "UNAUTHORIZED",
+				msg:    "Missing profile context",
+			}
 		}
 		prof, err := h.queries.GetProfile(ctx, urlProfileID)
 		if err != nil || prof.WorkspaceID != workspaceID {
-			return ""
+			return "", &httpError{
+				status: http.StatusUnprocessableEntity,
+				code:   "VALIDATION_ERROR",
+				msg:    "profile_id does not belong to this workspace",
+			}
 		}
-		return urlProfileID
+		return urlProfileID, nil
 	}
 
-	// Bare /v1/oauth/connect/:platform — Clerk-session path uses
-	// the user's default profile.
+	requestedID = strings.TrimSpace(requestedID)
+	if requestedID != "" {
+		if workspaceID != "" {
+			profileID, profileErr := resolveProfileForWorkspace(ctx, h.queries, workspaceID, requestedID)
+			if profileErr != nil {
+				return "", profileErr
+			}
+			return profileID, nil
+		}
+		if userID != "" {
+			if _, err := h.queries.GetProfileByIDAndWorkspaceOwner(ctx, db.GetProfileByIDAndWorkspaceOwnerParams{
+				ID:     requestedID,
+				UserID: userID,
+			}); err == nil {
+				return requestedID, nil
+			}
+			return "", &httpError{
+				status: http.StatusUnprocessableEntity,
+				code:   "VALIDATION_ERROR",
+				msg:    "profile_id does not belong to this workspace",
+			}
+		}
+	}
+
+	// Clerk-session path uses the user's default profile when
+	// the request does not include an explicit target.
 	if userID != "" {
 		if user, err := h.queries.GetUser(ctx, userID); err == nil && user.DefaultProfileID.Valid {
-			return user.DefaultProfileID.String
+			return user.DefaultProfileID.String, nil
 		}
 	}
 
@@ -538,12 +599,18 @@ func (h *OAuthHandler) getProfileID(r *http.Request) string {
 	// profile — for single-profile workspaces (the common case)
 	// it's the only one.
 	if workspaceID != "" {
-		if profiles, err := h.queries.ListProfilesByWorkspace(ctx, workspaceID); err == nil && len(profiles) > 0 {
-			return profiles[0].ID
+		profileID, profileErr := resolveProfileForWorkspace(ctx, h.queries, workspaceID, "")
+		if profileErr != nil {
+			return "", profileErr
 		}
+		return profileID, nil
 	}
 
-	return ""
+	return "", &httpError{
+		status: http.StatusUnauthorized,
+		code:   "UNAUTHORIZED",
+		msg:    "Missing profile context",
+	}
 }
 
 func (h *OAuthHandler) redirectWithError(w http.ResponseWriter, r *http.Request, redirectURL, errMsg string) {

@@ -76,8 +76,13 @@ System.out.println(profile.get("id").asText());`,
 const CONNECT_AUTH_SNIPPETS = [
   {
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/oauth/connect/linkedin" \
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+    code: `curl -X POST "https://api.unipost.dev/v1/oauth/connect" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "profile_id": "pr_brand_us",
+    "platform": "linkedin"
+  }'`,
   },
   {
     label: "Node.js",
@@ -282,14 +287,14 @@ export default function QuickstartPage() {
       </p>
       <DocsCodeTabs snippets={CONNECT_AUTH_SNIPPETS} />
       <ul className="docs-checklist">
-        <li>Call <code>GET /v1/oauth/connect/{"{platform}"}</code></li>
+        <li>Call <code>POST /v1/oauth/connect</code></li>
         <li>Read <code>data.auth_url</code> from the response</li>
         <li>Open it in a browser</li>
         <li>Complete OAuth in the browser</li>
       </ul>
       <p className="qs-note">
-        You can optionally add <code>redirect_url</code> if you want OAuth to land on your own app afterward, but Quickstart leaves it out to keep the first connection as simple as possible. Endpoint reference:{" "}
-        <ApiInlineLink endpoint="GET /v1/oauth/connect/{platform}" />.
+        You can optionally add <code>redirect_url</code> in the request body if you want OAuth to land on your own app afterward, but Quickstart leaves it out to keep the first connection as simple as possible. Endpoint reference:{" "}
+        <ApiInlineLink endpoint="POST /v1/oauth/connect" />.
       </p>
       <p className="qs-note">
         Bluesky is the exception. It uses an app password, not OAuth, so connect it through <ApiInlineLink endpoint="POST /v1/accounts/connect" /> instead.

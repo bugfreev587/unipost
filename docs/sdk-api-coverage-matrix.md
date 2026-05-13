@@ -68,7 +68,7 @@ Legend:
 | `PATCH /v1/webhooks/{id}` | Yes | Yes | Yes | Yes |
 | `DELETE /v1/webhooks/{id}` | Yes | Yes | Yes | Cleanup path |
 | `POST /v1/webhooks/{id}/rotate` | Yes | Yes | Yes | Yes |
-| `GET /v1/oauth/connect/{platform}` | Yes | Yes | Yes | Yes, accepts current `unauthorized` backend behavior |
+| `POST /v1/oauth/connect` | Yes | Yes | Yes | Yes, accepts current `unauthorized` backend behavior |
 | `GET /v1/usage` | Yes | Yes | Yes | Yes |
 
 ## SDK-only helpers

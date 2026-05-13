@@ -8,11 +8,9 @@ const AUTH_FIELDS: ApiFieldItem[] = [
   { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key." },
 ];
 
-const PATH_FIELDS: ApiFieldItem[] = [
+const BODY_FIELDS: ApiFieldItem[] = [
+  { name: "profile_id?", type: "string", description: "Profile that should own the connected account. Required when the workspace has multiple profiles." },
   { name: "platform", type: "string", description: <>OAuth platform key such as <code>linkedin</code>, <code>twitter</code>, <code>youtube</code>, <code>instagram</code>, <code>threads</code>, <code>tiktok</code>, or <code>pinterest</code>. See <Link href="/docs/platforms#platform-names">available platforms</Link>.</> },
-];
-
-const QUERY_FIELDS: ApiFieldItem[] = [
   { name: "redirect_url?", type: "string", description: "Optional app URL where the browser should land after OAuth completes." },
 ];
 
@@ -31,8 +29,14 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/oauth/connect/linkedin" \
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+    code: `curl -X POST "https://api.unipost.dev/v1/oauth/connect" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "profile_id": "pr_brand_us",
+    "platform": "linkedin",
+    "redirect_url": "https://app.acme.com/integrations/done"
+  }'`,
   },
   {
     lang: "js",
@@ -97,12 +101,11 @@ export default function OAuthConnectPage() {
       section="accounts"
       title="Connect account (OAuth)"
       description="Starts an OAuth account connection flow by returning an auth_url you open in the browser. Use this for OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, and Pinterest, then list accounts afterward to find the new UniPost account ID."
-      method="GET"
-      path="/v1/oauth/connect/:platform"
+      method="POST"
+      path="/v1/oauth/connect"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
-        { title: "Path Parameters", items: PATH_FIELDS },
-        { title: "Query Parameters", items: QUERY_FIELDS },
+        { title: "Request Body", items: BODY_FIELDS },
       ]}
       responses={[
         { code: "200", fields: RESPONSE_200_FIELDS },
