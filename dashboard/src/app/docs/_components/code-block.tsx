@@ -134,6 +134,16 @@ export function CodeTabs({
 export function codeBlockStyles() {
   return `
 .docs-code-block,.docs-code-tabs{margin:20px 0;border:1px solid var(--docs-border);border-radius:18px;background:var(--docs-code-frame-bg, var(--docs-bg-elevated));overflow:hidden;box-shadow:var(--docs-card-shadow);width:100%;min-width:0}
+.docs-code-block,.docs-code-tabs{
+  --docs-selection-bg: rgba(96, 165, 250, 0.24);
+  --docs-selection-bg-strong: rgba(96, 165, 250, 0.32);
+  --docs-selection-bg-soft: rgba(96, 165, 250, 0.16);
+}
+html.dark .docs-code-block,html.dark .docs-code-tabs{
+  --docs-selection-bg: rgba(124, 178, 255, 0.28);
+  --docs-selection-bg-strong: rgba(124, 178, 255, 0.36);
+  --docs-selection-bg-soft: rgba(124, 178, 255, 0.18);
+}
 .docs-code-block.compact{margin:0}
 .docs-code-toolbar,.docs-code-tabs-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:var(--docs-code-header-bg, var(--docs-bg-elevated));min-width:0}
 .docs-code-meta{display:flex;align-items:center;gap:8px;min-width:0}
@@ -149,5 +159,22 @@ export function codeBlockStyles() {
 .docs-code-tab{padding:8px 12px;border-radius:10px;border:1px solid var(--docs-border);background:var(--docs-code-tab-bg, var(--docs-bg-elevated));color:var(--docs-text-muted);font-size:12.5px;font-family:var(--docs-mono, var(--mono), monospace);cursor:pointer;transition:all .12s}
 .docs-code-tab:hover{color:var(--docs-text);background:var(--docs-bg-muted)}
 .docs-code-tab.active{color:var(--docs-tab-active-text);border-color:var(--docs-tab-active-border);background:var(--docs-tab-active-bg);box-shadow:var(--docs-tab-active-shadow)}
+.docs-code-block ::selection,.docs-code-tabs ::selection,
+.docs-code-block ::-moz-selection,.docs-code-tabs ::-moz-selection{
+  background: var(--docs-selection-bg) !important;
+  background-color: var(--docs-selection-bg) !important;
+  color: inherit !important;
+}
+.docs-code-block .monaco-editor,.docs-code-tabs .monaco-editor{
+  --vscode-editor-selectionBackground: var(--docs-selection-bg-strong) !important;
+  --vscode-editor-inactiveSelectionBackground: var(--docs-selection-bg) !important;
+  --vscode-editor-selectionHighlightBackground: var(--docs-selection-bg-soft) !important;
+}
+.docs-code-block .monaco-editor .focused .selected-text,
+.docs-code-block .monaco-editor .selected-text,
+.docs-code-tabs .monaco-editor .focused .selected-text,
+.docs-code-tabs .monaco-editor .selected-text{
+  background-color: var(--docs-selection-bg-strong) !important;
+}
 `;
 }
