@@ -128,6 +128,11 @@ export default function WhiteLabelPlatformGuidePage() {
                     >
                       <img src={step.image} alt={step.title} className="wlp-shot-image" />
                     </button>
+                    {step.snippets?.length ? (
+                      <div className="wlp-step-code">
+                        <DocsCodeTabs snippets={step.snippets} />
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
