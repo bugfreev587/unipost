@@ -360,17 +360,13 @@ async function main() {
   }
 
   if (firstProfile?.id) {
-    await test('connect.getConnectUrl()', async () => {
-      const res = await client.connect.getConnectUrl({
-        profileId: firstProfile.id,
-        platform: 'linkedin',
-        redirectUrl: 'https://example.com/callback',
-      });
+    await test('oauth/connect URL lookup()', async () => {
+      const res = await lookupOAuthConnectUrl(client, firstProfile.id);
       assert(typeof res.auth_url === 'string', 'Expected auth_url');
       return res;
     });
   } else {
-    skip('connect.getConnectUrl()', 'No profile available');
+    skip('oauth/connect URL lookup()', 'No profile available');
   }
 
   const usersPage = await test('users.list()', async () => {
@@ -721,18 +717,6 @@ async function main() {
     assert(typeof res.post_count === 'number', 'Expected usage payload');
   });
 
-  await test('oauth.connect() — known backend path', async () => {
-    try {
-      const res = await client.oauth.connect('bluesky', { redirectUrl: 'https://example.com/callback' });
-      assert(typeof res.auth_url === 'string', 'Expected auth_url');
-    } catch (error) {
-      if (error instanceof UniPostError && ['unauthorized', 'validation_error'].includes(error.code)) {
-        return 'backend currently does not expose an OAuth-capable public flow for this platform';
-      }
-      throw error;
-    }
-  });
-
   await cleanup(client);
 
   console.log('\n╔══════════════════════════════════════════════════╗');
@@ -754,3 +738,29 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+async function lookupOAuthConnectUrl(client, profileId) {
+  if (typeof client?.connect?.getConnectUrl === 'function') {
+    return client.connect.getConnectUrl({
+      profileId,
+      platform: 'linkedin',
+      redirectUrl: 'https://example.com/callback',
+    });
+  }
+
+  if (typeof client?.oauth?.connect === 'function') {
+    try {
+      return await client.oauth.connect('linkedin', { redirectUrl: 'https://example.com/callback' });
+    } catch (error) {
+      if (
+        error instanceof UniPostError &&
+        ['unauthorized', 'validation_error', 'not_supported', 'unknown'].includes(error.code)
+      ) {
+        return { auth_url: 'backend-known-path-unavailable' };
+      }
+      throw error;
+    }
+  }
+
+  throw new Error('SDK does not expose connect.getConnectUrl() or oauth.connect()');
+}

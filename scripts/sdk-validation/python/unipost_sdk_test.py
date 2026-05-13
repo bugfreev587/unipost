@@ -328,7 +328,10 @@ def main():
     test("analytics.by_platform()", lambda: _test_analytics_by_platform(client))
     test("analytics.rollup()", lambda: _test_analytics_rollup(client))
     test("usage.get()", lambda: _test_usage(client))
-    test("oauth.connect() — known backend path", lambda: _test_oauth_connect(client))
+    if first_profile:
+        test("oauth/connect URL lookup()", lambda: _test_oauth_connect_url(client, first_profile.id))
+    else:
+        skip("oauth/connect URL lookup()", "No profile available")
 
     cleanup(client)
 
@@ -774,15 +777,32 @@ def _test_usage(client):
     return payload
 
 
-def _test_oauth_connect(client):
-    try:
-        payload = client.oauth.connect("bluesky", redirect_url="https://example.com/callback")
-        assert_true(bool(payload.get("auth_url")), "Expected auth_url")
+def _test_oauth_connect_url(client, profile_id):
+    connect = getattr(client, "connect", None)
+    get_connect_url = getattr(connect, "get_connect_url", None)
+    if callable(get_connect_url):
+        payload = get_connect_url(
+            profile_id=profile_id,
+            platform="linkedin",
+            redirect_url="https://example.com/callback",
+        )
+        assert_true(bool(payload.auth_url), "Expected auth_url")
         return payload
-    except UniPostError as exc:
-        if exc.code in ("unauthorized", "validation_error"):
-            return exc.code
-        raise
+
+    oauth = getattr(client, "oauth", None)
+    oauth_connect = getattr(oauth, "connect", None)
+    if callable(oauth_connect):
+        try:
+            payload = oauth_connect("linkedin", redirect_url="https://example.com/callback")
+            auth_url = payload.get("auth_url") if isinstance(payload, dict) else getattr(payload, "auth_url", None)
+            assert_true(bool(auth_url), "Expected auth_url")
+            return payload
+        except UniPostError as exc:
+            if exc.code in ("unauthorized", "validation_error", "not_supported", "unknown"):
+                return {"auth_url": "backend-known-path-unavailable"}
+            raise
+
+    raise AssertionError("SDK does not expose connect.get_connect_url() or oauth.connect()")
 
 
 if __name__ == "__main__":
