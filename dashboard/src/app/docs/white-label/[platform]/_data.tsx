@@ -243,7 +243,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
     dashboardCard: "YouTube",
     clientIdLabel: "Client ID",
     clientSecretLabel: "Client Secret",
-    callbacks: ["https://api.unipost.dev/v1/oauth/callback/youtube"],
+    callbacks: ["https://api.unipost.dev/v1/connect/callback/youtube"],
     bestFor: "Products connecting customer-owned YouTube channels while keeping the Google consent experience under your brand.",
     appReview: "Scope verification may be needed depending on your rollout shape. Even before formal verification, start by proving the OAuth wiring with one real channel owner.",
     beforeYouStart: [
@@ -279,7 +279,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
           },
           {
             title: "Step 5: choose `Web application` and add UniPost's redirect URI",
-            caption: "Authorized redirect URI: `https://api.unipost.dev/v1/oauth/callback/youtube`",
+            caption: "Authorized redirect URI: `https://api.unipost.dev/v1/connect/callback/youtube`",
             image: "/docs/white-label/youtube/step5.png",
           },
           {
@@ -350,7 +350,7 @@ https://www.googleapis.com/auth/youtube.upload`,
       },
       {
         title: "Add UniPost's redirect URI",
-        body: "In the `Authorized redirect URIs` section, add the exact UniPost callback URL shown below: `https://api.unipost.dev/v1/oauth/callback/youtube`. Copy and paste it exactly; a redirect typo will break the flow even if the rest of the setup is correct.",
+        body: "In the `Authorized redirect URIs` section, add the exact UniPost callback URL shown below: `https://api.unipost.dev/v1/connect/callback/youtube`. Copy and paste it exactly; a redirect typo will break the flow even if the rest of the setup is correct.",
       },
       {
         title: "Create and copy the credentials immediately",
