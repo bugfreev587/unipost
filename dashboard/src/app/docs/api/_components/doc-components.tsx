@@ -51,6 +51,7 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^GET \/v1\/profiles\/[^/]+$/i, href: "/docs/api/profiles/get" },
   { match: /^PATCH \/v1\/profiles\/[^/]+$/i, href: "/docs/api/profiles/update" },
   { match: /^DELETE \/v1\/profiles\/[^/]+$/i, href: "/docs/api/profiles/delete" },
+  { match: /^GET \/v1\/oauth\/connect\/[^/]+$/i, href: "/docs/api/accounts/oauth-connect" },
   { match: /^GET \/v1\/profiles\/[^/]+\/oauth\/connect\/[^/]+$/i, href: "/docs/api/accounts/oauth-connect" },
   { match: /^GET \/v1\/workspaces\/[^/]+\/api-keys$/i, href: "/docs/api/api-keys/list" },
   { match: /^POST \/v1\/workspaces\/[^/]+\/api-keys$/i, href: "/docs/api/api-keys/create" },
