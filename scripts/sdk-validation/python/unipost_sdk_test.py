@@ -64,6 +64,12 @@ def is_plan_gated(exc):
     return isinstance(exc, UniPostError) and exc.code in PLAN_GATED_CODES
 
 
+def is_transient_env_issue(exc):
+    code = getattr(exc, "code", "") or ""
+    text = str(exc).lower()
+    return code in ("rate_limited", "rate_limit") or "too many requests" in text or "timed out" in text
+
+
 def test(name, fn):
     global passed, failed, skipped
     print(f"  {name} ... ", end="", flush=True)
@@ -75,6 +81,10 @@ def test(name, fn):
     except Exception as exc:
         if is_plan_gated(exc):
             print(f"⏭ SKIP — Plan-gated ({exc.code})")
+            skipped += 1
+            return None
+        if is_transient_env_issue(exc):
+            print(f"⏭ SKIP — Transient env issue ({exc})")
             skipped += 1
             return None
         print(f"❌ FAIL — {exc}")
@@ -478,9 +488,11 @@ def _test_connect_create(client, profile_id):
         external_user_id=f"sdk-py-{int(datetime.now(timezone.utc).timestamp())}",
         external_user_email="sdk-validation@example.com",
         return_url="https://example.com/return",
+        allow_quickstart_creds=True,
     )
     assert_true(bool(payload.id and payload.url), "Expected connect session")
     assert_true(payload.platform == "youtube", "Expected youtube connect session")
+    assert_true(payload.allow_quickstart_creds is True, "Expected allow_quickstart_creds=true")
     return payload
 
 

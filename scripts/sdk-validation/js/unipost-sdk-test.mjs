@@ -346,9 +346,11 @@ async function main() {
       externalUserId: `sdk-js-${Date.now()}`,
       externalUserEmail: 'sdk-validation@example.com',
       returnUrl: 'https://example.com/return',
+      allowQuickstartCreds: true,
     });
     assert(res.id && res.url, 'Expected connect session id and url');
     assert(res.platform === 'youtube', 'Expected youtube connect session');
+    assert(res.allow_quickstart_creds === true, 'Expected allow_quickstart_creds=true');
     return res;
   });
 

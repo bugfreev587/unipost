@@ -7,7 +7,7 @@ const INSTALL_SNIPPETS = [
   { label: "Node.js", code: "npm install @unipost/sdk" },
   { label: "Python", code: "pip install unipost" },
   { label: "Go", code: "go get github.com/unipost-dev/sdk-go" },
-  { label: "Java", code: "implementation(\"dev.unipost:sdk-java:0.2.5\")" },
+  { label: "Java", code: "implementation(\"dev.unipost:sdk-java:0.2.9\")" },
 ];
 
 const INIT_SNIPPETS = [

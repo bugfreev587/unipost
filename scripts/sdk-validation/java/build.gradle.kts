@@ -2,7 +2,7 @@ plugins {
     application
 }
 
-val sdkVersion = providers.gradleProperty("unipostJavaSdkVersion").orElse("0.2.5")
+val sdkVersion = providers.gradleProperty("unipostJavaSdkVersion").orElse("0.2.9")
 val useLocalSdk = providers.gradleProperty("useLocalSdk").map { it.toBoolean() }.orElse(false)
 
 repositories {

@@ -14,6 +14,7 @@ const session = await client.connect.createSession({
   externalUserId: "acme_user_42",
   externalUserEmail: "user42@customer.com",
   returnUrl: "https://app.acme.com/integrations/linkedin/done",
+  allowQuickstartCreds: false,
 });
 
 console.log(session.url);`,

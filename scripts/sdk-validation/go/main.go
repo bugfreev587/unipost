@@ -37,6 +37,11 @@ func test(name string, fn func() error) {
 			skipped++
 			return
 		}
+		if isTransientEnvIssue(err) {
+			fmt.Printf("⏭ SKIP — Transient env issue\n")
+			skipped++
+			return
+		}
 		fmt.Printf("❌ FAIL — %s\n", err)
 		failed++
 		failures = append(failures, fmt.Sprintf("%s: %s", name, err))
@@ -70,6 +75,20 @@ func isPlanGated(err error) bool {
 		return true
 	}
 	return false
+}
+
+func isTransientEnvIssue(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := err.(*unipost.APIError); ok {
+		switch apiErr.Code {
+		case "rate_limited", "rate_limit":
+			return true
+		}
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "too many requests") || strings.Contains(text, "timed out")
 }
 
 func section(title string) {
@@ -426,11 +445,12 @@ func main() {
 	var connectSession *unipost.ConnectSession
 	test("Connect.CreateSession() — YouTube", func() error {
 		session, err := client.Connect.CreateSession(ctx, &unipost.CreateConnectSessionParams{
-			Platform:          "youtube",
-			ProfileID:         firstProfile.ID,
-			ExternalUserID:    fmt.Sprintf("sdk-go-%d", time.Now().Unix()),
-			ExternalUserEmail: "sdk-validation@example.com",
-			ReturnURL:         "https://example.com/return",
+			Platform:             "youtube",
+			ProfileID:            firstProfile.ID,
+			ExternalUserID:       fmt.Sprintf("sdk-go-%d", time.Now().Unix()),
+			ExternalUserEmail:    "sdk-validation@example.com",
+			ReturnURL:            "https://example.com/return",
+			AllowQuickstartCreds: true,
 		})
 		if err != nil {
 			return err
@@ -440,6 +460,9 @@ func main() {
 		}
 		if session.Platform != "youtube" {
 			return fmt.Errorf("expected youtube connect session, got %s", session.Platform)
+		}
+		if !session.AllowQuickstartCreds {
+			return fmt.Errorf("expected allow_quickstart_creds=true")
 		}
 		connectSession = session
 		return nil

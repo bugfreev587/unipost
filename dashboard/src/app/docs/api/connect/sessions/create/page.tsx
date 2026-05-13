@@ -61,6 +61,7 @@ const session = await client.connect.createSession({
   externalUserId: "user_123",
   externalUserEmail: "alex@acme.com",
   returnUrl: "https://app.acme.com/integrations/done",
+  allowQuickstartCreds: false,
 });
 
 console.log(session.url);`,
@@ -78,6 +79,7 @@ session = client.connect.create_session(
   external_user_id="user_123",
   external_user_email="alex@acme.com",
   return_url="https://app.acme.com/integrations/done",
+  allow_quickstart_creds=False,
 )
 
 print(session["data"]["url"])`,
@@ -99,11 +101,12 @@ func main() {
   client := unipost.NewClient()
 
   session, err := client.Connect.CreateSession(context.Background(), &unipost.CreateConnectSessionParams{
-    Platform:          "twitter",
-    ProfileID:         "pr_brand_us",
-    ExternalUserID:    "user_123",
-    ExternalUserEmail: "alex@acme.com",
-    ReturnURL:         "https://app.acme.com/integrations/done",
+    Platform:             "twitter",
+    ProfileID:            "pr_brand_us",
+    ExternalUserID:       "user_123",
+    ExternalUserEmail:    "alex@acme.com",
+    ReturnURL:            "https://app.acme.com/integrations/done",
+    AllowQuickstartCreds: false,
   })
   if err != nil {
     log.Fatal(err)
@@ -126,7 +129,8 @@ var session = client.connect().createSession(Map.of(
     "profile_id", "pr_brand_us",
     "external_user_id", "user_123",
     "external_user_email", "alex@acme.com",
-    "return_url", "https://app.acme.com/integrations/done"
+    "return_url", "https://app.acme.com/integrations/done",
+    "allow_quickstart_creds", false
 ));
 
 System.out.println(session.get("url").asText());`,

@@ -69,8 +69,8 @@ cd /Users/xiaoboyu/unipost-dev/sdk-java
 ./gradlew publishToMavenLocal
 
 cd /Users/xiaoboyu/unipost/scripts/sdk-validation/java
-UNIPOST_API_KEY=up_live_xxx ./gradlew run -PunipostJavaSdkVersion=0.2.5 -PuseLocalSdk=true
-UNIPOST_API_KEY=up_live_xxx TEST_ACCOUNT_ID=<id> ./gradlew run -PunipostJavaSdkVersion=0.2.5 -PuseLocalSdk=true
+UNIPOST_API_KEY=up_live_xxx ./gradlew run -PunipostJavaSdkVersion=0.2.9 -PuseLocalSdk=true
+UNIPOST_API_KEY=up_live_xxx TEST_ACCOUNT_ID=<id> ./gradlew run -PunipostJavaSdkVersion=0.2.9 -PuseLocalSdk=true
 ```
 
 Coverage broadly matches the JavaScript / Python / Go live suites, including public catalogs, workspace and profile CRUD, account health/capabilities, connect sessions, media, managed users, webhooks, platform credentials, API keys, posts, delivery jobs, analytics, usage, and OAuth connect URL generation.
