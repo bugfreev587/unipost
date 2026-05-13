@@ -9,7 +9,6 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const PATH_FIELDS: ApiFieldItem[] = [
-  { name: "profile_id", type: "string", description: "UniPost profile ID that should own the connected account." },
   { name: "platform", type: "string", description: <>OAuth platform key such as <code>linkedin</code>, <code>twitter</code>, <code>youtube</code>, <code>instagram</code>, <code>threads</code>, <code>tiktok</code>, or <code>pinterest</code>. See <Link href="/docs/platforms#platform-names">available platforms</Link>.</> },
 ];
 
@@ -32,14 +31,13 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done" \
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+    code: `curl "https://api.unipost.dev/v1/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done"`,
   },
   {
     lang: "js",
     label: "Node.js",
     code: `const res = await fetch(
-  "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done",
+  "https://api.unipost.dev/v1/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done",
   {
     headers: {
       Authorization: \`Bearer \${process.env.UNIPOST_API_KEY}\`,
@@ -57,7 +55,7 @@ console.log(body.data.auth_url);`,
 import requests
 
 res = requests.get(
-  "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin",
+  "https://api.unipost.dev/v1/oauth/connect/linkedin",
   params={"redirect_url": "https://app.acme.com/integrations/done"},
   headers={"Authorization": f"Bearer {os.environ['UNIPOST_API_KEY']}"},
 )
@@ -83,9 +81,9 @@ export default function OAuthConnectPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Get OAuth connect URL"
-      description="Returns an auth_url for connecting one self-owned social account to a specific profile. Open the returned URL in a browser to complete OAuth, then list accounts for that profile to find the new UniPost account ID."
+      description="Returns an auth_url for connecting one self-owned social account in the current workspace context. Open the returned URL in a browser to complete OAuth, then list accounts to find the new UniPost account ID."
       method="GET"
-      path="/v1/profiles/:profile_id/oauth/connect/:platform"
+      path="/v1/oauth/connect/:platform"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
         { title: "Path Parameters", items: PATH_FIELDS },

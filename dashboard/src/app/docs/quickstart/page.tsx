@@ -76,8 +76,7 @@ System.out.println(profile.get("id").asText());`,
 const CONNECT_AUTH_SNIPPETS = [
   {
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done" \
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+    code: `curl "https://api.unipost.dev/v1/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done"`,
   },
   {
     label: "Node.js",
@@ -282,18 +281,18 @@ export default function QuickstartPage() {
 
       <h2 id="connect-account">2. Connect an account</h2>
       <p className="qs-note">
-        For OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, and Pinterest, call the profile-scoped connect URL API. It returns an <code>auth_url</code>. Open that URL in a browser and complete OAuth there.
+        For OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, and Pinterest, call the connect URL API. It returns an <code>auth_url</code>. Open that URL in a browser and complete OAuth there.
       </p>
       <DocsCodeTabs snippets={CONNECT_AUTH_SNIPPETS} />
       <ul className="docs-checklist">
-        <li>Call <code>GET /v1/profiles/{"{profile_id}"}/oauth/connect/{"{platform}"}</code></li>
+        <li>Call <code>GET /v1/oauth/connect/{"{platform}"}</code></li>
         <li>Read <code>data.auth_url</code> from the response</li>
         <li>Open it in a browser</li>
         <li>Complete OAuth and let UniPost redirect back to your <code>redirect_url</code></li>
       </ul>
       <p className="qs-note">
         <code>redirect_url</code> is your own app page for “OAuth finished”. It is optional. If you omit it, UniPost still connects the account and sends the browser back to the UniPost app after OAuth completes. Endpoint reference:{" "}
-        <ApiInlineLink endpoint="GET /v1/profiles/{profile_id}/oauth/connect/{platform}" />.
+        <ApiInlineLink endpoint="GET /v1/oauth/connect/{platform}" />.
       </p>
       <p className="qs-note">
         Bluesky is the exception. It uses an app password, not OAuth, so connect it through <ApiInlineLink endpoint="POST /v1/accounts/connect" /> instead.
