@@ -261,24 +261,26 @@ func renderWelcomeEmail(to, userName, workspaceName, appBaseURL string) mail.Mes
 		appBaseURL = "https://app.unipost.dev"
 	}
 
-	subject := "[UniPost] Your workspace is ready"
+	subject := "Welcome to UniPost"
 	htmlBody := fmt.Sprintf(
 		`<p>Hi %s,</p>
-<p>Welcome to UniPost. Your workspace <strong>%s</strong> is live and ready to go.</p>
-<p>Here are the fastest next steps:</p>
+<p>Welcome to UniPost — your workspace, <strong>%s</strong>, is now live and ready to use.</p>
+<p>To get started, here are the recommended next steps:</p>
 <ul>
   <li>Connect your first social account</li>
-  <li>Create a draft or schedule your first post</li>
+  <li>Create or schedule your first post</li>
   <li>Invite teammates if you're setting up a shared workspace</li>
 </ul>
-<p>If you want setup help or product support, join our Discord support channel: <a href="https://discord.gg/HDBAhYpuQu">https://discord.gg/HDBAhYpuQu</a></p>
-<p><a href="%s">Open UniPost →</a></p>`,
+<p>If you need setup assistance, integration help, or product support, feel free to join our Discord community:<br><a href="https://discord.gg/HDBAhYpuQu">https://discord.gg/HDBAhYpuQu</a></p>
+<p><a href="%s">Open UniPost →</a></p>
+<p>We’re excited to have you on board and look forward to helping you streamline your social publishing workflow.</p>
+<p>Best,<br>The UniPost Team</p>`,
 		html.EscapeString(userName),
 		html.EscapeString(workspaceName),
 		appBaseURL,
 	)
 	textBody := fmt.Sprintf(
-		"Hi %s,\n\nWelcome to UniPost. Your workspace %s is live and ready to go.\n\nFastest next steps:\n- Connect your first social account\n- Create a draft or schedule your first post\n- Invite teammates if you're setting up a shared workspace\n\nNeed help? Join our Discord support channel: https://discord.gg/HDBAhYpuQu\n\nOpen UniPost: %s\n",
+		"Hi %s,\n\nWelcome to UniPost — your workspace, %s, is now live and ready to use.\n\nTo get started, here are the recommended next steps:\n- Connect your first social account\n- Create or schedule your first post\n- Invite teammates if you're setting up a shared workspace\n\nIf you need setup assistance, integration help, or product support, feel free to join our Discord community:\nhttps://discord.gg/HDBAhYpuQu\n\nOpen UniPost →\n%s\n\nWe're excited to have you on board and look forward to helping you streamline your social publishing workflow.\n\nBest,\nThe UniPost Team\n",
 		userName,
 		workspaceName,
 		appBaseURL,
