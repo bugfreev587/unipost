@@ -198,13 +198,16 @@ public final class UnipostSdkTest {
 
         if (firstProfile != null) {
             JsonNode finalFirstProfile1 = firstProfile;
-            JsonNode connectSession = testValue("connect.createSession()", () -> client.connect().createSession(map(
-                    "platform", "bluesky",
+            JsonNode connectSession = testValue("connect.createSession() — youtube", () -> client.connect().createSession(map(
+                    "platform", "youtube",
                     "profile_id", finalFirstProfile1.path("id").asText(),
                     "external_user_id", "sdk-java-user-" + Instant.now().getEpochSecond(),
                     "external_user_email", "sdk-java@example.com",
                     "return_url", "https://example.com/return"
             )));
+            if (connectSession != null) {
+                assertEquals("youtube", connectSession.path("platform").asText(), "Expected youtube connect session");
+            }
             if (connectSession != null && connectSession.hasNonNull("id")) {
                 test("connect.getSession()", () -> {
                     JsonNode res = client.connect().getSession(connectSession.path("id").asText());

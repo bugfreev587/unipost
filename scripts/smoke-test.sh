@@ -265,6 +265,35 @@ assert_status "200" "GET /v1/analytics/summary"
 api GET "/v1/platform-credentials"
 assert_status "200" "GET /v1/platform-credentials"
 
+# ── Profiles + YouTube connect sessions regression ───────────────────
+
+section "Profiles + YouTube connect session regression"
+
+api GET "/v1/profiles"
+assert_status "200" "GET /v1/profiles"
+assert_jq_truthy '.data[0].id' 'first profile id present'
+PROFILE_ID=$(echo "$RESP_BODY" | jq -r '.data[0].id // empty')
+
+if [[ -n "$PROFILE_ID" ]]; then
+  EXTERNAL_USER_ID="smoke-youtube-$(date -u +%s)"
+  api POST "/v1/connect/sessions" "$(jq -nc --arg profile_id "$PROFILE_ID" --arg external_user_id "$EXTERNAL_USER_ID" \
+    '{platform:"youtube", profile_id:$profile_id, external_user_id:$external_user_id, return_url:"https://example.com/return"}')"
+  assert_status "201" "POST /v1/connect/sessions (youtube)"
+  assert_jq '.data.platform' 'youtube' 'connect session platform=youtube'
+  assert_jq_truthy '.data.id' 'connect session id present'
+  assert_jq_truthy '.data.url' 'connect session url present'
+  CONNECT_SESSION_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
+
+  if [[ -n "$CONNECT_SESSION_ID" ]]; then
+    api GET "/v1/connect/sessions/${CONNECT_SESSION_ID}"
+    assert_status "200" "GET /v1/connect/sessions/{id} (youtube)"
+    assert_jq '.data.id' "$CONNECT_SESSION_ID" 'connect session id round-trips'
+    assert_jq '.data.platform' 'youtube' 'connect session get platform=youtube'
+  fi
+else
+  skip "YouTube connect session regression" "no profile available"
+fi
+
 # ── Sprint 1 / PR1 — Capabilities API (no auth) ───────────────────────
 
 section "Sprint 1 PR1 — Capabilities API"

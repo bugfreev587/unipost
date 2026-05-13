@@ -339,15 +339,16 @@ async function main() {
     });
   }
 
-  connectSession = await test('connect.createSession()', async () => {
+  connectSession = await test('connect.createSession() — youtube', async () => {
     const res = await client.connect.createSession({
-      platform: 'bluesky',
+      platform: 'youtube',
       profileId: firstProfile?.id,
       externalUserId: `sdk-js-${Date.now()}`,
       externalUserEmail: 'sdk-validation@example.com',
       returnUrl: 'https://example.com/return',
     });
     assert(res.id && res.url, 'Expected connect session id and url');
+    assert(res.platform === 'youtube', 'Expected youtube connect session');
     return res;
   });
 

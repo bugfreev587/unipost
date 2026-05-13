@@ -424,9 +424,9 @@ func main() {
 	}
 
 	var connectSession *unipost.ConnectSession
-	test("Connect.CreateSession()", func() error {
+	test("Connect.CreateSession() — YouTube", func() error {
 		session, err := client.Connect.CreateSession(ctx, &unipost.CreateConnectSessionParams{
-			Platform:          "bluesky",
+			Platform:          "youtube",
 			ProfileID:         firstProfile.ID,
 			ExternalUserID:    fmt.Sprintf("sdk-go-%d", time.Now().Unix()),
 			ExternalUserEmail: "sdk-validation@example.com",
@@ -437,6 +437,9 @@ func main() {
 		}
 		if session.ID == "" || session.URL == "" {
 			return fmt.Errorf("expected connect session")
+		}
+		if session.Platform != "youtube" {
+			return fmt.Errorf("expected youtube connect session, got %s", session.Platform)
 		}
 		connectSession = session
 		return nil

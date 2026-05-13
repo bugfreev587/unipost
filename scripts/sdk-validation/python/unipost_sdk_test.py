@@ -470,13 +470,14 @@ def _test_media_get(client, media_id):
 
 def _test_connect_create(client, profile_id):
     payload = client.connect.create_session(
-        platform="bluesky",
+        platform="youtube",
         profile_id=profile_id,
         external_user_id=f"sdk-py-{int(datetime.now(timezone.utc).timestamp())}",
         external_user_email="sdk-validation@example.com",
         return_url="https://example.com/return",
     )
     assert_true(bool(payload.id and payload.url), "Expected connect session")
+    assert_true(payload.platform == "youtube", "Expected youtube connect session")
     return payload
 
 
