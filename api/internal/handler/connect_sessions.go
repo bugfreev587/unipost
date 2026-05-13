@@ -25,6 +25,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -252,6 +253,13 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:         pgtype.Timestamptz{Time: expiresAt, Valid: true},
 	})
 	if err != nil {
+		slog.Error("connect session create failed",
+			"workspace_id", workspaceID,
+			"profile_id", profileID,
+			"platform", body.Platform,
+			"external_user_id", body.ExternalUserID,
+			"error", err,
+		)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create connect session")
 		return
 	}
