@@ -195,12 +195,17 @@ export default function AccountsPage() {
     return () => { cancelled = true; };
   }, [getToken]);
 
+  const byoAccounts = useMemo(
+    () => accounts.filter((a) => a.connection_type === "byo"),
+    [accounts]
+  );
+
   const visibleAccounts = useMemo(
     () =>
       (profileFilter === "all"
-        ? accounts
-        : accounts.filter((a) => a.profile_id === profileFilter)),
-    [accounts, profileFilter]
+        ? byoAccounts
+        : byoAccounts.filter((a) => a.profile_id === profileFilter)),
+    [byoAccounts, profileFilter]
   );
 
   async function handleBlueskyConnect() {
@@ -495,17 +500,7 @@ export default function AccountsPage() {
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <div className="platform-icon-wrap"><PlatformIcon platform={a.platform} /></div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <span style={{ fontWeight: 500 }}>{a.account_name || a.id}</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          <span className={`dbadge ${a.connection_type === "managed" ? "dbadge-blue" : "dbadge-gray"}`}>
-                            {a.connection_type === "managed" ? "Managed" : "BYO"}
-                          </span>
-                          {a.external_user_email ? (
-                            <span style={{ color: "var(--dmuted2)", fontSize: 12 }}>{a.external_user_email}</span>
-                          ) : null}
-                        </div>
-                      </div>
+                      <span style={{ fontWeight: 500 }}>{a.account_name || a.id}</span>
                     </div>
                   </td>
                   <td style={{ color: "var(--dmuted)", fontSize: 13, fontWeight: 500 }}>

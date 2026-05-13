@@ -115,6 +115,7 @@ type managedUserListEntry struct {
 	AccountCount      int            `json:"account_count"`
 	PlatformCounts    map[string]int `json:"platform_counts"`
 	ReconnectCount    int            `json:"reconnect_count"`
+	DisconnectedCount int            `json:"disconnected_count"`
 	FirstConnectedAt  time.Time      `json:"first_connected_at"`
 	LastRefreshedAt   *time.Time     `json:"last_refreshed_at,omitempty"`
 }
@@ -174,6 +175,7 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 				"youtube":  int(row.YoutubeCount),
 			},
 			ReconnectCount:   int(row.ReconnectCount),
+			DisconnectedCount: int(row.DisconnectedCount),
 			FirstConnectedAt: row.FirstConnectedAt.Time,
 		}
 		if row.LastRefreshedAt.Valid {

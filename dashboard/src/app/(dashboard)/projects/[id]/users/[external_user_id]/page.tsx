@@ -124,6 +124,10 @@ export default function ManagedUserDetailPage() {
                 <span className="rounded px-2 py-1 text-xs text-[var(--success)]" style={{ background: "var(--success-soft)" }}>
                   Active
                 </span>
+              ) : acc.status === "disconnected" ? (
+                <span className="rounded px-2 py-1 text-xs text-[var(--danger)]" style={{ background: "var(--danger-soft)" }}>
+                  Disconnected
+                </span>
               ) : (
                 <span className="rounded px-2 py-1 text-xs text-[var(--warning)]" style={{ background: "var(--warning-soft)" }}>
                   {acc.status}

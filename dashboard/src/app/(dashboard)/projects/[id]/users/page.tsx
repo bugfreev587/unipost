@@ -110,7 +110,12 @@ export default function ManagedUsersPage() {
                     {new Date(u.first_connected_at).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-4">
-                    {u.reconnect_count > 0 ? (
+                    {u.disconnected_count > 0 ? (
+                      <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--danger)]" style={{ background: "var(--danger-soft)" }}>
+                        <AlertTriangle className="w-3 h-3" />
+                        {u.disconnected_count} disconnected
+                      </span>
+                    ) : u.reconnect_count > 0 ? (
                       <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--warning)]" style={{ background: "var(--warning-soft)" }}>
                         <AlertTriangle className="w-3 h-3" />
                         {u.reconnect_count} need reconnect

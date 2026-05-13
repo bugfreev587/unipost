@@ -1164,6 +1164,7 @@ export interface ManagedUserListEntry {
     youtube: number;
   };
   reconnect_count: number;
+  disconnected_count: number;
   first_connected_at: string;
   last_refreshed_at?: string;
 }

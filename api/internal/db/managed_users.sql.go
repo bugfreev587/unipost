@@ -16,7 +16,6 @@ SELECT COUNT(DISTINCT external_user_id)::INTEGER AS total
 FROM social_accounts
 WHERE profile_id = $1
   AND external_user_id IS NOT NULL
-  AND disconnected_at IS NULL
   AND connection_type = 'managed'
 `
 
@@ -32,7 +31,6 @@ SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, 
 FROM social_accounts
 WHERE profile_id = $1
   AND external_user_id = $2
-  AND disconnected_at IS NULL
   AND connection_type = 'managed'
 ORDER BY connected_at DESC
 `
@@ -95,12 +93,12 @@ SELECT
   COUNT(*) FILTER (WHERE platform = 'bluesky')::INTEGER  AS bluesky_count,
   COUNT(*) FILTER (WHERE platform = 'youtube')::INTEGER  AS youtube_count,
   COUNT(*) FILTER (WHERE status = 'reconnect_required')::INTEGER AS reconnect_count,
+  COUNT(*) FILTER (WHERE disconnected_at IS NOT NULL OR status = 'disconnected')::INTEGER AS disconnected_count,
   MIN(connected_at)::TIMESTAMPTZ   AS first_connected_at,
   MAX(last_refreshed_at)::TIMESTAMPTZ AS last_refreshed_at
 FROM social_accounts
 WHERE profile_id = $1
   AND external_user_id IS NOT NULL
-  AND disconnected_at IS NULL
   AND connection_type = 'managed'
 GROUP BY external_user_id
 ORDER BY MIN(connected_at) DESC, external_user_id DESC
@@ -121,6 +119,7 @@ type ListManagedUsersByProfileRow struct {
 	BlueskyCount      int32              `json:"bluesky_count"`
 	YoutubeCount      int32              `json:"youtube_count"`
 	ReconnectCount    int32              `json:"reconnect_count"`
+	DisconnectedCount int32              `json:"disconnected_count"`
 	FirstConnectedAt  pgtype.Timestamptz `json:"first_connected_at"`
 	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
 }
@@ -143,6 +142,7 @@ func (q *Queries) ListManagedUsersByProfile(ctx context.Context, arg ListManaged
 			&i.BlueskyCount,
 			&i.YoutubeCount,
 			&i.ReconnectCount,
+			&i.DisconnectedCount,
 			&i.FirstConnectedAt,
 			&i.LastRefreshedAt,
 		); err != nil {
