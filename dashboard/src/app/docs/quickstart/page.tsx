@@ -81,69 +81,46 @@ const CONNECT_AUTH_SNIPPETS = [
   },
   {
     label: "Node.js",
-    code: `const res = await fetch(
-  "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done",
-  {
-    headers: {
-      Authorization: \`Bearer \${process.env.UNIPOST_API_KEY}\`,
-    },
-  }
-);
+    code: `const { auth_url } = await client.connect.getConnectUrl({
+  profileId: "pr_brand_us",
+  platform: "linkedin",
+  redirectUrl: "https://app.acme.com/integrations/done", // optional
+});
 
-const body = await res.json();
-console.log(body.data.auth_url);`,
+console.log(auth_url);`,
   },
   {
     label: "Python",
-    code: `import os
-import requests
-
-res = requests.get(
-  "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin",
-  params={"redirect_url": "https://app.acme.com/integrations/done"},
-  headers={"Authorization": f"Bearer {os.environ['UNIPOST_API_KEY']}"},
+    code: `connect = client.connect.get_connect_url(
+  profile_id="pr_brand_us",
+  platform="linkedin",
+  redirect_url="https://app.acme.com/integrations/done",  # optional
 )
 
-print(res.json()["data"]["auth_url"])`,
+print(connect.auth_url)`,
   },
   {
     label: "Go",
-    code: `req, _ := http.NewRequest(
-  http.MethodGet,
-  "https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done",
-  nil,
-)
-req.Header.Set("Authorization", "Bearer "+os.Getenv("UNIPOST_API_KEY"))
-
-resp, err := http.DefaultClient.Do(req)
+    code: `connect, err := client.Connect.GetConnectURL(ctx, &unipost.GetConnectURLParams{
+  ProfileID:   "pr_brand_us",
+  Platform:    "linkedin",
+  RedirectURL: "https://app.acme.com/integrations/done", // optional
+})
 if err != nil {
   log.Fatal(err)
 }
-defer resp.Body.Close()
 
-var out struct {
-  Data struct {
-    AuthURL string \`json:"auth_url"\`
-  } \`json:"data"\`
-}
-if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-  log.Fatal(err)
-}
-
-fmt.Println(out.Data.AuthURL)`,
+fmt.Println(connect.AuthURL)`,
   },
   {
     label: "Java",
-    code: `var request = java.net.http.HttpRequest.newBuilder()
-    .uri(java.net.URI.create("https://api.unipost.dev/v1/profiles/pr_brand_us/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done"))
-    .header("Authorization", "Bearer " + System.getenv("UNIPOST_API_KEY"))
-    .GET()
-    .build();
+    code: `var connect = client.connect().getConnectUrl(Map.of(
+    "profile_id", "pr_brand_us",
+    "platform", "linkedin",
+    "redirect_url", "https://app.acme.com/integrations/done" // optional
+));
 
-var response = java.net.http.HttpClient.newHttpClient()
-    .send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-
-System.out.println(response.body());`,
+System.out.println(connect.get("auth_url").asText());`,
   },
 ];
 

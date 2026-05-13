@@ -358,6 +358,20 @@ async function main() {
     });
   }
 
+  if (firstProfile?.id) {
+    await test('connect.getConnectUrl()', async () => {
+      const res = await client.connect.getConnectUrl({
+        profileId: firstProfile.id,
+        platform: 'linkedin',
+        redirectUrl: 'https://example.com/callback',
+      });
+      assert(typeof res.auth_url === 'string', 'Expected auth_url');
+      return res;
+    });
+  } else {
+    skip('connect.getConnectUrl()', 'No profile available');
+  }
+
   const usersPage = await test('users.list()', async () => {
     const res = await client.users.list();
     assert(Array.isArray(res?.data), 'Expected managed user array');

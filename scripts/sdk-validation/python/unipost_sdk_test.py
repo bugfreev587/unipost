@@ -225,6 +225,10 @@ def main():
     connect_session = test("connect.create_session()", lambda: _test_connect_create(client, first_profile.id if first_profile else None))
     if connect_session:
         test("connect.get_session()", lambda: _test_connect_get(client, connect_session.id))
+    if first_profile:
+        test("connect.get_connect_url()", lambda: _test_connect_get_url(client, first_profile.id))
+    else:
+        skip("connect.get_connect_url()", "No profile available")
 
     users_page = test("users.list()", lambda: _test_users_list(client))
     users = users_page.get("data", []) if users_page else []
@@ -479,6 +483,16 @@ def _test_connect_create(client, profile_id):
 def _test_connect_get(client, session_id):
     payload = client.connect.get_session(session_id)
     assert_true(payload.id == session_id, "Expected matching connect session")
+    return payload
+
+
+def _test_connect_get_url(client, profile_id):
+    payload = client.connect.get_connect_url(
+        profile_id=profile_id,
+        platform="linkedin",
+        redirect_url="https://example.com/callback",
+    )
+    assert_true(bool(payload.auth_url), "Expected auth_url")
     return payload
 
 

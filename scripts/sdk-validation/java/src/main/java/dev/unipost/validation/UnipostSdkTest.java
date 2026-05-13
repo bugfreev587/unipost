@@ -211,9 +211,18 @@ public final class UnipostSdkTest {
                     assertEquals(connectSession.path("id").asText(), res.path("id").asText(), "Expected matching session");
                 });
             }
+            test("connect.getConnectUrl()", () -> {
+                JsonNode res = client.connect().getConnectUrl(map(
+                        "profile_id", finalFirstProfile1.path("id").asText(),
+                        "platform", "linkedin",
+                        "redirect_url", "https://example.com/callback"
+                ));
+                assertTrue(res.has("auth_url"), "Expected auth_url");
+            });
         } else {
             skip("connect.createSession()", "No profile available");
             skip("connect.getSession()", "No profile available");
+            skip("connect.getConnectUrl()", "No profile available");
         }
 
         Page<JsonNode> usersPage = testValue("users.list()", client.users()::list);

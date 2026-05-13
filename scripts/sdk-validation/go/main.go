@@ -455,6 +455,25 @@ func main() {
 		})
 	}
 
+	if firstProfile != nil {
+		test("Connect.GetConnectURL()", func() error {
+			res, err := client.Connect.GetConnectURL(ctx, &unipost.GetConnectURLParams{
+				ProfileID:   firstProfile.ID,
+				Platform:    "linkedin",
+				RedirectURL: "https://example.com/callback",
+			})
+			if err != nil {
+				return err
+			}
+			if res.AuthURL == "" {
+				return fmt.Errorf("expected auth url")
+			}
+			return nil
+		})
+	} else {
+		skip("Connect.GetConnectURL()", "No profile available")
+	}
+
 	var firstUser *unipost.ManagedUser
 	test("Users.List()", func() error {
 		users, err := client.Users.List(ctx)
