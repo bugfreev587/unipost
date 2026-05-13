@@ -63,6 +63,7 @@ type ConnectSession struct {
 	ExpiresAt                pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
+	AllowQuickstartCreds     bool               `json:"allow_quickstart_creds"`
 }
 
 type InboxItem struct {
@@ -309,15 +310,15 @@ type PostFailure struct {
 }
 
 type Profile struct {
-	ID                   string             `json:"id"`
-	Name                 string             `json:"name"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	BrandingLogoUrl      pgtype.Text        `json:"branding_logo_url"`
-	BrandingDisplayName  pgtype.Text        `json:"branding_display_name"`
-	BrandingPrimaryColor pgtype.Text        `json:"branding_primary_color"`
-	BrandingHidePoweredBy bool              `json:"branding_hide_powered_by"`
-	WorkspaceID          string             `json:"workspace_id"`
+	ID                    string             `json:"id"`
+	Name                  string             `json:"name"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	BrandingLogoUrl       pgtype.Text        `json:"branding_logo_url"`
+	BrandingDisplayName   pgtype.Text        `json:"branding_display_name"`
+	BrandingPrimaryColor  pgtype.Text        `json:"branding_primary_color"`
+	BrandingHidePoweredBy bool               `json:"branding_hide_powered_by"`
+	WorkspaceID           string             `json:"workspace_id"`
 }
 
 type SocialAccount struct {

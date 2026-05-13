@@ -53,20 +53,25 @@ type ConnectCallbackHandler struct {
 	encryptor         *crypto.AESEncryptor
 	bus               events.EventBus
 	registry          *connect.Registry
+	callbackBaseURL   string
 	limiter           *ipLimiter // shared in-memory limiter for callback brute-force protection
 	ilog              *integrationlogs.Logger
 	superAdminChecker *auth.SuperAdminChecker
 }
 
-func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, superAdminChecker *auth.SuperAdminChecker) *ConnectCallbackHandler {
+func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, callbackBaseURL string, superAdminChecker *auth.SuperAdminChecker) *ConnectCallbackHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
+	}
+	if callbackBaseURL == "" {
+		callbackBaseURL = "https://api.unipost.dev"
 	}
 	return &ConnectCallbackHandler{
 		queries:           queries,
 		encryptor:         encryptor,
 		bus:               bus,
 		registry:          registry,
+		callbackBaseURL:   callbackBaseURL,
 		limiter:           newIPLimiter(60, time.Minute),
 		superAdminChecker: superAdminChecker,
 	}
@@ -86,6 +91,30 @@ func (h *ConnectCallbackHandler) workspaceIDForProfile(ctx context.Context, prof
 		return ""
 	}
 	return profile.WorkspaceID
+}
+
+func (h *ConnectCallbackHandler) resolveConnector(ctx context.Context, workspaceID, platform string, allowQuickstartCreds bool) (connect.Connector, bool, error) {
+	if workspaceID != "" {
+		cred, err := h.queries.GetPlatformCredential(ctx, db.GetPlatformCredentialParams{
+			WorkspaceID: workspaceID,
+			Platform:    platform,
+		})
+		switch err {
+		case nil:
+			if connector := connect.NewManagedConnector(platform, cred.ClientID, cred.ClientSecret, h.callbackBaseURL); connector != nil {
+				return connector, true, nil
+			}
+		case pgx.ErrNoRows:
+			// Fall through to the default registry-backed connector.
+		default:
+			return nil, false, err
+		}
+	}
+	if !allowQuickstartCreds {
+		return nil, false, nil
+	}
+	connector, ok := h.registry.Get(platform)
+	return connector, ok, nil
 }
 
 func (h *ConnectCallbackHandler) logOAuthEvent(ctx context.Context, workspaceID string, event integrationlogs.Event) {
@@ -145,7 +174,13 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	connector, ok := h.registry.Get(session.Platform)
+	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
+	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds)
+	if err != nil {
+		slog.Error("connect.authorize: resolve connector", "platform", session.Platform, "workspace_id", workspaceID, "err", err)
+		renderConnectError(w, http.StatusInternalServerError, "Failed to load platform credentials.")
+		return
+	}
 	if !ok {
 		renderConnectError(w, http.StatusBadRequest, "Platform "+session.Platform+" is not supported.")
 		return
@@ -267,8 +302,12 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
-
-	connector, ok := h.registry.Get(platformName)
+	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds)
+	if err != nil {
+		slog.Error("connect.callback: resolve connector failed", "platform", platformName, "workspace_id", workspaceID, "err", err)
+		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "connector_resolution_failed", false)
+		return
+	}
 	if !ok {
 		renderConnectError(w, http.StatusBadRequest, "Platform not supported.")
 		return

@@ -4,9 +4,10 @@
 // a separate query path because:
 //
 //   1. Managed rows are routed through the internal/connect package
-//      (Twitter / LinkedIn) instead of the platform adapter registry,
-//      since the OAuth client id / secret used to mint the original
-//      tokens are env-var-scoped to UniPost's own apps.
+//      instead of the platform adapter registry because Connect
+//      accounts use the hosted OAuth connector implementations. The
+//      connector may use either UniPost's global app credentials or
+//      workspace-specific white-label credentials.
 //
 //   2. The query uses FOR UPDATE SKIP LOCKED so two API instances
 //      doing simultaneous ticks pick disjoint slices and never
@@ -31,6 +32,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/connect"
@@ -43,26 +45,73 @@ import (
 // are within 30 minutes of expiry. Tick is every 5 minutes per
 // Sprint 3 PRD §3 W6.
 type ManagedTokenRefreshWorker struct {
-	queries   *db.Queries
-	encryptor *crypto.AESEncryptor
-	registry  *connect.Registry
-	bus       events.EventBus
+	queries         *db.Queries
+	encryptor       *crypto.AESEncryptor
+	registry        *connect.Registry
+	bus             events.EventBus
+	callbackBaseURL string
 
 	// tickInterval is variable for tests; production uses 5 min.
 	tickInterval time.Duration
 }
 
-func NewManagedTokenRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, registry *connect.Registry, bus events.EventBus) *ManagedTokenRefreshWorker {
+func NewManagedTokenRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, registry *connect.Registry, bus events.EventBus, callbackBaseURL string) *ManagedTokenRefreshWorker {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
-	return &ManagedTokenRefreshWorker{
-		queries:      queries,
-		encryptor:    encryptor,
-		registry:     registry,
-		bus:          bus,
-		tickInterval: 5 * time.Minute,
+	if callbackBaseURL == "" {
+		callbackBaseURL = "https://api.unipost.dev"
 	}
+	return &ManagedTokenRefreshWorker{
+		queries:         queries,
+		encryptor:       encryptor,
+		registry:        registry,
+		bus:             bus,
+		callbackBaseURL: callbackBaseURL,
+		tickInterval:    5 * time.Minute,
+	}
+}
+
+func (w *ManagedTokenRefreshWorker) resolveConnector(ctx context.Context, acc db.SocialAccount) (connect.Connector, bool, error) {
+	allowQuickstartCreds := true
+	if acc.ConnectSessionID.Valid && acc.ConnectSessionID.String != "" && w.queries != nil {
+		session, err := w.queries.GetConnectSessionByIDOnly(ctx, acc.ConnectSessionID.String)
+		switch err {
+		case nil:
+			allowQuickstartCreds = session.AllowQuickstartCreds
+		case pgx.ErrNoRows:
+			allowQuickstartCreds = true
+		default:
+			return nil, false, err
+		}
+	}
+	if acc.ProfileID != "" && w.queries != nil {
+		profile, err := w.queries.GetProfile(ctx, acc.ProfileID)
+		if err != nil && err != pgx.ErrNoRows {
+			return nil, false, err
+		}
+		if err == nil && profile.WorkspaceID != "" {
+			cred, credErr := w.queries.GetPlatformCredential(ctx, db.GetPlatformCredentialParams{
+				WorkspaceID: profile.WorkspaceID,
+				Platform:    acc.Platform,
+			})
+			switch credErr {
+			case nil:
+				if connector := connect.NewManagedConnector(acc.Platform, cred.ClientID, cred.ClientSecret, w.callbackBaseURL); connector != nil {
+					return connector, true, nil
+				}
+			case pgx.ErrNoRows:
+				// Fall back to the default registry-backed connector.
+			default:
+				return nil, false, credErr
+			}
+		}
+	}
+	if !allowQuickstartCreds {
+		return nil, false, nil
+	}
+	connector, ok := w.registry.Get(acc.Platform)
+	return connector, ok, nil
 }
 
 // Start runs the worker loop until ctx is cancelled.
@@ -100,7 +149,11 @@ func (w *ManagedTokenRefreshWorker) RunOnce(ctx context.Context) {
 }
 
 func (w *ManagedTokenRefreshWorker) refreshOne(ctx context.Context, acc db.SocialAccount) {
-	connector, ok := w.registry.Get(acc.Platform)
+	connector, ok, err := w.resolveConnector(ctx, acc)
+	if err != nil {
+		slog.Error("managed token refresh: resolve connector failed", "platform", acc.Platform, "account_id", acc.ID, "err", err)
+		return
+	}
 	if !ok {
 		// Should never happen — the query already filters out bluesky,
 		// and the registry should always carry twitter + linkedin in

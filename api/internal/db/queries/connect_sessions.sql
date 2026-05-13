@@ -1,8 +1,8 @@
 -- name: CreateConnectSession :one
 INSERT INTO connect_sessions (
   profile_id, platform, external_user_id, external_user_email,
-  return_url, oauth_state, pkce_verifier, expires_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  return_url, oauth_state, pkce_verifier, expires_at, allow_quickstart_creds
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: GetConnectSessionByID :one

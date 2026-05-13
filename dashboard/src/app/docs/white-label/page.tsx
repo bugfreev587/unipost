@@ -27,7 +27,8 @@ console.log(session.url);`,
     "platform": "linkedin",
     "external_user_id": "acme_user_42",
     "external_user_email": "user42@customer.com",
-    "return_url": "https://app.acme.com/integrations/linkedin/done"
+    "return_url": "https://app.acme.com/integrations/linkedin/done",
+    "allow_quickstart_creds": false
   }'`,
   },
 ];
@@ -96,7 +97,7 @@ export default function WhiteLabelPage() {
         ]}
       />
       <p className="wl-note">
-        In practical terms: Quickstart uses UniPost&apos;s own OAuth apps, so your end users will see <code>UniPost</code> on the platform consent screen. White-label uses your uploaded platform credentials instead, so the same end users see your app name and brand assets on the consent screen once that platform app is configured and approved. Basic unlocks that for one platform while still keeping <code>Powered by UniPost</code> on the hosted Connect page; Growth and Team remove the one-platform cap and can hide that attribution.
+        In practical terms: Quickstart uses UniPost&apos;s own OAuth apps, so your end users will see <code>UniPost</code> on the platform consent screen. White-label uses your uploaded platform credentials instead, so the same end users see your app name and brand assets on the consent screen once that platform app is configured and approved. Connect sessions default to this white-label behavior; only sessions created with <code>allow_quickstart_creds=true</code> may fall back to UniPost&apos;s shared OAuth apps. Basic unlocks that for one platform while still keeping <code>Powered by UniPost</code> on the hosted Connect page; Growth and Team remove the one-platform cap and can hide that attribution.
       </p>
       <div className="wl-pick">
         <div className="wl-pick-card">

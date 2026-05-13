@@ -89,6 +89,7 @@ type connectSessionResponse struct {
 	ExternalUserID           string     `json:"external_user_id"`
 	ExternalUserEmail        string     `json:"external_user_email,omitempty"`
 	ReturnURL                string     `json:"return_url,omitempty"`
+	AllowQuickstartCreds     bool       `json:"allow_quickstart_creds"`
 	Status                   string     `json:"status"`
 	URL                      string     `json:"url,omitempty"`
 	ExpiresAt                time.Time  `json:"expires_at"`
@@ -99,13 +100,14 @@ type connectSessionResponse struct {
 
 func toConnectSessionResponse(s db.ConnectSession, hostedURL string) connectSessionResponse {
 	resp := connectSessionResponse{
-		ID:             s.ID,
-		Platform:       s.Platform,
-		ExternalUserID: s.ExternalUserID,
-		Status:         s.Status,
-		URL:            hostedURL,
-		ExpiresAt:      s.ExpiresAt.Time,
-		CreatedAt:      s.CreatedAt.Time,
+		ID:                   s.ID,
+		Platform:             s.Platform,
+		ExternalUserID:       s.ExternalUserID,
+		AllowQuickstartCreds: s.AllowQuickstartCreds,
+		Status:               s.Status,
+		URL:                  hostedURL,
+		ExpiresAt:            s.ExpiresAt.Time,
+		CreatedAt:            s.CreatedAt.Time,
 	}
 	if s.ExternalUserEmail.Valid {
 		resp.ExternalUserEmail = s.ExternalUserEmail.String
@@ -141,10 +143,19 @@ type publicConnectSessionResponse struct {
 }
 
 type publicBrandingPayload struct {
-	LogoURL      string `json:"logo_url,omitempty"`
-	DisplayName  string `json:"display_name,omitempty"`
-	PrimaryColor string `json:"primary_color,omitempty"`
-	HidePoweredBy bool  `json:"hide_powered_by,omitempty"`
+	LogoURL       string `json:"logo_url,omitempty"`
+	DisplayName   string `json:"display_name,omitempty"`
+	PrimaryColor  string `json:"primary_color,omitempty"`
+	HidePoweredBy bool   `json:"hide_powered_by,omitempty"`
+}
+
+func connectSessionPlatformUsesOAuthApp(platform string) bool {
+	switch platform {
+	case "twitter", "linkedin", "youtube", "instagram", "threads":
+		return true
+	default:
+		return false
+	}
 }
 
 // Create handles POST /v1/connect/sessions.
@@ -166,11 +177,12 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Platform          string `json:"platform"`
-		ProfileID         string `json:"profile_id"`
-		ExternalUserID    string `json:"external_user_id"`
-		ExternalUserEmail string `json:"external_user_email"`
-		ReturnURL         string `json:"return_url"`
+		Platform             string `json:"platform"`
+		ProfileID            string `json:"profile_id"`
+		ExternalUserID       string `json:"external_user_id"`
+		ExternalUserEmail    string `json:"external_user_email"`
+		ReturnURL            string `json:"return_url"`
+		AllowQuickstartCreds bool   `json:"allow_quickstart_creds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -218,6 +230,21 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if connectSessionPlatformUsesOAuthApp(body.Platform) && !body.AllowQuickstartCreds {
+		_, credErr := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
+			WorkspaceID: workspaceID,
+			Platform:    body.Platform,
+		})
+		if credErr == pgx.ErrNoRows {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+				"workspace is missing "+body.Platform+" platform credentials; upload white-label credentials first or pass allow_quickstart_creds=true")
+			return
+		}
+		if credErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load platform credentials")
+			return
+		}
+	}
 
 	oauthState, err := randomBase64URL(32)
 	if err != nil {
@@ -243,14 +270,15 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Add(connectSessionTTL)
 
 	session, err := h.queries.CreateConnectSession(r.Context(), db.CreateConnectSessionParams{
-		ProfileID:         profileID,
-		Platform:          body.Platform,
-		ExternalUserID:    body.ExternalUserID,
-		ExternalUserEmail: pgtype.Text{String: body.ExternalUserEmail, Valid: body.ExternalUserEmail != ""},
-		ReturnUrl:         pgtype.Text{String: body.ReturnURL, Valid: body.ReturnURL != ""},
-		OauthState:        oauthState,
-		PkceVerifier:      pkceVerifier,
-		ExpiresAt:         pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		ProfileID:            profileID,
+		Platform:             body.Platform,
+		ExternalUserID:       body.ExternalUserID,
+		ExternalUserEmail:    pgtype.Text{String: body.ExternalUserEmail, Valid: body.ExternalUserEmail != ""},
+		ReturnUrl:            pgtype.Text{String: body.ReturnURL, Valid: body.ReturnURL != ""},
+		OauthState:           oauthState,
+		PkceVerifier:         pkceVerifier,
+		ExpiresAt:            pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		AllowQuickstartCreds: body.AllowQuickstartCreds,
 	})
 	if err != nil {
 		slog.Error("connect session create failed",
@@ -279,10 +307,11 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ProfileID:     profileID,
 			Platform:      body.Platform,
 			Metadata: map[string]any{
-				"connect_session_id": session.ID,
-				"external_user_id":   body.ExternalUserID,
-				"has_return_url":     body.ReturnURL != "",
-				"expires_at":         expiresAt,
+				"connect_session_id":     session.ID,
+				"external_user_id":       body.ExternalUserID,
+				"has_return_url":         body.ReturnURL != "",
+				"allow_quickstart_creds": body.AllowQuickstartCreds,
+				"expires_at":             expiresAt,
 			},
 		})
 	}

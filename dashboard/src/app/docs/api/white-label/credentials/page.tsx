@@ -9,10 +9,10 @@ export default function PlatformCredentialsPage() {
       lead="Upload your own OAuth App client_id + client_secret for a platform. Once stored, every Connect session on the workspace for that platform runs against your App — the end user&rsquo;s consent screen shows your brand, not UniPost&rsquo;s."
     >
       <h2 id="when-to-use">When to use this endpoint</h2>
-      <p>Call this once per platform during white-label onboarding. If you never upload credentials for a platform, Connect sessions for that platform fall back to UniPost&rsquo;s global App, and the OAuth consent page shows &ldquo;UniPost&rdquo; as the requesting application. See the <Link href="/docs/white-label">white-label guide</Link> for the full integration walkthrough.</p>
+      <p>Call this once per platform during white-label onboarding. Connect sessions now default to requiring workspace-owned credentials for OAuth platforms, so this is the normal setup path for customer-facing onboarding. If you intentionally want to use UniPost&rsquo;s shared Quickstart OAuth app for a specific session, create that session with <code>allow_quickstart_creds=true</code>. See the <Link href="/docs/white-label">white-label guide</Link> for the full integration walkthrough.</p>
 
       <h2 id="paid-plan">Paid plan required</h2>
-      <p>Basic and up can upload platform credentials. Basic supports 1 platform slot; Growth and Team support all supported platforms. Free and API stay on UniPost&apos;s shared OAuth apps.</p>
+      <p>Basic and up can upload platform credentials. Basic supports 1 platform slot; Growth and Team support all supported platforms. Free and API workspaces can still use UniPost&apos;s shared Quickstart OAuth apps only when a session is created with <code>allow_quickstart_creds=true</code>.</p>
 
       <h2 id="create">Upload credentials</h2>
       <p>SDK support for platform credential management is coming soon. For now, upload credentials from the dashboard or call the REST endpoint directly.</p>
@@ -41,7 +41,7 @@ export default function PlatformCredentialsPage() {
       />
 
       <h2 id="delete">Remove credentials</h2>
-      <p>Deletes the stored credentials for one platform. After a successful delete, Connect sessions for that platform fall back to UniPost&rsquo;s global App. Existing already-connected accounts continue to publish using their stored Page tokens — deletion only affects <em>future</em> OAuth flows.</p>
+      <p>Deletes the stored credentials for one platform. After a successful delete, future Connect sessions for that platform will fail validation unless they are explicitly created with <code>allow_quickstart_creds=true</code>. Existing already-connected accounts continue to publish using their stored tokens — deletion only affects <em>future</em> OAuth flows.</p>
       <p>Returns <code>204 No Content</code> on success; safe to call when no credentials exist for that platform.</p>
 
       <h2 id="errors">Errors</h2>

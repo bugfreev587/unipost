@@ -14,20 +14,21 @@ import (
 const createConnectSession = `-- name: CreateConnectSession :one
 INSERT INTO connect_sessions (
   profile_id, platform, external_user_id, external_user_email,
-  return_url, oauth_state, pkce_verifier, expires_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
+  return_url, oauth_state, pkce_verifier, expires_at, allow_quickstart_creds
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds
 `
 
 type CreateConnectSessionParams struct {
-	ProfileID         string             `json:"profile_id"`
-	Platform          string             `json:"platform"`
-	ExternalUserID    string             `json:"external_user_id"`
-	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
-	ReturnUrl         pgtype.Text        `json:"return_url"`
-	OauthState        string             `json:"oauth_state"`
-	PkceVerifier      pgtype.Text        `json:"pkce_verifier"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	ProfileID            string             `json:"profile_id"`
+	Platform             string             `json:"platform"`
+	ExternalUserID       string             `json:"external_user_id"`
+	ExternalUserEmail    pgtype.Text        `json:"external_user_email"`
+	ReturnUrl            pgtype.Text        `json:"return_url"`
+	OauthState           string             `json:"oauth_state"`
+	PkceVerifier         pgtype.Text        `json:"pkce_verifier"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
+	AllowQuickstartCreds bool               `json:"allow_quickstart_creds"`
 }
 
 func (q *Queries) CreateConnectSession(ctx context.Context, arg CreateConnectSessionParams) (ConnectSession, error) {
@@ -40,6 +41,7 @@ func (q *Queries) CreateConnectSession(ctx context.Context, arg CreateConnectSes
 		arg.OauthState,
 		arg.PkceVerifier,
 		arg.ExpiresAt,
+		arg.AllowQuickstartCreds,
 	)
 	var i ConnectSession
 	err := row.Scan(
@@ -56,6 +58,7 @@ func (q *Queries) CreateConnectSession(ctx context.Context, arg CreateConnectSes
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.AllowQuickstartCreds,
 	)
 	return i, err
 }
@@ -72,7 +75,7 @@ func (q *Queries) ExpireConnectSession(ctx context.Context, id string) error {
 }
 
 const getConnectSessionByID = `-- name: GetConnectSessionByID :one
-SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
+SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds FROM connect_sessions
 WHERE id = $1 AND profile_id = $2
 `
 
@@ -98,12 +101,13 @@ func (q *Queries) GetConnectSessionByID(ctx context.Context, arg GetConnectSessi
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.AllowQuickstartCreds,
 	)
 	return i, err
 }
 
 const getConnectSessionByIDOnly = `-- name: GetConnectSessionByIDOnly :one
-SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
+SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds FROM connect_sessions
 WHERE id = $1
 `
 
@@ -127,12 +131,13 @@ func (q *Queries) GetConnectSessionByIDOnly(ctx context.Context, id string) (Con
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.AllowQuickstartCreds,
 	)
 	return i, err
 }
 
 const getConnectSessionByOAuthState = `-- name: GetConnectSessionByOAuthState :one
-SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at FROM connect_sessions
+SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds FROM connect_sessions
 WHERE oauth_state = $1
 `
 
@@ -153,6 +158,7 @@ func (q *Queries) GetConnectSessionByOAuthState(ctx context.Context, oauthState 
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.AllowQuickstartCreds,
 	)
 	return i, err
 }
@@ -162,7 +168,7 @@ UPDATE connect_sessions
 SET status = 'cancelled',
     completed_at = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
+RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds
 `
 
 func (q *Queries) MarkConnectSessionCancelled(ctx context.Context, id string) (ConnectSession, error) {
@@ -182,6 +188,7 @@ func (q *Queries) MarkConnectSessionCancelled(ctx context.Context, id string) (C
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.AllowQuickstartCreds,
 	)
 	return i, err
 }
@@ -192,7 +199,7 @@ SET status = 'completed',
     completed_social_account_id = $2,
     completed_at = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at
+RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds
 `
 
 type MarkConnectSessionCompletedParams struct {
@@ -217,6 +224,7 @@ func (q *Queries) MarkConnectSessionCompleted(ctx context.Context, arg MarkConne
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.AllowQuickstartCreds,
 	)
 	return i, err
 }

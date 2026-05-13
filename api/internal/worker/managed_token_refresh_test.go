@@ -9,7 +9,7 @@ import (
 
 // TestNewManagedTokenRefreshWorker — basic constructor sanity.
 func TestNewManagedTokenRefreshWorker(t *testing.T) {
-	w := NewManagedTokenRefreshWorker(nil, nil, connect.NewRegistry(), nil)
+	w := NewManagedTokenRefreshWorker(nil, nil, connect.NewRegistry(), nil, "")
 	if w == nil {
 		t.Fatal("constructor returned nil")
 	}

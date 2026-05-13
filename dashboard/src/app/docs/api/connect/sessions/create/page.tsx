@@ -14,11 +14,13 @@ const BODY_FIELDS: ApiFieldItem[] = [
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
   { name: "return_url?", type: "string", description: "Where UniPost redirects the user after completion." },
+  { name: "allow_quickstart_creds?", type: "boolean", description: "Optional escape hatch for OAuth platforms. Defaults to false. When false, the workspace must already have white-label platform credentials uploaded for that platform. Set true only if you intentionally want this session to fall back to UniPost's shared Quickstart OAuth app." },
 ];
 
 const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Connect session ID." },
   { name: "url", type: "string", description: "Hosted onboarding URL to redirect the user to." },
+  { name: "allow_quickstart_creds", type: "boolean", description: "Whether this session is allowed to fall back to UniPost's shared Quickstart OAuth app when no workspace-specific credentials exist." },
   { name: "status", type: "string", description: <>Session lifecycle state. Create responses start as pending.<EnumValues values={["pending", "completed", "expired", "cancelled"]} /></> },
   { name: "expires_at", type: "string | null", description: "Expiration timestamp for the hosted session." },
 ];
@@ -42,7 +44,8 @@ const SNIPPETS = [
     "profile_id": "pr_brand_us",
     "external_user_id": "user_123",
     "external_user_email": "alex@acme.com",
-    "return_url": "https://app.acme.com/integrations/done"
+    "return_url": "https://app.acme.com/integrations/done",
+    "allow_quickstart_creds": false
   }'`,
   },
   {
@@ -138,6 +141,7 @@ const RESPONSE_SNIPPETS = [
   "data": {
     "id": "cs_abc123",
     "url": "https://connect.unipost.dev/session/cs_abc123",
+    "allow_quickstart_creds": false,
     "status": "pending",
     "expires_at": "2026-04-22T18:00:00Z"
   }
@@ -160,9 +164,9 @@ const RESPONSE_SNIPPETS = [
     label: "402",
     code: `{
   "error": {
-    "code": "PLAN_PLATFORM_NOT_ALLOWED",
-    "normalized_code": "plan_platform_not_allowed",
-    "message": "connecting twitter accounts requires a paid plan — upgrade at unipost.dev/pricing"
+    "code": "VALIDATION_ERROR",
+    "normalized_code": "validation_error",
+    "message": "workspace is missing twitter platform credentials; upload white-label credentials first or pass allow_quickstart_creds=true"
   },
   "request_id": "req_123"
 }`,
@@ -174,7 +178,7 @@ export default function CreateConnectSessionPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Create connect session"
-      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow. In a multi-profile workspace, pass profile_id explicitly so the new account lands under the intended brand."
+      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow. For OAuth platforms, this endpoint defaults to white-label mode: the workspace must already have platform credentials uploaded unless you explicitly pass allow_quickstart_creds=true."
       method="POST"
       path="/v1/connect/sessions"
       requestSections={[
