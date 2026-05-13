@@ -61,13 +61,24 @@ func (h *ManagedUsersHandler) getProfileID(r *http.Request) string {
 
 	if urlProfileID != "" {
 		if userID != "" {
-			if _, err := h.queries.GetProfileByIDAndWorkspaceOwner(ctx, db.GetProfileByIDAndWorkspaceOwnerParams{
-				ID:     urlProfileID,
-				UserID: userID,
-			}); err == nil {
-				return urlProfileID
+			// Clerk-session callers should be authorized via their active
+			// workspace membership, not only by direct workspace ownership.
+			// Otherwise invited team members hit a silent 401 here and the
+			// dashboard renders the empty state even though managed users exist.
+			if workspaceID == "" {
+				if _, err := h.queries.GetProfileByIDAndWorkspaceOwner(ctx, db.GetProfileByIDAndWorkspaceOwnerParams{
+					ID:     urlProfileID,
+					UserID: userID,
+				}); err == nil {
+					return urlProfileID
+				}
+				return ""
 			}
-			return ""
+			prof, err := h.queries.GetProfile(ctx, urlProfileID)
+			if err != nil || prof.WorkspaceID != workspaceID {
+				return ""
+			}
+			return urlProfileID
 		}
 		if workspaceID == "" {
 			return ""
