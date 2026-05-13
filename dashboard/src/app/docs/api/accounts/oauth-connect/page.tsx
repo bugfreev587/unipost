@@ -37,30 +37,45 @@ const SNIPPETS = [
   {
     lang: "js",
     label: "Node.js",
-    code: `const res = await fetch(
-  "https://api.unipost.dev/v1/oauth/connect/linkedin",
-  {
-    headers: {
-      Authorization: \`Bearer \${process.env.UNIPOST_API_KEY}\`,
-    },
-  }
-);
+    code: `const { auth_url } = await client.connect.getConnectUrl({
+  profileId: "pr_brand_us",
+  platform: "linkedin",
+});
 
-const body = await res.json();
-console.log(body.data.auth_url);`,
+console.log(auth_url);`,
   },
   {
     lang: "python",
     label: "Python",
-    code: `import os
-import requests
-
-res = requests.get(
-  "https://api.unipost.dev/v1/oauth/connect/linkedin",
-  headers={"Authorization": f"Bearer {os.environ['UNIPOST_API_KEY']}"},
+    code: `connect = client.connect.get_connect_url(
+  profile_id="pr_brand_us",
+  platform="linkedin",
 )
 
-print(res.json()["data"]["auth_url"])`,
+print(connect.auth_url)`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `connect, err := client.Connect.GetConnectURL(ctx, &unipost.GetConnectURLParams{
+  ProfileID: "pr_brand_us",
+  Platform:  "linkedin",
+})
+if err != nil {
+  log.Fatal(err)
+}
+
+fmt.Println(connect.AuthURL)`,
+  },
+  {
+    lang: "java",
+    label: "Java",
+    code: `var connect = client.connect().getConnectUrl(Map.of(
+    "profile_id", "pr_brand_us",
+    "platform", "linkedin"
+));
+
+System.out.println(connect.get("auth_url").asText());`,
   },
 ];
 
