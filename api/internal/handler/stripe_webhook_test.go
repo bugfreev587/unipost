@@ -62,8 +62,11 @@ func TestRenderPaidActivationEmail(t *testing.T) {
 	if msg.Subject != "[UniPost] Welcome to Growth" {
 		t.Fatalf("unexpected subject: %q", msg.Subject)
 	}
-	if !strings.Contains(msg.HTML, "Acme") || !strings.Contains(msg.HTML, "/settings/billing") {
+	if !strings.Contains(msg.HTML, "Acme") || !strings.Contains(msg.HTML, "/settings/billing") || !strings.Contains(msg.HTML, "https://discord.gg/HDBAhYpuQu") {
 		t.Fatalf("html body missing expected content: %s", msg.HTML)
+	}
+	if !strings.Contains(msg.Text, "Join our Discord support channel for faster help: https://discord.gg/HDBAhYpuQu") {
+		t.Fatalf("text body missing discord link: %s", msg.Text)
 	}
 	if !strings.Contains(msg.Text, "Open billing: https://app.unipost.dev/settings/billing") {
 		t.Fatalf("text body missing billing link: %s", msg.Text)

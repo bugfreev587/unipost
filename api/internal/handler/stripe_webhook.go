@@ -379,8 +379,9 @@ func renderPaidActivationEmail(to, workspaceName, planName, appBaseURL string) m
 	subject := fmt.Sprintf("[UniPost] Welcome to %s", planName)
 	html := fmt.Sprintf(`<p>Your UniPost <strong>%s</strong> plan is now active for <strong>%s</strong>.</p>
 <p>You can connect accounts, invite teammates, and start publishing right away.</p>
+<p>If you want faster setup help or product support, join our Discord support channel: <a href="https://discord.gg/HDBAhYpuQu">https://discord.gg/HDBAhYpuQu</a></p>
 <p><a href="%s/settings/billing">Open billing →</a></p>`, html.EscapeString(planName), html.EscapeString(workspaceName), appBaseURL)
-	text := fmt.Sprintf("Your UniPost %s plan is now active for %s.\n\nOpen billing: %s/settings/billing\n", planName, workspaceName, appBaseURL)
+	text := fmt.Sprintf("Your UniPost %s plan is now active for %s.\n\nJoin our Discord support channel for faster help: https://discord.gg/HDBAhYpuQu\n\nOpen billing: %s/settings/billing\n", planName, workspaceName, appBaseURL)
 
 	return mail.Message{
 		To:      to,
