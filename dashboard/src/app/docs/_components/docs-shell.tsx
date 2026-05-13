@@ -245,7 +245,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           children: [
             { label: "List accounts", href: "/docs/api/accounts/list", method: "GET" },
             { label: "Connect account (credentials)", href: "/docs/api/accounts/connect", method: "POST" },
-            { label: "Connect account (OAuth)", href: "/docs/api/accounts/oauth-connect", method: "GET" },
+            { label: "Connect account (OAuth)", href: "/docs/api/accounts/oauth-connect", method: "POST" },
             { label: "Disconnect account", href: "/docs/api/accounts/disconnect", method: "DELETE" },
             { label: "Get account capabilities", href: "/docs/api/accounts/capabilities", method: "GET" },
             { label: "Check account health", href: "/docs/api/accounts/health", method: "GET" },
