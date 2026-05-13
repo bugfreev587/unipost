@@ -7,6 +7,7 @@ import (
 	"html"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -218,8 +219,30 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 	}
 
 	if eventType == "user.created" && createdWorkspace && email != "" {
+		slog.Info("welcome email: sending",
+			"user_id", userData.ID,
+			"email", email,
+			"workspace_name", workspaceName,
+			"event_type", eventType,
+			"template", "welcome_signup",
+		)
 		if err := h.mailer.Send(r.Context(), renderWelcomeEmail(email, name, workspaceName, h.appBaseURL)); err != nil {
-			log.Printf("Failed to send welcome email to %s: %v", email, err)
+			slog.Warn("welcome email: send failed",
+				"user_id", userData.ID,
+				"email", email,
+				"workspace_name", workspaceName,
+				"event_type", eventType,
+				"template", "welcome_signup",
+				"error", err,
+			)
+		} else {
+			slog.Info("welcome email: sent",
+				"user_id", userData.ID,
+				"email", email,
+				"workspace_name", workspaceName,
+				"event_type", eventType,
+				"template", "welcome_signup",
+			)
 		}
 	}
 
@@ -238,10 +261,16 @@ func renderWelcomeEmail(to, userName, workspaceName, appBaseURL string) mail.Mes
 		appBaseURL = "https://app.unipost.dev"
 	}
 
-	subject := "[UniPost] Welcome aboard"
+	subject := "[UniPost] Your workspace is ready"
 	htmlBody := fmt.Sprintf(
 		`<p>Hi %s,</p>
-<p>Welcome to UniPost. We created <strong>%s</strong> for you so you can start connecting accounts and publishing right away.</p>
+<p>Welcome to UniPost. Your workspace <strong>%s</strong> is live and ready to go.</p>
+<p>Here are the fastest next steps:</p>
+<ul>
+  <li>Connect your first social account</li>
+  <li>Create a draft or schedule your first post</li>
+  <li>Invite teammates if you're setting up a shared workspace</li>
+</ul>
 <p>If you want setup help or product support, join our Discord support channel: <a href="https://discord.gg/HDBAhYpuQu">https://discord.gg/HDBAhYpuQu</a></p>
 <p><a href="%s">Open UniPost →</a></p>`,
 		html.EscapeString(userName),
@@ -249,7 +278,7 @@ func renderWelcomeEmail(to, userName, workspaceName, appBaseURL string) mail.Mes
 		appBaseURL,
 	)
 	textBody := fmt.Sprintf(
-		"Hi %s,\n\nWelcome to UniPost. We created %s for you so you can start connecting accounts and publishing right away.\n\nNeed help? Join our Discord support channel: https://discord.gg/HDBAhYpuQu\n\nOpen UniPost: %s\n",
+		"Hi %s,\n\nWelcome to UniPost. Your workspace %s is live and ready to go.\n\nFastest next steps:\n- Connect your first social account\n- Create a draft or schedule your first post\n- Invite teammates if you're setting up a shared workspace\n\nNeed help? Join our Discord support channel: https://discord.gg/HDBAhYpuQu\n\nOpen UniPost: %s\n",
 		userName,
 		workspaceName,
 		appBaseURL,
