@@ -1,10 +1,10 @@
-// Per-tab storage for an in-progress tutorial replay session.
+// Per-tab storage for an in-progress tutorial session.
 //
-// When the user replays a tutorial, the modal-driven flow may navigate
-// the browser away (OAuth callback for the Connect step) and lose all
-// React state. We mirror just enough state into sessionStorage so the
-// host can restore the modal — and the OAuth-callback page can detect
-// the replay and bounce the user back to where the host is mounted.
+// The modal-driven flow may navigate the browser away (OAuth callback
+// for the Connect step) and lose all React state. We mirror just
+// enough state into sessionStorage so the host can restore the modal —
+// and the OAuth-callback page can detect an in-progress quickstart and
+// bounce the user back to where the host is mounted.
 
 import type { TutorialId, TutorialsCounts } from "@/lib/api";
 
@@ -12,7 +12,8 @@ const REPLAY_STORAGE_KEY = "unipost.tutorial_replay";
 
 export type StoredReplay = {
   id: TutorialId;
-  countsSnapshot: TutorialsCounts;
+  replay: boolean;
+  countsSnapshot?: TutorialsCounts;
   selectedAccountId?: string;
 };
 
@@ -22,7 +23,8 @@ export function readStoredReplay(): StoredReplay | null {
     const raw = window.sessionStorage.getItem(REPLAY_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredReplay>;
-    if (!parsed.id || !parsed.countsSnapshot) return null;
+    if (!parsed.id || typeof parsed.replay !== "boolean") return null;
+    if (parsed.replay && !parsed.countsSnapshot) return null;
     return parsed as StoredReplay;
   } catch {
     return null;

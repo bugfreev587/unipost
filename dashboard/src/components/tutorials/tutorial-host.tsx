@@ -189,10 +189,11 @@ export function TutorialHostProvider({
     track("tutorial_opened", { tutorial_id: "quickstart", trigger: "auto" });
   }, [state, profileId, activeSession, celebratingId]);
 
-  // Restore a replay session that was started before a CTA navigation
-  // (e.g. user clicked Connect, did OAuth, came back). The replay marker
-  // lives in sessionStorage; we restore it once, then clear the marker
-  // so a later refresh does not keep forcing the replay back open.
+  // Restore an in-progress tutorial session that was started before a
+  // CTA navigation (e.g. user clicked Connect, did OAuth, came back).
+  // The session marker lives in sessionStorage; we restore it once,
+  // then clear the marker so a later refresh does not keep forcing the
+  // modal back open.
   useEffect(() => {
     if (!state || replayRestoredRef.current || activeSession || celebratingId) return;
     const stored = readStoredReplay();
@@ -203,12 +204,10 @@ export function TutorialHostProvider({
     }
     replayRestoredRef.current = true;
     clearStoredReplay();
-    // Defer the setState off the effect body to match the auto-open
-    // pattern below and avoid the react-hooks/set-state-in-effect lint.
     void Promise.resolve().then(() => {
       setActiveSession({
         id: stored.id,
-        replay: true,
+        replay: stored.replay,
         countsSnapshot: stored.countsSnapshot,
       });
     });
@@ -250,12 +249,6 @@ export function TutorialHostProvider({
       const replay = state?.completedIds.has(id) ?? false;
       const countsSnapshot = replay && state ? { ...state.counts } : undefined;
       setActiveSession({ id, replay, countsSnapshot });
-      // Persist replay sessions per-tab so the modal can be restored
-      // after a CTA navigates away (e.g. OAuth round-trip).
-      if (replay && countsSnapshot) {
-        writeStoredReplay({ id, countsSnapshot });
-        replayRestoredRef.current = true;
-      }
       track("tutorial_opened", { tutorial_id: id, trigger: replay ? "replay" : "manual" });
     },
     [state],
@@ -340,16 +333,17 @@ export function TutorialHostProvider({
           countsSnapshot={activeSession?.countsSnapshot}
           onRequestClose={() => activeSession && handleClose(activeSession)}
           onStepCtaClick={() => {
-            // CTA navigates the page. In replay we keep the persisted
-            // marker so the modal can be restored when the user lands
-            // back on a tutorial-host route. In non-replay we fall
-            // through to the normal close path so dismissal is tracked
-            // (matches the original onClick={onRequestClose} behavior).
-            if (activeSession?.replay) {
-              setActiveSession(null);
-              return;
-            }
-            if (activeSession) handleClose(activeSession);
+            // CTA navigates the page, so persist just enough session
+            // state to resume the walkthrough on the next tutorial-host
+            // route instead of treating the click as an explicit skip.
+            if (!activeSession) return;
+            writeStoredReplay({
+              id: activeSession.id,
+              replay: activeSession.replay,
+              countsSnapshot: activeSession.countsSnapshot,
+            });
+            replayRestoredRef.current = true;
+            setActiveSession(null);
           }}
           onRequestComplete={() => handleManualComplete(activeTutorial.id)}
         />
