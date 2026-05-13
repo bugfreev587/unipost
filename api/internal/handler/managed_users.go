@@ -160,6 +160,7 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 				"twitter":  int(row.TwitterCount),
 				"linkedin": int(row.LinkedinCount),
 				"bluesky":  int(row.BlueskyCount),
+				"youtube":  int(row.YoutubeCount),
 			},
 			ReconnectCount:   int(row.ReconnectCount),
 			FirstConnectedAt: row.FirstConnectedAt.Time,

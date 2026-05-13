@@ -93,6 +93,7 @@ SELECT
   COUNT(*) FILTER (WHERE platform = 'twitter')::INTEGER  AS twitter_count,
   COUNT(*) FILTER (WHERE platform = 'linkedin')::INTEGER AS linkedin_count,
   COUNT(*) FILTER (WHERE platform = 'bluesky')::INTEGER  AS bluesky_count,
+  COUNT(*) FILTER (WHERE platform = 'youtube')::INTEGER  AS youtube_count,
   COUNT(*) FILTER (WHERE status = 'reconnect_required')::INTEGER AS reconnect_count,
   MIN(connected_at)::TIMESTAMPTZ   AS first_connected_at,
   MAX(last_refreshed_at)::TIMESTAMPTZ AS last_refreshed_at
@@ -118,6 +119,7 @@ type ListManagedUsersByProfileRow struct {
 	TwitterCount      int32              `json:"twitter_count"`
 	LinkedinCount     int32              `json:"linkedin_count"`
 	BlueskyCount      int32              `json:"bluesky_count"`
+	YoutubeCount      int32              `json:"youtube_count"`
 	ReconnectCount    int32              `json:"reconnect_count"`
 	FirstConnectedAt  pgtype.Timestamptz `json:"first_connected_at"`
 	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
@@ -139,6 +141,7 @@ func (q *Queries) ListManagedUsersByProfile(ctx context.Context, arg ListManaged
 			&i.TwitterCount,
 			&i.LinkedinCount,
 			&i.BlueskyCount,
+			&i.YoutubeCount,
 			&i.ReconnectCount,
 			&i.FirstConnectedAt,
 			&i.LastRefreshedAt,

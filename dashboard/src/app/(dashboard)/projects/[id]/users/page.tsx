@@ -101,6 +101,9 @@ export default function ManagedUsersPage() {
                       {u.platform_counts.bluesky > 0 && (
                         <PlatformBadge platform="bluesky" count={u.platform_counts.bluesky} />
                       )}
+                      {u.platform_counts.youtube > 0 && (
+                        <PlatformBadge platform="youtube" count={u.platform_counts.youtube} />
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-4 text-[var(--dmuted)] text-sm">

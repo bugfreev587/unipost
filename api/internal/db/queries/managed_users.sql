@@ -9,6 +9,7 @@ SELECT
   COUNT(*) FILTER (WHERE platform = 'twitter')::INTEGER  AS twitter_count,
   COUNT(*) FILTER (WHERE platform = 'linkedin')::INTEGER AS linkedin_count,
   COUNT(*) FILTER (WHERE platform = 'bluesky')::INTEGER  AS bluesky_count,
+  COUNT(*) FILTER (WHERE platform = 'youtube')::INTEGER  AS youtube_count,
   COUNT(*) FILTER (WHERE status = 'reconnect_required')::INTEGER AS reconnect_count,
   MIN(connected_at)::TIMESTAMPTZ   AS first_connected_at,
   MAX(last_refreshed_at)::TIMESTAMPTZ AS last_refreshed_at

@@ -1160,6 +1160,7 @@ export interface ManagedUserListEntry {
     twitter: number;
     linkedin: number;
     bluesky: number;
+    youtube: number;
   };
   reconnect_count: number;
   first_connected_at: string;
