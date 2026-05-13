@@ -35,39 +35,6 @@ UniPost client = new UniPost();`,
   },
 ];
 
-const CONNECT_SNIPPETS = [
-  {
-    label: "Node.js",
-    code: `import { UniPost } from "@unipost/sdk";
-
-const client = new UniPost();
-
-const session = await client.connect.createSession({
-  platform: "bluesky",
-  externalUserId: "user_123",
-  returnUrl: "https://app.acme.com/integrations/done",
-});
-
-console.log(session.url);`,
-  },
-  {
-    label: "Java",
-    code: `import dev.unipost.UniPost;
-
-import java.util.Map;
-
-UniPost client = new UniPost();
-
-var session = client.connect().createSession(Map.of(
-    "platform", "bluesky",
-    "external_user_id", "user_123",
-    "return_url", "https://app.acme.com/integrations/done"
-));
-
-System.out.println(session.get("url").asText());`,
-  },
-];
-
 const LIST_SNIPPETS = [
   {
     label: "Node.js",
@@ -383,7 +350,7 @@ export default function QuickstartPage() {
           ["Time to first post", "~5 minutes"],
           ["You'll need", "A UniPost account and one connected social account"],
           ["Languages", "Node.js, Python, Go, or Java (or call the REST API directly)"],
-          ["What you'll have at the end", "A live post and an account ID you can publish to"],
+          ["What you'll have at the end", "A live post and an account ID from Dashboard → Accounts → Quickstart"],
           ["Cost", "Free — the free tier covers the quickstart"],
         ]}
       />
@@ -408,7 +375,7 @@ export default function QuickstartPage() {
           <div className="qs-flow-num">3</div>
           <div className="qs-flow-body">
             <div className="qs-flow-title">Connect an account</div>
-            <div className="qs-flow-sub">From the dashboard or via <code>connect.sessions</code>.</div>
+            <div className="qs-flow-sub">Use the same Quickstart flow as the dashboard UI.</div>
           </div>
         </a>
         <a href="#first-post" className="qs-flow-step">
@@ -445,16 +412,27 @@ export default function QuickstartPage() {
       <DocsCodeTabs snippets={INIT_SNIPPETS} />
 
       <h2 id="connect-account">3. Connect an account</h2>
-      <p className="qs-note">Two paths. Pick one — you don't need both.</p>
+      <p className="qs-note">
+        API Quickstart mirrors Dashboard Quickstart. Connect one of your own accounts in the dashboard first, then come back here and use the API against that same account.
+      </p>
       <DocsTable
         columns={["Account owner", "How to connect", "Best for"]}
         rows={[
           ["Your team", "Dashboard → Accounts → Connect", "Prototypes, internal tools, your own brand accounts"],
-          ["Your customer", <ApiInlineLink key="api-connect" endpoint="POST /v1/connect/sessions" />, "SaaS products onboarding customer accounts"],
+          ["Your customer", <Link key="wl-guide" href="/docs/white-label">White-label → Connect Sessions</Link>, "SaaS products onboarding customer accounts"],
         ]}
       />
-      <h3 id="connect-session-example">Create a Connect session (customer-owned)</h3>
-      <DocsCodeTabs snippets={CONNECT_SNIPPETS} />
+      <ul className="docs-checklist">
+        <li>Open Dashboard → Accounts</li>
+        <li>Click <strong>Connect Account</strong> in Quickstart Mode</li>
+        <li>Authorize one account you control</li>
+        <li>Return here and list accounts to fetch its UniPost <code>account_id</code></li>
+      </ul>
+      <p className="qs-note">
+        Need to onboard customer-owned accounts instead of your own? That is a different flow. Use{" "}
+        <ApiInlineLink endpoint="POST /v1/connect/sessions" /> from the{" "}
+        <Link href="/docs/white-label">White-label guide</Link>, where <code>external_user_id</code> and <code>return_url</code> come from your own product.
+      </p>
 
       <h3 id="supported-platforms">Supported platforms</h3>
       <DocsTable
@@ -472,7 +450,7 @@ export default function QuickstartPage() {
       />
 
       <h2 id="get-account-id">Get your account ID</h2>
-      <p className="qs-note">List accounts and grab the UniPost ID you want to publish to.</p>
+      <p className="qs-note">List accounts and grab the UniPost ID for the account you just connected in Dashboard Quickstart.</p>
       <DocsCodeTabs snippets={LIST_SNIPPETS} />
 
       <h2 id="first-post">4. Publish your first post</h2>
@@ -507,7 +485,7 @@ export default function QuickstartPage() {
         <Link href="/docs/white-label" className="qs-next-card">
           <div className="qs-next-kicker">For customer accounts</div>
           <div className="qs-next-title">White-label</div>
-          <div className="qs-next-body">Branded Connect flows on your own OAuth apps.</div>
+          <div className="qs-next-body">Connect Sessions, external_user_id mapping, and branded onboarding on your own OAuth apps.</div>
         </Link>
         <Link href="/docs/api/posts/create" className="qs-next-card">
           <div className="qs-next-kicker">API reference</div>
