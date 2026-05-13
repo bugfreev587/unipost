@@ -80,7 +80,7 @@ export default function OAuthConnectPage() {
   return (
     <SingleEndpointReferencePage
       section="accounts"
-      title="Get OAuth connect URL"
+      title="Connect account (OAuth)"
       description="Starts an OAuth account connection flow by returning an auth_url you open in the browser. Use this for OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, and Pinterest, then list accounts afterward to find the new UniPost account ID."
       method="GET"
       path="/v1/oauth/connect/:platform"
