@@ -376,7 +376,7 @@ func main() {
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
-	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus)
+		stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, mailer, os.Getenv("APP_BASE_URL"))
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
 	// dynamic GROUP BY clause sqlc can't model.

@@ -2,9 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -13,19 +16,34 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
 
 type StripeWebhookHandler struct {
-	queries *db.Queries
-	stripe  *billing.Manager
-	bus     events.EventBus
+	queries    *db.Queries
+	stripe     *billing.Manager
+	bus        events.EventBus
+	mailer     mail.Mailer
+	appBaseURL string
 }
 
-func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager, bus events.EventBus) *StripeWebhookHandler {
+func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager, bus events.EventBus, mailer mail.Mailer, appBaseURL string) *StripeWebhookHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
-	return &StripeWebhookHandler{queries: queries, stripe: stripeMgr, bus: bus}
+	if mailer == nil {
+		mailer = mail.NoopMailer{}
+	}
+	if appBaseURL == "" {
+		appBaseURL = "https://app.unipost.dev"
+	}
+	return &StripeWebhookHandler{
+		queries:    queries,
+		stripe:     stripeMgr,
+		bus:        bus,
+		mailer:     mailer,
+		appBaseURL: strings.TrimRight(appBaseURL, "/"),
+	}
 }
 
 // HandleStripe handles POST /webhooks/stripe
@@ -81,6 +99,11 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 		return
 	}
 
+	var previousSub *db.Subscription
+	if sub, err := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID); err == nil {
+		previousSub = &sub
+	}
+
 	customerID := ""
 	if session.Customer != nil {
 		customerID = session.Customer.ID
@@ -104,6 +127,15 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	}
 
 	slog.Info("stripe webhook: subscription created", "workspace_id", workspaceID, "plan_id", planID, "customer", customerID)
+
+	if shouldSendPaidActivationEmail(previousSub, planID) {
+		if err := h.sendPaidActivationEmail(r, workspaceID, planID); err != nil {
+			slog.Warn("stripe webhook: failed to send paid activation email",
+				"workspace_id", workspaceID,
+				"plan_id", planID,
+				"error", err)
+		}
+	}
 }
 
 func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event stripe.Event) {
@@ -302,4 +334,58 @@ func subscriptionCurrentPeriodEnd(sub *stripe.Subscription) int64 {
 		return 0
 	}
 	return sub.Items.Data[0].CurrentPeriodEnd
+}
+
+func shouldSendPaidActivationEmail(previous *db.Subscription, newPlanID string) bool {
+	if newPlanID == "" || newPlanID == "free" {
+		return false
+	}
+	if previous == nil {
+		return true
+	}
+	return previous.PlanID == "" || previous.PlanID == "free"
+}
+
+func (h *StripeWebhookHandler) sendPaidActivationEmail(r *http.Request, workspaceID, planID string) error {
+	workspace, err := h.queries.GetWorkspace(r.Context(), workspaceID)
+	if err != nil {
+		return fmt.Errorf("load workspace: %w", err)
+	}
+	owner, err := h.queries.GetUser(r.Context(), workspace.UserID)
+	if err != nil {
+		return fmt.Errorf("load workspace owner: %w", err)
+	}
+	if strings.TrimSpace(owner.Email) == "" {
+		return nil
+	}
+
+	planName := planID
+	if plan, err := h.queries.GetPlan(r.Context(), planID); err == nil && strings.TrimSpace(plan.Name) != "" {
+		planName = plan.Name
+	}
+
+	msg := renderPaidActivationEmail(owner.Email, workspace.Name, planName, h.appBaseURL)
+	return h.mailer.Send(r.Context(), msg)
+}
+
+func renderPaidActivationEmail(to, workspaceName, planName, appBaseURL string) mail.Message {
+	if strings.TrimSpace(planName) == "" {
+		planName = "paid"
+	}
+	if strings.TrimSpace(workspaceName) == "" {
+		workspaceName = "your workspace"
+	}
+
+	subject := fmt.Sprintf("[UniPost] Welcome to %s", planName)
+	html := fmt.Sprintf(`<p>Your UniPost <strong>%s</strong> plan is now active for <strong>%s</strong>.</p>
+<p>You can connect accounts, invite teammates, and start publishing right away.</p>
+<p><a href="%s/settings/billing">Open billing →</a></p>`, html.EscapeString(planName), html.EscapeString(workspaceName), appBaseURL)
+	text := fmt.Sprintf("Your UniPost %s plan is now active for %s.\n\nOpen billing: %s/settings/billing\n", planName, workspaceName, appBaseURL)
+
+	return mail.Message{
+		To:      to,
+		Subject: subject,
+		HTML:    html,
+		Text:    text,
+	}
 }
