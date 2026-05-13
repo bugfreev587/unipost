@@ -31,13 +31,14 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done"`,
+    code: `curl "https://api.unipost.dev/v1/oauth/connect/linkedin" \
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
     lang: "js",
     label: "Node.js",
     code: `const res = await fetch(
-  "https://api.unipost.dev/v1/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done",
+  "https://api.unipost.dev/v1/oauth/connect/linkedin",
   {
     headers: {
       Authorization: \`Bearer \${process.env.UNIPOST_API_KEY}\`,
@@ -56,7 +57,6 @@ import requests
 
 res = requests.get(
   "https://api.unipost.dev/v1/oauth/connect/linkedin",
-  params={"redirect_url": "https://app.acme.com/integrations/done"},
   headers={"Authorization": f"Bearer {os.environ['UNIPOST_API_KEY']}"},
 )
 
@@ -81,7 +81,7 @@ export default function OAuthConnectPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Get OAuth connect URL"
-      description="Returns an auth_url for connecting one self-owned social account in the current workspace context. Open the returned URL in a browser to complete OAuth, then list accounts to find the new UniPost account ID."
+      description="Starts an OAuth account connection flow by returning an auth_url you open in the browser. Use this for OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, and Pinterest, then list accounts afterward to find the new UniPost account ID."
       method="GET"
       path="/v1/oauth/connect/:platform"
       requestSections={[

@@ -76,14 +76,14 @@ System.out.println(profile.get("id").asText());`,
 const CONNECT_AUTH_SNIPPETS = [
   {
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/oauth/connect/linkedin?redirect_url=https://app.acme.com/integrations/done"`,
+    code: `curl "https://api.unipost.dev/v1/oauth/connect/linkedin" \
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
     label: "Node.js",
     code: `const { auth_url } = await client.connect.getConnectUrl({
   profileId: "pr_brand_us",
   platform: "linkedin",
-  redirectUrl: "https://app.acme.com/integrations/done", // optional
 });
 
 console.log(auth_url);`,
@@ -93,7 +93,6 @@ console.log(auth_url);`,
     code: `connect = client.connect.get_connect_url(
   profile_id="pr_brand_us",
   platform="linkedin",
-  redirect_url="https://app.acme.com/integrations/done",  # optional
 )
 
 print(connect.auth_url)`,
@@ -103,7 +102,6 @@ print(connect.auth_url)`,
     code: `connect, err := client.Connect.GetConnectURL(ctx, &unipost.GetConnectURLParams{
   ProfileID:   "pr_brand_us",
   Platform:    "linkedin",
-  RedirectURL: "https://app.acme.com/integrations/done", // optional
 })
 if err != nil {
   log.Fatal(err)
@@ -115,8 +113,7 @@ fmt.Println(connect.AuthURL)`,
     label: "Java",
     code: `var connect = client.connect().getConnectUrl(Map.of(
     "profile_id", "pr_brand_us",
-    "platform", "linkedin",
-    "redirect_url", "https://app.acme.com/integrations/done" // optional
+    "platform", "linkedin"
 ));
 
 System.out.println(connect.get("auth_url").asText());`,
@@ -288,10 +285,10 @@ export default function QuickstartPage() {
         <li>Call <code>GET /v1/oauth/connect/{"{platform}"}</code></li>
         <li>Read <code>data.auth_url</code> from the response</li>
         <li>Open it in a browser</li>
-        <li>Complete OAuth and let UniPost redirect back to your <code>redirect_url</code></li>
+        <li>Complete OAuth in the browser</li>
       </ul>
       <p className="qs-note">
-        <code>redirect_url</code> is your own app page for “OAuth finished”. It is optional. If you omit it, UniPost still connects the account and sends the browser back to the UniPost app after OAuth completes. Endpoint reference:{" "}
+        You can optionally add <code>redirect_url</code> if you want OAuth to land on your own app afterward, but Quickstart leaves it out to keep the first connection as simple as possible. Endpoint reference:{" "}
         <ApiInlineLink endpoint="GET /v1/oauth/connect/{platform}" />.
       </p>
       <p className="qs-note">
