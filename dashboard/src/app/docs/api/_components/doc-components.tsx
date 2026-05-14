@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type WheelEvent } from "react";
 import Link from "next/link";
 import { Check, ChevronRight, Copy, Play, X } from "lucide-react";
 import { CodeBlock, CodeTabs as SharedCodeTabs, codeBlockStyles } from "../../_components/code-block";
@@ -266,7 +266,7 @@ export function CodeTabs({ snippets }: { snippets: { lang: string; label: string
         }}
       />
       <div className="docs-api-code-tabs" style={{ minWidth: 0 }}>
-        <SharedCodeTabs snippets={snippets} viewerMaxHeight={1600} themeVariant="api" />
+        <SharedCodeTabs snippets={snippets} viewerMaxHeight={10000} themeVariant="api" />
       </div>
     </>
   );
@@ -287,23 +287,6 @@ export function InfoBox({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ background: "color-mix(in srgb, var(--docs-link) 7%, var(--docs-bg-elevated))", border: "1px solid color-mix(in srgb, var(--docs-link) 18%, var(--docs-border))", borderRadius: 8, padding: "14px 18px", margin: "16px 0", fontSize: 13.5, lineHeight: 1.6, color: "var(--docs-text-soft)" }}>
       {children}
-    </div>
-  );
-}
-
-// ── Related endpoints ──
-export function RelatedEndpoints({ items }: { items: { method: string; path: string; label: string; href: string }[] }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      {items.map(item => (
-        <Link key={item.href} href={item.href} style={{
-          display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: "var(--docs-bg-elevated)", border: "1px solid var(--docs-border)",
-          borderRadius: 10, textDecoration: "none", color: "var(--docs-text-soft)", fontSize: 13, transition: "all .15s",
-        }}>
-          <MethodBadge method={item.method} />
-          <span>{item.label}</span>
-        </Link>
-      ))}
     </div>
   );
 }
@@ -455,10 +438,95 @@ function buildJsonTemplateValue(type?: string) {
   return "";
 }
 
+function shouldRenderBodyInput(type?: string) {
+  const normalized = (type || "").trim().toLowerCase();
+  return !(
+    normalized === "array"
+    || normalized.includes("[]")
+    || normalized.includes("object")
+  );
+}
+
+function readBodyFieldValue(value: string, key: string) {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    const fieldValue = parsed?.[key];
+    if (fieldValue === undefined || fieldValue === null) return "";
+    if (typeof fieldValue === "string") return fieldValue;
+    return String(fieldValue);
+  } catch {
+    return "";
+  }
+}
+
+function writeBodyFieldValue(value: string, key: string, nextValue: string, type?: string) {
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(value || "{}");
+  } catch {
+    parsed = {};
+  }
+
+  const normalized = (type || "").trim().toLowerCase();
+  if (normalized.includes("boolean")) {
+    parsed[key] = nextValue === "true";
+  } else if (normalized.includes("integer") || normalized.includes("number")) {
+    parsed[key] = nextValue.trim() ? Number(nextValue) : 0;
+  } else {
+    parsed[key] = nextValue;
+  }
+
+  return JSON.stringify(parsed, null, 2);
+}
+
+function readBodyComplexFieldValue(value: string, key: string, type?: string) {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    const fieldValue = parsed?.[key];
+    if (fieldValue === undefined || fieldValue === null) {
+      return (type || "").includes("[]") ? "" : JSON.stringify(buildJsonTemplateValue(type), null, 2);
+    }
+    if (Array.isArray(fieldValue) && (type || "").includes("[]")) {
+      return fieldValue.join(", ");
+    }
+    return JSON.stringify(fieldValue, null, 2);
+  } catch {
+    return "";
+  }
+}
+
+function writeBodyComplexFieldValue(value: string, key: string, nextValue: string, type?: string) {
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(value || "{}");
+  } catch {
+    parsed = {};
+  }
+
+  if ((type || "").includes("[]")) {
+    parsed[key] = nextValue
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return JSON.stringify(parsed, null, 2);
+  }
+
+  try {
+    parsed[key] = nextValue.trim() ? JSON.parse(nextValue) : buildJsonTemplateValue(type);
+  } catch {
+    parsed[key] = nextValue;
+  }
+
+  return JSON.stringify(parsed, null, 2);
+}
+
 function buildRequestBodyTemplate(fields: ApiFieldItem[]) {
   const template: Record<string, unknown> = {};
 
   for (const field of fields) {
+    if (normalizeConfigFieldName(field.name).optional) {
+      continue;
+    }
     const key = buildFieldKey(field.name);
     template[key] = buildJsonTemplateValue(field.type);
   }
@@ -479,6 +547,8 @@ function RequestConfigSection({
   values: Record<string, string>;
   onValueChange: (key: string, value: string) => void;
 }) {
+  const [expandedOptionalFields, setExpandedOptionalFields] = useState<Record<string, boolean>>({});
+
   if (fields.length === 0) {
     return null;
   }
@@ -505,35 +575,38 @@ function RequestConfigSection({
           const normalized = normalizeConfigFieldName(field.name);
           const inputId = `request-config-${section}-${normalized.label}`;
           const fieldKey = buildFieldKey(field.name);
+          const expanded = !normalized.optional || Boolean(expandedOptionalFields[fieldKey]);
+
+          if (normalized.optional && !expanded) {
+            return (
+              <div key={`${section}-${field.name}`} className="api-playground-field-row-wrap">
+                <button
+                  type="button"
+                  className="api-playground-field-row"
+                  onClick={() => setExpandedOptionalFields((current) => ({ ...current, [fieldKey]: true }))}
+                  aria-expanded={false}
+                >
+                  <span className="api-playground-row-name">
+                    <ChevronRight size={16} strokeWidth={2.2} />
+                    {normalized.label}
+                  </span>
+                  <span className="api-playground-field-type">{field.meta ? `${field.meta} · ` : ""}{field.type || "string"}</span>
+                </button>
+              </div>
+            );
+          }
 
           return (
             <div
               key={`${section}-${field.name}`}
-              style={{
-                border: "1px solid var(--docs-border)",
-                borderRadius: 14,
-                padding: "12px 12px 10px",
-                background: "var(--docs-bg-muted)",
-              }}
+              className="api-playground-field"
             >
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-                <label htmlFor={inputId} style={{ fontFamily: "var(--docs-mono)", fontSize: 12.5, fontWeight: 600, color: "var(--docs-text)" }}>
+              <div className="api-playground-field-heading">
+                <label htmlFor={inputId} className="api-playground-field-name">
                   {normalized.label}
+                  {!normalized.optional ? <span className="api-playground-required">*</span> : null}
                 </label>
-                {field.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 11.5, color: "var(--docs-text-muted)" }}>{field.type}</span> : null}
-                <span
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    color: normalized.optional ? "var(--docs-text-faint)" : "var(--docs-text)",
-                    fontFamily: "var(--docs-mono)",
-                    textTransform: "uppercase",
-                    letterSpacing: ".04em",
-                  }}
-                >
-                  {normalized.optional ? "Optional" : "Required"}
-                </span>
-                {field.meta ? <span style={{ fontSize: 12, color: "var(--docs-text-faint)" }}>{field.meta}</span> : null}
+                <span className="api-playground-field-type">{field.meta ? `${field.meta} · ` : ""}{field.type || "string"}</span>
               </div>
               <input
                 id={inputId}
@@ -543,22 +616,8 @@ function RequestConfigSection({
                 autoComplete="off"
                 value={values[fieldKey] || ""}
                 onChange={(event) => onValueChange(fieldKey, event.target.value)}
-                style={{
-                  width: "100%",
-                  borderRadius: 10,
-                  border: "1px solid var(--docs-border)",
-                  background: "var(--docs-bg-elevated)",
-                  color: "var(--docs-text)",
-                  fontSize: 12.5,
-                  lineHeight: 1.5,
-                  padding: "9px 11px",
-                  outline: "none",
-                  fontFamily: "var(--docs-mono)",
-                }}
+                className="api-playground-input"
               />
-              <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--docs-text-soft)", marginTop: 8 }}>
-                {field.description}
-              </div>
             </div>
           );
         })}
@@ -576,6 +635,9 @@ function RequestBodySection({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+
   if (fields.length === 0) {
     return null;
   }
@@ -597,55 +659,110 @@ function RequestBodySection({
         <span style={{ fontSize: 13, fontWeight: 500, color: "var(--docs-text-soft)", letterSpacing: ".01em" }}>Request Body</span>
         <ChevronRight className="api-accordion-chevron" strokeWidth={2.2} />
       </summary>
-      <div className="api-request-config-panel">
-        <div
-          style={{
-            border: "1px solid var(--docs-border)",
-            borderRadius: 14,
-            padding: 12,
-            background: "var(--docs-bg-muted)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 12.5, fontWeight: 500, color: "var(--docs-text-soft)" }}>body</span>
-            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 11.5, color: "var(--docs-text-muted)" }}>application/json</span>
-          </div>
+      <div className="api-request-config-panel api-request-body-panel">
+        <button type="button" className="api-playground-json-button" onClick={() => setEditorOpen((current) => !current)}>
+          {editorOpen ? "Close JSON Editor" : "Open JSON Editor"}
+        </button>
+        {editorOpen ? (
           <textarea
             value={value}
             onChange={(event) => onChange(event.target.value)}
             spellCheck={false}
-            style={{
-              width: "100%",
-              minHeight: 180,
-              resize: "vertical",
-              borderRadius: 12,
-              border: "1px solid var(--docs-border)",
-              background: "var(--docs-tech-bg)",
-              color: "var(--docs-tech-text)",
-              fontSize: 12.5,
-              lineHeight: 1.55,
-              padding: "12px 13px",
-              outline: "none",
-              fontFamily: "var(--docs-mono)",
-            }}
+            className="api-playground-json-editor"
           />
-          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-            {fields.map((field) => {
-              const normalized = normalizeConfigFieldName(field.name);
+        ) : null}
+        <div className="api-playground-body-grid">
+          {fields.map((field) => {
+            const normalized = normalizeConfigFieldName(field.name);
+            const fieldKey = buildFieldKey(field.name);
+            const inputId = `request-config-body-${normalized.label}`;
+            const canInput = shouldRenderBodyInput(field.type);
+            const expanded = !normalized.optional || Boolean(expandedRows[fieldKey]);
+
+            if (!canInput) {
+              const isStringArray = (field.type || "").includes("[]");
+
               return (
-                <div key={`body-${field.name}`}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                    <span style={{ fontFamily: "var(--docs-mono)", fontSize: 12, color: "var(--docs-text)" }}>{normalized.label}</span>
-                    {field.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 11, color: "var(--docs-text-muted)" }}>{field.type}</span> : null}
-                    <span style={{ fontSize: 10.5, color: "var(--docs-text-faint)", fontFamily: "var(--docs-mono)", textTransform: "uppercase", letterSpacing: ".04em" }}>
-                      {normalized.optional ? "Optional" : "Required"}
+                <div key={`body-${field.name}`} className="api-playground-field-row-wrap">
+                  <button
+                    type="button"
+                    className={`api-playground-field-row${expanded ? " expanded" : ""}`}
+                    onClick={() => setExpandedRows((current) => ({ ...current, [fieldKey]: !current[fieldKey] }))}
+                    aria-expanded={expanded}
+                  >
+                    <span className="api-playground-row-name">
+                      <ChevronRight size={16} strokeWidth={2.2} />
+                      {normalized.label}
                     </span>
-                  </div>
-                  <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--docs-text-soft)" }}>{field.description}</div>
+                    <span className="api-playground-field-type">{field.type || "object"}</span>
+                  </button>
+                  {expanded ? (
+                    <div className="api-playground-row-editor">
+                      {isStringArray ? (
+                        <input
+                          type="text"
+                          placeholder="value_one, value_two"
+                          spellCheck={false}
+                          autoComplete="off"
+                          value={readBodyComplexFieldValue(value, fieldKey, field.type)}
+                          onChange={(event) => onChange(writeBodyComplexFieldValue(value, fieldKey, event.target.value, field.type))}
+                          className="api-playground-input"
+                        />
+                      ) : (
+                        <textarea
+                          value={readBodyComplexFieldValue(value, fieldKey, field.type)}
+                          onChange={(event) => onChange(writeBodyComplexFieldValue(value, fieldKey, event.target.value, field.type))}
+                          spellCheck={false}
+                          className="api-playground-json-editor compact"
+                        />
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               );
-            })}
-          </div>
+            }
+
+            if (normalized.optional && !expanded) {
+              return (
+                <div key={`body-${field.name}`} className="api-playground-field-row-wrap">
+                  <button
+                    type="button"
+                    className="api-playground-field-row"
+                    onClick={() => setExpandedRows((current) => ({ ...current, [fieldKey]: true }))}
+                    aria-expanded={false}
+                  >
+                    <span className="api-playground-row-name">
+                      <ChevronRight size={16} strokeWidth={2.2} />
+                      {normalized.label}
+                    </span>
+                    <span className="api-playground-field-type">{field.type || "string"}</span>
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <div key={`body-${field.name}`} className="api-playground-field">
+                <div className="api-playground-field-heading">
+                  <label htmlFor={inputId} className="api-playground-field-name">
+                    {normalized.label}
+                    {!normalized.optional ? <span className="api-playground-required">*</span> : null}
+                  </label>
+                  <span className="api-playground-field-type">{field.type || "string"}</span>
+                </div>
+                <input
+                  id={inputId}
+                  type={field.type?.includes("boolean") ? "text" : field.type?.includes("integer") ? "number" : "text"}
+                  placeholder="Enter value"
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={readBodyFieldValue(value, fieldKey)}
+                  onChange={(event) => onChange(writeBodyFieldValue(value, fieldKey, event.target.value, field.type))}
+                  className="api-playground-input"
+                />
+              </div>
+            );
+          })}
         </div>
       </div>
     </details>
@@ -879,9 +996,134 @@ export function ApiRequestConfigCard({
                 border-top:1px solid var(--docs-border);
               }
               .api-request-config-section .api-request-config-panel{
-                padding:0 16px 16px;
+                padding:0 18px 18px;
+                display:grid;
+                gap:14px;
+              }
+              .api-request-body-panel{
+                padding-top:2px!important;
+              }
+              .api-playground-field{
+                min-width:0;
+              }
+              .api-playground-field-heading{
+                display:flex;
+                align-items:baseline;
+                justify-content:space-between;
+                gap:12px;
+                margin-bottom:8px;
+              }
+              .api-playground-field-name,
+              .api-playground-row-name{
+                display:inline-flex;
+                align-items:center;
+                gap:6px;
+                min-width:0;
+                color:var(--docs-text);
+                font-family:var(--docs-mono);
+                font-size:13px;
+                font-weight:680;
+                line-height:1.25;
+              }
+              .api-playground-required{
+                color:#ff6b6b;
+                font-family:var(--docs-ui);
+                font-weight:760;
+              }
+              .api-playground-field-type{
+                flex-shrink:0;
+                color:var(--docs-text-muted);
+                font-family:var(--docs-mono);
+                font-size:12px;
+                font-weight:560;
+                line-height:1.25;
+              }
+              .api-playground-input,
+              .api-playground-json-editor{
+                width:100%;
+                border:1px solid var(--docs-border);
+                border-radius:8px;
+                background:color-mix(in srgb, var(--docs-bg-muted) 58%, var(--docs-bg-elevated));
+                color:var(--docs-text);
+                font-family:var(--docs-mono);
+                font-size:13px;
+                line-height:1.5;
+                outline:none;
+              }
+              .api-playground-input{
+                height:42px;
+                padding:0 12px;
+              }
+              .api-playground-input:focus,
+              .api-playground-json-editor:focus{
+                border-color:color-mix(in srgb, #3b82f6 44%, var(--docs-border));
+                box-shadow:0 0 0 3px color-mix(in srgb, #3b82f6 12%, transparent);
+              }
+              .api-playground-input::placeholder{
+                color:var(--docs-text-faint);
+              }
+              .api-playground-body-grid{
+                display:grid;
+                grid-template-columns:repeat(2,minmax(0,1fr));
+                gap:18px 20px;
+              }
+              .api-playground-field-row{
+                display:flex;
+                align-items:center;
+                justify-content:space-between;
+                gap:16px;
+                width:100%;
+                padding:4px 0;
+                border:0;
+                background:transparent;
+                color:inherit;
+                text-align:left;
+                cursor:pointer;
+              }
+              .api-playground-field-row-wrap{
+                grid-column:1/-1;
                 display:grid;
                 gap:10px;
+              }
+              .api-playground-field-row.expanded svg{
+                transform:rotate(90deg);
+              }
+              .api-playground-field-row svg{
+                color:var(--docs-text-muted);
+                transition:transform .16s ease;
+              }
+              .api-playground-row-editor{
+                padding-left:26px;
+              }
+              .api-playground-json-button{
+                justify-self:start;
+                border:1px solid var(--docs-border);
+                border-radius:8px;
+                background:var(--docs-bg-muted);
+                color:var(--docs-text);
+                font-family:var(--docs-mono);
+                font-size:12px;
+                font-weight:680;
+                line-height:1;
+                padding:10px 12px;
+                cursor:pointer;
+              }
+              .api-playground-json-button:hover{
+                background:var(--docs-bg-elevated);
+              }
+              .api-playground-json-editor{
+                grid-column:1/-1;
+                min-height:160px;
+                resize:vertical;
+                padding:12px;
+              }
+              .api-playground-json-editor.compact{
+                min-height:112px;
+              }
+              @media (max-width: 720px){
+                .api-playground-body-grid{
+                  grid-template-columns:1fr;
+                }
               }
             `,
           }}
@@ -893,16 +1135,16 @@ export function ApiRequestConfigCard({
             background: "var(--docs-bg-muted)",
             fontSize: 11.5,
             fontFamily: "var(--docs-mono)",
-            color: "var(--docs-text-faint)",
+            color: "var(--docs-text-muted)",
             textAlign: "center",
           }}
         >
           {baseUrl}
         </div>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--docs-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-          <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 13, fontWeight: 700, color: METHOD_COLORS[method]?.text || "var(--docs-text)" }}>{method}</span>
-            <code style={{ fontFamily: "var(--docs-mono)", fontSize: 13, color: "var(--docs-text-soft)", wordBreak: "break-all" }}>{pathPreview}</code>
+          <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: METHOD_COLORS[method]?.text || "var(--docs-text)" }}>{method}</span>
+            <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)", wordBreak: "break-all" }}>{pathPreview}</code>
           </div>
           <button
             type="button"
@@ -1074,7 +1316,7 @@ export function ApiReferencePage({
 }) {
   return (
     <article className="docs-page docs-page-api" style={{ width: "100%" }}>
-      <div style={{ padding: "10px 0 22px", borderBottom: "1px solid var(--docs-border)", marginBottom: 26 }}>
+      <div className="api-reference-page-header" style={{ padding: "10px 0 22px", borderBottom: "1px solid var(--docs-border)", marginBottom: 26 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: "#f04d23", marginBottom: 18 }}>{section}</div>
         <h1 style={{ fontSize: 42, lineHeight: 1.06, letterSpacing: "-0.045em", fontWeight: 740, margin: 0, color: "var(--docs-text)" }}>{title}</h1>
         <div style={{ fontSize: 17, lineHeight: 1.75, color: "var(--docs-text-soft)", marginTop: 18, maxWidth: "96ch" }}>{description}</div>
@@ -1091,6 +1333,29 @@ export function ApiReferenceGrid({
   left: React.ReactNode;
   right: React.ReactNode;
 }) {
+  const rightColumnRef = useRef<HTMLDivElement | null>(null);
+
+  function handleRightColumnWheelCapture(event: WheelEvent<HTMLDivElement>) {
+    const element = rightColumnRef.current;
+    if (!element) return;
+
+    const deltaY = event.deltaY;
+    if (Math.abs(deltaY) <= Math.abs(event.deltaX)) return;
+
+    const maxScrollTop = element.scrollHeight - element.clientHeight;
+    if (maxScrollTop <= 1) return;
+
+    const canScrollUp = element.scrollTop > 0;
+    const canScrollDown = element.scrollTop < maxScrollTop - 1;
+    const shouldScrollRightColumn = (deltaY < 0 && canScrollUp) || (deltaY > 0 && canScrollDown);
+
+    if (!shouldScrollRightColumn) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    element.scrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + deltaY));
+  }
+
   return (
     <div
       style={{
@@ -1122,7 +1387,14 @@ export function ApiReferenceGrid({
         }}
       />
       <div style={{ minWidth: 0 }}>{left}</div>
-      <div className="api-reference-grid-right" style={{ minWidth: 0 }}>{right}</div>
+      <div
+        ref={rightColumnRef}
+        className="api-reference-grid-right"
+        onWheelCapture={handleRightColumnWheelCapture}
+        style={{ minWidth: 0 }}
+      >
+        {right}
+      </div>
     </div>
   );
 }
@@ -1137,7 +1409,7 @@ export function ApiEndpointCard({
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ border: "1px solid var(--docs-border)", borderRadius: 20, background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)", overflow: "hidden" }}>
+    <div className="api-endpoint-card" style={{ border: "1px solid var(--docs-border)", borderRadius: 8, background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)", overflow: "hidden" }}>
       <div>{children}</div>
     </div>
   );
@@ -1212,17 +1484,17 @@ export function ApiFieldList({
   items: ApiFieldItem[];
 }) {
   return (
-    <div>
+    <div className="api-field-list">
       {title ? <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--docs-text)", margin: "0 0 14px" }}>{title}</h3> : null}
-      <div style={{ display: "grid", gap: 14 }}>
+      <div className="api-field-list-items" style={{ display: "grid", gap: 14 }}>
         {items.map((item) => (
-          <div key={item.name}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-              <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#f04d23" }}>{item.name}</span>
+          <div key={item.name} className="api-field-row">
+            <div className="api-field-row-heading" style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+              <span className="api-field-name" style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#f04d23" }}>{item.name}</span>
               {item.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 13, color: "var(--docs-text-muted)" }}>{item.type}</span> : null}
               {item.meta ? <span style={{ fontSize: 12.5, color: "var(--docs-text-faint)" }}>{item.meta}</span> : null}
             </div>
-            <div style={{ fontSize: 15, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>{item.description}</div>
+            <div className="api-field-description" style={{ fontSize: 15, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>{item.description}</div>
           </div>
         ))}
       </div>

@@ -4,7 +4,6 @@ import {
   ApiInlineLink,
   EnumValues,
   type ApiFieldItem,
-  RelatedEndpoints,
 } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
@@ -480,98 +479,21 @@ export function CreatePostContent() {
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
     >
-      <div style={{ borderTop: "1px solid var(--docs-border)", paddingTop: 20 }}>
-        <div
-          className="create-post-results-intro"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)",
-            gap: 18,
-            alignItems: "start",
-            marginBottom: 18,
-          }}
-        >
-          <style
-            dangerouslySetInnerHTML={{
-              __html: `
-                @media (max-width: 980px){
-                  .create-post-results-intro{
-                    grid-template-columns:1fr!important;
-                  }
-                }
-              `,
-            }}
-          />
-          <div style={{ display: "grid", gap: 14 }}>
-            <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: 0 }}>
-              Immediate publish is asynchronous. A successful create response means UniPost accepted the request, created per-account result rows, and enqueued delivery jobs. It does not guarantee every destination already published.
+      <div style={{ paddingTop: 8 }}>
+        <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
+          <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>
+            Publishing Result
+          </h2>
+          <div style={{ display: "grid", gap: 12, maxWidth: 880 }}>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              <strong style={{ color: "var(--docs-text)" }}>Poll Model:</strong> immediate publish returns <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>202</code> after UniPost accepts and queues delivery. Poll <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> to read the final publishing result.
             </p>
-            <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: 0 }}>
-              To observe final outcome, poll <ApiInlineLink endpoint="GET /v1/posts/:post_id" />. If you need queue-level progress, use <ApiInlineLink endpoint="GET /v1/posts/:post_id/queue" />. For push delivery, subscribe to webhook events such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.partial</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>post.failed</code>.
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              <strong style={{ color: "var(--docs-text)" }}>Push Model:</strong> create a webhook subscription with <ApiInlineLink endpoint="POST /v1/webhooks" /> to receive final publishing events from UniPost.
             </p>
           </div>
-          <div style={{ border: "1px solid var(--docs-border)", borderRadius: 12, background: "var(--docs-bg-elevated)", overflow: "hidden" }}>
-            <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>
-              How clients should receive final results
-            </div>
-            <div style={{ padding: "18px", display: "grid", gap: 12 }}>
-              <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
-                <strong style={{ color: "var(--docs-text)" }}>1. Save the post ID from the create response.</strong> The initial <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>202</code> tells you the request was accepted, not that every destination has already published.
-              </div>
-              <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
-                <strong style={{ color: "var(--docs-text)" }}>2. Choose push or pull.</strong> Use developer webhooks if your backend wants final publish events pushed automatically. Use polling if your client prefers to check <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> until the post reaches a final status.
-              </div>
-              <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
-                <strong style={{ color: "var(--docs-text)" }}>3. Read both the parent status and the per-account results.</strong> The top-level post status tells you the aggregate outcome, while <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> tells you what happened on each destination account.
-              </div>
-            </div>
-          </div>
-        </div>
-        <div style={{ border: "1px solid var(--docs-border)", borderRadius: 12, background: "var(--docs-bg-elevated)", overflow: "hidden", marginBottom: 18 }}>
-          <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--docs-border)", fontSize: 15, fontWeight: 700, color: "var(--docs-text)" }}>
-            How to interpret the final aggregate status
-          </div>
-          <div style={{ padding: "0 18px 18px" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em" }}>Parent status</th>
-                  <th style={{ textAlign: "left", padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em" }}>What it means to your client</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 600 }}>published</td>
-                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-soft)" }}>Every destination result finished successfully.</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 600 }}>partial</td>
-                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-soft)" }}>At least one destination succeeded and at least one destination failed or is still unresolved. Check <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> to know exactly which accounts need attention.</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 600 }}>failed</td>
-                  <td style={{ padding: "12px 0", borderBottom: "1px solid var(--docs-border)", color: "var(--docs-text-soft)" }}>Every destination result ended in failure.</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: "12px 0", fontFamily: "var(--docs-mono)", color: "var(--docs-text)", fontWeight: 600 }}>queued / publishing</td>
-                  <td style={{ padding: "12px 0", color: "var(--docs-text-soft)" }}>The request is still in flight. Keep polling or wait for the webhook event.</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <RelatedEndpoints
-          items={[
-            { method: "POST", path: "/v1/posts/validate", label: "Validate post", href: "/docs/api/posts/validate" },
-            { method: "GET", path: "/v1/posts", label: "List posts", href: "/docs/api/posts/list" },
-            { method: "GET", path: "/v1/posts/:post_id", label: "Get post", href: "/docs/api/posts/get" },
-            { method: "GET", path: "/v1/posts/:post_id/analytics", label: "Post analytics", href: "/docs/api/analytics/posts" },
-            { method: "GET", path: "/v1/webhooks", label: "List webhooks", href: "/docs/api/webhooks" },
-            { method: "POST", path: "/v1/media", label: "Reserve media upload", href: "/docs/api/media/reserve" },
-            { method: "GET", path: "/v1/media/:media_id", label: "Get media", href: "/docs/api/media/get" },
-            { method: "GET", path: "/v1/accounts", label: "List accounts", href: "/docs/api/accounts/list" },
-          ]}
-        />
+        </section>
+
       </div>
     </SingleEndpointReferencePage>
   );

@@ -1,7 +1,6 @@
 "use client";
 
 import type { ApiFieldItem } from "../../_components/doc-components";
-import { RelatedEndpoints } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -208,13 +207,6 @@ export default function UpdatePostPage() {
         <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", margin: "0 0 14px" }}>
           Use PATCH for direct resource state changes. Legacy command routes such as <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>POST /v1/posts/:post_id/archive</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>/restore</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>/cancel</code> still work during the migration window, but PATCH is now the canonical route.
         </p>
-        <RelatedEndpoints
-          items={[
-            { method: "GET", path: "/v1/posts/:post_id", label: "Get post", href: "/docs/api/posts/get" },
-            { method: "POST", path: "/v1/posts/:post_id/publish", label: "Publish draft", href: "/docs/api/posts/drafts/publish" },
-            { method: "POST", path: "/v1/posts", label: "Create post", href: "/docs/api/posts/create" },
-          ]}
-        />
       </div>
     </SingleEndpointReferencePage>
   );
