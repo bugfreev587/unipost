@@ -3,7 +3,6 @@ import {
   ApiInlineLink,
   ApiReferencePage,
   ApiEndpointCard,
-  Breadcrumbs,
   CodeTabs,
   InfoBox,
   ResponseBlock,
@@ -250,12 +249,6 @@ export default function WebhooksPage() {
       title="Developer webhooks"
       description="Use developer webhooks when your own backend needs push delivery for async post results or account lifecycle events. Create each subscription with a name, a destination URL, and an event set. This is the machine-facing surface for product integrations, not the dashboard notifications channel."
     >
-      <Breadcrumbs items={[
-        { label: "Docs", href: "/docs" },
-        { label: "API Reference", href: "/docs/api" },
-        { label: "Developer Webhooks" },
-      ]} />
-
       <div style={{ display: "grid", gap: 18 }}>
         <ApiEndpointCard method="POST" path="/v1/webhooks">
           <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>

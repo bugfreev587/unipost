@@ -4,6 +4,10 @@ import { DocsPage, DocsTable } from "../../../_components/docs-shell";
 export default function PlatformCredentialsPage() {
   return (
     <DocsPage
+      breadcrumbItems={[
+        { label: "API Reference", href: "/docs/api" },
+        { label: "Platform Credentials" },
+      ]}
       eyebrow="API Reference"
       title="Platform Credentials"
       lead="Upload your own OAuth App client_id + client_secret for a platform. Once stored, every Connect session on the workspace for that platform runs against your App — the end user&rsquo;s consent screen shows your brand, not UniPost&rsquo;s."

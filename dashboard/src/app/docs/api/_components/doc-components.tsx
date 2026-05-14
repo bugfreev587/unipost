@@ -2,8 +2,10 @@
 
 import { useMemo, useRef, useState, type WheelEvent } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Check, ChevronRight, Copy, Play, X } from "lucide-react";
 import { CodeBlock, CodeTabs as SharedCodeTabs, codeBlockStyles } from "../../_components/code-block";
+import { DocsContentBreadcrumb } from "../../_components/docs-content-breadcrumb";
 import { JsonMonacoViewer } from "./json-monaco-viewer";
 
 // ── Method badge ──
@@ -1304,18 +1306,24 @@ export function ApiRequestConfigCard({
 }
 
 export function ApiReferencePage({
+  breadcrumbItems,
   section,
   title,
   description,
   children,
 }: {
+  breadcrumbItems?: { label: string; href?: string }[];
   section: string;
   title: string;
   description: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  const resolvedBreadcrumbItems = breadcrumbItems ?? buildApiReferenceBreadcrumb(pathname, title);
+
   return (
     <article className="docs-page docs-page-api" style={{ width: "100%" }}>
+      <DocsContentBreadcrumb items={resolvedBreadcrumbItems} />
       <div className="api-reference-page-header" style={{ padding: "10px 0 22px", borderBottom: "1px solid var(--docs-border)", marginBottom: 26 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: "#f04d23", marginBottom: 18 }}>{section}</div>
         <h1 style={{ fontSize: 42, lineHeight: 1.06, letterSpacing: "-0.045em", fontWeight: 740, margin: 0, color: "var(--docs-text)" }}>{title}</h1>
@@ -1324,6 +1332,38 @@ export function ApiReferencePage({
       {children}
     </article>
   );
+}
+
+function buildApiReferenceBreadcrumb(pathname: string, title: string) {
+  const items: Array<{ label: string; href?: string }> = [];
+  const sectionItem = getApiSectionBreadcrumb(pathname);
+
+  if (sectionItem && sectionItem.label.toLowerCase() !== title.trim().toLowerCase()) {
+    items.push(sectionItem);
+  }
+
+  items.push({ label: title });
+  return items;
+}
+
+function getApiSectionBreadcrumb(pathname: string) {
+  const matches: Array<{ prefix: string; label: string; href?: string }> = [
+    { prefix: "/docs/api/connect/sessions/", label: "Connect", href: "/docs/api/connect/sessions" },
+    { prefix: "/docs/api/profiles/", label: "Profiles", href: "/docs/api/profiles" },
+    { prefix: "/docs/api/accounts/", label: "Accounts", href: "/docs/api/accounts/list" },
+    { prefix: "/docs/api/users/", label: "Users", href: "/docs/api/users" },
+    { prefix: "/docs/api/api-keys/", label: "API keys", href: "/docs/api/api-keys" },
+    { prefix: "/docs/api/posts/drafts/", label: "Drafts", href: "/docs/api/posts/drafts" },
+    { prefix: "/docs/api/posts/", label: "Posts", href: "/docs/api/posts/list" },
+    { prefix: "/docs/api/media/", label: "Media", href: "/docs/api/media" },
+    { prefix: "/docs/api/analytics/", label: "Analytics", href: "/docs/api/analytics" },
+    { prefix: "/docs/api/webhooks/", label: "Webhooks", href: "/docs/api/webhooks" },
+    { prefix: "/docs/api/workspace/", label: "Workspace", href: "/docs/api/workspace/get" },
+    { prefix: "/docs/api/white-label/", label: "White-label", href: "/docs/api/white-label/branding" },
+    { prefix: "/docs/api/inbox", label: "Inbox" },
+  ];
+
+  return matches.find((match) => pathname.startsWith(match.prefix));
 }
 
 export function ApiReferenceGrid({
@@ -1360,7 +1400,7 @@ export function ApiReferenceGrid({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1.18fr) minmax(320px, 0.82fr)",
+        gridTemplateColumns: "minmax(0, 1fr) minmax(420px, 496px)",
         gap: 28,
         alignItems: "start",
       }}
@@ -1400,14 +1440,17 @@ export function ApiReferenceGrid({
 }
 
 export function ApiEndpointCard({
-  method,
-  path,
+  method: _method,
+  path: _path,
   children,
 }: {
   method: string;
   path: string;
   children: React.ReactNode;
 }) {
+  void _method;
+  void _path;
+
   return (
     <div className="api-endpoint-card" style={{ border: "1px solid var(--docs-border)", borderRadius: 8, background: "var(--docs-bg-elevated)", boxShadow: "var(--docs-card-shadow)", overflow: "hidden" }}>
       <div>{children}</div>

@@ -4,18 +4,23 @@ import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import { ChevronRight, Search } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ApiInlineLink } from "../api/_components/doc-components";
 import { CodeBlock, CodeTabs, codeBlockStyles, type CodeSnippet } from "./code-block";
+import { DocsContentBreadcrumb } from "./docs-content-breadcrumb";
 
 type NavLeaf = {
   label: string;
   href: string;
   badge?: string;
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+};
+
+type DocsLayoutStyle = CSSProperties & {
+  "--docs-api-sidebar-width"?: string;
 };
 
 type NavGroup = {
@@ -58,6 +63,7 @@ type DocsSearchResult = {
 const API_SIDEBAR_DEFAULT_WIDTH = 336;
 const API_SIDEBAR_MIN_WIDTH = 280;
 const API_SIDEBAR_MAX_WIDTH = 520;
+const API_REFERENCE_SIDEBAR_VISUAL_REDUCTION = 36;
 const API_SIDEBAR_STORAGE_KEY = "unipost-docs-api-sidebar-width";
 const DOCS_USER_PATH_KEY = "unipost-docs-user-path";
 const DOCS_USER_CHOOSER_HIDE_KEY = "unipost-docs-user-chooser-hide";
@@ -140,7 +146,7 @@ export function renderDocsRichContent(text: string) {
     if (index > lastIndex) {
       parts.push(text.slice(lastIndex, index));
     }
-    parts.push(renderInlineToken(match[0], `token-${matchIndex}`) as any);
+    parts.push(renderInlineToken(match[0], `token-${matchIndex}`));
     lastIndex = index + match[0].length;
     matchIndex += 1;
   }
@@ -242,7 +248,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Core",
       items: [
         {
-          label: "profiles",
+          label: "Profiles",
           children: [
             { label: "List profiles", href: "/docs/api/profiles/list", method: "GET" },
             { label: "Create profile", href: "/docs/api/profiles/create", method: "POST" },
@@ -252,7 +258,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         {
-          label: "accounts",
+          label: "Accounts",
           children: [
             { label: "List accounts", href: "/docs/api/accounts/list", method: "GET" },
             { label: "Connect account (credentials)", href: "/docs/api/accounts/connect", method: "POST" },
@@ -265,21 +271,21 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         {
-          label: "connect",
+          label: "Connect",
           children: [
             { label: "Create session", href: "/docs/api/connect/sessions/create", method: "POST" },
             { label: "Get session", href: "/docs/api/connect/sessions/get", method: "GET" },
           ],
         },
         {
-          label: "users",
+          label: "Users",
           children: [
             { label: "List users", href: "/docs/api/users/list", method: "GET" },
             { label: "Get user", href: "/docs/api/users/get", method: "GET" },
           ],
         },
         {
-          label: "api keys",
+          label: "API keys",
           children: [
             { label: "List API keys", href: "/docs/api/api-keys/list", method: "GET" },
             { label: "Create API key", href: "/docs/api/api-keys/create", method: "POST" },
@@ -292,7 +298,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Publishing",
       items: [
         {
-          label: "posts",
+          label: "Posts",
           children: [
             { label: "Create post", href: "/docs/api/posts/create", method: "POST" },
             { label: "List posts", href: "/docs/api/posts/list", method: "GET" },
@@ -302,14 +308,14 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         {
-          label: "drafts",
+          label: "Drafts",
           children: [
             { label: "Create draft", href: "/docs/api/posts/drafts/create", method: "POST" },
             { label: "Publish draft", href: "/docs/api/posts/drafts/publish", method: "POST" },
           ],
         },
         {
-          label: "media",
+          label: "Media",
           children: [
             { label: "Reserve upload", href: "/docs/api/media/reserve", method: "POST" },
             { label: "Get media", href: "/docs/api/media/get", method: "GET" },
@@ -327,7 +333,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Analytics",
       items: [
         {
-          label: "analytics",
+          label: "Analytics",
           children: [
             { label: "Workspace summary", href: "/docs/api/analytics/summary", method: "GET" },
             { label: "Post analytics", href: "/docs/api/analytics/posts", method: "GET" },
@@ -339,7 +345,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Developer Webhooks",
       items: [
         {
-          label: "webhooks",
+          label: "Webhooks",
           children: [
             { label: "Overview", href: "/docs/api/webhooks" },
             { label: "Create webhook", href: "/docs/api/webhooks/create", method: "POST" },
@@ -633,6 +639,7 @@ html.light{
   --docs-nav-text: #4d5870;
   --docs-nav-text-strong: #243047;
   --docs-nav-text-faint: #778199;
+  --docs-nav-active-text: #0f56b8;
   --docs-nav-hover: #e9edf4;
   --docs-nav-active-bg: #e2e9f3;
   --docs-nav-active-border: #cad5e4;
@@ -678,9 +685,10 @@ html.dark{
   --docs-nav-text: #a7b3c7;
   --docs-nav-text-strong: #eef2fb;
   --docs-nav-text-faint: #7f8ca4;
+  --docs-nav-active-text: #39bbff;
   --docs-nav-hover: #1a2330;
-  --docs-nav-active-bg: #212b38;
-  --docs-nav-active-border: #344154;
+  --docs-nav-active-bg: #25282f;
+  --docs-nav-active-border: #323948;
   --docs-link: #7cb2ff;
   --docs-link-hover: #a8cbff;
   --docs-accent: #6dd39a;
@@ -774,13 +782,13 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-nav-subgroup>summary::-webkit-details-marker{display:none}
 .docs-nav-subgroup-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 8px 6px;border:none;background:transparent;color:var(--docs-nav-text);font-size:15px;font-weight:560;line-height:1.35;text-align:left;cursor:pointer}
 .docs-nav-subgroup-toggle:hover{color:var(--docs-nav-text-strong)}
-.docs-nav-subgroup-chevron{width:18px;height:18px;color:var(--docs-nav-text-faint);flex-shrink:0;transition:transform .18s ease,color .18s ease;transform:rotate(0deg)}
+.docs-nav-subgroup-chevron{width:24px;height:24px;color:var(--docs-nav-text-faint);flex-shrink:0;transition:transform .18s ease,color .18s ease;transform:rotate(0deg);stroke-width:2.7px}
 .docs-nav-subgroup[open] .docs-nav-subgroup-chevron{transform:rotate(90deg);color:var(--docs-nav-text)}
 .docs-nav-subgroup-toggle:hover .docs-nav-subgroup-chevron{color:var(--docs-nav-text-strong)}
-.docs-nav-subgroup-items{margin-left:12px;padding-left:12px;border-left:1px solid color-mix(in srgb, var(--docs-border) 88%, transparent);display:grid;gap:2px}
+.docs-nav-subgroup-items{margin-left:0;padding-left:28px;border-left:none;display:grid;gap:2px}
 .docs-nav-link{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 8px;border-radius:10px;font-size:14.5px;font-weight:560;line-height:1.38;color:var(--docs-nav-text);text-decoration:none;transition:all .12s}
 .docs-nav-link:hover{color:var(--docs-nav-text-strong);background:var(--docs-nav-hover)}
-.docs-nav-link.active{color:var(--docs-nav-text-strong);font-weight:600;background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
+.docs-nav-link.active{color:var(--docs-nav-active-text);font-weight:620;background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
 .docs-api-inline{position:relative;display:inline-flex;align-items:center;padding:2px 8px 3px;border-radius:10px;background:color-mix(in srgb, #2f7d4e 18%, var(--docs-inline-code-bg));border:1px solid color-mix(in srgb, #5ca772 24%, var(--docs-border));color:var(--docs-text);font-family:var(--docs-mono);font-size:.84em;font-weight:560;line-height:1.15;letter-spacing:.005em;text-decoration:none;vertical-align:baseline;overflow:hidden;transition:all .14s}
 .docs-api-inline:hover{background:color-mix(in srgb, #2f7d4e 24%, var(--docs-inline-code-bg));border-color:color-mix(in srgb, #5ca772 40%, var(--docs-border));color:var(--docs-text);transform:translateY(-1px)}
 .docs-api-inline.docs-api-inline-post{background:color-mix(in srgb, #2563eb 16%, var(--docs-inline-code-bg));border-color:color-mix(in srgb, #60a5fa 28%, var(--docs-border))}
@@ -825,11 +833,11 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-table tr:last-child td{border-bottom:none}
 .docs-callout{margin:22px 0;padding:16px 18px;border-radius:16px;background:var(--docs-accent-soft);border:1px solid color-mix(in srgb, var(--docs-accent) 18%, transparent);color:var(--docs-text-soft);max-width:66ch}
 .docs-callout strong{color:var(--docs-text)}
-.docs-toc-title{padding:6px 8px 10px;font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-nav-text-faint)}
-.docs-toc-link{display:block;padding:7px 8px;border-radius:10px;font-size:12.5px;line-height:1.45;color:var(--docs-nav-text);text-decoration:none;transition:all .12s}
+.docs-toc-title{padding:6px 8px 10px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-nav-text-faint)}
+.docs-toc-link{display:block;padding:8px 9px;border-radius:10px;font-size:13.75px;line-height:1.5;color:var(--docs-nav-text);text-decoration:none;transition:all .12s}
 .docs-toc-link:hover{color:var(--docs-nav-text-strong);background:var(--docs-nav-hover)}
-.docs-toc-link.active{color:var(--docs-nav-text-strong);background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
-.docs-toc-link.level-h3{position:relative;margin-left:12px;padding-left:22px;color:var(--docs-nav-text-faint)}
+.docs-toc-link.active{color:var(--docs-nav-active-text);background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
+.docs-toc-link.level-h3{position:relative;margin-left:12px;padding-left:22px;font-size:13.25px;color:var(--docs-nav-text-faint)}
 .docs-toc-link.level-h3::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:1px;background:var(--docs-border-strong);border-radius:999px}
 .docs-empty-toc{padding:8px;color:var(--docs-nav-text-faint);font-size:12.5px;line-height:1.6}
 .docs-home-section{margin-top:46px}
@@ -857,14 +865,15 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 @media (max-width:960px){.docs-checklist.docs-checklist-2col{grid-template-columns:1fr}}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
-.docs-shell-api-create-post{
-  --docs-api-create-gutter:48px;
-  --docs-api-sidebar-inner-left:var(--docs-api-create-gutter);
+.docs-shell-redesign{
+  --docs-frame-max:1708px;
+  --docs-frame-edge:max(clamp(56px, 4.8vw, 88px), calc((100vw - var(--docs-frame-max)) / 2 + 32px));
+  --docs-frame-x:calc(var(--docs-frame-edge) - 32px);
   --docs-api-nav-warm-bg:#ffffff;
   --docs-api-nav-warm-line:transparent;
   background:var(--docs-api-nav-warm-bg);
 }
-.docs-shell-api-create-post .docs-topbar{
+.docs-shell-redesign .docs-topbar{
   position:fixed;
   top:0;
   left:0;
@@ -873,57 +882,122 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   border-bottom-color:transparent;
   backdrop-filter:blur(18px);
 }
-.docs-shell-api-create-post .docs-topbar-inner{
+.docs-shell-redesign .docs-topbar-inner{
   max-width:none;
+  margin:0 auto;
   min-height:78px;
-  padding-left:var(--docs-api-sidebar-inner-left);
-  padding-right:var(--docs-api-create-gutter);
-  display:grid;
-  grid-template-columns:minmax(190px, calc(var(--docs-api-sidebar-width, 336px) - 70px)) minmax(360px, 1fr) minmax(140px, auto);
+  padding-left:var(--docs-frame-edge);
+  padding-right:var(--docs-frame-edge);
+  display:flex;
   align-items:center;
-  column-gap:36px;
+  justify-content:space-between;
+  column-gap:0;
 }
-.docs-shell-api-create-post .docs-topbar-left{
-  display:contents;
+.docs-shell-redesign .docs-topbar-left{
+  display:flex;
+  align-items:center;
+  gap:clamp(128px, 8.4vw, 176px);
 }
-.docs-shell-api-create-post .docs-brand{
-  grid-column:1;
-  justify-self:start;
+.docs-shell-redesign .docs-brand{
+  grid-column:auto;
 }
-.docs-shell-api-create-post .docs-primary-nav{
-  grid-column:2;
-  justify-self:start;
-  gap:30px;
+.docs-shell-redesign .docs-primary-nav{
+  grid-column:auto;
+  justify-self:auto;
+  gap:34px;
   flex-wrap:nowrap;
 }
-.docs-shell-api-create-post .docs-topbar-right{
-  grid-column:3;
-  justify-self:end;
+.docs-shell-redesign .docs-topbar-right{
+  grid-column:auto;
+  justify-self:auto;
   gap:12px;
   flex-wrap:nowrap;
 }
-.docs-shell-api-create-post .docs-brand-mark{
+.docs-shell-redesign .docs-brand-mark{
   width:28px;
   height:28px;
 }
-.docs-shell-api-create-post .docs-brand-name{
+.docs-shell-redesign .docs-brand-name{
   font-size:17px;
   font-weight:720;
   letter-spacing:0;
 }
-.docs-shell-api-create-post .docs-primary-link{
+.docs-shell-redesign .docs-primary-link{
   padding:18px 2px 18px;
   font-size:14px;
   font-weight:620;
   letter-spacing:0;
 }
-.docs-shell-api-create-post .docs-primary-link.active{
+.docs-shell-redesign .docs-primary-link.active{
   border-bottom-color:#f04d23;
+}
+.docs-shell-redesign .docs-sidebar-section{
+  padding:12px 0 2px;
+  margin-bottom:12px;
+}
+.docs-shell-redesign .docs-sidebar-section-header{
+  padding:0 8px 10px;
+  margin-bottom:6px;
+  border-bottom:none;
+}
+.docs-shell-redesign .docs-section-label{
+  font-size:12px;
+  font-weight:650;
+  letter-spacing:0;
+  text-transform:none;
+}
+.docs-shell-redesign .docs-nav-subgroup-toggle{
+  padding:8px 8px;
+  font-size:15px;
+  font-weight:510;
+  letter-spacing:0;
+}
+.docs-shell-redesign .docs-nav-subgroup-chevron{
+  width:23px;
+  height:23px;
+}
+.docs-shell-redesign .docs-nav-subgroup-items{
+  margin-left:0;
+  padding-left:34px;
+  border-left:none;
+  gap:4px;
+}
+.docs-shell-redesign .docs-nav-link{
+  border-radius:5px;
+  padding:6px 9px;
+  font-size:13px;
+  font-weight:500;
+  line-height:1.35;
+  letter-spacing:0;
+}
+.docs-shell-redesign .docs-sidebar-section > .docs-nav-link{
+  padding:8px 8px;
+  font-size:15px;
+  font-weight:510;
+}
+.docs-shell-redesign .docs-nav-link.active{
+  background:#f1efee;
+  color:#8a2d8d;
+  box-shadow:none;
+}
+.docs-shell-redesign .docs-nav-method{
+  opacity:.78;
+  transform:scale(.92);
+  transform-origin:right center;
+}
+.docs-shell-redesign .docs-nav-link.active .docs-nav-method{
+  opacity:.9;
+}
+.docs-shell-api-create-post{
+  --docs-api-create-gutter:clamp(52px, 4.6vw, 72px);
+  --docs-api-sidebar-inner-left:var(--docs-frame-edge);
+  --docs-api-sidebar-inner-right:32px;
+  --docs-api-sidebar-shell-width:calc(var(--docs-api-sidebar-width, 336px) + var(--docs-api-create-gutter) + var(--docs-frame-x));
 }
 .docs-shell-api-create-post .docs-layout-api{
   max-width:none;
   margin:0;
-  padding:78px var(--docs-api-create-gutter) 44px calc(var(--docs-api-sidebar-width, 336px) + var(--docs-api-create-gutter));
+  padding:78px calc(var(--docs-api-create-gutter) + var(--docs-frame-x)) 44px var(--docs-api-sidebar-shell-width);
   background:transparent;
   display:block;
 }
@@ -931,7 +1005,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   position:fixed;
   top:78px;
   left:0;
-  width:calc(var(--docs-api-sidebar-width, 336px) + var(--docs-api-create-gutter));
+  width:var(--docs-api-sidebar-shell-width);
   height:calc(100vh - 78px);
   max-height:none;
   padding-top:22px;
@@ -968,48 +1042,246 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   border:none;
   border-radius:0;
   box-shadow:none;
-  padding:0 34px 0 var(--docs-api-sidebar-inner-left);
-}
-.docs-shell-api-create-post .docs-sidebar-section{
-  padding:12px 0 2px;
-  margin-bottom:14px;
-}
-.docs-shell-api-create-post .docs-sidebar-section-header{
-  padding:0 8px 12px;
-  margin-bottom:6px;
-  border-bottom:none;
-}
-.docs-shell-api-create-post .docs-section-label{
-  font-size:12px;
-  font-weight:650;
-  letter-spacing:0;
-  text-transform:none;
-}
-.docs-shell-api-create-post .docs-nav-subgroup-toggle{
-  padding:8px 8px 7px;
-  font-size:15px;
-  font-weight:500;
-  letter-spacing:0;
-}
-.docs-shell-api-create-post .docs-nav-subgroup-items{
-  margin-left:12px;
-  padding-left:14px;
-  border-left:1px solid color-mix(in srgb, var(--docs-api-nav-warm-line) 82%, #cdd6e2);
-  gap:4px;
-}
-.docs-shell-api-create-post .docs-nav-link{
-  border-radius:10px;
-  padding:7px 10px;
-  font-size:14px;
-  font-weight:500;
-  letter-spacing:0;
-}
-.docs-shell-api-create-post .docs-nav-link.active{
-  background:color-mix(in srgb, #f04d23 8%, #f7f4f1);
-  box-shadow:none;
+  padding:0 var(--docs-api-sidebar-inner-right) 0 var(--docs-api-sidebar-inner-left);
 }
 .docs-shell-api-create-post .docs-sidebar-resizer{
   display:none;
+}
+.docs-shell-guide-redesign .docs-layout-guide-redesign{
+  max-width:none;
+  margin:0;
+  padding:98px var(--docs-frame-edge) 70px;
+  grid-template-columns:330px minmax(0, 900px) 280px;
+  column-gap:64px;
+  justify-content:start;
+  background:transparent;
+}
+.docs-shell-guide-redesign .docs-sidebar-card{
+  padding-left:0;
+}
+.docs-shell-guide-redesign .docs-main-guide{
+  min-width:0;
+  padding-top:0;
+}
+.docs-shell-guide-redesign .docs-toc{
+  top:98px;
+  padding-top:0;
+}
+.docs-shell-guide-redesign .docs-toc-card{
+  background:transparent;
+  border:none;
+  border-radius:0;
+  box-shadow:none;
+  padding:0;
+}
+.docs-shell-guide-redesign .docs-toc-title{
+  padding:0 0 14px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign{
+  background:transparent;
+  border:none;
+  border-radius:0;
+  box-shadow:none;
+  padding:10px 0 10px;
+  max-width:900px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-eyebrow{
+  padding:0;
+  margin-bottom:18px;
+  border:none;
+  border-radius:0;
+  background:transparent;
+  color:#f04d23;
+  font-size:13px;
+  font-weight:680;
+  letter-spacing:0;
+  text-transform:none;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-guide-breadcrumb{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:10px;
+  color:var(--docs-text-faint);
+  font-size:13px;
+  font-weight:560;
+}
+.docs-shell-guide-redesign .docs-guide-breadcrumb-home,
+.docs-shell-guide-redesign .docs-guide-breadcrumb-link{
+  display:inline-flex;
+  align-items:center;
+  color:var(--docs-text-muted);
+  text-decoration:none;
+  transition:color .16s ease;
+}
+.docs-shell-guide-redesign .docs-guide-breadcrumb-home:hover,
+.docs-shell-guide-redesign .docs-guide-breadcrumb-link:hover{
+  color:var(--docs-text);
+}
+.docs-shell-guide-redesign .docs-guide-breadcrumb-chevron{
+  color:var(--docs-text-faint);
+  flex:0 0 auto;
+}
+.docs-shell-guide-redesign .docs-guide-breadcrumb-current{
+  display:inline-flex;
+  align-items:center;
+  border-radius:5px;
+  padding:5px 10px;
+  background:color-mix(in srgb, #8a2d8d 12%, transparent);
+  color:#8a2d8d;
+  font-size:12px;
+  font-weight:760;
+  letter-spacing:.08em;
+  line-height:1;
+  text-transform:uppercase;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign h1{
+  max-width:none;
+  margin-bottom:18px;
+  font-size:40px;
+  line-height:1.08;
+  letter-spacing:-.035em;
+  font-weight:760;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-lead{
+  max-width:860px;
+  margin-bottom:30px;
+  font-size:16.5px;
+  line-height:1.72;
+  color:var(--docs-text-soft);
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign h2{
+  margin-top:42px;
+  margin-bottom:14px;
+  font-size:25px;
+  line-height:1.22;
+  letter-spacing:-.025em;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign p,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-step-list,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-callout{
+  max-width:860px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign p{
+  font-size:15.5px;
+  line-height:1.74;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-checklist{
+  gap:9px;
+  margin:18px 0 8px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-checklist li{
+  font-size:14.5px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-step-list li{
+  font-size:15.5px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-callout{
+  border-radius:6px;
+  margin-top:30px;
+  padding:14px 16px;
+}
+.docs-shell-guide-redesign .docs-nav-link.active span:last-child{
+  color:inherit;
+}
+.docs-shell-guide-redesign .docs-toc-link{
+  padding:5px 0;
+  margin-left:0;
+  border-radius:0;
+  font-size:13px;
+  line-height:1.45;
+}
+.docs-shell-guide-redesign .docs-toc-link.level-h3{
+  margin-left:0;
+  padding-left:14px;
+  font-size:12.5px;
+  color:var(--docs-nav-text-faint);
+}
+.docs-shell-guide-redesign .docs-toc-link.level-h3::before{
+  content:none;
+  display:none;
+}
+.docs-shell-guide-redesign .docs-toc-link:hover{
+  background:transparent;
+  color:var(--docs-text);
+}
+.docs-shell-guide-redesign .docs-toc-link.active{
+  background:transparent;
+  box-shadow:none;
+  color:#8a2d8d;
+  font-weight:650;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table-wrap{
+  margin:18px 0 6px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table{
+  min-width:600px;
+  border:none;
+  border-radius:0;
+  background:transparent;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table th{
+  padding:11px 0;
+  background:transparent;
+  border-bottom:1px solid color-mix(in srgb, var(--docs-border) 92%, #9ca3af);
+  color:var(--docs-text-faint);
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table th + th,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table td + td{
+  padding-left:24px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table td{
+  padding:15px 0;
+  border-bottom:1px solid color-mix(in srgb, var(--docs-border) 88%, transparent);
+  color:var(--docs-text-soft);
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table td:first-child{
+  color:var(--docs-text);
+  font-weight:650;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs{
+  margin:16px 0 0;
+  border:none;
+  border-radius:10px;
+  background:#272936;
+  box-shadow:none;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs-header{
+  padding:14px 14px 12px;
+  background:#272936;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > div:last-child{
+  border:none!important;
+  border-radius:0!important;
+  background:#272936!important;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-monaco-frame{
+  border:none!important;
+  border-radius:0!important;
+  background:#272936!important;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tab{
+  border-color:rgba(255,255,255,.08);
+  background:rgba(15,18,26,.42);
+  color:#d4d4d8;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tab.active{
+  border-color:rgba(255,255,255,.2);
+  background:rgba(255,255,255,.08);
+  color:#fff;
+  box-shadow:none;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-copy-button,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-expand-button{
+  background:rgba(255,255,255,.04);
+  border-color:rgba(255,255,255,.1);
+  color:#d4d4d8;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs:hover .docs-copy-button,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs:focus-within .docs-copy-button,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs:hover .docs-expand-button,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs:focus-within .docs-expand-button{
+  opacity:1;
 }
 .docs-shell-api-create-post .docs-main-api{
   border-left:none;
@@ -1261,19 +1533,20 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   background:rgba(255,255,255,.12);
   border-color:rgba(255,255,255,.2);
 }
-html.dark .docs-shell-api-create-post{
+html.dark .docs-shell-redesign{
   --docs-api-nav-warm-bg:#18181b;
   background:#18181b;
 }
-html.dark .docs-shell-api-create-post .docs-topbar{
+html.dark .docs-shell-redesign .docs-topbar{
   background:#18181b;
   border-bottom-color:transparent;
 }
 html.dark .docs-shell-api-create-post .docs-main-api{
   border-left-color:transparent;
 }
-html.dark .docs-shell-api-create-post .docs-nav-link.active{
-  background:rgba(240,77,35,.11);
+html.dark .docs-shell-redesign .docs-nav-link.active{
+  background:#2a2a2b;
+  color:#1d9bd1;
 }
 html.dark .docs-shell-api-create-post .docs-page-api .docs-api-inline-method{
   color:#7cb2ff;
@@ -1281,15 +1554,98 @@ html.dark .docs-shell-api-create-post .docs-page-api .docs-api-inline-method{
 html.dark .docs-shell-api-create-post .docs-page-api .docs-api-code-tabs .docs-code-tabs > div:last-child{
   background:#272936!important;
 }
+html.dark .docs-shell-guide-redesign .docs-page-guide-redesign .docs-eyebrow{
+  color:#ff6a45;
+}
+html.dark .docs-shell-guide-redesign .docs-guide-breadcrumb-home,
+html.dark .docs-shell-guide-redesign .docs-guide-breadcrumb-link{
+  color:#c8c8ca;
+}
+html.dark .docs-shell-guide-redesign .docs-guide-breadcrumb-home:hover,
+html.dark .docs-shell-guide-redesign .docs-guide-breadcrumb-link:hover{
+  color:#f4f4f5;
+}
+html.dark .docs-shell-guide-redesign .docs-guide-breadcrumb-chevron{
+  color:#85858a;
+}
+html.dark .docs-shell-guide-redesign .docs-guide-breadcrumb-current{
+  background:#5d2762;
+  color:#ffffff;
+}
+html.dark .docs-shell-guide-redesign .docs-toc-link.active{
+  color:#1d9bd1;
+}
+html.dark .docs-shell-guide-redesign .docs-toc-link:hover{
+  color:#d7d7db;
+}
+.docs-shell-redesign.docs-shell-guide-redesign .docs-layout-guide-redesign{
+  --guide-content-top:98px;
+  display:grid;
+  padding:var(--guide-content-top) var(--docs-frame-edge) 70px;
+}
+.docs-shell-redesign.docs-shell-guide-redesign .docs-sidebar{
+  position:sticky;
+  top:var(--guide-content-top);
+  left:auto;
+  width:auto;
+  height:auto;
+  max-height:calc(100vh - var(--guide-content-top) - 24px);
+  padding-top:0;
+  z-index:auto;
+}
+.docs-shell-redesign.docs-shell-guide-redesign .docs-sidebar-card{
+  background:transparent;
+  border:none;
+  border-radius:0;
+  box-shadow:none;
+  padding:0;
+}
+.docs-shell-redesign.docs-shell-guide-redesign .docs-sidebar-section-header{
+  border-bottom:none;
+}
+.docs-shell-redesign.docs-shell-guide-redesign .docs-main-guide{
+  border-left:none;
+  padding-top:0;
+}
+.docs-shell-redesign.docs-shell-guide-redesign .docs-toc{
+  top:var(--guide-content-top);
+  max-height:calc(100vh - var(--guide-content-top) - 24px);
+  padding-top:0;
+}
+.docs-shell-redesign.docs-shell-guide-redesign .docs-page-guide-redesign{
+  padding-top:0;
+}
+@media (max-width:1320px){
+  .docs-shell-guide-redesign .docs-layout-guide-redesign{
+    padding-left:var(--docs-frame-edge);
+    padding-right:var(--docs-frame-edge);
+    grid-template-columns:235px minmax(0, 1fr) 220px;
+    column-gap:44px;
+  }
+}
+@media (max-width:1120px){
+  .docs-shell-guide-redesign .docs-layout-guide-redesign{
+    grid-template-columns:220px minmax(0, 1fr);
+    column-gap:36px;
+  }
+  .docs-shell-guide-redesign .docs-toc{
+    display:none;
+  }
+  .docs-shell-guide-redesign .docs-page-guide-redesign{
+    max-width:680px;
+  }
+}
 @media (max-width:960px){
-  .docs-shell-api-create-post{
+  .docs-shell-redesign{
+    --docs-frame-edge:16px;
+    --docs-frame-x:0px;
     background:var(--docs-bg-elevated);
   }
   .docs-shell-api-create-post .docs-layout-api{
     padding:22px 16px 60px;
     display:grid;
   }
-  .docs-shell-api-create-post .docs-topbar{
+  .docs-shell-redesign .docs-topbar{
     position:sticky;
   }
   .docs-shell-api-create-post .docs-sidebar{
@@ -1298,12 +1654,32 @@ html.dark .docs-shell-api-create-post .docs-page-api .docs-api-code-tabs .docs-c
     height:auto;
     overflow:auto;
   }
+  .docs-shell-redesign .docs-topbar-left{
+    gap:14px;
+  }
   .docs-shell-api-create-post .docs-main-api{
     padding-top:0;
     padding-left:0;
   }
   .docs-shell-api-create-post .docs-page.docs-page-api{
     padding:28px 0 34px;
+  }
+  .docs-shell-guide-redesign .docs-layout-guide-redesign{
+    padding:22px 16px 60px;
+    display:grid;
+    grid-template-columns:1fr;
+  }
+  .docs-shell-guide-redesign .docs-main-guide{
+    padding-top:0;
+  }
+  .docs-shell-guide-redesign .docs-page-guide-redesign{
+    padding:32px 8px 38px;
+  }
+  .docs-shell-guide-redesign .docs-page-guide-redesign h1{
+    font-size:40px;
+  }
+  .docs-shell-guide-redesign .docs-page-guide-redesign .docs-lead{
+    font-size:18px;
   }
 }
 .docs-chooser-overlay{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(10,14,20,.42);backdrop-filter:blur(12px)}
@@ -1341,6 +1717,18 @@ function getActivePrimaryNav(current: string): DocsPrimaryKey {
   if (current.startsWith("/docs/resources")) return "resources";
   if (current.startsWith("/docs/api")) return "api-reference";
   return "overview";
+}
+
+function isOverviewGuidePath(current: string) {
+  return (
+    current === "/docs/dashboard-quickstart"
+    || current === "/docs/quickstart"
+    || current === "/docs/sdk"
+    || current === "/docs/cli"
+    || current === "/docs/mcp"
+    || current === "/docs/white-label"
+    || current.startsWith("/docs/white-label/")
+  );
 }
 
 function collectHeadingItems() {
@@ -1413,7 +1801,8 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const activePrimaryNav = getActivePrimaryNav(pathname);
   const sidebarSections = DOCS_SIDEBAR_NAV[activePrimaryNav];
   const isApiPage = pathname.startsWith("/docs/api");
-  const useApiReferenceRedesign = isApiPage;
+  const useGuideRedesign = isOverviewGuidePath(pathname);
+  const useApiReferenceRedesign = isApiPage || useGuideRedesign;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1427,6 +1816,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let frame = 0;
+    const timers: number[] = [];
 
     const syncHeadings = () => {
       const nextHeadings = collectHeadingItems();
@@ -1434,8 +1824,15 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
       setActiveHeading(nextHeadings[0]?.id || "");
     };
 
+    syncHeadings();
     frame = window.requestAnimationFrame(syncHeadings);
-    return () => window.cancelAnimationFrame(frame);
+    timers.push(window.setTimeout(syncHeadings, 120));
+    timers.push(window.setTimeout(syncHeadings, 500));
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
   }, [pathname, children]);
 
   useEffect(() => {
@@ -1554,8 +1951,15 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     setShowUserChooser(false);
   };
 
+  const renderedApiSidebarWidth = isApiPage
+    ? clampApiSidebarWidth(apiSidebarWidth - API_REFERENCE_SIDEBAR_VISUAL_REDUCTION)
+    : 240;
+  const layoutStyle: DocsLayoutStyle | undefined = useApiReferenceRedesign
+    ? { "--docs-api-sidebar-width": `${renderedApiSidebarWidth}px` }
+    : undefined;
+
   return (
-    <div className={`docs-shell${isApiPage ? " docs-shell-api" : ""}${useApiReferenceRedesign ? " docs-shell-api-create-post" : ""}`}>
+    <div className={`docs-shell${useApiReferenceRedesign ? " docs-shell-redesign" : ""}${isApiPage ? " docs-shell-api docs-shell-api-create-post" : ""}${useGuideRedesign ? " docs-shell-guide-redesign" : ""}`}>
       <style dangerouslySetInnerHTML={{ __html: `${CSS}\n${codeBlockStyles()}` }} />
       <header className="docs-topbar">
         <div className="docs-topbar-inner">
@@ -1609,8 +2013,8 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <div
-        className={`docs-layout${isApiPage ? " docs-layout-api" : ""}${activePrimaryNav === "platforms" ? " docs-layout-platforms" : ""}`}
-        style={isApiPage ? { ["--docs-api-sidebar-width" as any]: `${apiSidebarWidth}px` } : undefined}
+        className={`docs-layout${isApiPage ? " docs-layout-api" : ""}${useGuideRedesign ? " docs-layout-guide-redesign" : ""}${activePrimaryNav === "platforms" ? " docs-layout-platforms" : ""}`}
+        style={layoutStyle}
       >
         <aside className="docs-sidebar">
           <div className="docs-sidebar-card">
@@ -1641,6 +2045,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                             <span>{child.label}</span>
                             {child.method ? (
                               <span
+                                className="docs-nav-method"
                                 style={{
                                   fontFamily: "var(--docs-mono)",
                                   fontSize: 12,
@@ -1666,6 +2071,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                       <span>{item.label}</span>
                       {item.method ? (
                         <span
+                          className="docs-nav-method"
                           style={{
                             fontFamily: "var(--docs-mono)",
                             fontSize: 12,
@@ -1704,7 +2110,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
           </div>
         ) : null}
 
-        <main className={`docs-main${isApiPage ? " docs-main-api" : ""}`}>{children}</main>
+        <main className={`docs-main${isApiPage ? " docs-main-api" : ""}${useGuideRedesign ? " docs-main-guide" : ""}`}>{children}</main>
 
         {!isApiPage ? (
           <aside className="docs-toc">
@@ -1765,26 +2171,66 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 }
 
 export function DocsPage({
+  breadcrumbItems,
   eyebrow,
   title,
   lead,
   children,
   className,
 }: {
-  eyebrow?: string;
+  breadcrumbItems?: { label: string; href?: string }[];
+  eyebrow?: React.ReactNode;
   title: string;
   lead?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }) {
+  const pathname = usePathname();
+  const autoGuideClass = isOverviewGuidePath(pathname) && !className?.includes("docs-page-guide-redesign");
+  const articleClassName = `docs-page${autoGuideClass ? " docs-page-guide-redesign" : ""}${className ? ` ${className}` : ""}`;
+  const resolvedBreadcrumbItems = breadcrumbItems ?? buildOverviewBreadcrumb(pathname, title);
+
   return (
-    <article className={`docs-page${className ? ` ${className}` : ""}`}>
+    <article className={articleClassName}>
+      {resolvedBreadcrumbItems?.length ? <DocsContentBreadcrumb items={resolvedBreadcrumbItems} /> : null}
       {eyebrow ? <div className="docs-eyebrow">{eyebrow}</div> : null}
       <h1>{title}</h1>
       {lead ? <p className="docs-lead">{lead}</p> : null}
       {children}
     </article>
   );
+}
+
+function buildOverviewBreadcrumb(pathname: string, title: string) {
+  const items: Array<{ label: string; href?: string }> = [];
+
+  if (pathname === "/docs" || pathname === "/docs/pricing") {
+    return undefined;
+  }
+
+  if (
+    pathname === "/docs/dashboard-quickstart"
+    || pathname === "/docs/quickstart"
+    || pathname === "/docs/sdk"
+    || pathname === "/docs/cli"
+    || pathname === "/docs/mcp"
+  ) {
+    items.push({ label: title });
+    return items;
+  }
+
+  if (pathname === "/docs/white-label") {
+    items.push({ label: title });
+    return items;
+  }
+
+  if (pathname.startsWith("/docs/white-label/")) {
+    items.push({ label: "White-label", href: "/docs/white-label" });
+    items.push({ label: title });
+    return items;
+  }
+
+  return undefined;
 }
 
 export function DocsTable({
@@ -1828,8 +2274,14 @@ export function DocsRichText({ text }: { text: string }) {
 
 export function DocsCodeTabs({
   snippets,
+  variant = "default",
 }: {
   snippets: CodeSnippet[];
+  variant?: "default" | "api";
 }) {
-  return <CodeTabs snippets={snippets} />;
+  return (
+    <div className={variant === "api" ? "docs-api-code-tabs" : undefined}>
+      <CodeTabs snippets={snippets} viewerMaxHeight={variant === "api" ? 10000 : undefined} themeVariant={variant} />
+    </div>
+  );
 }

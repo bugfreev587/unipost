@@ -146,6 +146,7 @@ function buildDefaultResponseSnippet(response: ResponseSection): Snippet {
 }
 
 export function SingleEndpointReferencePage({
+  breadcrumbItems,
   section,
   title,
   description,
@@ -157,6 +158,7 @@ export function SingleEndpointReferencePage({
   responseSnippets,
   children,
 }: {
+  breadcrumbItems?: { label: string; href?: string }[];
   section: string;
   title: string;
   description: React.ReactNode;
@@ -179,7 +181,7 @@ export function SingleEndpointReferencePage({
   ));
 
   return (
-    <ApiReferencePage section={section} title={title} description={description}>
+    <ApiReferencePage breadcrumbItems={breadcrumbItems} section={section} title={title} description={description}>
       <ApiReferenceGrid
         left={
           <div className="api-reference-left-flow" style={{ display: "grid", gap: 16 }}>
