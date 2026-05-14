@@ -6,7 +6,6 @@ import {
   Breadcrumbs,
   CodeTabs,
   InfoBox,
-  RelatedEndpoints,
   ResponseBlock,
 } from "../_components/doc-components";
 
@@ -312,20 +311,6 @@ export default function WebhooksPage() {
             <InfoBox>
               <strong style={{ color: "var(--docs-text)" }}>How to read webhook results:</strong> the <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>data</code> object is the same aggregate post shape your client would receive from <ApiInlineLink endpoint="GET /v1/posts/:post_id" />. Use the top-level status for the summary, then inspect <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> for destination-by-destination detail.
             </InfoBox>
-          </div>
-        </ApiEndpointCard>
-
-        <ApiEndpointCard method="POST" path="/v1/webhooks">
-          <div style={{ padding: "18px" }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Endpoint map</div>
-            <RelatedEndpoints items={[
-              { method: "POST", path: "/v1/webhooks", label: "Create webhook", href: "/docs/api/webhooks/create" },
-              { method: "GET", path: "/v1/webhooks", label: "List webhooks", href: "/docs/api/webhooks/list" },
-              { method: "GET", path: "/v1/webhooks/:id", label: "Get webhook", href: "/docs/api/webhooks/get" },
-              { method: "PATCH", path: "/v1/webhooks/:id", label: "Update webhook", href: "/docs/api/webhooks/update" },
-              { method: "POST", path: "/v1/webhooks/:id/rotate", label: "Rotate secret", href: "/docs/api/webhooks/rotate" },
-              { method: "GET", path: "/v1/posts/:post_id/queue", label: "Inspect queue state", href: "/docs/api/posts/get" },
-            ]} />
           </div>
         </ApiEndpointCard>
       </div>

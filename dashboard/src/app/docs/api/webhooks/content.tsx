@@ -2,7 +2,7 @@
 
 import {
   ApiInlineLink,
-  Breadcrumbs, DocSection, CodeTabs, ResponseBlock, InfoBox, RelatedEndpoints,
+  Breadcrumbs, DocSection, CodeTabs, ResponseBlock, InfoBox,
 } from "../_components/doc-components";
 
 interface WebhookEvent {
@@ -273,16 +273,6 @@ export function WebhooksContent() {
           After 3 failures on the same event, the delivery is marked as permanently failed. Persistent failures across multiple events may trigger automatic webhook disabling — check the webhook status via <ApiInlineLink endpoint="GET /v1/webhooks/:id" />.
         </p>
       </DocSection>
-
-      {/* Related */}
-      <DocSection id="related" title="Related">
-        <RelatedEndpoints items={[
-          { method: "POST", path: "/v1/posts", label: "Create post (triggers post.published)", href: "/docs/api/posts/create" },
-          { method: "POST", path: "/v1/connect/sessions", label: "Connect session (triggers account.connected)", href: "/docs/api/connect/sessions" },
-          { method: "GET", path: "/v1/accounts", label: "List accounts", href: "/docs/api/accounts/list" },
-        ]} />
-      </DocSection>
-
       <div style={{ marginTop: 48, paddingTop: 24, borderTop: "1px solid var(--docs-border)", fontSize: 13, color: "var(--docs-text-faint)" }}>
         <a href="/docs" style={{ color: "var(--docs-link)", textDecoration: "none" }}>&larr; View full docs</a>
         <span style={{ margin: "0 12px" }}>|</span>

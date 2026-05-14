@@ -291,23 +291,6 @@ export function InfoBox({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Related endpoints ──
-export function RelatedEndpoints({ items }: { items: { method: string; path: string; label: string; href: string }[] }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      {items.map(item => (
-        <Link key={item.href} href={item.href} style={{
-          display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: "var(--docs-bg-elevated)", border: "1px solid var(--docs-border)",
-          borderRadius: 10, textDecoration: "none", color: "var(--docs-text-soft)", fontSize: 13, transition: "all .15s",
-        }}>
-          <MethodBadge method={item.method} />
-          <span>{item.label}</span>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
 // ── Error codes table ──
 export interface ErrorCodeRow { code: string; http: number; description: string }
 

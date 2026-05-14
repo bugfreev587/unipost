@@ -1413,7 +1413,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const activePrimaryNav = getActivePrimaryNav(pathname);
   const sidebarSections = DOCS_SIDEBAR_NAV[activePrimaryNav];
   const isApiPage = pathname.startsWith("/docs/api");
-  const isApiCreatePostPage = pathname === "/docs/api/posts/create";
+  const useApiReferenceRedesign = isApiPage;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1555,7 +1555,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className={`docs-shell${isApiPage ? " docs-shell-api" : ""}${isApiCreatePostPage ? " docs-shell-api-create-post" : ""}`}>
+    <div className={`docs-shell${isApiPage ? " docs-shell-api" : ""}${useApiReferenceRedesign ? " docs-shell-api-create-post" : ""}`}>
       <style dangerouslySetInnerHTML={{ __html: `${CSS}\n${codeBlockStyles()}` }} />
       <header className="docs-topbar">
         <div className="docs-topbar-inner">
