@@ -237,6 +237,19 @@ func (w *ManagedTokenRefreshWorker) markReconnectRequired(ctx context.Context, a
 		)
 		return
 	}
+	armedRows, err := w.queries.ArmSocialAccountDisconnectNotification(ctx, acc.ID)
+	if err != nil {
+		slog.Error("managed token refresh: arm disconnect notification failed", "account_id", acc.ID, "err", err)
+		return
+	}
+	if armedRows == 0 {
+		slog.Info("managed token refresh: disconnect notification already armed",
+			"account_id", acc.ID,
+			"platform", acc.Platform,
+			"reason", reason,
+		)
+		return
+	}
 
 	accountName := ""
 	if acc.AccountName.Valid {

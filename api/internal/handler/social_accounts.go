@@ -324,25 +324,32 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to disconnect account")
 		return
 	}
+	armedRows, err := h.queries.ArmSocialAccountDisconnectNotification(r.Context(), disconnected.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to notify disconnect")
+		return
+	}
 
-	// Fan out account.disconnected webhook. Best-effort — never blocks.
-	accountName := ""
-	if disconnected.AccountName.Valid {
-		accountName = disconnected.AccountName.String
+	if armedRows > 0 {
+		// Fan out account.disconnected webhook. Best-effort — never blocks.
+		accountName := ""
+		if disconnected.AccountName.Valid {
+			accountName = disconnected.AccountName.String
+		}
+		// Webhooks are workspace-scoped; resolve workspace_id from profile.
+		wsID := profileID
+		if prof, pErr := h.queries.GetProfile(r.Context(), profileID); pErr == nil {
+			wsID = prof.WorkspaceID
+		}
+		h.bus.Publish(r.Context(), wsID, events.EventAccountDisconnected, map[string]any{
+			"social_account_id": disconnected.ID,
+			"profile_id":        profileID,
+			"platform":          disconnected.Platform,
+			"account_name":      accountName,
+			"disconnected_at":   time.Now().UTC().Format(time.RFC3339),
+			"reason":            "user_initiated",
+		})
 	}
-	// Webhooks are workspace-scoped; resolve workspace_id from profile.
-	wsID := profileID
-	if prof, pErr := h.queries.GetProfile(r.Context(), profileID); pErr == nil {
-		wsID = prof.WorkspaceID
-	}
-	h.bus.Publish(r.Context(), wsID, events.EventAccountDisconnected, map[string]any{
-		"social_account_id": disconnected.ID,
-		"profile_id":        profileID,
-		"platform":          disconnected.Platform,
-		"account_name":      accountName,
-		"disconnected_at":   time.Now().UTC().Format(time.RFC3339),
-		"reason":            "user_initiated",
-	})
 
 	writeSuccess(w, map[string]bool{"disconnected": true})
 }

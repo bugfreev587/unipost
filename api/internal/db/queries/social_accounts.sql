@@ -47,6 +47,8 @@ WHERE id = $1
 -- name: GetExpiringTokens :many
 SELECT * FROM social_accounts
 WHERE disconnected_at IS NULL
+  AND status = 'active'
+  AND connection_type <> 'managed'
   AND token_expires_at IS NOT NULL
   AND token_expires_at < NOW() + INTERVAL '24 hours';
 
@@ -55,7 +57,7 @@ UPDATE social_accounts
 SET access_token = $2,
     refresh_token = $3,
     token_expires_at = $4,
-    metadata = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
+    metadata = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     status = 'active',
     disconnected_at = NULL
 WHERE id = $1;
@@ -93,7 +95,7 @@ SET access_token        = $2,
     external_account_id = $5,
     account_name        = $6,
     account_avatar_url  = $7,
-    metadata            = COALESCE($8, '{}'::jsonb) - 'dismissed_at',
+    metadata            = COALESCE($8, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     scope               = $9,
     connection_type     = $10,
     connect_session_id  = $11,
@@ -127,7 +129,7 @@ DO UPDATE SET
   external_account_id= EXCLUDED.external_account_id,
   account_name       = EXCLUDED.account_name,
   account_avatar_url = EXCLUDED.account_avatar_url,
-  metadata           = COALESCE(EXCLUDED.metadata, '{}'::jsonb) - 'dismissed_at',
+  metadata           = COALESCE(EXCLUDED.metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
   scope              = EXCLUDED.scope,
   connect_session_id = EXCLUDED.connect_session_id,
   external_user_email= EXCLUDED.external_user_email,
@@ -150,7 +152,7 @@ UPDATE social_accounts
 SET access_token       = $2,
     account_name       = $3,
     account_avatar_url = $4,
-    metadata           = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
+    metadata           = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     external_user_id   = $5,
     external_user_email= $6,
     connect_session_id = $7,
@@ -169,7 +171,7 @@ UPDATE social_accounts
 SET access_token      = $2,
     refresh_token     = $3,
     token_expires_at  = $4,
-    metadata          = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
+    metadata          = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     status            = 'active',
     disconnected_at   = NULL,
     last_refreshed_at = NOW()
@@ -178,9 +180,16 @@ RETURNING *;
 
 -- name: MarkSocialAccountReconnectRequired :execrows
 UPDATE social_accounts
-SET status = 'reconnect_required'
+SET status = 'reconnect_required',
+    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('reconnect_required_at', NOW()::TEXT)
 WHERE id = $1
   AND status = 'active';
+
+-- name: ArmSocialAccountDisconnectNotification :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('disconnect_notified_at', NOW()::TEXT)
+WHERE id = $1
+  AND COALESCE(metadata->>'disconnect_notified_at', '') = '';
 
 -- name: UpdateManagedTokenRefresh :exec
 UPDATE social_accounts

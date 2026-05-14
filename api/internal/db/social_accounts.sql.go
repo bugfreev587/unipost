@@ -126,6 +126,21 @@ func (q *Queries) DismissSocialAccount(ctx context.Context, arg DismissSocialAcc
 	return result.RowsAffected(), nil
 }
 
+const armSocialAccountDisconnectNotification = `-- name: ArmSocialAccountDisconnectNotification :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('disconnect_notified_at', NOW()::TEXT)
+WHERE id = $1
+  AND COALESCE(metadata->>'disconnect_notified_at', '') = ''
+`
+
+func (q *Queries) ArmSocialAccountDisconnectNotification(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, armSocialAccountDisconnectNotification, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findSocialAccountByExternalID = `-- name: FindSocialAccountByExternalID :one
 SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
@@ -213,6 +228,8 @@ func (q *Queries) GetDistinctProfileIDsForAccounts(ctx context.Context, arg GetD
 const getExpiringTokens = `-- name: GetExpiringTokens :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at FROM social_accounts
 WHERE disconnected_at IS NULL
+  AND status = 'active'
+  AND connection_type <> 'managed'
   AND token_expires_at IS NOT NULL
   AND token_expires_at < NOW() + INTERVAL '24 hours'
 `
@@ -781,7 +798,8 @@ func (q *Queries) ListSocialAccountsByWorkspaceFiltered(ctx context.Context, arg
 
 const markSocialAccountReconnectRequired = `-- name: MarkSocialAccountReconnectRequired :execrows
 UPDATE social_accounts
-SET status = 'reconnect_required'
+SET status = 'reconnect_required',
+    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('reconnect_required_at', NOW()::TEXT)
 WHERE id = $1
   AND status = 'active'
 `
@@ -799,7 +817,7 @@ UPDATE social_accounts
 SET access_token      = $2,
     refresh_token     = $3,
     token_expires_at  = $4,
-    metadata          = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
+    metadata          = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     status            = 'active',
     disconnected_at   = NULL,
     last_refreshed_at = NOW()
@@ -854,7 +872,7 @@ UPDATE social_accounts
 SET access_token       = $2,
     account_name       = $3,
     account_avatar_url = $4,
-    metadata           = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
+    metadata           = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     external_user_id   = $5,
     external_user_email= $6,
     connect_session_id = $7,
@@ -942,7 +960,7 @@ UPDATE social_accounts
 SET access_token = $2,
     refresh_token = $3,
     token_expires_at = $4,
-    metadata = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at',
+    metadata = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     status = 'active',
     disconnected_at = NULL
 WHERE id = $1
@@ -1090,7 +1108,7 @@ SET access_token        = $2,
     external_account_id = $5,
     account_name        = $6,
     account_avatar_url  = $7,
-    metadata            = COALESCE($8, '{}'::jsonb) - 'dismissed_at',
+    metadata            = COALESCE($8, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     scope               = $9,
     connection_type     = $10,
     connect_session_id  = $11,
@@ -1182,7 +1200,7 @@ DO UPDATE SET
   external_account_id= EXCLUDED.external_account_id,
   account_name       = EXCLUDED.account_name,
   account_avatar_url = EXCLUDED.account_avatar_url,
-  metadata           = COALESCE(EXCLUDED.metadata, '{}'::jsonb) - 'dismissed_at',
+  metadata           = COALESCE(EXCLUDED.metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
   scope              = EXCLUDED.scope,
   connect_session_id = EXCLUDED.connect_session_id,
   external_user_email= EXCLUDED.external_user_email,
