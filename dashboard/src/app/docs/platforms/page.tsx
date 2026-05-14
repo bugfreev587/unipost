@@ -172,34 +172,13 @@ export default function PlatformsPage() {
       lead="Use this page to understand what UniPost supports today across Twitter/X, LinkedIn, Instagram, Threads, TikTok, YouTube, Bluesky, and Facebook. The goal here is macro-level implementation guidance: which destinations exist, how the publish model works across them, where analytics and webhooks fit, and when you need to drop into a platform-specific guide."
       className="docs-page-wide"
     >
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-            .docs-table td:has(.docs-matrix-check),
-            .docs-table td:has(.docs-matrix-dash),
-            .docs-table th.docs-matrix-center{
-              text-align:center;
-            }
-            .docs-matrix-check{
-              display:inline-flex;
-              align-items:center;
-              justify-content:center;
-              min-width:20px;
-              color:#22c55e;
-              font-weight:700;
-              font-size:18px;
-              line-height:1;
-            }
-            .docs-matrix-dash{
-              display:inline-flex;
-              align-items:center;
-              justify-content:center;
-              min-width:20px;
-              color:var(--docs-text-soft);
-            }
-          `,
-        }}
-      />
+      <div className="docs-badge-row">
+        <span className="docs-badge">Publishing</span>
+        <span className="docs-badge">Media rules</span>
+        <span className="docs-badge">Analytics</span>
+        <span className="docs-badge">Webhooks</span>
+      </div>
+
       <h2 id="platform-names">Platform names in the UniPost API</h2>
       <p>Wherever the API accepts a platform — as a query filter, a request body field, or a path segment — UniPost uses the lowercase, URL-safe identifier listed below. Use this exact value when calling endpoints like <ApiInlineLink endpoint="GET /v1/accounts" />, <ApiInlineLink endpoint="POST /v1/accounts/connect" />, or <ApiInlineLink endpoint="POST /v1/connect/sessions" />.</p>
       <DocsTable
@@ -216,16 +195,37 @@ export default function PlatformsPage() {
 
       <h2 id="getting-started">Getting Started</h2>
 
-      <h3 id="connect-an-account">1. Connect an Account</h3>
-      <p>Start with <ApiInlineLink endpoint="POST /v1/accounts/connect" /> for workspace-owned accounts, or <ApiInlineLink endpoint="POST /v1/connect/sessions" /> for customer-owned account onboarding.</p>
+      <div className="docs-step-flow">
+        <div className="docs-step-row">
+          <div className="docs-step-number">1</div>
+          <div>
+            <div className="docs-step-title">Connect an account</div>
+            <div className="docs-step-copy">Start with <ApiInlineLink endpoint="POST /v1/accounts/connect" /> for workspace-owned accounts, or <ApiInlineLink endpoint="POST /v1/connect/sessions" /> for customer-owned account onboarding.</div>
+          </div>
+        </div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">2</div>
+          <div>
+            <div className="docs-step-title">Create a post</div>
+            <div className="docs-step-copy">Use <ApiInlineLink endpoint="POST /v1/posts" /> with the recommended <code>platform_posts[]</code> request shape.</div>
+          </div>
+        </div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">3</div>
+          <div>
+            <div className="docs-step-title">Cross-post to multiple platforms</div>
+            <div className="docs-step-copy">Send multiple platform-specific payloads in one request when you need cross-posting with adapted copy.</div>
+          </div>
+        </div>
+      </div>
+
+      <h3 id="connect-an-account">Connect an Account</h3>
       <DocsCode code={CONNECT_SNIPPET} language="bash" />
 
-      <h3 id="create-a-post">2. Create a Post</h3>
-      <p>Use <ApiInlineLink endpoint="POST /v1/posts" /> with the recommended <code>platform_posts[]</code> request shape.</p>
+      <h3 id="create-a-post">Create a Post</h3>
       <DocsCode code={CREATE_POST_SNIPPET} language="bash" />
 
-      <h3 id="cross-post-to-multiple-platforms">3. Cross-Post to Multiple Platforms</h3>
-      <p>Send multiple platform-specific payloads in one request when you need cross-posting with adapted copy.</p>
+      <h3 id="cross-post-to-multiple-platforms">Cross-Post to Multiple Platforms</h3>
       <DocsCode code={CROSS_POST_SNIPPET} language="bash" />
 
       <h2 id="platform-specific-features">Platform-Specific Features</h2>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
@@ -81,6 +81,18 @@ export function isFacebookEnabledForMe(isSuperAdmin: boolean | undefined): boole
   return isFeatureInDevEnabledForMe("facebook_pages", isSuperAdmin);
 }
 
+function subscribeToClientSnapshot() {
+  return () => {};
+}
+
+function getClientSnapshot() {
+  return true;
+}
+
+function getServerSnapshot() {
+  return false;
+}
+
 // Filter nav items based only on feature flags.
 function filterNavItems(userId?: string, userEmail?: string) {
   return ALL_NAV_ITEMS.filter((item) => {
@@ -113,6 +125,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [completedTutorialCount, setCompletedTutorialCount] = useState(0);
+  const themeMounted = useSyncExternalStore(subscribeToClientSnapshot, getClientSnapshot, getServerSnapshot);
   // Only one submenu should be expanded at a time.
   const [expandedMenu, setExpandedMenu] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -226,10 +239,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const tutorialTotal = TUTORIAL_REGISTRY.length;
   const quickstartsActive = pathname.startsWith("/docs");
   const settingsActive = pathname.startsWith("/settings");
-  const themeIsDark = resolvedTheme === "dark";
+  const themeIsDark = themeMounted && resolvedTheme === "dark";
   const ThemeIcon = themeIsDark ? Moon : Sun;
-  const nextTheme = themeIsDark ? "light" : "dark";
-  const themeLabel = themeIsDark ? "Switch to light theme" : "Switch to dark theme";
+  const nextTheme = resolvedTheme === "dark" ? "light" : "dark";
+  let themeLabel = "Toggle theme";
+  if (themeMounted) {
+    themeLabel = themeIsDark ? "Switch to light theme" : "Switch to dark theme";
+  }
 
   useEffect(() => {
     let cancelled = false;

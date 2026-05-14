@@ -8,9 +8,9 @@ export default function CliPage() {
       title="CLI"
       lead="A first-party UniPost CLI is planned so developers can script common workflows like auth checks, account inspection, publish operations, and analytics queries from the terminal."
     >
-      <div className="docs-callout">
+      <p>
         <strong>Coming soon:</strong> the CLI page will document installation, authentication, and common commands once the first public release is ready.
-      </div>
+      </p>
     </DocsPage>
   );
 }

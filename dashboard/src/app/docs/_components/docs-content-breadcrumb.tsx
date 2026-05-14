@@ -27,9 +27,12 @@ export function DocsContentBreadcrumb({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 12,
+        gap: 10,
         flexWrap: "wrap",
-        marginBottom: 20,
+        marginBottom: 18,
+        color: "var(--docs-text-faint)",
+        fontSize: 13,
+        fontWeight: 560,
       }}
     >
       <Link
@@ -39,9 +42,6 @@ export function DocsContentBreadcrumb({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          width: 30,
-          height: 30,
-          borderRadius: 999,
           color: "var(--docs-text-muted)",
           textDecoration: "none",
           transition: "color .18s ease, background-color .18s ease",
@@ -53,7 +53,7 @@ export function DocsContentBreadcrumb({
       {trail.map((item) => (
         <div
           key={`${item.label}-${item.href || "current"}`}
-          style={{ display: "inline-flex", alignItems: "center", gap: 12 }}
+          style={{ display: "inline-flex", alignItems: "center", gap: 10 }}
         >
           <ChevronRight
             className="docs-guide-breadcrumb-chevron"
@@ -67,9 +67,9 @@ export function DocsContentBreadcrumb({
               className="docs-guide-breadcrumb-link"
               style={{
                 color: "var(--docs-text-muted)",
-                fontSize: 15,
+                fontSize: 13,
                 fontWeight: 700,
-                letterSpacing: "-0.02em",
+                letterSpacing: "0",
                 textDecoration: "none",
                 transition: "color .18s ease",
               }}
@@ -81,9 +81,9 @@ export function DocsContentBreadcrumb({
               className="docs-guide-breadcrumb-link"
               style={{
                 color: "var(--docs-text-muted)",
-                fontSize: 15,
+                fontSize: 13,
                 fontWeight: 700,
-                letterSpacing: "-0.02em",
+                letterSpacing: "0",
               }}
             >
               {item.label}
@@ -92,28 +92,26 @@ export function DocsContentBreadcrumb({
         </div>
       ))}
 
-      {trail.length > 0 ? (
-        <ChevronRight
-          className="docs-guide-breadcrumb-chevron"
-          size={14}
-          strokeWidth={2.4}
-          style={{ color: "var(--docs-text-faint)" }}
-        />
-      ) : null}
+      <ChevronRight
+        className="docs-guide-breadcrumb-chevron"
+        size={14}
+        strokeWidth={2.4}
+        style={{ color: "var(--docs-text-faint)" }}
+      />
 
       <span
         className="docs-guide-breadcrumb-current"
         style={{
           display: "inline-flex",
           alignItems: "center",
-          minHeight: 44,
-          padding: "0 20px",
-          borderRadius: 12,
-          background: "color-mix(in srgb, var(--docs-link) 12%, transparent)",
-          color: "color-mix(in srgb, var(--docs-link) 88%, #5b2aa6)",
-          fontSize: 14,
-          fontWeight: 900,
-          letterSpacing: ".12em",
+          padding: "5px 10px",
+          borderRadius: 5,
+          background: "color-mix(in srgb, #8a2d8d 12%, transparent)",
+          color: "#8a2d8d",
+          fontSize: 12,
+          fontWeight: 760,
+          letterSpacing: ".08em",
+          lineHeight: 1,
           textTransform: "uppercase",
           whiteSpace: "nowrap",
         }}

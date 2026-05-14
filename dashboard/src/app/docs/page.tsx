@@ -39,9 +39,9 @@ export default function DocsHomePage() {
         Start here: <Link href="/docs/quickstart">API Quickstart</Link>
       </p>
 
-      <div className="docs-callout">
+      <p>
         <strong>Advanced setup:</strong> if you are embedding UniPost into your own product, see <Link href="/docs/white-label">White-label</Link>.
-      </div>
+      </p>
     </DocsPage>
   );
 }

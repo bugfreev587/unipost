@@ -287,7 +287,7 @@ export function ResponseBlock({ title, code }: { title: string; code: string }) 
 // ── Info box ──
 export function InfoBox({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ background: "color-mix(in srgb, var(--docs-link) 7%, var(--docs-bg-elevated))", border: "1px solid color-mix(in srgb, var(--docs-link) 18%, var(--docs-border))", borderRadius: 8, padding: "14px 18px", margin: "16px 0", fontSize: 13.5, lineHeight: 1.6, color: "var(--docs-text-soft)" }}>
+    <div className="docs-callout docs-callout-compact">
       {children}
     </div>
   );

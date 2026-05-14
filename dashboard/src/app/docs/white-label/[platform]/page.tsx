@@ -64,14 +64,13 @@ export default function WhiteLabelPlatformGuidePage() {
 
   return (
     <DocsPage
-      eyebrow="White-label Guide"
       title={guide.title}
       lead={guide.lead}
-      className="docs-page-wide"
+      className="docs-page-guide-redesign docs-page-wide"
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
-      <div className="wlp-top-callout">
+      <div className="docs-callout docs-callout-tip">
         <strong>Fastest route to a first success:</strong> create the app in{" "}
         <a href={guide.portalUrl} target="_blank" rel="noreferrer noopener">
           {guide.portalName}
@@ -130,7 +129,7 @@ export default function WhiteLabelPlatformGuidePage() {
                     </button>
                     {step.snippets?.length ? (
                       <div className="wlp-step-code">
-                        <DocsCodeTabs snippets={step.snippets} />
+                        <DocsCodeTabs snippets={step.snippets} variant="api" />
                       </div>
                     ) : null}
                   </div>
@@ -144,13 +143,13 @@ export default function WhiteLabelPlatformGuidePage() {
       {!guide.screenshotWalkthroughs ? (
         <>
           <h2 id="first-working-setup">First working setup</h2>
-          <div className="wlp-steps">
+          <div className="docs-step-flow">
             {guide.steps.map((step, index) => (
-              <div key={step.title} className="wlp-step-card">
-                <div className="wlp-step-num">{index + 1}</div>
-                <div className="wlp-step-body">
-                  <div className="wlp-step-title">{step.title}</div>
-                  <div className="wlp-step-copy">{step.body}</div>
+              <div key={step.title} className="docs-step-row">
+                <div className="docs-step-number">{index + 1}</div>
+                <div>
+                  <div className="docs-step-title">{step.title}</div>
+                  <div className="docs-step-copy">{step.body}</div>
                 </div>
               </div>
             ))}
@@ -173,13 +172,13 @@ export default function WhiteLabelPlatformGuidePage() {
           <p className="wlp-note">
             {guide.verificationWorkflow.intro}
           </p>
-          <div className="wlp-steps">
+          <div className="docs-step-flow">
             {guide.verificationWorkflow.steps.map((step, index) => (
-              <div key={step.title} className="wlp-step-card">
-                <div className="wlp-step-num">{index + 1}</div>
-                <div className="wlp-step-body">
-                  <div className="wlp-step-title">{step.title}</div>
-                  <div className="wlp-step-copy">{renderDocsRichContent(step.body)}</div>
+              <div key={step.title} className="docs-step-row">
+                <div className="docs-step-number">{index + 1}</div>
+                <div>
+                  <div className="docs-step-title">{step.title}</div>
+                  <div className="docs-step-copy">{renderDocsRichContent(step.body)}</div>
                 </div>
               </div>
             ))}
@@ -193,16 +192,16 @@ export default function WhiteLabelPlatformGuidePage() {
           <p className="wlp-note">
             {guide.apiWorkflow.intro}
           </p>
-          <div className="wlp-steps">
+          <div className="docs-step-flow">
             {guide.apiWorkflow.steps.map((step, index) => (
-              <div key={step.title} className="wlp-step-card">
-                <div className="wlp-step-num">{index + 1}</div>
-                <div className="wlp-step-body">
-                  <div className="wlp-step-title">{step.title}</div>
-                  <div className="wlp-step-copy">{renderDocsRichContent(step.body)}</div>
+              <div key={step.title} className="docs-step-row">
+                <div className="docs-step-number">{index + 1}</div>
+                <div>
+                  <div className="docs-step-title">{step.title}</div>
+                  <div className="docs-step-copy">{renderDocsRichContent(step.body)}</div>
                   {step.snippets?.length ? (
                     <div className="wlp-step-code">
-                      <DocsCodeTabs snippets={step.snippets} />
+                      <DocsCodeTabs snippets={step.snippets} variant="api" />
                     </div>
                   ) : null}
                 </div>
@@ -276,9 +275,6 @@ export default function WhiteLabelPlatformGuidePage() {
 }
 
 const styles = `
-.wlp-top-callout{margin:6px 0 24px;padding:16px 18px;border-radius:16px;background:color-mix(in srgb, var(--docs-link) 7%, var(--docs-bg-elevated));border:1px solid color-mix(in srgb, var(--docs-link) 18%, var(--docs-border));font-size:14.5px;line-height:1.7;color:var(--docs-text-soft)}
-.wlp-top-callout strong{color:var(--docs-text)}
-.wlp-top-callout a{color:var(--docs-link)}
 .wlp-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:8px 0 14px}
 .wlp-code-list{display:grid;gap:10px;margin:14px 0 8px}
 .wlp-callback-card{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border-radius:14px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
@@ -288,19 +284,124 @@ const styles = `
 .wlp-copy-btn.copied{color:var(--docs-link);border-color:color-mix(in srgb, var(--docs-link) 36%, var(--docs-border));background:color-mix(in srgb, var(--docs-link) 8%, var(--docs-bg-muted))}
 .wlp-shot-group{margin:14px 0 22px}
 .wlp-shot-group-title{font-size:20px;line-height:1.3;letter-spacing:-.02em;color:var(--docs-text);margin:0 0 8px}
-.wlp-shot-list{display:grid;gap:18px;margin:14px 0 8px}
-.wlp-shot-card{padding:16px 16px 18px;border-radius:18px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
+.wlp-shot-list{display:grid;gap:40px;margin:18px 0 10px}
+.wlp-shot-card{padding:0;border:none;border-radius:0;background:transparent}
 .wlp-shot-trigger{display:block;width:100%;padding:0;border:none;background:transparent;cursor:zoom-in}
-.wlp-shot-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:8px}
-.wlp-shot-caption{font-size:13px;line-height:1.6;color:var(--docs-text-soft);margin-bottom:12px}
+.wlp-shot-title{font-size:18px;font-weight:720;letter-spacing:-.02em;color:var(--docs-text);margin-bottom:8px}
+.wlp-shot-caption{font-size:14px;line-height:1.62;color:var(--docs-text-soft);margin-bottom:14px}
 .wlp-shot-caption code{font-family:var(--docs-mono);font-size:12px}
-.wlp-shot-image{display:block;width:100%;height:auto;border-radius:14px;border:1px solid var(--docs-border-strong);background:#111}
-.wlp-steps{display:grid;gap:12px;margin:14px 0 8px}
-.wlp-step-card{display:grid;grid-template-columns:38px 1fr;gap:14px;align-items:start;padding:16px 18px;border-radius:16px;border:1px solid var(--docs-border);background:var(--docs-bg-elevated)}
-.wlp-step-num{width:30px;height:30px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border));color:var(--docs-link);font-size:13px;font-weight:700}
-.wlp-step-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:4px}
-.wlp-step-copy{font-size:14px;line-height:1.68;color:var(--docs-text-soft)}
-.wlp-step-code{margin-top:14px}
+.wlp-shot-image{display:block;width:100%;height:auto;border-radius:12px;border:1px solid color-mix(in srgb, var(--docs-border) 78%, transparent);background:#111;box-shadow:0 12px 32px color-mix(in srgb, #0f172a 9%, transparent)}
+.wlp-step-code{margin-top:16px}
+.wlp-step-code .docs-api-code-tabs,
+.wlp-shot-card .docs-api-code-tabs{min-width:0}
+.wlp-step-code .docs-api-code-tabs .docs-code-tabs,
+.wlp-shot-card .docs-api-code-tabs .docs-code-tabs{
+  margin:0;
+  width:100%;
+  min-width:0;
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:16px;
+  background:#272936;
+  box-shadow:0 18px 40px rgba(15,23,42,.12);
+  overflow:hidden;
+}
+.wlp-step-code .docs-api-code-tabs .docs-code-tabs-header,
+.wlp-shot-card .docs-api-code-tabs .docs-code-tabs-header{
+  position:relative;
+  align-items:flex-start;
+  padding:14px 16px 0;
+  background:#272936;
+}
+.wlp-step-code .docs-api-code-tabs .docs-code-tab-list,
+.wlp-shot-card .docs-api-code-tabs .docs-code-tab-list{
+  gap:6px;
+  padding-right:86px;
+}
+.wlp-step-code .docs-api-code-tabs .docs-code-tab,
+.wlp-shot-card .docs-api-code-tabs .docs-code-tab{
+  border-radius:6px;
+  padding:6px 10px;
+  font-size:12px;
+  border-color:rgba(255,255,255,.08);
+  background:rgba(255,255,255,.05);
+  color:#d4d4d8;
+}
+.wlp-step-code .docs-api-code-tabs .docs-code-tab:hover,
+.wlp-shot-card .docs-api-code-tabs .docs-code-tab:hover{
+  color:#fff;
+  background:rgba(255,255,255,.08);
+}
+.wlp-step-code .docs-api-code-tabs .docs-code-tab.active,
+.wlp-shot-card .docs-api-code-tabs .docs-code-tab.active{
+  color:#fff;
+  border-color:rgba(255,255,255,.16);
+  background:rgba(255,255,255,.11);
+  box-shadow:none;
+}
+.wlp-step-code .docs-api-code-tabs .docs-copy-button,
+.wlp-step-code .docs-api-code-tabs .docs-expand-button,
+.wlp-shot-card .docs-api-code-tabs .docs-copy-button,
+.wlp-shot-card .docs-api-code-tabs .docs-expand-button{
+  position:absolute;
+  top:12px;
+  width:34px;
+  height:34px;
+  border-radius:6px;
+  border-color:rgba(255,255,255,.12);
+  background:rgba(255,255,255,.06);
+  color:#f4f4f5;
+  opacity:0;
+  transform:translateY(-3px);
+  transition:opacity .14s ease,transform .14s ease,background .14s ease,border-color .14s ease;
+  z-index:2;
+}
+.wlp-step-code .docs-api-code-tabs .docs-copy-button,
+.wlp-shot-card .docs-api-code-tabs .docs-copy-button{right:54px}
+.wlp-step-code .docs-api-code-tabs .docs-expand-button,
+.wlp-shot-card .docs-api-code-tabs .docs-expand-button{right:12px}
+.wlp-step-code .docs-api-code-tabs:hover .docs-copy-button,
+.wlp-step-code .docs-api-code-tabs:focus-within .docs-copy-button,
+.wlp-step-code .docs-api-code-tabs:hover .docs-expand-button,
+.wlp-step-code .docs-api-code-tabs:focus-within .docs-expand-button,
+.wlp-shot-card .docs-api-code-tabs:hover .docs-copy-button,
+.wlp-shot-card .docs-api-code-tabs:focus-within .docs-copy-button,
+.wlp-shot-card .docs-api-code-tabs:hover .docs-expand-button,
+.wlp-shot-card .docs-api-code-tabs:focus-within .docs-expand-button{
+  opacity:1;
+  transform:translateY(0);
+}
+.wlp-step-code .docs-api-code-tabs .docs-copy-button:hover,
+.wlp-step-code .docs-api-code-tabs .docs-expand-button:hover,
+.wlp-shot-card .docs-api-code-tabs .docs-copy-button:hover,
+.wlp-shot-card .docs-api-code-tabs .docs-expand-button:hover{
+  background:rgba(255,255,255,.12);
+  border-color:rgba(255,255,255,.2);
+}
+.wlp-step-code .docs-api-code-tabs .docs-monaco-frame,
+.wlp-shot-card .docs-api-code-tabs .docs-monaco-frame{
+  position:relative;
+  border:none!important;
+  border-radius:0!important;
+  background:#272936!important;
+}
+.wlp-step-code .docs-api-code-tabs .docs-monaco-frame::after,
+.wlp-shot-card .docs-api-code-tabs .docs-monaco-frame::after{
+  content:"";
+  position:absolute;
+  top:0;
+  right:0;
+  bottom:0;
+  width:28px;
+  pointer-events:none;
+  background:linear-gradient(90deg, transparent, #272936);
+  opacity:.86;
+}
+.wlp-step-code .docs-api-code-tabs .docs-code-tabs > div:last-child,
+.wlp-shot-card .docs-api-code-tabs .docs-code-tabs > div:last-child{
+  border:none!important;
+  border-radius:0!important;
+  background:#272936!important;
+}
 .wlp-next{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .wlp-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .wlp-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}

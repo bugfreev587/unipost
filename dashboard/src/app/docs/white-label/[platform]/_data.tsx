@@ -411,6 +411,62 @@ https://www.googleapis.com/auth/youtube.upload`,
               code: `curl "https://api.unipost.dev/v1/profiles" \\
   -H "Authorization: Bearer <API_KEY>"`,
             },
+            {
+              lang: "js",
+              label: "Node.js",
+              code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const { data: profiles } = await client.profiles.list();
+console.log(profiles.map((profile) => profile.id));`,
+            },
+            {
+              lang: "python",
+              label: "Python",
+              code: `from unipost import UniPost
+
+client = UniPost()
+
+profiles = client.profiles.list()
+print([p["id"] for p in profiles["data"]])`,
+            },
+            {
+              lang: "go",
+              label: "Go",
+              code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  profiles, err := client.Profiles.List(context.Background())
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  for _, profile := range profiles.Data {
+    fmt.Println(profile.ID)
+  }
+}`,
+            },
+            {
+              lang: "java",
+              label: "Java",
+              code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var profiles = client.profiles().list().getData();
+profiles.forEach(profile -> System.out.println(profile.get("id").asText()));`,
+            },
           ],
         },
         {
@@ -429,6 +485,82 @@ https://www.googleapis.com/auth/youtube.upload`,
     "branding_primary_color": "#10b981"
   }'`,
             },
+            {
+              lang: "js",
+              label: "Node.js",
+              code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const profile = await client.profiles.update("<PROFILE_ID>", {
+  brandingLogoUrl: "https://yourcdn.com/logo.png",
+  brandingDisplayName: "Your Brand",
+  brandingPrimaryColor: "#10b981",
+});
+
+console.log(profile.brandingDisplayName);`,
+            },
+            {
+              lang: "python",
+              label: "Python",
+              code: `from unipost import UniPost
+
+client = UniPost()
+
+profile = client.profiles.update(
+  "<PROFILE_ID>",
+  branding_logo_url="https://yourcdn.com/logo.png",
+  branding_display_name="Your Brand",
+  branding_primary_color="#10b981",
+)
+
+print(profile["data"]["branding_display_name"])`,
+            },
+            {
+              lang: "go",
+              label: "Go",
+              code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  profile, err := client.Profiles.Update(context.Background(), "<PROFILE_ID>", &unipost.UpdateProfileParams{
+    BrandingLogoURL:      unipost.String("https://yourcdn.com/logo.png"),
+    BrandingDisplayName:  unipost.String("Your Brand"),
+    BrandingPrimaryColor: unipost.String("#10b981"),
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(profile.BrandingDisplayName)
+}`,
+            },
+            {
+              lang: "java",
+              label: "Java",
+              code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var profile = client.profiles().update("<PROFILE_ID>", Map.of(
+    "branding_logo_url", "https://yourcdn.com/logo.png",
+    "branding_display_name", "Your Brand",
+    "branding_primary_color", "#10b981"
+));
+
+System.out.println(profile.get("branding_display_name").asText());`,
+            },
           ],
         },
         {
@@ -440,6 +572,66 @@ https://www.googleapis.com/auth/youtube.upload`,
               label: "cURL",
               code: `curl "https://api.unipost.dev/v1/accounts?platform=youtube" \\
   -H "Authorization: Bearer <API_KEY>"`,
+            },
+            {
+              lang: "js",
+              label: "Node.js",
+              code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const { data: accounts } = await client.accounts.list({
+  platform: "youtube",
+});
+
+console.log(accounts);`,
+            },
+            {
+              lang: "python",
+              label: "Python",
+              code: `from unipost import UniPost
+
+client = UniPost()
+
+accounts = client.accounts.list(platform="youtube")
+print(accounts["data"])`,
+            },
+            {
+              lang: "go",
+              label: "Go",
+              code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  accounts, err := client.Accounts.List(context.Background(), &unipost.ListAccountsParams{
+    Platform: "youtube",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = accounts
+}`,
+            },
+            {
+              lang: "java",
+              label: "Java",
+              code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var accounts = client.accounts().list(Map.of("platform", "youtube")).getData();
+System.out.println(accounts);`,
             },
           ],
         },

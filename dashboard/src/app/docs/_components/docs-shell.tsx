@@ -98,6 +98,79 @@ function renderDocsTableCell(cell: React.ReactNode) {
   return renderDocsRichContent(cell);
 }
 
+function getDocsTableColumnWidths(columns: readonly string[]) {
+  const key = columns.map((column) => column.trim().toLowerCase()).join("|");
+
+  switch (key) {
+    case "network|api platform value":
+    case "text|value":
+    case "image|value":
+    case "video|value":
+    case "limitation|why":
+    case "code|what it means":
+      return ["34%", "66%"];
+    case "feature|support|notes":
+    case "metric|support|notes":
+    case "surface|support|notes":
+      return ["34%", "32%", "34%"];
+    case "option|values|notes":
+      return ["34%", "32%", "34%"];
+    case "channel|available|what you need|format rule":
+      return ["26%", "14%", "32%", "28%"];
+    case "event|severity|default on|what triggers it":
+      return ["28%", "17%", "17%", "38%"];
+    case "field|required|limits|notes":
+      return ["26%", "14%", "26%", "34%"];
+    case "mode|best for|app / credentials|availability":
+      return ["22%", "36%", "24%", "18%"];
+    case "platform|white-label|developer portal|app review":
+      return ["24%", "18%", "30%", "28%"];
+    case "layer|what it controls|default if unset":
+      return ["30%", "38%", "32%"];
+    case "platform|text|images|video|threads|analytics|guide":
+      return ["20%", "12%", "12%", "12%", "12%", "12%", "20%"];
+    case "platform|first comment|audience / privacy|surface controls|playlist / tags|direct credentials":
+      return ["20%", "15%", "21%", "18%", "16%", "10%"];
+    case "platform|impressions|reach|likes|comments|views|docs":
+      return ["20%", "12%", "12%", "12%", "12%", "12%", "20%"];
+    default:
+      break;
+  }
+
+  if (columns.length === 2) return ["34%", "66%"];
+  if (columns.length === 3) return ["34%", "32%", "34%"];
+  if (columns.length === 4) return ["25%", "25%", "25%", "25%"];
+  return null;
+}
+
+function isCenteredDocsTableColumn(columns: readonly string[], columnIndex: number) {
+  const key = columns.map((column) => column.trim().toLowerCase()).join("|");
+  const normalized = columns[columnIndex]?.trim().toLowerCase();
+
+  switch (key) {
+    case "feature|support|notes":
+    case "metric|support|notes":
+    case "surface|support|notes":
+      return columnIndex === 1;
+    case "channel|available|what you need|format rule":
+      return columnIndex === 1;
+    case "event|severity|default on|what triggers it":
+      return columnIndex === 2;
+    case "field|required|limits|notes":
+      return columnIndex === 1;
+    case "platform|white-label|developer portal|app review":
+      return columnIndex === 1;
+    case "platform|text|images|video|threads|analytics|guide":
+      return columnIndex >= 1 && columnIndex <= 5;
+    case "platform|first comment|audience / privacy|surface controls|playlist / tags|direct credentials":
+      return columnIndex === 1 || columnIndex === 5;
+    case "platform|impressions|reach|likes|comments|views|docs":
+      return columnIndex >= 1 && columnIndex <= 5;
+    default:
+      return ["available", "default on", "required", "support"].includes(normalized ?? "");
+  }
+}
+
 function isApiReference(value: string) {
   const trimmed = value.trim();
   return /^(GET|POST|PUT|PATCH|DELETE)\s+\/v1\/[A-Za-z0-9_/:?{}.-]+$/i.test(trimmed)
@@ -647,6 +720,14 @@ html.light{
   --docs-link-hover: #0f56b8;
   --docs-accent: #1f7a4f;
   --docs-accent-soft: rgba(31, 122, 79, 0.08);
+  --docs-callout-info-accent: #16aeea;
+  --docs-callout-info-bg: color-mix(in srgb, #16aeea 11%, var(--docs-bg-elevated));
+  --docs-callout-tip-accent: #22c55e;
+  --docs-callout-tip-bg: color-mix(in srgb, #22c55e 11%, var(--docs-bg-elevated));
+  --docs-callout-warning-accent: #f59e0b;
+  --docs-callout-warning-bg: color-mix(in srgb, #f59e0b 12%, var(--docs-bg-elevated));
+  --docs-callout-danger-accent: #e91e63;
+  --docs-callout-danger-bg: color-mix(in srgb, #e91e63 12%, var(--docs-bg-elevated));
   --docs-shell-gradient: linear-gradient(180deg, #fcfdff 0%, #f7f8fb 34%, #f4f6fa 100%);
   --docs-topbar-bg: rgba(247, 248, 251, 0.88);
   --docs-card-shadow: 0 18px 46px rgba(15, 23, 42, 0.06);
@@ -693,6 +774,14 @@ html.dark{
   --docs-link-hover: #a8cbff;
   --docs-accent: #6dd39a;
   --docs-accent-soft: rgba(109, 211, 154, 0.11);
+  --docs-callout-info-accent: #21c2ff;
+  --docs-callout-info-bg: color-mix(in srgb, #21c2ff 18%, var(--docs-bg-elevated));
+  --docs-callout-tip-accent: #45d267;
+  --docs-callout-tip-bg: color-mix(in srgb, #45d267 18%, var(--docs-bg-elevated));
+  --docs-callout-warning-accent: #fbbf24;
+  --docs-callout-warning-bg: color-mix(in srgb, #fbbf24 16%, var(--docs-bg-elevated));
+  --docs-callout-danger-accent: #ff1673;
+  --docs-callout-danger-bg: color-mix(in srgb, #ff1673 22%, var(--docs-bg-elevated));
   --docs-shell-gradient: linear-gradient(180deg, #10141b 0%, #0c1017 36%, #0c1017 100%);
   --docs-topbar-bg: rgba(12, 16, 23, 0.82);
   --docs-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
@@ -718,6 +807,7 @@ html.dark{
   --docs-tab-active-shadow: inset 0 0 0 1px rgba(124, 178, 255, 0.18), 0 0 0 1px rgba(124, 178, 255, 0.08);
 }
 *{box-sizing:border-box}
+html{scrollbar-gutter:stable}
 body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .docs-shell{min-height:100vh;background:var(--docs-shell-gradient)}
 .docs-topbar{position:sticky;top:0;z-index:50;border-bottom:1px solid color-mix(in srgb, var(--docs-border) 82%, transparent);background:var(--docs-topbar-bg);backdrop-filter:blur(16px)}
@@ -788,7 +878,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-nav-subgroup-items{margin-left:0;padding-left:28px;border-left:none;display:grid;gap:2px}
 .docs-nav-link{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 8px;border-radius:10px;font-size:14.5px;font-weight:560;line-height:1.38;color:var(--docs-nav-text);text-decoration:none;transition:all .12s}
 .docs-nav-link:hover{color:var(--docs-nav-text-strong);background:var(--docs-nav-hover)}
-.docs-nav-link.active{color:var(--docs-nav-active-text);font-weight:620;background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
+.docs-nav-link.active{color:var(--docs-nav-active-text);font-weight:560;background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
 .docs-api-inline{position:relative;display:inline-flex;align-items:center;padding:2px 8px 3px;border-radius:10px;background:color-mix(in srgb, #2f7d4e 18%, var(--docs-inline-code-bg));border:1px solid color-mix(in srgb, #5ca772 24%, var(--docs-border));color:var(--docs-text);font-family:var(--docs-mono);font-size:.84em;font-weight:560;line-height:1.15;letter-spacing:.005em;text-decoration:none;vertical-align:baseline;overflow:hidden;transition:all .14s}
 .docs-api-inline:hover{background:color-mix(in srgb, #2f7d4e 24%, var(--docs-inline-code-bg));border-color:color-mix(in srgb, #5ca772 40%, var(--docs-border));color:var(--docs-text);transform:translateY(-1px)}
 .docs-api-inline.docs-api-inline-post{background:color-mix(in srgb, #2563eb 16%, var(--docs-inline-code-bg));border-color:color-mix(in srgb, #60a5fa 28%, var(--docs-border))}
@@ -805,14 +895,18 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-main-api{max-width:none}
 .docs-page{background:color-mix(in srgb, var(--docs-bg-elevated) 98%, transparent);border:1px solid var(--docs-border);border-radius:24px;padding:48px 52px 56px;box-shadow:var(--docs-card-shadow)}
 .docs-page-api{padding:42px 46px 52px}
-.docs-page.docs-page-wide h1,.docs-page.docs-page-wide .docs-lead,.docs-page.docs-page-wide p,.docs-page.docs-page-wide .docs-list,.docs-page.docs-page-wide .docs-step-list,.docs-page.docs-page-wide .docs-callout{max-width:none}
+.docs-page.docs-page-wide h1,.docs-page.docs-page-wide .docs-lead,.docs-page.docs-page-wide p,.docs-page.docs-page-wide .docs-list,.docs-page.docs-page-wide .docs-step-list,.docs-page.docs-page-wide .docs-callout,.docs-page.docs-page-wide .wlp-top-callout{max-width:none}
 .docs-eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:18px}
 .docs-page h1{font-size:42px;line-height:1.04;letter-spacing:-.045em;font-weight:730;margin:0 0 14px;color:var(--docs-text);max-width:12ch}
 .docs-page-api h1{max-width:none}
 .docs-lead{font-size:18px;line-height:1.72;color:var(--docs-text-soft);margin:0 0 34px;max-width:68ch}
-.docs-page h2,.docs-page h3{scroll-margin-top:96px}
+.docs-page h2,.docs-page h3{scroll-margin-top:96px;position:relative}
 .docs-page h2{font-size:27px;line-height:1.18;letter-spacing:-.03em;font-weight:710;margin:42px 0 14px;color:var(--docs-text)}
 .docs-page h3{font-size:20px;line-height:1.28;letter-spacing:-.02em;font-weight:680;margin:28px 0 12px;color:var(--docs-text)}
+.docs-heading-anchor{display:inline-flex;align-items:center;margin-left:10px;color:var(--docs-link);font-weight:760;text-decoration:none;opacity:0;transform:translateY(-1px);transition:opacity .14s ease,color .14s ease,transform .14s ease}
+.docs-page h2:hover .docs-heading-anchor,.docs-page h3:hover .docs-heading-anchor,.docs-heading-anchor:focus-visible{opacity:1}
+.docs-heading-anchor:hover{color:var(--docs-link-hover);text-decoration:none!important;transform:translateY(-1px) scale(1.04)}
+.docs-heading-anchor:focus-visible{outline:2px solid color-mix(in srgb, var(--docs-link) 58%, transparent);outline-offset:3px;border-radius:5px}
 .docs-page p{font-size:16px;line-height:1.76;color:var(--docs-text-soft);margin:0 0 16px;max-width:66ch}
 .docs-page a{color:var(--docs-link);text-decoration:none}
 .docs-page a:hover{color:var(--docs-link-hover);text-decoration:underline;text-decoration-thickness:1.2px}
@@ -828,11 +922,88 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-list li{margin-bottom:10px;line-height:1.72}
 .docs-table-wrap{overflow:auto;margin:20px 0}
 .docs-table{width:100%;border-collapse:separate;border-spacing:0;min-width:620px;border:1px solid var(--docs-border);border-radius:16px;overflow:hidden;background:var(--docs-bg-elevated)}
+.docs-table-fixed{table-layout:fixed}
 .docs-table th{font-size:11px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--docs-text-faint);text-align:left;padding:13px 15px;background:var(--docs-bg-muted);border-bottom:1px solid var(--docs-border)}
 .docs-table td{padding:15px;color:var(--docs-text-soft);font-size:14.5px;line-height:1.62;border-bottom:1px solid var(--docs-border);vertical-align:top}
 .docs-table tr:last-child td{border-bottom:none}
-.docs-callout{margin:22px 0;padding:16px 18px;border-radius:16px;background:var(--docs-accent-soft);border:1px solid color-mix(in srgb, var(--docs-accent) 18%, transparent);color:var(--docs-text-soft);max-width:66ch}
-.docs-callout strong{color:var(--docs-text)}
+.docs-table td:has(.docs-matrix-check),
+.docs-table td:has(.docs-matrix-dash),
+.docs-table th.docs-matrix-center,
+.docs-table .docs-table-cell-center{text-align:center}
+.docs-matrix-check{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:#22c55e;font-weight:700;font-size:18px;line-height:1}
+.docs-matrix-dash{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:var(--docs-text-soft)}
+.docs-callout,.wlp-top-callout{
+  --docs-callout-accent:var(--docs-callout-info-accent);
+  --docs-callout-bg:var(--docs-callout-info-bg);
+  position:relative;
+  display:block;
+  margin:24px 0;
+  padding:22px 24px 22px 70px;
+  border:0;
+  border-radius:9px;
+  background:var(--docs-callout-bg);
+  color:var(--docs-text-soft);
+  max-width:66ch;
+  box-shadow:inset 8px 0 0 var(--docs-callout-accent);
+  overflow:hidden;
+}
+.docs-callout::before,.wlp-top-callout::before{
+  content:"!";
+  position:absolute;
+  left:27px;
+  top:25px;
+  width:30px;
+  height:30px;
+  border:2px solid color-mix(in srgb, var(--docs-callout-accent) 54%, var(--docs-text));
+  border-radius:999px;
+  color:color-mix(in srgb, var(--docs-callout-accent) 50%, var(--docs-text));
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-size:18px;
+  font-weight:800;
+  line-height:1;
+}
+.docs-callout.docs-callout-tip,.wlp-top-callout.docs-callout-tip{
+  --docs-callout-accent:var(--docs-callout-tip-accent);
+  --docs-callout-bg:var(--docs-callout-tip-bg);
+}
+.docs-callout.docs-callout-tip::before,.wlp-top-callout.docs-callout-tip::before{content:"i"}
+.docs-callout.docs-callout-warning,.wlp-top-callout.docs-callout-warning{
+  --docs-callout-accent:var(--docs-callout-warning-accent);
+  --docs-callout-bg:var(--docs-callout-warning-bg);
+}
+.docs-callout.docs-callout-danger,.docs-callout.docs-callout-critical,
+.wlp-top-callout.docs-callout-danger,.wlp-top-callout.docs-callout-critical{
+  --docs-callout-accent:var(--docs-callout-danger-accent);
+  --docs-callout-bg:var(--docs-callout-danger-bg);
+}
+.docs-callout.docs-callout-compact{
+  margin:16px 0;
+  padding:18px 20px 18px 62px;
+  border-radius:8px;
+  font-size:13.5px;
+  line-height:1.65;
+  max-width:100%;
+}
+.docs-callout.docs-callout-compact::before{
+  left:23px;
+  top:19px;
+  width:26px;
+  height:26px;
+  font-size:15px;
+}
+.docs-callout strong:first-child,.wlp-top-callout strong:first-child{
+  display:block;
+  margin-bottom:7px;
+  color:var(--docs-text);
+  font-size:17px;
+  line-height:1.35;
+  font-weight:760;
+  letter-spacing:-.02em;
+}
+.docs-callout a,.wlp-top-callout a{color:var(--docs-callout-accent)}
+.docs-callout code,.wlp-top-callout code{font-family:var(--docs-mono);font-size:12.5px}
 .docs-toc-title{padding:6px 8px 10px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-nav-text-faint)}
 .docs-toc-link{display:block;padding:8px 9px;border-radius:10px;font-size:13.75px;line-height:1.5;color:var(--docs-nav-text);text-decoration:none;transition:all .12s}
 .docs-toc-link:hover{color:var(--docs-nav-text-strong);background:var(--docs-nav-hover)}
@@ -857,12 +1028,57 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-mini-card p{font-size:14.5px;line-height:1.68;color:var(--docs-text-soft);margin-bottom:8px}
 .docs-step-list{margin:18px 0 20px;padding-left:20px;max-width:66ch}
 .docs-step-list li{padding-left:4px;margin-bottom:10px;font-size:16px;line-height:1.72;color:var(--docs-text-soft)}
+.docs-step-flow{display:grid;grid-template-columns:1fr;gap:12px;margin:14px 0 8px}
+.docs-step-row{display:grid;grid-template-columns:38px 1fr;gap:14px;align-items:start;padding:4px 0 20px;border:none;border-radius:0;background:transparent;border-bottom:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent);color:inherit;text-decoration:none}
+.docs-step-row:last-child{border-bottom:none;padding-bottom:4px}
+.docs-step-row:hover{text-decoration:none}
+.docs-step-number{width:30px;height:30px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border));color:var(--docs-link);font-size:13px;font-weight:700}
+.docs-step-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:4px}
+.docs-step-copy{font-size:14px;line-height:1.68;color:var(--docs-text-soft)}
+.docs-step-copy code{font-family:var(--docs-mono);font-size:12px}
+.docs-screenshot-steps{list-style:none;padding:0;margin:14px 0 6px;display:grid;grid-template-columns:1fr;gap:20px}
+.docs-screenshot-step{padding:0 0 22px;border-bottom:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent)}
+.docs-screenshot-step:last-child{border-bottom:none;padding-bottom:4px}
+.docs-screenshot-step-head{display:grid;grid-template-columns:38px 1fr;gap:14px;align-items:start;margin-bottom:8px}
+.docs-screenshot-step-number{width:30px;height:30px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border));color:var(--docs-link);font-size:13px;font-weight:700}
+.docs-screenshot-step-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);padding-top:3px}
+.docs-screenshot-step-body{font-size:14px;line-height:1.68;color:var(--docs-text-soft);margin:0 0 12px 52px}
+.docs-screenshot-step-body code{font-family:var(--docs-mono);font-size:12.5px}
+.docs-screenshot-step-image{margin-left:52px;border:1px solid var(--docs-border);border-radius:10px;overflow:hidden;background:var(--docs-bg-muted)}
+.docs-screenshot-step-image img{display:block;width:100%;height:auto}
+.docs-badge-row{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 26px}
+.docs-badge{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);color:var(--docs-text);font-size:11.5px;font-weight:600;letter-spacing:.01em}
+.docs-badge-accent{background:color-mix(in srgb, var(--docs-link) 12%, var(--docs-bg-muted));border-color:color-mix(in srgb, var(--docs-link) 30%, var(--docs-border));color:var(--docs-link)}
+.docs-guide-intro{display:flex;align-items:flex-start;gap:16px;margin:2px 0 30px}
+.docs-guide-intro-icon{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border));color:var(--docs-link);flex:none}
+.docs-guide-intro-body{min-width:0}
+.docs-guide-intro-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:8px}
+.docs-guide-intro-copy{font-size:14px;line-height:1.68;color:var(--docs-text-soft)}
+.docs-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0 22px}
+.docs-summary-card{padding:0 0 16px;border-bottom:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent);min-width:0}
+.docs-summary-card-wide{grid-column:span 4}
+.docs-summary-label{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:6px}
+.docs-summary-value{font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--docs-text)}
+.docs-summary-copy{font-size:14px;font-weight:500;color:var(--docs-text-soft);line-height:1.55}
+.docs-summary-card.tone-ok .docs-summary-value{color:#16a34a}
+.docs-summary-card.tone-warn .docs-summary-value{color:#d97706}
+.docs-summary-card.tone-muted .docs-summary-value{color:var(--docs-text-faint)}
+.docs-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:10px 0 18px;max-width:none}
+.docs-note code,.qs-note code,.mcp-note code,.wl-note code,.wlp-note code{font-family:var(--docs-mono);font-size:12.5px}
+.docs-next-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
+.docs-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
+.docs-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
+.docs-next-kicker{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint)}
+.docs-next-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text)}
+.docs-next-body{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
+.docs-next-body code{font-family:var(--docs-mono);font-size:12px}
 .docs-checklist{list-style:none;padding:0;margin:10px 0 14px;display:grid;grid-template-columns:1fr;gap:4px}
 .docs-checklist li{display:flex;align-items:baseline;gap:12px;font-size:14px;line-height:1.7;color:var(--docs-text-soft)}
 .docs-checklist li::before{content:"";flex:none;width:6px;height:6px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 70%, var(--docs-border-strong));transform:translateY(-2px)}
 .docs-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
 .docs-checklist.docs-checklist-2col{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 22px}
-@media (max-width:960px){.docs-checklist.docs-checklist-2col{grid-template-columns:1fr}}
+@media (max-width:960px){.docs-checklist.docs-checklist-2col,.docs-next-grid{grid-template-columns:1fr}.docs-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.docs-summary-card-wide{grid-column:span 2}}
+@media (max-width:640px){.docs-summary-grid{grid-template-columns:1fr}.docs-summary-card-wide{grid-column:span 1}.docs-guide-intro{display:block}.docs-guide-intro-icon{margin-bottom:12px}.docs-screenshot-step-body,.docs-screenshot-step-image{margin-left:0}}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
 .docs-shell-redesign{
@@ -997,7 +1213,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-shell-api-create-post .docs-layout-api{
   max-width:none;
   margin:0;
-  padding:78px calc(var(--docs-api-create-gutter) + var(--docs-frame-x)) 44px var(--docs-api-sidebar-shell-width);
+  padding:78px var(--docs-api-create-gutter) 44px var(--docs-api-sidebar-shell-width);
   background:transparent;
   display:block;
 }
@@ -1159,7 +1375,8 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign p,
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-step-list,
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-callout{
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-callout,
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-top-callout{
   max-width:860px;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign p{
@@ -1176,11 +1393,8 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-step-list li{
   font-size:15.5px;
 }
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-callout{
-  border-radius:6px;
-  margin-top:30px;
-  padding:14px 16px;
-}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-callout,
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-top-callout{margin-top:26px}
 .docs-shell-guide-redesign .docs-nav-link.active span:last-child{
   color:inherit;
 }
@@ -1209,7 +1423,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   background:transparent;
   box-shadow:none;
   color:#8a2d8d;
-  font-weight:650;
+  font-weight:inherit;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-table-wrap{
   margin:18px 0 6px;
@@ -1219,6 +1433,9 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   border:none;
   border-radius:0;
   background:transparent;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table-fixed{
+  table-layout:fixed;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-table th{
   padding:11px 0;
@@ -1234,21 +1451,45 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   padding:15px 0;
   border-bottom:1px solid color-mix(in srgb, var(--docs-border) 88%, transparent);
   color:var(--docs-text-soft);
+  overflow-wrap:anywhere;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-table td:first-child{
   color:var(--docs-text);
   font-weight:650;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs{
-  margin:16px 0 0;
-  border:none;
-  border-radius:10px;
-  background:#272936;
+  border-radius:8px;
   box-shadow:none;
+  border-color:transparent;
+  background:#272936!important;
+  position:relative;
+  overflow:hidden;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs-header{
-  padding:14px 14px 12px;
-  background:#272936;
+  padding:14px 16px 0;
+  background:#272936!important;
+  align-items:flex-start;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > .docs-code-tabs-header .docs-code-tab-list{
+  padding-right:86px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tab{
+  border-radius:6px;
+  padding:6px 10px;
+  font-size:12px;
+  border-color:rgba(255,255,255,.08);
+  background:rgba(255,255,255,.05);
+  color:#d4d4d8;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tab:hover{
+  color:#ffffff;
+  background:rgba(255,255,255,.08);
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tab.active{
+  color:#ffffff;
+  border-color:rgba(255,255,255,.16);
+  background:rgba(255,255,255,.11);
+  box-shadow:none;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > div:last-child{
   border:none!important;
@@ -1256,32 +1497,54 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   background:#272936!important;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-monaco-frame{
+  position:relative;
   border:none!important;
   border-radius:0!important;
   background:#272936!important;
 }
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tab{
-  border-color:rgba(255,255,255,.08);
-  background:rgba(15,18,26,.42);
-  color:#d4d4d8;
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-monaco-frame::after{
+  content:"";
+  position:absolute;
+  top:0;
+  right:0;
+  bottom:0;
+  width:28px;
+  pointer-events:none;
+  background:linear-gradient(90deg, transparent, #272936);
+  opacity:.86;
 }
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tab.active{
-  border-color:rgba(255,255,255,.2);
-  background:rgba(255,255,255,.08);
-  color:#fff;
-  box-shadow:none;
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > .docs-code-tabs-header .docs-copy-button,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > .docs-code-tabs-header .docs-expand-button{
+  position:absolute;
+  top:12px;
+  width:34px;
+  height:34px;
+  border-radius:6px;
+  border-color:rgba(255,255,255,.12);
+  background:rgba(255,255,255,.06);
+  color:#f4f4f5;
+  opacity:0;
+  transform:translateY(-3px);
+  transition:opacity .14s ease, transform .14s ease, background .14s ease;
+  z-index:2;
 }
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-copy-button,
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-expand-button{
-  background:rgba(255,255,255,.04);
-  border-color:rgba(255,255,255,.1);
-  color:#d4d4d8;
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > .docs-code-tabs-header .docs-copy-button{
+  right:54px;
 }
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs:hover .docs-copy-button,
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs:focus-within .docs-copy-button,
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs:hover .docs-expand-button,
-.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs:focus-within .docs-expand-button{
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > .docs-code-tabs-header .docs-expand-button{
+  right:12px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs:hover > .docs-code-tabs-header .docs-copy-button,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs:focus-within > .docs-code-tabs-header .docs-copy-button,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs:hover > .docs-code-tabs-header .docs-expand-button,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs:focus-within > .docs-code-tabs-header .docs-expand-button{
   opacity:1;
+  transform:translateY(0);
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > .docs-code-tabs-header .docs-copy-button:hover,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-api-code-tabs .docs-code-tabs > .docs-code-tabs-header .docs-expand-button:hover{
+  background:rgba(255,255,255,.12);
+  border-color:rgba(255,255,255,.2);
 }
 .docs-shell-api-create-post .docs-main-api{
   border-left:none;
@@ -1721,17 +1984,104 @@ function getActivePrimaryNav(current: string): DocsPrimaryKey {
 
 function isOverviewGuidePath(current: string) {
   return (
-    current === "/docs/dashboard-quickstart"
+    current === "/docs"
+    || current === "/docs/dashboard-quickstart"
     || current === "/docs/quickstart"
     || current === "/docs/sdk"
     || current === "/docs/cli"
     || current === "/docs/mcp"
     || current === "/docs/white-label"
     || current.startsWith("/docs/white-label/")
+    || current === "/docs/platforms"
+    || current.startsWith("/docs/platforms/")
+    || current === "/docs/resources"
+    || current.startsWith("/docs/resources/")
   );
 }
 
+function slugifyHeading(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getHeadingText(heading: HTMLElement) {
+  const storedText = heading.dataset.docsHeadingText;
+  if (storedText) return storedText;
+
+  const clone = heading.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll(".docs-heading-anchor").forEach((anchor) => anchor.remove());
+  return clone.textContent?.trim() || "";
+}
+
+function ensureHeadingIds() {
+  const usedIds = new Set(
+    Array.from(document.querySelectorAll<HTMLElement>(".docs-main .docs-page [id]"))
+      .map((node) => node.id)
+      .filter(Boolean)
+  );
+  const generatedCounts = new Map<string, number>();
+  const headings = Array.from(
+    document.querySelectorAll<HTMLElement>(".docs-main .docs-page h2, .docs-main .docs-page h3")
+  );
+
+  headings.forEach((heading) => {
+    if (heading.id) return;
+
+    const text = getHeadingText(heading);
+    const base = slugifyHeading(text) || "section";
+    const nextCount = (generatedCounts.get(base) || 0) + 1;
+    generatedCounts.set(base, nextCount);
+
+    let candidate = nextCount === 1 ? base : `${base}-${nextCount}`;
+    let collisionCount = nextCount;
+    while (usedIds.has(candidate)) {
+      collisionCount += 1;
+      candidate = `${base}-${collisionCount}`;
+    }
+
+    heading.id = candidate;
+    usedIds.add(candidate);
+  });
+}
+
+function ensureHeadingAnchors() {
+  const path = window.location.pathname;
+  const headings = Array.from(
+    document.querySelectorAll<HTMLElement>(".docs-main .docs-page h2[id], .docs-main .docs-page h3[id]")
+  );
+
+  headings.forEach((heading) => {
+    const text = getHeadingText(heading);
+    if (text && !heading.dataset.docsHeadingText) {
+      heading.dataset.docsHeadingText = text;
+    }
+
+    const existingAnchor = Array.from(heading.children).find((child) =>
+      child.classList.contains("docs-heading-anchor")
+    ) as HTMLAnchorElement | undefined;
+    const anchor = existingAnchor || document.createElement("a");
+    const href = `${path}#${heading.id}`;
+
+    anchor.className = "docs-heading-anchor";
+    anchor.href = href;
+    anchor.textContent = "#";
+    anchor.title = `Direct link to ${text || "this section"}`;
+    anchor.setAttribute("aria-label", `Direct link to ${text || "this section"}`);
+
+    if (!existingAnchor) {
+      heading.appendChild(anchor);
+    }
+  });
+}
+
 function collectHeadingItems() {
+  ensureHeadingIds();
+  ensureHeadingAnchors();
+
   const seen = new Set<string>();
   const items: HeadingItem[] = [];
 
@@ -1741,7 +2091,7 @@ function collectHeadingItems() {
 
   directHeadings.forEach((node) => {
     const id = node.id;
-    const text = node.textContent?.trim() || "";
+    const text = getHeadingText(node);
     if (!id || !text || seen.has(id)) return;
     seen.add(id);
     items.push({
@@ -1760,7 +2110,7 @@ function collectHeadingItems() {
     if (!id || seen.has(id)) return;
 
     const titleNode = section.querySelector<HTMLElement>("h2, h3");
-    const text = titleNode?.textContent?.trim() || "";
+    const text = titleNode ? getHeadingText(titleNode) : "";
     const level = (titleNode?.tagName.toLowerCase() as "h2" | "h3" | undefined) || "h3";
     if (!text) return;
 
@@ -1772,6 +2122,9 @@ function collectHeadingItems() {
 }
 
 function collectObservedNodes() {
+  ensureHeadingIds();
+  ensureHeadingAnchors();
+
   const nodes = [
     ...Array.from(document.querySelectorAll<HTMLElement>(".docs-main .docs-page h2[id], .docs-main .docs-page h3[id]")),
     ...Array.from(document.querySelectorAll<HTMLElement>(".docs-main section[id]")),
@@ -1871,6 +2224,29 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
       window.removeEventListener("scroll", scheduleSync);
       window.removeEventListener("resize", scheduleSync);
     };
+  }, [pathname, headings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rawHash = window.location.hash.slice(1);
+    if (!rawHash) return;
+
+    let id = rawHash;
+    try {
+      id = decodeURIComponent(rawHash);
+    } catch {
+      id = rawHash;
+    }
+
+    const target = document.getElementById(id);
+    if (!target) return;
+
+    const timer = window.setTimeout(() => {
+      target.scrollIntoView({ block: "start" });
+      setActiveHeading(target.id);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [pathname, headings]);
 
   useEffect(() => {
@@ -2122,7 +2498,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                 headings.map((heading) => (
                   <a
                     key={heading.id}
-                    href={`#${heading.id}`}
+                    href={`${pathname}#${heading.id}`}
                     className={`docs-toc-link level-${heading.level}${activeHeading === heading.id ? " active" : ""}`}
                   >
                     {heading.text}
@@ -2193,7 +2569,7 @@ export function DocsPage({
   return (
     <article className={articleClassName}>
       {resolvedBreadcrumbItems?.length ? <DocsContentBreadcrumb items={resolvedBreadcrumbItems} /> : null}
-      {eyebrow ? <div className="docs-eyebrow">{eyebrow}</div> : null}
+      {eyebrow && !resolvedBreadcrumbItems?.length ? <div className="docs-eyebrow">{eyebrow}</div> : null}
       <h1>{title}</h1>
       {lead ? <p className="docs-lead">{lead}</p> : null}
       {children}
@@ -2202,35 +2578,42 @@ export function DocsPage({
 }
 
 function buildOverviewBreadcrumb(pathname: string, title: string) {
-  const items: Array<{ label: string; href?: string }> = [];
+  const fromNav = buildBreadcrumbFromDocsNav(pathname);
+  if (fromNav.length > 0) return fromNav;
+  return [{ label: title }];
+}
 
-  if (pathname === "/docs" || pathname === "/docs/pricing") {
-    return undefined;
+function buildBreadcrumbFromDocsNav(pathname: string) {
+  for (const primary of DOCS_PRIMARY_NAV) {
+    if (primary.href === pathname) {
+      return [{ label: primary.label }];
+    }
+
+    const sections = DOCS_SIDEBAR_NAV[primary.key] || [];
+    for (const section of sections) {
+      for (const item of section.items) {
+        if ("children" in item) {
+          const child = item.children.find((candidate) => candidate.href === pathname);
+          if (!child) continue;
+
+          if (child.label.toLowerCase() === "overview") {
+            return [{ label: item.label }];
+          }
+
+          return [
+            { label: item.label, href: item.children[0]?.href },
+            { label: child.label },
+          ];
+        }
+
+        if (item.href === pathname) {
+          return [{ label: item.label }];
+        }
+      }
+    }
   }
 
-  if (
-    pathname === "/docs/dashboard-quickstart"
-    || pathname === "/docs/quickstart"
-    || pathname === "/docs/sdk"
-    || pathname === "/docs/cli"
-    || pathname === "/docs/mcp"
-  ) {
-    items.push({ label: title });
-    return items;
-  }
-
-  if (pathname === "/docs/white-label") {
-    items.push({ label: title });
-    return items;
-  }
-
-  if (pathname.startsWith("/docs/white-label/")) {
-    items.push({ label: "White-label", href: "/docs/white-label" });
-    items.push({ label: title });
-    return items;
-  }
-
-  return undefined;
+  return [];
 }
 
 export function DocsTable({
@@ -2240,13 +2623,29 @@ export function DocsTable({
   columns: readonly string[];
   rows: readonly (readonly React.ReactNode[])[];
 }) {
+  const pathname = usePathname();
+  const useFixedColumns = isOverviewGuidePath(pathname);
+  const columnWidths = useFixedColumns ? getDocsTableColumnWidths(columns) : null;
+
   return (
     <div className="docs-table-wrap">
-      <table className="docs-table">
+      <table className={useFixedColumns && columnWidths ? "docs-table docs-table-fixed" : "docs-table"}>
+        {columnWidths ? (
+          <colgroup>
+            {columnWidths.map((width, index) => (
+              <col key={`${columns[index]}-${index}`} style={{ width }} />
+            ))}
+          </colgroup>
+        ) : null}
         <thead>
           <tr>
-            {columns.map((column) => (
-              <th key={column}>{column}</th>
+            {columns.map((column, columnIndex) => (
+              <th
+                className={isCenteredDocsTableColumn(columns, columnIndex) ? "docs-table-cell-center" : undefined}
+                key={column}
+              >
+                {column}
+              </th>
             ))}
           </tr>
         </thead>
@@ -2254,7 +2653,12 @@ export function DocsTable({
           {rows.map((row, index) => (
             <tr key={index}>
               {row.map((cell, cellIndex) => (
-                <td key={cellIndex}>{renderDocsTableCell(cell)}</td>
+                <td
+                  className={isCenteredDocsTableColumn(columns, cellIndex) ? "docs-table-cell-center" : undefined}
+                  key={cellIndex}
+                >
+                  {renderDocsTableCell(cell)}
+                </td>
               ))}
             </tr>
           ))}
@@ -2265,6 +2669,17 @@ export function DocsTable({
 }
 
 export function DocsCode({ code, language }: { code: string; language?: string }) {
+  const pathname = usePathname();
+  const useApiCodeTemplate = isOverviewGuidePath(pathname);
+
+  if (useApiCodeTemplate) {
+    return (
+      <div className="docs-api-code-tabs">
+        <CodeTabs snippets={[{ label: language || "Code", lang: language, code }]} viewerMaxHeight={10000} themeVariant="api" />
+      </div>
+    );
+  }
+
   return <CodeBlock code={code} language={language} />;
 }
 
@@ -2279,9 +2694,12 @@ export function DocsCodeTabs({
   snippets: CodeSnippet[];
   variant?: "default" | "api";
 }) {
+  const pathname = usePathname();
+  const effectiveVariant = variant === "default" && isOverviewGuidePath(pathname) ? "api" : variant;
+
   return (
-    <div className={variant === "api" ? "docs-api-code-tabs" : undefined}>
-      <CodeTabs snippets={snippets} viewerMaxHeight={variant === "api" ? 10000 : undefined} themeVariant={variant} />
+    <div className={effectiveVariant === "api" ? "docs-api-code-tabs" : undefined}>
+      <CodeTabs snippets={snippets} viewerMaxHeight={effectiveVariant === "api" ? 10000 : undefined} themeVariant={effectiveVariant} />
     </div>
   );
 }

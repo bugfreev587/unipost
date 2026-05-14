@@ -72,12 +72,10 @@ export default function SlackWebhookPage() {
       title="Slack Webhook URL"
       lead="Create a Slack incoming webhook and paste it into UniPost. Seven clicks in Slack, one paste in UniPost."
     >
-      <style dangerouslySetInnerHTML={{ __html: styles }} />
-
-      <div className="sw-badges">
-        <span className="sw-badge">~2 min</span>
-        <span className="sw-badge">No admin required</span>
-        <span className="sw-badge">One-time setup</span>
+      <div className="docs-badge-row">
+        <span className="docs-badge">~2 min</span>
+        <span className="docs-badge">No admin required</span>
+        <span className="docs-badge">One-time setup</span>
       </div>
 
       <h2 id="at-a-glance">At a glance</h2>
@@ -92,20 +90,20 @@ export default function SlackWebhookPage() {
         ]}
       />
 
-      <div className="docs-callout">
+      <div className="docs-callout docs-callout-warning">
         <strong>Heads up:</strong> UniPost only accepts URLs starting with <code>https://hooks.slack.com/</code>. Anything else is rejected at save time.
       </div>
 
       <h2 id="steps">Steps in Slack</h2>
-      <ol className="sw-steps">
+      <ol className="docs-screenshot-steps">
         {STEPS.map((step) => (
-          <li key={step.n} className="sw-step">
-            <div className="sw-step-head">
-              <div className="sw-step-num">{step.n}</div>
-              <div className="sw-step-title">{step.title}</div>
+          <li key={step.n} className="docs-screenshot-step">
+            <div className="docs-screenshot-step-head">
+              <div className="docs-screenshot-step-number">{step.n}</div>
+              <div className="docs-screenshot-step-title">{step.title}</div>
             </div>
-            <div className="sw-step-body">{step.body}</div>
-            <div className="sw-step-img">
+            <div className="docs-screenshot-step-body">{step.body}</div>
+            <div className="docs-screenshot-step-image">
               <img src={step.img} alt={step.alt} />
             </div>
           </li>
@@ -120,9 +118,9 @@ export default function SlackWebhookPage() {
         <li>Optional — add a label such as <code>#ops-alerts</code></li>
         <li>Save, then click <strong>Test</strong></li>
       </ul>
-      <div className="docs-callout">
+      <p className="docs-note">
         <strong>Next:</strong> after the channel shows as <strong>Verified</strong>, open the <Link href="/docs/resources/notifications#subscribe-events">Subscriptions</Link> table and turn on the alerts you want.
-      </div>
+      </p>
 
       <h2 id="troubleshooting">Troubleshooting</h2>
       <DocsTable
@@ -135,51 +133,28 @@ export default function SlackWebhookPage() {
       />
 
       <h2 id="next-steps">Next steps</h2>
-      <div className="sw-next">
-        <Link href="/docs/resources/notifications" className="sw-next-card">
-          <div className="sw-next-kicker">Overview</div>
-          <div className="sw-next-title">Notifications overview</div>
-          <div className="sw-next-body">Channels, events, and which ones are on by default.</div>
+      <div className="docs-next-grid">
+        <Link href="/docs/resources/notifications" className="docs-next-card">
+          <div className="docs-next-kicker">Overview</div>
+          <div className="docs-next-title">Notifications overview</div>
+          <div className="docs-next-body">Channels, events, and which ones are on by default.</div>
         </Link>
-        <Link href="/docs/resources/discord-webhook" className="sw-next-card">
-          <div className="sw-next-kicker">Also available</div>
-          <div className="sw-next-title">Discord Webhook URL</div>
-          <div className="sw-next-body">Same setup shape for a Discord channel.</div>
+        <Link href="/docs/resources/discord-webhook" className="docs-next-card">
+          <div className="docs-next-kicker">Also available</div>
+          <div className="docs-next-title">Discord Webhook URL</div>
+          <div className="docs-next-body">Same setup shape for a Discord channel.</div>
         </Link>
-        <a href="https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/" target="_blank" rel="noreferrer" className="sw-next-card">
-          <div className="sw-next-kicker">Slack docs</div>
-          <div className="sw-next-title">Incoming Webhooks reference</div>
-          <div className="sw-next-body">Slack's official deep-dive on webhook payloads and limits.</div>
+        <a href="https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/" target="_blank" rel="noreferrer" className="docs-next-card">
+          <div className="docs-next-kicker">Slack docs</div>
+          <div className="docs-next-title">Incoming Webhooks reference</div>
+          <div className="docs-next-body">Slack&apos;s official deep-dive on webhook payloads and limits.</div>
         </a>
-        <Link href="/settings/notifications" className="sw-next-card">
-          <div className="sw-next-kicker">Configure</div>
-          <div className="sw-next-title">Open Notifications settings</div>
-          <div className="sw-next-body">Add the channel and manage subscriptions.</div>
+        <Link href="/settings/notifications" className="docs-next-card">
+          <div className="docs-next-kicker">Configure</div>
+          <div className="docs-next-title">Open Notifications settings</div>
+          <div className="docs-next-body">Add the channel and manage subscriptions.</div>
         </Link>
       </div>
     </DocsPage>
   );
 }
-
-const styles = `
-.sw-badges{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 18px}
-.sw-badge{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);color:var(--docs-text);font-size:11.5px;font-weight:600;letter-spacing:.01em}
-.sw-steps{list-style:none;padding:0;margin:14px 0 6px;display:grid;grid-template-columns:1fr;gap:18px;counter-reset:sw-step}
-.sw-step{padding:18px 20px 20px;border:1px solid var(--docs-border);border-radius:18px;background:var(--docs-bg-elevated);box-shadow:0 1px 0 rgba(255,255,255,.02)}
-.sw-step-head{display:flex;align-items:center;gap:12px;margin-bottom:8px}
-.sw-step-num{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));color:var(--docs-link);font-size:14px;font-weight:700;border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border));flex:none}
-.sw-step-title{font-size:17px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text)}
-.sw-step-body{font-size:14.5px;line-height:1.7;color:var(--docs-text-soft);margin-bottom:12px}
-.sw-step-body code{font-family:var(--docs-mono);font-size:12.5px}
-.sw-step-img{border:1px solid var(--docs-border);border-radius:14px;overflow:hidden;background:var(--docs-bg-muted)}
-.sw-step-img img{display:block;width:100%;height:auto}
-.sw-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
-.sw-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
-.sw-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
-.sw-next-kicker{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint)}
-.sw-next-title{font-size:16px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text)}
-.sw-next-body{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
-@media (max-width:960px){
-  .sw-next{grid-template-columns:1fr}
-}
-`;

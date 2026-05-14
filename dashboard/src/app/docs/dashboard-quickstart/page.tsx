@@ -8,6 +8,7 @@ export default function DashboardQuickstartPage() {
       eyebrow="Getting Started"
       title="Dashboard Quickstart"
       lead="Use the UniPost dashboard to connect social accounts, draft content, customize per platform, and publish your first post without writing code."
+      className="docs-page-guide-redesign docs-page-wide"
     >
       <DocsQuickstartCard tutorialId="quickstart" />
 
@@ -50,9 +51,9 @@ export default function DashboardQuickstartPage() {
         Review the selected accounts, media, and any per-platform customization, then publish. If the composer reports validation issues, resolve them in the drawer before trying again.
       </p>
 
-      <div className="docs-callout">
+      <p>
         <strong>Building an integration instead?</strong> Start with the <Link href="/docs/quickstart">API Quickstart</Link> if you want to publish programmatically rather than through the dashboard UI.
-      </div>
+      </p>
     </DocsPage>
   );
 }

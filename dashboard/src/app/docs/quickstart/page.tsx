@@ -224,33 +224,33 @@ export default function QuickstartPage() {
       </ul>
 
       <h2 id="steps">The four steps</h2>
-      <div className="qs-flow">
-        <a href="#install" className="qs-flow-step">
-          <div className="qs-flow-num">1</div>
-          <div className="qs-flow-body">
-            <div className="qs-flow-title">Create a profile</div>
-            <div className="qs-flow-sub">Call <code>POST /v1/profiles</code> and keep the returned <code>profile_id</code>.</div>
+      <div className="docs-step-flow">
+        <a href="#install" className="docs-step-row">
+          <div className="docs-step-number">1</div>
+          <div>
+            <div className="docs-step-title">Create a profile</div>
+            <div className="docs-step-copy">Call <code>POST /v1/profiles</code> and keep the returned <code>profile_id</code>.</div>
           </div>
         </a>
-        <a href="#connect-account" className="qs-flow-step">
-          <div className="qs-flow-num">2</div>
-          <div className="qs-flow-body">
-            <div className="qs-flow-title">Connect an account</div>
-            <div className="qs-flow-sub">Call the OAuth connect endpoint and open the returned <code>auth_url</code> in a browser.</div>
+        <a href="#connect-account" className="docs-step-row">
+          <div className="docs-step-number">2</div>
+          <div>
+            <div className="docs-step-title">Connect an account</div>
+            <div className="docs-step-copy">Call the OAuth connect endpoint and open the returned <code>auth_url</code> in a browser.</div>
           </div>
         </a>
-        <a href="#get-account-id" className="qs-flow-step">
-          <div className="qs-flow-num">3</div>
-          <div className="qs-flow-body">
-            <div className="qs-flow-title">List connected accounts</div>
-            <div className="qs-flow-sub">Fetch your new UniPost <code>account_id</code>.</div>
+        <a href="#get-account-id" className="docs-step-row">
+          <div className="docs-step-number">3</div>
+          <div>
+            <div className="docs-step-title">List connected accounts</div>
+            <div className="docs-step-copy">Fetch your new UniPost <code>account_id</code>.</div>
           </div>
         </a>
-        <a href="#first-post" className="qs-flow-step">
-          <div className="qs-flow-num">4</div>
-          <div className="qs-flow-body">
-            <div className="qs-flow-title">Publish or schedule</div>
-            <div className="qs-flow-sub">Send one post immediately or schedule one for later.</div>
+        <a href="#first-post" className="docs-step-row">
+          <div className="docs-step-number">4</div>
+          <div>
+            <div className="docs-step-title">Publish or schedule</div>
+            <div className="docs-step-copy">Send one post immediately or schedule one for later.</div>
           </div>
         </a>
       </div>
@@ -365,12 +365,6 @@ export default function QuickstartPage() {
 const styles = `
 .qs-badges{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 26px}
 .qs-badge{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);color:var(--docs-text);font-size:11.5px;font-weight:600;letter-spacing:.01em}
-.qs-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0 28px}
-.qs-flow-step{text-decoration:none;color:inherit;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);display:flex;gap:12px;align-items:flex-start}
-.qs-flow-step:hover{border-color:color-mix(in srgb,var(--docs-link) 34%, var(--docs-border));transform:translateY(-1px)}
-.qs-flow-num{width:28px;height:28px;border-radius:999px;background:color-mix(in srgb,var(--docs-link) 12%, var(--docs-bg-muted));color:var(--docs-link);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.qs-flow-title{font-size:14px;font-weight:700;color:var(--docs-text)}
-.qs-flow-sub{font-size:13px;line-height:1.55;color:var(--docs-text-soft);margin-top:4px}
 .qs-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:8px 0 14px;max-width:none}
 .qs-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:8px}
 .qs-next-card{padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit}
@@ -379,10 +373,6 @@ const styles = `
 .qs-next-title{font-size:15px;font-weight:700;color:var(--docs-text);margin-bottom:6px}
 .qs-next-body{font-size:13px;line-height:1.6;color:var(--docs-text-soft)}
 @media (max-width: 980px){
-  .qs-flow{grid-template-columns:repeat(2,minmax(0,1fr))}
   .qs-next{grid-template-columns:1fr}
-}
-@media (max-width: 640px){
-  .qs-flow{grid-template-columns:1fr}
 }
 `;

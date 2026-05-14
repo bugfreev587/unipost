@@ -147,40 +147,40 @@ export default function McpPage() {
 
       <h2 id="recommended-flow">Recommended flow</h2>
       <p className="mcp-note">&ldquo;Generate text, then publish immediately&rdquo; is not the safest pattern. Prefer generate → validate → preview → publish.</p>
-      <div className="mcp-flow">
-        <div className="mcp-flow-step">
-          <div className="mcp-flow-num">1</div>
-          <div className="mcp-flow-body">
-            <div className="mcp-flow-title">List accounts</div>
-            <div className="mcp-flow-sub">Ground the agent in real destination accounts.</div>
+      <div className="docs-step-flow">
+        <div className="docs-step-row">
+          <div className="docs-step-number">1</div>
+          <div>
+            <div className="docs-step-title">List accounts</div>
+            <div className="docs-step-copy">Ground the agent in real destination accounts.</div>
           </div>
         </div>
-        <div className="mcp-flow-step">
-          <div className="mcp-flow-num">2</div>
-          <div className="mcp-flow-body">
-            <div className="mcp-flow-title">Draft candidate copy</div>
-            <div className="mcp-flow-sub">Let the model propose platform-aware captions.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">2</div>
+          <div>
+            <div className="docs-step-title">Draft candidate copy</div>
+            <div className="docs-step-copy">Let the model propose platform-aware captions.</div>
           </div>
         </div>
-        <div className="mcp-flow-step">
-          <div className="mcp-flow-num">3</div>
-          <div className="mcp-flow-body">
-            <div className="mcp-flow-title">Validate</div>
-            <div className="mcp-flow-sub">Catch caption, media, and support issues before publish.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">3</div>
+          <div>
+            <div className="docs-step-title">Validate</div>
+            <div className="docs-step-copy">Catch caption, media, and support issues before publish.</div>
           </div>
         </div>
-        <div className="mcp-flow-step">
-          <div className="mcp-flow-num">4</div>
-          <div className="mcp-flow-body">
-            <div className="mcp-flow-title">Preview</div>
-            <div className="mcp-flow-sub">Send a human-readable link when review is required.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">4</div>
+          <div>
+            <div className="docs-step-title">Preview</div>
+            <div className="docs-step-copy">Send a human-readable link when review is required.</div>
           </div>
         </div>
-        <div className="mcp-flow-step">
-          <div className="mcp-flow-num">5</div>
-          <div className="mcp-flow-body">
-            <div className="mcp-flow-title">Publish</div>
-            <div className="mcp-flow-sub">Commit once the draft is approved.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">5</div>
+          <div>
+            <div className="docs-step-title">Publish</div>
+            <div className="docs-step-copy">Commit once the draft is approved.</div>
           </div>
         </div>
       </div>
@@ -258,11 +258,6 @@ const styles = `
 .mcp-badge{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);color:var(--docs-text);font-size:11.5px;font-weight:600;letter-spacing:.01em}
 .mcp-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:6px 0 14px;max-width:none}
 .mcp-note code{font-family:var(--docs-mono);font-size:12.5px}
-.mcp-flow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0 6px}
-.mcp-flow-step{display:grid;grid-template-columns:36px 1fr;gap:14px;align-items:start;padding:14px 16px;border:1px solid var(--docs-border);border-radius:14px;background:var(--docs-bg-elevated)}
-.mcp-flow-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));color:var(--docs-link);font-size:13px;font-weight:700;border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border))}
-.mcp-flow-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:3px}
-.mcp-flow-sub{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
 .mcp-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .mcp-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .mcp-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
@@ -271,7 +266,6 @@ const styles = `
 .mcp-next-body{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
 .mcp-next-body code{font-family:var(--docs-mono);font-size:12px}
 @media (max-width:960px){
-  .mcp-flow{grid-template-columns:1fr}
   .mcp-next{grid-template-columns:1fr}
 }
 `;

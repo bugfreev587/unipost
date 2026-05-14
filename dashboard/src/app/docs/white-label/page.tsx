@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { DocsCode, DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
-import { ApiInlineLink } from "../api/_components/doc-components";
 
 const CREATE_SESSION_SNIPPETS = [
   {
@@ -105,15 +104,15 @@ export default function WhiteLabelPage() {
           <div className="wl-pick-kicker">Pick Quickstart if</div>
           <ul className="wl-pick-list">
             <li>You publish to social accounts your team owns</li>
-            <li>You're validating a prototype or internal tool</li>
-            <li>You don't need your brand on the Connect surface</li>
+            <li>You&apos;re validating a prototype or internal tool</li>
+            <li>You don&apos;t need your brand on the Connect surface</li>
           </ul>
         </div>
         <div className="wl-pick-card wl-pick-card-accent">
           <div className="wl-pick-kicker">Pick White-label if</div>
           <ul className="wl-pick-list">
             <li>Your customers bring their own accounts</li>
-            <li>Your customers shouldn't know UniPost exists</li>
+            <li>Your customers shouldn&apos;t know UniPost exists</li>
             <li>You need your own platform API rate limits</li>
           </ul>
         </div>
@@ -121,54 +120,54 @@ export default function WhiteLabelPage() {
 
       <h2 id="how-it-works">How it works</h2>
       <p className="wl-note">White-label is not just &quot;paste credentials into UniPost&quot;. The real flow starts in each platform&apos;s official developer console, then comes back into UniPost after your app credentials and platform review path are in place.</p>
-      <div className="wl-flow">
-        <div className="wl-flow-step">
-          <div className="wl-flow-num">1</div>
-          <div className="wl-flow-body">
-            <div className="wl-flow-title">Create the official platform app</div>
-            <div className="wl-flow-sub">In the platform&apos;s own developer portal, create the OAuth app your customers will authorize against. This is where the eventual consent-screen brand comes from.</div>
+      <div className="docs-step-flow">
+        <div className="docs-step-row">
+          <div className="docs-step-number">1</div>
+          <div>
+            <div className="docs-step-title">Create the official platform app</div>
+            <div className="docs-step-copy">In the platform&apos;s own developer portal, create the OAuth app your customers will authorize against. This is where the eventual consent-screen brand comes from.</div>
           </div>
         </div>
-        <div className="wl-flow-step">
-          <div className="wl-flow-num">2</div>
-          <div className="wl-flow-body">
-            <div className="wl-flow-title">Generate client ID and client secret</div>
-            <div className="wl-flow-sub">Finish the platform-side setup needed to mint the real OAuth credentials. Depending on the platform, this can involve enabling APIs, creating OAuth clients, and choosing the right app type.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">2</div>
+          <div>
+            <div className="docs-step-title">Generate client ID and client secret</div>
+            <div className="docs-step-copy">Finish the platform-side setup needed to mint the real OAuth credentials. Depending on the platform, this can involve enabling APIs, creating OAuth clients, and choosing the right app type.</div>
           </div>
         </div>
-        <div className="wl-flow-step">
-          <div className="wl-flow-num">3</div>
-          <div className="wl-flow-body">
-            <div className="wl-flow-title">Whitelist UniPost&apos;s callback URL</div>
-            <div className="wl-flow-sub">Each platform has its own exact callback path. Use the platform-specific white-label guide below and copy the URL verbatim into that platform&apos;s developer console.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">3</div>
+          <div>
+            <div className="docs-step-title">Whitelist UniPost&apos;s callback URL</div>
+            <div className="docs-step-copy">Each platform has its own exact callback path. Use the platform-specific white-label guide below and copy the URL verbatim into that platform&apos;s developer console.</div>
           </div>
         </div>
-        <div className="wl-flow-step">
-          <div className="wl-flow-num">4</div>
-          <div className="wl-flow-body">
-          <div className="wl-flow-title">Upload credentials to UniPost</div>
-            <div className="wl-flow-sub">Push your client ID and secret to UniPost. Basic supports one platform; Growth and Team support all supported platforms.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">4</div>
+          <div>
+            <div className="docs-step-title">Upload credentials to UniPost</div>
+            <div className="docs-step-copy">Push your client ID and secret to UniPost. Basic supports one platform; Growth and Team support all supported platforms.</div>
           </div>
         </div>
-        <div className="wl-flow-step">
-          <div className="wl-flow-num">5</div>
-          <div className="wl-flow-body">
-            <div className="wl-flow-title">Complete platform verification or app review</div>
-            <div className="wl-flow-sub">Some platforms let you test before review, but branded public rollout usually still depends on the platform approving your app, scopes, or brand. Plan for that review loop instead of treating it as an optional afterthought.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">5</div>
+          <div>
+            <div className="docs-step-title">Complete platform verification or app review</div>
+            <div className="docs-step-copy">Some platforms let you test before review, but branded public rollout usually still depends on the platform approving your app, scopes, or brand. Plan for that review loop instead of treating it as an optional afterthought.</div>
           </div>
         </div>
-        <div className="wl-flow-step">
-          <div className="wl-flow-num">6</div>
-          <div className="wl-flow-body">
-          <div className="wl-flow-title">Set profile branding</div>
-            <div className="wl-flow-sub">Logo, display name, and primary color on the hosted Connect page. Growth and Team can also hide the UniPost attribution footer.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">6</div>
+          <div>
+            <div className="docs-step-title">Set profile branding</div>
+            <div className="docs-step-copy">Logo, display name, and primary color on the hosted Connect page. Growth and Team can also hide the UniPost attribution footer.</div>
           </div>
         </div>
-        <div className="wl-flow-step">
-          <div className="wl-flow-num">7</div>
-          <div className="wl-flow-body">
-            <div className="wl-flow-title">Create a session and publish</div>
-            <div className="wl-flow-sub">Call <code>POST /v1/connect/sessions</code>, send the end user to the returned URL, then publish via <code>POST /v1/posts</code>.</div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">7</div>
+          <div>
+            <div className="docs-step-title">Create a session and publish</div>
+            <div className="docs-step-copy">Call <code>POST /v1/connect/sessions</code>, send the end user to the returned URL, then publish via <code>POST /v1/posts</code>.</div>
           </div>
         </div>
       </div>
@@ -278,7 +277,7 @@ export default function WhiteLabelPage() {
       <ul className="docs-checklist docs-checklist-2col">
         <li>Developer accounts on each platform you plan to support</li>
         <li>OAuth <code>client_id</code> + <code>client_secret</code> per platform</li>
-        <li>UniPost's callback URL allow-listed on each platform app</li>
+        <li>UniPost&apos;s callback URL allow-listed on each platform app</li>
         <li>A logo URL (HTTPS, ≤ 2 KB), brand display name, and hex color</li>
         <li>A stable <code>external_user_id</code> format owned by your backend</li>
         <li>A <code>return_url</code> on your product to land users after Connect</li>
@@ -363,12 +362,6 @@ const styles = `
 .wl-pick-list{margin:0;padding-left:18px;color:var(--docs-text-soft)}
 .wl-pick-list li{font-size:14px;line-height:1.65;margin-bottom:4px}
 .wl-pick-list li:last-child{margin-bottom:0}
-.wl-flow{display:grid;grid-template-columns:1fr;gap:10px;margin:14px 0 6px}
-.wl-flow-step{display:grid;grid-template-columns:36px 1fr;gap:14px;align-items:start;padding:14px 16px;border:1px solid var(--docs-border);border-radius:14px;background:var(--docs-bg-elevated)}
-.wl-flow-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 14%, var(--docs-bg-muted));color:var(--docs-link);font-size:13px;font-weight:700;border:1px solid color-mix(in srgb, var(--docs-link) 22%, var(--docs-border))}
-.wl-flow-title{font-size:15px;font-weight:700;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:3px}
-.wl-flow-sub{font-size:13.5px;line-height:1.6;color:var(--docs-text-soft)}
-.wl-flow-sub code{font-family:var(--docs-mono);font-size:12px}
 .wl-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .wl-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .wl-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}

@@ -86,9 +86,9 @@ export default function SdkPage() {
         ))}
       </div>
 
-      <div className="docs-callout">
+      <p>
         <strong>Need a language we don&rsquo;t ship yet?</strong> The REST API is the source of truth — any HTTP client can talk to it. See the <Link href="/docs/api">API reference</Link> to get started, or <Link href="mailto:support@unipost.dev">let us know</Link> which runtime to prioritize next.
-      </div>
+      </p>
     </DocsPage>
   );
 }
