@@ -8,7 +8,6 @@ export default function BrandingPage() {
         { label: "API Reference", href: "/docs/api" },
         { label: "Profile Branding" },
       ]}
-      eyebrow="API Reference"
       title="Profile Branding"
       lead="Set the logo, display name, and primary color that render on the UniPost-hosted Connect page. This is how you make the OAuth onboarding flow look like your product instead of UniPost."
     >

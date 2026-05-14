@@ -1307,7 +1307,7 @@ export function ApiRequestConfigCard({
 
 export function ApiReferencePage({
   breadcrumbItems,
-  section,
+  section: _section,
   title,
   description,
   children,
@@ -1325,7 +1325,6 @@ export function ApiReferencePage({
     <article className="docs-page docs-page-api" style={{ width: "100%" }}>
       <DocsContentBreadcrumb items={resolvedBreadcrumbItems} />
       <div className="api-reference-page-header" style={{ padding: "10px 0 22px", borderBottom: "1px solid var(--docs-border)", marginBottom: 26 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#f04d23", marginBottom: 18 }}>{section}</div>
         <h1 style={{ fontSize: 42, lineHeight: 1.06, letterSpacing: "-0.045em", fontWeight: 740, margin: 0, color: "var(--docs-text)" }}>{title}</h1>
         <div style={{ fontSize: 17, lineHeight: 1.75, color: "var(--docs-text-soft)", marginTop: 18, maxWidth: "96ch" }}>{description}</div>
       </div>
