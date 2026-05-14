@@ -1,10 +1,11 @@
 "use client";
 
 import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Search } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ApiInlineLink } from "../api/_components/doc-components";
@@ -42,6 +43,16 @@ type HeadingItem = {
   id: string;
   text: string;
   level: "h2" | "h3";
+};
+
+type DocsSearchResult = {
+  title: string;
+  href: string;
+  primary: string;
+  section?: string;
+  group?: string;
+  method?: NavLeaf["method"];
+  keywords: string;
 };
 
 const API_SIDEBAR_DEFAULT_WIDTH = 336;
@@ -351,6 +362,254 @@ const DOCS_METHOD_COLORS: Record<NonNullable<NavLeaf["method"]>, string> = {
   DELETE: "#dc2626",
 };
 
+function buildDocsSearchIndex(): DocsSearchResult[] {
+  const results = new Map<string, DocsSearchResult>();
+
+  for (const primary of DOCS_PRIMARY_NAV) {
+    results.set(primary.href, {
+      title: primary.label,
+      href: primary.href,
+      primary: primary.label,
+      keywords: `${primary.label} ${primary.href}`,
+    });
+
+    for (const section of DOCS_SIDEBAR_NAV[primary.key] || []) {
+      for (const item of section.items) {
+        if ("children" in item) {
+          for (const child of item.children) {
+            results.set(child.href, {
+              title: child.label,
+              href: child.href,
+              primary: primary.label,
+              section: section.title,
+              group: item.label,
+              method: child.method,
+              keywords: [
+                child.label,
+                child.href,
+                child.method,
+                item.label,
+                section.title,
+                primary.label,
+              ].filter(Boolean).join(" "),
+            });
+          }
+        } else {
+          results.set(item.href, {
+            title: item.label,
+            href: item.href,
+            primary: primary.label,
+            section: section.title,
+            method: item.method,
+            keywords: [
+              item.label,
+              item.href,
+              item.method,
+              section.title,
+              primary.label,
+            ].filter(Boolean).join(" "),
+          });
+        }
+      }
+    }
+  }
+
+  return Array.from(results.values());
+}
+
+const DOCS_SEARCH_INDEX = buildDocsSearchIndex();
+
+function scoreDocsSearchResult(result: DocsSearchResult, query: string) {
+  const q = query.trim().toLowerCase();
+  if (!q) return 1;
+
+  const title = result.title.toLowerCase();
+  const href = result.href.toLowerCase();
+  const keywords = result.keywords.toLowerCase();
+  const parts = q.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 1;
+  if (!parts.every((part) => keywords.includes(part))) return 0;
+
+  let score = 10;
+  if (title === q) score += 80;
+  if (title.startsWith(q)) score += 52;
+  if (title.includes(q)) score += 32;
+  if (href.includes(q)) score += 22;
+  if (result.method && result.method.toLowerCase() === q) score += 12;
+  score += Math.max(0, 24 - title.length / 2);
+  return score;
+}
+
+function DocsSearch() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [mounted, setMounted] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const results = useMemo(() => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      const current = DOCS_SEARCH_INDEX.find((result) => result.href === pathname);
+      const suggested = DOCS_SEARCH_INDEX
+        .map((result) => {
+          let score = 0;
+          if (result.href === pathname) score += 120;
+          if (current?.group && result.group === current.group) score += 80;
+          if (current?.section && result.section === current.section) score += 42;
+          if (current?.primary && result.primary === current.primary) score += 18;
+          if (result.href.includes("/webhooks")) score += pathname.includes("/posts/create") ? 8 : 0;
+          return { result, score };
+        })
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score || a.result.title.localeCompare(b.result.title));
+
+      return suggested.slice(0, 7).map((item) => item.result);
+    }
+
+    const scored = DOCS_SEARCH_INDEX
+      .map((result) => ({ result, score: scoreDocsSearchResult(result, trimmed) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || a.result.title.localeCompare(b.result.title));
+
+    return scored.slice(0, 8).map((item) => item.result);
+  }, [pathname, query]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const isSearchShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k";
+      if (!isSearchShortcut) return;
+      event.preventDefault();
+      setOpen(true);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setActiveIndex(0);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }, [open]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
+  function closeSearch() {
+    setOpen(false);
+    setQuery("");
+    setActiveIndex(0);
+  }
+
+  function selectResult(result: DocsSearchResult) {
+    closeSearch();
+    router.push(result.href);
+  }
+
+  function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSearch();
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((value) => Math.min(results.length - 1, value + 1));
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((value) => Math.max(0, value - 1));
+      return;
+    }
+
+    if (event.key === "Enter" && results[activeIndex]) {
+      event.preventDefault();
+      selectResult(results[activeIndex]);
+    }
+  }
+
+  return (
+    <>
+      <button type="button" className="docs-search-trigger" onClick={() => setOpen(true)} aria-label="Search docs">
+        <Search size={15} />
+        <span>Search docs</span>
+        <kbd>⌘K</kbd>
+      </button>
+      {open && mounted ? createPortal((
+        <div className="docs-search-overlay" role="presentation" onMouseDown={closeSearch}>
+          <div
+            className="docs-search-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Search UniPost docs"
+            onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={handleDialogKeyDown}
+          >
+            <div className="docs-search-input-row">
+              <Search size={18} />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search docs..."
+                aria-label="Search docs"
+              />
+              <kbd>Esc</kbd>
+            </div>
+            <div className="docs-search-section-label">{query.trim() ? "Results" : "Suggested"}</div>
+            <div className="docs-search-results" role="listbox" aria-label="Search results">
+              {results.length > 0 ? (
+                results.map((result, index) => (
+                  <button
+                    key={result.href}
+                    type="button"
+                    className={`docs-search-result${index === activeIndex ? " active" : ""}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => selectResult(result)}
+                    role="option"
+                    aria-selected={index === activeIndex}
+                  >
+                    <span className="docs-search-result-main">
+                      <span className="docs-search-result-title">
+                        {result.method ? (
+                          <span
+                            className="docs-search-method"
+                            style={{ color: DOCS_METHOD_COLORS[result.method] }}
+                          >
+                            {result.method}
+                          </span>
+                        ) : null}
+                        {result.title}
+                      </span>
+                      <span className="docs-search-result-meta">
+                        {[result.primary, result.section, result.group].filter(Boolean).join(" / ")}
+                      </span>
+                    </span>
+                    <span className="docs-search-result-path">{result.href}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="docs-search-empty">No docs found for “{query.trim()}”.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ), document.body) : null}
+    </>
+  );
+}
+
 const CSS = `
 :root{
   --docs-ui: var(--font-inter), var(--font-geist-sans), system-ui, sans-serif;
@@ -464,6 +723,29 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-primary-link:hover{color:var(--docs-text)}
 .docs-primary-link.active{color:var(--docs-text);border-bottom-color:var(--docs-link)}
 .docs-topbar-right{display:flex;align-items:center;gap:14px;justify-content:flex-end;flex-wrap:wrap}
+.docs-dashboard-toplink{display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 12px;border-radius:10px;color:var(--docs-text);font-size:14px;font-weight:650;line-height:1;text-decoration:none;transition:background .14s ease,color .14s ease}
+.docs-dashboard-toplink:hover{background:var(--docs-bg-muted);color:var(--docs-text)}
+.docs-search-trigger{height:38px;display:inline-flex;align-items:center;gap:9px;padding:0 10px 0 12px;border:1px solid var(--docs-border-strong);border-radius:8px;background:color-mix(in srgb, var(--docs-bg-elevated) 92%, transparent);color:var(--docs-text-muted);font-family:var(--docs-ui);font-size:14px;font-weight:500;line-height:1;cursor:pointer;box-shadow:0 1px 0 rgba(15,23,42,.03);transition:border-color .14s ease,background .14s ease,color .14s ease,box-shadow .14s ease}
+.docs-search-trigger:hover{background:var(--docs-bg-elevated);border-color:color-mix(in srgb, var(--docs-text-muted) 38%, var(--docs-border));color:var(--docs-text);box-shadow:0 8px 18px rgba(15,23,42,.06)}
+.docs-search-trigger svg{color:var(--docs-text-faint)}
+.docs-search-trigger kbd,.docs-search-input-row kbd{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:24px;padding:0 6px;border:1px solid var(--docs-border-strong);border-radius:6px;background:var(--docs-bg-muted);color:var(--docs-text-muted);font-family:var(--docs-ui);font-size:12px;font-weight:650;line-height:1;box-shadow:inset 0 -1px 0 rgba(15,23,42,.04)}
+.docs-search-overlay{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-start;justify-content:center;padding:92px 20px 24px;background:rgba(15,18,26,.16);backdrop-filter:blur(5px)}
+.docs-search-dialog{width:min(610px,100%);overflow:hidden;border:1px solid color-mix(in srgb, var(--docs-border) 88%, transparent);border-radius:14px;background:var(--docs-bg-elevated);box-shadow:0 22px 62px rgba(15,23,42,.18)}
+.docs-search-input-row{display:flex;align-items:center;gap:11px;padding:12px 13px;border-bottom:1px solid var(--docs-border);color:var(--docs-text-faint)}
+.docs-search-input-row:focus-within{box-shadow:inset 0 0 0 1px color-mix(in srgb, #7aa7e8 42%, transparent)}
+.docs-search-input-row input{width:100%;border:0!important;outline:0!important;box-shadow:none!important;background:transparent;color:var(--docs-text);font-family:var(--docs-ui);font-size:16px;font-weight:520;line-height:1.35;appearance:none}
+.docs-search-input-row input::placeholder{color:var(--docs-text-faint)}
+.docs-search-section-label{padding:9px 13px 2px;color:var(--docs-text-faint);font-size:11px;font-weight:760;letter-spacing:.08em;text-transform:uppercase}
+.docs-search-results{max-height:min(392px,calc(100vh - 210px));overflow:auto;padding:5px 7px 8px;scrollbar-width:none}
+.docs-search-results::-webkit-scrollbar{display:none}
+.docs-search-result{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;padding:10px 10px;border:0;border-radius:10px;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.docs-search-result:hover,.docs-search-result.active{background:var(--docs-bg-muted)}
+.docs-search-result-main{display:grid;gap:5px;min-width:0}
+.docs-search-result-title{display:flex;align-items:center;gap:9px;min-width:0;color:var(--docs-text);font-size:14.5px;font-weight:680;line-height:1.25}
+.docs-search-method{font-family:var(--docs-mono);font-size:11px;font-weight:760;letter-spacing:.02em}
+.docs-search-result-meta{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--docs-text-muted);font-size:12.5px;font-weight:500}
+.docs-search-result-path{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--docs-text-faint);font-family:var(--docs-mono);font-size:12px}
+.docs-search-empty{padding:34px 18px 38px;color:var(--docs-text-muted);font-size:14px;text-align:center}
 .docs-auth-actions{display:flex;align-items:center;gap:8px}
 .docs-auth-btn{display:inline-flex;align-items:center;justify-content:center;padding:8px 13px;border-radius:10px;border:1px solid transparent;font-family:var(--docs-ui);font-size:13px;font-weight:600;line-height:1;text-decoration:none;cursor:pointer;transition:all .14s}
 .docs-auth-btn.ghost{background:transparent;color:var(--docs-text-muted);border-color:var(--docs-border)}
@@ -575,6 +857,455 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 @media (max-width:960px){.docs-checklist.docs-checklist-2col{grid-template-columns:1fr}}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
+.docs-shell-api-create-post{
+  --docs-api-create-gutter:48px;
+  --docs-api-sidebar-inner-left:var(--docs-api-create-gutter);
+  --docs-api-nav-warm-bg:#ffffff;
+  --docs-api-nav-warm-line:transparent;
+  background:var(--docs-api-nav-warm-bg);
+}
+.docs-shell-api-create-post .docs-topbar{
+  position:fixed;
+  top:0;
+  left:0;
+  right:0;
+  background:var(--docs-api-nav-warm-bg);
+  border-bottom-color:transparent;
+  backdrop-filter:blur(18px);
+}
+.docs-shell-api-create-post .docs-topbar-inner{
+  max-width:none;
+  min-height:78px;
+  padding-left:var(--docs-api-sidebar-inner-left);
+  padding-right:var(--docs-api-create-gutter);
+  display:grid;
+  grid-template-columns:minmax(190px, calc(var(--docs-api-sidebar-width, 336px) - 70px)) minmax(360px, 1fr) minmax(140px, auto);
+  align-items:center;
+  column-gap:36px;
+}
+.docs-shell-api-create-post .docs-topbar-left{
+  display:contents;
+}
+.docs-shell-api-create-post .docs-brand{
+  grid-column:1;
+  justify-self:start;
+}
+.docs-shell-api-create-post .docs-primary-nav{
+  grid-column:2;
+  justify-self:start;
+  gap:30px;
+  flex-wrap:nowrap;
+}
+.docs-shell-api-create-post .docs-topbar-right{
+  grid-column:3;
+  justify-self:end;
+  gap:12px;
+  flex-wrap:nowrap;
+}
+.docs-shell-api-create-post .docs-brand-mark{
+  width:28px;
+  height:28px;
+}
+.docs-shell-api-create-post .docs-brand-name{
+  font-size:17px;
+  font-weight:720;
+  letter-spacing:0;
+}
+.docs-shell-api-create-post .docs-primary-link{
+  padding:18px 2px 18px;
+  font-size:14px;
+  font-weight:620;
+  letter-spacing:0;
+}
+.docs-shell-api-create-post .docs-primary-link.active{
+  border-bottom-color:#f04d23;
+}
+.docs-shell-api-create-post .docs-layout-api{
+  max-width:none;
+  margin:0;
+  padding:78px var(--docs-api-create-gutter) 44px calc(var(--docs-api-sidebar-width, 336px) + var(--docs-api-create-gutter));
+  background:transparent;
+  display:block;
+}
+.docs-shell-api-create-post .docs-sidebar{
+  position:fixed;
+  top:78px;
+  left:0;
+  width:calc(var(--docs-api-sidebar-width, 336px) + var(--docs-api-create-gutter));
+  height:calc(100vh - 78px);
+  max-height:none;
+  padding-top:22px;
+  overflow:auto;
+  z-index:20;
+  scrollbar-gutter:stable;
+  scrollbar-width:thin;
+  scrollbar-color:transparent transparent;
+  transition:scrollbar-color .16s ease;
+}
+.docs-shell-api-create-post .docs-sidebar:hover,
+.docs-shell-api-create-post .docs-sidebar:focus-within{
+  scrollbar-color:color-mix(in srgb, #b7c0ce 64%, transparent) transparent;
+}
+.docs-shell-api-create-post .docs-sidebar::-webkit-scrollbar{
+  width:10px;
+}
+.docs-shell-api-create-post .docs-sidebar::-webkit-scrollbar-track{
+  background:transparent;
+}
+.docs-shell-api-create-post .docs-sidebar::-webkit-scrollbar-thumb{
+  background:transparent;
+  border-radius:999px;
+  border:3px solid transparent;
+  background-clip:content-box;
+}
+.docs-shell-api-create-post .docs-sidebar:hover::-webkit-scrollbar-thumb,
+.docs-shell-api-create-post .docs-sidebar:focus-within::-webkit-scrollbar-thumb{
+  background:color-mix(in srgb, #b7c0ce 64%, transparent);
+  background-clip:content-box;
+}
+.docs-shell-api-create-post .docs-sidebar-card{
+  background:transparent;
+  border:none;
+  border-radius:0;
+  box-shadow:none;
+  padding:0 34px 0 var(--docs-api-sidebar-inner-left);
+}
+.docs-shell-api-create-post .docs-sidebar-section{
+  padding:12px 0 2px;
+  margin-bottom:14px;
+}
+.docs-shell-api-create-post .docs-sidebar-section-header{
+  padding:0 8px 12px;
+  margin-bottom:6px;
+  border-bottom:none;
+}
+.docs-shell-api-create-post .docs-section-label{
+  font-size:12px;
+  font-weight:650;
+  letter-spacing:0;
+  text-transform:none;
+}
+.docs-shell-api-create-post .docs-nav-subgroup-toggle{
+  padding:8px 8px 7px;
+  font-size:15px;
+  font-weight:500;
+  letter-spacing:0;
+}
+.docs-shell-api-create-post .docs-nav-subgroup-items{
+  margin-left:12px;
+  padding-left:14px;
+  border-left:1px solid color-mix(in srgb, var(--docs-api-nav-warm-line) 82%, #cdd6e2);
+  gap:4px;
+}
+.docs-shell-api-create-post .docs-nav-link{
+  border-radius:10px;
+  padding:7px 10px;
+  font-size:14px;
+  font-weight:500;
+  letter-spacing:0;
+}
+.docs-shell-api-create-post .docs-nav-link.active{
+  background:color-mix(in srgb, #f04d23 8%, #f7f4f1);
+  box-shadow:none;
+}
+.docs-shell-api-create-post .docs-sidebar-resizer{
+  display:none;
+}
+.docs-shell-api-create-post .docs-main-api{
+  border-left:none;
+  padding-top:14px;
+  padding-left:36px;
+  padding-right:32px;
+}
+.docs-shell-api-create-post .docs-page.docs-page-api{
+  background:transparent;
+  border:none;
+  border-radius:0;
+  box-shadow:none;
+  padding:20px 0 8px;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-page-header{
+  width:100%;
+  margin-bottom:46px;
+  padding:4px 0 0;
+  border-bottom-color:transparent!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-page-header h1{
+  font-size:44px!important;
+  line-height:1.04!important;
+  letter-spacing:0!important;
+  max-width:1120px;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-page-header > div:first-child{
+  font-size:13px!important;
+  margin-bottom:18px!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-page-header > div:last-child{
+  max-width:min(1120px, 100%)!important;
+  font-size:18px!important;
+  line-height:1.62!important;
+  text-wrap:pretty;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-grid{
+  gap:32px;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-grid-right{
+  box-sizing:border-box;
+  top:88px;
+  max-height:calc(100vh - 104px);
+  overflow-y:auto;
+  overscroll-behavior-y:auto;
+  padding-right:6px;
+  padding-bottom:6px;
+  scrollbar-gutter:stable;
+  scrollbar-width:thin;
+  scrollbar-color:transparent transparent;
+  transition:scrollbar-color .16s ease;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-grid-right:hover,
+.docs-shell-api-create-post .docs-page-api .api-reference-grid-right:focus-within{
+  scrollbar-color:color-mix(in srgb, #b7c0ce 62%, transparent) transparent;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-grid-right::-webkit-scrollbar{
+  width:10px;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-grid-right::-webkit-scrollbar-track{
+  background:transparent;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-grid-right::-webkit-scrollbar-thumb{
+  background:transparent;
+  border-radius:999px;
+  border:3px solid transparent;
+  background-clip:content-box;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-grid-right:hover::-webkit-scrollbar-thumb,
+.docs-shell-api-create-post .docs-page-api .api-reference-grid-right:focus-within::-webkit-scrollbar-thumb{
+  background:color-mix(in srgb, #b7c0ce 62%, transparent);
+  background-clip:content-box;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-left-flow{
+  gap:26px!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-endpoint-summary{
+  padding:4px 0 6px;
+}
+.docs-shell-api-create-post .docs-page-api .api-endpoint-card{
+  border-radius:16px;
+  box-shadow:none;
+  border-color:color-mix(in srgb, var(--docs-border) 92%, transparent);
+  background:color-mix(in srgb, var(--docs-bg-elevated) 96%, transparent);
+}
+.docs-shell-api-create-post .docs-page-api .api-field-sections{
+  display:grid;
+  gap:38px;
+}
+.docs-shell-api-create-post .docs-page-api .api-field-section{
+  padding:0;
+}
+.docs-shell-api-create-post .docs-page-api .api-response-field-section{
+  margin-top:2px;
+}
+.docs-shell-api-create-post .docs-page-api .api-reference-left-extra{
+  margin-top:-4px;
+}
+.docs-shell-api-create-post .docs-page-api .api-field-section-title{
+  font-size:25px;
+  line-height:1.22;
+  letter-spacing:0;
+  font-weight:720;
+  color:var(--docs-text);
+  margin:0 0 20px;
+}
+.docs-shell-api-create-post .docs-page-api .api-field-list-items{
+  gap:0!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-field-row{
+  padding:19px 0 20px;
+  border-top:1px solid color-mix(in srgb, var(--docs-border) 84%, transparent);
+}
+.docs-shell-api-create-post .docs-page-api .api-field-row:first-child{
+  border-top:none;
+  padding-top:0;
+}
+.docs-shell-api-create-post .docs-page-api .api-field-row-heading{
+  margin-bottom:9px!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-field-name{
+  color:#e6401a!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-field-description{
+  max-width:78ch;
+  font-size:15.5px!important;
+  line-height:1.68!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-accordion{
+  border-top:1px solid color-mix(in srgb, var(--docs-border) 84%, transparent);
+}
+.docs-shell-api-create-post .docs-page-api .api-accordion-summary{
+  padding:16px 0!important;
+  font-size:14px!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-accordion-panel{
+  padding:0 0 22px 28px!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-endpoint-card code,
+.docs-shell-api-create-post .docs-page-api .api-endpoint-card span{
+  letter-spacing:0!important;
+}
+.docs-shell-api-create-post .docs-page-api .api-endpoint-card span[style*="#f04d23"],
+.docs-shell-api-create-post .docs-page-api .api-endpoint-card span[style*="#ff3b1f"]{
+  color:#d83a18!important;
+}
+.docs-shell-api-create-post .docs-page-api .docs-api-inline{
+  padding:1px 7px 2px;
+  border-radius:8px;
+  background:color-mix(in srgb, #2563eb 10%, var(--docs-inline-code-bg));
+  border-color:color-mix(in srgb, #60a5fa 20%, var(--docs-border));
+}
+.docs-shell-api-create-post .docs-page-api .docs-api-inline.docs-api-inline-post{
+  background:color-mix(in srgb, #2563eb 11%, var(--docs-inline-code-bg));
+  border-color:color-mix(in srgb, #60a5fa 22%, var(--docs-border));
+}
+.docs-shell-api-create-post .docs-page-api .docs-api-inline-method{
+  color:#2563eb;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs{
+  border-radius:8px;
+  box-shadow:none;
+  border-color:transparent;
+  background:#272936!important;
+  position:relative;
+  overflow:hidden;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs-header{
+  padding:14px 16px 0;
+  background:#272936!important;
+  align-items:flex-start;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs > .docs-code-tabs-header .docs-code-tab-list{
+  padding-right:86px;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tab{
+  border-radius:6px;
+  padding:6px 10px;
+  font-size:12px;
+  border-color:rgba(255,255,255,.08);
+  background:rgba(255,255,255,.05);
+  color:#d4d4d8;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tab:hover{
+  color:#ffffff;
+  background:rgba(255,255,255,.08);
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tab.active{
+  color:#ffffff;
+  border-color:rgba(255,255,255,.16);
+  background:rgba(255,255,255,.11);
+  box-shadow:none;
+}
+.docs-shell-api-create-post .docs-page-api .docs-api-code-tabs .docs-code-tabs{
+  background:#272936!important;
+}
+.docs-shell-api-create-post .docs-page-api .docs-api-code-tabs .docs-code-tabs > div:last-child{
+  border:none!important;
+  border-radius:0!important;
+  background:#272936!important;
+}
+.docs-shell-api-create-post .docs-page-api .docs-monaco-frame{
+  position:relative;
+  border:none!important;
+  border-radius:0!important;
+  background:#272936!important;
+}
+.docs-shell-api-create-post .docs-page-api .docs-monaco-frame::after{
+  content:"";
+  position:absolute;
+  top:0;
+  right:0;
+  bottom:0;
+  width:28px;
+  pointer-events:none;
+  background:linear-gradient(90deg, transparent, #272936);
+  opacity:.86;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs > .docs-code-tabs-header .docs-copy-button,
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs > .docs-code-tabs-header .docs-expand-button{
+  position:absolute;
+  top:12px;
+  width:34px;
+  height:34px;
+  border-radius:6px;
+  border-color:rgba(255,255,255,.12);
+  background:rgba(255,255,255,.06);
+  color:#f4f4f5;
+  opacity:0;
+  transform:translateY(-3px);
+  transition:opacity .14s ease, transform .14s ease, background .14s ease;
+  z-index:2;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs > .docs-code-tabs-header .docs-copy-button{
+  right:54px;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs > .docs-code-tabs-header .docs-expand-button{
+  right:12px;
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs:hover > .docs-code-tabs-header .docs-copy-button,
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs:focus-within > .docs-code-tabs-header .docs-copy-button,
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs:hover > .docs-code-tabs-header .docs-expand-button,
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs:focus-within > .docs-code-tabs-header .docs-expand-button{
+  opacity:1;
+  transform:translateY(0);
+}
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs > .docs-code-tabs-header .docs-copy-button:hover,
+.docs-shell-api-create-post .docs-page-api .docs-code-tabs > .docs-code-tabs-header .docs-expand-button:hover{
+  background:rgba(255,255,255,.12);
+  border-color:rgba(255,255,255,.2);
+}
+html.dark .docs-shell-api-create-post{
+  --docs-api-nav-warm-bg:#18181b;
+  background:#18181b;
+}
+html.dark .docs-shell-api-create-post .docs-topbar{
+  background:#18181b;
+  border-bottom-color:transparent;
+}
+html.dark .docs-shell-api-create-post .docs-main-api{
+  border-left-color:transparent;
+}
+html.dark .docs-shell-api-create-post .docs-nav-link.active{
+  background:rgba(240,77,35,.11);
+}
+html.dark .docs-shell-api-create-post .docs-page-api .docs-api-inline-method{
+  color:#7cb2ff;
+}
+html.dark .docs-shell-api-create-post .docs-page-api .docs-api-code-tabs .docs-code-tabs > div:last-child{
+  background:#272936!important;
+}
+@media (max-width:960px){
+  .docs-shell-api-create-post{
+    background:var(--docs-bg-elevated);
+  }
+  .docs-shell-api-create-post .docs-layout-api{
+    padding:22px 16px 60px;
+    display:grid;
+  }
+  .docs-shell-api-create-post .docs-topbar{
+    position:sticky;
+  }
+  .docs-shell-api-create-post .docs-sidebar{
+    position:sticky;
+    width:auto;
+    height:auto;
+    overflow:auto;
+  }
+  .docs-shell-api-create-post .docs-main-api{
+    padding-top:0;
+    padding-left:0;
+  }
+  .docs-shell-api-create-post .docs-page.docs-page-api{
+    padding:28px 0 34px;
+  }
+}
 .docs-chooser-overlay{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(10,14,20,.42);backdrop-filter:blur(12px)}
 .docs-chooser-card{width:min(640px,100%);background:var(--docs-bg-elevated);border:1px solid var(--docs-border);border-radius:24px;box-shadow:var(--docs-shadow);padding:28px}
 .docs-chooser-title{font-size:28px;line-height:1.1;letter-spacing:-.04em;font-weight:760;color:var(--docs-text);margin:0 0 10px}
@@ -682,6 +1413,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const activePrimaryNav = getActivePrimaryNav(pathname);
   const sidebarSections = DOCS_SIDEBAR_NAV[activePrimaryNav];
   const isApiPage = pathname.startsWith("/docs/api");
+  const isApiCreatePostPage = pathname === "/docs/api/posts/create";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -823,7 +1555,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="docs-shell">
+    <div className={`docs-shell${isApiPage ? " docs-shell-api" : ""}${isApiCreatePostPage ? " docs-shell-api-create-post" : ""}`}>
       <style dangerouslySetInnerHTML={{ __html: `${CSS}\n${codeBlockStyles()}` }} />
       <header className="docs-topbar">
         <div className="docs-topbar-inner">
@@ -845,13 +1577,14 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
           <div className="docs-topbar-right">
+            <a href={APP_URL} className="docs-dashboard-toplink">
+              Dashboard
+            </a>
             <ThemeToggle />
+            <DocsSearch />
             {isLoaded ? (
               isSignedIn ? (
                 <div className="docs-auth-actions">
-                  <a href={APP_URL} className="docs-auth-btn primary">
-                    Go to Dashboard
-                  </a>
                   <UserButton appearance={userButtonAppearance} />
                 </div>
               ) : (

@@ -182,7 +182,7 @@ export function SingleEndpointReferencePage({
     <ApiReferencePage section={section} title={title} description={description}>
       <ApiReferenceGrid
         left={
-          <div style={{ display: "grid", gap: 16 }}>
+          <div className="api-reference-left-flow" style={{ display: "grid", gap: 16 }}>
             {shouldRenderPlayground ? (
               <ApiRequestConfigCard
                 method={method}
@@ -197,38 +197,40 @@ export function SingleEndpointReferencePage({
               />
             ) : null}
 
-            <ApiEndpointCard method={method} path={path}>
-              <div style={{ padding: "16px 18px" }}>
-                <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: METHOD_COLORS[method], marginRight: 12 }}>{method}</span>
-                <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>{path}</code>
-              </div>
-            </ApiEndpointCard>
+            {!shouldRenderPlayground ? (
+              <section className="api-endpoint-summary">
+                <div>
+                  <span style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: METHOD_COLORS[method], marginRight: 12 }}>{method}</span>
+                  <code style={{ fontFamily: "var(--docs-mono)", fontSize: 15, color: "var(--docs-text)" }}>{path}</code>
+                </div>
+              </section>
+            ) : null}
 
-            <ApiEndpointCard method={method} path={path}>
+            <div className="api-field-sections">
               {requestSections.map((section, index) => (
-                <div
+                <section
                   key={section.title}
+                  className="api-field-section"
                   style={{
-                    padding: "18px",
-                    borderBottom: index < requestSections.length - 1 ? "1px solid var(--docs-border)" : undefined,
+                    paddingTop: index === 0 ? 0 : undefined,
                   }}
                 >
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>{section.title}</div>
+                  <h2 className="api-field-section-title">{section.title}</h2>
                   <ApiFieldList items={section.items} />
-                </div>
+                </section>
               ))}
-            </ApiEndpointCard>
+            </div>
 
-            <ApiEndpointCard method={method} path={path}>
-              <div style={{ padding: "18px 18px 4px" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 14 }}>Response Body</div>
-              </div>
+            <section className="api-field-section api-response-field-section">
+              <h2 className="api-field-section-title">Response Body</h2>
               {responses.map((response) => (
                 <ApiAccordion key={response.code} title={response.code}>
                   <ApiFieldList items={response.fields} />
                 </ApiAccordion>
               ))}
-            </ApiEndpointCard>
+            </section>
+
+            {children ? <div className="api-reference-left-extra">{children}</div> : null}
           </div>
         }
         right={
@@ -238,7 +240,6 @@ export function SingleEndpointReferencePage({
           </div>
         }
       />
-      {children ? <div style={{ marginTop: 20 }}>{children}</div> : null}
     </ApiReferencePage>
   );
 }
