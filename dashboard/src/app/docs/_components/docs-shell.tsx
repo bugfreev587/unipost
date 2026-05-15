@@ -296,6 +296,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
         { label: "Threads", href: "/docs/platforms/threads" },
         { label: "TikTok", href: "/docs/platforms/tiktok" },
         { label: "YouTube", href: "/docs/platforms/youtube" },
+        { label: "Pinterest", href: "/docs/platforms/pinterest" },
         { label: "Bluesky", href: "/docs/platforms/bluesky" },
         { label: "Facebook", href: "/docs/platforms/facebook", badge: "Beta" },
       ],

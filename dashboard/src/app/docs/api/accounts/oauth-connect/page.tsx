@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -10,7 +10,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "profile_id?", type: "string", description: "Profile that should own the connected account. Required when the workspace has multiple profiles." },
-  { name: "platform", type: "string", description: <>OAuth platform key such as <code>linkedin</code>, <code>twitter</code>, <code>youtube</code>, <code>instagram</code>, <code>threads</code>, <code>tiktok</code>, or <code>pinterest</code>. See <Link href="/docs/platforms#platform-names">available platforms</Link>.</> },
+  { name: "platform", type: "string", description: <>OAuth platform key. Facebook Page OAuth is beta/admin-gated; Bluesky uses <Link href="/docs/api/accounts/connect">direct credentials</Link> instead.<EnumValues values={["twitter", "linkedin", "instagram", "threads", "youtube", "tiktok", "pinterest", "facebook"]} /></> },
   { name: "redirect_url?", type: "string", description: "Optional app URL where the browser should land after OAuth completes." },
 ];
 
@@ -100,7 +100,7 @@ export default function OAuthConnectPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Connect account (OAuth)"
-      description="Starts an OAuth account connection flow by returning an auth_url you open in the browser. Use this for OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, and Pinterest, then list accounts afterward to find the new UniPost account ID."
+      description="Starts an OAuth account connection flow by returning an auth_url you open in the browser. Use this for OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, Pinterest, and beta Facebook Page connections, then list accounts afterward to find the new UniPost account ID."
       method="POST"
       path="/v1/oauth/connect"
       requestSections={[

@@ -99,7 +99,7 @@ const RESPONSE_SNIPPETS = [
     label: "200",
     code: `{
   "data": {
-    "schema_version": "1.5",
+    "schema_version": "1.7",
     "account_id": "sa_instagram_123",
     "platform": "instagram",
     "capability": {

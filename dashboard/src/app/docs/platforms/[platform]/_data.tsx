@@ -77,6 +77,11 @@ const icons = {
       <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
     </svg>
   ),
+  pinterest: (
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden>
+      <path d="M12.04 0C5.4 0 .03 5.37.03 12c0 5.08 3.16 9.42 7.62 11.17-.11-.95-.2-2.41.04-3.45.22-.94 1.41-5.97 1.41-5.97s-.36-.72-.36-1.78c0-1.67.97-2.92 2.18-2.92 1.03 0 1.53.77 1.53 1.7 0 1.03-.66 2.57-1 4-.28 1.2.6 2.18 1.78 2.18 2.14 0 3.78-2.26 3.78-5.52 0-2.89-2.08-4.91-5.04-4.91-3.43 0-5.44 2.57-5.44 5.23 0 1.04.4 2.15.9 2.75.1.12.11.23.08.35-.09.38-.3 1.2-.34 1.37-.05.22-.18.27-.41.16-1.5-.7-2.44-2.89-2.44-4.65 0-3.78 2.75-7.26 7.93-7.26 4.16 0 7.4 2.97 7.4 6.93 0 4.14-2.61 7.47-6.23 7.47-1.22 0-2.36-.63-2.75-1.38l-.75 2.85c-.27 1.04-1 2.35-1.49 3.15 1.12.35 2.31.54 3.56.54 6.63 0 12-5.37 12-12S18.67 0 12.04 0z" />
+    </svg>
+  ),
   bluesky: (
     <svg viewBox="0 0 600 530" width="26" height="26" fill="currentColor" aria-hidden>
       <path d="M135.7 44.3C202.3 94.8 273.6 197.2 300 249.6c26.4-52.4 97.7-154.8 164.3-205.3C520.4 1.5 588 -22.1 588 68.2c0 18 -10.4 151.2-16.5 172.8-21.2 75-98.6 94.1-167.9 82.6 121.1 20.7 151.8 89.2 85.3 157.8C390.5 584.2 310.2 500 300 481.4c-10.2 18.6-90.5 102.8-188.9 0C44.6 413.8 75.3 345.3 196.4 324.6c-69.3 11.5-146.7-7.6-167.9-82.6C22.4 220.4 12 87.2 12 69.2c0-90.3 67.6-66.7 123.7-24.9z" />
@@ -339,7 +344,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     icon: icons.linkedin,
     tagline: "Long-form text, multi-image, and first-comment posts with audience controls.",
     lead: "LinkedIn is where you usually want cleaner formatting, longer copy, and explicit audience controls. UniPost keeps that complexity under `platform_options.linkedin` while preserving one core publish shape.",
-    badges: ["Publishing", "Scheduling", "Analytics", "White-label"],
+    badges: ["Publishing", "Scheduling", "Analytics scopes gated", "White-label"],
     summary: {
       publishing: "full",
       scheduling: "full",
@@ -812,7 +817,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Photo carousel", yes, "Up to 35 images"],
       ["Scheduling", yes, "Use `scheduled_at`"],
       ["Privacy options", yes, "Use `platform_options.tiktok`"],
-      ["Analytics", partial, "Engagement + view count; reach/impressions not exposed"],
+      ["Analytics", partial, "Post engagement + view count require TikTok analytics scopes. Production OAuth does not request those scopes until TikTok approves them."],
       ["Text-only posts", no, "TikTok is media-first"],
       ["Threads", no, "Not applicable"],
       ["Inbox / comments", no, "Not part of the UniPost inbox today"],
@@ -865,10 +870,10 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["platform_options.tiktok.photo_cover_index", "0-based number", "Which image becomes the carousel cover"],
     ],
     analytics: [
-      ["Video views", yes, "TikTok `view_count` (video plays)"],
-      ["Likes", yes, "Supported"],
-      ["Comments", yes, "Supported"],
-      ["Shares", yes, "Supported"],
+      ["Video views", partial, "Requires `video.list`; this scope is not requested in production until TikTok approves it"],
+      ["Likes", partial, "Requires `video.list`; this scope is not requested in production until TikTok approves it"],
+      ["Comments", partial, "Requires `video.list`; this scope is not requested in production until TikTok approves it"],
+      ["Shares", partial, "Requires `video.list`; this scope is not requested in production until TikTok approves it"],
       ["Impressions", no, "TikTok exposes views, not display impressions"],
       ["Reach", no, "Not exposed by TikTok"],
       ["Saves", no, "Not exposed by TikTok"],
@@ -917,6 +922,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     limitations: [
       ["Daily safety cap", "50 publishes/day per connected TikTok account (UTC reset). Failed posts do not count toward the cap."],
       ["Audit required for public use", "TikTok Content Posting API apps must pass audit before posting to non-allowlisted accounts"],
+      ["Analytics scopes are not default", "Production OAuth currently requests only `video.publish`, `video.upload`, and `user.info.basic`. `user.info.profile`, `user.info.stats`, and `video.list` stay behind `TIKTOK_ANALYTICS_SCOPES_ENABLED` until TikTok approves them."],
       ["No text-only posts", "TikTok is strictly media-led"],
       ["Inbox is not supported", "Comments and DMs are not in UniPost inbox today"],
     ],
@@ -1091,6 +1097,132 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Daily safety cap", "50 publishes/day per connected YouTube channel (UTC reset). Failed uploads do not count toward the cap."],
       ["Title is required and does not fall back to caption", "`platform_options.youtube.title` must be set explicitly"],
       ["`made_for_kids` must be explicit", "YouTube refuses uploads without an audience choice"],
+      ["No inbox surface", "Comment moderation is not in UniPost inbox today"],
+    ],
+  },
+
+  pinterest: {
+    title: "Pinterest",
+    brandColor: "#e60023",
+    icon: icons.pinterest,
+    tagline: "Single-image or single-video Pin publishing with board selection.",
+    lead: "Pinterest publishing is board-first: every Pin needs exactly one image or video and a destination board. UniPost exposes board selection through `platform_options.pinterest` while keeping the top-level publish shape consistent.",
+    badges: ["Publishing", "Scheduling", "Analytics", "White-label"],
+    summary: {
+      publishing: "full",
+      scheduling: "full",
+      analytics: "limited",
+      inbox: "none",
+      connection: "OAuth — Quickstart and White-label both supported",
+    },
+    capabilities: [
+      ["Image Pins", yes, "Exactly 1 image"],
+      ["Video Pins", yes, "Exactly 1 video"],
+      ["Scheduling", yes, "Use `scheduled_at`"],
+      ["Board selection", yes, "Required via `platform_options.pinterest.board_id`"],
+      ["Analytics", partial, "Impressions, engagements, saves, clicks, and video views when production analytics access is available"],
+      ["Text-only posts", no, "Pinterest requires media"],
+      ["Threads", no, "Not applicable"],
+      ["Inbox / comments", no, "Not part of the UniPost inbox today"],
+    ],
+    requirements: [
+      ["media_urls or media_ids", "Required", "Exactly 1 image or 1 video", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. Do not mix media types."],
+      ["platform_options.pinterest.board_id", "Required", "Pinterest board ID", "Select the board the Pin should be created in."],
+      ["caption", "Optional", "800 chars", "Stored as the Pin description"],
+      ["platform_options.pinterest.title", "Optional", "100 chars", "Pinterest Pin title"],
+      ["platform_options.pinterest.link", "Optional", "URL", "Destination link for the Pin"],
+    ],
+    mediaSpecs: [
+      {
+        surface: "Image Pin",
+        description: "Single-image Pin. Vertical 2:3 creative usually performs best.",
+        text: [
+          ["Title", "100 chars"],
+          ["Description", "800 chars"],
+        ],
+        image: [
+          ["Formats", "JPG, JPEG, PNG, WebP"],
+          ["Max per post", "1"],
+          ["Max file size", "20 MB"],
+          ["Aspect ratio", "2:3 recommended"],
+        ],
+      },
+      {
+        surface: "Video Pin",
+        description: "Single-video Pin.",
+        text: [
+          ["Title", "100 chars"],
+          ["Description", "800 chars"],
+        ],
+        video: [
+          ["Formats", "MP4, MOV"],
+          ["Max per post", "1"],
+          ["Max file size", "2 GB"],
+          ["Duration", "Up to 15 min"],
+        ],
+      },
+    ],
+    options: [
+      ["platform_options.pinterest.board_id", "string", "Required board ID"],
+      ["platform_options.pinterest.title", "string", "Optional Pin title"],
+      ["platform_options.pinterest.link", "URL", "Optional destination URL"],
+    ],
+    analytics: [
+      ["Impressions", yes, "Supported for production Pinterest API access"],
+      ["Likes / engagements", yes, "Mapped from Pinterest engagement metrics"],
+      ["Comments", yes, "Comment count when returned by Pinterest"],
+      ["Saves", yes, "Pinterest save count"],
+      ["Clicks", yes, "Outbound click metrics"],
+      ["Video views", yes, "Video Pin views when applicable"],
+      ["Reach", no, "Not exposed by this integration"],
+      ["Shares", no, "Not exposed by this integration"],
+    ],
+    setup: [
+      modeQuickstart,
+      modeWhitelabel,
+      ["Requirement", "A Pinterest board must exist before publishing", "Sandbox mode may only see boards created through the same API environment", "—"],
+    ],
+    examples: [
+      {
+        title: "Image Pin",
+        body: `{
+  "caption": "A compact launch checklist for product teams.",
+  "account_ids": ["sa_pinterest_1"],
+  "media_urls": ["https://cdn.example.com/checklist.png"],
+  "platform_options": {
+    "pinterest": {
+      "board_id": "1234567890",
+      "title": "Launch checklist",
+      "link": "https://example.com/checklist"
+    }
+  }
+}`,
+      },
+      {
+        title: "Video Pin",
+        body: `{
+  "caption": "A 30-second product walkthrough.",
+  "account_ids": ["sa_pinterest_1"],
+  "media_urls": ["https://cdn.example.com/walkthrough.mp4"],
+  "platform_options": {
+    "pinterest": {
+      "board_id": "1234567890",
+      "title": "Product walkthrough"
+    }
+  }
+}`,
+      },
+    ],
+    errors: [
+      ["media_required", "Pinterest requires exactly one image or video"],
+      ["too_many_media", "More than one media asset supplied"],
+      ["mixed_media_unsupported", "Do not mix image and video in one Pin"],
+      ["pinterest_board_required", "`platform_options.pinterest.board_id` is required"],
+    ],
+    limitations: [
+      ["Daily safety cap", "50 publishes/day per connected Pinterest account (UTC reset). Failed posts do not count toward the cap."],
+      ["Board ID required", "Call the Pinterest boards endpoint or use the dashboard board picker before publishing"],
+      ["Sandbox analytics caveat", "Pinterest analytics are unavailable in API sandbox; production access is required"],
       ["No inbox surface", "Comment moderation is not in UniPost inbox today"],
     ],
   },

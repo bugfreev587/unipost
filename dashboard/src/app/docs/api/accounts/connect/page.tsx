@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -10,8 +10,8 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "profile_id?", type: "string", description: "Profile that should own the connected account. Required when the workspace has multiple profiles." },
-  { name: "platform", type: "string", description: <>Platform key such as twitter, linkedin, instagram, threads, pinterest, tiktok, youtube, or bluesky. <Link href="/docs/platforms#platform-names">[available platforms]</Link></> },
-  { name: "credentials", type: "object", description: "Adapter-specific credentials payload used for direct account connection." },
+  { name: "platform", type: "string", description: <>Direct credential connection currently supports Bluesky. Use <Link href="/docs/api/accounts/oauth-connect">OAuth connect</Link> for Twitter/X, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest, and Facebook.<EnumValues values={["bluesky"]} /></> },
+  { name: "credentials", type: "object", description: "Adapter-specific credentials payload used for direct account connection. For Bluesky, send handle and app_password." },
 ];
 
 const RESPONSE_201_FIELDS: ApiFieldItem[] = [

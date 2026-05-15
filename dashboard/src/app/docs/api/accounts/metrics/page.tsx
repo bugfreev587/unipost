@@ -50,7 +50,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     name: "platform_specific",
     type: "object",
     description:
-      "Untransformed platform-native fields. On X: tweet_count, listed_count. When the upstream call fails (rate-limited, tier-restricted, etc.), follower/following/post counts come back as 0 and platform_specific carries upstream_status (HTTP code from the platform) and upstream_error (response body) — branch on the presence of upstream_status to distinguish a real zero account from an upstream failure.",
+      "Untransformed platform-native fields. On X: tweet_count, listed_count. On TikTok, after analytics scopes are approved and enabled, likes_count is included. When the upstream call fails (rate-limited, tier-restricted, missing scope, etc.), follower/following/post counts come back as 0 and platform_specific carries upstream_status (HTTP code from the platform) and upstream_error (response body) — branch on the presence of upstream_status to distinguish a real zero account from an upstream failure.",
   },
   {
     name: "fetched_at",
@@ -189,7 +189,7 @@ export default function AccountMetricsPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Get account metrics"
-      description="Returns follower / following / post counts for one connected social account, fetched live from the platform's API. Currently supported on X (Twitter); other platforms return 501 NOT_SUPPORTED. Not cached — every call hits the upstream API, so prefer caching client-side if your dashboard polls frequently."
+      description="Returns follower / following / post counts for one connected social account, fetched live from the platform's API. Currently supported on X (Twitter). TikTok account metrics are implemented behind TikTok's analytics scopes and should be treated as unavailable in production until those scopes are approved and enabled. Other platforms return 501 NOT_SUPPORTED. Not cached — every call hits the upstream API, so prefer caching client-side if your dashboard polls frequently."
       method="GET"
       path="/v1/accounts/:account_id/metrics"
       requestSections={[

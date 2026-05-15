@@ -9,7 +9,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
-  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow. <Link href="/docs/platforms#platform-names">[available platforms]</Link><EnumValues values={["twitter", "linkedin", "bluesky", "youtube"]} /></> },
+  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow. Hosted Connect currently supports the values below; use <Link href="/docs/api/accounts/oauth-connect">OAuth connect</Link> for direct dashboard/API account linking on TikTok, Instagram, Threads, Pinterest, or Facebook.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube"]} /></> },
   { name: "profile_id?", type: "string", description: "Profile that should own the resulting connected account. Required when the workspace has multiple profiles." },
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },

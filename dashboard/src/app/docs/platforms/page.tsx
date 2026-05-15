@@ -78,6 +78,15 @@ const PLATFORM_QUICK_REFERENCE = [
     <Link key="youtube-guide" href="/docs/platforms/youtube">View</Link>,
   ],
   [
+    "Pinterest",
+    dashCell(),
+    checkCell(),
+    checkCell(),
+    dashCell(),
+    checkCell(),
+    <Link key="pinterest-guide" href="/docs/platforms/pinterest">View</Link>,
+  ],
+  [
     "Bluesky",
     checkCell(),
     checkCell(),
@@ -104,6 +113,7 @@ const PLATFORM_FEATURES = [
   ["Threads", dashCell(), checkCell(), dashCell(), dashCell(), dashCell()],
   ["TikTok", dashCell(), dashCell(), checkCell(), dashCell(), dashCell()],
   ["YouTube", dashCell(), dashCell(), dashCell(), checkCell(), dashCell()],
+  ["Pinterest", dashCell(), checkCell(), checkCell(), dashCell(), dashCell()],
   ["Bluesky", dashCell(), checkCell(), dashCell(), dashCell(), checkCell()],
   ["Facebook (Beta)", dashCell(), dashCell(), dashCell(), dashCell(), dashCell()],
 ] as const;
@@ -113,8 +123,9 @@ const ANALYTICS_COVERAGE = [
   ["LinkedIn", checkCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-linkedin" href="/docs/api/analytics">View</Link>],
   ["Instagram", checkCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-instagram" href="/docs/api/analytics">View</Link>],
   ["Threads", checkCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-threads" href="/docs/api/analytics">View</Link>],
-  ["TikTok", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-tiktok" href="/docs/api/analytics">View</Link>],
+  ["TikTok", dashCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-tiktok" href="/docs/api/analytics">View</Link>],
   ["YouTube", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-youtube" href="/docs/api/analytics">View</Link>],
+  ["Pinterest", checkCell(), dashCell(), checkCell(), checkCell(), checkCell(), <Link key="analytics-pinterest" href="/docs/api/analytics">View</Link>],
   ["Bluesky", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-bluesky" href="/docs/api/analytics">View</Link>],
   ["Facebook (Beta)", dashCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-facebook" href="/docs/api/analytics">View</Link>],
 ] as const;
@@ -169,7 +180,7 @@ export default function PlatformsPage() {
     <DocsPage
       eyebrow="Platforms"
       title="Platform support across UniPost."
-      lead="Use this page to understand what UniPost supports today across Twitter/X, LinkedIn, Instagram, Threads, TikTok, YouTube, Bluesky, and Facebook. The goal here is macro-level implementation guidance: which destinations exist, how the publish model works across them, where analytics and webhooks fit, and when you need to drop into a platform-specific guide."
+      lead="Use this page to understand what UniPost supports today across Twitter/X, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest, Bluesky, and Facebook. The goal here is macro-level implementation guidance: which destinations exist, how the publish model works across them, where analytics and webhooks fit, and when you need to drop into a platform-specific guide."
       className="docs-page-wide"
     >
       <div className="docs-badge-row">
@@ -187,7 +198,7 @@ export default function PlatformsPage() {
       />
 
       <h2 id="platform-quick-reference">Platform Quick Reference</h2>
-      <p>UniPost currently documents eight publishing destinations in the public platform guides. Each guide expands on media rules, validation behavior, and example request bodies for that network.</p>
+      <p>UniPost currently documents nine publishing destinations in the public platform guides. Each guide expands on media rules, validation behavior, and example request bodies for that network.</p>
       <DocsTable
         columns={["Platform", "Text", "Images", "Video", "Threads", "Analytics", "Guide"]}
         rows={PLATFORM_QUICK_REFERENCE}
@@ -249,7 +260,7 @@ export default function PlatformsPage() {
       <h2 id="api-reference">API Reference</h2>
       <p>The fastest path through the current platform surface is usually:</p>
       <ul className="docs-list">
-        <li><Link href="/docs/api/accounts/connect">Connect account</Link> for workspace-owned accounts.</li>
+        <li><Link href="/docs/api/accounts/oauth-connect">OAuth connect</Link> for OAuth platforms, or <Link href="/docs/api/accounts/connect">direct credentials</Link> for Bluesky.</li>
         <li><Link href="/docs/api/connect/sessions">Connect sessions</Link> for customer-owned account onboarding.</li>
         <li><Link href="/docs/api/posts/create">Create post</Link> for publish and scheduling.</li>
         <li><Link href="/docs/api/posts/validate">Validate post</Link> for preflight checks before publish.</li>

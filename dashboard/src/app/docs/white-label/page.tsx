@@ -195,6 +195,12 @@ export default function WhiteLabelPage() {
             "Audit required",
           ],
           [
+            "Pinterest",
+            "Yes",
+            <a key="pin" href="https://developers.pinterest.com" target="_blank" rel="noreferrer noopener">developers.pinterest.com</a>,
+            "Production API access required for broad use",
+          ],
+          [
             <Link key="youtube-guide" href="/docs/white-label/youtube">YouTube</Link>,
             "Yes",
             <a key="yt" href="https://console.cloud.google.com" target="_blank" rel="noreferrer noopener">console.cloud.google.com</a>,
