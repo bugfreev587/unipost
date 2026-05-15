@@ -26,6 +26,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
@@ -58,6 +59,18 @@ func main() {
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
 	slog.Info("runtime environment detected", "env", runtimeenv.Current(), "production", runtimeenv.IsProduction())
+	if flagProvider, flagErr := featureflags.NewProviderFromEnv(); flagErr != nil {
+		slog.Error("feature flags provider init failed; falling back to env provider", "error", flagErr)
+		featureflags.SetProvider(featureflags.EnvProvider{})
+	} else {
+		featureflags.SetProvider(flagProvider)
+	}
+	defer func() {
+		if err := featureflags.Close(); err != nil {
+			slog.Warn("feature flags provider close failed", "error", err)
+		}
+	}()
+	slog.Info("feature flags provider initialized", "provider", featureflags.ProviderName())
 
 	port := os.Getenv("PORT")
 	if port == "" {
