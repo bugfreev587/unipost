@@ -35,6 +35,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
@@ -56,6 +57,7 @@ func main() {
 
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
+	slog.Info("runtime environment detected", "env", runtimeenv.Current(), "production", runtimeenv.IsProduction())
 
 	port := os.Getenv("PORT")
 	if port == "" {

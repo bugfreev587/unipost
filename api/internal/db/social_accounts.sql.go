@@ -819,8 +819,10 @@ UPDATE social_accounts
 SET access_token      = $2,
     refresh_token     = $3,
     token_expires_at  = $4,
-    metadata          = COALESCE($5, metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
-    scope             = $6,
+    account_name      = $5,
+    account_avatar_url= $6,
+    metadata          = COALESCE($7, metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    scope             = $8,
     status            = 'active',
     disconnected_at   = NULL,
     last_refreshed_at = NOW()
@@ -829,12 +831,14 @@ RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_a
 `
 
 type ReactivateSocialAccountParams struct {
-	ID             string             `json:"id"`
-	AccessToken    string             `json:"access_token"`
-	RefreshToken   pgtype.Text        `json:"refresh_token"`
-	TokenExpiresAt pgtype.Timestamptz `json:"token_expires_at"`
-	Metadata       []byte             `json:"metadata"`
-	Scope          []string           `json:"scope"`
+	ID               string             `json:"id"`
+	AccessToken      string             `json:"access_token"`
+	RefreshToken     pgtype.Text        `json:"refresh_token"`
+	TokenExpiresAt   pgtype.Timestamptz `json:"token_expires_at"`
+	AccountName      pgtype.Text        `json:"account_name"`
+	AccountAvatarUrl pgtype.Text        `json:"account_avatar_url"`
+	Metadata         []byte             `json:"metadata"`
+	Scope            []string           `json:"scope"`
 }
 
 // Reactivate a disconnected account with fresh tokens. Preserves
@@ -846,6 +850,8 @@ func (q *Queries) ReactivateSocialAccount(ctx context.Context, arg ReactivateSoc
 		arg.AccessToken,
 		arg.RefreshToken,
 		arg.TokenExpiresAt,
+		arg.AccountName,
+		arg.AccountAvatarUrl,
 		arg.Metadata,
 		arg.Scope,
 	)
