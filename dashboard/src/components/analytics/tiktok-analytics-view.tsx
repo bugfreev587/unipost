@@ -354,6 +354,11 @@ function ProfilePanel({ profile, account }: { profile: TikTokProfile | null; acc
   const displayName = profile?.display_name || account.account_name || "TikTok account";
   const username = profile?.username || account.account_name || "";
   const avatarUrl = profile?.avatar_url || account.account_avatar_url || "";
+  const normalizedUsername = username.replace(/^@/, "").trim();
+  const canonicalProfileUrl = normalizedUsername ? `https://www.tiktok.com/@${normalizedUsername}` : "";
+  const profileWebLink = canonicalProfileUrl || profile?.profile_web_link || "";
+  const profileWebLabel = canonicalProfileUrl || profile?.profile_web_link || "";
+  const profileDeepLink = profile?.profile_deep_link || "";
   return (
     <div className="settings-section" style={{ marginBottom: 0 }}>
       <div className="settings-section-header">
@@ -370,24 +375,24 @@ function ProfilePanel({ profile, account }: { profile: TikTokProfile | null; acc
               {displayName}
               {profile?.is_verified ? <BadgeCheck style={{ width: 15, height: 15, color: "var(--info)" }} /> : null}
             </div>
-            <div style={{ color: "var(--dmuted)", fontSize: 13 }}>{username ? `@${username.replace(/^@/, "")}` : account.id}</div>
+            <div style={{ color: "var(--dmuted)", fontSize: 13 }}>{normalizedUsername ? `@${normalizedUsername}` : account.id}</div>
           </div>
         </div>
         <div style={{ color: "var(--dtext)", fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>
           {profile?.bio_description || "No TikTok bio returned yet."}
         </div>
         <div style={{ display: "grid", gap: 9 }}>
-          {profile?.profile_web_link && (
-            <Link href={profile.profile_web_link} style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--daccent)", fontSize: 13, textDecoration: "none" }}>
+          {profileWebLink && (
+            <Link href={profileWebLink} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--daccent)", fontSize: 13, textDecoration: "none" }}>
               <ExternalLink style={{ width: 14, height: 14 }} />
-              {profile.profile_web_link}
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profileWebLabel}</span>
             </Link>
           )}
-          {profile?.profile_deep_link && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)", fontSize: 13, minWidth: 0 }}>
+          {profileDeepLink && (
+            <Link href={profileDeepLink} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)", fontSize: 13, minWidth: 0, textDecoration: "none" }}>
               <LinkIcon style={{ width: 14, height: 14, flexShrink: 0 }} />
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.profile_deep_link}</span>
-            </div>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profileDeepLink}</span>
+            </Link>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)", fontSize: 13 }}>
             <BadgeCheck style={{ width: 14, height: 14 }} />
