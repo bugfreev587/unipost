@@ -63,6 +63,23 @@ func TestTikTokOAuthScopesIncludeAnalyticsWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestTikTokBasicUserInfoFieldsStayWithinBasicScope(t *testing.T) {
+	disallowed := map[string]bool{
+		"username":        true,
+		"profile_web_link": true,
+		"is_verified":     true,
+		"follower_count":  true,
+		"following_count": true,
+		"likes_count":     true,
+		"video_count":     true,
+	}
+	for _, field := range tiktokBasicUserInfoFields {
+		if disallowed[field] {
+			t.Fatalf("basic user-info fields include %q, which requires non-basic TikTok scopes", field)
+		}
+	}
+}
+
 func TestBuildTikTokPostInfoPhotoOmitsDuetStitch(t *testing.T) {
 	info := buildTikTokPostInfo("hello", "PUBLIC_TO_EVERYONE", nil, "photo")
 
