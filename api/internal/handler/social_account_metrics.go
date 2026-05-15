@@ -98,6 +98,10 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 
 	metrics, err := metricsAdapter.GetAccountMetrics(r.Context(), accessToken, acc.ExternalAccountID)
 	if err != nil {
+		if acc.Platform == "tiktok" && (looksLikeTikTokAuthError(err) || looksLikeTikTokMissingScopeError(err)) {
+			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Reconnect TikTok to enable analytics.")
+			return
+		}
 		// Bubble up upstream errors as 502 — the request was valid,
 		// the upstream just couldn't fulfill it. Distinguishes from
 		// our own 5xx so customers know it's not a UniPost bug.

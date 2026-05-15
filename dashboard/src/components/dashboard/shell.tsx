@@ -69,6 +69,7 @@ const ALL_NAV_ITEMS = [
   { href: "/logs", label: "Logs", icon: FileText },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
+    { href: "/analytics/platforms", label: "Platforms" },
     { href: "/analytics/api", label: "API" },
   ]},
 ];

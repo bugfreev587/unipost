@@ -12,8 +12,8 @@ import (
 )
 
 const createSocialAccount = `-- name: CreateSocialAccount :one
-INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata, scope)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `
 
@@ -27,6 +27,7 @@ type CreateSocialAccountParams struct {
 	AccountName       pgtype.Text        `json:"account_name"`
 	AccountAvatarUrl  pgtype.Text        `json:"account_avatar_url"`
 	Metadata          []byte             `json:"metadata"`
+	Scope             []string           `json:"scope"`
 }
 
 func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccountParams) (SocialAccount, error) {
@@ -40,6 +41,7 @@ func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccou
 		arg.AccountName,
 		arg.AccountAvatarUrl,
 		arg.Metadata,
+		arg.Scope,
 	)
 	var i SocialAccount
 	err := row.Scan(
@@ -817,7 +819,8 @@ UPDATE social_accounts
 SET access_token      = $2,
     refresh_token     = $3,
     token_expires_at  = $4,
-    metadata          = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    metadata          = COALESCE($5, metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    scope             = $6,
     status            = 'active',
     disconnected_at   = NULL,
     last_refreshed_at = NOW()
@@ -830,6 +833,8 @@ type ReactivateSocialAccountParams struct {
 	AccessToken    string             `json:"access_token"`
 	RefreshToken   pgtype.Text        `json:"refresh_token"`
 	TokenExpiresAt pgtype.Timestamptz `json:"token_expires_at"`
+	Metadata       []byte             `json:"metadata"`
+	Scope          []string           `json:"scope"`
 }
 
 // Reactivate a disconnected account with fresh tokens. Preserves
@@ -841,6 +846,8 @@ func (q *Queries) ReactivateSocialAccount(ctx context.Context, arg ReactivateSoc
 		arg.AccessToken,
 		arg.RefreshToken,
 		arg.TokenExpiresAt,
+		arg.Metadata,
+		arg.Scope,
 	)
 	var i SocialAccount
 	err := row.Scan(

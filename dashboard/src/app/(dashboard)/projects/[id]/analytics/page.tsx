@@ -443,7 +443,7 @@ function AnalyticsPageInner() {
           )}
 
           {/* Layer 3: By Platform */}
-          <ByPlatformTable rows={byPlatform} />
+          <ByPlatformTable rows={byPlatform} profileId={profileId} />
 
           {/* Layer 4: Posts Table */}
           <PostsTable
@@ -823,7 +823,7 @@ function TrendChart({
 
 // ─── ByPlatformTable ──────────────────────────────────────────────────────
 
-function ByPlatformTable({ rows }: { rows: PlatformAnalytics[] }) {
+function ByPlatformTable({ rows, profileId }: { rows: PlatformAnalytics[]; profileId: string }) {
   const sorted = [...rows].sort((a, b) => b.impressions - a.impressions);
 
   return (
@@ -852,6 +852,14 @@ function ByPlatformTable({ rows }: { rows: PlatformAnalytics[] }) {
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <PlatformIcon platform={r.platform} size={14} />
                       <span style={{ fontWeight: 500, color: "var(--dtext)", textTransform: "capitalize" }}>{r.platform}</span>
+                      {r.platform === "tiktok" && (
+                        <Link
+                          href={`/projects/${profileId}/analytics/platforms/tiktok`}
+                          style={{ color: "var(--daccent)", fontSize: 12, textDecoration: "none", marginLeft: 4 }}
+                        >
+                          View TikTok analytics
+                        </Link>
+                      )}
                     </span>
                   </td>
                   <td style={tdRight}>{formatNumber(r.posts)}</td>

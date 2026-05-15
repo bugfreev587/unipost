@@ -605,6 +605,8 @@ func main() {
 		r.Get("/v1/accounts/{id}/health", socialAccountHandler.AccountHealth)
 		r.Get("/v1/accounts/{id}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/accounts/{id}/tiktok/profile", socialAccountHandler.TikTokProfile)
+		r.Get("/v1/accounts/{id}/tiktok/videos", socialAccountHandler.TikTokVideos)
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Post("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
@@ -624,6 +626,8 @@ func main() {
 		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/dismiss", socialAccountHandler.Dismiss)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/profile", socialAccountHandler.TikTokProfile)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/videos", socialAccountHandler.TikTokVideos)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).

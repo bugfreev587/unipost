@@ -504,6 +504,7 @@ export async function deleteWebhook(
 export interface SocialAccount {
   id: string;
   profile_id: string;
+  profile_name?: string;
   platform: string;
   account_name: string | null;
   connected_at: string;
@@ -511,6 +512,7 @@ export interface SocialAccount {
   connection_type: "byo" | "managed";
   external_user_id?: string;
   external_user_email?: string;
+  scope?: string[];
 }
 
 export async function listSocialAccounts(
@@ -661,6 +663,90 @@ export async function getTikTokCreatorInfo(
 ): Promise<ApiResponse<TikTokCreatorInfo>> {
   return request(
     `/v1/profiles/${profileId}/accounts/${accountId}/tiktok/creator-info`,
+    token
+  );
+}
+
+export interface AccountMetrics {
+  social_account_id: string;
+  platform: string;
+  follower_count: number;
+  following_count: number;
+  post_count: number;
+  platform_specific?: Record<string, unknown>;
+  fetched_at: string;
+}
+
+export async function getAccountMetrics(
+  token: string,
+  profileId: string,
+  accountId: string
+): Promise<ApiResponse<AccountMetrics>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/metrics`,
+    token
+  );
+}
+
+export interface TikTokProfile {
+  social_account_id: string;
+  platform: string;
+  open_id: string;
+  display_name: string;
+  avatar_url: string;
+  username: string;
+  profile_web_link: string;
+  profile_deep_link: string;
+  bio_description: string;
+  is_verified: boolean;
+  fetched_at: string;
+}
+
+export interface TikTokVideo {
+  id: string;
+  title?: string;
+  video_description?: string;
+  cover_image_url?: string;
+  share_url?: string;
+  create_time?: number;
+  view_count: number;
+  like_count: number;
+  comment_count: number;
+  share_count: number;
+  duration?: number;
+  embed_link?: string;
+}
+
+export interface TikTokVideosResponse {
+  videos: TikTokVideo[];
+  cursor: number;
+  has_more: boolean;
+  fetched_at: string;
+}
+
+export async function getTikTokProfile(
+  token: string,
+  profileId: string,
+  accountId: string
+): Promise<ApiResponse<TikTokProfile>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/tiktok/profile`,
+    token
+  );
+}
+
+export async function getTikTokVideos(
+  token: string,
+  profileId: string,
+  accountId: string,
+  opts?: { cursor?: number; limit?: number }
+): Promise<ApiResponse<TikTokVideosResponse>> {
+  const qs = new URLSearchParams();
+  if (opts?.cursor) qs.set("cursor", String(opts.cursor));
+  if (opts?.limit) qs.set("limit", String(opts.limit));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/tiktok/videos${suffix}`,
     token
   );
 }

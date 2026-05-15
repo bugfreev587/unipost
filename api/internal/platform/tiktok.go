@@ -24,6 +24,15 @@ type TikTokAdapter struct {
 
 const tiktokHomepageURL = "https://www.tiktok.com"
 
+var tiktokScopes = []string{
+	"user.info.basic",
+	"user.info.profile",
+	"user.info.stats",
+	"video.list",
+	"video.publish",
+	"video.upload",
+}
+
 func NewTikTokAdapter() *TikTokAdapter {
 	return &TikTokAdapter{client: debugrt.NewClient(120 * time.Second)}
 }
@@ -45,12 +54,7 @@ func (a *TikTokAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 		AuthURL:      "https://www.tiktok.com/v2/auth/authorize/",
 		TokenURL:     "https://open.tiktokapis.com/v2/oauth/token/",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/tiktok",
-		// NOTE: analytics needs the video.list scope, but TikTok sandbox apps
-		// can't request it — the entire authorization fails with "scope" as
-		// the reason. Add "video.list" to this slice AND to the scope query
-		// param in GetAuthURL below, then have every connected account
-		// disconnect/reconnect, ONLY after the app has production access.
-		Scopes: []string{"video.publish", "video.upload", "user.info.basic"},
+		Scopes:       tiktokScopes,
 	}
 }
 
@@ -60,10 +64,8 @@ func (a *TikTokAdapter) GetAuthURL(config OAuthConfig, state string) string {
 		"client_key":    {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
 		"response_type": {"code"},
-		// Keep in sync with DefaultOAuthConfig.Scopes above. video.list is
-		// intentionally absent until production access — see the note there.
-		"scope": {"video.publish,video.upload,user.info.basic"},
-		"state": {state},
+		"scope":         {strings.Join(config.Scopes, ",")},
+		"state":         {state},
 	}
 	return config.AuthURL + "?" + params.Encode()
 }
@@ -164,9 +166,14 @@ func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, co
 		ExternalAccountID: openID,
 		AccountName:       userInfo.displayName,
 		AvatarURL:         userInfo.avatarURL,
+		Scopes:            config.Scopes,
 		Metadata: map[string]any{
-			"open_id":      openID,
-			"display_name": userInfo.displayName,
+			"open_id":          openID,
+			"display_name":     userInfo.displayName,
+			"username":         userInfo.username,
+			"profile_web_link": userInfo.profileWebLink,
+			"is_verified":      userInfo.isVerified,
+			"granted_scopes":   config.Scopes,
 		},
 	}, nil
 }
@@ -998,18 +1005,38 @@ func (a *TikTokAdapter) TikTokProfileURL(ctx context.Context, accessToken string
 }
 
 type tiktokUserInfo struct {
-	openID      string
-	displayName string
-	avatarURL   string
+	openID          string
+	displayName     string
+	avatarURL       string
+	username        string
+	profileWebLink  string
+	profileDeepLink string
+	bioDescription  string
+	isVerified      bool
+	followerCount   int64
+	followingCount  int64
+	likesCount      int64
+	videoCount      int64
 }
 
 func (a *TikTokAdapter) getUserInfo(ctx context.Context, accessToken string) (*tiktokUserInfo, error) {
-	body, _ := json.Marshal(map[string]any{
-		"fields": []string{"open_id", "display_name", "avatar_url"},
-	})
+	fields := strings.Join([]string{
+		"open_id",
+		"display_name",
+		"avatar_url",
+		"username",
+		"profile_web_link",
+		"profile_deep_link",
+		"bio_description",
+		"is_verified",
+		"follower_count",
+		"following_count",
+		"likes_count",
+		"video_count",
+	}, ",")
 
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		"https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url", bytes.NewReader(body))
+		"https://open.tiktokapis.com/v2/user/info/?fields="+fields, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1021,20 +1048,171 @@ func (a *TikTokAdapter) getUserInfo(ctx context.Context, accessToken string) (*t
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("tiktok user info: missing profile/stats scope or invalid token")
+		}
+		return nil, fmt.Errorf("tiktok user info (%d): %s", resp.StatusCode, string(respBody))
+	}
+
 	var result struct {
 		Data struct {
 			User struct {
-				OpenID      string `json:"open_id"`
-				DisplayName string `json:"display_name"`
-				AvatarURL   string `json:"avatar_url"`
+				OpenID          string `json:"open_id"`
+				DisplayName     string `json:"display_name"`
+				AvatarURL       string `json:"avatar_url"`
+				Username        string `json:"username"`
+				ProfileWebLink  string `json:"profile_web_link"`
+				ProfileDeepLink string `json:"profile_deep_link"`
+				BioDescription  string `json:"bio_description"`
+				IsVerified      bool   `json:"is_verified"`
+				FollowerCount   int64  `json:"follower_count"`
+				FollowingCount  int64  `json:"following_count"`
+				LikesCount      int64  `json:"likes_count"`
+				VideoCount      int64  `json:"video_count"`
 			} `json:"user"`
 		} `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("tiktok user info decode: %w", err)
+	}
+	if result.Error.Code != "" && result.Error.Code != "ok" {
+		return nil, fmt.Errorf("tiktok user info: %s", result.Error.Message)
+	}
 
 	return &tiktokUserInfo{
-		openID:      result.Data.User.OpenID,
-		displayName: result.Data.User.DisplayName,
-		avatarURL:   result.Data.User.AvatarURL,
+		openID:          result.Data.User.OpenID,
+		displayName:     result.Data.User.DisplayName,
+		avatarURL:       result.Data.User.AvatarURL,
+		username:        result.Data.User.Username,
+		profileWebLink:  result.Data.User.ProfileWebLink,
+		profileDeepLink: result.Data.User.ProfileDeepLink,
+		bioDescription:  result.Data.User.BioDescription,
+		isVerified:      result.Data.User.IsVerified,
+		followerCount:   result.Data.User.FollowerCount,
+		followingCount:  result.Data.User.FollowingCount,
+		likesCount:      result.Data.User.LikesCount,
+		videoCount:      result.Data.User.VideoCount,
 	}, nil
+}
+
+type TikTokProfile struct {
+	OpenID          string `json:"open_id"`
+	DisplayName     string `json:"display_name"`
+	AvatarURL       string `json:"avatar_url"`
+	Username        string `json:"username"`
+	ProfileWebLink  string `json:"profile_web_link"`
+	ProfileDeepLink string `json:"profile_deep_link"`
+	BioDescription  string `json:"bio_description"`
+	IsVerified      bool   `json:"is_verified"`
+}
+
+func (a *TikTokAdapter) FetchProfile(ctx context.Context, accessToken string) (*TikTokProfile, error) {
+	info, err := a.getUserInfo(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	return &TikTokProfile{
+		OpenID:          info.openID,
+		DisplayName:     info.displayName,
+		AvatarURL:       info.avatarURL,
+		Username:        info.username,
+		ProfileWebLink:  info.profileWebLink,
+		ProfileDeepLink: info.profileDeepLink,
+		BioDescription:  info.bioDescription,
+		IsVerified:      info.isVerified,
+	}, nil
+}
+
+func (a *TikTokAdapter) GetAccountMetrics(ctx context.Context, accessToken, externalAccountID string) (*AccountMetrics, error) {
+	info, err := a.getUserInfo(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	return &AccountMetrics{
+		FollowerCount:  info.followerCount,
+		FollowingCount: info.followingCount,
+		PostCount:      info.videoCount,
+		PlatformSpecific: map[string]any{
+			"likes_count": info.likesCount,
+			"video_count": info.videoCount,
+		},
+	}, nil
+}
+
+type TikTokVideo struct {
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	CoverImageURL    string `json:"cover_image_url"`
+	ShareURL         string `json:"share_url"`
+	CreateTime       int64  `json:"create_time"`
+	ViewCount        int64  `json:"view_count"`
+	LikeCount        int64  `json:"like_count"`
+	CommentCount     int64  `json:"comment_count"`
+	ShareCount       int64  `json:"share_count"`
+	Duration         int64  `json:"duration"`
+	EmbedLink        string `json:"embed_link"`
+	VideoDescription string `json:"video_description"`
+}
+
+type TikTokVideoList struct {
+	Videos  []TikTokVideo `json:"videos"`
+	Cursor  int64         `json:"cursor"`
+	HasMore bool          `json:"has_more"`
+}
+
+func (a *TikTokAdapter) ListVideos(ctx context.Context, accessToken string, cursor int64, limit int) (*TikTokVideoList, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 20
+	}
+	body, _ := json.Marshal(map[string]any{
+		"max_count": limit,
+		"cursor":    cursor,
+	})
+	fields := "id,title,cover_image_url,share_url,create_time,view_count,like_count,comment_count,share_count,duration,embed_link,video_description"
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		"https://open.tiktokapis.com/v2/video/list/?fields="+fields,
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tiktok video list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("tiktok video list: missing video.list scope or invalid token")
+		}
+		return nil, fmt.Errorf("tiktok video list (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Data  TikTokVideoList `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("tiktok video list decode: %w", err)
+	}
+	if result.Error.Code != "" && result.Error.Code != "ok" {
+		return nil, fmt.Errorf("tiktok video list: %s", result.Error.Message)
+	}
+	if result.Data.Videos == nil {
+		result.Data.Videos = []TikTokVideo{}
+	}
+	return &result.Data, nil
 }

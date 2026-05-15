@@ -122,9 +122,10 @@ type ConnectResult struct {
 	AccessToken       string
 	RefreshToken      string
 	TokenExpiresAt    time.Time
-	ExternalAccountID string         // Platform-specific account ID (e.g., Bluesky DID)
-	AccountName       string         // Display name or handle
+	ExternalAccountID string // Platform-specific account ID (e.g., Bluesky DID)
+	AccountName       string // Display name or handle
 	AvatarURL         string
+	Scopes            []string
 	Metadata          map[string]any // Platform-specific metadata
 }
 

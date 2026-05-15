@@ -44,6 +44,7 @@ type socialAccountResponse struct {
 	ConnectionType    string    `json:"connection_type"`
 	ExternalUserID    *string   `json:"external_user_id,omitempty"`
 	ExternalUserEmail *string   `json:"external_user_email,omitempty"`
+	Scope             []string  `json:"scope,omitempty"`
 }
 
 func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAccountResponse {
@@ -84,6 +85,7 @@ func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAc
 		ConnectionType:    a.ConnectionType,
 		ExternalUserID:    extUserID,
 		ExternalUserEmail: extUserEmail,
+		Scope:             a.Scope,
 	}
 }
 
@@ -184,6 +186,7 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		AccountName:       pgtype.Text{String: result.AccountName, Valid: result.AccountName != ""},
 		AccountAvatarUrl:  pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
 		Metadata:          metadataJSON,
+		Scope:             result.Scopes,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save account")

@@ -378,6 +378,8 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					AccessToken:    encAccess,
 					RefreshToken:   pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
 					TokenExpiresAt: pgtype.Timestamptz{Time: result.TokenExpiresAt, Valid: !result.TokenExpiresAt.IsZero()},
+					Metadata:       metadataJSON,
+					Scope:          result.Scopes,
 				})
 				h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
 					Level:     integrationlogs.LevelInfo,
@@ -419,6 +421,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		AccountName:       pgtype.Text{String: result.AccountName, Valid: result.AccountName != ""},
 		AccountAvatarUrl:  pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
 		Metadata:          metadataJSON,
+		Scope:             result.Scopes,
 	})
 	if err != nil {
 		slog.Error("oauth callback: failed to save account", "error", err)

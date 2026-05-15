@@ -1,6 +1,6 @@
 -- name: CreateSocialAccount :one
-INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata, scope)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: ListSocialAccountsByProfile :many
@@ -171,7 +171,8 @@ UPDATE social_accounts
 SET access_token      = $2,
     refresh_token     = $3,
     token_expires_at  = $4,
-    metadata          = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    metadata          = COALESCE($5, metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    scope             = $6,
     status            = 'active',
     disconnected_at   = NULL,
     last_refreshed_at = NOW()
