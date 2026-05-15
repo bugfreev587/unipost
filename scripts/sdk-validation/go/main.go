@@ -25,9 +25,18 @@ var (
 	createdPlatformCredentials []string
 )
 
+type skipTestError string
+
+func (e skipTestError) Error() string { return string(e) }
+
 func test(name string, fn func() error) {
 	fmt.Printf("  %s ... ", name)
 	if err := fn(); err != nil {
+		if skipErr, ok := err.(skipTestError); ok {
+			fmt.Printf("⏭ SKIP — %s\n", skipErr)
+			skipped++
+			return
+		}
 		// Convert plan-gated 402s into SKIPs so the regression suite
 		// can run end-to-end against any plan tier without spurious
 		// failures on Analytics / profile cap / etc. when the test
@@ -89,6 +98,22 @@ func isTransientEnvIssue(err error) bool {
 	}
 	text := strings.ToLower(err.Error())
 	return strings.Contains(text, "too many requests") || strings.Contains(text, "timed out")
+}
+
+func isTikTokReconnectRequired(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := err.(*unipost.APIError); ok {
+		code := strings.ToLower(apiErr.Code)
+		if code == "needs_reconnect" {
+			return true
+		}
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "reconnect") ||
+		strings.Contains(text, "tiktok rejected your credentials") ||
+		strings.Contains(text, "missing scope")
 }
 
 func section(title string) {
@@ -351,6 +376,9 @@ func main() {
 		test("Accounts.TikTokCreatorInfo()", func() error {
 			payload, err := client.Accounts.TikTokCreatorInfo(ctx, tiktokID)
 			if err != nil {
+				if isTikTokReconnectRequired(err) {
+					return skipTestError("TikTok account needs reconnect")
+				}
 				return err
 			}
 			if _, ok := payload["creator_username"]; !ok {

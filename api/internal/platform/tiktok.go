@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -34,6 +35,38 @@ var tiktokAnalyticsScopes = []string{
 	"user.info.profile",
 	"user.info.stats",
 	"video.list",
+}
+
+var tiktokBasicUserInfoFields = []string{
+	"open_id",
+	"display_name",
+	"avatar_url",
+}
+
+var tiktokProfileUserInfoFields = []string{
+	"open_id",
+	"display_name",
+	"avatar_url",
+	"username",
+	"profile_web_link",
+	"profile_deep_link",
+	"bio_description",
+	"is_verified",
+}
+
+var tiktokMetricsUserInfoFields = []string{
+	"open_id",
+	"display_name",
+	"avatar_url",
+	"username",
+	"profile_web_link",
+	"profile_deep_link",
+	"bio_description",
+	"is_verified",
+	"follower_count",
+	"following_count",
+	"likes_count",
+	"video_count",
 }
 
 func NewTikTokAdapter() *TikTokAdapter {
@@ -63,15 +96,10 @@ func (a *TikTokAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 
 func tiktokOAuthScopes() []string {
 	scopes := append([]string(nil), tiktokLegacyScopes...)
-	if !truthyEnv("TIKTOK_ANALYTICS_SCOPES_ENABLED") {
+	if !featureflags.Enabled(context.Background(), featureflags.TikTokAnalyticsScopes, featureflags.Target{}) {
 		return scopes
 	}
 	return append(scopes, tiktokAnalyticsScopes...)
-}
-
-func truthyEnv(name string) bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 func (a *TikTokAdapter) GetAuthURL(config OAuthConfig, state string) string {
@@ -170,7 +198,7 @@ func (a *TikTokAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, co
 	}
 
 	// Get user info
-	userInfo, err := a.getUserInfo(ctx, accessToken)
+	userInfo, err := a.getBasicUserInfo(ctx, accessToken)
 	if err != nil {
 		userInfo = &tiktokUserInfo{openID: openID, displayName: openID}
 	}
@@ -1035,21 +1063,20 @@ type tiktokUserInfo struct {
 	videoCount      int64
 }
 
-func (a *TikTokAdapter) getUserInfo(ctx context.Context, accessToken string) (*tiktokUserInfo, error) {
-	fields := strings.Join([]string{
-		"open_id",
-		"display_name",
-		"avatar_url",
-		"username",
-		"profile_web_link",
-		"profile_deep_link",
-		"bio_description",
-		"is_verified",
-		"follower_count",
-		"following_count",
-		"likes_count",
-		"video_count",
-	}, ",")
+func (a *TikTokAdapter) getBasicUserInfo(ctx context.Context, accessToken string) (*tiktokUserInfo, error) {
+	return a.getUserInfo(ctx, accessToken, tiktokBasicUserInfoFields)
+}
+
+func (a *TikTokAdapter) getProfileUserInfo(ctx context.Context, accessToken string) (*tiktokUserInfo, error) {
+	return a.getUserInfo(ctx, accessToken, tiktokProfileUserInfoFields)
+}
+
+func (a *TikTokAdapter) getMetricsUserInfo(ctx context.Context, accessToken string) (*tiktokUserInfo, error) {
+	return a.getUserInfo(ctx, accessToken, tiktokMetricsUserInfoFields)
+}
+
+func (a *TikTokAdapter) getUserInfo(ctx context.Context, accessToken string, fieldList []string) (*tiktokUserInfo, error) {
+	fields := strings.Join(fieldList, ",")
 
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		"https://open.tiktokapis.com/v2/user/info/?fields="+fields, nil)
@@ -1129,7 +1156,7 @@ type TikTokProfile struct {
 }
 
 func (a *TikTokAdapter) FetchProfile(ctx context.Context, accessToken string) (*TikTokProfile, error) {
-	info, err := a.getUserInfo(ctx, accessToken)
+	info, err := a.getProfileUserInfo(ctx, accessToken)
 	if err != nil {
 		return nil, err
 	}
@@ -1146,7 +1173,7 @@ func (a *TikTokAdapter) FetchProfile(ctx context.Context, accessToken string) (*
 }
 
 func (a *TikTokAdapter) GetAccountMetrics(ctx context.Context, accessToken, externalAccountID string) (*AccountMetrics, error) {
-	info, err := a.getUserInfo(ctx, accessToken)
+	info, err := a.getMetricsUserInfo(ctx, accessToken)
 	if err != nil {
 		return nil, err
 	}

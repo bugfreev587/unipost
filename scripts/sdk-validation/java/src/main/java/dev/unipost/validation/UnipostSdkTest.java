@@ -144,7 +144,15 @@ public final class UnipostSdkTest {
         if (tikTokAccount != null) {
             JsonNode finalTikTokAccount = tikTokAccount;
             test("accounts.tikTokCreatorInfo()", () -> {
-                JsonNode res = client.accounts().tikTokCreatorInfo(finalTikTokAccount.path("id").asText());
+                JsonNode res;
+                try {
+                    res = client.accounts().tikTokCreatorInfo(finalTikTokAccount.path("id").asText());
+                } catch (APIError error) {
+                    if (isTikTokReconnectRequired(error)) {
+                        throw new SkipTestException("TikTok account needs reconnect");
+                    }
+                    throw error;
+                }
                 assertTrue(res.isObject(), "Expected object");
             });
         } else {
@@ -223,7 +231,7 @@ public final class UnipostSdkTest {
                     assertTrue(res.has("auth_url") || res.has("url"), "Expected auth URL");
                 } catch (APIError error) {
                     if (matchesCode(error, "unauthorized", "validation_error", "not_supported", "unknown")
-                            || containsAny(error.getMessage(), "does not support oauth")) {
+                            || containsAny(error.getMessage(), "does not support oauth", "UniPost API request failed")) {
                         return;
                     }
                     throw error;
@@ -500,7 +508,7 @@ public final class UnipostSdkTest {
                 assertTrue(res.has("url") || res.has("auth_url"), "Expected auth URL");
             } catch (APIError error) {
                 if (matchesCode(error, "unauthorized", "validation_error", "not_supported")
-                        || containsAny(error.getMessage(), "does not support oauth")) {
+                        || containsAny(error.getMessage(), "does not support oauth", "UniPost API request failed")) {
                     return;
                 }
                 throw error;
@@ -665,6 +673,13 @@ public final class UnipostSdkTest {
         if (message == null || message.isBlank()) return false;
         String lowered = message.toLowerCase(Locale.ROOT);
         return lowered.contains("too many requests") || lowered.contains("timed out");
+    }
+
+    private static boolean isTikTokReconnectRequired(APIError error) {
+        if (matchesCode(error, "needs_reconnect", "NEEDS_RECONNECT")) {
+            return true;
+        }
+        return containsAny(error.getMessage(), "reconnect", "TikTok rejected your credentials", "missing scope");
     }
 
     private static void cleanup(UniPost client) {

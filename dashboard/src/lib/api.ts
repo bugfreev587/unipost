@@ -507,6 +507,7 @@ export interface SocialAccount {
   profile_name?: string;
   platform: string;
   account_name: string | null;
+  account_avatar_url?: string | null;
   connected_at: string;
   status: "active" | "reconnect_required" | "disconnected";
   connection_type: "byo" | "managed";
@@ -1695,6 +1696,16 @@ export interface MeResponse {
   // whether to pop the Welcome modal on first load.
   onboarding_intent?: OnboardingIntent;
   onboarding_shown_at?: string;
+}
+
+export interface FeatureFlagsResponse {
+  environment: string;
+  provider: string;
+  flags: Record<string, boolean>;
+}
+
+export async function getFeatureFlags(token: string): Promise<ApiResponse<FeatureFlagsResponse>> {
+  return request("/v1/me/features", token);
 }
 
 // ── Members & invites (RBAC) ──

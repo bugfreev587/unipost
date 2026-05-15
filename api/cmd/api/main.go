@@ -26,6 +26,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
@@ -35,6 +36,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
@@ -56,6 +58,19 @@ func main() {
 
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
+	slog.Info("runtime environment detected", "env", runtimeenv.Current(), "production", runtimeenv.IsProduction())
+	if flagProvider, flagErr := featureflags.NewProviderFromEnv(); flagErr != nil {
+		slog.Error("feature flags provider init failed; falling back to env provider", "error", flagErr)
+		featureflags.SetProvider(featureflags.EnvProvider{})
+	} else {
+		featureflags.SetProvider(flagProvider)
+	}
+	defer func() {
+		if err := featureflags.Close(); err != nil {
+			slog.Warn("feature flags provider close failed", "error", err)
+		}
+	}()
+	slog.Info("feature flags provider initialized", "provider", featureflags.ProviderName())
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -356,7 +371,7 @@ func main() {
 	r.Use(mw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://app.unipost.dev", "https://unipost.dev", "http://localhost:3000"},
+		AllowedOrigins:   corsAllowedOrigins(),
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
 		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-UniPost-Usage", "X-UniPost-Warning", "X-UniPost-RateLimit-Limit", "X-UniPost-RateLimit-Remaining", "X-UniPost-RateLimit-Reset", "X-UniPost-QueueDepth", "Retry-After"},
@@ -500,6 +515,7 @@ func main() {
 		r.Use(auth.ClerkSessionMiddleware)
 
 		r.Get("/v1/me", meHandler.Get)
+		r.Get("/v1/me/features", meHandler.Features)
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
 		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding)
 		r.Patch("/v1/me/intent", meHandler.SetIntent)
@@ -814,6 +830,26 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+func corsAllowedOrigins() []string {
+	origins := []string{
+		"https://app.unipost.dev",
+		"https://dev-app.unipost.dev",
+		"https://dev.unipost.dev",
+		"https://unipost.dev",
+		"http://localhost:3000",
+	}
+
+	extraOrigins := strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",")
+	for _, origin := range extraOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+
+	return origins
 }
 
 // syncStripePriceIDs writes the LIVE Stripe price IDs from env vars into the

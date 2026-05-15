@@ -15,10 +15,12 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 type MeHandler struct {
-	queries      *db.Queries
+	queries           *db.Queries
 	adminChecker      *auth.AdminChecker
 	superAdminChecker *auth.SuperAdminChecker
 }
@@ -107,6 +109,44 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		resp.OnboardingShownAt = &v
 	}
 	writeSuccess(w, resp)
+}
+
+type featureFlagsResponse struct {
+	Environment string          `json:"environment"`
+	Provider    string          `json:"provider"`
+	Flags       map[string]bool `json:"flags"`
+}
+
+// Features returns the current authenticated user's effective feature
+// visibility. The browser uses this for UI only; risky behavior remains gated
+// again inside the backend path that performs the action.
+func (h *MeHandler) Features(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+
+	target := featureflags.Target{UserID: userID, Env: runtimeenv.Current()}
+	if user, err := h.queries.GetUser(r.Context(), userID); err == nil {
+		target.UserEmail = user.Email
+	}
+	if mem, err := h.queries.GetActiveMembership(r.Context(), userID); err == nil {
+		target.WorkspaceID = mem.WorkspaceID
+	} else if workspaces, wsErr := h.queries.ListWorkspacesByUser(r.Context(), userID); wsErr == nil && len(workspaces) > 0 {
+		target.WorkspaceID = workspaces[0].ID
+	}
+
+	flags := make(map[string]bool, len(featureflags.Definitions()))
+	for _, def := range featureflags.Definitions() {
+		flags[string(def.Flag)] = featureflags.Enabled(r.Context(), def.Flag, target)
+	}
+
+	writeSuccess(w, featureFlagsResponse{
+		Environment: target.Env,
+		Provider:    featureflags.ProviderName(),
+		Flags:       flags,
+	})
 }
 
 // SetIntent handles PATCH /v1/me/intent.

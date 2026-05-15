@@ -236,7 +236,7 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
     { label: "Followers", value: metrics?.follower_count || 0, icon: Users, scope: "user.info.stats" },
     { label: "Following", value: metrics?.following_count || 0, icon: UserRoundCheck, scope: "user.info.stats" },
     { label: "Total Likes", value: metricSpecificNumber(metrics, "likes_count"), icon: Heart, scope: "user.info.stats" },
-    { label: "Videos", value: metrics?.post_count || 0, icon: ListVideo, scope: "user.info.stats" },
+    { label: "Public Videos", value: metrics?.post_count || 0, icon: ListVideo, scope: "user.info.stats" },
   ];
 
   return (
@@ -353,6 +353,12 @@ function ScopeReadiness({ missingScopes }: { missingScopes: readonly string[] })
 function ProfilePanel({ profile, account }: { profile: TikTokProfile | null; account: SocialAccount }) {
   const displayName = profile?.display_name || account.account_name || "TikTok account";
   const username = profile?.username || account.account_name || "";
+  const avatarUrl = profile?.avatar_url || account.account_avatar_url || "";
+  const normalizedUsername = username.replace(/^@/, "").trim();
+  const canonicalProfileUrl = normalizedUsername ? `https://www.tiktok.com/@${normalizedUsername}` : "";
+  const profileWebLink = canonicalProfileUrl || profile?.profile_web_link || "";
+  const profileWebLabel = canonicalProfileUrl || profile?.profile_web_link || "";
+  const profileDeepLink = profile?.profile_deep_link || "";
   return (
     <div className="settings-section" style={{ marginBottom: 0 }}>
       <div className="settings-section-header">
@@ -363,32 +369,30 @@ function ProfilePanel({ profile, account }: { profile: TikTokProfile | null; acc
       </div>
       <div className="settings-section-body">
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <div style={{ width: 48, height: 48, borderRadius: 8, background: "linear-gradient(135deg, #111827, #0f766e)", display: "grid", placeItems: "center", color: "white", fontWeight: 700 }}>
-            {displayName.slice(0, 2).toUpperCase()}
-          </div>
+          <ProfileAvatar src={avatarUrl} label={displayName} />
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--dtext)", fontWeight: 700 }}>
               {displayName}
               {profile?.is_verified ? <BadgeCheck style={{ width: 15, height: 15, color: "var(--info)" }} /> : null}
             </div>
-            <div style={{ color: "var(--dmuted)", fontSize: 13 }}>{username ? `@${username.replace(/^@/, "")}` : account.id}</div>
+            <div style={{ color: "var(--dmuted)", fontSize: 13 }}>{normalizedUsername ? `@${normalizedUsername}` : account.id}</div>
           </div>
         </div>
         <div style={{ color: "var(--dtext)", fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>
           {profile?.bio_description || "No TikTok bio returned yet."}
         </div>
         <div style={{ display: "grid", gap: 9 }}>
-          {profile?.profile_web_link && (
-            <Link href={profile.profile_web_link} style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--daccent)", fontSize: 13, textDecoration: "none" }}>
+          {profileWebLink && (
+            <Link href={profileWebLink} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--daccent)", fontSize: 13, textDecoration: "none" }}>
               <ExternalLink style={{ width: 14, height: 14 }} />
-              {profile.profile_web_link}
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profileWebLabel}</span>
             </Link>
           )}
-          {profile?.profile_deep_link && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)", fontSize: 13, minWidth: 0 }}>
+          {profileDeepLink && (
+            <Link href={profileDeepLink} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)", fontSize: 13, minWidth: 0, textDecoration: "none" }}>
               <LinkIcon style={{ width: 14, height: 14, flexShrink: 0 }} />
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.profile_deep_link}</span>
-            </div>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profileDeepLink}</span>
+            </Link>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)", fontSize: 13 }}>
             <BadgeCheck style={{ width: 14, height: 14 }} />
@@ -396,6 +400,26 @@ function ProfilePanel({ profile, account }: { profile: TikTokProfile | null; acc
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ProfileAvatar({ src, label }: { src: string; label: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  const showImage = src && !failed;
+  return (
+    <div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(135deg, #111827, #0f766e)", display: "grid", placeItems: "center", color: "white", fontWeight: 700, overflow: "hidden", flexShrink: 0 }}>
+      {showImage ? (
+        <img
+          src={src}
+          alt=""
+          onError={() => setFailed(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+      ) : (
+        label.slice(0, 2).toUpperCase()
+      )}
     </div>
   );
 }
@@ -435,9 +459,7 @@ function VideosTable({ videos }: { videos: TikTokVideo[] }) {
               <tr key={video.id}>
                 <td style={tdStyle}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 38, height: 38, borderRadius: 6, background: "var(--surface2)", display: "grid", placeItems: "center", color: "var(--dmuted)" }}>
-                      <Play style={{ width: 15, height: 15 }} />
-                    </div>
+                    <VideoThumb video={video} />
                     <div>
                       <div style={{ color: "var(--dtext)", fontWeight: 600 }}>{video.title || video.video_description || "Untitled TikTok video"}</div>
                       <div style={{ color: "var(--dmuted2)", fontSize: 12, fontFamily: "var(--font-geist-mono), monospace" }}>{video.id}</div>
@@ -458,6 +480,26 @@ function VideosTable({ videos }: { videos: TikTokVideo[] }) {
         </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+function VideoThumb({ video }: { video: TikTokVideo }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [video.cover_image_url]);
+  const showImage = video.cover_image_url && !failed;
+  return (
+    <div style={{ width: 38, height: 38, borderRadius: 6, background: "var(--surface2)", display: "grid", placeItems: "center", color: "var(--dmuted)", overflow: "hidden", flexShrink: 0 }}>
+      {showImage ? (
+        <img
+          src={video.cover_image_url}
+          alt=""
+          onError={() => setFailed(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+      ) : (
+        <Play style={{ width: 15, height: 15 }} />
+      )}
     </div>
   );
 }

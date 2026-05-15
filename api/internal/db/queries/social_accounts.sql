@@ -171,8 +171,10 @@ UPDATE social_accounts
 SET access_token      = $2,
     refresh_token     = $3,
     token_expires_at  = $4,
-    metadata          = COALESCE($5, metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
-    scope             = $6,
+    account_name      = $5,
+    account_avatar_url= $6,
+    metadata          = COALESCE($7, metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    scope             = $8,
     status            = 'active',
     disconnected_at   = NULL,
     last_refreshed_at = NOW()

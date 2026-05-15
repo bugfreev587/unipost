@@ -9,7 +9,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, dismissSocialAccount, getOAuthConnectURL, listProfiles, getActivation, getMe,
+  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation, getMe,
   type SocialAccount, type Profile,
 } from "@/lib/api";
 import { isFacebookEnabledForMe } from "@/components/dashboard/shell";
@@ -75,7 +75,6 @@ export default function AccountsPage() {
   // the first connect fast and low-friction. Toggleable via "Show all".
   const [firstTimeMode, setFirstTimeMode] = useState(searchParams.get("first") === "1");
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
-  const [dismissTarget, setDismissTarget] = useState<string | null>(null);
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
   const [appPassword, setAppPassword] = useState("");
@@ -165,7 +164,7 @@ export default function AccountsPage() {
       setProfiles(profRes.data);
       // Load accounts from all profiles
       const allAccounts = await Promise.all(
-        profRes.data.map((p) => listSocialAccounts(token, p.id, { include_disconnected: true }))
+        profRes.data.map((p) => listSocialAccounts(token, p.id))
       );
       setAccounts(allAccounts.flatMap((r) => r.data));
     } catch (err) {
@@ -257,25 +256,6 @@ export default function AccountsPage() {
     }
     finally { setDisconnectTarget(null); }
   }
-
-  async function handleDismiss(accountId: string) {
-    const account = accounts.find((a) => a.id === accountId);
-    const ownerProfileId = account?.profile_id || profileId;
-    try {
-      setAccountsError(null);
-      const token = await getToken();
-      if (!token) return;
-      await dismissSocialAccount(token, ownerProfileId, accountId);
-      loadAccounts();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to dismiss account";
-      console.error("Failed to dismiss:", err);
-      setAccountsError({ message, topic: "account-dismiss-failure" });
-    } finally {
-      setDismissTarget(null);
-    }
-  }
-
 
   return (
     <>
@@ -542,19 +522,9 @@ export default function AccountsPage() {
                     </span>
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    {a.status === "disconnected" ? (
-                      <button
-                        className="dbtn dbtn-ghost"
-                        style={{ padding: "4px 10px", fontSize: 12 }}
-                        onClick={() => setDismissTarget(a.id)}
-                      >
-                        Dismiss
-                      </button>
-                    ) : (
-                      <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setDisconnectTarget(a.id)}>
-                        Disconnect
-                      </button>
-                    )}
+                    <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setDisconnectTarget(a.id)}>
+                      Disconnect
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -571,15 +541,6 @@ export default function AccountsPage() {
         variant="danger"
         onConfirm={() => disconnectTarget && handleDisconnect(disconnectTarget)}
         onCancel={() => setDisconnectTarget(null)}
-      />
-
-      <ConfirmModal
-        open={!!dismissTarget}
-        title="Dismiss Disconnected Account"
-        message="Hide this disconnected account from Quickstart permanently? Historical data will be kept, but the account will no longer appear in this dashboard view."
-        confirmLabel="Dismiss"
-        onConfirm={() => dismissTarget && handleDismiss(dismissTarget)}
-        onCancel={() => setDismissTarget(null)}
       />
 
       {pendingFacebookId && workspaceId && (

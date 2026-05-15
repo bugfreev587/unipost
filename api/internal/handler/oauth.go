@@ -374,12 +374,14 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				_, _ = h.queries.ReactivateSocialAccount(r.Context(), db.ReactivateSocialAccountParams{
-					ID:             existing.ID,
-					AccessToken:    encAccess,
-					RefreshToken:   pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
-					TokenExpiresAt: pgtype.Timestamptz{Time: result.TokenExpiresAt, Valid: !result.TokenExpiresAt.IsZero()},
-					Metadata:       metadataJSON,
-					Scope:          result.Scopes,
+					ID:               existing.ID,
+					AccessToken:      encAccess,
+					RefreshToken:     pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
+					TokenExpiresAt:   pgtype.Timestamptz{Time: result.TokenExpiresAt, Valid: !result.TokenExpiresAt.IsZero()},
+					AccountName:      pgtype.Text{String: result.AccountName, Valid: result.AccountName != ""},
+					AccountAvatarUrl: pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
+					Metadata:         metadataJSON,
+					Scope:            result.Scopes,
 				})
 				h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
 					Level:     integrationlogs.LevelInfo,
