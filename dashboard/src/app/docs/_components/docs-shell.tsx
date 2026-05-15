@@ -1,7 +1,7 @@
 "use client";
 
 import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
-import { ChevronRight, Search } from "lucide-react";
+import { ChevronRight, ListTree, Menu, Search, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
@@ -49,6 +49,8 @@ type HeadingItem = {
   text: string;
   level: "h2" | "h3";
 };
+
+type MobileDocsPanel = "nav" | "toc" | null;
 
 type DocsSearchResult = {
   title: string;
@@ -1012,6 +1014,9 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-toc-link.level-h3{position:relative;margin-left:12px;padding-left:22px;font-size:13.25px;color:var(--docs-nav-text-faint)}
 .docs-toc-link.level-h3::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:1px;background:var(--docs-border-strong);border-radius:999px}
 .docs-empty-toc{padding:8px;color:var(--docs-nav-text-faint);font-size:12.5px;line-height:1.6}
+.docs-mobile-menu-bar{display:none}
+.docs-mobile-drawer-overlay{display:none}
+.docs-mobile-drawer{display:none}
 .docs-home-section{margin-top:46px}
 .docs-home-section:first-of-type{margin-top:10px}
 .docs-kicker{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:10px}
@@ -1945,6 +1950,107 @@ html.dark .docs-shell-guide-redesign .docs-toc-link:hover{
   .docs-shell-guide-redesign .docs-page-guide-redesign .docs-lead{
     font-size:18px;
   }
+  .docs-mobile-menu-bar{
+    position:sticky;
+    top:var(--docs-topbar-height, 72px);
+    z-index:35;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 16px;
+    border-bottom:1px solid var(--docs-border);
+    background:color-mix(in srgb, var(--docs-bg-elevated) 94%, transparent);
+    backdrop-filter:blur(14px);
+  }
+  .docs-mobile-menu-button{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    min-height:38px;
+    padding:0 12px;
+    border:1px solid var(--docs-border-strong);
+    border-radius:10px;
+    background:var(--docs-bg-elevated);
+    color:var(--docs-text);
+    font-family:var(--docs-ui);
+    font-size:13px;
+    font-weight:700;
+    line-height:1;
+    cursor:pointer;
+    box-shadow:0 1px 0 rgba(15,23,42,.03);
+  }
+  .docs-mobile-menu-button.secondary{
+    color:var(--docs-text-muted);
+  }
+  .docs-mobile-menu-button svg{
+    width:17px;
+    height:17px;
+  }
+  .docs-mobile-drawer-overlay{
+    position:fixed;
+    inset:0;
+    z-index:95;
+    display:block;
+    background:rgba(9,11,17,.46);
+    backdrop-filter:blur(10px);
+  }
+  .docs-mobile-drawer{
+    position:fixed;
+    z-index:96;
+    top:0;
+    bottom:0;
+    left:0;
+    display:grid;
+    grid-template-rows:auto minmax(0,1fr);
+    width:min(88vw, 380px);
+    border-right:1px solid var(--docs-border);
+    background:var(--docs-nav-surface);
+    box-shadow:24px 0 70px rgba(0,0,0,.28);
+  }
+  .docs-mobile-drawer-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    padding:16px 16px 14px;
+    border-bottom:1px solid var(--docs-border);
+  }
+  .docs-mobile-drawer-title{
+    font-size:14px;
+    font-weight:760;
+    color:var(--docs-text);
+    letter-spacing:.01em;
+  }
+  .docs-mobile-drawer-close{
+    width:36px;
+    height:36px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid var(--docs-border);
+    border-radius:10px;
+    background:var(--docs-bg-muted);
+    color:var(--docs-text-muted);
+    cursor:pointer;
+  }
+  .docs-mobile-drawer-close svg{
+    width:18px;
+    height:18px;
+  }
+  .docs-mobile-drawer-body{
+    min-height:0;
+    overflow:auto;
+    padding:14px 14px 22px;
+  }
+  .docs-mobile-drawer .docs-sidebar-card,
+  .docs-mobile-drawer .docs-toc-card{
+    border:none;
+    border-radius:0;
+    box-shadow:none;
+    background:transparent;
+    padding:0;
+  }
 }
 .docs-chooser-overlay{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(10,14,20,.42);backdrop-filter:blur(12px)}
 .docs-chooser-card{width:min(640px,100%);background:var(--docs-bg-elevated);border:1px solid var(--docs-border);border-radius:24px;box-shadow:var(--docs-shadow);padding:28px}
@@ -2148,6 +2254,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const [activeHeading, setActiveHeading] = useState("");
   const [apiSidebarWidth, setApiSidebarWidth] = useState(API_SIDEBAR_DEFAULT_WIDTH);
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<MobileDocsPanel>(null);
   const [showUserChooser, setShowUserChooser] = useState(false);
   const [dontShowChooserAgain, setDontShowChooserAgain] = useState(false);
   const dragStartXRef = useRef(0);
@@ -2157,6 +2264,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const isApiPage = pathname.startsWith("/docs/api");
   const useGuideRedesign = isOverviewGuidePath(pathname);
   const useApiReferenceRedesign = isApiPage || useGuideRedesign;
+  const hasPageContents = !isApiPage && headings.length > 0;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2302,6 +2410,29 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     setShowUserChooser(true);
   }, [pathname, router]);
 
+  useEffect(() => {
+    setMobilePanel(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobilePanel || typeof window === "undefined") return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobilePanel(null);
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mobilePanel]);
+
   const topLinks = useMemo(() => DOCS_PRIMARY_NAV, []);
 
   const handleChooseDocsPath = (href: string) => {
@@ -2334,6 +2465,139 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const layoutStyle: DocsLayoutStyle | undefined = useApiReferenceRedesign
     ? { "--docs-api-sidebar-width": `${renderedApiSidebarWidth}px` }
     : undefined;
+  const closeMobilePanel = () => setMobilePanel(null);
+  const renderSidebarNavigation = (onNavigate?: () => void) => (
+    <div className="docs-sidebar-card">
+      {sidebarSections.map((section) => (
+        <section key={section.title} className="docs-sidebar-section">
+          <div className="docs-sidebar-section-header">
+            <div className="docs-section-label">{section.title}</div>
+            {section.description ? <div className="docs-section-desc">{section.description}</div> : null}
+          </div>
+          {section.items.map((item) =>
+            isNavGroup(item) ? (
+              <details
+                key={item.label}
+                className="docs-nav-subgroup"
+                open={isNavGroupActive(pathname, item)}
+              >
+                <summary className="docs-nav-subgroup-toggle">
+                  <span>{item.label}</span>
+                  <ChevronRight className="docs-nav-subgroup-chevron" strokeWidth={2.2} />
+                </summary>
+                <div className="docs-nav-subgroup-items">
+                  {item.children.map((child) => (
+                    <Link
+                      key={child.href}
+                      href={child.href}
+                      className={`docs-nav-link${isLeafActive(pathname, child.href) ? " active" : ""}`}
+                      onClick={onNavigate}
+                    >
+                      <span>{child.label}</span>
+                      {child.method ? (
+                        <span
+                          className="docs-nav-method"
+                          style={{
+                            fontFamily: "var(--docs-mono)",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            letterSpacing: ".04em",
+                            color: DOCS_METHOD_COLORS[child.method],
+                            flexShrink: 0,
+                          }}
+                        >
+                          {child.method}
+                        </span>
+                      ) : child.badge ? <span className="docs-nav-badge">{child.badge}</span> : null}
+                    </Link>
+                  ))}
+                </div>
+              </details>
+            ) : (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
+                onClick={onNavigate}
+              >
+                <span>{item.label}</span>
+                {item.method ? (
+                  <span
+                    className="docs-nav-method"
+                    style={{
+                      fontFamily: "var(--docs-mono)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      letterSpacing: ".04em",
+                      color: DOCS_METHOD_COLORS[item.method],
+                      flexShrink: 0,
+                    }}
+                  >
+                    {item.method}
+                  </span>
+                ) : item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
+              </Link>
+            )
+          )}
+        </section>
+      ))}
+    </div>
+  );
+  const renderTocNavigation = (onNavigate?: () => void) => (
+    <div className="docs-toc-card">
+      <div className="docs-toc-title">On This Page</div>
+      {headings.length === 0 ? (
+        <div className="docs-empty-toc">This page is a navigation hub. Open a guide or reference page to see section links here.</div>
+      ) : (
+        headings.map((heading) => (
+          <a
+            key={heading.id}
+            href={`${pathname}#${heading.id}`}
+            className={`docs-toc-link level-${heading.level}${activeHeading === heading.id ? " active" : ""}`}
+            onClick={onNavigate}
+          >
+            {heading.text}
+          </a>
+        ))
+      )}
+    </div>
+  );
+  const mobileDrawer = mobilePanel && typeof document !== "undefined"
+    ? createPortal(
+      <>
+        <button
+          type="button"
+          className="docs-mobile-drawer-overlay"
+          aria-label="Close docs menu"
+          onClick={closeMobilePanel}
+        />
+        <aside
+          className="docs-mobile-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="docs-mobile-drawer-title"
+        >
+          <div className="docs-mobile-drawer-header">
+            <div id="docs-mobile-drawer-title" className="docs-mobile-drawer-title">
+              {mobilePanel === "nav" ? "Docs navigation" : "On this page"}
+            </div>
+            <button
+              type="button"
+              className="docs-mobile-drawer-close"
+              aria-label="Close docs menu"
+              onClick={closeMobilePanel}
+            >
+              <X />
+            </button>
+          </div>
+          <div className="docs-mobile-drawer-body">
+            {mobilePanel === "nav" ? renderSidebarNavigation(closeMobilePanel) : renderTocNavigation(closeMobilePanel)}
+          </div>
+        </aside>
+      </>,
+      document.body,
+    )
+    : null;
 
   return (
     <div className={`docs-shell${useApiReferenceRedesign ? " docs-shell-redesign" : ""}${isApiPage ? " docs-shell-api docs-shell-api-create-post" : ""}${useGuideRedesign ? " docs-shell-guide-redesign" : ""}`}>
@@ -2389,84 +2653,37 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
+      <div className="docs-mobile-menu-bar">
+        <button
+          type="button"
+          className="docs-mobile-menu-button"
+          aria-label="Open docs navigation"
+          aria-expanded={mobilePanel === "nav"}
+          onClick={() => setMobilePanel("nav")}
+        >
+          <Menu />
+          Menu
+        </button>
+        {hasPageContents ? (
+          <button
+            type="button"
+            className="docs-mobile-menu-button secondary"
+            aria-label="Open page contents"
+            aria-expanded={mobilePanel === "toc"}
+            onClick={() => setMobilePanel("toc")}
+          >
+            <ListTree />
+            Contents
+          </button>
+        ) : null}
+      </div>
+
       <div
         className={`docs-layout${isApiPage ? " docs-layout-api" : ""}${useGuideRedesign ? " docs-layout-guide-redesign" : ""}${activePrimaryNav === "platforms" ? " docs-layout-platforms" : ""}`}
         style={layoutStyle}
       >
         <aside className="docs-sidebar">
-          <div className="docs-sidebar-card">
-            {sidebarSections.map((section) => (
-              <section key={section.title} className="docs-sidebar-section">
-                <div className="docs-sidebar-section-header">
-                  <div className="docs-section-label">{section.title}</div>
-                  {section.description ? <div className="docs-section-desc">{section.description}</div> : null}
-                </div>
-                {section.items.map((item) =>
-                  isNavGroup(item) ? (
-                    <details
-                      key={item.label}
-                      className="docs-nav-subgroup"
-                      open={isNavGroupActive(pathname, item)}
-                    >
-                      <summary className="docs-nav-subgroup-toggle">
-                        <span>{item.label}</span>
-                        <ChevronRight className="docs-nav-subgroup-chevron" strokeWidth={2.2} />
-                      </summary>
-                      <div className="docs-nav-subgroup-items">
-                        {item.children.map((child) => (
-                          <Link
-                            key={child.href}
-                            href={child.href}
-                            className={`docs-nav-link${isLeafActive(pathname, child.href) ? " active" : ""}`}
-                          >
-                            <span>{child.label}</span>
-                            {child.method ? (
-                              <span
-                                className="docs-nav-method"
-                                style={{
-                                  fontFamily: "var(--docs-mono)",
-                                  fontSize: 12,
-                                  fontWeight: 700,
-                                  letterSpacing: ".04em",
-                                  color: DOCS_METHOD_COLORS[child.method],
-                                  flexShrink: 0,
-                                }}
-                              >
-                                {child.method}
-                              </span>
-                            ) : child.badge ? <span className="docs-nav-badge">{child.badge}</span> : null}
-                          </Link>
-                        ))}
-                      </div>
-                    </details>
-                  ) : (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
-                    >
-                      <span>{item.label}</span>
-                      {item.method ? (
-                        <span
-                          className="docs-nav-method"
-                          style={{
-                            fontFamily: "var(--docs-mono)",
-                            fontSize: 12,
-                            fontWeight: 700,
-                            letterSpacing: ".04em",
-                            color: DOCS_METHOD_COLORS[item.method],
-                            flexShrink: 0,
-                          }}
-                        >
-                          {item.method}
-                        </span>
-                      ) : item.badge ? <span className="docs-nav-badge">{item.badge}</span> : null}
-                    </Link>
-                  )
-                )}
-              </section>
-            ))}
-          </div>
+          {renderSidebarNavigation()}
         </aside>
 
         {isApiPage ? (
@@ -2491,25 +2708,11 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
         {!isApiPage ? (
           <aside className="docs-toc">
-            <div className="docs-toc-card">
-              <div className="docs-toc-title">On This Page</div>
-              {headings.length === 0 ? (
-                <div className="docs-empty-toc">This page is a navigation hub. Open a guide or reference page to see section links here.</div>
-              ) : (
-                headings.map((heading) => (
-                  <a
-                    key={heading.id}
-                    href={`${pathname}#${heading.id}`}
-                    className={`docs-toc-link level-${heading.level}${activeHeading === heading.id ? " active" : ""}`}
-                  >
-                    {heading.text}
-                  </a>
-                ))
-              )}
-            </div>
+            {renderTocNavigation()}
           </aside>
         ) : null}
       </div>
+      {mobileDrawer}
       {showUserChooser ? (
         <div className="docs-chooser-overlay" role="dialog" aria-modal="true" aria-labelledby="docs-user-chooser-title">
           <div className="docs-chooser-card">
