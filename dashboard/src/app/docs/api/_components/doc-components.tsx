@@ -1396,43 +1396,77 @@ export function ApiReferenceGrid({
   }
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) minmax(420px, 496px)",
-        gap: 28,
-        alignItems: "start",
-      }}
-      className="api-reference-grid"
-    >
+    <div className="api-reference-grid-shell">
       <style
         dangerouslySetInnerHTML={{
           __html: `
+            .api-reference-grid-shell{
+              width:100%;
+              min-width:0;
+              container-type:inline-size;
+            }
+            .api-reference-grid{
+              display:grid;
+              grid-template-columns:minmax(420px, 1fr) minmax(340px, 496px);
+              gap:clamp(22px, 2.4cqi, 32px);
+              align-items:start;
+              min-width:0;
+            }
             .api-reference-grid-right{
               position:sticky;
               top:96px;
               align-self:start;
+              min-width:0;
             }
-            @media (max-width: 1080px){
+            .api-reference-grid-left{
+              min-width:0;
+            }
+            @container (max-width: 960px){
               .api-reference-grid{
                 grid-template-columns:1fr!important;
               }
               .api-reference-grid-right{
                 position:static!important;
                 top:auto!important;
+                max-height:none!important;
+                overflow:visible!important;
+                padding-right:0!important;
+              }
+            }
+            @container (max-width: 620px){
+              .api-reference-grid{
+                gap:22px;
+              }
+              .api-reference-grid-right .docs-code-tabs-header{
+                padding:12px 12px 0;
+              }
+              .api-reference-grid-right .docs-code-tabs > .docs-code-tabs-header .docs-code-tab-list{
+                padding-right:0;
+              }
+              .api-reference-grid-right .docs-code-tabs > .docs-code-tabs-header .docs-copy-button,
+              .api-reference-grid-right .docs-code-tabs > .docs-code-tabs-header .docs-expand-button{
+                opacity:1;
+                transform:none;
+              }
+              .api-reference-grid-right .docs-code-tabs > .docs-code-tabs-header .docs-copy-button{
+                right:50px;
+              }
+              .api-reference-grid-right .docs-code-tabs > .docs-code-tabs-header .docs-expand-button{
+                right:10px;
               }
             }
           `,
         }}
       />
-      <div style={{ minWidth: 0 }}>{left}</div>
-      <div
-        ref={rightColumnRef}
-        className="api-reference-grid-right"
-        onWheelCapture={handleRightColumnWheelCapture}
-        style={{ minWidth: 0 }}
-      >
-        {right}
+      <div className="api-reference-grid">
+        <div className="api-reference-grid-left">{left}</div>
+        <div
+          ref={rightColumnRef}
+          className="api-reference-grid-right"
+          onWheelCapture={handleRightColumnWheelCapture}
+        >
+          {right}
+        </div>
       </div>
     </div>
   );
