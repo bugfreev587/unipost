@@ -8,9 +8,9 @@ UniPost deploys backend code from Railway and frontend code from Vercel. Merging
 2. Route all new backend feature checks through `api/internal/featureflags` instead of reading scattered environment variables.
 3. Run with `FEATURE_FLAGS_PROVIDER=env` until the Unleash service is deployed.
 4. Deploy Unleash as an independent Railway service backed by its own PostgreSQL database.
-5. Create Unleash environments for `development`, `preview`, and `production`.
+5. Use Unleash environments for `development` and `production`. Add `preview` later only if the Unleash edition and release process need a separate preview target.
 6. Switch the API to `FEATURE_FLAGS_PROVIDER=unleash` environment by environment.
-7. Add a read-only UniPost admin status page after backend and frontend checks both use the shared API surface.
+7. Add a read-only UniPost admin status page at `/admin/features` after backend and frontend checks both use the shared API surface.
 
 ## Railway Unleash Service
 
@@ -94,7 +94,6 @@ Recommended defaults:
 
 ```text
 development: on
-preview: on for internal users/workspaces
 production: off
 fallback: off in production
 ```
@@ -108,3 +107,13 @@ video.list
 ```
 
 Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
+
+## Admin Status Page
+
+UniPost admins can inspect evaluated flag state from:
+
+```text
+/admin/features
+```
+
+This page calls the backend `GET /v1/me/features` endpoint and never connects to Unleash directly. It shows the runtime environment, active provider, enabled flag count, and the current value for each registered UniPost flag. The page is read-only by design; operational changes still happen in Unleash so emergency rollback remains a single production flag toggle.
