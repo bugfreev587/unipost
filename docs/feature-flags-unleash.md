@@ -58,6 +58,30 @@ UNLEASH_ENVIRONMENT=production
 
 Backend SDKs evaluate flags locally from cached definitions. If Unleash is unreachable at startup, UniPost falls back to the env provider rather than blocking API boot.
 
+## Frontend Contract
+
+The dashboard should not connect to Unleash directly in the first rollout. It should call:
+
+```text
+GET /v1/me/features
+```
+
+The response is intentionally simple:
+
+```json
+{
+  "data": {
+    "environment": "production",
+    "provider": "unleash",
+    "flags": {
+      "tiktok.analytics_scopes": false
+    }
+  }
+}
+```
+
+The browser can use this to show or hide UI affordances. The backend must still enforce any sensitive behavior in the API handler or platform adapter that performs the action.
+
 ## Initial Flags
 
 Create this flag in Unleash:

@@ -515,6 +515,7 @@ func main() {
 		r.Use(auth.ClerkSessionMiddleware)
 
 		r.Get("/v1/me", meHandler.Get)
+		r.Get("/v1/me/features", meHandler.Features)
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
 		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding)
 		r.Patch("/v1/me/intent", meHandler.SetIntent)

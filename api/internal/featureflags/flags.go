@@ -122,6 +122,14 @@ func DefinitionFor(flag Flag) (Definition, bool) {
 	return def, ok
 }
 
+func Definitions() []Definition {
+	items := make([]Definition, 0, len(definitions))
+	for _, def := range definitions {
+		items = append(items, def)
+	}
+	return items
+}
+
 func normalizeTarget(target Target) Target {
 	if strings.TrimSpace(target.Env) == "" {
 		target.Env = runtimeenv.Current()

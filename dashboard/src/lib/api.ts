@@ -1698,6 +1698,16 @@ export interface MeResponse {
   onboarding_shown_at?: string;
 }
 
+export interface FeatureFlagsResponse {
+  environment: string;
+  provider: string;
+  flags: Record<string, boolean>;
+}
+
+export async function getFeatureFlags(token: string): Promise<ApiResponse<FeatureFlagsResponse>> {
+  return request("/v1/me/features", token);
+}
+
 // ── Members & invites (RBAC) ──
 
 export interface Member {
