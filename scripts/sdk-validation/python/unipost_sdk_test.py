@@ -25,6 +25,10 @@ created_media_ids = []
 created_platform_credentials = []
 
 
+class SkipTest(Exception):
+    pass
+
+
 def pick_stable_profile(profiles, workspace):
     if not profiles:
         return None
@@ -70,6 +74,12 @@ def is_transient_env_issue(exc):
     return code in ("rate_limited", "rate_limit") or "too many requests" in text or "timed out" in text
 
 
+def is_tiktok_reconnect_required(exc):
+    code = (getattr(exc, "code", "") or "").lower()
+    text = str(exc).lower()
+    return code == "needs_reconnect" or "reconnect" in text or "tiktok rejected your credentials" in text or "missing scope" in text
+
+
 def test(name, fn):
     global passed, failed, skipped
     print(f"  {name} ... ", end="", flush=True)
@@ -79,6 +89,10 @@ def test(name, fn):
         passed += 1
         return value
     except Exception as exc:
+        if isinstance(exc, SkipTest):
+            print(f"⏭ SKIP — {exc}")
+            skipped += 1
+            return None
         if is_plan_gated(exc):
             print(f"⏭ SKIP — Plan-gated ({exc.code})")
             skipped += 1
@@ -449,7 +463,12 @@ def _test_accounts_capabilities(client, account_id):
 
 
 def _test_tiktok_creator_info(client, account_id):
-    payload = client.accounts.tiktok_creator_info(account_id)
+    try:
+        payload = client.accounts.tiktok_creator_info(account_id)
+    except UniPostError as exc:
+        if is_tiktok_reconnect_required(exc):
+            raise SkipTest("TikTok account needs reconnect") from exc
+        raise
     assert_true("creator_username" in payload or "creator_nickname" in payload, "Expected TikTok creator info")
     return payload
 

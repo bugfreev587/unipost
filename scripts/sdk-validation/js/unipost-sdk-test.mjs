@@ -17,6 +17,8 @@ const createdWebhookIds = [];
 const createdMediaIds = [];
 const createdPlatformCredentialKeys = [];
 
+class SkipTestError extends Error {}
+
 function pickStableProfile(profiles = [], workspace) {
   if (!Array.isArray(profiles) || profiles.length === 0) return null;
 
@@ -43,6 +45,11 @@ async function test(name, fn) {
     passed += 1;
     return result;
   } catch (error) {
+    if (error instanceof SkipTestError) {
+      console.log(`⏭ SKIP — ${error.message}`);
+      skipped += 1;
+      return null;
+    }
     // Convert plan-gated 402s into SKIPs so the regression suite can
     // run end-to-end against any plan tier without spurious failures
     // on Analytics / profile cap / etc. when the test workspace is
@@ -77,6 +84,15 @@ function isPlanGated(error) {
     'profile_limit_reached',
     'member_limit_reached',
   ].includes(error.code);
+}
+
+function isTikTokReconnectRequired(error) {
+  const code = String(error?.code || '').toLowerCase();
+  const message = String(error?.message || error || '').toLowerCase();
+  return code === 'needs_reconnect' ||
+    message.includes('reconnect') ||
+    message.includes('tiktok rejected your credentials') ||
+    message.includes('missing scope');
 }
 
 function assert(condition, message) {
@@ -288,7 +304,15 @@ async function main() {
 
   if (tikTokAccount) {
     await test('accounts.tikTokCreatorInfo()', async () => {
-      const res = await client.accounts.tikTokCreatorInfo(tikTokAccount.id);
+      let res;
+      try {
+        res = await client.accounts.tikTokCreatorInfo(tikTokAccount.id);
+      } catch (error) {
+        if (isTikTokReconnectRequired(error)) {
+          throw new SkipTestError('TikTok account needs reconnect');
+        }
+        throw error;
+      }
       assert(typeof res.creator_username === 'string' || typeof res.creator_nickname === 'string', 'Expected TikTok creator fields');
     });
   } else {
