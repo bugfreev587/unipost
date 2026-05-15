@@ -821,6 +821,7 @@ func main() {
 func corsAllowedOrigins() []string {
 	origins := []string{
 		"https://app.unipost.dev",
+		"https://dev-app.unipost.dev",
 		"https://dev.unipost.dev",
 		"https://unipost.dev",
 		"http://localhost:3000",
