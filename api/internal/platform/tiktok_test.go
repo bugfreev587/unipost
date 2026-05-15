@@ -1,7 +1,9 @@
 package platform
 
-import "testing"
-import "net/url"
+import (
+	"net/url"
+	"testing"
+)
 
 func TestBuildTikTokPostInfoIncludesRequiredToggles(t *testing.T) {
 	info := buildTikTokPostInfo("hello", "PUBLIC_TO_EVERYONE", nil, "video")
@@ -29,7 +31,9 @@ func TestBuildTikTokPostInfoIncludesRequiredToggles(t *testing.T) {
 	}
 }
 
-func TestTikTokOAuthScopesIncludeAnalytics(t *testing.T) {
+func TestTikTokOAuthScopesDefaultToApprovedProductionSet(t *testing.T) {
+	t.Setenv("TIKTOK_ANALYTICS_SCOPES_ENABLED", "")
+
 	adapter := NewTikTokAdapter()
 	config := adapter.DefaultOAuthConfig("https://api.unipost.dev")
 	got := adapter.GetAuthURL(config, "state-1")
@@ -37,7 +41,23 @@ func TestTikTokOAuthScopesIncludeAnalytics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload"
+	want := "video.publish,video.upload,user.info.basic"
+	if q := u.Query().Get("scope"); q != want {
+		t.Fatalf("scope = %q, want %q", q, want)
+	}
+}
+
+func TestTikTokOAuthScopesIncludeAnalyticsWhenEnabled(t *testing.T) {
+	t.Setenv("TIKTOK_ANALYTICS_SCOPES_ENABLED", "true")
+
+	adapter := NewTikTokAdapter()
+	config := adapter.DefaultOAuthConfig("https://api.unipost.dev")
+	got := adapter.GetAuthURL(config, "state-1")
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "video.publish,video.upload,user.info.basic,user.info.profile,user.info.stats,video.list"
 	if q := u.Query().Get("scope"); q != want {
 		t.Fatalf("scope = %q, want %q", q, want)
 	}

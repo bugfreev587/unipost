@@ -24,13 +24,16 @@ type TikTokAdapter struct {
 
 const tiktokHomepageURL = "https://www.tiktok.com"
 
-var tiktokScopes = []string{
+var tiktokLegacyScopes = []string{
+	"video.publish",
+	"video.upload",
 	"user.info.basic",
+}
+
+var tiktokAnalyticsScopes = []string{
 	"user.info.profile",
 	"user.info.stats",
 	"video.list",
-	"video.publish",
-	"video.upload",
 }
 
 func NewTikTokAdapter() *TikTokAdapter {
@@ -54,8 +57,21 @@ func (a *TikTokAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 		AuthURL:      "https://www.tiktok.com/v2/auth/authorize/",
 		TokenURL:     "https://open.tiktokapis.com/v2/oauth/token/",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/tiktok",
-		Scopes:       tiktokScopes,
+		Scopes:       tiktokOAuthScopes(),
 	}
+}
+
+func tiktokOAuthScopes() []string {
+	scopes := append([]string(nil), tiktokLegacyScopes...)
+	if !truthyEnv("TIKTOK_ANALYTICS_SCOPES_ENABLED") {
+		return scopes
+	}
+	return append(scopes, tiktokAnalyticsScopes...)
+}
+
+func truthyEnv(name string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 func (a *TikTokAdapter) GetAuthURL(config OAuthConfig, state string) string {
