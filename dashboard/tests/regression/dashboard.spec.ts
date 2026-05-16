@@ -1,0 +1,86 @@
+import { expect, test, type Page } from "@playwright/test";
+
+const testEmail = process.env.DASHBOARD_TEST_EMAIL;
+const testPassword = process.env.DASHBOARD_TEST_PASSWORD;
+const configuredProfileId = process.env.DASHBOARD_TEST_PROFILE_ID;
+
+const publicRoutes = [
+  { path: "/docs", marker: /UniPost|Dashboard|API/i },
+  { path: "/pricing", marker: /Free|Basic|Growth|Team/i },
+  { path: "/tools/tiktok-analytics", marker: /TikTok Analytics/i },
+];
+
+test.describe("public dashboard surfaces", () => {
+  for (const route of publicRoutes) {
+    test(`${route.path} loads without server errors`, async ({ page }) => {
+      const serverErrors: string[] = [];
+      page.on("response", (response) => {
+        if (response.status() >= 500) {
+          serverErrors.push(`${response.status()} ${response.url()}`);
+        }
+      });
+
+      await page.goto(route.path, { waitUntil: "domcontentloaded" });
+      await expect(page.getByText(route.marker).first()).toBeVisible();
+      expect(serverErrors).toEqual([]);
+    });
+  }
+});
+
+test.describe("authenticated dashboard smoke", () => {
+  test.skip(!testEmail || !testPassword, "Set DASHBOARD_TEST_EMAIL and DASHBOARD_TEST_PASSWORD to enable authenticated dashboard regression.");
+
+  test("core dashboard routes load and preserve feature-flag gating", async ({ page }) => {
+    await signIn(page, testEmail!, testPassword!);
+    const profileId = configuredProfileId || await resolveProfileId(page);
+
+    await expectDashboardRoute(page, `/projects/${profileId}`);
+    await expectDashboardRoute(page, `/projects/${profileId}/accounts`);
+    await expectDashboardRoute(page, `/projects/${profileId}/posts`);
+    await expectDashboardRoute(page, `/projects/${profileId}/analytics`);
+    await expectDashboardRoute(page, `/projects/${profileId}/settings`);
+
+    await page.goto(`/projects/${profileId}/analytics/platforms/tiktok`, { waitUntil: "networkidle" });
+    await expect(page.getByText(/TikTok Analytics|TikTok analytics is disabled/).first()).toBeVisible();
+  });
+});
+
+async function signIn(page: Page, email: string, password: string) {
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  if (!page.url().includes("clerk") && !page.url().includes("sign-in")) {
+    await expect(page.getByText(/Navigate|Profiles|Posts|Dashboard/i).first()).toBeVisible();
+    return;
+  }
+
+  await page.getByLabel(/email/i).fill(email);
+  const continueButton = page.getByRole("button", { name: /continue|next/i });
+  if (await continueButton.isVisible().catch(() => false)) {
+    await continueButton.click();
+  }
+  await page.getByLabel(/password/i).fill(password);
+  await page.getByRole("button", { name: /continue|sign in|log in/i }).click();
+  await page.waitForURL((url) => !url.hostname.includes("clerk") && !url.pathname.includes("sign-in"), { timeout: 30_000 });
+}
+
+async function resolveProfileId(page: Page): Promise<string> {
+  await page.goto("/projects", { waitUntil: "networkidle" });
+  const projectLink = page.locator('a[href^="/projects/"]').first();
+  await expect(projectLink).toBeVisible();
+  const href = await projectLink.getAttribute("href");
+  const profileId = href?.match(/^\/projects\/([^/]+)/)?.[1];
+  if (!profileId) throw new Error("Could not resolve dashboard profile id from /projects");
+  return profileId;
+}
+
+async function expectDashboardRoute(page: Page, path: string) {
+  const failedRequests: string[] = [];
+  page.on("response", (response) => {
+    if (response.status() >= 500) {
+      failedRequests.push(`${response.status()} ${response.url()}`);
+    }
+  });
+
+  await page.goto(path, { waitUntil: "networkidle" });
+  await expect(page.locator("body")).toContainText(/Navigate|Settings|Posts|Analytics|Connections|Profiles/);
+  expect(failedRequests).toEqual([]);
+}
