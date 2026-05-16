@@ -9,8 +9,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 type tiktokProfileResponse struct {
@@ -96,6 +99,10 @@ func (h *SocialAccountHandler) loadTikTokForAnalytics(w http.ResponseWriter, r *
 		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Account is not a TikTok account")
 		return nil, nil, "", false
 	}
+	if !tiktokAnalyticsScopesEnabled(r) {
+		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "TikTok analytics is not enabled in this environment.")
+		return nil, nil, "", false
+	}
 
 	adapter, err := platform.Get("tiktok")
 	if err != nil {
@@ -115,6 +122,14 @@ func (h *SocialAccountHandler) loadTikTokForAnalytics(w http.ResponseWriter, r *
 		return nil, nil, "", false
 	}
 	return acc, tiktokAdapter, accessToken, true
+}
+
+func tiktokAnalyticsScopesEnabled(r *http.Request) bool {
+	return featureflags.Enabled(r.Context(), featureflags.TikTokAnalyticsScopes, featureflags.Target{
+		UserID:      auth.GetUserID(r.Context()),
+		WorkspaceID: auth.GetWorkspaceID(r.Context()),
+		Env:         runtimeenv.Current(),
+	})
 }
 
 func accountIDFromRequest(r *http.Request) string {

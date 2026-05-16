@@ -73,6 +73,10 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 			"Account is disconnected — reconnect before fetching metrics")
 		return
 	}
+	if acc.Platform == "tiktok" && !tiktokAnalyticsScopesEnabled(r) {
+		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "TikTok analytics is not enabled in this environment.")
+		return
+	}
 
 	adapter, err := platform.Get(acc.Platform)
 	if err != nil {

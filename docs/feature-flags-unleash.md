@@ -106,7 +106,7 @@ user.info.stats
 video.list
 ```
 
-Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
+It also controls the dashboard TikTok platform analytics surface under `Analytics -> Platforms -> TikTok` and the backend endpoints that fetch TikTok profile, account metrics, and public video inventory. Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
 
 ## Admin Status Page
 
