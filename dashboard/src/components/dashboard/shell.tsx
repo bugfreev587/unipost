@@ -7,6 +7,8 @@ import { useAuth, useUser, useClerk } from "@clerk/nextjs";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { useTheme } from "@/components/theme-provider";
 import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
+import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
+import { useFeatureFlags } from "@/lib/use-feature-flags";
 // useClerk kept for signOut
 import {
   DropdownMenu,
@@ -38,6 +40,7 @@ import {
   BookOpen,
   Sun,
   Moon,
+  type LucideIcon,
 } from "lucide-react";
 
 // Feature flag: NEXT_PUBLIC_FEATURE_INBOX controls Inbox visibility.
@@ -51,8 +54,25 @@ function isFeatureEnabled(envVar: string | undefined, userId: string | undefined
   return false;
 }
 
-// Items with `featureFlag` are gated by the env var check.
-const ALL_NAV_ITEMS = [
+type NavSubItem = {
+  href: string;
+  label: string;
+  backendFlag?: string;
+};
+
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  exactMatch?: boolean;
+  featureFlag?: string;
+  backendFlag?: string;
+  submenu?: NavSubItem[];
+};
+
+// Items with `featureFlag` are gated by the env var check. Items with
+// `backendFlag` are gated by /v1/me/features.
+const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/profile", label: "Profiles", icon: Layers },
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
     { href: "/accounts", label: "Quickstart" },
@@ -67,7 +87,7 @@ const ALL_NAV_ITEMS = [
   { href: "/logs", label: "Logs", icon: FileText },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
-    { href: "/analytics/platforms", label: "Platforms" },
+    { href: "/analytics/platforms", label: "Platforms", backendFlag: FEATURE_FLAG_KEYS.tiktokAnalyticsScopes },
     { href: "/analytics/api", label: "API" },
   ]},
 ];
@@ -93,16 +113,17 @@ function getServerSnapshot() {
 }
 
 // Filter nav items based only on feature flags.
-function filterNavItems(userId?: string, userEmail?: string) {
+function filterNavItems(userId?: string, userEmail?: string, backendFlags?: Record<string, boolean>) {
   return ALL_NAV_ITEMS.filter((item) => {
     // Feature flag gate
     if ("featureFlag" in item && item.featureFlag) {
       if (!isFeatureEnabled(FEATURE_FLAGS[item.featureFlag], userId, userEmail)) return false;
     }
+    if (item.backendFlag && !backendFlags?.[item.backendFlag]) return false;
     return true;
   }).map((item) => {
     if (!item.submenu) return item;
-    const filteredSub = item.submenu;
+    const filteredSub = item.submenu.filter((sub) => !sub.backendFlag || backendFlags?.[sub.backendFlag]);
     return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
   }).filter((item) => item.submenu === undefined || item.submenu.length > 0);
 }
@@ -120,6 +141,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useUser();
   const { signOut } = useClerk();
   const { resolvedTheme, setTheme } = useTheme();
+  const { flags: backendFeatureFlags } = useFeatureFlags();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -156,7 +178,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     Boolean(profileId) && inboxFeatureEnabled,
   );
 
-  const navItems = filterNavItems(user?.id, user?.primaryEmailAddress?.emailAddress);
+  const navItems = filterNavItems(user?.id, user?.primaryEmailAddress?.emailAddress, backendFeatureFlags);
 
   // Auto-expand the submenu that matches the current URL on navigation,
   // but only when the pathname actually changes — not on every render.
