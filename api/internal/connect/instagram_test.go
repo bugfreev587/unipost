@@ -27,7 +27,7 @@ func TestInstagramAuthorizeURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if u.Host != "api.instagram.com" {
+	if u.Host != "www.instagram.com" {
 		t.Errorf("host: got %q", u.Host)
 	}
 	q := u.Query()
@@ -39,6 +39,9 @@ func TestInstagramAuthorizeURL(t *testing.T) {
 	}
 	if q.Get("scope") != instagramScopes {
 		t.Errorf("scope: got %q", q.Get("scope"))
+	}
+	if q.Get("enable_fb_login") != "0" {
+		t.Errorf("enable_fb_login: got %q", q.Get("enable_fb_login"))
 	}
 	// No PKCE on Instagram's authorize URL.
 	if q.Get("code_challenge") != "" || q.Get("code_challenge_method") != "" {
@@ -203,7 +206,7 @@ func TestInstagramRefresh_ReusesAccessTokenSlot(t *testing.T) {
 // analytics, comments, and DMs — all submitted together for Meta
 // App Review.
 func TestInstagramScopes_LockedToBusinessAPI(t *testing.T) {
-	wantScopes := "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments"
+	wantScopes := "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments,instagram_business_manage_messages"
 	if instagramScopes != wantScopes {
 		t.Errorf("instagramScopes drift: got %q, want %q", instagramScopes, wantScopes)
 	}

@@ -29,7 +29,7 @@ func (a *InstagramAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfi
 	return OAuthConfig{
 		ClientID:     os.Getenv("INSTAGRAM_APP_ID"),
 		ClientSecret: os.Getenv("INSTAGRAM_APP_SECRET"),
-		AuthURL:      "https://api.instagram.com/oauth/authorize",
+		AuthURL:      "https://www.instagram.com/oauth/authorize",
 		TokenURL:     "https://api.instagram.com/oauth/access_token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/instagram",
 		Scopes: []string{
@@ -43,7 +43,15 @@ func (a *InstagramAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfi
 }
 
 func (a *InstagramAdapter) GetAuthURL(config OAuthConfig, state string) string {
-	return BuildAuthURL(config.AuthURL, config.ClientID, config.RedirectURL, state, config.Scopes)
+	params := url.Values{
+		"client_id":       {config.ClientID},
+		"redirect_uri":    {config.RedirectURL},
+		"response_type":   {"code"},
+		"state":           {state},
+		"scope":           {strings.Join(config.Scopes, ",")},
+		"enable_fb_login": {"0"},
+	}
+	return config.AuthURL + "?" + params.Encode()
 }
 
 func (a *InstagramAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, code string) (*ConnectResult, error) {

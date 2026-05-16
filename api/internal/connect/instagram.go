@@ -50,16 +50,16 @@ import (
 )
 
 const (
-	instagramAuthorizeEndpoint  = "https://api.instagram.com/oauth/authorize"
-	instagramTokenEndpoint      = "https://api.instagram.com/oauth/access_token"
-	instagramLongLivedEndpoint  = "https://graph.instagram.com/access_token"
-	instagramRefreshEndpoint    = "https://graph.instagram.com/refresh_access_token"
-	instagramProfileEndpoint    = "https://graph.instagram.com/v21.0/me"
+	instagramAuthorizeEndpoint = "https://www.instagram.com/oauth/authorize"
+	instagramTokenEndpoint     = "https://api.instagram.com/oauth/access_token"
+	instagramLongLivedEndpoint = "https://graph.instagram.com/access_token"
+	instagramRefreshEndpoint   = "https://graph.instagram.com/refresh_access_token"
+	instagramProfileEndpoint   = "https://graph.instagram.com/v21.0/me"
 
 	// Comma-separated per Instagram's API contract (LinkedIn uses
 	// space-separated, Twitter uses space-separated — Meta is the
 	// odd one out here, hence the explicit constant).
-	instagramScopes = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments"
+	instagramScopes = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments,instagram_business_manage_messages"
 )
 
 // InstagramConnector is the Connect Connector for Instagram.
@@ -99,7 +99,7 @@ func NewInstagramConnector(clientID, clientSecret, callbackBaseURL string) *Inst
 
 func (c *InstagramConnector) Platform() string { return "instagram" }
 
-// AuthorizeURL builds the api.instagram.com authorize URL. No PKCE.
+// AuthorizeURL builds the Instagram Business Login authorize URL. No PKCE.
 // Instagram's authorize endpoint requires response_type=code and the
 // redirect_uri to match the one registered in the Meta App dashboard
 // exactly (down to the trailing slash).
@@ -110,6 +110,7 @@ func (c *InstagramConnector) AuthorizeURL(session SessionView) (string, error) {
 	q.Set("response_type", "code")
 	q.Set("scope", instagramScopes)
 	q.Set("state", session.OAuthState)
+	q.Set("enable_fb_login", "0")
 	return c.AuthorizeEndpoint + "?" + q.Encode(), nil
 }
 
