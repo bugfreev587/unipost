@@ -8,6 +8,10 @@
 # Node dependencies.
 node_modules/
 
+# Playwright artifacts.
+playwright-report/
+test-results/
+
 # Python bytecode caches.
 __pycache__/
 *.pyc
