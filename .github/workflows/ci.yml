@@ -79,6 +79,7 @@ jobs:
       NEXT_PUBLIC_BASE_URL: https://unipost.dev
       NEXT_PUBLIC_LANDING_URL: https://unipost.dev
       NEXT_PUBLIC_APP_HOST: localhost:3000
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
     defaults:
       run:
         working-directory: dashboard
