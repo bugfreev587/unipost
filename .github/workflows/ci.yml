@@ -23,6 +23,8 @@ jobs:
     name: API tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      API_COVERAGE_MIN: "9.0"
     defaults:
       run:
         working-directory: api
@@ -34,8 +36,35 @@ jobs:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
 
-      - name: Run Go tests
-        run: go test ./...
+      - name: Run Go tests with coverage
+        run: go test ./... -covermode=atomic -coverprofile=coverage.out
+
+      - name: Summarize Go coverage
+        run: |
+          go tool cover -func=coverage.out | tee coverage.txt
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}')"
+          coverage="${total%\%}"
+          {
+            echo "### API coverage"
+            echo
+            echo "Total statement coverage: ${total}"
+            echo "Minimum required coverage: ${API_COVERAGE_MIN}%"
+          } >> "$GITHUB_STEP_SUMMARY"
+          awk -v coverage="$coverage" -v minimum="$API_COVERAGE_MIN" 'BEGIN {
+            if ((coverage + 0) < (minimum + 0)) {
+              printf("API coverage %.1f%% is below the %.1f%% minimum\n", coverage, minimum) > "/dev/stderr"
+              exit 1
+            }
+          }'
+
+      - name: Upload Go coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-go-coverage
+          path: |
+            api/coverage.out
+            api/coverage.txt
+          if-no-files-found: error
 
   dashboard:
     name: Dashboard build
@@ -43,11 +72,13 @@ jobs:
     timeout-minutes: 25
     env:
       NEXT_TELEMETRY_DISABLED: "1"
+      DASHBOARD_BASE_URL: http://localhost:3000
+      DASHBOARD_WEB_SERVER: "1"
       NEXT_PUBLIC_API_URL: https://api.unipost.dev
-      NEXT_PUBLIC_APP_URL: https://app.unipost.dev
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_BASE_URL: https://unipost.dev
       NEXT_PUBLIC_LANDING_URL: https://unipost.dev
-      NEXT_PUBLIC_APP_HOST: app.unipost.dev
+      NEXT_PUBLIC_APP_HOST: localhost:3000
     defaults:
       run:
         working-directory: dashboard
@@ -65,3 +96,25 @@ jobs:
 
       - name: Build dashboard
         run: npm run build
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run dashboard smoke regression
+        run: npm run test:regression:dashboard
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-dashboard-playwright-report
+          path: dashboard/playwright-report
+          if-no-files-found: ignore
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-dashboard-test-results
+          path: dashboard/test-results
+          if-no-files-found: ignore

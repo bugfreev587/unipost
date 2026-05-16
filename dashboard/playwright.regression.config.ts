@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.DASHBOARD_BASE_URL || "https://app.unipost.dev";
+const startLocalServer = process.env.DASHBOARD_WEB_SERVER === "1";
 
 export default defineConfig({
   testDir: "./tests/regression",
@@ -20,6 +21,14 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
+  webServer: startLocalServer
+    ? {
+        command: "npm run start -- --hostname 0.0.0.0 --port 3000",
+        url: `${baseURL}/docs`,
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+      }
+    : undefined,
   projects: [
     {
       name: "chromium",

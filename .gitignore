@@ -4,6 +4,8 @@
 # Go build outputs.
 /api/api
 /scripts/sdk-validation/go/unipost-sdk-test
+coverage.out
+coverage.txt
 
 # Node dependencies.
 node_modules/
