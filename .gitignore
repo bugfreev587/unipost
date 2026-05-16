@@ -5,6 +5,9 @@
 /api/api
 /scripts/sdk-validation/go/unipost-sdk-test
 
+# Node dependencies.
+node_modules/
+
 # Python bytecode caches.
 __pycache__/
 *.pyc

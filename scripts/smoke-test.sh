@@ -2,12 +2,11 @@
 # Sprint 1 + Sprint 2 smoke test for the deployed UniPost API.
 #
 # Usage:
-#   ./scripts/smoke-test.sh                  # default: validate-only / no platform posts
 #   API_KEY=up_live_... ./scripts/smoke-test.sh
 #   BASE_URL=http://localhost:8080 ./scripts/smoke-test.sh
 #
 # Environment:
-#   API_KEY    — UniPost API key. Defaults to the smoke key baked in below.
+#   API_KEY    — UniPost API key. Required.
 #   BASE_URL   — API base URL. Defaults to https://api.unipost.dev.
 #   ACCOUNT_ID — A real social account ID to use for media / draft tests.
 #                If unset, the script auto-picks the first account from
@@ -26,7 +25,7 @@
 
 set -uo pipefail
 
-API_KEY="${API_KEY:-up_live_AaNS2SGj2S2HmF6kUkDANzXemqq45nqrJcG4uNSEnk9g}"
+API_KEY="${API_KEY:-}"
 BASE_URL="${BASE_URL:-https://api.unipost.dev}"
 
 # ── Output helpers ────────────────────────────────────────────────────
@@ -115,6 +114,19 @@ assert_status() {
   fi
 }
 
+assert_status_one_of() {
+  local label="$1"
+  shift
+  local expected
+  for expected in "$@"; do
+    if [[ "$RESP_STATUS" == "$expected" ]]; then
+      pass "$label (HTTP $RESP_STATUS)"
+      return
+    fi
+  done
+  fail "$label" "expected one of [$*], got $RESP_STATUS — body: ${RESP_BODY:0:200}"
+}
+
 assert_jq() {
   local query="$1"
   local expected="$2"
@@ -143,6 +155,11 @@ assert_jq_truthy() {
 # ── Boot check ────────────────────────────────────────────────────────
 
 require_jq
+
+if [[ -z "$API_KEY" ]]; then
+  echo -e "${RED}error:${NC} API_KEY is required"
+  exit 64
+fi
 
 echo -e "${BOLD}UniPost smoke test${NC}"
 echo -e "  base url: ${CYAN}${BASE_URL}${NC}"
@@ -264,6 +281,36 @@ assert_status "200" "GET /v1/analytics/summary"
 
 api GET "/v1/platform-credentials"
 assert_status "200" "GET /v1/platform-credentials"
+
+# ── Dashboard-class read surfaces that are not part of SDK regression ─
+
+section "Dashboard read surfaces — limits / summaries / members / logs / inbox gate"
+
+api GET "/v1/limits"
+assert_status "200" "GET /v1/limits"
+assert_jq_truthy '.data.plan_id' 'limits.plan_id present'
+
+api GET "/v1/posts/summaries?limit=5"
+assert_status "200" "GET /v1/posts/summaries"
+assert_jq_truthy '.data' 'post summaries data present'
+
+api GET "/v1/members"
+assert_status "200" "GET /v1/members"
+assert_jq_truthy '.data' 'members data present'
+
+api GET "/v1/audit-log?limit=5"
+assert_status "200" "GET /v1/audit-log"
+assert_jq_truthy '.data' 'audit-log data present'
+
+api GET "/v1/logs?limit=5"
+assert_status "200" "GET /v1/logs"
+assert_jq_truthy '.data' 'logs data present'
+
+api GET "/v1/inbox/unread-count"
+assert_status_one_of "GET /v1/inbox/unread-count returns data or plan gate" "200" "402"
+if [[ "$RESP_STATUS" == "200" ]]; then
+  assert_jq_truthy '.data' 'inbox unread-count data present'
+fi
 
 # ── Profiles + YouTube connect sessions regression ───────────────────
 

@@ -138,7 +138,6 @@ jobs:
           TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
           BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
           LOG_DIR: ${{ github.workspace }}/artifacts/regression
-          JAVA_SDK_VERSION: 0.2.7
         run: scripts/regression/run-suite.sh sdk-java
 
       - name: Upload Java SDK log
