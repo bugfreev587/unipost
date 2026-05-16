@@ -19,10 +19,21 @@ The required checks should be:
 
 This covers the minimum production-safety bar before merging:
 
-- backend compile and Go tests with `go test ./...`
+- backend compile, Go tests, and Go statement coverage artifacts with `go test ./... -coverprofile=coverage.out`
 - dashboard dependency install and production `next build`
+- dashboard local smoke regression against the built app with Playwright
+
+The current backend statement coverage baseline measured during setup is 9.7%. The required CI floor starts at 9.0% so the gate blocks major regressions without pretending the codebase is already well covered. Raise `API_COVERAGE_MIN` in `.github/workflows/ci.yml` as focused tests are added. The biggest current backend gaps are generated DB query wrappers, worker loops, billing/webhook integration edges, and platform adapters that depend on third-party APIs.
+
+The local dashboard smoke in CI uses the public GitHub Actions variable `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` so public pages can initialize Clerk with a valid frontend key. It pairs that with a dummy `CLERK_SECRET_KEY` placeholder because `clerkMiddleware` requires the variable at server startup, but public-page smoke coverage does not authenticate or call Clerk server APIs. Authenticated dashboard regression still requires real Clerk test credentials and stays in the deployed regression workflow.
 
 Dashboard lint is intentionally not a required check yet because the existing codebase currently has lint errors. Once those are cleaned up, add `npm run lint` to the dashboard job and make it required.
+
+Before any agent creates a pull request, it should run the same local CI equivalent:
+
+- `GOCACHE=/tmp/unipost-go-build go test ./...` from `api/`
+- `npm run build` from `dashboard/`
+- `npm run test:regression:dashboard` from `dashboard/` when Playwright browsers are installed or the change touches dashboard routing, docs, auth, onboarding, analytics, posting, account connection, or shared UI shell code
 
 ## Deployed regression monitor
 
