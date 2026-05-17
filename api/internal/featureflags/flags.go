@@ -14,7 +14,8 @@ import (
 type Flag string
 
 const (
-	TikTokAnalyticsScopes Flag = "tiktok.analytics_scopes"
+	TikTokAnalyticsScopes         Flag = "tiktok.analytics_scopes"
+	AttributionUTMSignupBindingV1 Flag = "attribution.utm_signup_binding_v1"
 )
 
 type Target struct {
@@ -54,6 +55,14 @@ var definitions = map[Flag]Definition{
 		EnvVar:        "FEATURE_TIKTOK_ANALYTICS_SCOPES",
 		LegacyEnvVars: []string{"TIKTOK_ANALYTICS_SCOPES_ENABLED"},
 		Description:   "Requests TikTok analytics OAuth scopes: user.info.profile, user.info.stats, and video.list.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	AttributionUTMSignupBindingV1: {
+		Flag:        AttributionUTMSignupBindingV1,
+		EnvVar:      "FEATURE_ATTRIBUTION_UTM_SIGNUP_BINDING_V1",
+		Description: "Captures lightweight UTM attribution and binds landing sessions to signed-in users for Admin conversion reporting.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

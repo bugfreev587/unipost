@@ -108,6 +108,22 @@ video.list
 
 It also controls the dashboard TikTok platform analytics surface under `Analytics -> Platforms -> TikTok` and the backend endpoints that fetch TikTok profile, account metrics, and public video inventory. Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
 
+Create this flag in Unleash:
+
+```text
+attribution.utm_signup_binding_v1
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: growth analytics / Admin. This flag controls lightweight UTM capture on landing visits and authenticated binding from a landing `session_id` to the signed-in user. When disabled, UniPost keeps the existing `r` / referrer landing-source tracking behavior and skips new session-user binding writes. Production can roll back by disabling `attribution.utm_signup_binding_v1`; existing attribution rows remain readable, but no new UTM JSONB values or bindings are recorded while the flag is off.
+
 ## Admin Status Page
 
 UniPost admins can inspect evaluated flag state from:

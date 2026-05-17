@@ -4,6 +4,7 @@ import { DM_Sans, Fira_Code } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SiteFooterGate } from "@/components/marketing/site-footer";
+import { LandingAttributionBinder } from "@/components/marketing/landing-attribution-binder";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -166,6 +167,7 @@ export default function RootLayout({
         </head>
         <body className="min-h-full flex flex-col bg-[var(--app-bg)] text-[var(--text)]">
           <ThemeProvider>
+            <LandingAttributionBinder />
             {children}
             <SiteFooterGate />
           </ThemeProvider>
