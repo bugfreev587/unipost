@@ -72,6 +72,24 @@ func TestSanitizeLandingAttributionKeepsAllowedKeys(t *testing.T) {
 	}
 }
 
+func TestSanitizeLandingAttributionExpandsShortAliases(t *testing.T) {
+	got := sanitizeLandingAttribution(map[string]string{
+		"s": "ph",
+		"m": "launch",
+		"c": "l0526",
+	})
+
+	if got["utm_source"] != "ph" {
+		t.Fatalf("utm_source = %q, want ph", got["utm_source"])
+	}
+	if got["utm_medium"] != "launch" {
+		t.Fatalf("utm_medium = %q, want launch", got["utm_medium"])
+	}
+	if got["utm_campaign"] != "l0526" {
+		t.Fatalf("utm_campaign = %q, want l0526", got["utm_campaign"])
+	}
+}
+
 func TestLandingBotUserAgentFilterDoesNotMatchSafariPreview(t *testing.T) {
 	if isLandingBotUserAgent("Mozilla/5.0 Safari Technology Preview") {
 		t.Fatal("Safari Technology Preview should not be filtered as a bot")
