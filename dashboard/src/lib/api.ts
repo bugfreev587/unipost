@@ -507,6 +507,7 @@ export interface SocialAccount {
   profile_name?: string;
   platform: string;
   account_name: string | null;
+  external_account_id?: string;
   account_avatar_url?: string | null;
   connected_at: string;
   status: "active" | "reconnect_required" | "disconnected";

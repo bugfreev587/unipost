@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo, useRef } from "react";
 import type { CreateSocialPostPayload, SocialAccount } from "@/lib/api";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus } from "@/components/tools/platform-limits";
+import { getAccountIdentityKey } from "./account-labels";
 
 // --- Types ---
 
@@ -302,16 +303,18 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     return activeAccounts.filter((a) => selectedAccountIds.has(a.id));
   }, [activeAccounts, selectedAccountIds]);
 
-  // Detect duplicate platform accounts (same platform + account_name).
+  // Detect duplicate platform accounts by stable platform account id when
+  // available. Some Threads rows have a generic account_name ("threads"),
+  // so using the display label would collapse two real accounts.
   // When the same underlying account is connected via BYO + managed,
   // or selected from two profiles, we should only publish once.
   const { duplicateAccountIds, uniqueSelectedAccounts } = useMemo(() => {
-    const seen = new Map<string, string>(); // "platform::account_name" → first account id
+    const seen = new Map<string, string>();
     const dupes = new Set<string>();
     const unique: SocialAccount[] = [];
 
     for (const acc of selectedAccounts) {
-      const key = `${acc.platform}::${(acc.account_name || "").toLowerCase()}`;
+      const key = getAccountIdentityKey(acc);
       const existing = seen.get(key);
       if (existing) {
         dupes.add(acc.id);

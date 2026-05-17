@@ -39,6 +39,7 @@ type socialAccountResponse struct {
 	ProfileName       string    `json:"profile_name"`
 	Platform          string    `json:"platform"`
 	AccountName       *string   `json:"account_name"`
+	ExternalAccountID string    `json:"external_account_id"`
 	ConnectedAt       time.Time `json:"connected_at"`
 	Status            string    `json:"status"`
 	ConnectionType    string    `json:"connection_type"`
@@ -80,6 +81,7 @@ func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAc
 		ProfileName:       pName,
 		Platform:          a.Platform,
 		AccountName:       name,
+		ExternalAccountID: a.ExternalAccountID,
 		ConnectedAt:       a.ConnectedAt.Time,
 		Status:            status,
 		ConnectionType:    a.ConnectionType,
