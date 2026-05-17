@@ -5,6 +5,7 @@ import { PlatformIcon } from "@/components/platform-icons";
 import { PLATFORM_LABELS, PLATFORM_BRAND_COLORS } from "./use-create-post-form";
 import type { SocialAccount } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { getAccountDisplayName } from "./account-labels";
 
 interface AccountCardProps {
   account: SocialAccount;
@@ -15,6 +16,7 @@ interface AccountCardProps {
 export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "#888";
   const label = PLATFORM_LABELS[account.platform] || account.platform;
+  const accountLabel = getAccountDisplayName(account);
   const selectedBackground = "linear-gradient(180deg, color-mix(in srgb, var(--primary) 14%, var(--surface-raised)) 0%, color-mix(in srgb, var(--primary) 4%, var(--surface-raised)) 100%)";
 
   return (
@@ -60,8 +62,8 @@ export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
       </div>
 
       {/* Handle */}
-      <div className="truncate text-[12px]" style={{ color: "var(--dtext)" }}>
-        {account.account_name || account.external_user_email || account.platform}
+      <div className="truncate text-[12px]" style={{ color: "var(--dtext)" }} title={accountLabel}>
+        {accountLabel}
       </div>
     </button>
   );

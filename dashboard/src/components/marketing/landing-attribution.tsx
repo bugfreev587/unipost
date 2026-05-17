@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { recordLandingVisit } from "@/lib/api";
 import {
+  firstQueryValue,
   getOrCreateLandingSessionId,
   getStoredLandingSource,
   normalizeLandingSource,
@@ -12,14 +13,15 @@ import {
 export function LandingAttribution() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const sourceFromUrl = normalizeLandingSource(params.get("r"));
+    const rawSource = firstQueryValue(params, "r", "utm_source", "s");
+    const sourceFromUrl = normalizeLandingSource(rawSource);
     const source = sourceFromUrl ?? getStoredLandingSource();
     const sessionId = getOrCreateLandingSessionId();
     const attribution = {
       r: params.get("r") || undefined,
-      utm_source: params.get("utm_source") || undefined,
-      utm_medium: params.get("utm_medium") || undefined,
-      utm_campaign: params.get("utm_campaign") || undefined,
+      utm_source: firstQueryValue(params, "utm_source", "s"),
+      utm_medium: firstQueryValue(params, "utm_medium", "m"),
+      utm_campaign: firstQueryValue(params, "utm_campaign", "c"),
     };
 
     if (sourceFromUrl) {

@@ -23,6 +23,14 @@ export function normalizeLandingSource(raw: string | null | undefined) {
   return source && KNOWN_LANDING_SOURCES.has(source) ? source : undefined;
 }
 
+export function firstQueryValue(params: URLSearchParams, ...keys: string[]) {
+  for (const key of keys) {
+    const value = params.get(key);
+    if (value) return value;
+  }
+  return undefined;
+}
+
 function landingCookieDomain() {
   if (typeof window === "undefined") return "";
   const host = window.location.hostname;

@@ -10,6 +10,7 @@ import {
   Flag,
   FileText,
   LayoutDashboard,
+  MousePointerClick,
   Send,
   Settings,
   TrendingUp,
@@ -87,6 +88,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/admin", section: "Overview", enabled: true, icon: LayoutDashboard },
+  { label: "Visitors", href: "/admin/visitors", section: "Overview", enabled: true, icon: MousePointerClick },
   { label: "Users", href: "/admin/users", section: "Overview", enabled: true, icon: Users },
   { label: "Posts", href: "/admin/posts", section: "Overview", enabled: true, icon: Send },
   { label: "Billing", href: "/admin/billing", section: "Revenue", enabled: true, icon: CreditCard },

@@ -117,6 +117,38 @@ type adminLandingSourcesResponse struct {
 	Rows           []adminLandingSourceRow `json:"rows"`
 }
 
+type adminLandingVisitorRow struct {
+	ID          int64             `json:"id"`
+	CreatedAt   string            `json:"created_at"`
+	Path        string            `json:"path"`
+	SourceCode  string            `json:"source_code"`
+	Label       string            `json:"label"`
+	Referrer    string            `json:"referrer"`
+	SessionID   string            `json:"session_id"`
+	UserID      *string           `json:"user_id"`
+	UserEmail   *string           `json:"user_email"`
+	RawQuery    string            `json:"raw_query"`
+	Attribution map[string]string `json:"attribution"`
+}
+
+type adminLandingVisitorTrendRow struct {
+	Date           string `json:"date"`
+	Visits         int64  `json:"visits"`
+	UniqueVisitors int64  `json:"unique_visitors"`
+	Signups        int64  `json:"signups"`
+}
+
+type adminLandingVisitorsResponse struct {
+	RangeDays       int64                         `json:"range_days"`
+	TotalVisits     int64                         `json:"total_visits"`
+	UniqueVisitors  int64                         `json:"unique_visitors"`
+	Signups         int64                         `json:"signups"`
+	Rows            []adminLandingVisitorRow      `json:"rows"`
+	Trend           []adminLandingVisitorTrendRow `json:"trend"`
+	SourceOptions   []string                      `json:"source_options"`
+	CampaignOptions []string                      `json:"campaign_options"`
+}
+
 func (h *LandingAttributionHandler) RecordVisit(w http.ResponseWriter, r *http.Request) {
 	var body recordLandingVisitRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -359,6 +391,207 @@ ORDER BY visits DESC, source_code ASC`, days)
 	writeSuccess(w, resp)
 }
 
+func (h *LandingAttributionHandler) GetAdminVisitors(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	if days <= 0 {
+		days = 30
+	}
+	if days > 365 {
+		days = 365
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	source := normalizeLandingCode(r.URL.Query().Get("source"))
+	if source == "direct" {
+		source = "direct"
+	}
+	campaign := sanitizeLandingText(r.URL.Query().Get("campaign"), 128)
+
+	resp := adminLandingVisitorsResponse{
+		RangeDays: int64(days),
+		Rows:      []adminLandingVisitorRow{},
+		Trend:     []adminLandingVisitorTrendRow{},
+	}
+
+	if err := h.pool.QueryRow(r.Context(), `
+WITH filtered AS (
+  SELECT *
+  FROM landing_visits
+  WHERE created_at >= NOW() - make_interval(days => $1)
+    AND ($2 = '' OR source_code = $2)
+    AND ($3 = '' OR attribution->>'utm_campaign' = $3)
+)
+SELECT
+  COUNT(*)::BIGINT,
+  COUNT(DISTINCT f.session_id)::BIGINT,
+  COUNT(DISTINCT lsu.user_id)::BIGINT
+FROM filtered f
+LEFT JOIN landing_session_users lsu ON lsu.session_id = f.session_id`,
+		days, source, campaign,
+	).Scan(&resp.TotalVisits, &resp.UniqueVisitors, &resp.Signups); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load visitor totals")
+		return
+	}
+
+	trendRows, err := h.pool.Query(r.Context(), `
+WITH filtered AS (
+  SELECT *
+  FROM landing_visits
+  WHERE created_at >= NOW() - make_interval(days => $1)
+    AND ($2 = '' OR source_code = $2)
+    AND ($3 = '' OR attribution->>'utm_campaign' = $3)
+)
+SELECT
+  to_char(date_trunc('day', f.created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+  COUNT(*)::BIGINT,
+  COUNT(DISTINCT f.session_id)::BIGINT,
+  COUNT(DISTINCT lsu.user_id)::BIGINT
+FROM filtered f
+LEFT JOIN landing_session_users lsu ON lsu.session_id = f.session_id
+GROUP BY day
+ORDER BY day ASC`,
+		days, source, campaign,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load visitor trend")
+		return
+	}
+	defer trendRows.Close()
+	for trendRows.Next() {
+		var row adminLandingVisitorTrendRow
+		if err := trendRows.Scan(&row.Date, &row.Visits, &row.UniqueVisitors, &row.Signups); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan visitor trend")
+			return
+		}
+		resp.Trend = append(resp.Trend, row)
+	}
+	if err := trendRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor trend")
+		return
+	}
+
+	visitRows, err := h.pool.Query(r.Context(), `
+SELECT
+  lv.id,
+  lv.created_at,
+  lv.path,
+  lv.source_code,
+  lv.referer,
+  lv.session_id,
+  lv.raw_query,
+  lv.attribution,
+  lsu.user_id,
+  u.email
+FROM landing_visits lv
+LEFT JOIN LATERAL (
+  SELECT user_id
+  FROM landing_session_users
+  WHERE session_id = lv.session_id
+  ORDER BY last_seen_at DESC
+  LIMIT 1
+) lsu ON TRUE
+LEFT JOIN users u ON u.id = lsu.user_id
+WHERE lv.created_at >= NOW() - make_interval(days => $1)
+  AND ($2 = '' OR lv.source_code = $2)
+  AND ($3 = '' OR lv.attribution->>'utm_campaign' = $3)
+ORDER BY lv.created_at DESC, lv.id DESC
+LIMIT $4`,
+		days, source, campaign, limit,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load visitor rows")
+		return
+	}
+	defer visitRows.Close()
+	for visitRows.Next() {
+		var id int64
+		var createdAt time.Time
+		var path, sourceCode, referer, sessionID, rawQuery string
+		var attributionBytes []byte
+		var userID, userEmail *string
+		if err := visitRows.Scan(&id, &createdAt, &path, &sourceCode, &referer, &sessionID, &rawQuery, &attributionBytes, &userID, &userEmail); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan visitor rows")
+			return
+		}
+		attribution := map[string]string{}
+		if len(attributionBytes) > 0 {
+			_ = json.Unmarshal(attributionBytes, &attribution)
+		}
+		resp.Rows = append(resp.Rows, adminLandingVisitorRow{
+			ID:          id,
+			CreatedAt:   createdAt.UTC().Format(time.RFC3339),
+			Path:        path,
+			SourceCode:  sourceCode,
+			Label:       h.labelFor(sourceCode),
+			Referrer:    referer,
+			SessionID:   sessionID,
+			UserID:      userID,
+			UserEmail:   userEmail,
+			RawQuery:    rawQuery,
+			Attribution: attribution,
+		})
+	}
+	if err := visitRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor rows")
+		return
+	}
+
+	sourceRows, err := h.pool.Query(r.Context(), `
+SELECT DISTINCT source_code
+FROM landing_visits
+WHERE created_at >= NOW() - make_interval(days => $1)
+ORDER BY source_code ASC`, days)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load visitor source options")
+		return
+	}
+	defer sourceRows.Close()
+	for sourceRows.Next() {
+		var option string
+		if err := sourceRows.Scan(&option); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan visitor source options")
+			return
+		}
+		resp.SourceOptions = append(resp.SourceOptions, option)
+	}
+	if err := sourceRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor source options")
+		return
+	}
+
+	campaignRows, err := h.pool.Query(r.Context(), `
+SELECT DISTINCT attribution->>'utm_campaign'
+FROM landing_visits
+WHERE created_at >= NOW() - make_interval(days => $1)
+  AND NULLIF(attribution->>'utm_campaign', '') IS NOT NULL
+ORDER BY 1 ASC`, days)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load visitor campaign options")
+		return
+	}
+	defer campaignRows.Close()
+	for campaignRows.Next() {
+		var option string
+		if err := campaignRows.Scan(&option); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan visitor campaign options")
+			return
+		}
+		resp.CampaignOptions = append(resp.CampaignOptions, option)
+	}
+	if err := campaignRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor campaign options")
+		return
+	}
+
+	writeSuccess(w, resp)
+}
+
 func (h *LandingAttributionHandler) resolveSource(explicitSource string, referrer string) string {
 	code := normalizeLandingCode(explicitSource)
 	if _, ok := h.sources[code]; ok && code != "direct" {
@@ -473,12 +706,23 @@ func sanitizeLandingAttribution(raw map[string]string) map[string]string {
 		"utm_source":   true,
 		"utm_medium":   true,
 		"utm_campaign": true,
+		"s":            true,
+		"m":            true,
+		"c":            true,
+	}
+	aliases := map[string]string{
+		"s": "utm_source",
+		"m": "utm_medium",
+		"c": "utm_campaign",
 	}
 	out := make(map[string]string, len(raw))
 	for key, value := range raw {
 		key = strings.ToLower(strings.TrimSpace(key))
 		if !allowed[key] {
 			continue
+		}
+		if alias, ok := aliases[key]; ok {
+			key = alias
 		}
 		value = sanitizeLandingText(value, 128)
 		if value == "" {

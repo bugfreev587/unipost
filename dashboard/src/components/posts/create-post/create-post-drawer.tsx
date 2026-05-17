@@ -9,6 +9,7 @@ import { ConnectedAccountsGrid, PostToGrid } from "./account-card-grid";
 import { PlatformEditorBlock } from "./platform-editor-block";
 import { EmptyPlatformState } from "./empty-platform-state";
 import { PublishModePanel } from "./publish-mode-panel";
+import { getAccountDisplayName } from "./account-labels";
 import {
   buildAIAssistAccountLabels,
   buildAIAssistCurrentFirstComments,
@@ -1432,7 +1433,7 @@ function issueTargetLabel(issue: SocialPostValidationIssue, accounts: SocialAcco
   if (issue.account_id) {
     const account = accounts.find((candidate) => candidate.id === issue.account_id);
     const platformLabel = account?.platform || issue.platform || "platform";
-    const accountLabel = account?.account_name || account?.external_user_email || platformLabel;
+    const accountLabel = account ? getAccountDisplayName(account) : platformLabel;
     return `${platformLabel} · ${accountLabel}`;
   }
   if (issue.field === "scheduled_at") return "Publish settings";

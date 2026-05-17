@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { PLATFORM_LABELS, PLATFORM_BRAND_COLORS } from "./use-create-post-form";
 import type { SocialAccount } from "@/lib/api";
+import { getAccountDisplayName } from "./account-labels";
 
 // --- Connected Accounts section (clickable cards to select/deselect) ---
 
@@ -87,6 +88,7 @@ function AccountCardSmall({
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
   const label = PLATFORM_LABELS[account.platform] || account.platform;
+  const accountLabel = getAccountDisplayName(account);
 
   return (
     <button
@@ -130,7 +132,7 @@ function AccountCardSmall({
             {label}
           </div>
           <div className="mt-0.5 truncate text-[11.5px] leading-[1.3]" style={{ color: "var(--dtext)", fontWeight: 500 }}>
-            {account.account_name || account.external_user_email || account.platform}
+            {accountLabel}
           </div>
         </div>
       </div>
@@ -199,6 +201,7 @@ function PostToChip({
   onRemove: (id: string) => void;
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
+  const accountLabel = getAccountDisplayName(account);
 
   return (
     <div
@@ -220,8 +223,9 @@ function PostToChip({
       <span
         className={`truncate max-w-[80px] ${isDuplicate ? "line-through" : ""}`}
         style={{ color: isDuplicate ? "var(--dmuted)" : "var(--dtext)" }}
+        title={accountLabel}
       >
-        {account.account_name || account.platform}
+        {accountLabel}
       </span>
       {isDuplicate && (
         <span className="text-[9px] flex-shrink-0" style={{ color: "var(--warning)" }}>DUP</span>

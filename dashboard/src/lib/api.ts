@@ -507,6 +507,7 @@ export interface SocialAccount {
   profile_name?: string;
   platform: string;
   account_name: string | null;
+  external_account_id?: string;
   account_avatar_url?: string | null;
   connected_at: string;
   status: "active" | "reconnect_required" | "disconnected";
@@ -1508,6 +1509,43 @@ export interface AdminLandingSourcesResponse {
   rows: AdminLandingSourceRow[];
 }
 
+export interface AdminLandingVisitorRow {
+  id: number;
+  created_at: string;
+  path: string;
+  source_code: string;
+  label: string;
+  referrer: string;
+  session_id: string;
+  user_id: string | null;
+  user_email: string | null;
+  raw_query: string;
+  attribution: {
+    r?: string;
+    utm_source?: string;
+    utm_medium?: string;
+    utm_campaign?: string;
+  };
+}
+
+export interface AdminLandingVisitorTrendRow {
+  date: string;
+  visits: number;
+  unique_visitors: number;
+  signups: number;
+}
+
+export interface AdminLandingVisitorsResponse {
+  range_days: number;
+  total_visits: number;
+  unique_visitors: number;
+  signups: number;
+  rows: AdminLandingVisitorRow[];
+  trend: AdminLandingVisitorTrendRow[];
+  source_options: string[];
+  campaign_options: string[];
+}
+
 export interface AdminUserRow {
   id: string;
   email: string;
@@ -1991,6 +2029,18 @@ export async function getAdminLandingSources(
   days = 30
 ): Promise<ApiResponse<AdminLandingSourcesResponse>> {
   return request(`/v1/admin/landing-sources?days=${days}`, token);
+}
+
+export async function getAdminLandingVisitors(
+  token: string,
+  params?: { days?: number; source?: string; campaign?: string; limit?: number }
+): Promise<ApiResponse<AdminLandingVisitorsResponse>> {
+  const qs = new URLSearchParams();
+  qs.set("days", String(params?.days ?? 30));
+  if (params?.source) qs.set("source", params.source);
+  if (params?.campaign) qs.set("campaign", params.campaign);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  return request(`/v1/admin/landing-visitors?${qs.toString()}`, token);
 }
 
 export async function listAdminUsers(

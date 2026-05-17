@@ -19,6 +19,7 @@ import { PinterestFields } from "./platform-fields/pinterest-fields";
 import type { SocialAccount } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { SocialPostValidationIssue } from "@/lib/api";
+import { getAccountDisplayName } from "./account-labels";
 
 interface PlatformEditorBlockProps {
   account: SocialAccount;
@@ -102,6 +103,7 @@ export function PlatformEditorBlock({
 }: PlatformEditorBlockProps) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "#888";
   const label = PLATFORM_LABELS[account.platform] || account.platform;
+  const accountLabel = getAccountDisplayName(account);
   const limit = captionLimit || PLATFORM_CHAR_LIMITS[account.platform] || 5000;
   const errorIssues = issues.filter((issue) => issue.severity === "error");
   const warningIssues = issues.filter((issue) => issue.severity === "warning");
@@ -157,7 +159,7 @@ export function PlatformEditorBlock({
             <div className="text-[13.5px] leading-[1.25]" style={{ color: "var(--dtext)", fontWeight: 600 }}>{label}</div>
             <div className="flex items-center gap-2 flex-wrap">
               <div className="compose-meta-text font-mono text-[10.5px] tracking-[0.02em]">
-                {account.account_name || account.external_user_email || account.platform}
+                {accountLabel}
               </div>
               {hasErrors && (
                 <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: "color-mix(in srgb, var(--danger) 45%, white)" }}>

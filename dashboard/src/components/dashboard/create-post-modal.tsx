@@ -6,6 +6,7 @@ import { PlatformIcon } from "@/components/platform-icons";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus, STATUS_COLORS } from "@/components/tools/platform-limits";
 import type { CreateSocialPostPayload, SocialAccount, SocialPost, SocialPostValidationResult } from "@/lib/api";
 import { createSocialPost, validateSocialPost } from "@/lib/api";
+import { getAccountDisplayName } from "@/components/posts/create-post/account-labels";
 
 const CSS = `.cpm-overlay{position:fixed;inset:0;background:var(--overlay);z-index:50;animation:cpm-fade .15s ease}
 @keyframes cpm-fade{from{opacity:0}to{opacity:1}}
@@ -219,7 +220,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
                       >
                         <span className="cpm-override-left">
                           <PlatformIcon platform={acc.platform} size={13} />
-                          {acc.account_name || acc.platform}
+                          {getAccountDisplayName(acc)}
                           {!hasOverride && <span className="cpm-override-tag">Same caption</span>}
                         </span>
                         <span className="cpm-override-edit">
@@ -262,7 +263,7 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
                   <label key={a.id} className="cpm-account">
                     <input type="checkbox" checked={selectedIds.has(a.id)} onChange={() => toggleAccount(a.id)} />
                     <PlatformIcon platform={a.platform} size={14} />
-                    <span className="cpm-account-name">{a.account_name || a.platform}</span>
+                    <span className="cpm-account-name" title={getAccountDisplayName(a)}>{getAccountDisplayName(a)}</span>
                   </label>
                 ))
               )}

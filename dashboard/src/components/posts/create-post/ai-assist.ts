@@ -6,6 +6,7 @@ import type {
   SocialPostValidationIssue,
 } from "@/lib/api";
 import type { MediaItem, PlatformOverride } from "./use-create-post-form";
+import { getAccountDisplayName } from "./account-labels";
 
 export type AIAssistObjective = "awareness" | "engagement" | "clicks" | "sales";
 export type AIAssistTone = "professional" | "friendly" | "bold" | "playful";
@@ -143,7 +144,7 @@ export function buildAIPostAssistRequest(params: {
 export function buildAIAssistAccountLabels(accounts: SocialAccount[]): Record<string, string> {
   const labels: Record<string, string> = {};
   for (const account of accounts) {
-    labels[account.id] = account.account_name || account.external_user_email || account.platform;
+    labels[account.id] = getAccountDisplayName(account);
   }
   return labels;
 }
