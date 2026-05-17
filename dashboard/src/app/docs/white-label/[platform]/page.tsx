@@ -192,7 +192,7 @@ export default function WhiteLabelPlatformGuidePage() {
           <p className="wlp-note">
             {guide.apiWorkflow.intro}
           </p>
-          <div className="docs-step-flow">
+          <div className="docs-step-flow wlp-api-step-flow">
             {guide.apiWorkflow.steps.map((step, index) => (
               <div key={step.title} className="docs-step-row">
                 <div className="docs-step-number">{index + 1}</div>
@@ -294,6 +294,53 @@ const styles = `
 .wlp-step-code{margin-top:16px}
 .wlp-step-code .docs-api-code-tabs,
 .wlp-shot-card .docs-api-code-tabs{min-width:0}
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow{
+  grid-template-columns:1fr;
+  gap:0;
+  margin:22px 0 12px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-row{
+  grid-template-columns:54px minmax(0,1fr);
+  gap:18px;
+  align-items:start;
+  padding:8px 0 34px;
+  border:none;
+  border-bottom:1px solid #e5e9f0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+  transform:none;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-row:last-child{
+  border-bottom:none;
+  padding-bottom:4px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-row:hover{
+  background:transparent;
+  transform:none;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-number{
+  width:34px;
+  height:34px;
+  margin-top:1px;
+  border-radius:999px;
+  font-size:14px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-title{
+  max-width:760px;
+  font-size:18px;
+  line-height:1.35;
+  margin-bottom:12px;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-copy{
+  max-width:760px;
+  font-size:15.5px;
+  line-height:1.72;
+}
+.wlp-api-step-flow .wlp-step-code{
+  max-width:760px;
+  margin-top:20px;
+}
 .wlp-step-code .docs-api-code-tabs .docs-code-tabs,
 .wlp-shot-card .docs-api-code-tabs .docs-code-tabs{
   margin:0;
@@ -417,5 +464,14 @@ const styles = `
   .wlp-callback-card{flex-direction:column;align-items:stretch}
   .wlp-copy-btn{justify-content:center}
   .wlp-next{grid-template-columns:1fr}
+  .docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-row{
+    grid-template-columns:1fr;
+    padding:18px;
+  }
+  .docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-title,
+  .docs-shell-guide-redesign .docs-page-guide-redesign .wlp-api-step-flow .docs-step-copy,
+  .wlp-api-step-flow .wlp-step-code{
+    max-width:none;
+  }
 }
 `;
