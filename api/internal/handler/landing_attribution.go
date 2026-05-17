@@ -517,12 +517,10 @@ func isLandingBotUserAgent(userAgent string) bool {
 		"bot",
 		"crawler",
 		"spider",
-		"preview",
-		"googlebot",
-		"bingbot",
-		"slackbot",
-		"discordbot",
 		"facebookexternalhit",
+		"linkedinbot",
+		"whatsapp",
+		"telegrambot",
 	} {
 		if strings.Contains(ua, needle) {
 			return true

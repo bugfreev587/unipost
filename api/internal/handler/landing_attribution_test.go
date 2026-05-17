@@ -71,3 +71,15 @@ func TestSanitizeLandingAttributionKeepsAllowedKeys(t *testing.T) {
 		t.Fatalf("unexpected email key in attribution: %#v", got)
 	}
 }
+
+func TestLandingBotUserAgentFilterDoesNotMatchSafariPreview(t *testing.T) {
+	if isLandingBotUserAgent("Mozilla/5.0 Safari Technology Preview") {
+		t.Fatal("Safari Technology Preview should not be filtered as a bot")
+	}
+	if !isLandingBotUserAgent("LinkedInBot/1.0") {
+		t.Fatal("LinkedInBot should be filtered")
+	}
+	if !isLandingBotUserAgent("WhatsApp/2.0") {
+		t.Fatal("WhatsApp link preview should be filtered")
+	}
+}
