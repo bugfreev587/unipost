@@ -149,7 +149,7 @@ export default function AdminDashboardPage() {
 
       <div className="ad-section-header" style={{ marginTop: 8 }}>
         <div className="ad-section-title">Landing Sources</div>
-        <div className="ad-section-meta">Last {landingSources?.range_days ?? 30} days</div>
+        <div className="ad-section-meta">Last {landingSources?.range_days ?? 30} days · assisted multi-touch; one signup can appear under multiple sources</div>
       </div>
 
       <div className="ad-stat-grid" style={{ marginBottom: 14 }}>

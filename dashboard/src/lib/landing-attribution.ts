@@ -98,3 +98,15 @@ export function getOrCreateLandingSessionId() {
   writeLandingSessionCookie(next);
   return next;
 }
+
+export function appendLandingSessionId(rawUrl: string) {
+  if (typeof window === "undefined") return rawUrl;
+  try {
+    const sessionId = getOrCreateLandingSessionId();
+    const url = new URL(rawUrl, window.location.origin);
+    url.searchParams.set(LANDING_SESSION_QUERY_KEY, sessionId);
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}

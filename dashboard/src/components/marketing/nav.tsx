@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { LandingAttribution } from "@/components/marketing/landing-attribution";
+import { appendLandingSessionId } from "@/lib/landing-attribution";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
@@ -33,49 +35,62 @@ const PUBLIC_NAV_ITEMS = [
 
 type PublicNavKey = (typeof PUBLIC_NAV_ITEMS)[number]["key"];
 
+function useLandingRedirectUrls() {
+  const [urls, setUrls] = useState({
+    appUrl: APP_URL,
+    signUpRedirectUrl: SIGN_UP_REDIRECT_URL,
+  });
+
+  useEffect(() => {
+    setUrls({
+      appUrl: appendLandingSessionId(APP_URL),
+      signUpRedirectUrl: appendLandingSessionId(SIGN_UP_REDIRECT_URL),
+    });
+  }, []);
+
+  return urls;
+}
+
 export function MarketingNav() {
   const { isSignedIn, isLoaded } = useAuth();
+  const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
+
+  let controls: ReactNode;
 
   if (!isLoaded) {
-    return (
-      <>
-        <LandingAttribution />
-        <div style={{ display: "flex", alignItems: "center", gap: 8, height: 36 }} />
-      </>
+    controls = <div style={{ display: "flex", alignItems: "center", gap: 8, height: 36 }} />;
+  } else if (isSignedIn) {
+    controls = (
+      <div className="mk-auth-controls">
+        <ThemeToggle />
+        <a href={appUrl} className="mk-auth-btn mk-auth-btn-primary">
+          Go to Dashboard
+        </a>
+        <UserButton appearance={userButtonAppearance} />
+      </div>
     );
-  }
-
-  if (isSignedIn) {
-    return (
-      <>
-        <LandingAttribution />
-        <div className="mk-auth-controls">
-          <ThemeToggle />
-          <a href={APP_URL} className="mk-auth-btn mk-auth-btn-primary">
-            Go to Dashboard
-          </a>
-          <UserButton appearance={userButtonAppearance} />
-        </div>
-      </>
+  } else {
+    controls = (
+      <div className="mk-auth-row">
+        <ThemeToggle />
+        <SignInButton mode="redirect" forceRedirectUrl={appUrl}>
+          <button className="mk-auth-btn mk-auth-btn-ghost">
+            Sign in
+          </button>
+        </SignInButton>
+        <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
+          <button className="mk-auth-btn mk-auth-btn-primary">
+            Get Started Free
+          </button>
+        </SignUpButton>
+      </div>
     );
   }
 
   return (
     <>
       <LandingAttribution />
-      <div className="mk-auth-row">
-        <ThemeToggle />
-        <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
-          <button className="mk-auth-btn mk-auth-btn-ghost">
-            Sign in
-          </button>
-        </SignInButton>
-        <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
-          <button className="mk-auth-btn mk-auth-btn-primary">
-            Get Started Free
-          </button>
-        </SignUpButton>
-      </div>
+      {controls}
     </>
   );
 }
@@ -108,19 +123,20 @@ export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
 
 export function MarketingCTA({ className = "lp-btn lp-btn-primary lp-btn-lg" }: { className?: string } = {}) {
   const { isSignedIn, isLoaded } = useAuth();
+  const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
 
   if (!isLoaded) return <div style={{ height: 48 }} />;
 
   if (isSignedIn) {
     return (
-      <a href={APP_URL} className={className}>
+      <a href={appUrl} className={className}>
         Go to Dashboard
       </a>
     );
   }
 
   return (
-    <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
+    <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
       <button className={className} style={{ cursor: "pointer" }}>
         Get Started Free
       </button>
@@ -130,19 +146,20 @@ export function MarketingCTA({ className = "lp-btn lp-btn-primary lp-btn-lg" }: 
 
 export function MarketingCTALight() {
   const { isSignedIn, isLoaded } = useAuth();
+  const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
 
   if (!isLoaded) return <div style={{ height: 48 }} />;
 
   if (isSignedIn) {
     return (
-      <a href={APP_URL} className="lp-btn lp-btn-outline lp-btn-lg">
+      <a href={appUrl} className="lp-btn lp-btn-outline lp-btn-lg">
         Go to Dashboard
       </a>
     );
   }
 
   return (
-    <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
+    <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
       <button className="lp-btn lp-btn-outline lp-btn-lg" style={{ cursor: "pointer" }}>
         Sign Up Free
       </button>
@@ -157,6 +174,7 @@ export function PricingNav() {
 
 export function PricingCTA({ className = "pr-btn-free", label, href }: { className?: string; label?: string; href?: string }) {
   const { isSignedIn, isLoaded } = useAuth();
+  const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
 
   if (!isLoaded) return <div style={{ height: 44 }} />;
 
@@ -171,14 +189,14 @@ export function PricingCTA({ className = "pr-btn-free", label, href }: { classNa
 
   if (isSignedIn) {
     return (
-      <a href={APP_URL} className={`pr-btn ${className}`}>
+      <a href={appUrl} className={`pr-btn ${className}`}>
         {className.includes("paid") ? "Upgrade" : "Go to Dashboard"}
       </a>
     );
   }
 
   return (
-    <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
+    <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
       <button className={`pr-btn ${className}`} style={{ cursor: "pointer" }}>
         {className.includes("paid") ? "Get Started" : "Get Started Free"}
       </button>
