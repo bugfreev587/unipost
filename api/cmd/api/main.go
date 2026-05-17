@@ -561,6 +561,7 @@ func main() {
 
 		r.Get("/v1/admin/stats", adminHandler.GetStats)
 		r.Get("/v1/admin/landing-sources", landingAttributionHandler.GetAdminSources)
+		r.Get("/v1/admin/landing-visitors", landingAttributionHandler.GetAdminVisitors)
 		r.Get("/v1/admin/posts", adminHandler.ListPosts)
 		r.Get("/v1/admin/posts/aggregates", adminHandler.ListPostsAggregates)
 		r.Get("/v1/admin/billing", adminHandler.ListBilling)
