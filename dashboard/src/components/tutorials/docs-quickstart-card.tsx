@@ -9,19 +9,41 @@ import { getBootstrap, type TutorialId } from "@/lib/api";
 import { TutorialHostProvider, useTutorialHost } from "./tutorial-host";
 import { getTutorial, prerequisitesMet, stepCompleted } from "./registry";
 
+const AUTH_LOAD_TIMEOUT_MS = 4500;
+const BOOTSTRAP_TIMEOUT_MS = 8000;
+
 const docsButtonLinkStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-  borderRadius: 12,
+  borderRadius: 7,
   border: "1px solid color-mix(in srgb, var(--docs-accent) 22%, var(--docs-border))",
-  background: "color-mix(in srgb, var(--docs-accent) 8%, var(--docs-surface))",
+  background: "color-mix(in srgb, var(--docs-accent) 7%, var(--docs-bg-elevated))",
   color: "var(--docs-text)",
-  padding: "10px 14px",
+  padding: "9px 13px",
   fontWeight: 600,
   textDecoration: "none",
-  fontSize: 14,
+  fontSize: 13,
 };
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} timed out`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 export function DocsQuickstartCard({
   tutorialId,
@@ -33,20 +55,47 @@ export function DocsQuickstartCard({
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const [profileId, setProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authLoadTimedOut, setAuthLoadTimedOut] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    if (isLoaded) {
+      setAuthLoadTimedOut(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setAuthLoadTimedOut(true);
+      setLoading(false);
+    }, AUTH_LOAD_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [isLoaded, retryCount]);
 
   useEffect(() => {
     if (!isLoaded) return;
+
+    setAuthLoadTimedOut(false);
+    setProfileId(null);
+
     if (!isSignedIn) {
       setLoading(false);
       return;
     }
 
     let cancelled = false;
+    setLoading(true);
+
     (async () => {
       try {
-        const token = await getToken();
-        if (!token || cancelled) return;
-        const res = await getBootstrap(token);
+        const token = await withTimeout(getToken(), BOOTSTRAP_TIMEOUT_MS, "Clerk token");
+        if (cancelled) return;
+        if (!token) {
+          setProfileId(null);
+          setLoading(false);
+          return;
+        }
+        const res = await withTimeout(getBootstrap(token), BOOTSTRAP_TIMEOUT_MS, "Dashboard bootstrap");
         if (cancelled) return;
         setProfileId(res.data.last_profile_id ?? res.data.default_profile_id ?? null);
       } catch {
@@ -59,10 +108,37 @@ export function DocsQuickstartCard({
     return () => {
       cancelled = true;
     };
-  }, [getToken, isLoaded, isSignedIn]);
+  }, [getToken, isLoaded, isSignedIn, retryCount]);
 
   const tutorial = getTutorial(tutorialId);
   if (!tutorial) return null;
+
+  if (!isLoaded && authLoadTimedOut) {
+    return (
+      <div className="docs-callout" style={{ marginBottom: 24 }}>
+        <strong>Interactive quickstart</strong>
+        <div style={{ marginTop: 6 }}>
+          We could not confirm your dashboard session from this page.
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+          <button
+            type="button"
+            style={{ ...docsButtonLinkStyle, cursor: "pointer", fontFamily: "inherit" }}
+            onClick={() => {
+              setLoading(true);
+              setAuthLoadTimedOut(false);
+              setRetryCount((value) => value + 1);
+            }}
+          >
+            Retry quickstart
+          </button>
+          <Link href="/projects" style={docsButtonLinkStyle}>
+            Open dashboard
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoaded || loading) {
     return (
@@ -141,23 +217,21 @@ function DocsQuickstartCardInner({
   return (
     <div
       style={{
-        marginBottom: 18,
-        borderRadius: 20,
+        marginBottom: 20,
+        overflow: "hidden",
+        borderRadius: 8,
         border: locked
           ? "1px solid var(--docs-border)"
           : "1px solid color-mix(in srgb, var(--docs-accent) 28%, var(--docs-border))",
         background: locked
           ? "var(--docs-bg-elevated)"
-          : "linear-gradient(135deg, color-mix(in srgb, var(--docs-accent) 13%, var(--docs-bg-elevated) 87%), var(--docs-bg-elevated))",
-        boxShadow: locked
-          ? "0 6px 18px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 5%, transparent)"
-          : "0 10px 28px color-mix(in srgb, var(--shadow-color, rgba(15,23,42,1)) 8%, transparent)",
-        overflow: "hidden",
+          : "color-mix(in srgb, var(--docs-accent) 3%, var(--docs-bg-elevated))",
+        boxShadow: "none",
       }}
     >
       <div
         style={{
-          padding: 18,
+          padding: 16,
           display: "flex",
           alignItems: "stretch",
           justifyContent: "space-between",
@@ -172,8 +246,8 @@ function DocsQuickstartCardInner({
               alignItems: "center",
               gap: 6,
               marginBottom: 10,
-              padding: "4px 10px",
-              borderRadius: 999,
+              padding: "4px 9px",
+              borderRadius: 6,
               background: "var(--docs-bg-elevated)",
               border: "1px solid color-mix(in srgb, var(--docs-accent) 14%, var(--docs-border))",
               color: "var(--docs-text)",
@@ -193,7 +267,7 @@ function DocsQuickstartCardInner({
                 width: 40,
                 height: 40,
                 flexShrink: 0,
-                borderRadius: 12,
+                borderRadius: 8,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -225,8 +299,8 @@ function DocsQuickstartCardInner({
                   alignItems: "center",
                   gap: 6,
                   marginBottom: 6,
-                  padding: "2px 8px",
-                  borderRadius: 999,
+                  padding: "2px 7px",
+                  borderRadius: 5,
                   background: completed
                     ? "color-mix(in srgb, #10b981 14%, var(--docs-bg-elevated))"
                     : locked
@@ -240,7 +314,7 @@ function DocsQuickstartCardInner({
                   color: completed ? "#10b981" : locked ? "var(--docs-text-muted)" : "#3b82f6",
                   fontSize: 11,
                   fontWeight: 700,
-                  letterSpacing: "0.06em",
+                  letterSpacing: "0.04em",
                   textTransform: "uppercase",
                 }}
               >
@@ -248,12 +322,12 @@ function DocsQuickstartCardInner({
               </div>
               <div
                 style={{
-                  fontSize: 22,
-                  lineHeight: 1.15,
-                  fontWeight: 800,
+                  fontSize: 18,
+                  lineHeight: 1.25,
+                  fontWeight: 740,
                   color: "var(--docs-text)",
                   marginBottom: 6,
-                  letterSpacing: "-0.025em",
+                  letterSpacing: "-0.015em",
                 }}
               >
                 {tutorial.title}
@@ -263,7 +337,7 @@ function DocsQuickstartCardInner({
                   color: "var(--docs-text-soft)",
                   lineHeight: 1.55,
                   marginBottom: 10,
-                  fontSize: 14,
+                  fontSize: 13.5,
                   maxWidth: 760,
                 }}
               >
@@ -274,8 +348,8 @@ function DocsQuickstartCardInner({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 8,
-                  padding: "5px 10px",
-                  borderRadius: 10,
+                  padding: "5px 9px",
+                  borderRadius: 7,
                   background: "var(--docs-bg-elevated)",
                   border: "1px dashed color-mix(in srgb, var(--docs-accent) 26%, var(--docs-border))",
                   color: "var(--docs-text)",
@@ -301,11 +375,10 @@ function DocsQuickstartCardInner({
             flexDirection: "column",
             justifyContent: "space-between",
             gap: 10,
-            padding: 14,
-            borderRadius: 16,
+            padding: 13,
+            borderRadius: 8,
             border: "1px solid color-mix(in srgb, var(--docs-accent) 16%, var(--docs-border))",
             background: "var(--docs-bg-elevated)",
-            boxShadow: "inset 0 1px 0 color-mix(in srgb, white 6%, transparent)",
           }}
         >
           <div
@@ -340,16 +413,15 @@ function DocsQuickstartCardInner({
                 justifyContent: "center",
                 gap: 8,
                 width: "100%",
-                borderRadius: 12,
+                borderRadius: 7,
                 border: "1px solid color-mix(in srgb, var(--docs-accent) 32%, var(--docs-border))",
                 background: "var(--docs-accent)",
                 color: "white",
-                padding: "10px 14px",
+                padding: "9px 13px",
                 fontWeight: 700,
                 cursor: "pointer",
                 fontFamily: "inherit",
-                fontSize: 14,
-                boxShadow: "0 8px 20px color-mix(in srgb, var(--docs-accent) 22%, transparent)",
+                fontSize: 13,
               }}
             >
               <CtaIcon style={{ width: 15, height: 15 }} />

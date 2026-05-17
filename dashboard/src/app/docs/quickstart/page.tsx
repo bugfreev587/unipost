@@ -322,7 +322,7 @@ export default function QuickstartPage() {
         ]}
       />
       <p className="qs-note">
-        Reference: <ApiInlineLink endpoint="POST /v1/posts/create" />.
+        Reference: <ApiInlineLink endpoint="POST /v1/posts" />.
       </p>
 
       <h2 id="what-this-is-not">What this quickstart is not</h2>
@@ -363,15 +363,19 @@ export default function QuickstartPage() {
 }
 
 const styles = `
-.qs-badges{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 26px}
-.qs-badge{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);color:var(--docs-text);font-size:11.5px;font-weight:600;letter-spacing:.01em}
-.qs-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:8px 0 14px;max-width:none}
-.qs-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:8px}
-.qs-next-card{padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit}
-.qs-next-card:hover{border-color:color-mix(in srgb,var(--docs-link) 34%, var(--docs-border));transform:translateY(-1px)}
-.qs-next-kicker{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:8px}
-.qs-next-title{font-size:15px;font-weight:700;color:var(--docs-text);margin-bottom:6px}
-.qs-next-body{font-size:13px;line-height:1.6;color:var(--docs-text-soft)}
+.qs-badges{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 28px}
+.qs-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:6px;background:#f8fafc;border:1px solid #e5e9f0;color:#4d5565;font-size:11.5px;font-weight:650;letter-spacing:0}
+.qs-note{font-size:15px;line-height:1.72;color:var(--docs-text-soft);margin:8px 0 16px;max-width:760px}
+.qs-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
+.qs-next-card{display:flex;min-height:138px;flex-direction:column;padding:16px;border:1px solid #e5e9f0;border-radius:8px;background:#ffffff;text-decoration:none;color:inherit;box-shadow:0 1px 0 rgba(15,23,42,.02);transition:border-color .14s ease,background .14s ease,transform .14s ease}
+.qs-next-card:hover{border-color:#ccd4df;background:#fbfcfe;transform:translateY(-1px);text-decoration:none!important}
+.qs-next-kicker{font-size:10.5px;font-weight:760;letter-spacing:.08em;text-transform:uppercase;color:#6f7685;margin-bottom:10px}
+.qs-next-title{font-size:15px;font-weight:720;color:var(--docs-text);margin-bottom:7px;letter-spacing:-.01em}
+.qs-next-body{font-size:13px;line-height:1.58;color:var(--docs-text-soft)}
+.qs-next-body code{font-size:11.5px}
+html.dark .qs-badge{background:#202025;border-color:#303038;color:#c8c8ca}
+html.dark .qs-next-card{background:#18181b;border-color:#2a2a2f}
+html.dark .qs-next-card:hover{background:#202025;border-color:#3a3a43}
 @media (max-width: 980px){
   .qs-next{grid-template-columns:1fr}
 }

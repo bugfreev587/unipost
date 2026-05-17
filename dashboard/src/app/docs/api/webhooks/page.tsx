@@ -259,10 +259,10 @@ export default function WebhooksPage() {
           </div>
           <div style={{ padding: "18px" }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 12 }}>Live events</div>
-            <div style={{ border: "1px solid var(--docs-border)", borderRadius: 10, overflow: "hidden", background: "var(--docs-bg-elevated)" }}>
+            <div style={{ border: "none", borderRadius: 0, overflow: "visible", background: "transparent" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
                 <thead>
-                  <tr style={{ background: "var(--docs-bg-muted)" }}>
+                  <tr style={{ background: "transparent" }}>
                     <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>Event</th>
                     <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--docs-text-faint)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", borderBottom: "1px solid var(--docs-border)" }}>When it fires</th>
                   </tr>
