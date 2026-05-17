@@ -473,12 +473,23 @@ func sanitizeLandingAttribution(raw map[string]string) map[string]string {
 		"utm_source":   true,
 		"utm_medium":   true,
 		"utm_campaign": true,
+		"s":            true,
+		"m":            true,
+		"c":            true,
+	}
+	aliases := map[string]string{
+		"s": "utm_source",
+		"m": "utm_medium",
+		"c": "utm_campaign",
 	}
 	out := make(map[string]string, len(raw))
 	for key, value := range raw {
 		key = strings.ToLower(strings.TrimSpace(key))
 		if !allowed[key] {
 			continue
+		}
+		if alias, ok := aliases[key]; ok {
+			key = alias
 		}
 		value = sanitizeLandingText(value, 128)
 		if value == "" {
