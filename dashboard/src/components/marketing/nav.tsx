@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { UniPostLogo } from "@/components/brand/unipost-logo";
+import { LandingAttribution } from "@/components/marketing/landing-attribution";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
@@ -36,35 +37,46 @@ export function MarketingNav() {
   const { isSignedIn, isLoaded } = useAuth();
 
   if (!isLoaded) {
-    return <div style={{ display: "flex", alignItems: "center", gap: 8, height: 36 }} />;
+    return (
+      <>
+        <LandingAttribution />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, height: 36 }} />
+      </>
+    );
   }
 
   if (isSignedIn) {
     return (
-      <div className="mk-auth-controls">
-        <ThemeToggle />
-        <a href={APP_URL} className="mk-auth-btn mk-auth-btn-primary">
-          Go to Dashboard
-        </a>
-        <UserButton appearance={userButtonAppearance} />
-      </div>
+      <>
+        <LandingAttribution />
+        <div className="mk-auth-controls">
+          <ThemeToggle />
+          <a href={APP_URL} className="mk-auth-btn mk-auth-btn-primary">
+            Go to Dashboard
+          </a>
+          <UserButton appearance={userButtonAppearance} />
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="mk-auth-row">
-      <ThemeToggle />
-      <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
-        <button className="mk-auth-btn mk-auth-btn-ghost">
-          Sign in
-        </button>
-      </SignInButton>
-      <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
-        <button className="mk-auth-btn mk-auth-btn-primary">
-          Get Started Free
-        </button>
-      </SignUpButton>
-    </div>
+    <>
+      <LandingAttribution />
+      <div className="mk-auth-row">
+        <ThemeToggle />
+        <SignInButton mode="redirect" forceRedirectUrl={APP_URL}>
+          <button className="mk-auth-btn mk-auth-btn-ghost">
+            Sign in
+          </button>
+        </SignInButton>
+        <SignUpButton mode="redirect" forceRedirectUrl={SIGN_UP_REDIRECT_URL}>
+          <button className="mk-auth-btn mk-auth-btn-primary">
+            Get Started Free
+          </button>
+        </SignUpButton>
+      </div>
+    </>
   );
 }
 

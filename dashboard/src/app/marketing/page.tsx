@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { MarketingNav, MarketingCTA, MarketingCTALight } from "@/components/marketing/nav";
-import { LandingAttribution } from "@/components/marketing/landing-attribution";
 import { LandingCodeTabs } from "@/components/marketing/landing-code-tabs";
 
 export const metadata: Metadata = {
@@ -1084,7 +1083,6 @@ export default function LandingPage() {
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <LandingAttribution />
 
       <div className="lp-shell">
         <nav className="lp-nav">
