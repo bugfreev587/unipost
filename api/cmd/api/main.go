@@ -517,6 +517,7 @@ func main() {
 		r.Get("/v1/me", meHandler.Get)
 		r.Get("/v1/me/features", meHandler.Features)
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
+		r.Post("/v1/me/landing-attribution", landingAttributionHandler.BindSessionToUser)
 		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding)
 		r.Patch("/v1/me/intent", meHandler.SetIntent)
 		r.Post("/v1/me/onboarding-shown", meHandler.MarkShown)

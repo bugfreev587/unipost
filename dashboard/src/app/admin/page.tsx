@@ -12,17 +12,33 @@ import { useAuth } from "@clerk/nextjs";
 
 import { AdminShell, StatCard, fmtCents, fmtDate, fmtNumber, fmtRelative } from "./_components/admin-ui";
 
+function fmtPct(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
 function LandingSourceRowView({ row }: { row: AdminLandingSourceRow }) {
   return (
     <tr>
       <td>
         <div style={{ fontWeight: 500 }}>{row.label}</div>
+        {row.top_campaign && (
+          <div className="ad-mono" style={{ marginTop: 3 }}>top: {row.top_campaign}</div>
+        )}
       </td>
       <td>
         <span className="ad-badge ad-b-gray">{row.source_code}</span>
       </td>
       <td>{fmtNumber(row.visits)}</td>
       <td>{fmtNumber(row.unique_visitors)}</td>
+      <td>
+        <div>{fmtNumber(row.signups)}</div>
+        <div className="ad-mono">{fmtPct(row.signup_rate)}</div>
+      </td>
+      <td>
+        <div>{fmtNumber(row.paid_users)}</div>
+        <div className="ad-mono">{fmtPct(row.paid_conversion_rate)}</div>
+      </td>
       <td style={{ color: "var(--dmuted)", fontSize: 11.5 }}>{fmtRelative(row.last_visit_at)}</td>
     </tr>
   );
@@ -151,6 +167,8 @@ export default function AdminDashboardPage() {
               <th>Code</th>
               <th>Visits</th>
               <th>Unique Visitors</th>
+              <th>Signups</th>
+              <th>Paid Users</th>
               <th>Last Visit</th>
             </tr>
           </thead>
@@ -159,7 +177,7 @@ export default function AdminDashboardPage() {
               landingSources.rows.map((row) => <LandingSourceRowView key={row.source_code} row={row} />)
             ) : (
               <tr>
-                <td colSpan={5} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>
+                <td colSpan={7} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>
                   {loading ? "Loading…" : "No landing source data yet"}
                 </td>
               </tr>

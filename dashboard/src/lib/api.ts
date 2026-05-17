@@ -1493,6 +1493,11 @@ export interface AdminLandingSourceRow {
   label: string;
   visits: number;
   unique_visitors: number;
+  signups: number;
+  paid_users: number;
+  signup_rate: number;
+  paid_conversion_rate: number;
+  top_campaign: string | null;
   last_visit_at: string | null;
 }
 
@@ -2108,12 +2113,29 @@ export async function recordLandingVisit(data: {
   source?: string;
   session_id: string;
   referrer?: string;
+  raw_query?: string;
+  attribution?: {
+    r?: string;
+    utm_source?: string;
+    utm_medium?: string;
+    utm_campaign?: string;
+  };
 }): Promise<void> {
   await fetch(`${API_URL}/v1/public/landing-visit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
     keepalive: true,
+  });
+}
+
+export async function bindLandingAttributionSession(
+  token: string,
+  sessionId: string
+): Promise<ApiResponse<{ bound: boolean }>> {
+  return request("/v1/me/landing-attribution", token, {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId }),
   });
 }
 
