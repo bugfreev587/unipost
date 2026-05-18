@@ -22,8 +22,8 @@ const PLANS: Plan[] = [
 // product-stage difference instead of just a price/quota grid.
 const PLAN_BLURBS: Record<string, string> = {
   free:   "Try the API and dashboard.",
-  api:    "API + MCP only. No dashboard.",
-  basic:  "Adds Inbox, Analytics, X, and white-label for 1 platform.",
+  api:    "Dashboard + API + Analytics.",
+  basic:  "Adds white-label, Inbox, and full Analytics.",
   growth: "Adds full white-label and optional attribution removal.",
   team:   "Adds RBAC and team collab.",
 };
