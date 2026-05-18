@@ -1,1081 +1,1125 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
 import Link from "next/link";
-import { UniPostLogo } from "@/components/brand/unipost-logo";
-import { MarketingNav, MarketingCTA, MarketingCTALight } from "@/components/marketing/nav";
-import { LandingCodeTabs } from "@/components/marketing/landing-code-tabs";
+import {
+  ArrowDown,
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  KeyRound,
+  Plug,
+  Send,
+  ShieldCheck,
+  Webhook,
+} from "lucide-react";
+import { PlatformIcon } from "@/components/platform-icons";
+import { PublicSiteHeader } from "@/components/marketing/nav";
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
+const START_BUILDING_URL = `${APP_URL}/welcome`;
 
 export const metadata: Metadata = {
-  title: "UniPost | Unified Social Media API for Apps and AI Agents",
+  title: "UniPost | Ship Social Publishing in Days",
   description:
-    "Add social publishing to your product with hosted Connect, validation, media uploads, per-platform posting, and delivery monitoring across X, Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, and Pinterest.",
+    "A unified social media publishing API for connecting customer accounts, uploading media, publishing to nine social networks, and tracking delivery.",
   alternates: {
     canonical: "https://unipost.dev/",
   },
 };
 
-const PLATFORM_ICONS: Record<string, ReactNode> = {
-  X: <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>,
-  Bluesky: <svg width="18" height="18" viewBox="0 0 600 530" fill="#0085ff"><path d="M135.7 44.3C202.3 94.8 273.6 197.2 300 249.6c26.4-52.4 97.7-154.8 164.3-205.3C520.4 1.5 588 -22.1 588 68.2c0 18 -10.4 151.2-16.5 172.8-21.2 75-98.6 94.1-167.9 82.6 121.1 20.7 151.8 89.2 85.3 157.8C390.5 584.2 310.2 500 300 481.4c-10.2 18.6-90.5 102.8-188.9 0C44.6 413.8 75.3 345.3 196.4 324.6c-69.3 11.5-146.7-7.6-167.9-82.6C22.4 220.4 12 87.2 12 69.2c0-90.3 67.6-66.7 123.7-24.9z"/></svg>,
-  LinkedIn: <svg width="18" height="18" viewBox="0 0 24 24" fill="#0a66c2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>,
-  Instagram: <svg width="18" height="18" viewBox="0 0 24 24" fill="url(#ig)"><defs><radialGradient id="ig" cx="30%" cy="107%" r="150%"><stop offset="0%" stopColor="#fdf497"/><stop offset="5%" stopColor="#fdf497"/><stop offset="45%" stopColor="#fd5949"/><stop offset="60%" stopColor="#d6249f"/><stop offset="90%" stopColor="#285AEB"/></radialGradient></defs><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>,
-  Threads: <svg width="18" height="18" viewBox="0 0 192 192" fill="currentColor"><path d="M141.537 88.988a66.667 66.667 0 0 0-2.518-1.143c-1.482-27.307-16.403-42.94-41.457-43.1h-.34c-14.986 0-27.449 6.396-35.12 18.036l13.779 9.452c5.73-8.695 14.724-10.548 21.348-10.548h.229c8.249.053 14.474 2.452 18.503 7.129 2.932 3.405 4.893 8.111 5.864 14.05-7.314-1.243-15.224-1.626-23.68-1.14-23.82 1.371-39.134 15.326-38.092 34.7.528 9.818 5.235 18.28 13.256 23.808 6.768 4.666 15.471 6.98 24.49 6.52 11.918-.607 21.27-5.003 27.79-13.066 4.947-6.116 8.1-13.908 9.532-23.619 5.708 3.45 9.953 8.063 12.37 13.676 4.106 9.533 4.349 25.194-7.865 37.315-10.724 10.64-23.618 15.254-38.399 15.358-16.388-.115-28.796-5.382-36.877-15.66-7.515-9.56-11.416-23.12-11.594-40.322.178-17.202 4.079-30.762 11.594-40.322 8.081-10.278 20.489-15.545 36.877-15.66 16.506.116 29.148 5.42 37.567 15.76 4.108 5.048 7.21 11.467 9.312 19.023l14.854-3.982c-2.605-9.463-6.641-17.573-12.159-24.356C152.088 14.14 136.308 7.353 116.379 7.2h-.069c-19.874.142-35.468 6.947-46.333 20.25C60.4 39.452 55.545 55.77 55.33 75.94l-.002.162.002.16c.215 20.17 5.07 36.488 14.645 48.49 10.865 13.303 26.459 20.108 46.333 20.25h.069c18.134-.119 33.577-5.86 45.916-17.068 16.456-14.938 17.617-36.986 12.28-49.39-3.835-8.908-11.151-16.063-21.036-20.544zm-36.844 51.014c-9.985.508-20.361-3.928-21.025-13.278-.477-6.732 4.746-14.243 24.298-15.368 2.132-.123 4.22-.183 6.263-.183 6.26 0 12.12.616 17.39 1.812-1.98 22.459-14.948 26.513-26.926 27.017z"/></svg>,
-  TikTok: <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1v-3.5a6.37 6.37 0 00-.79-.05A6.34 6.34 0 003.15 15.2a6.34 6.34 0 0010.86 4.48 6.3 6.3 0 001.86-4.48V8.73a8.26 8.26 0 004.84 1.56V6.84a4.85 4.85 0 01-1.12-.15z"/></svg>,
-  YouTube: <svg width="18" height="18" viewBox="0 0 24 24" fill="#ff0000"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>,
-  Pinterest: <svg width="18" height="18" viewBox="0 0 24 24" fill="#e60023"><path d="M12.017 0C5.396 0 0 5.383 0 12.014c0 4.895 2.918 9.104 7.111 10.956-.098-.93-.186-2.36.04-3.377.205-.872 1.314-5.55 1.314-5.55s-.336-.672-.336-1.664c0-1.56.91-2.726 2.038-2.726.958 0 1.42.718 1.42 1.577 0 .962-.614 2.398-.93 3.73-.264 1.114.562 2.022 1.666 2.022 2 0 3.536-2.11 3.536-5.156 0-2.693-1.935-4.576-4.7-4.576-3.2 0-5.08 2.4-5.08 4.88 0 .968.373 2.008.84 2.574a.338.338 0 01.077.323c-.084.355-.27 1.114-.307 1.27-.05.204-.165.247-.38.148-1.415-.658-2.3-2.724-2.3-4.386 0-3.57 2.594-6.85 7.478-6.85 3.925 0 6.976 2.8 6.976 6.548 0 3.904-2.46 7.047-5.875 7.047-1.147 0-2.227-.596-2.595-1.302l-.705 2.686c-.254.978-.94 2.202-1.4 2.95 1.053.324 2.168.5 3.333.5C18.624 24 24 18.617 24 12.014 24 5.383 18.624 0 12.017 0z"/></svg>,
-};
-
 const PLATFORMS = [
-  { name: "X", slug: "twitter" },
-  { name: "Bluesky", slug: "bluesky" },
-  { name: "LinkedIn", slug: "linkedin" },
-  { name: "Instagram", slug: "instagram" },
-  { name: "Threads", slug: "threads" },
-  { name: "TikTok", slug: "tiktok" },
-  { name: "YouTube", slug: "youtube" },
-  { name: "Pinterest", slug: "pinterest" },
+  { name: "X", key: "twitter" },
+  { name: "LinkedIn", key: "linkedin" },
+  { name: "Instagram", key: "instagram" },
+  { name: "TikTok", key: "tiktok" },
+  { name: "Threads", key: "threads" },
+  { name: "YouTube", key: "youtube" },
+  { name: "Facebook", key: "facebook" },
+  { name: "Pinterest", key: "pinterest" },
+  { name: "Bluesky", key: "bluesky" },
+] as const;
+
+const WHY_ITEMS = [
+  "Different OAuth flows",
+  "Different media rules",
+  "Different rate limits",
+  "Different publishing APIs",
 ];
 
-const HERO_POINTS = [
-  "Hosted Connect flows for end-user social accounts",
-  "Per-platform captions, media handling, and validation",
-  "Delivery jobs, account health, webhooks, and analytics",
-];
-
-const USE_CASES = [
+const HOW_STEPS = [
   {
-    eyebrow: "For SaaS products",
-    title: "Add social publishing without building the plumbing.",
-    body: "Ship account onboarding, draft validation, previews, publishing, and delivery monitoring as product features instead of a quarter-long infrastructure project.",
+    icon: KeyRound,
+    title: "Get API Key",
+    body: "Create a UniPost API key from your workspace and use it to authenticate every publish, media, and account request.",
   },
   {
-    eyebrow: "For AI agents",
-    title: "Give agents a safe path to publish.",
-    body: "Use per-platform payloads, validation, idempotency, and preview links so AI systems can draft and publish without spraying the same caption everywhere.",
+    icon: Plug,
+    title: "Connect accounts",
+    body: "Send customers through hosted OAuth flows, then store the returned connected account IDs in your product.",
   },
   {
-    eyebrow: "For ops teams",
-    title: "Keep one control plane for every destination.",
-    body: "Track usage, reconnect unhealthy accounts, inspect failed deliveries, and keep customer-facing posting flows inside one consistent API surface.",
-  },
-];
-
-const PRIMITIVES = [
-  {
-    title: "Hosted Connect",
-    desc: "Onboard customer accounts through a branded OAuth flow while UniPost handles token exchange and refresh.",
-    chips: ["Connect sessions", "external_user_id mapping", "White-label"],
-  },
-  {
-    title: "Validation + Preview",
-    desc: "Catch platform issues before send, then share a read-only preview link with teammates, customers, or AI review steps.",
-    chips: ["POST /v1/posts/validate", "Preview links", "Per-platform checks"],
-  },
-  {
-    title: "Media Pipeline",
-    desc: "Use public asset URLs or reserve local uploads through UniPost so image and video workflows stay predictable.",
-    chips: ["POST /v1/media", "upload_url", "media_ids"],
-  },
-  {
-    title: "Per-platform Delivery",
-    desc: "Publish one campaign across multiple accounts while still controlling captions, media shape, and platform-specific options.",
-    chips: ["platform_posts[]", "Account-level results", "Retries"],
+    icon: Send,
+    title: "Publish content",
+    body: "Submit text, media, or per-platform variants in one request and let UniPost handle validation and delivery.",
   },
 ];
 
-const FLOW_STEPS = [
+const TRUST_POINTS = [
   {
-    step: "01",
-    title: "Onboard the user account",
-    body: "Create a Connect session for a specific end user and let UniPost own the OAuth handshake and token lifecycle.",
+    icon: Plug,
+    title: "One API surface",
+    body: "Connect accounts, upload media, publish posts, and inspect results without stitching together every platform yourself.",
   },
   {
-    step: "02",
-    title: "Validate and prepare the payload",
-    body: "Run preflight validation, upload local media when needed, and generate a preview if the content needs review before publishing.",
+    icon: Webhook,
+    title: "Reliable Delivery",
+    body: "Validation, retries, account-level status, and webhooks help your product show clear outcomes to users.",
   },
   {
-    step: "03",
-    title: "Publish and monitor outcomes",
-    body: "Send the post, watch delivery jobs, listen for webhooks, and surface account health and analytics back inside your own app.",
-  },
-];
-
-const STATS = [
-  { number: "8", label: "platforms supported now" },
-  { number: "100", label: "free posts every month" },
-  { number: "1", label: "API for connect, publish, and monitor" },
-  { number: "24h", label: "default preview link lifetime" },
-];
-
-const MODES = [
-  {
-    badge: "Quickstart",
-    badgeColor: "#22c55e",
-    title: "Go live before you apply for every platform credential.",
-    desc: "Use UniPost's developer credentials and start integrating immediately while you validate your product and onboarding flow.",
-    features: [
-      "Fastest path from API key to real posts",
-      "No platform approval process to get started",
-      "Ideal for prototyping, pilots, and early customer validation",
-    ],
-  },
-  {
-    badge: "White-label",
-    badgeColor: "#38bdf8",
-    title: "Move the social surface under your own brand.",
-    desc: "Bring your own credentials and present your product throughout the hosted onboarding experience when you are ready to own the full flow.",
-    features: [
-      "OAuth screens show your app, not a generic tool",
-      "Credential ownership stays with your product team",
-      "Best fit for customer-facing SaaS at scale",
-    ],
+    icon: ShieldCheck,
+    title: "Built for apps and agents",
+    body: "Use account scoping and observable publish flows to let products, automations, and agents post safely.",
   },
 ];
 
-const FAQS = [
+const API_SURFACE = [
   {
-    q: "What is UniPost in one sentence?",
-    a: "UniPost is a unified social media API that lets apps and AI agents connect end-user accounts, validate drafts, upload media, publish per-platform content, and monitor delivery across multiple networks.",
+    area: "Connect",
+    method: "POST",
+    path: "/v1/connect/sessions",
+    href: "/docs/api/connect/sessions/create",
+    body: "Create a hosted OAuth session for customer account onboarding.",
   },
   {
-    q: "Who is this built for?",
-    a: "Teams building customer-facing products, AI agents, internal automations, and workflow tools that need to publish on behalf of many users without owning every OAuth and media edge case themselves.",
+    area: "Posts",
+    method: "POST",
+    path: "/v1/posts",
+    href: "/docs/api/posts/create",
+    body: "Publish, schedule, or draft content across connected destinations.",
   },
   {
-    q: "Do I need to handle local media uploads myself?",
-    a: "No. If you already host the file publicly, send the URL directly. If the file is local, reserve an upload through POST /v1/media, upload the bytes to the returned URL, then publish using media_ids.",
+    area: "Analytics",
+    method: "GET",
+    path: "/v1/analytics/summary",
+    href: "/docs/api/analytics/summary",
+    body: "Fetch workspace-wide reporting totals and trend breakdowns.",
   },
   {
-    q: "What counts as a post on the free plan?",
-    a: "One successful publish to one social account counts as one post. A campaign that publishes to three accounts counts as three posts. Failed posts do not count against quota.",
+    area: "Webhooks",
+    method: "POST",
+    path: "/v1/webhooks",
+    href: "/docs/api/webhooks/create",
+    body: "Receive publish outcomes and account lifecycle events without polling.",
   },
-];
-
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" width="14" height="14" style={{ flexShrink: 0 }}>
-      <path d="M3 8l4 4 6-7" />
-    </svg>
-  );
-}
+  {
+    area: "API keys",
+    method: "POST",
+    path: "/v1/api-keys",
+    href: "/docs/api/api-keys/create",
+    body: "Create workspace keys for server-side UniPost API access.",
+  },
+  {
+    area: "Inbox",
+    method: "GET",
+    path: "/v1/inbox",
+    href: "/docs/api/inbox",
+    body: "Read comments, DMs, and reply workflows across supported social channels.",
+  },
+] as const;
 
 const CSS = `
 :root{
-  --lp-page-max:1360px;
-  --lp-nav-max:1480px;
-  --lp-text-max:680px;
+  --lp-bg:var(--app-bg);
+  --lp-surface:var(--marketing-surface);
+  --lp-surface-alt:var(--marketing-surface-alt);
+  --lp-surface-elevated:var(--marketing-surface-elevated);
+  --lp-border:var(--marketing-border);
+  --lp-border-strong:var(--marketing-border-strong);
+  --lp-text:var(--marketing-text);
+  --lp-muted:var(--marketing-muted);
+  --lp-subtle:var(--marketing-subtle);
+  --lp-link:var(--marketing-link);
+  --lp-link-hover:var(--marketing-link-hover);
+  --lp-success:var(--marketing-auth-primary-bg);
+  --lp-shadow:var(--marketing-shadow-soft);
+  --lp-shadow-lg:var(--marketing-shadow-lg);
+  --lp-content:1180px;
+  --lp-wide:1320px;
   --lp-pad:32px;
-  --lp-section:112px;
-  --lp-emerald:#34d399;
-  --lp-sky:#38bdf8;
-  --lp-amber:#f59e0b;
-  --lp-shadow:0 24px 80px rgba(0,0,0,.18);
-  --lp-soft-shadow:0 16px 36px rgba(15,23,42,.08);
-}
-html.dark{
-  --lp-bg:#050816;
-  --lp-bg-2:#081120;
-  --lp-surface:#0c1728;
-  --lp-surface-2:#0f1d33;
-  --lp-surface-3:#13233c;
-  --lp-border:rgba(255,255,255,.09);
-  --lp-border-2:rgba(255,255,255,.14);
-  --lp-text:#f8fafc;
-  --lp-muted:#a9b6ca;
-  --lp-soft:#dbe5f4;
-  --lp-chip:#d5e0ef;
-  --lp-overlay:rgba(5,8,22,.72);
-  --lp-hero-glow:radial-gradient(circle at top left, rgba(56,189,248,.18), transparent 42%),radial-gradient(circle at 90% 10%, rgba(52,211,153,.16), transparent 32%),linear-gradient(180deg, #071021 0%, #050816 42%, #071020 100%);
-  --lp-panel:linear-gradient(180deg, rgba(12,23,40,.94), rgba(8,16,30,.98));
-  --lp-code-bg:#0b1220;
-  --lp-code-text:#d7e4f3;
-  --lp-code-gutter:#5e7089;
-}
-html.light{
-  --lp-bg:#f5f9ff;
-  --lp-bg-2:#edf5fd;
-  --lp-surface:#ffffff;
-  --lp-surface-2:#f7fbff;
-  --lp-surface-3:#edf4fb;
-  --lp-border:rgba(15,23,42,.10);
-  --lp-border-2:rgba(15,23,42,.16);
-  --lp-text:#0f172a;
-  --lp-muted:#56657a;
-  --lp-soft:#223046;
-  --lp-chip:#334155;
-  --lp-overlay:rgba(245,249,255,.78);
-  --lp-hero-glow:radial-gradient(circle at top left, rgba(56,189,248,.18), transparent 42%),radial-gradient(circle at 90% 10%, rgba(52,211,153,.18), transparent 30%),linear-gradient(180deg, #f8fbff 0%, #eef6ff 44%, #f5f9ff 100%);
-  --lp-panel:linear-gradient(180deg, rgba(255,255,255,.98), rgba(244,249,255,.98));
-  --lp-code-bg:#0f172a;
-  --lp-code-text:#dbe6f6;
-  --lp-code-gutter:#64748b;
+  --lp-radius:8px;
+  --lp-mono:var(--font-fira-code), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --lp-ui:var(--font-dm-sans), system-ui, sans-serif;
+  --lp-ease:cubic-bezier(.16,1,.3,1);
 }
 *{box-sizing:border-box}
 body{
+  margin:0;
   background:var(--lp-bg);
   color:var(--lp-text);
-  font-family:var(--font-dm-sans),system-ui,sans-serif;
+  font-family:var(--lp-ui);
   -webkit-font-smoothing:antialiased;
 }
 .lp-shell{
   min-height:100vh;
   background:
-    radial-gradient(circle at 15% 0%, rgba(52,211,153,.09), transparent 26%),
-    radial-gradient(circle at 82% 4%, rgba(56,189,248,.10), transparent 24%),
-    var(--lp-bg);
+    radial-gradient(circle at 82% 4%, color-mix(in srgb, var(--lp-link) 7%, transparent), transparent 34rem),
+    linear-gradient(180deg, color-mix(in srgb, var(--lp-surface-alt) 52%, var(--lp-bg)) 0%, var(--lp-bg) 50%);
 }
-.lp-nav{
-  position:sticky;
-  top:0;
-  z-index:50;
+.lp-main{
   width:100%;
-  border-bottom:1px solid var(--lp-border);
-  background:var(--lp-overlay);
-  backdrop-filter:blur(18px);
-  -webkit-backdrop-filter:blur(18px);
 }
-.lp-nav-inner{
-  max-width:var(--lp-nav-max);
+.lp-section{
+  width:100%;
+  padding:104px var(--lp-pad);
+}
+.lp-section.compact{
+  padding-top:64px;
+  padding-bottom:64px;
+}
+.lp-inner{
+  max-width:var(--lp-content);
   margin:0 auto;
-  padding:0 var(--lp-pad);
-  height:62px;
-  display:grid;
-  grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
-  align-items:center;
-  gap:16px;
 }
-.lp-nav-links{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:4px;
+.lp-wide-inner{
+  max-width:var(--lp-wide);
+  margin:0 auto;
 }
-.lp-nav-link{
-  padding:8px 14px;
-  border-radius:999px;
-  color:var(--lp-muted);
-  text-decoration:none;
-  font-size:14px;
-  font-weight:600;
-  transition:all .14s;
-}
-.lp-nav-link:hover{
-  color:var(--lp-text);
-  background:rgba(255,255,255,.04);
-}
-.lp-nav-dropdown{position:relative}
-.lp-nav-dropdown-trigger{
+.lp-eyebrow{
   display:inline-flex;
   align-items:center;
-  background:none;
-  border:none;
-  font-family:inherit;
-}
-.lp-nav-dropdown-menu{
-  position:absolute;
-  top:100%;
-  right:0;
-  margin-top:8px;
-  min-width:260px;
-  border-radius:18px;
-  padding:8px;
-  background:var(--lp-surface);
-  border:1px solid var(--lp-border-2);
-  opacity:0;
-  visibility:hidden;
-  transform:translateY(-6px);
-  transition:all .16s ease;
-  box-shadow:0 24px 50px rgba(15,23,42,.18);
-}
-.lp-nav-dropdown:hover .lp-nav-dropdown-menu{
-  opacity:1;
-  visibility:visible;
-  transform:translateY(0);
-}
-.lp-nav-dropdown-item{
-  display:flex;
-  gap:12px;
-  align-items:flex-start;
-  padding:12px;
-  border-radius:14px;
-  color:var(--lp-text);
-  text-decoration:none;
-  transition:background .12s;
-}
-.lp-nav-dropdown-item:hover{background:var(--lp-surface-2)}
-.lp-nav-dropdown-icon{
-  width:36px;
-  height:36px;
-  border-radius:12px;
-  background:var(--lp-surface-3);
-  border:1px solid var(--lp-border);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  color:var(--lp-emerald);
-  flex-shrink:0;
-}
-.lp-nav-dropdown-label{
-  font-size:14px;
+  gap:8px;
+  margin:0 0 16px;
+  color:var(--lp-link);
+  font-family:var(--lp-mono);
+  font-size:12px;
   font-weight:700;
-  margin-bottom:3px;
+  text-transform:uppercase;
 }
-.lp-nav-dropdown-desc{
-  font-size:12.5px;
-  line-height:1.45;
+.lp-eyebrow::before{
+  content:"";
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--lp-link);
+  box-shadow:0 0 0 5px color-mix(in srgb, var(--lp-link) 12%, transparent);
+}
+.lp-section-head{
+  max-width:760px;
+  margin:0 0 34px;
+  text-align:left;
+}
+.lp-section-head.center{
+  margin-left:auto;
+  margin-right:auto;
+  text-align:center;
+}
+.lp-section-head.center .lp-eyebrow{
+  justify-content:center;
+}
+.lp-section-head.center p{
+  margin-left:auto;
+  margin-right:auto;
+}
+.lp-section-head h2{
+  margin:0;
+  font-size:clamp(32px, 4vw, 48px);
+  line-height:1.12;
+  letter-spacing:0;
+  font-weight:800;
+}
+.lp-section-head p{
+  margin:16px 0 0;
   color:var(--lp-muted);
-}
-.lp-page{
-  max-width:var(--lp-page-max);
-  margin:0 auto;
-  padding:0 var(--lp-pad) 120px;
+  font-size:17px;
+  line-height:1.65;
 }
 .lp-btn{
   display:inline-flex;
   align-items:center;
   justify-content:center;
   gap:8px;
-  min-height:48px;
-  padding:12px 22px;
-  border-radius:999px;
+  min-height:46px;
+  padding:11px 18px;
+  border-radius:var(--lp-radius);
+  border:1px solid transparent;
+  font-family:var(--lp-ui);
   font-size:14px;
   font-weight:700;
   text-decoration:none;
-  border:1px solid transparent;
-  transition:all .15s;
+  white-space:nowrap;
+  transition:background .22s var(--lp-ease), border-color .22s var(--lp-ease), color .22s var(--lp-ease), transform .22s var(--lp-ease), box-shadow .22s var(--lp-ease);
+}
+.lp-btn:hover{
+  transform:translateY(-1px);
+}
+.lp-btn:active{
+  transform:translateY(0) scale(.98);
 }
 .lp-btn-primary{
-  background:linear-gradient(135deg, var(--lp-emerald), #7cf3be);
-  color:#03110a;
-  box-shadow:0 18px 40px rgba(52,211,153,.24);
+  background:var(--lp-link);
+  color:#fff;
+  box-shadow:0 14px 28px color-mix(in srgb, var(--lp-link) 16%, transparent);
 }
 .lp-btn-primary:hover{
-  transform:translateY(-1px);
-  box-shadow:0 24px 44px rgba(52,211,153,.30);
+  background:var(--lp-link-hover);
+}
+.lp-btn-primary svg{
+  color:currentColor;
 }
 .lp-btn-outline{
+  background:var(--lp-surface);
   color:var(--lp-text);
-  border-color:var(--lp-border-2);
-  background:rgba(255,255,255,.03);
+  border-color:var(--lp-border-strong);
 }
 .lp-btn-outline:hover{
-  background:rgba(255,255,255,.06);
-  border-color:rgba(255,255,255,.22);
-}
-.lp-btn-subtle{
-  color:var(--lp-soft);
-  border-color:var(--lp-border);
-  background:transparent;
-}
-.lp-btn-subtle:hover{
-  background:rgba(255,255,255,.03);
-}
-.lp-section{
-  padding-top:var(--lp-section);
-}
-.lp-eyebrow{
-  display:inline-flex;
-  align-items:center;
-  gap:10px;
-  padding:8px 14px;
-  border-radius:999px;
-  border:1px solid rgba(52,211,153,.24);
-  background:rgba(52,211,153,.09);
-  color:var(--lp-emerald);
-  font-size:12px;
-  font-weight:800;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-}
-.lp-eyebrow-dot{
-  width:7px;
-  height:7px;
-  border-radius:50%;
-  background:currentColor;
-  box-shadow:0 0 0 6px rgba(52,211,153,.12);
+  background:var(--lp-surface-alt);
 }
 .lp-hero{
-  padding:40px 0 24px;
-}
-.lp-hero-shell{
-  display:grid;
-  grid-template-columns:minmax(0,1.02fr) minmax(400px,.98fr);
-  gap:36px;
+  min-height:min(760px, calc(100dvh - 58px));
+  padding:76px var(--lp-pad) 70px;
+  display:flex;
   align-items:center;
-  padding:48px;
-  border:1px solid var(--lp-border);
-  border-radius:32px;
-  background:var(--lp-hero-glow);
+  border-bottom:1px solid var(--lp-border);
   overflow:hidden;
+}
+.lp-hero-inner{
+  width:100%;
+  max-width:var(--lp-wide);
+  margin:0 auto;
   position:relative;
-  box-shadow:var(--lp-shadow);
+}
+.lp-hero-grid{
+  display:grid;
+  grid-template-columns:minmax(0, .96fr) minmax(420px, 1.04fr);
+  gap:72px;
+  align-items:center;
 }
 .lp-hero-copy{
   position:relative;
-  z-index:1;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  text-align:center;
+  z-index:2;
+  max-width:680px;
+  text-align:left;
+  padding:18px 0 24px;
 }
-.lp-hero-title{
-  margin:22px 0 18px;
-  max-width:720px;
-  font-size:clamp(48px, 6vw, 84px);
-  line-height:.98;
-  letter-spacing:-.06em;
-  font-weight:900;
-}
-.lp-hero-title strong{
-  display:block;
-  color:var(--lp-emerald);
-  font-weight:900;
+.lp-hero h1{
+  margin:0;
+  font-size:clamp(44px, 5.2vw, 74px);
+  line-height:1.06;
+  letter-spacing:0;
+  font-weight:800;
 }
 .lp-hero-sub{
-  max-width:var(--lp-text-max);
-  color:var(--lp-soft);
+  max-width:660px;
+  margin:22px 0 0;
+  color:var(--lp-muted);
   font-size:18px;
-  line-height:1.75;
+  line-height:1.7;
 }
 .lp-hero-actions{
   display:flex;
   align-items:center;
-  justify-content:center;
+  justify-content:flex-start;
   gap:12px;
   flex-wrap:wrap;
-  margin:32px 0 24px;
+  margin-top:30px;
 }
-.lp-hero-proof{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:12px;
-  max-width:640px;
-  width:100%;
-}
-.lp-hero-proof-card{
-  display:flex;
-  gap:12px;
-  align-items:flex-start;
-  padding:14px 16px;
-  border-radius:18px;
-  background:rgba(255,255,255,.05);
-  border:1px solid var(--lp-border);
-}
-.lp-hero-proof-card svg{
-  color:var(--lp-emerald);
-  margin-top:2px;
-}
-.lp-hero-proof-label{
+.lp-hero-note{
+  margin:18px 0 0;
+  color:var(--lp-subtle);
   font-size:13px;
-  line-height:1.55;
-  color:var(--lp-chip);
+}
+.lp-model{
+  display:grid;
+  gap:18px;
+  padding:28px;
+  border:1px solid var(--lp-border);
+  border-radius:24px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--lp-surface) 96%, transparent), color-mix(in srgb, var(--lp-surface-alt) 74%, transparent));
+  box-shadow:var(--lp-shadow-lg);
+}
+.lp-model-node{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:20px;
+  min-height:84px;
+  padding:20px;
+  border:1px solid var(--lp-border);
+  border-radius:18px;
+  background:var(--lp-surface);
+}
+.lp-model-node.api{
+  border-color:color-mix(in srgb, var(--lp-link) 44%, var(--lp-border));
+  background:color-mix(in srgb, var(--lp-link) 7%, var(--lp-surface));
+}
+.lp-model-label{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-width:0;
+}
+.lp-model-icon{
+  width:40px;
+  height:40px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex-shrink:0;
+  border-radius:12px;
+  background:var(--lp-surface-alt);
+  color:var(--lp-link);
+}
+.lp-model-title{
+  display:block;
+  font-size:16px;
+  font-weight:800;
+}
+.lp-model-copy{
+  display:block;
+  margin-top:4px;
+  color:var(--lp-muted);
+  font-size:13px;
+  line-height:1.45;
+}
+.lp-model-arrow{
+  display:flex;
+  justify-content:center;
+  color:var(--lp-subtle);
+}
+.lp-model-platforms{
+  display:grid;
+  grid-template-columns:repeat(4, minmax(0, 1fr));
+  gap:10px;
+}
+.lp-model-platform{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  min-height:48px;
+  padding:9px;
+  border:1px solid var(--lp-border);
+  border-radius:14px;
+  background:var(--lp-surface);
+  color:var(--lp-text);
+  font-size:12.5px;
+  font-weight:800;
+}
+.lp-hero-stats{
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:12px;
+  max-width:560px;
+  margin-top:30px;
+}
+.lp-hero-stat{
+  border-top:1px solid var(--lp-border-strong);
+  padding-top:14px;
+}
+.lp-hero-stat strong{
+  display:block;
+  font-family:var(--lp-mono);
+  font-size:24px;
+  line-height:1;
+}
+.lp-hero-stat span{
+  display:block;
+  margin-top:7px;
+  color:var(--lp-muted);
+  font-size:12px;
+  font-weight:700;
 }
 .lp-hero-visual{
   position:relative;
-  min-height:520px;
+  min-height:540px;
 }
-.lp-visual-stack{
+.lp-console{
+  position:relative;
+  overflow:hidden;
+  border:1px solid color-mix(in srgb, var(--lp-border-strong) 84%, transparent);
+  border-radius:18px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--lp-surface) 94%, transparent), color-mix(in srgb, var(--lp-surface-alt) 88%, transparent));
+  box-shadow:var(--lp-shadow-lg);
+}
+.lp-console::before{
+  content:"";
   position:absolute;
   inset:0;
+  pointer-events:none;
+  border:1px solid color-mix(in srgb, #fff 38%, transparent);
+  box-shadow:inset 0 1px 0 color-mix(in srgb, #fff 48%, transparent);
 }
-.lp-visual-card{
-  position:absolute;
-  border:1px solid var(--lp-border);
-  background:var(--lp-panel);
-  border-radius:24px;
-  box-shadow:var(--lp-shadow);
-  overflow:hidden;
-}
-.lp-visual-card-main{
-  right:0;
-  top:16px;
-  width:min(100%, 520px);
-  padding:20px;
-}
-.lp-visual-card-secondary{
-  left:16px;
-  bottom:18px;
-  width:min(78%, 360px);
-  padding:18px;
-}
-.lp-visual-card-float{
-  right:38px;
-  bottom:0;
-  width:240px;
-  padding:16px;
-}
-.lp-visual-topline{
+.lp-console-head{
   display:flex;
   align-items:center;
   justify-content:space-between;
-  margin-bottom:18px;
+  gap:16px;
+  padding:18px 20px;
+  border-bottom:1px solid var(--lp-border);
 }
-.lp-visual-topline strong{
-  font-size:14px;
-  letter-spacing:-.02em;
-}
-.lp-visual-pill{
-  padding:6px 10px;
-  border-radius:999px;
-  background:rgba(56,189,248,.14);
-  color:var(--lp-sky);
-  font-size:11px;
+.lp-console-title{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-size:13px;
   font-weight:800;
-  text-transform:uppercase;
-  letter-spacing:.08em;
 }
-.lp-visual-lanes{
+.lp-console-title span{
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  background:var(--lp-success);
+  animation:lpPulse 2.4s var(--lp-ease) infinite;
+}
+.lp-console-time{
+  color:var(--lp-subtle);
+  font-family:var(--lp-mono);
+  font-size:12px;
+}
+.lp-console-body{
+  padding:22px;
+}
+.lp-compose{
   display:grid;
   gap:14px;
-}
-.lp-lane{
-  padding:16px;
-  border-radius:18px;
-  background:rgba(255,255,255,.04);
+  padding:18px;
   border:1px solid var(--lp-border);
+  border-radius:14px;
+  background:var(--lp-surface);
 }
-.lp-lane-label{
+.lp-compose-line{
+  height:12px;
+  border-radius:999px;
+  background:var(--lp-surface-alt);
+}
+.lp-compose-line.wide{width:92%}
+.lp-compose-line.mid{width:72%}
+.lp-compose-media{
+  display:grid;
+  grid-template-columns:1.4fr .8fr;
+  gap:12px;
+}
+.lp-compose-media div{
+  min-height:92px;
+  border:1px solid var(--lp-border);
+  border-radius:12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--lp-link) 12%, transparent), transparent 60%),
+    var(--lp-surface-alt);
+}
+.lp-compose-actions{
   display:flex;
   align-items:center;
   justify-content:space-between;
   gap:12px;
-  margin-bottom:10px;
-  font-size:13px;
-  font-weight:700;
 }
-.lp-lane-sub{
-  color:var(--lp-muted);
-  font-size:12.5px;
-  line-height:1.55;
-}
-.lp-lane-platforms{
+.lp-chip-row{
   display:flex;
-  flex-wrap:wrap;
   gap:8px;
-  margin-top:12px;
+  flex-wrap:wrap;
 }
 .lp-mini-chip{
   display:inline-flex;
   align-items:center;
-  gap:7px;
-  padding:7px 10px;
-  border-radius:999px;
-  background:rgba(255,255,255,.06);
+  gap:6px;
+  min-height:28px;
+  padding:5px 9px;
   border:1px solid var(--lp-border);
-  color:var(--lp-chip);
+  border-radius:999px;
+  color:var(--lp-muted);
   font-size:12px;
-  font-weight:600;
+  font-weight:700;
 }
-.lp-signal-list{
+.lp-mini-chip svg{color:var(--lp-link)}
+.lp-send-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  min-height:32px;
+  padding:7px 12px;
+  border-radius:999px;
+  background:var(--lp-link);
+  color:#fff;
+  font-size:12px;
+  font-weight:800;
+}
+.lp-queue{
   display:grid;
   gap:10px;
+  margin-top:16px;
 }
-.lp-signal-item{
+.lp-queue-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  padding:13px 14px;
+  border:1px solid var(--lp-border);
+  border-radius:12px;
+  background:color-mix(in srgb, var(--lp-surface) 86%, transparent);
+  animation:lpFloat 5s var(--lp-ease) infinite;
+}
+.lp-queue-item:nth-child(2){animation-delay:.45s}
+.lp-queue-item:nth-child(3){animation-delay:.9s}
+.lp-queue-name{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-weight:800;
+  font-size:13px;
+}
+.lp-dot{
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  background:var(--lp-link);
+}
+.lp-dot.green{background:var(--lp-success)}
+.lp-dot.amber{background:#d97706}
+.lp-queue-status{
+  color:var(--lp-muted);
+  font-family:var(--lp-mono);
+  font-size:11px;
+}
+.lp-architecture{
+  position:absolute;
+  left:-34px;
+  right:28px;
+  bottom:-36px;
+  z-index:2;
+  padding:0;
+}
+.lp-architecture{
+  max-width:none;
+  margin:0;
+}
+.lp-arch-flow{
+  display:grid;
+  grid-template-columns:1fr 44px 1fr 44px 1.08fr;
+  align-items:center;
+  gap:0;
+}
+.lp-arch-node{
+  min-height:96px;
+  padding:16px;
+  border:1px solid var(--lp-border-strong);
+  border-radius:14px;
+  background:color-mix(in srgb, var(--lp-surface) 92%, transparent);
+  box-shadow:var(--lp-shadow);
+  backdrop-filter:blur(16px);
+}
+.lp-arch-node.api{
+  border-color:color-mix(in srgb, var(--lp-link) 52%, var(--lp-border));
+  background:color-mix(in srgb, var(--lp-link) 8%, var(--lp-surface));
+}
+.lp-arch-label{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:10px;
+  color:var(--lp-text);
+  font-size:15px;
+  font-weight:800;
+}
+.lp-arch-node p{
+  margin:0;
+  color:var(--lp-muted);
+  font-size:12.5px;
+  line-height:1.5;
+}
+.lp-arch-arrow{
+  height:2px;
+  background:var(--lp-border-strong);
+  position:relative;
+}
+.lp-arch-arrow::after{
+  content:"";
+  position:absolute;
+  right:-1px;
+  top:50%;
+  width:8px;
+  height:8px;
+  border-top:2px solid var(--lp-border-strong);
+  border-right:2px solid var(--lp-border-strong);
+  transform:translateY(-50%) rotate(45deg);
+}
+.lp-platform-strip{
+  display:grid;
+  grid-template-columns:repeat(9, minmax(0, 1fr));
+  align-items:center;
+  gap:12px;
+}
+.lp-platform-card{
+  min-height:64px;
+  display:flex;
+  flex-direction:row;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  padding:12px;
+  border:1px solid var(--lp-border);
+  border-radius:16px;
+  background:var(--lp-surface);
+  color:var(--lp-text);
+  font-size:13px;
+  font-weight:700;
+  white-space:nowrap;
+}
+.lp-split{
+  display:grid;
+  grid-template-columns:minmax(0, .88fr) minmax(420px, 1.12fr);
+  gap:58px;
+  align-items:center;
+}
+.lp-problem-list{
+  display:grid;
+  gap:12px;
+  margin-top:24px;
+}
+.lp-problem-item{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:15px 0;
+  border-top:1px solid var(--lp-border);
+  font-weight:700;
+}
+.lp-problem-item svg{
+  color:var(--lp-link);
+  flex-shrink:0;
+}
+.lp-unifies{
+  padding:30px;
+  border:1px solid var(--lp-border-strong);
+  border-radius:18px;
+  background:var(--lp-surface-elevated);
+  box-shadow:var(--lp-shadow);
+}
+.lp-unifies-title{
+  margin:0 0 18px;
+  font-size:24px;
+  line-height:1.2;
+  font-weight:800;
+}
+.lp-unifies-row{
+  display:grid;
+  grid-template-columns:1fr;
+  align-items:center;
+  gap:12px;
+}
+.lp-unifies-box{
+  min-height:126px;
+  padding:18px;
+  border:1px solid var(--lp-border);
+  border-radius:14px;
+  background:var(--lp-surface);
+}
+.lp-unifies-box strong{
+  display:block;
+  margin-bottom:12px;
+  font-size:14px;
+}
+.lp-unifies-box span{
+  display:block;
+  color:var(--lp-muted);
+  font-size:13px;
+  line-height:1.55;
+}
+.lp-unifies-arrow{
+  display:none;
+  color:var(--lp-link);
+}
+.lp-steps{
+  position:relative;
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:22px;
+  align-items:stretch;
+}
+.lp-steps::before{
+  content:"";
+  position:absolute;
+  left:12%;
+  right:12%;
+  top:72px;
+  height:2px;
+  background:linear-gradient(90deg, transparent, color-mix(in srgb, var(--lp-link) 42%, var(--lp-border-strong)), transparent);
+}
+.lp-step{
+  position:relative;
+  min-height:312px;
+  padding:30px;
+  border:1px solid var(--lp-border);
+  border-radius:18px;
+  background:var(--lp-surface);
+  box-shadow:var(--lp-shadow);
+  transition:transform .22s var(--lp-ease), border-color .22s var(--lp-ease);
+  animation:lpRise .7s var(--lp-ease) both;
+}
+.lp-step:nth-child(2){animation-delay:.08s}
+.lp-step:nth-child(3){animation-delay:.16s}
+.lp-step:hover{
+  transform:translateY(-3px);
+  border-color:var(--lp-border-strong);
+}
+.lp-step-number{
+  width:76px;
+  height:76px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  margin-bottom:24px;
+  border:1px solid color-mix(in srgb, var(--lp-link) 34%, var(--lp-border));
+  border-radius:22px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--lp-link) 16%, transparent), transparent 62%),
+    var(--lp-surface-alt);
+  font-family:var(--lp-mono);
+  color:color-mix(in srgb, var(--lp-link) 75%, var(--lp-text));
+  font-size:34px;
+  line-height:1;
+  font-weight:700;
+}
+.lp-step-icon{
+  width:42px;
+  height:42px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  margin-bottom:18px;
+  border-radius:var(--lp-radius);
+  background:color-mix(in srgb, var(--lp-link) 10%, var(--lp-surface-alt));
+  color:var(--lp-link);
+}
+.lp-step h3,
+.lp-feature h3{
+  margin:0;
+  font-size:18px;
+  line-height:1.25;
+  font-weight:800;
+}
+.lp-step p,
+.lp-feature p{
+  margin:12px 0 0;
+  color:var(--lp-muted);
+  font-size:14px;
+  line-height:1.6;
+}
+.lp-api-section{
+  padding-top:28px;
+  padding-bottom:72px;
+}
+.lp-api-section .lp-section-head{
+  margin-bottom:24px;
+}
+.lp-api-list{
+  max-width:980px;
+  margin:0 auto;
+  display:grid;
+  gap:9px;
+}
+.lp-api-row{
+  display:grid;
+  grid-template-columns:140px minmax(230px, .78fr) minmax(0, 1fr) 24px;
+  align-items:center;
+  gap:18px;
+  padding:15px 22px;
+  border:1px solid var(--lp-border);
+  border-radius:16px;
+  background:var(--lp-surface);
+  color:var(--lp-text);
+  text-decoration:none;
+  box-shadow:none;
+  transition:transform .22s var(--lp-ease), border-color .22s var(--lp-ease), background .22s var(--lp-ease);
+}
+.lp-api-row:hover{
+  transform:translateY(-2px);
+  border-color:var(--lp-border-strong);
+  background:var(--lp-surface-elevated);
+}
+.lp-api-area{
+  color:var(--lp-muted);
+  font-family:var(--lp-mono);
+  font-size:12px;
+  font-weight:800;
+  text-transform:uppercase;
+}
+.lp-api-endpoint{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+  font-family:var(--lp-mono);
+  font-size:17px;
+  font-weight:700;
+}
+.lp-api-method{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:54px;
+  padding:5px 8px;
+  border-radius:8px;
+  background:color-mix(in srgb, var(--lp-link) 11%, var(--lp-surface-alt));
+  color:var(--lp-link);
+  font-size:12px;
+  line-height:1;
+}
+.lp-api-method.post{
+  background:color-mix(in srgb, var(--lp-success) 13%, var(--lp-surface-alt));
+  color:color-mix(in srgb, var(--lp-success) 82%, var(--lp-text));
+}
+.lp-api-method.planned{
+  background:var(--lp-surface-alt);
+  color:var(--lp-muted);
+}
+.lp-api-path{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.lp-api-body{
+  margin:0;
+  color:var(--lp-muted);
+  font-size:14px;
+  line-height:1.45;
+}
+.lp-api-link{
+  display:flex;
+  justify-content:flex-end;
+  color:var(--lp-subtle);
+}
+.lp-code-layout{
+  display:grid;
+  grid-template-columns:minmax(0, .82fr) minmax(420px, 1.18fr);
+  gap:28px;
+  align-items:stretch;
+}
+.lp-code-copy{
+  padding:32px;
+  border:1px solid var(--lp-border);
+  border-radius:18px;
+  background:var(--lp-surface);
+}
+.lp-code-copy h2{
+  margin:0;
+  font-size:36px;
+  line-height:1.15;
+}
+.lp-code-copy p{
+  margin:16px 0 0;
+  color:var(--lp-muted);
+  font-size:16px;
+  line-height:1.65;
+}
+.lp-code-window{
+  overflow:hidden;
+  border:1px solid var(--lp-border);
+  border-radius:18px;
+  background:color-mix(in srgb, var(--lp-surface) 94%, #0f172a);
+  box-shadow:var(--lp-shadow);
+}
+.lp-code-head{
   display:flex;
   align-items:center;
   justify-content:space-between;
   gap:12px;
-  padding:12px 14px;
-  border-radius:16px;
-  background:rgba(255,255,255,.04);
-  border:1px solid var(--lp-border);
-  font-size:13px;
-}
-.lp-signal-meta{
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-}
-.lp-signal-meta strong{
-  font-size:13px;
-}
-.lp-signal-meta span{
-  color:var(--lp-muted);
+  min-height:44px;
+  padding:0 16px;
+  border-bottom:1px solid var(--lp-border);
+  color:var(--lp-subtle);
+  font-family:var(--lp-mono);
   font-size:12px;
 }
-.lp-signal-badge{
-  padding:5px 10px;
-  border-radius:999px;
-  font-size:11px;
-  font-weight:800;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-}
-.lp-signal-badge.ok{background:rgba(52,211,153,.16);color:var(--lp-emerald)}
-.lp-signal-badge.warn{background:rgba(245,158,11,.16);color:var(--lp-amber)}
-.lp-code-card{
-  border-radius:18px;
-  overflow:hidden;
-  border:1px solid rgba(255,255,255,.08);
-  background:var(--lp-code-bg);
-}
-.lp-code-card-head{
+.lp-code-dots{
   display:flex;
-  align-items:center;
-  gap:8px;
-  padding:12px 14px;
-  border-bottom:1px solid rgba(255,255,255,.06);
+  gap:7px;
 }
-.lp-code-dot{
-  width:9px;
-  height:9px;
+.lp-code-dots span{
+  width:10px;
+  height:10px;
   border-radius:50%;
-  background:rgba(255,255,255,.26);
+  background:var(--lp-border-strong);
 }
-.lp-code-card-body{
-  padding:14px 16px 18px;
-  color:var(--lp-code-text);
-  font-family:var(--font-fira-code),monospace;
-  font-size:12px;
-  line-height:1.8;
+.lp-code code{
+  display:block;
+  margin:0;
+  padding:22px;
+  color:var(--lp-text);
+  font-family:var(--lp-mono);
+  font-size:13px;
+  line-height:1.75;
+  overflow:auto;
   white-space:pre;
 }
-.lp-code-accent{color:#7dd3fc}
-.lp-code-green{color:#86efac}
-.lp-code-amber{color:#fcd34d}
-.lp-platforms{
-  padding-top:28px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-}
-.lp-platforms-label{
-  font-size:12px;
-  color:var(--lp-muted);
-  text-transform:uppercase;
-  letter-spacing:.12em;
-  font-weight:800;
-  margin-bottom:18px;
-  text-align:center;
-}
-.lp-platform-row{
-  display:flex;
-  flex-wrap:wrap;
-  justify-content:center;
-  gap:12px;
-}
-.lp-platform-chip{
-  display:inline-flex;
-  align-items:center;
-  gap:10px;
-  padding:10px 16px;
-  border-radius:999px;
-  text-decoration:none;
-  color:var(--lp-chip);
-  border:1px solid var(--lp-border);
-  background:var(--lp-surface);
-  transition:all .14s;
-  font-size:14px;
-  font-weight:700;
-}
-.lp-platform-chip:hover{
-  transform:translateY(-1px);
-  color:var(--lp-text);
-  border-color:var(--lp-border-2);
-}
-.lp-section-head{
-  max-width:720px;
-  margin:0 auto 28px;
-  text-align:center;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  margin-bottom:28px;
-}
-.lp-section-head h2{
-  font-size:clamp(32px,4vw,54px);
-  line-height:1.02;
-  letter-spacing:-.05em;
-  font-weight:900;
-  margin:16px 0 12px;
-}
-.lp-section-head p{
-  color:var(--lp-soft);
-  font-size:17px;
-  line-height:1.75;
-  max-width:680px;
-}
-.lp-usecase-grid{
+.tok-key{color:#7c3aed}
+.tok-str{color:#0f766e}
+.tok-prop{color:#2563eb}
+.tok-var{color:#b45309}
+.tok-punc{color:var(--lp-subtle)}
+html.dark .tok-key{color:#c4b5fd}
+html.dark .tok-str{color:#5eead4}
+html.dark .tok-prop{color:#93c5fd}
+html.dark .tok-var{color:#fbbf24}
+.lp-features{
   display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-template-columns:repeat(3, minmax(0, 1fr));
   gap:18px;
+  align-items:stretch;
 }
-.lp-usecase-card,
-.lp-primitive-card,
-.lp-flow-step,
-.lp-mode-card,
-.lp-faq-item{
-  background:var(--lp-surface);
+.lp-feature{
+  min-height:236px;
+  padding:30px;
   border:1px solid var(--lp-border);
-  border-radius:24px;
-}
-.lp-usecase-card{
-  padding:26px;
-  min-height:230px;
-  box-shadow:var(--lp-soft-shadow);
-}
-.lp-card-eyebrow{
-  color:var(--lp-sky);
-  font-size:12px;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-  font-weight:800;
-  margin-bottom:12px;
-}
-.lp-usecase-card h3,
-.lp-primitive-card h3,
-.lp-flow-step h3,
-.lp-mode-card h3,
-.lp-faq-item h3{
-  font-size:24px;
-  line-height:1.15;
-  letter-spacing:-.04em;
-  font-weight:800;
-  margin-bottom:12px;
-}
-.lp-usecase-card p,
-.lp-primitive-card p,
-.lp-flow-step p,
-.lp-mode-card p,
-.lp-faq-item p{
-  color:var(--lp-soft);
-  font-size:15px;
-  line-height:1.75;
-}
-.lp-primitives-grid{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:18px;
-}
-.lp-primitive-card{
-  padding:26px;
-}
-.lp-chip-row{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  margin-top:18px;
-}
-.lp-chip{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding:8px 11px;
-  border-radius:999px;
-  background:var(--lp-surface-2);
-  border:1px solid var(--lp-border);
-  color:var(--lp-chip);
-  font-size:12px;
-  font-family:var(--font-fira-code),monospace;
-  font-weight:600;
-}
-.lp-step-list{
-  display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:18px;
-}
-.lp-flow-step{
-  padding:22px;
-}
-.lp-flow-step-number{
-  display:inline-flex;
-  margin-bottom:12px;
-  color:var(--lp-emerald);
-  font-family:var(--font-fira-code),monospace;
-  font-size:13px;
-  font-weight:800;
-}
-.lp-stats{
-  display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
-  gap:14px;
-}
-.lp-stat{
-  padding:24px;
   border-radius:20px;
   background:var(--lp-surface);
-  border:1px solid var(--lp-border);
-  box-shadow:var(--lp-soft-shadow);
+  transition:transform .22s var(--lp-ease), border-color .22s var(--lp-ease);
 }
-.lp-stat strong{
-  display:block;
-  margin-bottom:8px;
-  color:var(--lp-emerald);
-  font-size:40px;
-  line-height:1;
-  letter-spacing:-.06em;
-  font-weight:900;
+.lp-feature:hover{
+  transform:translateY(-3px);
+  border-color:var(--lp-border-strong);
 }
-.lp-stat span{
-  color:var(--lp-soft);
-  font-size:14px;
-  line-height:1.6;
-}
-.lp-code-shell{
-  display:grid;
-  grid-template-columns:minmax(0,.86fr) minmax(0,1.14fr);
-  gap:22px;
-  align-items:start;
-}
-.lp-code-left{
-  padding:24px;
-  border-radius:24px;
-  background:var(--lp-surface);
-  border:1px solid var(--lp-border);
-  box-shadow:var(--lp-soft-shadow);
-}
-.lp-code-left ul{
-  list-style:none;
-  display:grid;
-  gap:16px;
-  margin-top:22px;
-}
-.lp-code-left li{
+.lp-feature-icon{
+  width:42px;
+  height:42px;
   display:flex;
-  gap:12px;
-  align-items:flex-start;
-}
-.lp-code-left li svg{
-  color:var(--lp-emerald);
-  margin-top:3px;
-}
-.lp-code-left li strong{
-  display:block;
-  font-size:15px;
-  margin-bottom:4px;
-}
-.lp-code-left li span{
-  color:var(--lp-muted);
-  font-size:13.5px;
-  line-height:1.6;
-}
-.lp-code-right{
-  overflow:hidden;
-  border-radius:24px;
-  border:1px solid var(--lp-border);
-  box-shadow:var(--lp-shadow);
-}
-.lp-code-tabs-bar{
-  display:flex;
-  gap:6px;
-  padding:14px 16px;
-  background:var(--lp-surface);
-  border-bottom:1px solid var(--lp-border);
-}
-.lp-code-tab{
-  border:1px solid transparent;
-  background:transparent;
-  color:var(--lp-muted);
-  padding:7px 12px;
-  border-radius:999px;
-  font-family:var(--font-fira-code),monospace;
-  font-size:12px;
-  font-weight:700;
-  cursor:pointer;
-}
-.lp-code-tab.active{
-  color:var(--lp-text);
-  background:var(--lp-surface-2);
-  border-color:var(--lp-border);
-}
-.lp-editor{
-  background:var(--lp-code-bg);
-}
-.lp-editor-code{
-  padding:18px 0 22px;
-  margin:0;
-  overflow:auto;
-  font-family:var(--font-fira-code),monospace;
-  font-size:13px;
-  line-height:1.75;
-}
-.lp-editor-line{
-  display:flex;
-  padding-right:18px;
-}
-.lp-editor-line:hover{background:rgba(255,255,255,.03)}
-.lp-editor-ln{
-  width:48px;
-  padding-right:14px;
-  text-align:right;
-  color:var(--lp-code-gutter);
-  flex-shrink:0;
-  user-select:none;
-}
-.lp-editor-text{
-  color:var(--lp-code-text);
-  white-space:pre;
-}
-.lp-modes-grid{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:18px;
-}
-.lp-mode-card{
-  padding:30px;
-  box-shadow:var(--lp-soft-shadow);
-}
-.lp-mode-badge{
-  display:inline-flex;
   align-items:center;
-  gap:8px;
-  padding:8px 14px;
-  border-radius:999px;
+  justify-content:center;
   margin-bottom:18px;
-  font-family:var(--font-fira-code),monospace;
-  font-size:12px;
-  font-weight:800;
-  text-transform:uppercase;
-  letter-spacing:.08em;
-}
-.lp-mode-card ul{
-  list-style:none;
-  display:grid;
-  gap:12px;
-  margin:20px 0 24px;
-}
-.lp-mode-card li{
-  display:flex;
-  gap:10px;
-  color:var(--lp-soft);
-  font-size:14px;
-  line-height:1.65;
-}
-.lp-mode-card li svg{
-  margin-top:4px;
-  flex-shrink:0;
-}
-.lp-faq-grid{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:18px;
-}
-.lp-faq-item{
-  padding:24px;
+  border-radius:var(--lp-radius);
+  background:var(--lp-surface-alt);
+  color:var(--lp-link);
 }
 .lp-cta{
-  padding-top:var(--lp-section);
+  padding:72px var(--lp-pad) 104px;
 }
-.lp-cta-panel{
-  position:relative;
-  overflow:hidden;
-  border-radius:32px;
+.lp-cta-inner{
+  max-width:940px;
+  margin:0 auto;
+  padding:46px;
   border:1px solid var(--lp-border);
-  background:linear-gradient(135deg, rgba(52,211,153,.11), rgba(56,189,248,.10) 45%, var(--lp-surface) 100%);
-  padding:44px 40px;
+  border-radius:18px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--lp-link) 8%, transparent), transparent 56%),
+    var(--lp-surface);
   box-shadow:var(--lp-shadow);
-  display:flex;
-  flex-direction:column;
-  align-items:center;
   text-align:center;
 }
-.lp-cta-panel h2{
-  max-width:760px;
-  font-size:clamp(34px,4vw,58px);
-  line-height:1.02;
-  letter-spacing:-.05em;
-  font-weight:900;
-  margin-bottom:14px;
+.lp-cta-inner .lp-eyebrow{
+  justify-content:center;
 }
-.lp-cta-panel p{
-  max-width:720px;
-  color:var(--lp-soft);
+.lp-cta h2{
+  margin:0;
+  font-size:46px;
+  line-height:1.1;
+  letter-spacing:0;
+}
+.lp-cta p{
+  max-width:680px;
+  margin:16px auto 0;
+  color:var(--lp-muted);
   font-size:17px;
-  line-height:1.75;
+  line-height:1.65;
 }
 .lp-cta-actions{
   display:flex;
+  justify-content:center;
   gap:12px;
   flex-wrap:wrap;
-  justify-content:center;
   margin-top:28px;
 }
-.lp-footnote{
-  margin-top:18px;
-  color:var(--lp-muted);
-  font-size:13px;
-  line-height:1.7;
+.lp-code-actions{
+  justify-content:flex-start;
+  margin-top:24px;
 }
-.lp-footnote a{
-  color:var(--lp-text);
+@keyframes lpPulse{
+  0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--lp-success) 28%, transparent)}
+  50%{box-shadow:0 0 0 9px transparent}
 }
-@media (max-width:1200px){
-  :root{--lp-pad:24px}
-  .lp-hero-shell,
-  .lp-code-shell{
-    grid-template-columns:1fr;
-  }
-  .lp-hero-visual{
-    min-height:480px;
-  }
+@keyframes lpFloat{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(-5px)}
 }
-@media (max-width:980px){
-  :root{--lp-section:88px}
-  .lp-nav-links{display:none}
-  .lp-hero-shell{padding:32px}
-  .lp-primitives-grid,
-  .lp-usecase-grid,
-  .lp-modes-grid,
-  .lp-faq-grid,
-  .lp-stats,
-  .lp-step-list{
-    grid-template-columns:1fr 1fr;
-  }
-  .lp-hero-proof{
-    grid-template-columns:1fr;
-  }
+@keyframes lpMarquee{
+  from{transform:translateX(0)}
+  to{transform:translateX(-50%)}
 }
-@media (max-width:720px){
-  :root{--lp-pad:18px;--lp-section:72px}
-  .lp-page{padding-bottom:88px}
-  .lp-nav-inner{height:58px;display:flex;justify-content:space-between}
-  .lp-hero{
-    padding-top:24px;
+@keyframes lpRise{
+  from{opacity:0;transform:translateY(18px)}
+  to{opacity:1;transform:translateY(0)}
+}
+@media (max-width:1100px){
+  .lp-hero{min-height:auto}
+  .lp-hero-grid,
+  .lp-split,
+  .lp-api-row,
+  .lp-code-layout{grid-template-columns:1fr}
+  .lp-hero-copy{max-width:780px}
+  .lp-platform-strip{grid-template-columns:repeat(3, minmax(0, 1fr))}
+  .lp-steps{grid-template-columns:1fr}
+  .lp-steps::before{display:none}
+  .lp-features{grid-template-columns:repeat(2, minmax(0, 1fr))}
+  .lp-arch-flow{grid-template-columns:1fr}
+  .lp-api-link{justify-content:flex-start}
+  .lp-architecture{left:24px;right:24px;bottom:-30px}
+  .lp-arch-arrow{
+    width:2px;
+    height:34px;
+    margin:0 auto;
   }
-  .lp-hero-shell{
-    padding:24px 20px;
-    border-radius:24px;
-  }
-  .lp-hero-title{
-    font-size:42px;
-  }
-  .lp-hero-sub{
-    font-size:16px;
-  }
-  .lp-hero-visual{
-    min-height:440px;
-  }
-  .lp-visual-card-main,
-  .lp-visual-card-secondary,
-  .lp-visual-card-float{
-    position:relative;
-    width:100%;
-    left:auto;
-    right:auto;
+  .lp-arch-arrow::after{
     top:auto;
-    bottom:auto;
+    right:50%;
+    bottom:-1px;
+    transform:translateX(50%) rotate(135deg);
   }
-  .lp-visual-stack{
-    display:grid;
-    gap:12px;
-    position:static;
+}
+@media (max-width:760px){
+  :root{--lp-pad:20px}
+  .lp-section{padding-top:64px;padding-bottom:64px}
+  .lp-hero{padding-top:44px;padding-bottom:42px}
+  .lp-hero-sub{font-size:17px}
+  .lp-hero-stats{grid-template-columns:1fr 1fr}
+  .lp-model{padding:18px;border-radius:18px}
+  .lp-model-platforms{grid-template-columns:repeat(2, minmax(0, 1fr))}
+  .lp-console{border-radius:16px}
+  .lp-console-body{padding:16px}
+  .lp-compose-actions{align-items:flex-start;flex-direction:column}
+  .lp-architecture{position:relative;left:auto;right:auto;bottom:auto;margin-top:16px}
+  .lp-section-head h2,
+  .lp-code-copy h2,
+  .lp-cta h2{font-size:32px}
+  .lp-steps,
+  .lp-features,
+  .lp-platform-strip{grid-template-columns:1fr}
+  .lp-platform-strip{grid-template-columns:repeat(2, minmax(0, 1fr))}
+  .lp-model-platforms{grid-template-columns:repeat(2, minmax(0, 1fr))}
+  .lp-code-layout{grid-template-columns:1fr}
+  .lp-api-row{padding:17px}
+  .lp-api-endpoint{
+    align-items:flex-start;
+    flex-direction:column;
+    font-size:15px;
   }
-  .lp-primitives-grid,
-  .lp-usecase-grid,
-  .lp-modes-grid,
-  .lp-faq-grid,
-  .lp-stats,
-  .lp-step-list{
-    grid-template-columns:1fr;
+  .lp-api-path{
+    max-width:100%;
+    white-space:normal;
+    overflow-wrap:anywhere;
   }
-  .lp-section-head h2{
-    font-size:34px;
-  }
-  .lp-cta-panel{
-    padding:28px 22px;
-    border-radius:24px;
-  }
+  .lp-code code{font-size:12px}
+  .lp-step:nth-child(2),
+  .lp-step:nth-child(3){margin-top:0}
+  .lp-cta-inner{padding:32px 24px}
+}
+@media (prefers-reduced-motion:reduce){
+  .lp-platform-strip,
+  .lp-queue-item,
+  .lp-console-title span,
+  .lp-step{animation:none}
+  .lp-btn,
+  .lp-step,
+  .lp-feature{transition:none}
 }
 `;
 
@@ -1083,183 +1127,165 @@ export default function LandingPage() {
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-
       <div className="lp-shell">
-        <nav className="lp-nav">
-          <div className="lp-nav-inner">
-            <Link href="/" aria-label="UniPost home" style={{ textDecoration: "none" }}>
-              <UniPostLogo markSize={28} wordmarkColor="var(--lp-text)" />
-            </Link>
+        <PublicSiteHeader />
+        <main className="lp-main">
+          <section className="lp-hero">
+            <div className="lp-hero-inner">
+              <div className="lp-hero-grid">
+                <div className="lp-hero-copy">
+                  <p className="lp-eyebrow">Unified social publishing API</p>
+                  <h1>Post to every social platform with one API</h1>
+                  <p className="lp-hero-sub">
+                    Connect customer accounts, upload media, and publish to X, LinkedIn,
+                    Instagram, TikTok, Threads, YouTube, and more through one unified API.
+                  </p>
+                  <div className="lp-hero-actions">
+                    <a href={START_BUILDING_URL} className="lp-btn lp-btn-primary">
+                      Start Building
+                      <ArrowRight size={17} />
+                    </a>
+                    <Link href="/docs" className="lp-btn lp-btn-outline">
+                      <BookOpen size={17} />
+                      View Docs
+                    </Link>
+                  </div>
+                  <p className="lp-hero-note">Built for developers adding social publishing to apps, workflows, and agents.</p>
+                </div>
 
-            <div className="lp-nav-links">
-              <Link href="/solutions" className="lp-nav-link">Solutions</Link>
-              <Link href="/tools" className="lp-nav-link">Tools</Link>
-              <Link href="/pricing" className="lp-nav-link">Pricing</Link>
-              <div className="lp-nav-dropdown">
-                <button className="lp-nav-link lp-nav-dropdown-trigger">
-                  Docs
-                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginLeft: 5 }}>
-                    <path d="M4 6l4 4 4-4" />
-                  </svg>
-                </button>
-                <div className="lp-nav-dropdown-menu">
-                  <Link href="/docs/quickstart" className="lp-nav-dropdown-item">
-                    <span className="lp-nav-dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /></svg></span>
-                    <span><div className="lp-nav-dropdown-label">Quickstart</div><div className="lp-nav-dropdown-desc">Go from API key to your first published post.</div></span>
-                  </Link>
-                  <Link href="/docs/sdk" className="lp-nav-dropdown-item">
-                    <span className="lp-nav-dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2a7 7 0 0 0-4 12.75V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.25A7 7 0 0 0 12 2Z" /></svg></span>
-                    <span><div className="lp-nav-dropdown-label">SDKs</div><div className="lp-nav-dropdown-desc">Use UniPost from JavaScript, Python, and Go.</div></span>
-                  </Link>
-                  <Link href="/docs/mcp" className="lp-nav-dropdown-item">
-                    <span className="lp-nav-dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></svg></span>
-                    <span><div className="lp-nav-dropdown-label">MCP Server</div><div className="lp-nav-dropdown-desc">Connect AI agents to UniPost tools and workflows.</div></span>
-                  </Link>
-                  <Link href="/docs/api" className="lp-nav-dropdown-item">
-                    <span className="lp-nav-dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 6h12" /><path d="M8 12h12" /><path d="M8 18h12" /><path d="M3 6h.01" /><path d="M3 12h.01" /><path d="M3 18h.01" /></svg></span>
-                    <span><div className="lp-nav-dropdown-label">API Reference</div><div className="lp-nav-dropdown-desc">Inspect endpoints, schemas, and example payloads.</div></span>
-                  </Link>
+                <div className="lp-model" aria-label="UniPost publishing model">
+                  <div className="lp-model-node">
+                    <div className="lp-model-label">
+                      <span className="lp-model-icon"><Plug size={20} /></span>
+                      <span>
+                        <span className="lp-model-title">Your app</span>
+                        <span className="lp-model-copy">Scheduling tools, SaaS products, internal workflows, and agents.</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="lp-model-arrow"><ArrowDown size={22} /></div>
+                  <div className="lp-model-node api">
+                    <div className="lp-model-label">
+                      <span className="lp-model-icon"><KeyRound size={20} /></span>
+                      <span>
+                        <span className="lp-model-title">UniPost API</span>
+                        <span className="lp-model-copy">Connect accounts, upload media, publish posts, and track delivery.</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="lp-model-arrow"><ArrowDown size={22} /></div>
+                  <div className="lp-model-platforms">
+                    {PLATFORMS.slice(0, 8).map((platform) => (
+                      <div className="lp-model-platform" key={platform.key}>
+                        <PlatformIcon platform={platform.key} size={19} />
+                        {platform.name}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
+          </section>
 
-            <MarketingNav />
-          </div>
-        </nav>
+          <section className="lp-section compact" aria-label="Supported platforms">
+            <div className="lp-wide-inner">
+              <div className="lp-platform-strip">
+                {PLATFORMS.map((platform) => (
+                  <div className="lp-platform-card" key={platform.key}>
+                    <PlatformIcon platform={platform.key} size={22} />
+                    {platform.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
 
-        <main className="lp-page">
-          <section className="lp-hero">
-            <div className="lp-hero-shell">
-              <div className="lp-hero-copy">
-                <div className="lp-eyebrow">
-                  <span className="lp-eyebrow-dot" />
-                  Unified social media API for apps and AI agents
+          <section className="lp-section">
+            <div className="lp-inner lp-split">
+              <div>
+                <div className="lp-section-head left">
+                  <p className="lp-eyebrow">Why UniPost</p>
+                  <h2>Stop maintaining separate social media integrations</h2>
+                  <p>
+                    Every platform has its own connection model, content constraints, media behavior,
+                    publish lifecycle, and failure modes. UniPost turns those differences into one API.
+                  </p>
                 </div>
-                <h1 className="lp-hero-title">
-                  Add social publishing to your product,
-                  <strong>not your roadmap.</strong>
-                </h1>
-                <p className="lp-hero-sub">
-                  UniPost gives your app one place to onboard customer social accounts, validate drafts, upload media,
-                  publish platform-specific posts, and monitor delivery across X, Bluesky, LinkedIn, Instagram, Threads,
-                  TikTok, YouTube, and Pinterest.
-                </p>
-                <div className="lp-hero-actions">
-                  <MarketingCTA className="lp-btn lp-btn-primary" />
-                  <Link href="/docs" className="lp-btn lp-btn-outline">View Docs</Link>
-                  <Link href="/pricing" className="lp-btn lp-btn-subtle">See Pricing</Link>
-                </div>
-                <div className="lp-hero-proof">
-                  {HERO_POINTS.map((point) => (
-                    <div key={point} className="lp-hero-proof-card">
-                      <CheckIcon />
-                      <div className="lp-hero-proof-label">{point}</div>
+                <div className="lp-problem-list">
+                  {WHY_ITEMS.map((item) => (
+                    <div className="lp-problem-item" key={item}>
+                      <CheckCircle2 size={18} />
+                      {item}
                     </div>
                   ))}
-                  <div className="lp-hero-proof-card">
-                    <CheckIcon />
-                    <div className="lp-hero-proof-label">Free plan includes 100 posts per month with no credit card.</div>
-                  </div>
                 </div>
               </div>
 
-              <div className="lp-hero-visual" aria-hidden="true">
-                <div className="lp-visual-stack">
-                  <div className="lp-visual-card lp-visual-card-main">
-                    <div className="lp-visual-topline">
-                      <strong>Product workflow</strong>
-                      <span className="lp-visual-pill">One API</span>
-                    </div>
-                    <div className="lp-visual-lanes">
-                      <div className="lp-lane">
-                        <div className="lp-lane-label">
-                          <span>Connect end-user accounts</span>
-                          <span style={{ color: "var(--lp-emerald)" }}>hosted OAuth</span>
-                        </div>
-                        <div className="lp-lane-sub">Create a Connect session, map it to your own external user, and keep the OAuth complexity out of your frontend.</div>
-                      </div>
-                      <div className="lp-lane">
-                        <div className="lp-lane-label">
-                          <span>Shape content per platform</span>
-                          <span style={{ color: "var(--lp-sky)" }}>platform_posts[]</span>
-                        </div>
-                        <div className="lp-lane-sub">Use different captions, media, and platform options instead of forcing one generic payload everywhere.</div>
-                        <div className="lp-lane-platforms">
-                          {PLATFORMS.slice(0, 5).map((platform) => (
-                            <span key={platform.name} className="lp-mini-chip">
-                              {PLATFORM_ICONS[platform.name]}
-                              {platform.name}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="lp-lane">
-                        <div className="lp-lane-label">
-                          <span>Observe delivery and health</span>
-                          <span style={{ color: "var(--lp-amber)" }}>ops ready</span>
-                        </div>
-                        <div className="lp-lane-sub">Watch job state, handle retries, reconnect failed accounts, and surface health back into your own product.</div>
-                      </div>
-                    </div>
+              <div className="lp-unifies">
+                <h3 className="lp-unifies-title">One product feature instead of nine integration projects</h3>
+                <div className="lp-unifies-row">
+                  <div className="lp-unifies-box">
+                    <strong>Before UniPost</strong>
+                    <span>Custom OAuth, media validation, retry logic, result tracking, and platform-specific code for each network.</span>
                   </div>
-
-                  <div className="lp-visual-card lp-visual-card-secondary">
-                    <div className="lp-visual-topline">
-                      <strong>Delivery snapshot</strong>
-                      <span className="lp-visual-pill">Live</span>
-                    </div>
-                    <div className="lp-signal-list">
-                      <div className="lp-signal-item">
-                        <div className="lp-signal-meta">
-                          <strong>LinkedIn launch post</strong>
-                          <span>validated · scheduled · delivered</span>
-                        </div>
-                        <span className="lp-signal-badge ok">ok</span>
-                      </div>
-                      <div className="lp-signal-item">
-                        <div className="lp-signal-meta">
-                          <strong>Pinterest campaign</strong>
-                          <span>media uploaded · waiting on board selection</span>
-                        </div>
-                        <span className="lp-signal-badge warn">review</span>
-                      </div>
-                      <div className="lp-signal-item">
-                        <div className="lp-signal-meta">
-                          <strong>Threads draft</strong>
-                          <span>preview shared with customer before publish</span>
-                        </div>
-                        <span className="lp-signal-badge ok">ready</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="lp-visual-card lp-visual-card-float">
-                    <div className="lp-code-card">
-                      <div className="lp-code-card-head">
-                        <span className="lp-code-dot" />
-                        <span className="lp-code-dot" />
-                        <span className="lp-code-dot" />
-                      </div>
-                      <div className="lp-code-card-body">{`POST /v1/posts
-{
-  "platform_posts": [
-    { "account_id": "sa_ln_01" },
-    { "account_id": "sa_pin_02" }
-  ]
-}`}</div>
-                    </div>
+                  <div className="lp-unifies-arrow"><ArrowRight size={24} /></div>
+                  <div className="lp-unifies-box">
+                    <strong>With UniPost</strong>
+                    <span>Connect accounts once, publish by account ID, and monitor delivery with one API and webhook surface.</span>
                   </div>
                 </div>
               </div>
             </div>
+          </section>
 
-            <div className="lp-platforms">
-              <div className="lp-platforms-label">Supported Platforms</div>
-              <div className="lp-platform-row">
-                {PLATFORMS.map((platform) => (
-                  <Link key={platform.name} href={`/${platform.slug}-api`} className="lp-platform-chip">
-                    {PLATFORM_ICONS[platform.name]}
-                    {platform.name}
+          <section className="lp-section">
+            <div className="lp-wide-inner">
+              <div className="lp-section-head center">
+                <p className="lp-eyebrow">How it works</p>
+                <h2>Get an API key, connect accounts, publish content</h2>
+                <p>
+                  The production path is three steps: authenticate your app, connect customer
+                  accounts, then send publish requests through one API.
+                </p>
+              </div>
+              <div className="lp-steps">
+                {HOW_STEPS.map((step, index) => {
+                  const Icon = step.icon;
+                  return (
+                    <div className="lp-step" key={step.title}>
+                      <div className="lp-step-number">{String(index + 1).padStart(2, "0")}</div>
+                      <div className="lp-step-icon"><Icon size={20} /></div>
+                      <h3>{step.title}</h3>
+                      <p>{step.body}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          <section className="lp-section lp-api-section">
+            <div className="lp-wide-inner">
+              <div className="lp-section-head center">
+                <p className="lp-eyebrow">What you can do</p>
+                <h2>One API surface for the social layer</h2>
+                <p>
+                  Pick the endpoint for the job: onboard accounts, publish posts,
+                  report analytics, receive delivery events, and handle inbox workflows.
+                </p>
+              </div>
+              <div className="lp-api-list">
+                {API_SURFACE.map((item) => (
+                  <Link href={item.href} className="lp-api-row" key={item.area}>
+                    <div className="lp-api-area">{item.area}</div>
+                    <div className="lp-api-endpoint">
+                      <span className={`lp-api-method ${item.method.toLowerCase()}`}>{item.method}</span>
+                      <span className="lp-api-path">{item.path}</span>
+                    </div>
+                    <p className="lp-api-body">{item.body}</p>
+                    <span className="lp-api-link" aria-hidden="true">
+                      <ArrowRight size={18} />
+                    </span>
                   </Link>
                 ))}
               </div>
@@ -1267,191 +1293,88 @@ export default function LandingPage() {
           </section>
 
           <section className="lp-section">
-            <div className="lp-section-head">
-              <div className="lp-eyebrow"><span className="lp-eyebrow-dot" />Built for real product flows</div>
-              <h2>Not a posting wrapper. A full social layer.</h2>
-              <p>
-                The hard part is not firing a single request. It is safely onboarding accounts, shaping content per
-                platform, and staying operational when your users publish at scale.
-              </p>
-            </div>
-            <div className="lp-usecase-grid">
-              {USE_CASES.map((item) => (
-                <div key={item.title} className="lp-usecase-card">
-                  <div className="lp-card-eyebrow">{item.eyebrow}</div>
-                  <h3>{item.title}</h3>
-                  <p>{item.body}</p>
+            <div className="lp-inner lp-code-layout">
+              <div className="lp-code-copy">
+                <p className="lp-eyebrow">Developer quickstart</p>
+                <h2>A publish call should feel boring</h2>
+                <p>
+                  Once accounts are connected, your app sends one request. UniPost handles the
+                  platform-specific rules behind it.
+                </p>
+                <div className="lp-hero-actions lp-code-actions">
+                  <Link href="/docs/quickstart" className="lp-btn lp-btn-primary">Read Quickstart</Link>
+                  <Link href="/docs/api/posts/create" className="lp-btn lp-btn-outline">Create Post API</Link>
                 </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="lp-section">
-            <div className="lp-section-head">
-              <div className="lp-eyebrow"><span className="lp-eyebrow-dot" />Core primitives</div>
-              <h2>The pieces you actually need to ship.</h2>
-              <p>
-                UniPost covers the boring-but-critical surfaces that usually leak into your app architecture once
-                customer accounts, local media, or AI-generated content enter the picture.
-              </p>
-            </div>
-            <div className="lp-primitives-grid">
-              {PRIMITIVES.map((item) => (
-                <div key={item.title} className="lp-primitive-card">
-                  <h3>{item.title}</h3>
-                  <p>{item.desc}</p>
-                  <div className="lp-chip-row">
-                    {item.chips.map((chip) => (
-                      <span key={chip} className="lp-chip">{chip}</span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="lp-section">
-            <div className="lp-section-head">
-              <div className="lp-eyebrow"><span className="lp-eyebrow-dot" />How it fits</div>
-              <h2>One clean workflow from onboarding to delivery.</h2>
-              <p>
-                The winning flow is not “generate one caption and spray it everywhere.” It is connecting the user,
-                validating the payload, then publishing with visibility into what happened next.
-              </p>
-            </div>
-            <div className="lp-step-list">
-              {FLOW_STEPS.map((step) => (
-                <div key={step.step} className="lp-flow-step">
-                  <span className="lp-flow-step-number">{step.step}</span>
-                  <h3>{step.title}</h3>
-                  <p>{step.body}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="lp-section">
-            <div className="lp-stats">
-              {STATS.map((stat) => (
-                <div key={stat.label} className="lp-stat">
-                  <strong>{stat.number}</strong>
-                  <span>{stat.label}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="lp-section">
-            <div className="lp-section-head">
-              <div className="lp-eyebrow"><span className="lp-eyebrow-dot" />Developer experience</div>
-              <h2>Built for per-platform control, not one generic caption.</h2>
-              <p>
-                Keep one API shape while still giving your product or agent enough structure to send different content
-                to different destinations, handle local media, and stay idempotent.
-              </p>
-            </div>
-            <div className="lp-code-shell">
-              <div className="lp-code-left">
-                <h3 style={{ fontSize: 28, lineHeight: 1.1, letterSpacing: "-.04em", fontWeight: 850 }}>
-                  The API surface matches how modern products actually publish.
-                </h3>
-                <ul>
-                  <li>
-                    <CheckIcon />
-                    <div>
-                      <strong>Per-platform payloads</strong>
-                      <span>Use <code>platform_posts[]</code> when different networks need different captions, media, or options.</span>
-                    </div>
-                  </li>
-                  <li>
-                    <CheckIcon />
-                    <div>
-                      <strong>Media that starts local</strong>
-                      <span>Reserve uploads with <code>POST /v1/media</code>, then publish with returned <code>media_ids</code>.</span>
-                    </div>
-                  </li>
-                  <li>
-                    <CheckIcon />
-                    <div>
-                      <strong>Safer automation</strong>
-                      <span>Validation, preview links, idempotency keys, and structured result data make agentic workflows much less brittle.</span>
-                    </div>
-                  </li>
-                </ul>
               </div>
-              <div className="lp-code-right">
-                <LandingCodeTabs />
+              <div className="lp-code-window">
+                <div className="lp-code-head">
+                  <div className="lp-code-dots"><span /><span /><span /></div>
+                  <span>publish.ts</span>
+                </div>
+                <div className="lp-code">
+                  <code>
+                    <span className="tok-key">await</span> fetch<span className="tok-punc">(</span><span className="tok-str">&quot;https://api.unipost.dev/v1/posts&quot;</span><span className="tok-punc">, {"{"}</span>{`
+  `}<span className="tok-prop">method</span><span className="tok-punc">:</span> <span className="tok-str">&quot;POST&quot;</span><span className="tok-punc">,</span>{`
+  `}<span className="tok-prop">headers</span><span className="tok-punc">: {"{"}</span>{`
+    `}<span className="tok-str">&quot;Authorization&quot;</span><span className="tok-punc">:</span> <span className="tok-str">`Bearer ${"{"}</span><span className="tok-var">UNIPOST_API_KEY</span><span className="tok-str">{"}"}`</span><span className="tok-punc">,</span>{`
+    `}<span className="tok-str">&quot;Content-Type&quot;</span><span className="tok-punc">:</span> <span className="tok-str">&quot;application/json&quot;</span>{`
+  `}<span className="tok-punc">{"}"},</span>{`
+  `}<span className="tok-prop">body</span><span className="tok-punc">:</span> JSON.stringify<span className="tok-punc">({"{"}</span>{`
+    `}<span className="tok-prop">caption</span><span className="tok-punc">:</span> <span className="tok-str">&quot;Launching today&quot;</span><span className="tok-punc">,</span>{`
+    `}<span className="tok-prop">account_ids</span><span className="tok-punc">: [</span>{`
+      `}<span className="tok-str">&quot;sa_x_123&quot;</span><span className="tok-punc">,</span>{`
+      `}<span className="tok-str">&quot;sa_linkedin_456&quot;</span><span className="tok-punc">,</span>{`
+      `}<span className="tok-str">&quot;sa_threads_789&quot;</span>{`
+    `}<span className="tok-punc">]</span>{`
+  `}<span className="tok-punc">{"}"})</span>{`
+`}<span className="tok-punc">{"}"});</span>
+                  </code>
+                </div>
               </div>
             </div>
           </section>
 
           <section className="lp-section">
-            <div className="lp-section-head">
-              <div className="lp-eyebrow"><span className="lp-eyebrow-dot" />Adoption path</div>
-              <h2>Start quickly. Then take ownership of the surface.</h2>
-              <p>
-                UniPost lets you validate the posting experience early, then graduate into your own branded OAuth and
-                credential stack when the product is ready.
-              </p>
-            </div>
-            <div className="lp-modes-grid">
-              {MODES.map((mode, index) => (
-                <div key={mode.badge} className="lp-mode-card">
-                  <div
-                    className="lp-mode-badge"
-                    style={{
-                      background: `${mode.badgeColor}18`,
-                      color: mode.badgeColor,
-                      border: `1px solid ${mode.badgeColor}30`,
-                    }}
-                  >
-                    {mode.badge}
-                  </div>
-                  <h3>{mode.title}</h3>
-                  <p>{mode.desc}</p>
-                  <ul>
-                    {mode.features.map((feature) => (
-                      <li key={feature}>
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={mode.badgeColor} strokeWidth="2.2"><path d="M3 8l4 4 6-7" /></svg>
-                        <span>{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  {index === 0 ? <MarketingCTA className="lp-btn lp-btn-primary" /> : <MarketingCTALight />}
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="lp-section">
-            <div className="lp-section-head">
-              <div className="lp-eyebrow"><span className="lp-eyebrow-dot" />FAQ</div>
-              <h2>Questions teams usually ask before they integrate.</h2>
-            </div>
-            <div className="lp-faq-grid">
-              {FAQS.map((item) => (
-                <div key={item.q} className="lp-faq-item">
-                  <h3>{item.q}</h3>
-                  <p>{item.a}</p>
-                </div>
-              ))}
+            <div className="lp-wide-inner">
+              <div className="lp-section-head center">
+                <p className="lp-eyebrow">Why teams trust it</p>
+                <h2>Simple on the surface, dependable underneath</h2>
+                <p>
+                  UniPost keeps the interface small while taking care of the platform details that
+                  usually slow teams down.
+                </p>
+              </div>
+              <div className="lp-features">
+                {TRUST_POINTS.map((feature) => {
+                  const Icon = feature.icon;
+                  return (
+                    <div className="lp-feature" key={feature.title}>
+                      <div className="lp-feature-icon"><Icon size={20} /></div>
+                      <h3>{feature.title}</h3>
+                      <p>{feature.body}</p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </section>
 
           <section className="lp-cta">
-            <div className="lp-cta-panel">
-              <h2>Build the social layer once, then keep shipping product.</h2>
+            <div className="lp-cta-inner">
+              <p className="lp-eyebrow">Start building</p>
+              <h2>Build the social layer once</h2>
               <p>
-                Start on the free plan, wire up Connect and publish flows, and move into white-label onboarding and
-                higher volume when your product is ready.
+                Add account connection, media upload, multi-platform publishing, and delivery monitoring
+                without maintaining every social integration yourself.
               </p>
               <div className="lp-cta-actions">
-                <MarketingCTA className="lp-btn lp-btn-primary" />
-                <Link href="/docs/quickstart" className="lp-btn lp-btn-outline">Start with Quickstart</Link>
-              </div>
-              <div className="lp-footnote">
-                Want to inspect the agent path too? Try <Link href="/tools/agentpost">AgentPost</Link> or browse the{" "}
-                <Link href="/compare">comparison pages</Link>.
+                <a href={START_BUILDING_URL} className="lp-btn lp-btn-primary">
+                  Start Building
+                  <ArrowRight size={17} />
+                </a>
+                <Link href="/alternatives/zernio" className="lp-btn lp-btn-outline">
+                  Compare alternatives
+                </Link>
               </div>
             </div>
           </section>

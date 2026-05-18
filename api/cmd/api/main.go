@@ -462,7 +462,7 @@ func main() {
 
 	// WebSocket — auth via ?token= query param (browser WS API
 	// doesn't support custom headers). Handler validates Clerk JWT.
-	inboxWSHandler := ws.NewHandler(inboxHub, queries)
+	inboxWSHandler := ws.NewHandler(inboxHub, queries).WithFeatureFlag(featureflags.Inbox)
 	logsWSHandler := ws.NewHandler(logsHub, queries)
 	r.Get("/v1/inbox/ws", inboxWSHandler.ServeHTTP)
 	r.Get("/v1/logs/ws", logsWSHandler.ServeHTTP)
@@ -788,6 +788,7 @@ func main() {
 		// Plan-gated (migration 059): Free + API plans get 402.
 		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool)
 		r.Route("/v1/inbox", func(r chi.Router) {
+			r.Use(handler.RequireFeatureFlag(featureflags.Inbox))
 			r.Use(handler.RequirePlanInbox(quotaChecker))
 			r.Get("/", inboxHandler.List)
 			r.Get("/unread-count", inboxHandler.UnreadCount)

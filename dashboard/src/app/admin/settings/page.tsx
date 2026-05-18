@@ -3,6 +3,8 @@
 import Link from "next/link";
 
 import { useTheme } from "@/components/theme-provider";
+import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
+import { useFeatureFlags } from "@/lib/use-feature-flags";
 
 import { AdminShell, PanelRow } from "../_components/admin-ui";
 
@@ -12,7 +14,6 @@ const SETTINGS = {
   landingUrl: process.env.NEXT_PUBLIC_LANDING_URL || "https://unipost.dev",
   baseUrl: process.env.NEXT_PUBLIC_BASE_URL || "https://unipost.dev",
   appHost: process.env.NEXT_PUBLIC_APP_HOST || "app.unipost.dev",
-  inboxEnabled: process.env.NEXT_PUBLIC_FEATURE_INBOX === "true",
 };
 
 function SettingPill({
@@ -44,6 +45,8 @@ function SettingPill({
 
 export default function AdminSettingsPage() {
   const { theme, setTheme } = useTheme();
+  const { flags } = useFeatureFlags();
+  const inboxEnabled = flags[FEATURE_FLAG_KEYS.inbox] === true;
 
   return (
     <AdminShell title="Settings">
@@ -71,17 +74,17 @@ export default function AdminSettingsPage() {
           </div>
 
           <div className="ad-panel-section">
-            <div className="ad-panel-section-title">Frontend Flags</div>
+            <div className="ad-panel-section-title">Feature Flags</div>
             <PanelRow
               k="Inbox"
               v={
                 <span
                   className="ad-badge"
-                  style={SETTINGS.inboxEnabled
+                  style={inboxEnabled
                     ? { background: "var(--success-soft)", color: "var(--success)", border: "1px solid color-mix(in srgb, var(--success) 20%, transparent)" }
                     : { background: "var(--surface2)", color: "var(--dmuted)", border: "1px solid var(--dborder2)" }}
                 >
-                  {SETTINGS.inboxEnabled ? "enabled" : "disabled"}
+                  {inboxEnabled ? "enabled" : "disabled"}
                 </span>
               }
             />

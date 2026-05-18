@@ -129,7 +129,7 @@
   --theme-toggle-icon-active: var(--primary);
   --platform-icon-mono: #111827;
 
-  --marketing-nav-bg: rgb(255 255 255 / 0.84);
+  --marketing-nav-bg: #ffffff;
   --marketing-nav-border: rgb(148 163 184 / 0.18);
   --marketing-surface: #ffffff;
   --marketing-surface-alt: #f5f7fb;
@@ -241,7 +241,7 @@
   --theme-toggle-icon-active: var(--primary);
   --platform-icon-mono: #f5f5f5;
 
-  --marketing-nav-bg: rgb(8 8 8 / 0.82);
+  --marketing-nav-bg: #080808;
   --marketing-nav-border: rgb(255 255 255 / 0.06);
   --marketing-surface: #0f0f0f;
   --marketing-surface-alt: #151515;
