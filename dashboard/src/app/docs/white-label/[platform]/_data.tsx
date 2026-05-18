@@ -394,7 +394,7 @@ https://www.googleapis.com/auth/youtube.upload`,
       ["Authorized redirect URI", "Callback URL below", "Must match exactly or Google rejects the callback."],
     ],
     apiWorkflow: {
-      title: "Verify the API flow",
+      title: "Connect a YouTube account through your app",
       intro: "After your YouTube credentials are saved, prove the customer-facing flow your own app will use: create an API key, choose the branded profile, create a Connect session, send the returned OAuth URL to your end user, then confirm UniPost recorded the managed YouTube account.",
       steps: [
         {
