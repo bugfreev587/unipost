@@ -39,10 +39,15 @@ const themeInitScript = `
     const storageKey = "unipost-theme";
     const cookieKey = "unipost-theme";
     const host = window.location.hostname;
+    const pathname = window.location.pathname;
     const isMarketingHost =
       host === "unipost.dev" ||
       host === "www.unipost.dev" ||
       (host.endsWith(".unipost.dev") && host !== "app.unipost.dev");
+    const isLandingSurface =
+      isMarketingHost ||
+      pathname === "/" ||
+      pathname === "/marketing";
     const cookieMatch = document.cookie.match(/(?:^|; )unipost-theme=(light|dark)(?:;|$)/);
     const cookieTheme = cookieMatch ? cookieMatch[1] : null;
     const storedTheme = localStorage.getItem(storageKey);
@@ -51,7 +56,7 @@ const themeInitScript = `
       ? cookieTheme
       : (storedTheme === "light" || storedTheme === "dark")
         ? storedTheme
-      : isMarketingHost
+      : isLandingSurface
         ? "light"
         : (prefersDark ? "dark" : "light");
     const root = document.documentElement;

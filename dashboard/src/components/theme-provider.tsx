@@ -49,12 +49,13 @@ function getSystemTheme(): ResolvedTheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function isMarketingHost(hostname: string): boolean {
-  return (
+function isLandingSurface(hostname: string, pathname: string): boolean {
+  const isMarketingHost =
     hostname === "unipost.dev" ||
     hostname === "www.unipost.dev" ||
-    (hostname.endsWith(".unipost.dev") && hostname !== "app.unipost.dev")
-  );
+    (hostname.endsWith(".unipost.dev") && hostname !== "app.unipost.dev");
+
+  return isMarketingHost || pathname === "/" || pathname === "/marketing";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -70,7 +71,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (storedTheme === "light" || storedTheme === "dark") {
       return storedTheme;
     }
-    if (isMarketingHost(window.location.hostname)) {
+    if (isLandingSurface(window.location.hostname, window.location.pathname)) {
       return "light";
     }
     return getSystemTheme();
