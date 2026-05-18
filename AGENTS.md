@@ -29,6 +29,10 @@
 - Keep commits focused on the requested change. Do not include `artifacts/` or unrelated generated files unless the user asks.
 - If the user explicitly requests a different branch, direct push, hotfix, or production change, follow that latest instruction instead of the default flow.
 
+## UI design skill
+
+For frontend, dashboard, landing page, component styling, layout, typography, or visual polish work, use the installed `design-taste-frontend` / `taste-skill` Codex skill before designing or editing UI.
+
 ## Feature flag and production isolation rules
 
 - Any new feature that can affect production users, third-party OAuth scopes, billing, writes, background jobs, external API calls, user-visible workflow changes, or data access must be protected by a feature flag before it is merged to `main`.

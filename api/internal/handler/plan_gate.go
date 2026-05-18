@@ -4,7 +4,9 @@ import (
 	"net/http"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 // plan_gate.go houses chi-style middleware that enforce the
@@ -18,8 +20,8 @@ import (
 //	})
 //
 // Gates run AFTER the auth middleware that stamps workspace_id into
-// the request context, so a missing workspace context is treated as
-// 401 rather than 402 to keep the error semantics clean.
+// the request context, so a missing workspace context is treated as an
+// internal routing/auth-context error rather than an auth or plan failure.
 //
 // Fail-open in the Checker: if the plans table is briefly unreadable
 // the gate lets the request through. A paying customer briefly seeing
@@ -35,7 +37,7 @@ func RequirePlanInbox(q *quota.Checker) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			workspaceID := auth.GetWorkspaceID(r.Context())
 			if workspaceID == "" {
-				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
 				return
 			}
 			if q != nil && !q.PlanAllowsInbox(r.Context(), workspaceID) {
@@ -43,6 +45,32 @@ func RequirePlanInbox(q *quota.Checker) func(http.Handler) http.Handler {
 					"Inbox requires the Basic plan or higher — upgrade at unipost.dev/pricing")
 				return
 			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireFeatureFlag blocks a route group when its remote feature flag is
+// disabled. This is separate from plan gates: flags control rollout and
+// emergency shutdown, while plan gates control packaging.
+func RequireFeatureFlag(flag featureflags.Flag) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			workspaceID := auth.GetWorkspaceID(r.Context())
+			if workspaceID == "" {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
+				return
+			}
+
+			if !featureflags.Enabled(r.Context(), flag, featureflags.Target{
+				UserID:      auth.GetUserID(r.Context()),
+				WorkspaceID: workspaceID,
+				Env:         runtimeenv.Current(),
+			}) {
+				writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
+				return
+			}
+
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -58,7 +86,7 @@ func RequirePlanAnalytics(q *quota.Checker) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			workspaceID := auth.GetWorkspaceID(r.Context())
 			if workspaceID == "" {
-				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
 				return
 			}
 			if q != nil && !q.PlanAllowsAnalytics(r.Context(), workspaceID) {
@@ -82,7 +110,7 @@ func RequirePlanWhiteLabel(q *quota.Checker) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			workspaceID := auth.GetWorkspaceID(r.Context())
 			if workspaceID == "" {
-				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
 				return
 			}
 			if q != nil && !q.PlanAllowsWhiteLabel(r.Context(), workspaceID) {

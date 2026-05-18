@@ -61,7 +61,7 @@ type SyncResponse = {
 type ConversationGroup = {
   id: string;
   threadKey: string;
-  source: "ig_comment" | "ig_dm" | "threads_reply" | "fb_comment" | "fb_dm";
+  source: InboxItem["source"];
   title: string;
   subtitle: string;
   items: InboxItem[];
@@ -168,6 +168,7 @@ function timeAgo(dateStr: string): string {
 function sourceLabel(source: InboxItem["source"]) {
   switch (source) {
     case "ig_comment":
+    case "youtube_comment":
     case "fb_comment":
       return "Comment";
     case "ig_dm":
@@ -189,6 +190,8 @@ function platformFromSource(source: InboxItem["source"] | ConversationGroup["sou
   switch (source) {
     case "threads_reply":
       return "threads";
+    case "youtube_comment":
+      return "youtube";
     case "fb_comment":
     case "fb_dm":
       return "facebook";
@@ -200,6 +203,7 @@ function platformFromSource(source: InboxItem["source"] | ConversationGroup["sou
 function sourceIcon(source: InboxItem["source"]) {
   switch (source) {
     case "ig_comment":
+    case "youtube_comment":
     case "fb_comment":
       return <MessageCircle style={{ width: 14, height: 14 }} />;
     case "ig_dm":
@@ -729,6 +733,7 @@ function InboxPageInner() {
 
   const commentsGroups = useMemo(() => [
     ...groupItems(items, "ig_comment"),
+    ...groupItems(items, "youtube_comment"),
     ...groupItems(items, "fb_comment"),
   ].map(enrichGroupTitle), [items, socialPosts, mediaContext]);
   const dmGroups = useMemo(() => [
@@ -1454,7 +1459,7 @@ function InboxPageInner() {
                 body={
                   reconnectAccounts.length > 0 || missingPermissionErrors.length > 0
                     ? "Fix the account state above, then sync again."
-                    : "UniPost will show new Instagram comments, DMs, and Threads replies here once they arrive."
+                    : "UniPost will show new Instagram and YouTube comments, Instagram DMs, and Threads replies here once they arrive."
                 }
               />
             </div>

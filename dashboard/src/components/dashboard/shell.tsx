@@ -43,17 +43,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-// Feature flag: NEXT_PUBLIC_FEATURE_INBOX controls Inbox visibility.
-// "true" = everyone, "user_id1,user_id2" = only those users, unset = hidden.
-function isFeatureEnabled(envVar: string | undefined, userId: string | undefined, userEmail: string | undefined): boolean {
-  if (!envVar) return false;
-  if (envVar === "true") return true;
-  const allowed = envVar.split(",").map((s) => s.trim().toLowerCase());
-  if (userId && allowed.includes(userId)) return true;
-  if (userEmail && allowed.includes(userEmail.toLowerCase())) return true;
-  return false;
-}
-
 type NavSubItem = {
   href: string;
   label: string;
@@ -65,13 +54,11 @@ type NavItem = {
   label: string;
   icon: LucideIcon;
   exactMatch?: boolean;
-  featureFlag?: string;
   backendFlag?: string;
   submenu?: NavSubItem[];
 };
 
-// Items with `featureFlag` are gated by the env var check. Items with
-// `backendFlag` are gated by /v1/me/features.
+// Items with `backendFlag` are gated by /v1/me/features.
 const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/profile", label: "Profiles", icon: Layers },
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
@@ -81,7 +68,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   ]},
   { href: "/posts", label: "Posts", icon: Send, exactMatch: true },
   { href: "/posts/queue", label: "Queue", icon: ListTodo, exactMatch: true },
-  { href: "/inbox", label: "Inbox", icon: MessageSquare, featureFlag: "INBOX" },
+  { href: "/inbox", label: "Inbox", icon: MessageSquare, backendFlag: FEATURE_FLAG_KEYS.inbox },
   { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/webhooks", label: "Webhooks", icon: Webhook },
   { href: "/logs", label: "Logs", icon: FileText },
@@ -91,10 +78,6 @@ const ALL_NAV_ITEMS: NavItem[] = [
     { href: "/analytics/api", label: "API" },
   ]},
 ];
-
-const FEATURE_FLAGS: Record<string, string | undefined> = {
-  INBOX: process.env.NEXT_PUBLIC_FEATURE_INBOX,
-};
 
 export function isFacebookEnabledForMe(isSuperAdmin: boolean | undefined): boolean {
   return isFeatureInDevEnabledForMe("facebook_pages", isSuperAdmin);
@@ -113,12 +96,8 @@ function getServerSnapshot() {
 }
 
 // Filter nav items based only on feature flags.
-function filterNavItems(userId?: string, userEmail?: string, backendFlags?: Record<string, boolean>) {
+function filterNavItems(backendFlags?: Record<string, boolean>) {
   return ALL_NAV_ITEMS.filter((item) => {
-    // Feature flag gate
-    if ("featureFlag" in item && item.featureFlag) {
-      if (!isFeatureEnabled(FEATURE_FLAGS[item.featureFlag], userId, userEmail)) return false;
-    }
     if (item.backendFlag && !backendFlags?.[item.backendFlag]) return false;
     return true;
   }).map((item) => {
@@ -165,20 +144,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const currentProfile = profiles.find((p) => p.id === profileId);
 
   // Global inbox unread badge — only enable the hook when (1) the
-  // INBOX feature flag is on for this user (matches the nav item's
-  // visibility check below) and (2) we have a profile context, since
-  // the workspace JWT is required for the WebSocket / count fetch.
+  // Inbox feature flag is on (matches the nav item's visibility check
+  // below) and (2) we have a profile context, since the workspace JWT
+  // is required for the WebSocket / count fetch.
   // Disabled = 0 returned, no network calls, no WS connection.
-  const inboxFeatureEnabled = isFeatureEnabled(
-    FEATURE_FLAGS.INBOX,
-    user?.id,
-    user?.primaryEmailAddress?.emailAddress,
-  );
+  const inboxFeatureEnabled = backendFeatureFlags[FEATURE_FLAG_KEYS.inbox] === true;
   const inboxUnreadCount = useGlobalInboxUnreadCount(
     Boolean(profileId) && inboxFeatureEnabled,
   );
 
-  const navItems = filterNavItems(user?.id, user?.primaryEmailAddress?.emailAddress, backendFeatureFlags);
+  const navItems = filterNavItems(backendFeatureFlags);
 
   // Auto-expand the submenu that matches the current URL on navigation,
   // but only when the pathname actually changes — not on every render.

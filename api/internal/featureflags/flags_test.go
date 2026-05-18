@@ -47,6 +47,15 @@ func TestEnvProviderSupportsLegacyTikTokFlag(t *testing.T) {
 	}
 }
 
+func TestInboxDefaultsEnabled(t *testing.T) {
+	SetProvider(EnvProvider{})
+	t.Cleanup(func() { SetProvider(EnvProvider{}) })
+
+	if !Enabled(context.Background(), Inbox, Target{Env: "production"}) {
+		t.Fatal("Inbox should default on because it is already generally supported")
+	}
+}
+
 func unsetenv(t *testing.T, name string) {
 	t.Helper()
 	old, ok := os.LookupEnv(name)

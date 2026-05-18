@@ -21,6 +21,18 @@ type ThemeContextValue = {
 
 const STORAGE_KEY = "unipost-theme";
 const COOKIE_KEY = "unipost-theme";
+const LANDING_PATHS = new Set([
+  "/",
+  "/marketing",
+  "/twitter-api",
+  "/linkedin-api",
+  "/instagram-api",
+  "/threads-api",
+  "/tiktok-api",
+  "/youtube-api",
+  "/pinterest-api",
+  "/bluesky-api",
+]);
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
@@ -49,12 +61,13 @@ function getSystemTheme(): ResolvedTheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function isMarketingHost(hostname: string): boolean {
-  return (
+function isLandingSurface(hostname: string, pathname: string): boolean {
+  const isMarketingHost =
     hostname === "unipost.dev" ||
     hostname === "www.unipost.dev" ||
-    (hostname.endsWith(".unipost.dev") && hostname !== "app.unipost.dev")
-  );
+    (hostname.endsWith(".unipost.dev") && hostname !== "app.unipost.dev");
+
+  return isMarketingHost || LANDING_PATHS.has(pathname);
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -70,7 +83,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (storedTheme === "light" || storedTheme === "dark") {
       return storedTheme;
     }
-    if (isMarketingHost(window.location.hostname)) {
+    if (isLandingSurface(window.location.hostname, window.location.pathname)) {
       return "light";
     }
     return getSystemTheme();
