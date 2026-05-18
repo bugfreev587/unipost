@@ -7,9 +7,6 @@ import {
   CheckCircle2,
   KeyRound,
   Plug,
-  Send,
-  ShieldCheck,
-  Webhook,
 } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { PublicSiteHeader } from "@/components/marketing/nav";
@@ -47,37 +44,16 @@ const WHY_ITEMS = [
 
 const HOW_STEPS = [
   {
-    icon: KeyRound,
     title: "Get API Key",
     body: "Create a UniPost API key from your workspace and use it to authenticate every publish, media, and account request.",
   },
   {
-    icon: Plug,
     title: "Connect accounts",
     body: "Send customers through hosted OAuth flows, then store the returned connected account IDs in your product.",
   },
   {
-    icon: Send,
     title: "Publish content",
     body: "Submit text, media, or per-platform variants in one request and let UniPost handle validation and delivery.",
-  },
-];
-
-const TRUST_POINTS = [
-  {
-    icon: Plug,
-    title: "One API surface",
-    body: "Connect accounts, upload media, publish posts, and inspect results without stitching together every platform yourself.",
-  },
-  {
-    icon: Webhook,
-    title: "Reliable Delivery",
-    body: "Validation, retries, account-level status, and webhooks help your product show clear outcomes to users.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Built for apps and agents",
-    body: "Use account scoping and observable publish flows to let products, automations, and agents post safely.",
   },
 ];
 
@@ -125,6 +101,22 @@ const API_SURFACE = [
     body: "Read comments, DMs, and reply workflows across supported social channels.",
   },
 ] as const;
+
+const PUBLISH_SNIPPET = `await fetch("https://api.unipost.dev/v1/posts", {
+  method: "POST",
+  headers: {
+    "Authorization": \`Bearer \${UNIPOST_API_KEY}\`,
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    caption: "Launching today",
+    account_ids: [
+      "sa_x_123",
+      "sa_linkedin_456",
+      "sa_threads_789"
+    ]
+  })
+});`;
 
 const CSS = `
 :root{
@@ -429,221 +421,6 @@ body{
   font-size:12px;
   font-weight:700;
 }
-.lp-hero-visual{
-  position:relative;
-  min-height:540px;
-}
-.lp-console{
-  position:relative;
-  overflow:hidden;
-  border:1px solid color-mix(in srgb, var(--lp-border-strong) 84%, transparent);
-  border-radius:18px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--lp-surface) 94%, transparent), color-mix(in srgb, var(--lp-surface-alt) 88%, transparent));
-  box-shadow:var(--lp-shadow-lg);
-}
-.lp-console::before{
-  content:"";
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  border:1px solid color-mix(in srgb, #fff 38%, transparent);
-  box-shadow:inset 0 1px 0 color-mix(in srgb, #fff 48%, transparent);
-}
-.lp-console-head{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:16px;
-  padding:18px 20px;
-  border-bottom:1px solid var(--lp-border);
-}
-.lp-console-title{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  font-size:13px;
-  font-weight:800;
-}
-.lp-console-title span{
-  width:9px;
-  height:9px;
-  border-radius:50%;
-  background:var(--lp-success);
-  animation:lpPulse 2.4s var(--lp-ease) infinite;
-}
-.lp-console-time{
-  color:var(--lp-subtle);
-  font-family:var(--lp-mono);
-  font-size:12px;
-}
-.lp-console-body{
-  padding:22px;
-}
-.lp-compose{
-  display:grid;
-  gap:14px;
-  padding:18px;
-  border:1px solid var(--lp-border);
-  border-radius:14px;
-  background:var(--lp-surface);
-}
-.lp-compose-line{
-  height:12px;
-  border-radius:999px;
-  background:var(--lp-surface-alt);
-}
-.lp-compose-line.wide{width:92%}
-.lp-compose-line.mid{width:72%}
-.lp-compose-media{
-  display:grid;
-  grid-template-columns:1.4fr .8fr;
-  gap:12px;
-}
-.lp-compose-media div{
-  min-height:92px;
-  border:1px solid var(--lp-border);
-  border-radius:12px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--lp-link) 12%, transparent), transparent 60%),
-    var(--lp-surface-alt);
-}
-.lp-compose-actions{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-}
-.lp-chip-row{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-}
-.lp-mini-chip{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  min-height:28px;
-  padding:5px 9px;
-  border:1px solid var(--lp-border);
-  border-radius:999px;
-  color:var(--lp-muted);
-  font-size:12px;
-  font-weight:700;
-}
-.lp-mini-chip svg{color:var(--lp-link)}
-.lp-send-pill{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  min-height:32px;
-  padding:7px 12px;
-  border-radius:999px;
-  background:var(--lp-link);
-  color:#fff;
-  font-size:12px;
-  font-weight:800;
-}
-.lp-queue{
-  display:grid;
-  gap:10px;
-  margin-top:16px;
-}
-.lp-queue-item{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:16px;
-  padding:13px 14px;
-  border:1px solid var(--lp-border);
-  border-radius:12px;
-  background:color-mix(in srgb, var(--lp-surface) 86%, transparent);
-  animation:lpFloat 5s var(--lp-ease) infinite;
-}
-.lp-queue-item:nth-child(2){animation-delay:.45s}
-.lp-queue-item:nth-child(3){animation-delay:.9s}
-.lp-queue-name{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  font-weight:800;
-  font-size:13px;
-}
-.lp-dot{
-  width:9px;
-  height:9px;
-  border-radius:50%;
-  background:var(--lp-link);
-}
-.lp-dot.green{background:var(--lp-success)}
-.lp-dot.amber{background:#d97706}
-.lp-queue-status{
-  color:var(--lp-muted);
-  font-family:var(--lp-mono);
-  font-size:11px;
-}
-.lp-architecture{
-  position:absolute;
-  left:-34px;
-  right:28px;
-  bottom:-36px;
-  z-index:2;
-  padding:0;
-}
-.lp-architecture{
-  max-width:none;
-  margin:0;
-}
-.lp-arch-flow{
-  display:grid;
-  grid-template-columns:1fr 44px 1fr 44px 1.08fr;
-  align-items:center;
-  gap:0;
-}
-.lp-arch-node{
-  min-height:96px;
-  padding:16px;
-  border:1px solid var(--lp-border-strong);
-  border-radius:14px;
-  background:color-mix(in srgb, var(--lp-surface) 92%, transparent);
-  box-shadow:var(--lp-shadow);
-  backdrop-filter:blur(16px);
-}
-.lp-arch-node.api{
-  border-color:color-mix(in srgb, var(--lp-link) 52%, var(--lp-border));
-  background:color-mix(in srgb, var(--lp-link) 8%, var(--lp-surface));
-}
-.lp-arch-label{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  margin-bottom:10px;
-  color:var(--lp-text);
-  font-size:15px;
-  font-weight:800;
-}
-.lp-arch-node p{
-  margin:0;
-  color:var(--lp-muted);
-  font-size:12.5px;
-  line-height:1.5;
-}
-.lp-arch-arrow{
-  height:2px;
-  background:var(--lp-border-strong);
-  position:relative;
-}
-.lp-arch-arrow::after{
-  content:"";
-  position:absolute;
-  right:-1px;
-  top:50%;
-  width:8px;
-  height:8px;
-  border-top:2px solid var(--lp-border-strong);
-  border-right:2px solid var(--lp-border-strong);
-  transform:translateY(-50%) rotate(45deg);
-}
 .lp-platform-strip{
   display:grid;
   grid-template-columns:repeat(9, minmax(0, 1fr));
@@ -742,65 +519,44 @@ body{
   position:absolute;
   left:12%;
   right:12%;
-  top:72px;
+  top:64px;
   height:2px;
   background:linear-gradient(90deg, transparent, color-mix(in srgb, var(--lp-link) 42%, var(--lp-border-strong)), transparent);
 }
 .lp-step{
   position:relative;
-  min-height:312px;
-  padding:30px;
+  min-height:238px;
+  padding:26px;
   border:1px solid var(--lp-border);
   border-radius:18px;
   background:var(--lp-surface);
   box-shadow:var(--lp-shadow);
-  transition:transform .22s var(--lp-ease), border-color .22s var(--lp-ease);
-  animation:lpRise .7s var(--lp-ease) both;
-}
-.lp-step:nth-child(2){animation-delay:.08s}
-.lp-step:nth-child(3){animation-delay:.16s}
-.lp-step:hover{
-  transform:translateY(-3px);
-  border-color:var(--lp-border-strong);
 }
 .lp-step-number{
-  width:76px;
-  height:76px;
+  width:62px;
+  height:62px;
   display:flex;
   align-items:center;
   justify-content:center;
-  margin-bottom:24px;
+  margin-bottom:22px;
   border:1px solid color-mix(in srgb, var(--lp-link) 34%, var(--lp-border));
-  border-radius:22px;
+  border-radius:18px;
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--lp-link) 16%, transparent), transparent 62%),
     var(--lp-surface-alt);
   font-family:var(--lp-mono);
   color:color-mix(in srgb, var(--lp-link) 75%, var(--lp-text));
-  font-size:34px;
+  font-size:28px;
   line-height:1;
   font-weight:700;
 }
-.lp-step-icon{
-  width:42px;
-  height:42px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  margin-bottom:18px;
-  border-radius:var(--lp-radius);
-  background:color-mix(in srgb, var(--lp-link) 10%, var(--lp-surface-alt));
-  color:var(--lp-link);
-}
-.lp-step h3,
-.lp-feature h3{
+.lp-step h3{
   margin:0;
   font-size:18px;
   line-height:1.25;
   font-weight:800;
 }
-.lp-step p,
-.lp-feature p{
+.lp-step p{
   margin:12px 0 0;
   color:var(--lp-muted);
   font-size:14px;
@@ -915,9 +671,9 @@ body{
 }
 .lp-code-window{
   overflow:hidden;
-  border:1px solid var(--lp-border);
+  border:1px solid #1e293b;
   border-radius:18px;
-  background:color-mix(in srgb, var(--lp-surface) 94%, #0f172a);
+  background:#0f172a;
   box-shadow:var(--lp-shadow);
 }
 .lp-code-head{
@@ -927,8 +683,8 @@ body{
   gap:12px;
   min-height:44px;
   padding:0 16px;
-  border-bottom:1px solid var(--lp-border);
-  color:var(--lp-subtle);
+  border-bottom:1px solid #1e293b;
+  color:#94a3b8;
   font-family:var(--lp-mono);
   font-size:12px;
 }
@@ -940,56 +696,18 @@ body{
   width:10px;
   height:10px;
   border-radius:50%;
-  background:var(--lp-border-strong);
+  background:#334155;
 }
-.lp-code code{
+.lp-code pre{
   display:block;
   margin:0;
   padding:22px;
-  color:var(--lp-text);
+  color:#dbeafe;
   font-family:var(--lp-mono);
   font-size:13px;
   line-height:1.75;
   overflow:auto;
   white-space:pre;
-}
-.tok-key{color:#7c3aed}
-.tok-str{color:#0f766e}
-.tok-prop{color:#2563eb}
-.tok-var{color:#b45309}
-.tok-punc{color:var(--lp-subtle)}
-html.dark .tok-key{color:#c4b5fd}
-html.dark .tok-str{color:#5eead4}
-html.dark .tok-prop{color:#93c5fd}
-html.dark .tok-var{color:#fbbf24}
-.lp-features{
-  display:grid;
-  grid-template-columns:repeat(3, minmax(0, 1fr));
-  gap:18px;
-  align-items:stretch;
-}
-.lp-feature{
-  min-height:236px;
-  padding:30px;
-  border:1px solid var(--lp-border);
-  border-radius:20px;
-  background:var(--lp-surface);
-  transition:transform .22s var(--lp-ease), border-color .22s var(--lp-ease);
-}
-.lp-feature:hover{
-  transform:translateY(-3px);
-  border-color:var(--lp-border-strong);
-}
-.lp-feature-icon{
-  width:42px;
-  height:42px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  margin-bottom:18px;
-  border-radius:var(--lp-radius);
-  background:var(--lp-surface-alt);
-  color:var(--lp-link);
 }
 .lp-cta{
   padding:72px var(--lp-pad) 104px;
@@ -1033,22 +751,6 @@ html.dark .tok-var{color:#fbbf24}
   justify-content:flex-start;
   margin-top:24px;
 }
-@keyframes lpPulse{
-  0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--lp-success) 28%, transparent)}
-  50%{box-shadow:0 0 0 9px transparent}
-}
-@keyframes lpFloat{
-  0%,100%{transform:translateY(0)}
-  50%{transform:translateY(-5px)}
-}
-@keyframes lpMarquee{
-  from{transform:translateX(0)}
-  to{transform:translateX(-50%)}
-}
-@keyframes lpRise{
-  from{opacity:0;transform:translateY(18px)}
-  to{opacity:1;transform:translateY(0)}
-}
 @media (max-width:1100px){
   .lp-hero{min-height:auto}
   .lp-hero-grid,
@@ -1059,21 +761,7 @@ html.dark .tok-var{color:#fbbf24}
   .lp-platform-strip{grid-template-columns:repeat(3, minmax(0, 1fr))}
   .lp-steps{grid-template-columns:1fr}
   .lp-steps::before{display:none}
-  .lp-features{grid-template-columns:repeat(2, minmax(0, 1fr))}
-  .lp-arch-flow{grid-template-columns:1fr}
   .lp-api-link{justify-content:flex-start}
-  .lp-architecture{left:24px;right:24px;bottom:-30px}
-  .lp-arch-arrow{
-    width:2px;
-    height:34px;
-    margin:0 auto;
-  }
-  .lp-arch-arrow::after{
-    top:auto;
-    right:50%;
-    bottom:-1px;
-    transform:translateX(50%) rotate(135deg);
-  }
 }
 @media (max-width:760px){
   :root{--lp-pad:20px}
@@ -1083,15 +771,10 @@ html.dark .tok-var{color:#fbbf24}
   .lp-hero-stats{grid-template-columns:1fr 1fr}
   .lp-model{padding:18px;border-radius:18px}
   .lp-model-platforms{grid-template-columns:repeat(2, minmax(0, 1fr))}
-  .lp-console{border-radius:16px}
-  .lp-console-body{padding:16px}
-  .lp-compose-actions{align-items:flex-start;flex-direction:column}
-  .lp-architecture{position:relative;left:auto;right:auto;bottom:auto;margin-top:16px}
   .lp-section-head h2,
   .lp-code-copy h2,
   .lp-cta h2{font-size:32px}
   .lp-steps,
-  .lp-features,
   .lp-platform-strip{grid-template-columns:1fr}
   .lp-platform-strip{grid-template-columns:repeat(2, minmax(0, 1fr))}
   .lp-model-platforms{grid-template-columns:repeat(2, minmax(0, 1fr))}
@@ -1107,19 +790,14 @@ html.dark .tok-var{color:#fbbf24}
     white-space:normal;
     overflow-wrap:anywhere;
   }
-  .lp-code code{font-size:12px}
+  .lp-code pre{font-size:12px}
   .lp-step:nth-child(2),
   .lp-step:nth-child(3){margin-top:0}
   .lp-cta-inner{padding:32px 24px}
 }
 @media (prefers-reduced-motion:reduce){
-  .lp-platform-strip,
-  .lp-queue-item,
-  .lp-console-title span,
-  .lp-step{animation:none}
   .lp-btn,
-  .lp-step,
-  .lp-feature{transition:none}
+  .lp-step{transition:none}
 }
 `;
 
@@ -1249,17 +927,13 @@ export default function LandingPage() {
                 </p>
               </div>
               <div className="lp-steps">
-                {HOW_STEPS.map((step, index) => {
-                  const Icon = step.icon;
-                  return (
-                    <div className="lp-step" key={step.title}>
-                      <div className="lp-step-number">{String(index + 1).padStart(2, "0")}</div>
-                      <div className="lp-step-icon"><Icon size={20} /></div>
-                      <h3>{step.title}</h3>
-                      <p>{step.body}</p>
-                    </div>
-                  );
-                })}
+                {HOW_STEPS.map((step, index) => (
+                  <div className="lp-step" key={step.title}>
+                    <div className="lp-step-number">{String(index + 1).padStart(2, "0")}</div>
+                    <h3>{step.title}</h3>
+                    <p>{step.body}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </section>
@@ -1312,49 +986,8 @@ export default function LandingPage() {
                   <span>publish.ts</span>
                 </div>
                 <div className="lp-code">
-                  <code>
-                    <span className="tok-key">await</span> fetch<span className="tok-punc">(</span><span className="tok-str">&quot;https://api.unipost.dev/v1/posts&quot;</span><span className="tok-punc">, {"{"}</span>{`
-  `}<span className="tok-prop">method</span><span className="tok-punc">:</span> <span className="tok-str">&quot;POST&quot;</span><span className="tok-punc">,</span>{`
-  `}<span className="tok-prop">headers</span><span className="tok-punc">: {"{"}</span>{`
-    `}<span className="tok-str">&quot;Authorization&quot;</span><span className="tok-punc">:</span> <span className="tok-str">`Bearer ${"{"}</span><span className="tok-var">UNIPOST_API_KEY</span><span className="tok-str">{"}"}`</span><span className="tok-punc">,</span>{`
-    `}<span className="tok-str">&quot;Content-Type&quot;</span><span className="tok-punc">:</span> <span className="tok-str">&quot;application/json&quot;</span>{`
-  `}<span className="tok-punc">{"}"},</span>{`
-  `}<span className="tok-prop">body</span><span className="tok-punc">:</span> JSON.stringify<span className="tok-punc">({"{"}</span>{`
-    `}<span className="tok-prop">caption</span><span className="tok-punc">:</span> <span className="tok-str">&quot;Launching today&quot;</span><span className="tok-punc">,</span>{`
-    `}<span className="tok-prop">account_ids</span><span className="tok-punc">: [</span>{`
-      `}<span className="tok-str">&quot;sa_x_123&quot;</span><span className="tok-punc">,</span>{`
-      `}<span className="tok-str">&quot;sa_linkedin_456&quot;</span><span className="tok-punc">,</span>{`
-      `}<span className="tok-str">&quot;sa_threads_789&quot;</span>{`
-    `}<span className="tok-punc">]</span>{`
-  `}<span className="tok-punc">{"}"})</span>{`
-`}<span className="tok-punc">{"}"});</span>
-                  </code>
+                  <pre><code>{PUBLISH_SNIPPET}</code></pre>
                 </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="lp-section">
-            <div className="lp-wide-inner">
-              <div className="lp-section-head center">
-                <p className="lp-eyebrow">Why teams trust it</p>
-                <h2>Simple on the surface, dependable underneath</h2>
-                <p>
-                  UniPost keeps the interface small while taking care of the platform details that
-                  usually slow teams down.
-                </p>
-              </div>
-              <div className="lp-features">
-                {TRUST_POINTS.map((feature) => {
-                  const Icon = feature.icon;
-                  return (
-                    <div className="lp-feature" key={feature.title}>
-                      <div className="lp-feature-icon"><Icon size={20} /></div>
-                      <h3>{feature.title}</h3>
-                      <p>{feature.body}</p>
-                    </div>
-                  );
-                })}
               </div>
             </div>
           </section>

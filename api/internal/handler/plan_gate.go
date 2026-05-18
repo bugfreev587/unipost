@@ -20,8 +20,8 @@ import (
 //	})
 //
 // Gates run AFTER the auth middleware that stamps workspace_id into
-// the request context, so a missing workspace context is treated as
-// 401 rather than 402 to keep the error semantics clean.
+// the request context, so a missing workspace context is treated as an
+// internal routing/auth-context error rather than an auth or plan failure.
 //
 // Fail-open in the Checker: if the plans table is briefly unreadable
 // the gate lets the request through. A paying customer briefly seeing
@@ -37,7 +37,7 @@ func RequirePlanInbox(q *quota.Checker) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			workspaceID := auth.GetWorkspaceID(r.Context())
 			if workspaceID == "" {
-				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
 				return
 			}
 			if q != nil && !q.PlanAllowsInbox(r.Context(), workspaceID) {
@@ -58,7 +58,7 @@ func RequireFeatureFlag(flag featureflags.Flag) func(http.Handler) http.Handler 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			workspaceID := auth.GetWorkspaceID(r.Context())
 			if workspaceID == "" {
-				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
 				return
 			}
 
@@ -86,7 +86,7 @@ func RequirePlanAnalytics(q *quota.Checker) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			workspaceID := auth.GetWorkspaceID(r.Context())
 			if workspaceID == "" {
-				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
 				return
 			}
 			if q != nil && !q.PlanAllowsAnalytics(r.Context(), workspaceID) {
@@ -110,7 +110,7 @@ func RequirePlanWhiteLabel(q *quota.Checker) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			workspaceID := auth.GetWorkspaceID(r.Context())
 			if workspaceID == "" {
-				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
 				return
 			}
 			if q != nil && !q.PlanAllowsWhiteLabel(r.Context(), workspaceID) {

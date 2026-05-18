@@ -1,9 +1,11 @@
 package ws
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/jwks"
@@ -12,8 +14,20 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
+
+type errorBody struct {
+	Code           string `json:"code"`
+	NormalizedCode string `json:"normalized_code,omitempty"`
+	Message        string `json:"message"`
+}
+
+type errorResponse struct {
+	Error     errorBody `json:"error"`
+	RequestID string    `json:"request_id,omitempty"`
+}
 
 // Handler upgrades an HTTP request to a WebSocket connection.
 // Auth: Clerk JWT is passed as ?token=<jwt> query param since the
@@ -35,10 +49,23 @@ func (h *Handler) WithFeatureFlag(flag featureflags.Flag) *Handler {
 	return h
 }
 
+func writeWSError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(errorResponse{
+		Error: errorBody{
+			Code:           code,
+			NormalizedCode: strings.ToLower(code),
+			Message:        message,
+		},
+		RequestID: appmw.GetRequestID(r.Context()),
+	})
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		http.Error(w, `{"error":"missing token query param"}`, http.StatusUnauthorized)
+		writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Missing token query param")
 		return
 	}
 
@@ -54,14 +81,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Warn("ws: auth failed", "err", err)
-		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+		writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid token")
 		return
 	}
 
 	workspace, err := h.queries.GetDefaultWorkspaceForUser(r.Context(), claims.Subject)
 	if err != nil {
 		slog.Warn("ws: no workspace for user", "user_id", claims.Subject, "err", err)
-		http.Error(w, `{"error":"no workspace"}`, http.StatusForbidden)
+		writeWSError(w, r, http.StatusForbidden, "FORBIDDEN", "No workspace found for user")
 		return
 	}
 
@@ -71,7 +98,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: workspace.ID,
 			Env:         runtimeenv.Current(),
 		}) {
-			http.Error(w, `{"error":"feature disabled"}`, http.StatusForbidden)
+			writeWSError(w, r, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
 			return
 		}
 	}

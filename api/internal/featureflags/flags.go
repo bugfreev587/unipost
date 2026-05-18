@@ -71,6 +71,7 @@ var definitions = map[Flag]Definition{
 	Inbox: {
 		Flag:        Inbox,
 		Description: "Controls the UniPost Inbox surface for comments, DMs, replies, unread counts, manual sync, and realtime updates.",
+		// Kill-switch for already-shipped functionality; defaults on everywhere.
 		DefaultEnabled: func(Target) bool {
 			return true
 		},

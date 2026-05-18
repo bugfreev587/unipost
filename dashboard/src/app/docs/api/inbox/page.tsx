@@ -18,7 +18,7 @@ const AVAILABILITY_FIELDS: ApiFieldItem[] = [
   },
   {
     name: "Current support",
-    type: "Instagram, Threads, YouTube",
+    type: "ig_comment, ig_dm, threads_reply, youtube_comment",
     description: "Instagram comments and DMs, Threads comments, and YouTube comments are currently supported. More sources are coming soon.",
   },
   {
@@ -64,22 +64,22 @@ const ENDPOINT_FIELDS: ApiFieldItem[] = [
 
 const SOURCE_FIELDS: ApiFieldItem[] = [
   {
-    name: "instagram_comments",
+    name: "ig_comment",
     type: "supported",
     description: "Comments on connected Instagram Business or Creator accounts.",
   },
   {
-    name: "instagram_dms",
+    name: "ig_dm",
     type: "supported",
     description: "Instagram DMs when the connected account and permissions are eligible.",
   },
   {
-    name: "threads_comments",
+    name: "threads_reply",
     type: "supported",
     description: "Comments and replies on connected Threads content.",
   },
   {
-    name: "youtube_comments",
+    name: "youtube_comment",
     type: "supported",
     description: "Comments on connected YouTube video content.",
   },
