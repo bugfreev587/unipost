@@ -45,6 +45,392 @@ export type WhiteLabelGuide = {
   relatedPlatformTitle: string;
 };
 
+type ApiWorkflowConfig = {
+  title: string;
+  platform: string;
+  platformName: string;
+  sessionTitle: string;
+  accountNoun: string;
+  credentialOwner: string;
+  returnPath: string;
+  firstTestNote: string;
+  finalTestNote: string;
+  connectBodyExtra?: string;
+  alternatePlatformValues?: Array<[string, string]>;
+};
+
+function buildConnectThroughAppWorkflow(config: ApiWorkflowConfig): NonNullable<WhiteLabelGuide["apiWorkflow"]> {
+  const alternatePlatformSnippet = config.alternatePlatformValues?.length
+    ? [
+        {
+          lang: "text",
+          label: "Related platform values",
+          code: config.alternatePlatformValues
+            .map(([value, label]) => `${value} - ${label}`)
+            .join("\n"),
+        },
+      ]
+    : [];
+
+  return {
+    title: config.title,
+    intro: `After your ${config.credentialOwner} credentials are saved, prove the customer-facing flow your own app will use: create an API key, choose the branded profile, create a Connect session, send the returned OAuth URL to your end user, then confirm UniPost recorded the managed ${config.accountNoun}.`,
+    steps: [
+      {
+        title: "Step 1: create your first API key in the dashboard",
+        body: `Open UniPost in the same workspace where you saved the ${config.platformName} credentials, create an API key, and store it immediately. The first key must be created in the dashboard because there is no API key available yet to call \`POST /v1/api-keys\`.`,
+      },
+      {
+        title: "Step 2: list profiles and copy the `profile_id` you will use for branding",
+        body: "Every workspace gets at least one profile. Start by listing profiles so you can grab the `id` for the profile that should own your hosted Connect branding.",
+        snippets: [
+          {
+            lang: "curl",
+            label: "cURL",
+            code: `curl "https://api.unipost.dev/v1/profiles" \\
+  -H "Authorization: Bearer <API_KEY>"`,
+          },
+          {
+            lang: "js",
+            label: "Node.js",
+            code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const { data: profiles } = await client.profiles.list();
+console.log(profiles.map((profile) => profile.id));`,
+          },
+          {
+            lang: "python",
+            label: "Python",
+            code: `from unipost import UniPost
+
+client = UniPost()
+
+profiles = client.profiles.list()
+print([p["id"] for p in profiles["data"]])`,
+          },
+          {
+            lang: "go",
+            label: "Go",
+            code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  profiles, err := client.Profiles.List(context.Background())
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  for _, profile := range profiles.Data {
+    fmt.Println(profile.ID)
+  }
+}`,
+          },
+          {
+            lang: "java",
+            label: "Java",
+            code: `import dev.unipost.UniPost;
+
+UniPost client = new UniPost();
+
+var profiles = client.profiles().list().getData();
+profiles.forEach(profile -> System.out.println(profile.get("id").asText()));`,
+          },
+        ],
+      },
+      {
+        title: "Step 3: patch the profile branding that should show on hosted Connect",
+        body: "With the `profile_id` in hand, update the logo, display name, and primary color. This is the fastest way to confirm your hosted Connect surface is reading your own branding instead of UniPost defaults.",
+        snippets: [
+          {
+            lang: "curl",
+            label: "cURL",
+            code: `curl -X PATCH "https://api.unipost.dev/v1/profiles/<PROFILE_ID>" \\
+  -H "Authorization: Bearer <API_KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "branding_logo_url": "https://yourcdn.com/logo.png",
+    "branding_display_name": "Your Brand",
+    "branding_primary_color": "#10b981"
+  }'`,
+          },
+          {
+            lang: "js",
+            label: "Node.js",
+            code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const profile = await client.profiles.update("<PROFILE_ID>", {
+  brandingLogoUrl: "https://yourcdn.com/logo.png",
+  brandingDisplayName: "Your Brand",
+  brandingPrimaryColor: "#10b981",
+});
+
+console.log(profile.brandingDisplayName);`,
+          },
+          {
+            lang: "python",
+            label: "Python",
+            code: `from unipost import UniPost
+
+client = UniPost()
+
+profile = client.profiles.update(
+  "<PROFILE_ID>",
+  branding_logo_url="https://yourcdn.com/logo.png",
+  branding_display_name="Your Brand",
+  branding_primary_color="#10b981",
+)
+
+print(profile["data"]["branding_display_name"])`,
+          },
+          {
+            lang: "go",
+            label: "Go",
+            code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  profile, err := client.Profiles.Update(context.Background(), "<PROFILE_ID>", &unipost.UpdateProfileParams{
+    BrandingLogoURL:      unipost.String("https://yourcdn.com/logo.png"),
+    BrandingDisplayName:  unipost.String("Your Brand"),
+    BrandingPrimaryColor: unipost.String("#10b981"),
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(profile.BrandingDisplayName)
+}`,
+          },
+          {
+            lang: "java",
+            label: "Java",
+            code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var profile = client.profiles().update("<PROFILE_ID>", Map.of(
+    "branding_logo_url", "https://yourcdn.com/logo.png",
+    "branding_display_name", "Your Brand",
+    "branding_primary_color", "#10b981"
+));
+
+System.out.println(profile.get("branding_display_name").asText());`,
+          },
+        ],
+      },
+      {
+        title: `Step 4: create ${config.sessionTitle} for your app user`,
+        body: `From your backend, create a Connect session with \`platform\` set to \`${config.platform}\`, the branded \`profile_id\`, and your stable \`external_user_id\`. UniPost returns a hosted OAuth URL. Redirect your app user to that URL, or open it inside the connection flow in your own product, so they can authorize their ${config.accountNoun} under your white-label app.${config.connectBodyExtra ? ` ${config.connectBodyExtra}` : ""}`,
+        snippets: [
+          {
+            lang: "curl",
+            label: "cURL",
+            code: `curl -X POST "https://api.unipost.dev/v1/connect/sessions" \\
+  -H "Authorization: Bearer <API_KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "platform": "${config.platform}",
+    "profile_id": "<PROFILE_ID>",
+    "external_user_id": "user_123",
+    "external_user_email": "mira@yourapp.com",
+    "return_url": "https://yourapp.com${config.returnPath}"
+  }'`,
+          },
+          {
+            lang: "js",
+            label: "Node.js",
+            code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const session = await client.connect.createSession({
+  platform: "${config.platform}",
+  profileId: "<PROFILE_ID>",
+  externalUserId: "user_123",
+  externalUserEmail: "mira@yourapp.com",
+  returnUrl: "https://yourapp.com${config.returnPath}",
+});
+
+console.log(session.url);`,
+          },
+          {
+            lang: "python",
+            label: "Python",
+            code: `from unipost import UniPost
+
+client = UniPost()
+
+session = client.connect.create_session(
+  platform="${config.platform}",
+  profile_id="<PROFILE_ID>",
+  external_user_id="user_123",
+  external_user_email="mira@yourapp.com",
+  return_url="https://yourapp.com${config.returnPath}",
+)
+
+print(session["data"]["url"])`,
+          },
+          {
+            lang: "go",
+            label: "Go",
+            code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  session, err := client.Connect.CreateSession(context.Background(), &unipost.CreateConnectSessionParams{
+    Platform:          "${config.platform}",
+    ProfileID:         "<PROFILE_ID>",
+    ExternalUserID:    "user_123",
+    ExternalUserEmail: "mira@yourapp.com",
+    ReturnURL:         "https://yourapp.com${config.returnPath}",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(session.URL)
+}`,
+          },
+          {
+            lang: "java",
+            label: "Java",
+            code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var session = client.connect().createSession(Map.of(
+    "platform", "${config.platform}",
+    "profile_id", "<PROFILE_ID>",
+    "external_user_id", "user_123",
+    "external_user_email", "mira@yourapp.com",
+    "return_url", "https://yourapp.com${config.returnPath}"
+));
+
+System.out.println(session.get("url").asText());`,
+          },
+          ...alternatePlatformSnippet,
+        ],
+      },
+      {
+        title: `Step 5: confirm the managed ${config.platformName} account is visible through the API`,
+        body: `After the user completes OAuth, UniPost stores the connected ${config.accountNoun} as a managed account tied to your \`external_user_id\`. Verify it through the accounts API; the same user should also appear in the dashboard's Developer App Users view. ${config.firstTestNote}`,
+        snippets: [
+          {
+            lang: "curl",
+            label: "cURL",
+            code: `curl "https://api.unipost.dev/v1/accounts?platform=${config.platform}&external_user_id=user_123" \\
+  -H "Authorization: Bearer <API_KEY>"`,
+          },
+          {
+            lang: "js",
+            label: "Node.js",
+            code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const { data: accounts } = await client.accounts.list({
+  platform: "${config.platform}",
+  externalUserId: "user_123",
+});
+
+console.log(accounts);`,
+          },
+          {
+            lang: "python",
+            label: "Python",
+            code: `from unipost import UniPost
+
+client = UniPost()
+
+accounts = client.accounts.list(platform="${config.platform}", external_user_id="user_123")
+print(accounts["data"])`,
+          },
+          {
+            lang: "go",
+            label: "Go",
+            code: `package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  accounts, err := client.Accounts.List(context.Background(), &unipost.ListAccountsParams{
+    Platform:       "${config.platform}",
+    ExternalUserID: "user_123",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _ = accounts
+}`,
+          },
+          {
+            lang: "java",
+            label: "Java",
+            code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var accounts = client.accounts().list(Map.of(
+    "platform", "${config.platform}",
+    "external_user_id", "user_123"
+)).getData();
+System.out.println(accounts);`,
+          },
+        ],
+      },
+      {
+        title: "Step 6: use that managed account and profile in your first real API workflow",
+        body: `At this point you have the four values you need most often: \`API_KEY\`, \`profile_id\`, \`external_user_id\`, and the connected ${config.platformName} \`account_id\`. ${config.finalTestNote}`,
+      },
+    ],
+  };
+}
+
 export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
   meta: {
     slug: "meta",
@@ -97,6 +483,23 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       ["App Secret", "App Secret", "Stored encrypted; UniPost never shows it back in the read view."],
       ["OAuth redirect allowlist", "Callback URLs below", "Add every Meta callback your rollout needs before testing."],
     ],
+    apiWorkflow: buildConnectThroughAppWorkflow({
+      title: "Connect an Instagram account through your app",
+      platform: "instagram",
+      platformName: "Instagram",
+      sessionTitle: "an Instagram Connect session",
+      accountNoun: "Instagram account",
+      credentialOwner: "Meta app",
+      returnPath: "/settings/integrations/instagram/done",
+      firstTestNote: "If your rollout starts with Threads or Facebook instead, use the matching platform value when you create the session and when you filter the accounts list.",
+      finalTestNote: "From here, run a small end-to-end publish test against the connected account so you know the white-label Meta app is usable, not just visible.",
+      connectBodyExtra: "The same Meta credential pair can support Instagram, Threads, and Facebook, but each Connect session still needs the exact surface the user is connecting.",
+      alternatePlatformValues: [
+        ["instagram", "Instagram account connection"],
+        ["threads", "Threads profile connection"],
+        ["facebook", "Facebook Page connection"],
+      ],
+    }),
     gotchas: [
       ["One Meta app, multiple surfaces", "Instagram, Threads, and Facebook can share one Meta app, but each UniPost flow may use a different callback path. Whitelist all needed paths before you test."],
       ["Review can block scale", "A test user flow may work before full public rollout is approved. Do not assume one successful internal test means public customer onboarding is ready."],
@@ -158,6 +561,17 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       ["Client Secret", "Client Secret", "Treat as production secret material; store it once in UniPost and in your password manager."],
       ["Authorized redirect URL", "Callback URL below", "LinkedIn rejects near-matches, so do not improvise the path."],
     ],
+    apiWorkflow: buildConnectThroughAppWorkflow({
+      title: "Connect a LinkedIn account through your app",
+      platform: "linkedin",
+      platformName: "LinkedIn",
+      sessionTitle: "a LinkedIn Connect session",
+      accountNoun: "LinkedIn account",
+      credentialOwner: "LinkedIn app",
+      returnPath: "/settings/integrations/linkedin/done",
+      firstTestNote: "This should be the same member account you used for the first consent-screen smoke test.",
+      finalTestNote: "From here, run a small end-to-end publish test so you know the white-label LinkedIn connection is usable, not just visible.",
+    }),
     gotchas: [
       ["Redirect URI mismatch", "LinkedIn is unforgiving here. If the consent screen errors immediately, compare the callback URL character by character."],
       ["Over-scoping too early", "Adding extra LinkedIn products before the first working connect usually creates more review and troubleshooting surface than you need."],
@@ -219,6 +633,17 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       ["Client Secret", "Client Secret", "Save once in UniPost and rotate through your internal secrets process when needed."],
       ["Redirect URI allowlist", "Callback URL below", "Add before testing, not after the first failure."],
     ],
+    apiWorkflow: buildConnectThroughAppWorkflow({
+      title: "Connect a TikTok account through your app",
+      platform: "tiktok",
+      platformName: "TikTok",
+      sessionTitle: "a TikTok Connect session",
+      accountNoun: "TikTok creator account",
+      credentialOwner: "TikTok app",
+      returnPath: "/settings/integrations/tiktok/done",
+      firstTestNote: "Use the controlled creator account from your smoke test so account-type issues are easy to separate from API wiring issues.",
+      finalTestNote: "From here, run a small end-to-end publish test so you know the white-label TikTok connection is usable, not just visible.",
+    }),
     gotchas: [
       ["Creator-account assumptions", "Use a real creator account early so you discover any account-type issues while the setup surface is still small."],
       ["Review is part of the project", "Treat TikTok review as part of the rollout timeline, not a post-launch admin chore."],
@@ -394,8 +819,8 @@ https://www.googleapis.com/auth/youtube.upload`,
       ["Authorized redirect URI", "Callback URL below", "Must match exactly or Google rejects the callback."],
     ],
     apiWorkflow: {
-      title: "After the account connects: verify the API flow",
-      intro: "Once your YouTube account is connected in the dashboard, the next job is to prove your API path is wired correctly too. The sequence below starts from the dashboard, then moves into the API calls you will keep using in your own backend.",
+      title: "Connect a YouTube account through your app",
+      intro: "After your YouTube credentials are saved, prove the customer-facing flow your own app will use: create an API key, choose the branded profile, create a Connect session, send the returned OAuth URL to your end user, then confirm UniPost recorded the managed YouTube account.",
       steps: [
         {
           title: "Step 1: create your first API key in the dashboard",
@@ -564,13 +989,116 @@ System.out.println(profile.get("branding_display_name").asText());`,
           ],
         },
         {
-          title: "Step 4: confirm the connected YouTube account is visible through the API",
-          body: "Now verify that the same workspace can see the YouTube connection over API. This is the handoff point between 'the dashboard connect worked' and 'my backend can rely on this account now'.",
+          title: "Step 4: create a YouTube Connect session for your app user",
+          body: "From your backend, create a Connect session with `platform` set to `youtube`, the branded `profile_id`, and your stable `external_user_id`. UniPost returns a hosted OAuth URL. Redirect your app user to that URL, or open it inside the connection flow in your own product, so they can authorize their YouTube channel under your white-label Google app.",
           snippets: [
             {
               lang: "curl",
               label: "cURL",
-              code: `curl "https://api.unipost.dev/v1/accounts?platform=youtube" \\
+              code: `curl -X POST "https://api.unipost.dev/v1/connect/sessions" \\
+  -H "Authorization: Bearer <API_KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "platform": "youtube",
+    "profile_id": "<PROFILE_ID>",
+    "external_user_id": "user_123",
+    "external_user_email": "alex@yourapp.com",
+    "return_url": "https://yourapp.com/settings/integrations/youtube/done"
+  }'`,
+            },
+            {
+              lang: "js",
+              label: "Node.js",
+              code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const session = await client.connect.createSession({
+  platform: "youtube",
+  profileId: "<PROFILE_ID>",
+  externalUserId: "user_123",
+  externalUserEmail: "alex@yourapp.com",
+  returnUrl: "https://yourapp.com/settings/integrations/youtube/done",
+});
+
+console.log(session.url);`,
+            },
+            {
+              lang: "python",
+              label: "Python",
+              code: `from unipost import UniPost
+
+client = UniPost()
+
+session = client.connect.create_session(
+  platform="youtube",
+  profile_id="<PROFILE_ID>",
+  external_user_id="user_123",
+  external_user_email="alex@yourapp.com",
+  return_url="https://yourapp.com/settings/integrations/youtube/done",
+)
+
+print(session["data"]["url"])`,
+            },
+            {
+              lang: "go",
+              label: "Go",
+              code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  session, err := client.Connect.CreateSession(context.Background(), &unipost.CreateConnectSessionParams{
+    Platform:          "youtube",
+    ProfileID:         "<PROFILE_ID>",
+    ExternalUserID:    "user_123",
+    ExternalUserEmail: "alex@yourapp.com",
+    ReturnURL:         "https://yourapp.com/settings/integrations/youtube/done",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(session.URL)
+}`,
+            },
+            {
+              lang: "java",
+              label: "Java",
+              code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var session = client.connect().createSession(Map.of(
+    "platform", "youtube",
+    "profile_id", "<PROFILE_ID>",
+    "external_user_id", "user_123",
+    "external_user_email", "alex@yourapp.com",
+    "return_url", "https://yourapp.com/settings/integrations/youtube/done"
+));
+
+System.out.println(session.get("url").asText());`,
+            },
+          ],
+        },
+        {
+          title: "Step 5: confirm the managed YouTube account is visible through the API",
+          body: "After the user completes OAuth, UniPost stores the connected YouTube channel as a managed account tied to your `external_user_id`. Verify it through the accounts API; the same user should also appear in the dashboard's Developer App Users view.",
+          snippets: [
+            {
+              lang: "curl",
+              label: "cURL",
+              code: `curl "https://api.unipost.dev/v1/accounts?platform=youtube&external_user_id=user_123" \\
   -H "Authorization: Bearer <API_KEY>"`,
             },
             {
@@ -582,6 +1110,7 @@ const client = new UniPost();
 
 const { data: accounts } = await client.accounts.list({
   platform: "youtube",
+  externalUserId: "user_123",
 });
 
 console.log(accounts);`,
@@ -593,7 +1122,7 @@ console.log(accounts);`,
 
 client = UniPost()
 
-accounts = client.accounts.list(platform="youtube")
+accounts = client.accounts.list(platform="youtube", external_user_id="user_123")
 print(accounts["data"])`,
             },
             {
@@ -612,7 +1141,8 @@ func main() {
   client := unipost.NewClient()
 
   accounts, err := client.Accounts.List(context.Background(), &unipost.ListAccountsParams{
-    Platform: "youtube",
+    Platform:       "youtube",
+    ExternalUserID: "user_123",
   })
   if err != nil {
     log.Fatal(err)
@@ -630,14 +1160,17 @@ import java.util.Map;
 
 UniPost client = new UniPost();
 
-var accounts = client.accounts().list(Map.of("platform", "youtube")).getData();
+var accounts = client.accounts().list(Map.of(
+    "platform", "youtube",
+    "external_user_id", "user_123"
+)).getData();
 System.out.println(accounts);`,
             },
           ],
         },
         {
-          title: "Step 5: use that account and profile in your first real API workflow",
-          body: "At this point you have the three values you need most often: `API_KEY`, `profile_id`, and the connected YouTube `account_id`. From here, the natural next move is a small end-to-end publish test so you know the connection is usable, not just visible.",
+          title: "Step 6: use that managed account and profile in your first real API workflow",
+          body: "At this point you have the four values you need most often: `API_KEY`, `profile_id`, `external_user_id`, and the connected YouTube `account_id`. From here, run a small end-to-end publish test so you know the white-label connection is usable, not just visible.",
         },
       ],
     },
@@ -702,6 +1235,17 @@ System.out.println(accounts);`,
       ["Client Secret", "Client Secret", "Store once in UniPost, then manage future rotations like any production secret."],
       ["Callback / redirect URL", "Callback URL below", "Copy exactly to avoid redirect mismatch errors."],
     ],
+    apiWorkflow: buildConnectThroughAppWorkflow({
+      title: "Connect an X account through your app",
+      platform: "twitter",
+      platformName: "X / Twitter",
+      sessionTitle: "an X Connect session",
+      accountNoun: "X account",
+      credentialOwner: "X app",
+      returnPath: "/settings/integrations/x/done",
+      firstTestNote: "If this call fails even after OAuth completes, re-check developer tier and app access before assuming the account list API is wrong.",
+      finalTestNote: "From here, run a small end-to-end publish test so you know the white-label X connection is usable, not just visible.",
+    }),
     gotchas: [
       ["Tier mismatch", "X problems often look like OAuth bugs when the real issue is access level or commercial eligibility."],
       ["Old browser session state", "If you tested with the wrong credentials first, retry in a clean session after saving the correct app details."],
