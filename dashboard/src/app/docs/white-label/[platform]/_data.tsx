@@ -394,8 +394,8 @@ https://www.googleapis.com/auth/youtube.upload`,
       ["Authorized redirect URI", "Callback URL below", "Must match exactly or Google rejects the callback."],
     ],
     apiWorkflow: {
-      title: "After the account connects: verify the API flow",
-      intro: "Once your YouTube account is connected in the dashboard, the next job is to prove your API path is wired correctly too. The sequence below starts from the dashboard, then moves into the API calls you will keep using in your own backend.",
+      title: "Verify the API flow",
+      intro: "After your YouTube credentials are saved, prove the customer-facing flow your own app will use: create an API key, choose the branded profile, create a Connect session, send the returned OAuth URL to your end user, then confirm UniPost recorded the managed YouTube account.",
       steps: [
         {
           title: "Step 1: create your first API key in the dashboard",
@@ -564,13 +564,116 @@ System.out.println(profile.get("branding_display_name").asText());`,
           ],
         },
         {
-          title: "Step 4: confirm the connected YouTube account is visible through the API",
-          body: "Now verify that the same workspace can see the YouTube connection over API. This is the handoff point between 'the dashboard connect worked' and 'my backend can rely on this account now'.",
+          title: "Step 4: create a YouTube Connect session for your app user",
+          body: "From your backend, create a Connect session with `platform` set to `youtube`, the branded `profile_id`, and your stable `external_user_id`. UniPost returns a hosted OAuth URL. Redirect your app user to that URL, or open it inside the connection flow in your own product, so they can authorize their YouTube channel under your white-label Google app.",
           snippets: [
             {
               lang: "curl",
               label: "cURL",
-              code: `curl "https://api.unipost.dev/v1/accounts?platform=youtube" \\
+              code: `curl -X POST "https://api.unipost.dev/v1/connect/sessions" \\
+  -H "Authorization: Bearer <API_KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "platform": "youtube",
+    "profile_id": "<PROFILE_ID>",
+    "external_user_id": "user_123",
+    "external_user_email": "alex@yourapp.com",
+    "return_url": "https://yourapp.com/settings/integrations/youtube/done"
+  }'`,
+            },
+            {
+              lang: "js",
+              label: "Node.js",
+              code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+
+const session = await client.connect.createSession({
+  platform: "youtube",
+  profileId: "<PROFILE_ID>",
+  externalUserId: "user_123",
+  externalUserEmail: "alex@yourapp.com",
+  returnUrl: "https://yourapp.com/settings/integrations/youtube/done",
+});
+
+console.log(session.url);`,
+            },
+            {
+              lang: "python",
+              label: "Python",
+              code: `from unipost import UniPost
+
+client = UniPost()
+
+session = client.connect.create_session(
+  platform="youtube",
+  profile_id="<PROFILE_ID>",
+  external_user_id="user_123",
+  external_user_email="alex@yourapp.com",
+  return_url="https://yourapp.com/settings/integrations/youtube/done",
+)
+
+print(session["data"]["url"])`,
+            },
+            {
+              lang: "go",
+              label: "Go",
+              code: `package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  client := unipost.NewClient()
+
+  session, err := client.Connect.CreateSession(context.Background(), &unipost.CreateConnectSessionParams{
+    Platform:          "youtube",
+    ProfileID:         "<PROFILE_ID>",
+    ExternalUserID:    "user_123",
+    ExternalUserEmail: "alex@yourapp.com",
+    ReturnURL:         "https://yourapp.com/settings/integrations/youtube/done",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(session.URL)
+}`,
+            },
+            {
+              lang: "java",
+              label: "Java",
+              code: `import dev.unipost.UniPost;
+
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+var session = client.connect().createSession(Map.of(
+    "platform", "youtube",
+    "profile_id", "<PROFILE_ID>",
+    "external_user_id", "user_123",
+    "external_user_email", "alex@yourapp.com",
+    "return_url", "https://yourapp.com/settings/integrations/youtube/done"
+));
+
+System.out.println(session.get("url").asText());`,
+            },
+          ],
+        },
+        {
+          title: "Step 5: confirm the managed YouTube account is visible through the API",
+          body: "After the user completes OAuth, UniPost stores the connected YouTube channel as a managed account tied to your `external_user_id`. Verify it through the accounts API; the same user should also appear in the dashboard's Developer App Users view.",
+          snippets: [
+            {
+              lang: "curl",
+              label: "cURL",
+              code: `curl "https://api.unipost.dev/v1/accounts?platform=youtube&external_user_id=user_123" \\
   -H "Authorization: Bearer <API_KEY>"`,
             },
             {
@@ -582,6 +685,7 @@ const client = new UniPost();
 
 const { data: accounts } = await client.accounts.list({
   platform: "youtube",
+  externalUserId: "user_123",
 });
 
 console.log(accounts);`,
@@ -593,7 +697,7 @@ console.log(accounts);`,
 
 client = UniPost()
 
-accounts = client.accounts.list(platform="youtube")
+accounts = client.accounts.list(platform="youtube", external_user_id="user_123")
 print(accounts["data"])`,
             },
             {
@@ -612,7 +716,8 @@ func main() {
   client := unipost.NewClient()
 
   accounts, err := client.Accounts.List(context.Background(), &unipost.ListAccountsParams{
-    Platform: "youtube",
+    Platform:       "youtube",
+    ExternalUserID: "user_123",
   })
   if err != nil {
     log.Fatal(err)
@@ -630,14 +735,17 @@ import java.util.Map;
 
 UniPost client = new UniPost();
 
-var accounts = client.accounts().list(Map.of("platform", "youtube")).getData();
+var accounts = client.accounts().list(Map.of(
+    "platform", "youtube",
+    "external_user_id", "user_123"
+)).getData();
 System.out.println(accounts);`,
             },
           ],
         },
         {
-          title: "Step 5: use that account and profile in your first real API workflow",
-          body: "At this point you have the three values you need most often: `API_KEY`, `profile_id`, and the connected YouTube `account_id`. From here, the natural next move is a small end-to-end publish test so you know the connection is usable, not just visible.",
+          title: "Step 6: use that managed account and profile in your first real API workflow",
+          body: "At this point you have the four values you need most often: `API_KEY`, `profile_id`, `external_user_id`, and the connected YouTube `account_id`. From here, run a small end-to-end publish test so you know the white-label connection is usable, not just visible.",
         },
       ],
     },
