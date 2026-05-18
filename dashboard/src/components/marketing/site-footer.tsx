@@ -100,6 +100,7 @@ export function SiteFooter() {
             links={[
               { label: "Overview", href: "/" },
               { label: "Pricing", href: "/pricing" },
+              { label: "Blog", href: "/blog" },
               { label: "Docs", href: "/docs" },
             ]}
           />

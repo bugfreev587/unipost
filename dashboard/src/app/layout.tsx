@@ -51,6 +51,7 @@ const themeInitScript = `
       "/youtube-api",
       "/pinterest-api",
       "/bluesky-api",
+      "/blog",
     ]);
     const isMarketingHost =
       host === "unipost.dev" ||
@@ -58,7 +59,8 @@ const themeInitScript = `
       (host.endsWith(".unipost.dev") && host !== "app.unipost.dev");
     const isLandingSurface =
       isMarketingHost ||
-      landingPaths.has(pathname);
+      landingPaths.has(pathname) ||
+      pathname.startsWith("/blog/");
     const cookieMatch = document.cookie.match(/(?:^|; )unipost-theme=(light|dark)(?:;|$)/);
     const cookieTheme = cookieMatch ? cookieMatch[1] : null;
     const storedTheme = localStorage.getItem(storageKey);
