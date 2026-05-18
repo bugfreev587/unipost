@@ -6,11 +6,13 @@ import (
 	"os"
 
 	"github.com/clerk/clerk-sdk-go/v2"
-	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	"github.com/clerk/clerk-sdk-go/v2/jwks"
+	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	"github.com/coder/websocket"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 // Handler upgrades an HTTP request to a WebSocket connection.
@@ -19,12 +21,18 @@ import (
 // is resolved from the user's default workspace (single-workspace
 // product surface), matching DualAuthMiddleware's Clerk path.
 type Handler struct {
-	Hub     *Hub
-	queries *db.Queries
+	Hub         *Hub
+	queries     *db.Queries
+	featureFlag featureflags.Flag
 }
 
 func NewHandler(hub *Hub, queries *db.Queries) *Handler {
 	return &Handler{Hub: hub, queries: queries}
+}
+
+func (h *Handler) WithFeatureFlag(flag featureflags.Flag) *Handler {
+	h.featureFlag = flag
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +63,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("ws: no workspace for user", "user_id", claims.Subject, "err", err)
 		http.Error(w, `{"error":"no workspace"}`, http.StatusForbidden)
 		return
+	}
+
+	if h.featureFlag != "" {
+		if !featureflags.Enabled(r.Context(), h.featureFlag, featureflags.Target{
+			UserID:      claims.Subject,
+			WorkspaceID: workspace.ID,
+			Env:         runtimeenv.Current(),
+		}) {
+			http.Error(w, `{"error":"feature disabled"}`, http.StatusForbidden)
+			return
+		}
 	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
