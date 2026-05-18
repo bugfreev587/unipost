@@ -30,6 +30,7 @@ const PUBLIC_NAV_ITEMS = [
   { href: "/solutions", label: "Solutions", key: "solutions" },
   { href: "/tools", label: "Tools", key: "tools" },
   { href: "/pricing", label: "Pricing", key: "pricing" },
+  { href: "/blog", label: "Blog", key: "blog" },
   { href: "/docs", label: "Docs", key: "docs" },
 ] as const;
 
