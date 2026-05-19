@@ -2,12 +2,15 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -195,10 +199,12 @@ type accountSummary struct {
 
 type socialPostResponse struct {
 	ID                 string     `json:"id"`
+	Message            string     `json:"message,omitempty"`
 	Caption            *string    `json:"caption"`
 	MediaURLs          []string   `json:"media_urls,omitempty"`
 	Status             string     `json:"status"`
 	ExecutionMode      string     `json:"execution_mode,omitempty"`
+	IdempotencyReplay  bool       `json:"idempotency_replay,omitempty"`
 	QueuedResultsCount int        `json:"queued_results_count,omitempty"`
 	ActiveJobCount     int        `json:"active_job_count,omitempty"`
 	RetryingCount      int        `json:"retrying_count,omitempty"`
@@ -294,10 +300,10 @@ func groupPostResultsByPostID(rows []db.SocialPostResult) map[string][]db.Social
 // once via the same pure function /validate uses, then dispatched to
 // either the scheduled or immediate path.
 //
-// Idempotency: when the request carries an idempotency_key, we look
-// for an existing post with that (project_id, key) within the 24h
-// window. On hit we hydrate the prior response and return it
-// unchanged — no new platform posts are created.
+// Idempotency: scheduled creates may include an optional idempotency_key.
+// For scheduled posts only, the key is unique within a workspace while
+// the prior post remains scheduled. Completed/cancelled history does
+// not block a new schedule with the same key.
 //
 // Validation behavior: structural errors (caption too long, mixing
 // image+video, missing required media, schedule out of range, etc.)
@@ -340,21 +346,6 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Message:     "Started post creation workflow.",
 		Metadata:    summarizePublishRequest(body, parsed),
 	})
-
-	// Idempotency replay — if this key already produced a row, return
-	// the prior response unchanged. Cheap: one indexed lookup.
-	if parsed.IdempotencyKey != "" {
-		if existing, err := h.queries.GetSocialPostByIdempotencyKey(r.Context(), db.GetSocialPostByIdempotencyKeyParams{
-			WorkspaceID:    workspaceID,
-			IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
-		}); err == nil {
-			h.writeReplayedPost(w, r, existing)
-			return
-		}
-		// pgx.ErrNoRows is the expected miss; anything else we treat
-		// as transient and proceed (better to risk a duplicate than
-		// to block a publish on a flaky lookup).
-	}
 
 	// Quota headers (soft — never blocks).
 	quotaStatus := h.quota.Check(r.Context(), workspaceID)
@@ -414,6 +405,9 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Phase 3).
 	deliveryJobUnits := len(parsed.Posts)
 	if parsed.ScheduledAt != nil {
+		if h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
+			return
+		}
 		if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{
 			enqueue:      true,
 			enqueueUnits: 1,
@@ -478,6 +472,9 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
 	})
 	if err != nil {
+		if isScheduledIdempotencyUniqueViolation(err) && h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create scheduled post")
 		return
 	}
@@ -513,6 +510,120 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		Source:      post.Source,
 		ProfileIDs:  post.ProfileIds,
 	})
+}
+
+func (h *SocialPostHandler) maybeReplayScheduledIdempotency(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) bool {
+	if parsed.ScheduledAt == nil || parsed.IdempotencyKey == "" {
+		return false
+	}
+
+	existing, err := h.queries.GetScheduledSocialPostByIdempotencyKey(r.Context(), db.GetScheduledSocialPostByIdempotencyKeyParams{
+		WorkspaceID:    workspaceID,
+		IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check scheduled post idempotency")
+		return true
+	}
+
+	same, err := scheduledIdempotencyPayloadMatches(existing, parsed.Posts, *parsed.ScheduledAt)
+	if err != nil {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT", "A scheduled post with the same idempotency_key already exists, but UniPost could not compare it with this request. Use a new idempotency_key to schedule a new post.")
+		return true
+	}
+	if !same {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT", "A scheduled post with the same idempotency_key already exists for this workspace. Use the same payload to replay it, or use a new idempotency_key to schedule a different post.")
+		return true
+	}
+
+	resp := h.replayedPostResponse(r, existing)
+	resp.Message = "A scheduled post with the same idempotency_key already exists. Returning the existing scheduled post; no new post was scheduled."
+	resp.IdempotencyReplay = true
+	w.Header().Set("X-UniPost-Idempotent-Replay", "true")
+	w.Header().Set("Idempotent-Replay", "true")
+	writeCreated(w, resp)
+	return true
+}
+
+type scheduledIdempotencyPayload struct {
+	ScheduledAt string            `json:"scheduled_at"`
+	Posts       []json.RawMessage `json:"posts"`
+}
+
+type scheduledIdempotencyPostInput struct {
+	AccountID       string         `json:"account_id"`
+	Caption         string         `json:"caption"`
+	MediaURLs       []string       `json:"media_urls"`
+	MediaIDs        []string       `json:"media_ids"`
+	PlatformOptions map[string]any `json:"platform_options,omitempty"`
+	InReplyTo       string         `json:"in_reply_to,omitempty"`
+	ThreadPosition  int            `json:"thread_position,omitempty"`
+	FirstComment    string         `json:"first_comment,omitempty"`
+}
+
+func scheduledIdempotencyPayloadMatches(existing db.SocialPost, requested []platform.PlatformPostInput, scheduledAt time.Time) (bool, error) {
+	if !existing.ScheduledAt.Valid {
+		return false, errors.New("existing scheduled post has no scheduled_at")
+	}
+	existingPosts, err := platform.DecodePostMetadata(existing.Metadata, derefText(existing.Caption))
+	if err != nil {
+		return false, err
+	}
+	existingHash, err := scheduledIdempotencyPayloadHash(existingPosts, existing.ScheduledAt.Time)
+	if err != nil {
+		return false, err
+	}
+	requestHash, err := scheduledIdempotencyPayloadHash(requested, scheduledAt)
+	if err != nil {
+		return false, err
+	}
+	return existingHash == requestHash, nil
+}
+
+func scheduledIdempotencyPayloadHash(posts []platform.PlatformPostInput, scheduledAt time.Time) (string, error) {
+	marshaledPosts := make([]string, 0, len(posts))
+	for _, post := range posts {
+		raw, err := json.Marshal(scheduledIdempotencyPostInput{
+			AccountID:       post.AccountID,
+			Caption:         post.Caption,
+			MediaURLs:       append([]string(nil), post.MediaURLs...),
+			MediaIDs:        append([]string(nil), post.MediaIDs...),
+			PlatformOptions: post.PlatformOptions,
+			InReplyTo:       post.InReplyTo,
+			ThreadPosition:  post.ThreadPosition,
+			FirstComment:    post.FirstComment,
+		})
+		if err != nil {
+			return "", err
+		}
+		marshaledPosts = append(marshaledPosts, string(raw))
+	}
+	sort.Strings(marshaledPosts)
+
+	payload := scheduledIdempotencyPayload{
+		ScheduledAt: scheduledAt.UTC().Format(time.RFC3339Nano),
+		Posts:       make([]json.RawMessage, 0, len(marshaledPosts)),
+	}
+	for _, raw := range marshaledPosts {
+		payload.Posts = append(payload.Posts, json.RawMessage(raw))
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func isScheduledIdempotencyUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "social_posts_workspace_scheduled_idempotency_uniq"
 }
 
 // createImmediatePost persists the post and queues one delivery job per
@@ -1606,29 +1717,9 @@ func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
 	})
 }
 
-// writeReplayedPost is the writer shim for the single-post path.
-// Calls replayedPostResponse and stamps the Idempotent-Replay header.
-func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Request, post db.SocialPost) {
-	resp := h.replayedPostResponse(r, post)
-	w.Header().Set("Idempotent-Replay", "true")
-	if socialPostCreateStatusCode(post) == http.StatusAccepted {
-		writeAccepted(w, resp)
-		return
-	}
-	writeCreated(w, resp)
-}
-
-func socialPostCreateStatusCode(post db.SocialPost) int {
-	if post.Status == "draft" || post.Status == "scheduled" || post.ScheduledAt.Valid {
-		return http.StatusCreated
-	}
-	return http.StatusAccepted
-}
-
 // replayedPostResponse rebuilds a socialPostResponse from a previously-
-// stored post (looked up by idempotency_key) and returns it as if it
-// were the original publish response. No new platform posts are made.
-// Used by both writeReplayedPost (single) and processBulkOne (bulk).
+// stored scheduled post and returns it as if it were the original
+// create response. No new scheduled row is made.
 func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.SocialPost) socialPostResponse {
 	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
 	jobs, _ := h.queries.ListPostDeliveryJobsByPost(r.Context(), post.ID)

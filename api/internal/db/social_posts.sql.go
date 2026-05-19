@@ -217,6 +217,7 @@ const expireOldIdempotencyKeys = `-- name: ExpireOldIdempotencyKeys :exec
 UPDATE social_posts
 SET idempotency_key = NULL
 WHERE idempotency_key IS NOT NULL
+  AND status <> 'scheduled'
   AND created_at <= NOW() - INTERVAL '24 hours'
 `
 
@@ -312,6 +313,43 @@ func (q *Queries) GetScheduledPostsByWorkspace(ctx context.Context, workspaceID 
 	return items, nil
 }
 
+const getScheduledSocialPostByIdempotencyKey = `-- name: GetScheduledSocialPostByIdempotencyKey :one
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
+WHERE workspace_id = $1
+  AND idempotency_key = $2
+  AND status = 'scheduled'
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetScheduledSocialPostByIdempotencyKeyParams struct {
+	WorkspaceID    string      `json:"workspace_id"`
+	IdempotencyKey pgtype.Text `json:"idempotency_key"`
+}
+
+func (q *Queries) GetScheduledSocialPostByIdempotencyKey(ctx context.Context, arg GetScheduledSocialPostByIdempotencyKeyParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, getScheduledSocialPostByIdempotencyKey, arg.WorkspaceID, arg.IdempotencyKey)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
+		&i.Source,
+		&i.ProfileIds,
+	)
+	return i, err
+}
+
 const getSocialPostByID = `-- name: GetSocialPostByID :one
 SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
 WHERE id = $1
@@ -358,40 +396,6 @@ type GetSocialPostByIDAndWorkspaceParams struct {
 
 func (q *Queries) GetSocialPostByIDAndWorkspace(ctx context.Context, arg GetSocialPostByIDAndWorkspaceParams) (SocialPost, error) {
 	row := q.db.QueryRow(ctx, getSocialPostByIDAndWorkspace, arg.ID, arg.WorkspaceID)
-	var i SocialPost
-	err := row.Scan(
-		&i.ID,
-		&i.Caption,
-		&i.MediaUrls,
-		&i.Status,
-		&i.ScheduledAt,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.Metadata,
-		&i.IdempotencyKey,
-		&i.WorkspaceID,
-		&i.ArchivedAt,
-		&i.DeletedAt,
-		&i.Source,
-		&i.ProfileIds,
-	)
-	return i, err
-}
-
-const getSocialPostByIdempotencyKey = `-- name: GetSocialPostByIdempotencyKey :one
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
-WHERE workspace_id = $1
-  AND idempotency_key = $2
-  AND created_at > NOW() - INTERVAL '24 hours'
-`
-
-type GetSocialPostByIdempotencyKeyParams struct {
-	WorkspaceID    string      `json:"workspace_id"`
-	IdempotencyKey pgtype.Text `json:"idempotency_key"`
-}
-
-func (q *Queries) GetSocialPostByIdempotencyKey(ctx context.Context, arg GetSocialPostByIdempotencyKeyParams) (SocialPost, error) {
-	row := q.db.QueryRow(ctx, getSocialPostByIdempotencyKey, arg.WorkspaceID, arg.IdempotencyKey)
 	var i SocialPost
 	err := row.Scan(
 		&i.ID,

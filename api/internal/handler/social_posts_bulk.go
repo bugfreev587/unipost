@@ -8,10 +8,9 @@
 // itself parses); per-post failures land in each entry's error field
 // rather than failing the whole batch.
 //
-// Per-post idempotency keys still work — re-sending the same batch
-// with the same keys returns the original responses for already-
-// processed posts (and processes any keys that haven't been seen).
-// This makes batch retries safe.
+// The bulk path is immediate-publish only. Scheduled idempotency lives
+// on POST /v1/social-posts, where the database uniqueness constraint
+// can backstop replay safety.
 //
 // Quota counts each post individually. If a workspace hits its quota
 // halfway through the batch, the remaining posts get a quota_exceeded
@@ -26,14 +25,9 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-
-	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
@@ -160,23 +154,6 @@ func (h *SocialPostHandler) processBulkOne(
 				Code:    "VALIDATION_ERROR",
 				Message: "scheduled posts are not supported in bulk publish — use POST /v1/social-posts",
 			},
-		}
-	}
-
-	// Idempotency replay — if this key already produced a row, return
-	// the prior response in this slot. The other posts in the batch
-	// still process. Re-sending the same batch with the same keys is
-	// safe and the natural retry pattern.
-	if parsed.IdempotencyKey != "" {
-		if existing, err := h.queries.GetSocialPostByIdempotencyKey(r.Context(), db.GetSocialPostByIdempotencyKeyParams{
-			WorkspaceID:    workspaceID,
-			IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
-		}); err == nil {
-			resp := h.replayedPostResponse(r, existing)
-			return bulkResultEntry{Status: http.StatusOK, Data: &resp}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			// Treat lookup errors as transient and proceed — better
-			// to risk a duplicate than to block on a flaky lookup.
 		}
 	}
 
