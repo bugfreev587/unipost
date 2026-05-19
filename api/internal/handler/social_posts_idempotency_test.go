@@ -178,6 +178,38 @@ func TestCreateScheduledPostRecoversUniqueViolationWithReplay(t *testing.T) {
 	assertScheduledReplayResponse(t, rr, existing.ID)
 }
 
+func TestApplyIdempotencyKeyHeaderFallback(t *testing.T) {
+	t.Run("uses header when body omitted key", func(t *testing.T) {
+		parsed := parsedRequest{}
+
+		applyIdempotencyKeyHeaderFallback(&parsed, " sdk-key-001 ")
+
+		if parsed.IdempotencyKey != "sdk-key-001" {
+			t.Fatalf("idempotency key = %q, want sdk-key-001", parsed.IdempotencyKey)
+		}
+	})
+
+	t.Run("body key wins over header", func(t *testing.T) {
+		parsed := parsedRequest{IdempotencyKey: "body-key"}
+
+		applyIdempotencyKeyHeaderFallback(&parsed, "header-key")
+
+		if parsed.IdempotencyKey != "body-key" {
+			t.Fatalf("idempotency key = %q, want body-key", parsed.IdempotencyKey)
+		}
+	})
+
+	t.Run("empty header leaves key empty", func(t *testing.T) {
+		parsed := parsedRequest{}
+
+		applyIdempotencyKeyHeaderFallback(&parsed, " ")
+
+		if parsed.IdempotencyKey != "" {
+			t.Fatalf("idempotency key = %q, want empty", parsed.IdempotencyKey)
+		}
+	})
+}
+
 func scheduledIdempotencyParsed(posts []platform.PlatformPostInput, scheduledAt time.Time) parsedRequest {
 	t := scheduledAt
 	return parsedRequest{
