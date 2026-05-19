@@ -529,10 +529,6 @@ func (h *SocialPostHandler) maybeReplayScheduledIdempotency(w http.ResponseWrite
 		return true
 	}
 
-	if existing.Status != "scheduled" {
-		return false
-	}
-
 	same, err := scheduledIdempotencyPayloadMatches(existing, parsed.Posts, *parsed.ScheduledAt)
 	if err != nil {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT", "A scheduled post with the same idempotency_key already exists, but UniPost could not compare it with this request. Use a new idempotency_key to schedule a new post.")
@@ -553,8 +549,8 @@ func (h *SocialPostHandler) maybeReplayScheduledIdempotency(w http.ResponseWrite
 }
 
 type scheduledIdempotencyPayload struct {
-	ScheduledAt string                          `json:"scheduled_at"`
-	Posts       []scheduledIdempotencyPostInput `json:"posts"`
+	ScheduledAt string            `json:"scheduled_at"`
+	Posts       []json.RawMessage `json:"posts"`
 }
 
 type scheduledIdempotencyPostInput struct {
@@ -588,12 +584,9 @@ func scheduledIdempotencyPayloadMatches(existing db.SocialPost, requested []plat
 }
 
 func scheduledIdempotencyPayloadHash(posts []platform.PlatformPostInput, scheduledAt time.Time) (string, error) {
-	payload := scheduledIdempotencyPayload{
-		ScheduledAt: scheduledAt.UTC().Format(time.RFC3339Nano),
-		Posts:       make([]scheduledIdempotencyPostInput, 0, len(posts)),
-	}
+	marshaledPosts := make([]string, 0, len(posts))
 	for _, post := range posts {
-		payload.Posts = append(payload.Posts, scheduledIdempotencyPostInput{
+		raw, err := json.Marshal(scheduledIdempotencyPostInput{
 			AccountID:       post.AccountID,
 			Caption:         post.Caption,
 			MediaURLs:       append([]string(nil), post.MediaURLs...),
@@ -603,12 +596,21 @@ func scheduledIdempotencyPayloadHash(posts []platform.PlatformPostInput, schedul
 			ThreadPosition:  post.ThreadPosition,
 			FirstComment:    post.FirstComment,
 		})
+		if err != nil {
+			return "", err
+		}
+		marshaledPosts = append(marshaledPosts, string(raw))
 	}
-	sort.Slice(payload.Posts, func(i, j int) bool {
-		left, _ := json.Marshal(payload.Posts[i])
-		right, _ := json.Marshal(payload.Posts[j])
-		return string(left) < string(right)
-	})
+	sort.Strings(marshaledPosts)
+
+	payload := scheduledIdempotencyPayload{
+		ScheduledAt: scheduledAt.UTC().Format(time.RFC3339Nano),
+		Posts:       make([]json.RawMessage, 0, len(marshaledPosts)),
+	}
+	for _, raw := range marshaledPosts {
+		payload.Posts = append(payload.Posts, json.RawMessage(raw))
+	}
+
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
@@ -1715,29 +1717,9 @@ func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
 	})
 }
 
-// writeReplayedPost is the writer shim for the single-post path.
-// Calls replayedPostResponse and stamps the Idempotent-Replay header.
-func (h *SocialPostHandler) writeReplayedPost(w http.ResponseWriter, r *http.Request, post db.SocialPost) {
-	resp := h.replayedPostResponse(r, post)
-	w.Header().Set("Idempotent-Replay", "true")
-	if socialPostCreateStatusCode(post) == http.StatusAccepted {
-		writeAccepted(w, resp)
-		return
-	}
-	writeCreated(w, resp)
-}
-
-func socialPostCreateStatusCode(post db.SocialPost) int {
-	if post.Status == "draft" || post.Status == "scheduled" || post.ScheduledAt.Valid {
-		return http.StatusCreated
-	}
-	return http.StatusAccepted
-}
-
 // replayedPostResponse rebuilds a socialPostResponse from a previously-
-// stored post (looked up by idempotency_key) and returns it as if it
-// were the original publish response. No new platform posts are made.
-// Used by both writeReplayedPost (single) and processBulkOne (bulk).
+// stored scheduled post and returns it as if it were the original
+// create response. No new scheduled row is made.
 func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.SocialPost) socialPostResponse {
 	results, _ := h.queries.ListSocialPostResultsByPost(r.Context(), post.ID)
 	jobs, _ := h.queries.ListPostDeliveryJobsByPost(r.Context(), post.ID)
