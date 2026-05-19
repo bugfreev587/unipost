@@ -62,7 +62,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "idempotency_key?",
     type: "string",
-    description: "Optional body-level idempotency key. Replays the original response for the same workspace and payload.",
+    description: "Optional body-level key for scheduled posts. While a matching post is still scheduled, UniPost returns the existing scheduled post for the same payload and returns 409 for a different payload.",
   },
   {
     name: "status?",
@@ -252,8 +252,9 @@ const SNIPPETS = [
     code: `curl -X POST "https://api.unipost.dev/v1/posts" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -H "Idempotency-Key: launch-day-2026-04-22" \\
   -d '{
+    "scheduled_at": "2026-04-22T10:00:00Z",
+    "idempotency_key": "launch-day-2026-04-22",
     "platform_posts": [
       {
         "account_id": "sa_twitter_789",
@@ -274,6 +275,7 @@ const SNIPPETS = [
 const client = new UniPost();
 
 const post = await client.posts.create({
+  scheduledAt: "2026-04-22T10:00:00Z",
   idempotencyKey: "launch-day-2026-04-22",
   platformPosts: [
     {
@@ -288,8 +290,7 @@ const post = await client.posts.create({
 });
 
 console.log(post.id);
-console.log(post.status); // queued/publishing
-console.log(post.executionMode); // async`,
+console.log(post.status); // scheduled`,
   },
   {
     lang: "python",
@@ -299,6 +300,7 @@ console.log(post.executionMode); // async`,
 client = UniPost()
 
 post = client.posts.create(
+  scheduled_at="2026-04-22T10:00:00Z",
   idempotency_key="launch-day-2026-04-22",
   platform_posts=[
     {
@@ -313,8 +315,7 @@ post = client.posts.create(
 )
 
 print(post["data"]["id"])
-print(post["data"]["status"])  # queued/publishing
-print(post["data"]["execution_mode"])`,
+print(post["data"]["status"])  # scheduled`,
   },
   {
     lang: "go",
@@ -332,6 +333,7 @@ func main() {
   client := unipost.NewClient()
 
   post, err := client.Posts.Create(context.Background(), &unipost.CreatePostParams{
+    ScheduledAt:    "2026-04-22T10:00:00Z",
     IdempotencyKey: "launch-day-2026-04-22",
     PlatformPosts: []unipost.PlatformPost{
       {
@@ -348,7 +350,7 @@ func main() {
     log.Fatal(err)
   }
 
-  _, _, _ = post.ID, post.Status, post.ExecutionMode
+  _, _ = post.ID, post.Status
 }`,
   },
   {
@@ -362,6 +364,7 @@ import java.util.Map;
 UniPost client = new UniPost();
 
 var post = client.posts().create(Map.of(
+    "scheduled_at", "2026-04-22T10:00:00Z",
     "idempotency_key", "launch-day-2026-04-22",
     "platform_posts", List.of(
         Map.of(
@@ -376,8 +379,7 @@ var post = client.posts().create(Map.of(
 ));
 
 System.out.println(post.get("id").asText());
-System.out.println(post.get("status").asText()); // queued/publishing
-System.out.println(post.get("execution_mode").asText());`,
+System.out.println(post.get("status").asText()); // scheduled`,
   },
 ];
 
@@ -446,9 +448,9 @@ const RESPONSE_SNIPPETS = [
     label: "409",
     code: `{
   "error": {
-    "code": "CONFLICT",
-    "normalized_code": "conflict",
-    "message": "Idempotency key already used with different request body."
+    "code": "IDEMPOTENCY_KEY_CONFLICT",
+    "normalized_code": "idempotency_key_conflict",
+    "message": "A scheduled post with the same idempotency_key already exists for this workspace."
   },
   "request_id": "req_123"
 }`,

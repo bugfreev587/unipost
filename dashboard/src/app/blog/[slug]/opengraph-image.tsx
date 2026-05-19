@@ -1,7 +1,6 @@
 import { ImageResponse } from "next/og";
 import { getBlogPost, blogPosts } from "@/lib/blog";
 
-export const runtime = "edge";
 export const alt = "UniPost blog post";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
