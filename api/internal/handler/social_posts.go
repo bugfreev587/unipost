@@ -337,6 +337,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, "VALIDATION_ERROR", msg)
 		return
 	}
+	applyIdempotencyKeyHeaderFallback(&parsed, r.Header.Get("Idempotency-Key"))
 
 	h.logPublishingEvent(r.Context(), integrationlogs.Event{
 		WorkspaceID: workspaceID,
@@ -427,6 +428,13 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.createImmediatePost(w, r, workspaceID, parsed, accountMap)
+}
+
+func applyIdempotencyKeyHeaderFallback(parsed *parsedRequest, headerValue string) {
+	if parsed == nil || parsed.IdempotencyKey != "" {
+		return
+	}
+	parsed.IdempotencyKey = strings.TrimSpace(headerValue)
 }
 
 // createScheduledPost persists the post with status="scheduled" and
