@@ -29,6 +29,14 @@
 - Keep commits focused on the requested change. Do not include `artifacts/` or unrelated generated files unless the user asks.
 - If the user explicitly requests a different branch, direct push, hotfix, or production change, follow that latest instruction instead of the default flow.
 
+## Environment domains
+
+- Development backend API: `https://dev-api.unipost.dev`
+- Development frontend: `https://dev.unipost.dev`
+- Production backend API: `https://api.unipost.dev`
+- Production frontend: `https://unipost.dev`
+- When testing deployed development changes, use the development domains above. Do not use production domains for dev-environment validation.
+
 ## UI design skill
 
 For frontend, dashboard, landing page, component styling, layout, typography, or visual polish work, use the installed `design-taste-frontend` / `taste-skill` Codex skill before designing or editing UI.
