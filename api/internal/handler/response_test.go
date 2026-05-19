@@ -5,10 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgtype"
-
-	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
 func TestNormalizeErrorCode(t *testing.T) {
@@ -179,45 +175,5 @@ func TestWriteErrorContract(t *testing.T) {
 	}
 	if got.RequestID != "req_error" {
 		t.Fatalf("request_id = %q, want req_error", got.RequestID)
-	}
-}
-
-func TestSocialPostCreateStatusCode(t *testing.T) {
-	tests := []struct {
-		name string
-		post db.SocialPost
-		want int
-	}{
-		{
-			name: "draft create stays 201",
-			post: db.SocialPost{Status: "draft"},
-			want: http.StatusCreated,
-		},
-		{
-			name: "scheduled create stays 201",
-			post: db.SocialPost{
-				Status:      "scheduled",
-				ScheduledAt: pgtype.Timestamptz{Valid: true},
-			},
-			want: http.StatusCreated,
-		},
-		{
-			name: "immediate async create is 202",
-			post: db.SocialPost{Status: "publishing"},
-			want: http.StatusAccepted,
-		},
-		{
-			name: "replayed published async create stays 202",
-			post: db.SocialPost{Status: "published"},
-			want: http.StatusAccepted,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := socialPostCreateStatusCode(tt.post); got != tt.want {
-				t.Fatalf("socialPostCreateStatusCode(%+v) = %d, want %d", tt.post, got, tt.want)
-			}
-		})
 	}
 }

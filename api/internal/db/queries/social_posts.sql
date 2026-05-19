@@ -11,12 +11,6 @@ UPDATE social_posts
 SET profile_ids = $2
 WHERE id = $1;
 
--- name: GetSocialPostByIdempotencyKey :one
-SELECT * FROM social_posts
-WHERE workspace_id = $1
-  AND idempotency_key = $2
-  AND created_at > NOW() - INTERVAL '24 hours';
-
 -- name: GetScheduledSocialPostByIdempotencyKey :one
 SELECT * FROM social_posts
 WHERE workspace_id = $1
