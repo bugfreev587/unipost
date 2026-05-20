@@ -118,9 +118,8 @@ function getDocsTableColumnWidths(columns: readonly string[]) {
     case "option|values|notes":
       return ["34%", "32%", "34%"];
     case "pattern|api path|when to use it":
-      return ["26%", "24%", "50%"];
     case "step|api call|purpose":
-      return ["10%", "24%", "66%"];
+      return ["14%", "36%", "50%"];
     case "channel|available|what you need|format rule":
       return ["26%", "14%", "32%", "28%"];
     case "event|severity|default on|what triggers it":
@@ -175,6 +174,27 @@ function isCenteredDocsTableColumn(columns: readonly string[], columnIndex: numb
     default:
       return ["available", "default on", "required", "support"].includes(normalized ?? "");
   }
+}
+
+function isNoWrapDocsTableColumn(columns: readonly string[], columnIndex: number) {
+  const key = columns.map((column) => column.trim().toLowerCase()).join("|");
+
+  switch (key) {
+    case "pattern|api path|when to use it":
+    case "step|api call|purpose":
+      return columnIndex === 1;
+    default:
+      return false;
+  }
+}
+
+function getDocsTableCellClassName(columns: readonly string[], columnIndex: number) {
+  const classNames = [
+    isCenteredDocsTableColumn(columns, columnIndex) ? "docs-table-cell-center" : null,
+    isNoWrapDocsTableColumn(columns, columnIndex) ? "docs-table-cell-nowrap" : null,
+  ].filter(Boolean);
+
+  return classNames.length > 0 ? classNames.join(" ") : undefined;
 }
 
 function isApiReference(value: string) {
@@ -937,6 +957,8 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-table td:has(.docs-matrix-dash),
 .docs-table th.docs-matrix-center,
 .docs-table .docs-table-cell-center{text-align:center}
+.docs-table th.docs-table-cell-nowrap,
+.docs-table td.docs-table-cell-nowrap{white-space:nowrap;overflow-wrap:normal;word-break:normal}
 .docs-matrix-check{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:#22c55e;font-weight:700;font-size:18px;line-height:1}
 .docs-matrix-dash{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:var(--docs-text-soft)}
 .docs-callout,.wlp-top-callout{
@@ -1578,6 +1600,12 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   border-bottom:1px solid #eef1f5;
   color:var(--docs-text-soft);
   overflow-wrap:anywhere;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table th.docs-table-cell-nowrap,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table td.docs-table-cell-nowrap{
+  white-space:nowrap;
+  overflow-wrap:normal;
+  word-break:normal;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-table td:first-child{
   color:var(--docs-text);
@@ -3011,7 +3039,7 @@ export function DocsTable({
           <tr>
             {columns.map((column, columnIndex) => (
               <th
-                className={isCenteredDocsTableColumn(columns, columnIndex) ? "docs-table-cell-center" : undefined}
+                className={getDocsTableCellClassName(columns, columnIndex)}
                 key={column}
               >
                 {column}
@@ -3024,7 +3052,7 @@ export function DocsTable({
             <tr key={index}>
               {row.map((cell, cellIndex) => (
                 <td
-                  className={isCenteredDocsTableColumn(columns, cellIndex) ? "docs-table-cell-center" : undefined}
+                  className={getDocsTableCellClassName(columns, cellIndex)}
                   key={cellIndex}
                 >
                   {renderDocsTableCell(cell)}
