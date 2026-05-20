@@ -640,9 +640,11 @@ function summaryTone(value: "full" | "limited" | "none") {
 function PlatformApiExamples({
   examples,
   headingLevel = 2,
+  title = "API Examples",
 }: {
   examples: PlatformDoc["examples"];
   headingLevel?: 2 | 3;
+  title?: string;
 }) {
   const Heading = headingLevel === 3 ? "h3" : "h2";
   const renderExampleTitle = (title: string) => {
@@ -675,7 +677,7 @@ function PlatformApiExamples({
 
   return (
     <>
-      <Heading id="api-examples">API Examples</Heading>
+      <Heading id="api-examples">{title}</Heading>
       <p className="docs-note">
         Each example calls <ApiInlineLink endpoint="POST /v1/posts" /> with Bearer
         auth. Swap the <code>account_ids</code> for your own, then copy the snippet
@@ -696,6 +698,123 @@ function PlatformApiExamples({
   );
 }
 
+function mediaSpecId(surface: string) {
+  return `media-specs-${surface.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function mediaSpecRows(spec: NonNullable<PlatformDoc["mediaSpecs"]>[number]) {
+  return [
+    ...(spec.text ?? []).map((row) => ["Text", row[0], row[1]] as const),
+    ...(spec.image ?? []).map((row) => ["Image", row[0], row[1]] as const),
+    ...(spec.video ?? []).map((row) => ["Video", row[0], row[1]] as const),
+  ];
+}
+
+function MediaSpecsSection({ data }: { data: PlatformDoc }) {
+  if (!data.mediaSpecs) return null;
+
+  return (
+    <>
+      <h2 id="media-specs">Media specifications</h2>
+      <p className="docs-note">
+        Per-surface limits for text, images, and video. These are the source of
+        truth UniPost uses for preflight validation and media optimization —
+        treat hard-limit values as enforced and &quot;recommended&quot; values as
+        platform guidance.
+      </p>
+      <div className="docs-surface-tabs" aria-label={`${data.title} media surfaces`}>
+        {data.mediaSpecs.map((spec) => (
+          <a className="docs-surface-tab" href={`#${mediaSpecId(spec.surface)}`} key={spec.surface}>
+            {spec.surface}
+          </a>
+        ))}
+      </div>
+      {data.mediaSpecs.map((spec) => (
+        <section className="docs-surface-panel" key={spec.surface}>
+          <h3 id={mediaSpecId(spec.surface)}>{spec.surface}</h3>
+          {spec.description ? (
+            <p className="docs-note">{spec.description}</p>
+          ) : null}
+          <DocsTable
+            columns={["Type", "Requirement", "Value"]}
+            rows={mediaSpecRows(spec)}
+          />
+        </section>
+      ))}
+    </>
+  );
+}
+
+function InstagramInputModeCards() {
+  return (
+    <div className="docs-decision-grid">
+      <article className="docs-decision-card">
+        <div className="docs-decision-kicker">Hosted media URL</div>
+        <div className="docs-decision-endpoint">
+          <ApiInlineLink endpoint="POST /v1/posts" />
+        </div>
+        <p>
+          Use this when your image or video already has a public URL. Pass it in{" "}
+          <code>platform_posts[].media_urls</code> and publish directly.
+        </p>
+      </article>
+      <article className="docs-decision-card">
+        <div className="docs-decision-kicker">Local file upload</div>
+        <div className="docs-decision-endpoint">
+          <ApiInlineLink endpoint="POST /v1/media" />
+          <span>then</span>
+          <ApiInlineLink endpoint="POST /v1/posts" />
+        </div>
+        <p>
+          Use this when your app has raw file bytes. Reserve media, PUT the bytes,
+          poll until uploaded, then publish with <code>platform_posts[].media_ids</code>.
+        </p>
+        <a className="docs-decision-link" href="#local-file-flow">
+          See the 7-step flow
+        </a>
+      </article>
+    </div>
+  );
+}
+
+function InstagramNextSteps() {
+  return (
+    <div className="docs-next-grid">
+      <Link href="/docs/platforms/instagram#api-examples" className="docs-next-card">
+        <div className="docs-next-kicker">Publish surfaces</div>
+        <div className="docs-next-title">Build a carousel post</div>
+        <div className="docs-next-body">
+          Start from the Instagram carousel payload and swap in your own account
+          and media.
+        </div>
+      </Link>
+      <Link href="/docs/api/posts/create#publishing-result" className="docs-next-card">
+        <div className="docs-next-kicker">Async result</div>
+        <div className="docs-next-title">Track publishing status</div>
+        <div className="docs-next-body">
+          Read the final post result after UniPost accepts the publish request.
+        </div>
+      </Link>
+      <Link href="/docs/api/webhooks" className="docs-next-card">
+        <div className="docs-next-kicker">Push delivery</div>
+        <div className="docs-next-title">Set up developer webhooks</div>
+        <div className="docs-next-body">
+          Receive post.published, post.partial, and post.failed events in your
+          backend.
+        </div>
+      </Link>
+      <Link href="/docs/white-label/meta" className="docs-next-card">
+        <div className="docs-next-kicker">Customer accounts</div>
+        <div className="docs-next-title">Prepare Meta app review</div>
+        <div className="docs-next-body">
+          Use your own Meta app when customers connect Instagram accounts through
+          your branded flow.
+        </div>
+      </Link>
+    </div>
+  );
+}
+
 export default async function PlatformDetailPage({
   params,
 }: {
@@ -708,6 +827,7 @@ export default async function PlatformDetailPage({
   const supportsManagedUploads = data.requirements.some(
     (row) => row[0].includes("media_urls") || row[0].includes("media_ids"),
   );
+  const isInstagram = platform === "instagram";
 
   return (
     <DocsPage
@@ -725,15 +845,25 @@ export default async function PlatformDetailPage({
         </div>
         <div className="docs-guide-intro-body">
           <div className="docs-guide-intro-title">{data.tagline}</div>
-          <div className="docs-badge-row">
-            {data.badges.map((badge) => (
-              <span className="docs-badge" key={badge}>
-                {badge}
-              </span>
-            ))}
-          </div>
+          {isInstagram ? null : (
+            <div className="docs-badge-row">
+              {data.badges.map((badge) => (
+                <span className="docs-badge" key={badge}>
+                  {badge}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
+
+      {isInstagram ? (
+        <div className="docs-callout docs-callout-warning docs-callout-compact">
+          <strong>Instagram account requirement</strong>
+          Connected accounts must be Instagram Business or Creator accounts linked
+          to a Facebook Page. White-label public use also requires Meta app review.
+        </div>
+      ) : null}
 
       <h2 id="at-a-glance">At a glance</h2>
       <div className="docs-summary-grid">
@@ -746,18 +876,34 @@ export default async function PlatformDetailPage({
             </div>
           );
         })}
-        <div className="docs-summary-card docs-summary-card-wide">
+        {isInstagram ? null : (
+          <div className="docs-summary-card docs-summary-card-wide">
+            <div className="docs-summary-label">Connection</div>
+            <div className="docs-summary-copy">
+              {data.summary.connection}
+            </div>
+          </div>
+        )}
+      </div>
+      {isInstagram ? (
+        <div className="docs-summary-connection">
           <div className="docs-summary-label">Connection</div>
           <div className="docs-summary-copy">
             {data.summary.connection}
           </div>
         </div>
-      </div>
+      ) : null}
 
-      {platform === "instagram" ? (
+      <h2 id="feature-matrix">Feature matrix</h2>
+      <DocsTable columns={["Feature", "Support", "Notes"]} rows={data.capabilities} />
+
+      <h2 id="limitations">Known constraints</h2>
+      <DocsTable columns={["Limitation", "Why"]} rows={data.limitations} />
+
+      {isInstagram ? (
         <>
-          <h2 id="post-api-guide">Post API Guide</h2>
-          <h3 id="media-input-options">Media Input Options</h3>
+          <h2 id="post-api-guide">Publish guide</h2>
+          <h3 id="media-input-options">Choose input mode</h3>
           <p className="docs-note">
             Start here when you want to publish an Instagram post through the API.
             Hosted media can go straight into <code>media_urls</code>. Local files
@@ -766,16 +912,14 @@ export default async function PlatformDetailPage({
             returns <code>202</code>; read the final result with{" "}
             <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> or webhooks.
           </p>
-          <DocsTable
-            columns={["Pattern", "API path", "When to use it"]}
-            rows={[
-              ["Hosted media URL", <ApiInlineLink key="hosted-create" endpoint="POST /v1/posts" />, "Your image or video already has a public URL. Pass it in platform_posts[].media_urls."],
-              ["Local file upload", <ApiInlineLink key="local-reserve" endpoint="POST /v1/media" />, "Your app has raw file bytes. Reserve media, upload bytes, poll until uploaded, then publish with platform_posts[].media_ids."],
-            ]}
-          />
-          <h3 id="api-call-sequence-diagram">API Call Sequence Diagram</h3>
-          <InstagramApiSequenceDiagram />
+          <InstagramInputModeCards />
           <h3 id="local-file-flow">Local File Flow</h3>
+          <p className="docs-note">
+            The diagram shows the same local-file publish path as the table below:
+            reserve media, upload to storage, confirm the media is ready, publish,
+            then read or receive the asynchronous result.
+          </p>
+          <InstagramApiSequenceDiagram />
           <DocsTable
             columns={["Step", "API call", "Purpose"]}
             rows={[
@@ -795,14 +939,15 @@ export default async function PlatformDetailPage({
               ],
             ]}
           />
-          <h3 id="code-examples">Code Examples</h3>
+          <h3 id="code-examples">End-to-end local file example</h3>
           <DocsCodeTabs snippets={INSTAGRAM_LOCAL_FILE_SNIPPETS} />
-          <PlatformApiExamples examples={data.examples} headingLevel={3} />
+          <PlatformApiExamples
+            examples={data.examples}
+            headingLevel={3}
+            title="Publish examples by surface"
+          />
         </>
       ) : null}
-
-      <h2 id="feature-matrix">Feature matrix</h2>
-      <DocsTable columns={["Feature", "Support", "Notes"]} rows={data.capabilities} />
 
       <h2 id="media-requirements">Media &amp; field requirements</h2>
       <DocsTable
@@ -819,47 +964,7 @@ export default async function PlatformDetailPage({
         </p>
       ) : null}
 
-      {data.mediaSpecs ? (
-        <>
-          <h2 id="media-specs">Media specifications</h2>
-          <p className="docs-note">
-            Per-surface limits for text, images, and video. These are the source of
-            truth UniPost uses for preflight validation and media optimization —
-            treat hard-limit values as enforced and &quot;recommended&quot; values as
-            platform guidance.
-          </p>
-          {data.mediaSpecs.map((spec) => (
-            <section key={spec.surface}>
-              <h3
-                id={`media-specs-${spec.surface.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
-              >
-                {spec.surface}
-              </h3>
-              {spec.description ? (
-                <p className="docs-note">{spec.description}</p>
-              ) : null}
-              {spec.text ? (
-                <DocsTable
-                  columns={["Text", "Value"]}
-                  rows={spec.text.map((row) => [row[0], row[1]])}
-                />
-              ) : null}
-              {spec.image ? (
-                <DocsTable
-                  columns={["Image", "Value"]}
-                  rows={spec.image.map((row) => [row[0], row[1]])}
-                />
-              ) : null}
-              {spec.video ? (
-                <DocsTable
-                  columns={["Video", "Value"]}
-                  rows={spec.video.map((row) => [row[0], row[1]])}
-                />
-              ) : null}
-            </section>
-          ))}
-        </>
-      ) : null}
+      <MediaSpecsSection data={data} />
 
       {data.options ? (
         <>
@@ -896,16 +1001,14 @@ export default async function PlatformDetailPage({
       />
       {data.setupNote ? <p className="docs-note">{data.setupNote}</p> : null}
 
-      {platform === "instagram" ? null : <PlatformApiExamples examples={data.examples} />}
-
-      <h2 id="limitations">Limitations</h2>
-      <DocsTable columns={["Limitation", "Why"]} rows={data.limitations} />
+      {isInstagram ? null : <PlatformApiExamples examples={data.examples} />}
 
       <h2 id="validation-errors">Validation errors</h2>
       <DocsTable columns={["Code", "What it means"]} rows={data.errors} />
 
       <h2 id="next-steps">Next steps</h2>
-      <div className="docs-next-grid">
+      {isInstagram ? <InstagramNextSteps /> : (
+        <div className="docs-next-grid">
         <Link href="/docs/quickstart" className="docs-next-card">
           <div className="docs-next-kicker">Start publishing</div>
           <div className="docs-next-title">Quickstart</div>
@@ -934,7 +1037,8 @@ export default async function PlatformDetailPage({
             Branded Connect flows that run against your own OAuth app.
           </div>
         </Link>
-      </div>
+        </div>
+      )}
     </DocsPage>
   );
 }
