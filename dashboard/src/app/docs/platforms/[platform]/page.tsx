@@ -14,27 +14,38 @@ const SUMMARY_LABELS: Record<keyof Omit<PlatformSummary, "connection">, string> 
 
 const INSTAGRAM_LOCAL_FILE_SNIPPETS = [
   {
-    label: "Node.js",
+    label: "Node SDK",
     lang: "javascript",
     code: `import { readFile } from "node:fs/promises";
 import { UniPost } from "@unipost/sdk";
 
 const client = new UniPost();
-const accountId = "sa_instagram_123";
-const fileBuffer = await readFile("campaign-photo.jpg");
 
+// Step 1: connect Instagram once, then keep the returned account_id.
+const { auth_url: authUrl } = await client.connect.getConnectUrl({
+  platform: "instagram",
+});
+console.log("Open this URL in a browser:", authUrl);
+
+const { data: accounts } = await client.accounts.list({ platform: "instagram" });
+const accountId = accounts[0].id;
+
+// Step 2: reserve media and get a presigned upload URL.
+const fileBuffer = await readFile("campaign-photo.jpg");
 const { mediaId, uploadUrl } = await client.media.upload({
   filename: "campaign-photo.jpg",
   contentType: "image/jpeg",
   sizeBytes: fileBuffer.byteLength,
 });
 
+// Step 3: PUT raw bytes to the upload_url.
 await fetch(uploadUrl, {
   method: "PUT",
   headers: { "Content-Type": "image/jpeg" },
   body: fileBuffer,
 });
 
+// Step 4: poll until the media row is ready to publish.
 let media = await client.media.get(mediaId);
 while (media.status === "pending") {
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -45,6 +56,7 @@ if (media.status !== "uploaded" && media.status !== "attached") {
   throw new Error(\`media upload failed with status \${media.status}\`);
 }
 
+// Step 5: optional preflight validation.
 const validation = await client.posts.validate({
   platformPosts: [
     {
@@ -60,6 +72,7 @@ if (!validation.valid) {
   throw new Error(JSON.stringify(validation.errors, null, 2));
 }
 
+// Step 6: create the Instagram post with media_ids.
 const post = await client.posts.create({
   platformPosts: [
     {
@@ -69,6 +82,360 @@ const post = await client.posts.create({
       platformOptions: { mediaType: "feed" },
     },
   ],
+});
+
+console.log(post.id);`,
+  },
+  {
+    label: "Python SDK",
+    lang: "python",
+    code: `from pathlib import Path
+import time
+import requests
+from unipost import UniPost
+
+client = UniPost()
+
+# Step 1: connect Instagram once, then keep the returned account_id.
+connect = client.connect.get_connect_url(platform="instagram")
+print("Open this URL in a browser:", connect.auth_url)
+
+accounts = client.accounts.list(platform="instagram")
+account_id = accounts["data"][0]["id"]
+
+# Step 2: reserve media and get a presigned upload URL.
+file_path = Path("campaign-photo.jpg")
+file_bytes = file_path.read_bytes()
+reservation = client.media.upload(
+    filename=file_path.name,
+    content_type="image/jpeg",
+    size_bytes=len(file_bytes),
+)
+media_id = reservation["data"]["media_id"]
+upload_url = reservation["data"]["upload_url"]
+
+# Step 3: PUT raw bytes to the upload_url.
+requests.put(
+    upload_url,
+    data=file_bytes,
+    headers={"Content-Type": "image/jpeg"},
+)
+
+# Step 4: poll until the media row is ready to publish.
+media = client.media.get(media_id)
+while media["data"]["status"] == "pending":
+    time.sleep(1)
+    media = client.media.get(media_id)
+
+if media["data"]["status"] not in ("uploaded", "attached"):
+    raise RuntimeError(f"media upload failed with status {media['data']['status']}")
+
+# Step 5: optional preflight validation.
+validation = client.posts.validate(
+    platform_posts=[
+        {
+            "account_id": account_id,
+            "caption": "New seasonal item is available today.",
+            "media_ids": [media_id],
+            "platform_options": {"mediaType": "feed"},
+        }
+    ]
+)
+if not validation["data"]["valid"]:
+    raise RuntimeError(validation["data"]["errors"])
+
+# Step 6: create the Instagram post with media_ids.
+post = client.posts.create(
+    platform_posts=[
+        {
+            "account_id": account_id,
+            "caption": "New seasonal item is available today.",
+            "media_ids": [media_id],
+            "platform_options": {"mediaType": "feed"},
+        }
+    ]
+)
+
+print(post["data"]["id"])`,
+  },
+  {
+    label: "Go SDK",
+    lang: "go",
+    code: `package main
+
+import (
+  "bytes"
+  "context"
+  "fmt"
+  "log"
+  "net/http"
+  "os"
+  "time"
+
+  "github.com/unipost-dev/sdk-go/unipost"
+)
+
+func main() {
+  ctx := context.Background()
+  client := unipost.NewClient()
+
+  // Step 1: connect Instagram once, then keep the returned account_id.
+  connect, err := client.Connect.GetConnectURL(ctx, &unipost.GetConnectURLParams{
+    Platform: "instagram",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+  fmt.Println("Open this URL in a browser:", connect.AuthURL)
+
+  accounts, err := client.Accounts.List(ctx, &unipost.ListAccountsParams{
+    Platform: "instagram",
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+  accountID := accounts[0].ID
+
+  // Step 2: reserve media and get a presigned upload URL.
+  fileBytes, err := os.ReadFile("campaign-photo.jpg")
+  if err != nil {
+    log.Fatal(err)
+  }
+  reservation, err := client.Media.Upload(ctx, &unipost.MediaUploadRequest{
+    Filename:    "campaign-photo.jpg",
+    ContentType: "image/jpeg",
+    SizeBytes:   int64(len(fileBytes)),
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // Step 3: PUT raw bytes to the upload_url.
+  req, err := http.NewRequestWithContext(ctx, http.MethodPut, reservation.UploadURL, bytes.NewReader(fileBytes))
+  if err != nil {
+    log.Fatal(err)
+  }
+  req.Header.Set("Content-Type", "image/jpeg")
+  resp, err := http.DefaultClient.Do(req)
+  if err != nil {
+    log.Fatal(err)
+  }
+  resp.Body.Close()
+
+  // Step 4: poll until the media row is ready to publish.
+  media, err := client.Media.Get(ctx, reservation.MediaID)
+  if err != nil {
+    log.Fatal(err)
+  }
+  for media.Status == "pending" {
+    time.Sleep(time.Second)
+    media, err = client.Media.Get(ctx, reservation.MediaID)
+    if err != nil {
+      log.Fatal(err)
+    }
+  }
+  if media.Status != "uploaded" && media.Status != "attached" {
+    log.Fatalf("media upload failed with status %s", media.Status)
+  }
+
+  // Step 5: optional preflight validation.
+  validation, err := client.Posts.Validate(ctx, &unipost.ValidatePostParams{
+    PlatformPosts: []unipost.PlatformPost{
+      {
+        AccountID:       accountID,
+        Caption:         "New seasonal item is available today.",
+        MediaIDs:        []string{reservation.MediaID},
+        PlatformOptions: map[string]any{"mediaType": "feed"},
+      },
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+  if !validation.Valid {
+    log.Fatalf("validation failed: %+v", validation.Errors)
+  }
+
+  // Step 6: create the Instagram post with media_ids.
+  post, err := client.Posts.Create(ctx, &unipost.CreatePostParams{
+    PlatformPosts: []unipost.PlatformPost{
+      {
+        AccountID:       accountID,
+        Caption:         "New seasonal item is available today.",
+        MediaIDs:        []string{reservation.MediaID},
+        PlatformOptions: map[string]any{"mediaType": "feed"},
+      },
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  fmt.Println(post.ID)
+}`,
+  },
+  {
+    label: "Java SDK",
+    lang: "java",
+    code: `import dev.unipost.UniPost;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+
+UniPost client = new UniPost();
+
+// Step 1: connect Instagram once, then keep the returned account_id.
+var connect = client.connect().getConnectUrl(Map.of(
+    "platform", "instagram"
+));
+System.out.println("Open this URL in a browser: " + connect.get("auth_url").asText());
+
+var accounts = client.accounts().list(Map.of("platform", "instagram")).getData();
+var accountId = accounts.get(0).get("id").asText();
+
+// Step 2: reserve media and get a presigned upload URL.
+var filePath = Path.of("campaign-photo.jpg");
+var fileBytes = Files.readAllBytes(filePath);
+var reservation = client.media().upload(Map.of(
+    "filename", "campaign-photo.jpg",
+    "content_type", "image/jpeg",
+    "size_bytes", fileBytes.length
+));
+var mediaId = reservation.get("media_id").asText();
+var uploadUrl = reservation.get("upload_url").asText();
+
+// Step 3: PUT raw bytes to the upload_url.
+HttpClient.newHttpClient().send(
+    HttpRequest.newBuilder(URI.create(uploadUrl))
+        .header("Content-Type", "image/jpeg")
+        .PUT(BodyPublishers.ofByteArray(fileBytes))
+        .build(),
+    BodyHandlers.discarding()
+);
+
+// Step 4: poll until the media row is ready to publish.
+var media = client.media().get(mediaId);
+while (media.get("status").asText().equals("pending")) {
+    Thread.sleep(1000);
+    media = client.media().get(mediaId);
+}
+var status = media.get("status").asText();
+if (!status.equals("uploaded") && !status.equals("attached")) {
+    throw new RuntimeException("media upload failed with status " + status);
+}
+
+// Step 5: optional preflight validation.
+var payload = Map.of(
+    "platform_posts", List.of(
+        Map.of(
+            "account_id", accountId,
+            "caption", "New seasonal item is available today.",
+            "media_ids", List.of(mediaId),
+            "platform_options", Map.of("mediaType", "feed")
+        )
+    )
+);
+var validation = client.posts().validate(payload);
+if (!validation.get("valid").asBoolean()) {
+    throw new RuntimeException(validation.get("errors").toString());
+}
+
+// Step 6: create the Instagram post with media_ids.
+var post = client.posts().create(payload);
+System.out.println(post.get("id").asText());`,
+  },
+  {
+    label: "REST API",
+    lang: "javascript",
+    code: `import { readFile } from "node:fs/promises";
+
+const API_BASE = "https://api.unipost.dev";
+const headers = {
+  Authorization: \`Bearer \${process.env.UNIPOST_API_KEY}\`,
+  "Content-Type": "application/json",
+};
+
+async function unipost(path, options = {}) {
+  const response = await fetch(\`\${API_BASE}\${path}\`, {
+    ...options,
+    headers: { ...headers, ...options.headers },
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(JSON.stringify(body, null, 2));
+  }
+  return body.data;
+}
+
+// Step 1: connect Instagram once, then keep the returned account_id.
+const connect = await unipost("/v1/oauth/connect", {
+  method: "POST",
+  body: JSON.stringify({ platform: "instagram" }),
+});
+console.log("Open this URL in a browser:", connect.auth_url);
+
+const accounts = await unipost("/v1/accounts?platform=instagram");
+const accountId = accounts[0].id;
+
+// Step 2: reserve media and get a presigned upload URL.
+const fileBuffer = await readFile("campaign-photo.jpg");
+const reservation = await unipost("/v1/media", {
+  method: "POST",
+  body: JSON.stringify({
+    filename: "campaign-photo.jpg",
+    content_type: "image/jpeg",
+    size_bytes: fileBuffer.byteLength,
+  }),
+});
+
+// Step 3: PUT raw bytes to the upload_url.
+await fetch(reservation.upload_url, {
+  method: "PUT",
+  headers: { "Content-Type": "image/jpeg" },
+  body: fileBuffer,
+});
+
+// Step 4: poll until the media row is ready to publish.
+let media = await unipost(\`/v1/media/\${reservation.media_id}\`);
+while (media.status === "pending") {
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  media = await unipost(\`/v1/media/\${reservation.media_id}\`);
+}
+if (media.status !== "uploaded" && media.status !== "attached") {
+  throw new Error(\`media upload failed with status \${media.status}\`);
+}
+
+const postPayload = {
+  platform_posts: [
+    {
+      account_id: accountId,
+      caption: "New seasonal item is available today.",
+      media_ids: [reservation.media_id],
+      platform_options: { mediaType: "feed" },
+    },
+  ],
+};
+
+// Step 5: optional preflight validation.
+const validation = await unipost("/v1/posts/validate", {
+  method: "POST",
+  body: JSON.stringify(postPayload),
+});
+if (!validation.valid) {
+  throw new Error(JSON.stringify(validation.errors, null, 2));
+}
+
+// Step 6: create the Instagram post with media_ids.
+const post = await unipost("/v1/posts", {
+  method: "POST",
+  body: JSON.stringify(postPayload),
 });
 
 console.log(post.id);`,

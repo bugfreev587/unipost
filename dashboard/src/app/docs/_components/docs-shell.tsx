@@ -117,6 +117,10 @@ function getDocsTableColumnWidths(columns: readonly string[]) {
       return ["34%", "32%", "34%"];
     case "option|values|notes":
       return ["34%", "32%", "34%"];
+    case "pattern|api path|when to use it":
+      return ["26%", "24%", "50%"];
+    case "step|api call|purpose":
+      return ["10%", "24%", "66%"];
     case "channel|available|what you need|format rule":
       return ["26%", "14%", "32%", "28%"];
     case "event|severity|default on|what triggers it":
