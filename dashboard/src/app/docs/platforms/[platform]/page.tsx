@@ -834,6 +834,7 @@ export default async function PlatformDetailPage({
         columns={["Mode", "Best for", "App / credentials", "Availability"]}
         rows={data.setup}
       />
+      {data.setupNote ? <p className="docs-note">{data.setupNote}</p> : null}
 
       <h2 id="api-examples">API examples</h2>
       <p className="docs-note">
