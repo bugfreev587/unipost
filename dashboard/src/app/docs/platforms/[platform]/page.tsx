@@ -442,6 +442,154 @@ console.log(post.id);`,
   },
 ];
 
+const INSTAGRAM_API_SEQUENCE_STEPS = [
+  {
+    from: "Client",
+    to: "UniPost API",
+    call: "POST /v1/media",
+    result: "Reserve a media_id and a presigned upload_url.",
+  },
+  {
+    from: "Client",
+    to: "Object storage",
+    call: "PUT upload_url",
+    result: "Upload the raw image or video bytes directly to storage.",
+  },
+  {
+    from: "Client",
+    to: "UniPost API",
+    call: "GET /v1/media/:media_id",
+    result: "Poll until the media status is uploaded or attached.",
+  },
+  {
+    from: "Client",
+    to: "UniPost API",
+    call: "POST /v1/posts/validate",
+    result: "Optionally preflight Instagram media rules and account state.",
+  },
+  {
+    from: "Client",
+    to: "UniPost API",
+    call: "POST /v1/posts",
+    result: "Create the post with media_ids and receive the queued post response.",
+  },
+  {
+    from: "UniPost Worker",
+    to: "Instagram Graph API",
+    call: "create container -> media_publish",
+    result: "Publish to Instagram and store the final platform result.",
+  },
+  {
+    from: "Client",
+    to: "UniPost API",
+    call: "GET /v1/posts/:post_id",
+    result: "Read the final status, result, and permalink.",
+  },
+] as const;
+
+function InstagramApiSequenceDiagram() {
+  return (
+    <div
+      aria-label="Instagram post API call sequence"
+      role="list"
+      style={{
+        borderBottom: "1px solid var(--docs-border)",
+        borderTop: "1px solid var(--docs-border)",
+        display: "grid",
+        gap: 0,
+        margin: "12px 0 28px",
+      }}
+    >
+      {INSTAGRAM_API_SEQUENCE_STEPS.map((step, index) => (
+        <div
+          key={`${step.from}-${step.to}-${step.call}`}
+          role="listitem"
+          style={{
+            borderBottom: index === INSTAGRAM_API_SEQUENCE_STEPS.length - 1 ? undefined : "1px solid var(--docs-border)",
+            display: "grid",
+            gap: 8,
+            padding: "14px 0",
+          }}
+        >
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                background: "var(--docs-bg-muted)",
+                border: "1px solid var(--docs-border)",
+                borderRadius: 999,
+                color: "var(--docs-text-soft)",
+                display: "inline-flex",
+                fontFamily: "var(--docs-mono)",
+                fontSize: 12,
+                fontWeight: 700,
+                lineHeight: 1,
+                padding: "7px 10px",
+              }}
+            >
+              {step.from}
+            </span>
+            <span
+              aria-hidden="true"
+              style={{
+                color: "var(--docs-text-muted)",
+                fontFamily: "var(--docs-mono)",
+                fontSize: 13,
+              }}
+            >
+              -&gt;
+            </span>
+            <span
+              style={{
+                background: "var(--docs-bg-muted)",
+                border: "1px solid var(--docs-border)",
+                borderRadius: 999,
+                color: "var(--docs-text-soft)",
+                display: "inline-flex",
+                fontFamily: "var(--docs-mono)",
+                fontSize: 12,
+                fontWeight: 700,
+                lineHeight: 1,
+                padding: "7px 10px",
+              }}
+            >
+              {step.to}
+            </span>
+            <code
+              style={{
+                background: "var(--docs-inline-code-bg)",
+                border: "1px solid var(--docs-border)",
+                borderRadius: 8,
+                color: "var(--docs-text-soft)",
+                fontFamily: "var(--docs-mono)",
+                fontSize: 13,
+                padding: "5px 8px",
+              }}
+            >
+              {step.call}
+            </code>
+          </div>
+          <div
+            style={{
+              color: "var(--docs-text-muted)",
+              fontSize: 15,
+              lineHeight: 1.55,
+            }}
+          >
+            {step.result}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function summaryBadge(value: "full" | "limited" | "none") {
   if (value === "full") return "Supported";
   if (value === "limited") return "Limited";
@@ -515,6 +663,7 @@ export default async function PlatformDetailPage({
       {platform === "instagram" ? (
         <>
           <h2 id="post-api-guide">Post API Guide</h2>
+          <h3 id="media-input-options">Media Input Options</h3>
           <p className="docs-note">
             Start here when you want to publish an Instagram post through the API.
             Hosted media can go straight into <code>media_urls</code>. Local files
@@ -530,7 +679,9 @@ export default async function PlatformDetailPage({
               ["Local file upload", <ApiInlineLink key="local-reserve" endpoint="POST /v1/media" />, "Your app has raw file bytes. Reserve media, upload bytes, poll until uploaded, then publish with platform_posts[].media_ids."],
             ]}
           />
-          <h3 id="local-file-flow">Local file flow</h3>
+          <h3 id="api-call-sequence-diagram">API Call Sequence Diagram</h3>
+          <InstagramApiSequenceDiagram />
+          <h3 id="local-file-flow">Local File Flow</h3>
           <DocsTable
             columns={["Step", "API call", "Purpose"]}
             rows={[
@@ -542,6 +693,7 @@ export default async function PlatformDetailPage({
               ["6", <ApiInlineLink key="create" endpoint="POST /v1/posts" />, "Create the post with platform_posts[].media_ids and platform_options.mediaType."],
             ]}
           />
+          <h3 id="code-examples">Code Examples</h3>
           <DocsCodeTabs snippets={INSTAGRAM_LOCAL_FILE_SNIPPETS} />
         </>
       ) : null}
