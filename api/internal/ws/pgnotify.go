@@ -102,6 +102,23 @@ func Notify(ctx context.Context, pool *pgxpool.Pool, workspaceID string, item an
 	}
 }
 
+// NotifyEvent sends a pre-shaped inbox event, such as inbox.sync_complete.
+func NotifyEvent(ctx context.Context, pool *pgxpool.Pool, workspaceID string, event map[string]any) {
+	payload := make(map[string]any, len(event)+1)
+	for k, v := range event {
+		payload[k] = v
+	}
+	payload["workspace_id"] = workspaceID
+	msg, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, err = pool.Exec(ctx, "SELECT pg_notify($1, $2)", inboxChannel, string(msg))
+	if err != nil {
+		slog.Warn("ws notify failed", "err", err)
+	}
+}
+
 func NotifyLog(ctx context.Context, pool *pgxpool.Pool, msg any) {
 	raw, err := json.Marshal(msg)
 	if err != nil {

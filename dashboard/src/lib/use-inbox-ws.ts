@@ -11,6 +11,23 @@ function getWsUrl(token: string): string {
   return `${base}/v1/inbox/ws?token=${token}`;
 }
 
+function isInboxItem(value: unknown): value is InboxItem {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<InboxItem>;
+  return (
+    typeof item.id === "string" &&
+    typeof item.source === "string" &&
+    typeof item.is_read === "boolean" &&
+    typeof item.is_own === "boolean"
+  );
+}
+
+function isSyncCompleteMessage(msg: { type?: unknown; item?: unknown }): boolean {
+  if (msg.type === "inbox.sync_complete") return true;
+  if (!msg.item || typeof msg.item !== "object") return false;
+  return (msg.item as { type?: unknown }).type === "inbox.sync_complete";
+}
+
 /**
  * Connects to the inbox WebSocket and calls onNewItem when a new
  * inbox item arrives. Falls back gracefully — returns `connected`
@@ -94,10 +111,10 @@ export function useInboxWebSocket(
 
         ws.onmessage = (e) => {
           try {
-            const msg = JSON.parse(e.data);
-            if (msg.type === "inbox.new_item" && msg.item) {
-              onNewItemRef.current(msg.item as InboxItem);
-            } else if (msg.type === "inbox.sync_complete") {
+            const msg = JSON.parse(e.data) as { type?: unknown; item?: unknown };
+            if (msg.type === "inbox.new_item" && isInboxItem(msg.item)) {
+              onNewItemRef.current(msg.item);
+            } else if (isSyncCompleteMessage(msg)) {
               onSyncCompleteRef.current?.();
             }
           } catch {

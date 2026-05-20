@@ -2274,11 +2274,13 @@ export interface InboxItem {
 
 export async function listInboxItems(
   token: string,
-  filters?: { source?: string; is_read?: string }
+  filters?: { source?: string; is_read?: string; is_own?: string; limit?: number }
 ): Promise<ApiResponse<InboxItem[]>> {
   const qs = new URLSearchParams();
   if (filters?.source) qs.set("source", filters.source);
   if (filters?.is_read) qs.set("is_read", filters.is_read);
+  if (filters?.is_own) qs.set("is_own", filters.is_own);
+  if (typeof filters?.limit === "number") qs.set("limit", String(filters.limit));
   const q = qs.toString();
   return request(`/v1/inbox${q ? `?${q}` : ""}`, token);
 }

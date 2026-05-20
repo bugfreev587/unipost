@@ -101,6 +101,16 @@ const QUERY_FIELDS: ApiFieldItem[] = [
     type: "boolean",
     description: "Filter unread or read items.",
   },
+  {
+    name: "is_own?",
+    type: "boolean",
+    description: "Filter items authored by the connected account or by an external user.",
+  },
+  {
+    name: "limit?",
+    type: "integer",
+    description: "Maximum number of items to return. Defaults to 50 and caps at 500.",
+  },
 ];
 
 const RESPONSE_FIELDS: ApiFieldItem[] = [
@@ -128,7 +138,7 @@ const REQUEST_SNIPPETS = [
   {
     lang: "curl",
     label: "List",
-    code: `curl "https://api.unipost.dev/v1/inbox?source=ig_comment&is_read=false" \\
+    code: `curl "https://api.unipost.dev/v1/inbox?source=ig_comment&is_read=false&is_own=false&limit=100" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {

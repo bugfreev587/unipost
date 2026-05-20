@@ -14,7 +14,7 @@
 // here, one inside the inbox page) is a known and acceptable cost — a
 // React Context to share a single connection would be a bigger refactor.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { getInboxUnreadCount } from "@/lib/api";
 import { useInboxWebSocket } from "@/lib/use-inbox-ws";
@@ -22,6 +22,7 @@ import { useInboxWebSocket } from "@/lib/use-inbox-ws";
 export function useGlobalInboxUnreadCount(enabled: boolean): number {
   const { getToken } = useAuth();
   const [count, setCount] = useState(0);
+  const seenItemIdsRef = useRef(new Set<string>());
 
   // Authoritative refetch — pulled out so we can call it on mount,
   // on a refresh interval, and after every `inbox.sync_complete`
@@ -88,6 +89,8 @@ export function useGlobalInboxUnreadCount(enabled: boolean): number {
   useInboxWebSocket(
     enabled,
     (item) => {
+      if (seenItemIdsRef.current.has(item.id)) return;
+      seenItemIdsRef.current.add(item.id);
       if (!item.is_own && !item.is_read) {
         setCount((c) => c + 1);
       }

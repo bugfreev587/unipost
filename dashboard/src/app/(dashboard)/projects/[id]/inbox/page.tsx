@@ -89,6 +89,20 @@ const COMMENT_THREAD_LINE_COLOR = "var(--dborder2)";
 // the horizontal stroke. Small enough to feel tight, big enough to
 // read as a curve rather than a kink at most zoom levels.
 const COMMENT_THREAD_BEND_RADIUS = 10;
+const INBOX_RECENT_ITEM_LIMIT = 50;
+const INBOX_UNREAD_ITEM_LIMIT = 500;
+
+function mergeInboxItems(...groups: InboxItem[][]): InboxItem[] {
+  const byId = new Map<string, InboxItem>();
+  for (const group of groups) {
+    for (const item of group) {
+      byId.set(item.id, item);
+    }
+  }
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime(),
+  );
+}
 
 function initialsFromName(name?: string) {
   const value = (name || "?").trim();
@@ -668,14 +682,26 @@ function InboxPageInner() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [itemsRes, unreadRes, socialPostsRes] = await Promise.all([
-        listInboxItems(token),
+      const [recentItemsRes, unreadRes, socialPostsRes] = await Promise.all([
+        listInboxItems(token, { limit: INBOX_RECENT_ITEM_LIMIT }),
         getInboxUnreadCount(token),
         listSocialPostSummaries(token),
       ]);
+      const unreadTotal = unreadRes.data.count;
+      const unreadFetchLimit = Math.min(
+        INBOX_UNREAD_ITEM_LIMIT,
+        Math.max(INBOX_RECENT_ITEM_LIMIT, unreadTotal),
+      );
+      const unreadItemsRes = unreadTotal > 0
+        ? await listInboxItems(token, {
+            is_read: "false",
+            is_own: "false",
+            limit: unreadFetchLimit,
+          })
+        : null;
       const accountsRes = profileId ? await listSocialAccounts(token, profileId) : null;
-      setItems(itemsRes.data || []);
-      setUnreadCount(unreadRes.data.count);
+      setItems(mergeInboxItems(recentItemsRes.data || [], unreadItemsRes?.data || []));
+      setUnreadCount(unreadTotal);
       setSocialPosts(socialPostsRes.data || []);
       if (accountsRes?.data) setAccounts(accountsRes.data);
     } finally {
