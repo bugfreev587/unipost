@@ -2451,6 +2451,15 @@ function collectObservedNodes() {
   });
 }
 
+function areHeadingItemsEqual(left: HeadingItem[], right: HeadingItem[]) {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => (
+    item.id === right[index]?.id
+    && item.text === right[index]?.text
+    && item.level === right[index]?.level
+  ));
+}
+
 export function DocsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -2487,7 +2496,9 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
     const syncHeadings = () => {
       const nextHeadings = collectHeadingItems();
-      setHeadings(nextHeadings);
+      setHeadings((current) => (
+        areHeadingItemsEqual(current, nextHeadings) ? current : nextHeadings
+      ));
       setActiveHeading((current) => {
         if (current && nextHeadings.some((heading) => heading.id === current)) {
           return current;
@@ -2505,22 +2516,10 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     scheduleSyncHeadings();
     timers.push(window.setTimeout(syncHeadings, 120));
     timers.push(window.setTimeout(syncHeadings, 500));
-
-    const contentNode = document.querySelector(".docs-main .docs-page");
-    let observer: MutationObserver | null = null;
-    if (contentNode) {
-      observer = new MutationObserver(scheduleSyncHeadings);
-      observer.observe(contentNode, {
-        attributes: true,
-        attributeFilter: ["id"],
-        childList: true,
-        subtree: true,
-      });
-    }
+    timers.push(window.setTimeout(syncHeadings, 1200));
 
     return () => {
       window.cancelAnimationFrame(frame);
-      observer?.disconnect();
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [pathname, children]);
@@ -2565,26 +2564,40 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const rawHash = window.location.hash.slice(1);
-    if (!rawHash) return;
+    const timers: number[] = [];
 
-    let id = rawHash;
-    try {
-      id = decodeURIComponent(rawHash);
-    } catch {
-      id = rawHash;
-    }
+    const scrollToHash = () => {
+      const rawHash = window.location.hash.slice(1);
+      if (!rawHash) return;
 
-    const target = document.getElementById(id);
-    if (!target) return;
+      let id = rawHash;
+      try {
+        id = decodeURIComponent(rawHash);
+      } catch {
+        id = rawHash;
+      }
 
-    const timer = window.setTimeout(() => {
+      const target = document.getElementById(id);
+      if (!target) return;
+
       target.scrollIntoView({ block: "start" });
       setActiveHeading(target.id);
-    }, 0);
+    };
 
-    return () => window.clearTimeout(timer);
-  }, [pathname, headings]);
+    const scheduleHashScroll = () => {
+      timers.push(window.setTimeout(scrollToHash, 0));
+      timers.push(window.setTimeout(scrollToHash, 120));
+      timers.push(window.setTimeout(scrollToHash, 500));
+    };
+
+    scheduleHashScroll();
+    window.addEventListener("hashchange", scheduleHashScroll);
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("hashchange", scheduleHashScroll);
+    };
+  }, [pathname]);
 
   useEffect(() => {
     if (!isDraggingSidebar) return;
