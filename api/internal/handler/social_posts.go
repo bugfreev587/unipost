@@ -1714,14 +1714,14 @@ func filterFatalIssues(errs []platform.Issue) []platform.Issue {
 // issue list. Mirrors the shape of the /validate endpoint's response so
 // clients can use the same error-handling code for both.
 func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]any{
-			"code":    "VALIDATION_ERROR",
-			"message": "request failed pre-publish validation",
-			"issues":  errs,
+	writeJSON(w, http.StatusBadRequest, ErrorResponse{
+		Error: ErrorBody{
+			Code:           "VALIDATION_ERROR",
+			NormalizedCode: normalizeErrorCode("VALIDATION_ERROR"),
+			Message:        "request failed pre-publish validation",
+			Issues:         errs,
 		},
+		RequestID: requestIDFromResponse(w),
 	})
 }
 

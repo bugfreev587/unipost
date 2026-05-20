@@ -324,6 +324,12 @@ export default function QuickstartPage() {
       <p className="qs-note">
         Reference: <ApiInlineLink endpoint="POST /v1/posts" />.
       </p>
+      <p className="qs-note">
+        Publishing to Instagram from a local image or video file has one extra
+        media step: reserve an upload, PUT the bytes, poll until the media row is
+        uploaded, then create the post with <code>media_ids</code>. See the{" "}
+        <Link href="/docs/platforms/instagram#local-file-flow">Instagram local file flow</Link>.
+      </p>
 
       <h2 id="what-this-is-not">What this quickstart is not</h2>
       <DocsTable

@@ -38,6 +38,7 @@ export type PlatformDoc = {
     rows: readonly (readonly string[])[];
   };
   setup: readonly (readonly ReactNode[])[];
+  setupNote?: ReactNode;
   examples: ReadonlyArray<{ title: string; body: string; note?: string }>;
   errors: readonly (readonly string[])[];
   limitations: readonly (readonly string[])[];
@@ -495,7 +496,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Threads", no, "Not a Twitter-style thread platform"],
     ],
     requirements: [
-      ["media_urls or media_ids", "Required", "1 image, 1 video, or 2-10 carousel items", "Media is required. Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`."],
+      ["media_urls or media_ids", "Required", "1 image, 1 video, or 2-10 carousel items", "Media is required. Use `media_urls` for hosted assets, or upload local files with `POST /v1/media` and wait until the media row is `uploaded` before publishing with `media_ids`."],
       ["caption", "Optional", "2,200 chars", "Commonly sent with media"],
       ["platform_options.instagram.mediaType", "Optional", "feed / reels / story", "Defaults to `feed`. Use it to force Reels or Story behavior and trigger Instagram-specific preflight validation."],
       ["first_comment", "Optional", "text", "Supported after publish"],
@@ -613,8 +614,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     setup: [
       modeQuickstart,
       modeWhitelabel,
-      ["Requirement", "Connected IG must be Business or Creator linked to a Facebook Page", "Meta app review required for public use", "—"],
     ],
+    setupNote: "White-label requirement: connected Instagram accounts must be Business or Creator accounts linked to a Facebook Page. Your Meta app must pass app review before public use.",
     examples: [
       {
         title: "Single image",
@@ -667,6 +668,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["invalid_instagram_media_type", "Instagram mediaType must be `feed`, `reels`, or `story`"],
       ["instagram_reels_require_video", "Reels require exactly one video"],
       ["instagram_story_single_media_only", "Stories require exactly one image or video"],
+      ["media_not_uploaded", "A supplied `media_id` is still pending — PUT the bytes to the upload_url, then poll `GET /v1/media/{media_id}` until uploaded"],
       ["mixed_media_unsupported", "Mixed media outside a valid Instagram carousel flow"],
     ],
     limitations: [
@@ -881,8 +883,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     setup: [
       modeQuickstart,
       modeWhitelabel,
-      ["Requirement", "TikTok app must pass audit for public use", "Sandbox apps limit posting to allowlisted accounts", "—"],
     ],
+    setupNote: "White-label/public-use requirement: your TikTok app must pass audit before posting to non-allowlisted accounts. Sandbox apps are limited to allowlisted accounts.",
     examples: [
       {
         title: "Video post",
@@ -1180,8 +1182,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     setup: [
       modeQuickstart,
       modeWhitelabel,
-      ["Requirement", "A Pinterest board must exist before publishing", "Sandbox mode may only see boards created through the same API environment", "—"],
     ],
+    setupNote: "Platform requirement: create a Pinterest board before publishing. Sandbox mode may only see boards created through the same API environment.",
     examples: [
       {
         title: "Image Pin",
@@ -1353,8 +1355,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     setup: [
       modeQuickstart,
       modeWhitelabel,
-      ["Requirement", "Connected account must be a Facebook Page you manage", "Meta app review required for public use", "—"],
     ],
+    setupNote: "White-label requirement: the connected account must be a Facebook Page you manage. Your Meta app must pass app review before public use.",
     examples: [
       {
         title: "Text-only post",

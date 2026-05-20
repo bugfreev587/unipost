@@ -52,7 +52,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "media_ids?",
     type: "string[]",
-    description: <>Media library IDs returned by <ApiInlineLink endpoint="POST /v1/media" />. Use these for local files and larger videos.</>,
+    description: <>Media library IDs returned by <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />. Use these for local files and larger videos after <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> reports uploaded.</>,
   },
   {
     name: "scheduled_at?",
@@ -93,7 +93,7 @@ const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
   {
     name: "platform_posts[].media_ids?",
     type: "string[]",
-    description: "Account-specific media library asset IDs.",
+    description: <>Account-specific media library asset IDs. Pending uploads fail pre-publish validation with media_not_uploaded.</>,
   },
   {
     name: "platform_posts[].thread_position?",
@@ -242,6 +242,7 @@ const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: "Machine-readable error code." },
   { name: "error.normalized_code", type: "string", description: "Lowercase compatibility alias for the error code." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "error.issues?", type: "array", description: "Structured pre-publish validation issues such as media_not_uploaded." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
@@ -427,6 +428,35 @@ const RESPONSE_SNIPPETS = [
     "status": "scheduled",
     "created_at": "2026-04-22T10:00:00Z",
     "scheduled_at": "2026-04-23T16:00:00Z"
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "400",
+    code: `{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "normalized_code": "validation_error",
+    "message": "request failed pre-publish validation",
+    "issues": [
+      {
+        "platform_post_index": 0,
+        "account_id": "sa_instagram_123",
+        "platform": "instagram",
+        "field": "media_ids",
+        "code": "media_not_uploaded",
+        "message": "media_id media_123 is in status pending; PUT bytes to the upload_url returned by POST /v1/media, then poll GET /v1/media/media_123 until status is uploaded before publishing",
+        "actual": {
+          "media_id": "media_123",
+          "media_status": "pending",
+          "next_step": "PUT bytes to upload_url, then poll GET /v1/media/{media_id} until status=uploaded",
+          "docs_url": "https://unipost.dev/docs/api/media/reserve"
+        },
+        "severity": "error"
+      }
+    ]
   },
   "request_id": "req_123"
 }`,

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
 func TestNormalizeErrorCode(t *testing.T) {
@@ -175,5 +177,48 @@ func TestWriteErrorContract(t *testing.T) {
 	}
 	if got.RequestID != "req_error" {
 		t.Fatalf("request_id = %q, want req_error", got.RequestID)
+	}
+}
+
+func TestWriteValidationErrorsContract(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set("X-Request-Id", "req_validation")
+
+	writeValidationErrors(rr, []platform.Issue{
+		{
+			PlatformPostIndex: 0,
+			AccountID:         "acc_instagram",
+			Platform:          "instagram",
+			Field:             "media_ids",
+			Code:              platform.CodeMediaNotUploaded,
+			Message:           "media pending",
+			Severity:          platform.SeverityError,
+		},
+	})
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("writeValidationErrors status = %d, want 400", rr.Code)
+	}
+
+	var got struct {
+		Error struct {
+			Code           string           `json:"code"`
+			NormalizedCode string           `json:"normalized_code"`
+			Message        string           `json:"message"`
+			Issues         []platform.Issue `json:"issues"`
+		} `json:"error"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Error.Code != "VALIDATION_ERROR" || got.Error.NormalizedCode != "validation_error" {
+		t.Fatalf("error identifiers = %#v, want validation error contract", got.Error)
+	}
+	if got.RequestID != "req_validation" {
+		t.Fatalf("request_id = %q, want req_validation", got.RequestID)
+	}
+	if len(got.Error.Issues) != 1 || got.Error.Issues[0].Code != platform.CodeMediaNotUploaded {
+		t.Fatalf("issues = %#v, want media_not_uploaded issue", got.Error.Issues)
 	}
 }

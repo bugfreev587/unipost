@@ -117,6 +117,9 @@ function getDocsTableColumnWidths(columns: readonly string[]) {
       return ["34%", "32%", "34%"];
     case "option|values|notes":
       return ["34%", "32%", "34%"];
+    case "pattern|api path|when to use it":
+    case "step|api call|purpose":
+      return ["14%", "36%", "50%"];
     case "channel|available|what you need|format rule":
       return ["26%", "14%", "32%", "28%"];
     case "event|severity|default on|what triggers it":
@@ -171,6 +174,27 @@ function isCenteredDocsTableColumn(columns: readonly string[], columnIndex: numb
     default:
       return ["available", "default on", "required", "support"].includes(normalized ?? "");
   }
+}
+
+function isNoWrapDocsTableColumn(columns: readonly string[], columnIndex: number) {
+  const key = columns.map((column) => column.trim().toLowerCase()).join("|");
+
+  switch (key) {
+    case "pattern|api path|when to use it":
+    case "step|api call|purpose":
+      return columnIndex === 1;
+    default:
+      return false;
+  }
+}
+
+function getDocsTableCellClassName(columns: readonly string[], columnIndex: number) {
+  const classNames = [
+    isCenteredDocsTableColumn(columns, columnIndex) ? "docs-table-cell-center" : null,
+    isNoWrapDocsTableColumn(columns, columnIndex) ? "docs-table-cell-nowrap" : null,
+  ].filter(Boolean);
+
+  return classNames.length > 0 ? classNames.join(" ") : undefined;
 }
 
 function isApiReference(value: string) {
@@ -933,6 +957,8 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-table td:has(.docs-matrix-dash),
 .docs-table th.docs-matrix-center,
 .docs-table .docs-table-cell-center{text-align:center}
+.docs-table th.docs-table-cell-nowrap,
+.docs-table td.docs-table-cell-nowrap{white-space:nowrap;overflow-wrap:normal;word-break:normal}
 .docs-matrix-check{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:#22c55e;font-weight:700;font-size:18px;line-height:1}
 .docs-matrix-dash{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:var(--docs-text-soft)}
 .docs-callout,.wlp-top-callout{
@@ -1111,8 +1137,19 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-summary-card.tone-ok .docs-summary-value{color:#16a34a}
 .docs-summary-card.tone-warn .docs-summary-value{color:#d97706}
 .docs-summary-card.tone-muted .docs-summary-value{color:var(--docs-text-faint)}
+.docs-summary-connection{margin:0 0 24px;padding:15px 0 0;border-top:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent)}
 .docs-note{font-size:14px;line-height:1.65;color:var(--docs-text-soft);margin:10px 0 18px;max-width:none}
 .docs-note code,.qs-note code,.mcp-note code,.wl-note code,.wlp-note code{font-family:var(--docs-mono);font-size:12.5px}
+.docs-decision-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0 28px}
+.docs-decision-card{border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);padding:18px;min-width:0;box-shadow:0 1px 0 rgba(15,23,42,.03)}
+.docs-decision-kicker{font-size:15px;font-weight:720;letter-spacing:-.015em;color:var(--docs-text);margin-bottom:12px}
+.docs-decision-endpoint{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;color:var(--docs-text-faint);font-size:12px;font-weight:700}
+.docs-decision-card p{font-size:14px;line-height:1.68;margin:0;color:var(--docs-text-soft)}
+.docs-decision-link{display:inline-flex;margin-top:12px;font-size:13px;font-weight:700;color:var(--docs-link);text-decoration:none}
+.docs-surface-tabs{display:flex;align-items:center;gap:8px;overflow-x:auto;margin:16px 0 18px;padding-bottom:4px;scrollbar-width:thin}
+.docs-surface-tab{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 13px;border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-muted);color:var(--docs-text-soft);font-size:13px;font-weight:700;line-height:1;text-decoration:none;white-space:nowrap;transition:border-color .14s ease,color .14s ease,background .14s ease}
+.docs-surface-tab:hover{border-color:color-mix(in srgb, var(--docs-link) 34%, var(--docs-border));background:color-mix(in srgb, var(--docs-link) 8%, var(--docs-bg-muted));color:var(--docs-text);text-decoration:none}
+.docs-surface-panel{scroll-margin-top:96px}
 .docs-next-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 4px}
 .docs-next-card{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
 .docs-next-card:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));transform:translateY(-1px);box-shadow:var(--docs-card-shadow);text-decoration:none}
@@ -1125,7 +1162,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-checklist li::before{content:"";flex:none;width:6px;height:6px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 70%, var(--docs-border-strong));transform:translateY(-2px)}
 .docs-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
 .docs-checklist.docs-checklist-2col{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 22px}
-@media (max-width:960px){.docs-checklist.docs-checklist-2col,.docs-next-grid{grid-template-columns:1fr}.docs-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.docs-summary-card-wide{grid-column:span 2}}
+@media (max-width:960px){.docs-checklist.docs-checklist-2col,.docs-next-grid,.docs-decision-grid{grid-template-columns:1fr}.docs-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.docs-summary-card-wide{grid-column:span 2}}
 @media (max-width:640px){.docs-summary-grid{grid-template-columns:1fr}.docs-summary-card-wide{grid-column:span 1}.docs-guide-intro{display:block}.docs-guide-intro-icon{margin-bottom:12px}.docs-screenshot-step-body,.docs-screenshot-step-image{margin-left:0}}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
@@ -1574,6 +1611,12 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   border-bottom:1px solid #eef1f5;
   color:var(--docs-text-soft);
   overflow-wrap:anywhere;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table th.docs-table-cell-nowrap,
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-table td.docs-table-cell-nowrap{
+  white-space:nowrap;
+  overflow-wrap:normal;
+  word-break:normal;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-table td:first-child{
   color:var(--docs-text);
@@ -2408,6 +2451,15 @@ function collectObservedNodes() {
   });
 }
 
+function areHeadingItemsEqual(left: HeadingItem[], right: HeadingItem[]) {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => (
+    item.id === right[index]?.id
+    && item.text === right[index]?.text
+    && item.level === right[index]?.level
+  ));
+}
+
 export function DocsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -2444,14 +2496,27 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
     const syncHeadings = () => {
       const nextHeadings = collectHeadingItems();
-      setHeadings(nextHeadings);
-      setActiveHeading(nextHeadings[0]?.id || "");
+      setHeadings((current) => (
+        areHeadingItemsEqual(current, nextHeadings) ? current : nextHeadings
+      ));
+      setActiveHeading((current) => {
+        if (current && nextHeadings.some((heading) => heading.id === current)) {
+          return current;
+        }
+        return nextHeadings[0]?.id || "";
+      });
+    };
+
+    const scheduleSyncHeadings = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(syncHeadings);
     };
 
     syncHeadings();
-    frame = window.requestAnimationFrame(syncHeadings);
+    scheduleSyncHeadings();
     timers.push(window.setTimeout(syncHeadings, 120));
     timers.push(window.setTimeout(syncHeadings, 500));
+    timers.push(window.setTimeout(syncHeadings, 1200));
 
     return () => {
       window.cancelAnimationFrame(frame);
@@ -2499,26 +2564,40 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const rawHash = window.location.hash.slice(1);
-    if (!rawHash) return;
+    const timers: number[] = [];
 
-    let id = rawHash;
-    try {
-      id = decodeURIComponent(rawHash);
-    } catch {
-      id = rawHash;
-    }
+    const scrollToHash = () => {
+      const rawHash = window.location.hash.slice(1);
+      if (!rawHash) return;
 
-    const target = document.getElementById(id);
-    if (!target) return;
+      let id = rawHash;
+      try {
+        id = decodeURIComponent(rawHash);
+      } catch {
+        id = rawHash;
+      }
 
-    const timer = window.setTimeout(() => {
+      const target = document.getElementById(id);
+      if (!target) return;
+
       target.scrollIntoView({ block: "start" });
       setActiveHeading(target.id);
-    }, 0);
+    };
 
-    return () => window.clearTimeout(timer);
-  }, [pathname, headings]);
+    const scheduleHashScroll = () => {
+      timers.push(window.setTimeout(scrollToHash, 0));
+      timers.push(window.setTimeout(scrollToHash, 120));
+      timers.push(window.setTimeout(scrollToHash, 500));
+    };
+
+    scheduleHashScroll();
+    window.addEventListener("hashchange", scheduleHashScroll);
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("hashchange", scheduleHashScroll);
+    };
+  }, [pathname]);
 
   useEffect(() => {
     if (!isDraggingSidebar) return;
@@ -3007,7 +3086,7 @@ export function DocsTable({
           <tr>
             {columns.map((column, columnIndex) => (
               <th
-                className={isCenteredDocsTableColumn(columns, columnIndex) ? "docs-table-cell-center" : undefined}
+                className={getDocsTableCellClassName(columns, columnIndex)}
                 key={column}
               >
                 {column}
@@ -3020,7 +3099,7 @@ export function DocsTable({
             <tr key={index}>
               {row.map((cell, cellIndex) => (
                 <td
-                  className={isCenteredDocsTableColumn(columns, cellIndex) ? "docs-table-cell-center" : undefined}
+                  className={getDocsTableCellClassName(columns, cellIndex)}
                   key={cellIndex}
                 >
                   {renderDocsTableCell(cell)}
