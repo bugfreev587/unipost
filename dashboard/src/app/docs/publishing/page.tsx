@@ -32,9 +32,16 @@ export default function PublishingGuidePage() {
       <h2 id="publishing-result">Publishing result</h2>
       <p>
         <ApiInlineLink endpoint="POST /v1/posts" /> accepts immediate publish
-        requests asynchronously and returns once UniPost has queued the work. Poll{" "}
+        requests asynchronously and returns once UniPost has queued the work.
+      </p>
+      <h3 id="poll">Poll</h3>
+      <p>
         <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> when your UI needs to
-        show a live status, or subscribe to <Link href="/docs/api/webhooks">developer webhooks</Link>{" "}
+        show a live status.
+      </p>
+      <h3 id="push">Push</h3>
+      <p>
+        Subscribe to <Link href="/docs/api/webhooks">developer webhooks</Link>{" "}
         when your backend should receive final outcomes without polling.
       </p>
       <p>
