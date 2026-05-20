@@ -36,7 +36,8 @@ export default function DocsHomePage() {
         <li>Publish your first post with the REST API, an SDK, CLI, or MCP.</li>
       </ul>
       <p>
-        Start here: <Link href="/docs/quickstart">API Quickstart</Link>
+        Start here: <Link href="/docs/quickstart">API Quickstart</Link>, then use the{" "}
+        <Link href="/docs/publishing">Publishing guide</Link> for media upload and publish status flow.
       </p>
 
       <p>
