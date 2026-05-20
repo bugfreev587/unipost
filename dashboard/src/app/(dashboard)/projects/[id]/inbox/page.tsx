@@ -1264,7 +1264,7 @@ function InboxPageInner() {
   }
 
   return (
-    <div>
+    <div className="inbox-page-fullheight">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div
@@ -1473,8 +1473,8 @@ function InboxPageInner() {
         </div>
       </div>
 
-      <div ref={containerRef} style={{ display: "flex", border: "1px solid var(--dborder)", borderRadius: 14, overflow: "hidden", minHeight: 620 }}>
-        <div style={{ width: leftPaneWidth, minWidth: 240, maxWidth: 600, flexShrink: 0, background: "var(--sidebar)", overflowY: "auto" }}>
+      <div ref={containerRef} style={{ display: "flex", flex: 1, minHeight: 0, border: "1px solid var(--dborder)", borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ width: leftPaneWidth, minWidth: 240, maxWidth: 600, minHeight: 0, flexShrink: 0, background: "var(--sidebar)", overflowY: "auto" }}>
           {loading ? (
             <div style={{ padding: 24, color: "var(--dmuted)" }}>Loading inbox...</div>
           ) : activeGroups.length === 0 ? (
@@ -1570,7 +1570,7 @@ function InboxPageInner() {
           onMouseLeave={(e) => { e.currentTarget.style.background = "var(--dborder)"; }}
         />
 
-        <section style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1, background: "var(--surface)" }}>
+        <section style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, flex: 1, background: "var(--surface)" }}>
           {!selectedGroup ? (
             <div style={{ padding: 28 }}>
               <SyncStateCard
@@ -1749,7 +1749,7 @@ function InboxPageInner() {
               ) : null}
 
               <div style={{
-                flex: 1, overflowY: "auto",
+                flex: 1, minHeight: 0, overflowY: "auto",
                 padding: isDMSource(selectedGroup.source) ? "16px 14px" : "16px 20px",
                 display: "flex", flexDirection: "column",
                 gap: 0,
