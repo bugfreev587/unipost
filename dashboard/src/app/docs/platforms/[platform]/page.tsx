@@ -84,7 +84,12 @@ const post = await client.posts.create({
   ],
 });
 
-console.log(post.id);`,
+console.log(post.id);
+
+// Step 7: get the asynchronous publishing status and result.
+const publishingResult = await client.posts.get(post.id);
+console.log(publishingResult.data.status);
+console.log(publishingResult.data.results);`,
   },
   {
     label: "Python SDK",
@@ -156,7 +161,12 @@ post = client.posts.create(
     ]
 )
 
-print(post["data"]["id"])`,
+print(post["data"]["id"])
+
+# Step 7: get the asynchronous publishing status and result.
+publishing_result = client.posts.get(post["data"]["id"])
+print(publishing_result["data"]["status"])
+print(publishing_result["data"]["results"])`,
   },
   {
     label: "Go SDK",
@@ -272,6 +282,14 @@ func main() {
   }
 
   fmt.Println(post.ID)
+
+  // Step 7: get the asynchronous publishing status and result.
+  publishingResult, err := client.Posts.Get(ctx, post.ID)
+  if err != nil {
+    log.Fatal(err)
+  }
+  fmt.Println(publishingResult.Status)
+  fmt.Println(publishingResult.Results)
 }`,
   },
   {
@@ -349,7 +367,12 @@ if (!validation.get("valid").asBoolean()) {
 
 // Step 6: create the Instagram post with media_ids.
 var post = client.posts().create(payload);
-System.out.println(post.get("id").asText());`,
+System.out.println(post.get("id").asText());
+
+// Step 7: get the asynchronous publishing status and result.
+var publishingResult = client.posts().get(post.get("id").asText());
+System.out.println(publishingResult.get("status").asText());
+System.out.println(publishingResult.get("results"));`,
   },
   {
     label: "REST API",
@@ -438,154 +461,166 @@ const post = await unipost("/v1/posts", {
   body: JSON.stringify(postPayload),
 });
 
-console.log(post.id);`,
+console.log(post.id);
+
+// Step 7: get the asynchronous publishing status and result.
+const publishingResult = await unipost(\`/v1/posts/\${post.id}\`);
+console.log(publishingResult.status);
+console.log(publishingResult.results);`,
   },
 ];
 
-const INSTAGRAM_API_SEQUENCE_STEPS = [
-  {
-    from: "Client",
-    to: "UniPost API",
-    call: "POST /v1/media",
-    result: "Reserve a media_id and a presigned upload_url.",
-  },
-  {
-    from: "Client",
-    to: "Object storage",
-    call: "PUT upload_url",
-    result: "Upload the raw image or video bytes directly to storage.",
-  },
-  {
-    from: "Client",
-    to: "UniPost API",
-    call: "GET /v1/media/:media_id",
-    result: "Poll until the media status is uploaded or attached.",
-  },
-  {
-    from: "Client",
-    to: "UniPost API",
-    call: "POST /v1/posts/validate",
-    result: "Optionally preflight Instagram media rules and account state.",
-  },
-  {
-    from: "Client",
-    to: "UniPost API",
-    call: "POST /v1/posts",
-    result: "Create the post with media_ids and receive the queued post response.",
-  },
-  {
-    from: "UniPost Worker",
-    to: "Instagram Graph API",
-    call: "create container -> media_publish",
-    result: "Publish to Instagram and store the final platform result.",
-  },
-  {
-    from: "Client",
-    to: "UniPost API",
-    call: "GET /v1/posts/:post_id",
-    result: "Read the final status, result, and permalink.",
-  },
+const INSTAGRAM_SEQUENCE_ACTORS = [
+  { label: "Client", x: 130 },
+  { label: "UniPost API", x: 455 },
+  { label: "R2", x: 650 },
+  { label: "Worker", x: 845 },
+  { label: "Instagram", x: 1060 },
+] as const;
+
+const INSTAGRAM_SEQUENCE_MESSAGES: readonly {
+  from: number;
+  label: string;
+  response?: boolean;
+  to: number;
+  y: number;
+}[] = [
+  { from: 130, to: 455, y: 150, label: "POST /v1/media" },
+  { from: 455, to: 130, y: 195, label: "media_id + upload_url, status=pending", response: true },
+  { from: 130, to: 650, y: 250, label: "PUT bytes to upload_url" },
+  { from: 130, to: 455, y: 300, label: "GET /v1/media/{media_id}" },
+  { from: 455, to: 130, y: 345, label: "status=uploaded", response: true },
+  { from: 130, to: 455, y: 395, label: "POST /v1/posts or /v1/posts/validate" },
+  { from: 455, to: 130, y: 440, label: "202 accepted, post/result/job ids", response: true },
+  { from: 845, to: 1060, y: 520, label: "create media container" },
+  { from: 845, to: 1060, y: 565, label: "wait for container ready" },
+  { from: 845, to: 1060, y: 610, label: "media_publish" },
+  { from: 845, to: 1060, y: 650, label: "fetch permalink" },
+  { from: 130, to: 455, y: 650, label: "GET /v1/posts/{post_id}" },
 ] as const;
 
 function InstagramApiSequenceDiagram() {
   return (
     <div
       aria-label="Instagram post API call sequence"
-      role="list"
       style={{
-        borderBottom: "1px solid var(--docs-border)",
-        borderTop: "1px solid var(--docs-border)",
-        display: "grid",
-        gap: 0,
-        margin: "12px 0 28px",
+        background: "#171717",
+        border: "1px solid #333333",
+        borderRadius: 16,
+        margin: "14px 0 30px",
+        overflowX: "auto",
       }}
     >
-      {INSTAGRAM_API_SEQUENCE_STEPS.map((step, index) => (
-        <div
-          key={`${step.from}-${step.to}-${step.call}`}
-          role="listitem"
-          style={{
-            borderBottom: index === INSTAGRAM_API_SEQUENCE_STEPS.length - 1 ? undefined : "1px solid var(--docs-border)",
-            display: "grid",
-            gap: 8,
-            padding: "14px 0",
-          }}
-        >
-          <div
-            style={{
-              alignItems: "center",
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-            }}
+      <svg
+        aria-labelledby="instagram-sequence-title"
+        role="img"
+        viewBox="0 0 1180 770"
+        style={{
+          display: "block",
+          height: "auto",
+          minWidth: 980,
+          width: "100%",
+        }}
+      >
+        <title id="instagram-sequence-title">Instagram local file publishing sequence</title>
+        <defs>
+          <marker
+            id="instagram-sequence-arrow"
+            markerHeight="10"
+            markerUnits="strokeWidth"
+            markerWidth="10"
+            orient="auto"
+            refX="9"
+            refY="5"
           >
-            <span
-              style={{
-                background: "var(--docs-bg-muted)",
-                border: "1px solid var(--docs-border)",
-                borderRadius: 999,
-                color: "var(--docs-text-soft)",
-                display: "inline-flex",
-                fontFamily: "var(--docs-mono)",
-                fontSize: 12,
-                fontWeight: 700,
-                lineHeight: 1,
-                padding: "7px 10px",
-              }}
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#d4d4d8" />
+          </marker>
+        </defs>
+        <rect fill="#171717" height="770" rx="16" width="1180" x="0" y="0" />
+        {INSTAGRAM_SEQUENCE_ACTORS.map((actor) => (
+          <line
+            key={`${actor.label}-lifeline`}
+            stroke="#a3a3a3"
+            strokeWidth="2"
+            x1={actor.x}
+            x2={actor.x}
+            y1="98"
+            y2="690"
+          />
+        ))}
+        {INSTAGRAM_SEQUENCE_MESSAGES.map((message) => (
+          <g key={`${message.label}-${message.y}`}>
+            <line
+              markerEnd="url(#instagram-sequence-arrow)"
+              stroke="#d4d4d8"
+              strokeDasharray={message.response ? "4 5" : undefined}
+              strokeWidth="2"
+              x1={message.from}
+              x2={message.to}
+              y1={message.y}
+              y2={message.y}
+            />
+            <text
+              fill="#f4f4f5"
+              fontFamily="var(--docs-ui)"
+              fontSize="17"
+              textAnchor="middle"
+              x={(message.from + message.to) / 2}
+              y={message.y - 12}
             >
-              {step.from}
-            </span>
-            <span
-              aria-hidden="true"
-              style={{
-                color: "var(--docs-text-muted)",
-                fontFamily: "var(--docs-mono)",
-                fontSize: 13,
-              }}
+              {message.label}
+            </text>
+          </g>
+        ))}
+        {INSTAGRAM_SEQUENCE_ACTORS.map((actor) => (
+          <g key={`${actor.label}-top`}>
+            <rect
+              fill="#303030"
+              height="62"
+              rx="4"
+              stroke="#c7c7c7"
+              width="150"
+              x={actor.x - 75}
+              y="36"
+            />
+            <text
+              dominantBaseline="middle"
+              fill="#f4f4f5"
+              fontFamily="var(--docs-ui)"
+              fontSize="18"
+              textAnchor="middle"
+              x={actor.x}
+              y="67"
             >
-              -&gt;
-            </span>
-            <span
-              style={{
-                background: "var(--docs-bg-muted)",
-                border: "1px solid var(--docs-border)",
-                borderRadius: 999,
-                color: "var(--docs-text-soft)",
-                display: "inline-flex",
-                fontFamily: "var(--docs-mono)",
-                fontSize: 12,
-                fontWeight: 700,
-                lineHeight: 1,
-                padding: "7px 10px",
-              }}
+              {actor.label}
+            </text>
+          </g>
+        ))}
+        {INSTAGRAM_SEQUENCE_ACTORS.map((actor) => (
+          <g key={`${actor.label}-bottom`}>
+            <rect
+              fill="#303030"
+              height="62"
+              rx="4"
+              stroke="#c7c7c7"
+              width="150"
+              x={actor.x - 75}
+              y="690"
+            />
+            <text
+              dominantBaseline="middle"
+              fill="#f4f4f5"
+              fontFamily="var(--docs-ui)"
+              fontSize="18"
+              textAnchor="middle"
+              x={actor.x}
+              y="721"
             >
-              {step.to}
-            </span>
-            <code
-              style={{
-                background: "var(--docs-inline-code-bg)",
-                border: "1px solid var(--docs-border)",
-                borderRadius: 8,
-                color: "var(--docs-text-soft)",
-                fontFamily: "var(--docs-mono)",
-                fontSize: 13,
-                padding: "5px 8px",
-              }}
-            >
-              {step.call}
-            </code>
-          </div>
-          <div
-            style={{
-              color: "var(--docs-text-muted)",
-              fontSize: 15,
-              lineHeight: 1.55,
-            }}
-          >
-            {step.result}
-          </div>
-        </div>
-      ))}
+              {actor.label}
+            </text>
+          </g>
+        ))}
+      </svg>
     </div>
   );
 }
@@ -691,6 +726,14 @@ export default async function PlatformDetailPage({
               ["4", <ApiInlineLink key="get-media" endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" />, "Poll until status is uploaded or attached."],
               ["5", <ApiInlineLink key="validate" endpoint="POST /v1/posts/validate" />, "Optional preflight check for Instagram media rules and account state."],
               ["6", <ApiInlineLink key="create" endpoint="POST /v1/posts" />, "Create the post with platform_posts[].media_ids and platform_options.mediaType."],
+              [
+                "7",
+                <ApiInlineLink key="get-post" endpoint="GET /v1/posts/:post_id" />,
+                <span key="get-post-purpose">
+                  Get the async publishing status and result. You can also receive final status through webhooks; see{" "}
+                  <Link href="/docs/api/posts/create#publishing-result">Publishing Result</Link>.
+                </span>,
+              ],
             ]}
           />
           <h3 id="code-examples">Code Examples</h3>
