@@ -469,6 +469,42 @@ const DOCS_METHOD_COLORS: Record<NonNullable<NavLeaf["method"]>, string> = {
   DELETE: "#dc2626",
 };
 
+const SIDEBAR_LABEL_CASE_OVERRIDES: Record<string, string> = {
+  api: "API",
+  apis: "APIs",
+  cli: "CLI",
+  discord: "Discord",
+  facebook: "Facebook",
+  get: "Get",
+  id: "ID",
+  ids: "IDs",
+  instagram: "Instagram",
+  linkedin: "LinkedIn",
+  mcp: "MCP",
+  meta: "Meta",
+  oauth: "OAuth",
+  sdk: "SDK",
+  sdks: "SDKs",
+  slack: "Slack",
+  tiktok: "TikTok",
+  twitter: "Twitter",
+  unipost: "UniPost",
+  url: "URL",
+  urls: "URLs",
+  webhook: "Webhook",
+  webhooks: "Webhooks",
+  x: "X",
+  youtube: "YouTube",
+};
+
+function formatSidebarLabel(label: string) {
+  return label.replace(/[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?/g, (word) => {
+    const override = SIDEBAR_LABEL_CASE_OVERRIDES[word.toLowerCase()];
+    if (override) return override;
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
+}
+
 function buildDocsSearchIndex(): DocsSearchResult[] {
   const results = new Map<string, DocsSearchResult>();
 
@@ -2725,7 +2761,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                 open={isNavGroupActive(pathname, item)}
               >
                 <summary className="docs-nav-subgroup-toggle">
-                  <span>{item.label}</span>
+                  <span>{formatSidebarLabel(item.label)}</span>
                   <ChevronRight className="docs-nav-subgroup-chevron" strokeWidth={2.2} />
                 </summary>
                 <div className="docs-nav-subgroup-items">
@@ -2736,7 +2772,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                       className={`docs-nav-link${isLeafActive(pathname, child.href) ? " active" : ""}`}
                       onClick={onNavigate}
                     >
-                      <span>{child.label}</span>
+                      <span>{formatSidebarLabel(child.label)}</span>
                       {child.method ? (
                         <span
                           className="docs-nav-method"
@@ -2763,7 +2799,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
                 className={`docs-nav-link${isLeafActive(pathname, item.href) ? " active" : ""}`}
                 onClick={onNavigate}
               >
-                <span>{item.label}</span>
+                <span>{formatSidebarLabel(item.label)}</span>
                 {item.method ? (
                   <span
                     className="docs-nav-method"
