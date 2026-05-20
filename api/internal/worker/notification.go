@@ -344,7 +344,7 @@ func renderEmail(eventType string, payloadJSON []byte, appBaseURL string) mail.M
 	case "billing.usage_80pct":
 		return mail.Message{
 			Subject: "[UniPost] You've used 80% of this month's post quota",
-			HTML: fmt.Sprintf(`<p>Heads up — you've used 80%% of your monthly post quota. If you run out, new posts will be rejected until the quota resets or you upgrade.</p>
+			HTML: fmt.Sprintf(`<p>Heads up — you've used 80%% of your monthly post quota. Free workspaces stop accepting new publish requests at the monthly quota; paid workspaces keep soft-overage behavior, but sustained overage may require an upgrade.</p>
 <p><a href="%s/settings/billing">Review plan & usage →</a></p>`, appBaseURL),
 			Text: fmt.Sprintf("You've used 80%% of your UniPost monthly post quota.\n\nReview plan: %s/settings/billing\n", appBaseURL),
 		}

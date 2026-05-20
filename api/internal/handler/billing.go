@@ -24,16 +24,16 @@ func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker, stripeM
 }
 
 type billingResponse struct {
-	Plan           string  `json:"plan"`
-	PlanName       string  `json:"plan_name"`
-	Status         string  `json:"status"`
-	Usage          int     `json:"usage"`
-	Limit          int     `json:"limit"`
-	Percentage     float64 `json:"percentage"`
-	Period         string  `json:"period"`
-	Warning        string  `json:"warning,omitempty"`
-	CancelAtEnd    bool    `json:"cancel_at_period_end"`
-	TrialEligible  bool    `json:"trial_eligible"`
+	Plan          string  `json:"plan"`
+	PlanName      string  `json:"plan_name"`
+	Status        string  `json:"status"`
+	Usage         int     `json:"usage"`
+	Limit         int     `json:"limit"`
+	Percentage    float64 `json:"percentage"`
+	Period        string  `json:"period"`
+	Warning       string  `json:"warning,omitempty"`
+	CancelAtEnd   bool    `json:"cancel_at_period_end"`
+	TrialEligible bool    `json:"trial_eligible"`
 }
 
 // GetBilling handles GET /v1/billing (dual auth, workspace-scoped)
@@ -60,7 +60,7 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 		Period:        status.Period(),
 		Warning:       status.Warning,
 		CancelAtEnd:   sub.CancelAtPeriodEnd.Bool,
-		TrialEligible: !sub.TrialUsed,
+		TrialEligible: false,
 	})
 }
 
@@ -126,8 +126,8 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 			Params: stripe.Params{
 				Metadata: map[string]string{
 					"workspace_id": workspaceID,
-					"user_id":    userID,
-					"mode":       mode.Name,
+					"user_id":      userID,
+					"mode":         mode.Name,
 				},
 			},
 		}
@@ -155,21 +155,13 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		Params: stripe.Params{
 			Metadata: map[string]string{
 				"workspace_id": workspaceID,
-				"plan_id":    body.PlanID,
+				"plan_id":      body.PlanID,
 				// Stamp the mode on the session so the webhook handler can
 				// double-check which mode it came from when both signing
 				// secrets are valid (e.g. test events sent during setup).
 				"mode": mode.Name,
 			},
 		},
-	}
-
-	// Add 14-day free trial if user hasn't used it yet
-	if !sub.TrialUsed {
-		checkoutParams.SubscriptionData = &stripe.CheckoutSessionSubscriptionDataParams{
-			TrialPeriodDays: stripe.Int64(14),
-		}
-		_ = h.queries.MarkTrialUsed(r.Context(), workspaceID)
 	}
 
 	s, err := mode.Client.CheckoutSessions.New(checkoutParams)
@@ -257,10 +249,10 @@ func (h *BillingHandler) ListPlans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type planResponse struct {
-		ID        string `json:"id"`
-		Name      string `json:"name"`
-		PriceCents int32 `json:"price_cents"`
-		PostLimit  int32 `json:"post_limit"`
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		PriceCents int32  `json:"price_cents"`
+		PostLimit  int32  `json:"post_limit"`
 	}
 
 	result := make([]planResponse, len(plans))

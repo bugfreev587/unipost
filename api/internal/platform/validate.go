@@ -19,7 +19,7 @@
 // What this function CANNOT check (deferred to runtime adapter calls):
 //   - dimensions, duration, codec
 //   - fresh OAuth token validity (vs. just disconnected_at)
-//   - quota — that's a soft block in the live path anyway
+//   - workspace quota — handled in the live publish path
 //
 // Add new checks here whenever a class of failure appears in the wild;
 // the goal is for /validate to predict every error /social-posts can

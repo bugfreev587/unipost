@@ -517,6 +517,7 @@ WHERE i.workspace_id = $1
   AND sa.disconnected_at IS NULL
   AND ($3::TEXT IS NULL OR i.source = $3::TEXT)
   AND ($4::BOOLEAN IS NULL OR i.is_read = $4::BOOLEAN)
+  AND ($5::BOOLEAN IS NULL OR i.is_own = $5::BOOLEAN)
 ORDER BY i.received_at DESC
 LIMIT $2
 `
@@ -526,6 +527,7 @@ type ListInboxItemsByWorkspaceParams struct {
 	Limit       int32       `json:"limit"`
 	Source      pgtype.Text `json:"source"`
 	IsRead      pgtype.Bool `json:"is_read"`
+	IsOwn       pgtype.Bool `json:"is_own"`
 }
 
 func (q *Queries) ListInboxItemsByWorkspace(ctx context.Context, arg ListInboxItemsByWorkspaceParams) ([]InboxItem, error) {
@@ -534,6 +536,7 @@ func (q *Queries) ListInboxItemsByWorkspace(ctx context.Context, arg ListInboxIt
 		arg.Limit,
 		arg.Source,
 		arg.IsRead,
+		arg.IsOwn,
 	)
 	if err != nil {
 		return nil, err

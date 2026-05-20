@@ -366,6 +366,10 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 			Disconnected: ok && acc.DisconnectedAt.Valid,
 		}
 	}
+	// Scheduled posts were quota-admitted when the user created them.
+	// Do not re-run the Free hard cap at execution time; silently
+	// failing already-accepted scheduled work is a worse user experience
+	// than allowing a small projected overage.
 	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap)
 	return err
 }

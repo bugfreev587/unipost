@@ -17,6 +17,7 @@ const (
 	TikTokAnalyticsScopes         Flag = "tiktok.analytics_scopes"
 	AttributionUTMSignupBindingV1 Flag = "attribution.utm_signup_binding_v1"
 	Inbox                         Flag = "inbox"
+	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
 )
 
 type Target struct {
@@ -74,6 +75,14 @@ var definitions = map[Flag]Definition{
 		// Kill-switch for already-shipped functionality; defaults on everywhere.
 		DefaultEnabled: func(Target) bool {
 			return true
+		},
+	},
+	FreePlanHardPostQuota: {
+		Flag:        FreePlanHardPostQuota,
+		EnvVar:      "FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA",
+		Description: "Hard-blocks Free plan publish acceptance once the workspace would exceed its monthly post quota. Paid plans keep soft overage behavior.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
 		},
 	},
 }

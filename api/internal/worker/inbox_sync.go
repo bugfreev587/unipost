@@ -145,6 +145,11 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 	}
 
 	totalNew := 0
+	newByWorkspace := map[string]int{}
+	recordNew := func(workspaceID string) {
+		totalNew++
+		newByWorkspace[workspaceID]++
+	}
 	for _, acc := range accounts {
 		accessToken, err := w.encryptor.Decrypt(acc.AccessToken)
 		if err != nil {
@@ -184,7 +189,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 							LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							totalNew++
+							recordNew(acc.WorkspaceID)
 						}
 					}
 				}
@@ -217,7 +222,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						totalNew++
+						recordNew(acc.WorkspaceID)
 					}
 				}
 				// Reconcile: if webhook created items with thread_key = senderID,
@@ -326,7 +331,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						totalNew++
+						recordNew(acc.WorkspaceID)
 					}
 				}
 			}
@@ -386,7 +391,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						totalNew++
+						recordNew(acc.WorkspaceID)
 					}
 				}
 			}
@@ -423,7 +428,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 							LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							totalNew++
+							recordNew(acc.WorkspaceID)
 						}
 					}
 				}
@@ -433,16 +438,11 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 
 	if totalNew > 0 {
 		slog.Info("inbox sync worker: new items", "count", totalNew)
-		// Notify all workspaces that had new items.
-		notified := map[string]bool{}
-		for _, acc := range accounts {
-			if !notified[acc.WorkspaceID] {
-				ws.Notify(ctx, w.pool, acc.WorkspaceID, map[string]any{
-					"type":      "inbox.sync_complete",
-					"new_items": totalNew,
-				})
-				notified[acc.WorkspaceID] = true
-			}
+		for workspaceID, newItems := range newByWorkspace {
+			ws.NotifyEvent(ctx, w.pool, workspaceID, map[string]any{
+				"type":      "inbox.sync_complete",
+				"new_items": newItems,
+			})
 		}
 	}
 }

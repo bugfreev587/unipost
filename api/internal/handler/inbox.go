@@ -12,6 +12,7 @@ import (
 	stderrors "errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,14 +37,34 @@ const mediaContextCacheTTL = 1 * time.Hour
 // proxy timeout so our error response (with CORS headers) wins.
 const mediaContextFetchTimeout = 15 * time.Second
 
+const (
+	defaultInboxListLimit = int32(50)
+	maxInboxListLimit     = int32(500)
+)
+
 type InboxHandler struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
-	pool      *pgxpool.Pool // for ws.Notify
+	pool      *pgxpool.Pool // for inbox WebSocket notifications
 }
 
 func NewInboxHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxHandler {
 	return &InboxHandler{queries: queries, encryptor: encryptor, pool: pool}
+}
+
+func inboxListLimit(r *http.Request) int32 {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return defaultInboxListLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return defaultInboxListLimit
+	}
+	if n > int(maxInboxListLimit) {
+		return maxInboxListLimit
+	}
+	return int32(n)
 }
 
 // inboxItemResponse is the JSON shape returned to the frontend.
@@ -117,7 +138,7 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	params := db.ListInboxItemsByWorkspaceParams{
 		WorkspaceID: workspaceID,
-		Limit:       50,
+		Limit:       inboxListLimit(r),
 	}
 	if s := r.URL.Query().Get("source"); s != "" {
 		params.Source = pgtype.Text{String: s, Valid: true}
@@ -126,6 +147,11 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 		params.IsRead = pgtype.Bool{Bool: false, Valid: true}
 	} else if r.URL.Query().Get("is_read") == "true" {
 		params.IsRead = pgtype.Bool{Bool: true, Valid: true}
+	}
+	if r.URL.Query().Get("is_own") == "false" {
+		params.IsOwn = pgtype.Bool{Bool: false, Valid: true}
+	} else if r.URL.Query().Get("is_own") == "true" {
+		params.IsOwn = pgtype.Bool{Bool: true, Valid: true}
 	}
 
 	items, err := h.queries.ListInboxItemsByWorkspace(r.Context(), params)
@@ -933,7 +959,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 
 	// Notify all connected WebSocket clients to refresh if new items arrived.
 	if totalNew > 0 {
-		ws.Notify(r.Context(), h.pool, workspaceID, map[string]any{
+		ws.NotifyEvent(r.Context(), h.pool, workspaceID, map[string]any{
 			"type":      "inbox.sync_complete",
 			"new_items": totalNew,
 		})

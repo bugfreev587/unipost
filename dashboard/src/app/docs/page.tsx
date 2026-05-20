@@ -14,8 +14,8 @@ export default function DocsHomePage() {
           <p>Connect accounts, open the compose flow, and publish your first post from the UniPost UI.</p>
         </Link>
         <Link href="/docs/quickstart" className="docs-card" style={{ textDecoration: "none" }}>
-          <div className="docs-card-title">API Quickstart</div>
-          <p>Create an API key, connect accounts, and publish programmatically with SDKs, CLI, or MCP.</p>
+          <div className="docs-card-title">Quickstart Mode</div>
+          <p>Create an API key, connect accounts, and publish programmatically with the REST API or SDKs.</p>
         </Link>
       </div>
 
@@ -33,14 +33,15 @@ export default function DocsHomePage() {
       <ul className="docs-step-list">
         <li>Create an API key for your workspace.</li>
         <li>Connect at least one destination account.</li>
-        <li>Publish your first post with the REST API, an SDK, CLI, or MCP.</li>
+        <li>Publish your first post with the REST API or an SDK.</li>
       </ul>
       <p>
-        Start here: <Link href="/docs/quickstart">API Quickstart</Link>
+        Start here: <Link href="/docs/quickstart">Quickstart Mode</Link>, then use the{" "}
+        <Link href="/docs/publishing">Publishing guide</Link> for media upload and publish status flow.
       </p>
 
       <p>
-        <strong>Advanced setup:</strong> if you are embedding UniPost into your own product, see <Link href="/docs/white-label">White-label</Link>.
+        <strong>Customer-owned accounts:</strong> if you are embedding UniPost into your own product, see <Link href="/docs/white-label">White-label Mode</Link>.
       </p>
     </DocsPage>
   );

@@ -485,6 +485,18 @@ const RESPONSE_SNIPPETS = [
   "request_id": "req_123"
 }`,
   },
+  {
+    lang: "json",
+    label: "402",
+    code: `{
+  "error": {
+    "code": "PLAN_POST_QUOTA_EXCEEDED",
+    "normalized_code": "plan_post_quota_exceeded",
+    "message": "Free plan monthly post quota exceeded. You have used 100 of 100 posts this month, and this request needs 1 more. Upgrade to continue posting."
+  },
+  "request_id": "req_123"
+}`,
+  },
 ];
 
 export function CreatePostContent() {
@@ -505,6 +517,7 @@ export function CreatePostContent() {
         { code: "201", fields: RESPONSE_201_FIELDS },
         { code: "400", fields: ERROR_FIELDS },
         { code: "401", fields: ERROR_FIELDS },
+        { code: "402", fields: ERROR_FIELDS },
         { code: "422", fields: ERROR_FIELDS },
         { code: "500", fields: ERROR_FIELDS },
       ]}

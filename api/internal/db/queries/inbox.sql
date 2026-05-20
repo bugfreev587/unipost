@@ -17,6 +17,7 @@ WHERE i.workspace_id = $1
   AND sa.disconnected_at IS NULL
   AND (sqlc.narg('source')::TEXT IS NULL OR i.source = sqlc.narg('source')::TEXT)
   AND (sqlc.narg('is_read')::BOOLEAN IS NULL OR i.is_read = sqlc.narg('is_read')::BOOLEAN)
+  AND (sqlc.narg('is_own')::BOOLEAN IS NULL OR i.is_own = sqlc.narg('is_own')::BOOLEAN)
 ORDER BY i.received_at DESC
 LIMIT $2;
 

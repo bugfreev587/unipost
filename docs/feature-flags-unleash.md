@@ -141,6 +141,22 @@ fallback: on
 
 Owner area: Inbox / Dashboard. This flag controls the UniPost Inbox surface, including dashboard navigation, unread-count polling, the Inbox WebSocket, and `/v1/inbox/*` API routes. Inbox is already a supported product surface for Instagram comments and DMs, Threads comments, and YouTube comments; the flag exists for rollout control and emergency shutdown rather than for a new hidden feature. Production rollback is to disable `inbox` in the production environment, which hides the dashboard entry point and blocks the backend Inbox API while preserving stored inbox data.
 
+Create this flag in Unleash:
+
+```text
+billing.free_plan_hard_post_quota
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Billing / Publishing API. This flag controls whether Free plan workspaces are hard-blocked from creating new publish requests once the request would exceed the monthly post quota. Paid plans deliberately keep soft-overage behavior, with usage warnings and upgrade guidance rather than immediate interruption. There is no third-party approval dependency. Production rollback is to disable `billing.free_plan_hard_post_quota`; Free workspaces then return to the historical soft-overage behavior while the dashboard and pricing copy can be updated independently if needed.
+
 ## Admin Status Page
 
 UniPost admins can inspect evaluated flag state from:

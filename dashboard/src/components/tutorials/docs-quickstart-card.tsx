@@ -448,7 +448,7 @@ function DocsQuickstartCardInner({
 
       {!locked && tutorialId === "post_with_api" && (
         <div style={{ padding: "0 18px 14px", color: "var(--docs-text-muted)", fontSize: 13 }}>
-          The API Quickstart creates a key, picks a real connected account, and sends a live test post.
+          Quickstart Mode creates a key, picks a real connected account, and sends a live test post.
         </div>
       )}
       {!locked && tutorialId === "quickstart" && (
