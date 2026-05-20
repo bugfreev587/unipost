@@ -689,6 +689,34 @@ func TestValidate_MediaNotUploaded(t *testing.T) {
 	hasError(t, res, 0, CodeMediaNotUploaded)
 }
 
+func TestValidate_RequiredMediaWithPendingMediaIDReportsUploadOnly(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_pending": {Status: "pending", ContentType: "image/jpeg"},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_instagram", Caption: "x", MediaIDs: []string{"med_pending"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+
+	hasError(t, res, 0, CodeMediaNotUploaded)
+	hasNoError(t, res, CodeMissingRequired)
+
+	if len(res.Errors) == 0 {
+		t.Fatal("expected media_not_uploaded error")
+	}
+	actual, ok := res.Errors[0].Actual.(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured actual details, got %#v", res.Errors[0].Actual)
+	}
+	if actual["media_status"] != "pending" || actual["docs_url"] == "" {
+		t.Fatalf("unexpected media_not_uploaded details: %#v", actual)
+	}
+}
+
 func TestValidate_MediaIDUploaded(t *testing.T) {
 	res := ValidatePlatformPosts(ValidateOptions{
 		Capabilities: stubCapabilities(),

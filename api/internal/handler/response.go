@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
 type SuccessResponse struct {
@@ -22,9 +24,10 @@ type MetaResponse struct {
 }
 
 type ErrorBody struct {
-	Code           string `json:"code"`
-	NormalizedCode string `json:"normalized_code,omitempty"`
-	Message        string `json:"message"`
+	Code           string           `json:"code"`
+	NormalizedCode string           `json:"normalized_code,omitempty"`
+	Message        string           `json:"message"`
+	Issues         []platform.Issue `json:"issues,omitempty"`
 }
 
 type ErrorResponse struct {

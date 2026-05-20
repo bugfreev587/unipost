@@ -11,7 +11,7 @@ const PATH_FIELDS: ApiFieldItem[] = [
 ];
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Media library ID." },
-  { name: "status", type: "string", description: <>Media lifecycle state. Most clients poll until the row is no longer pending.<EnumValues values={["pending", "uploaded", "attached", "deleted"]} /></>, },
+  { name: "status", type: "string", description: <>Media lifecycle state. Poll until uploaded before passing the ID to a publish request.<EnumValues values={["pending", "uploaded", "attached", "deleted"]} /></>, },
   { name: "content_type", type: "string", description: "Resolved media MIME type." },
   { name: "size_bytes", type: "number", description: "Stored file size in bytes." },
 ];
@@ -36,7 +36,9 @@ const SNIPPETS = [
 const client = new UniPost();
 
 const media = await client.media.get("media_123");
-console.log(media.status);`,
+if (media.status === "uploaded" || media.status === "attached") {
+  console.log("ready to publish");
+}`,
   },
   {
     lang: "python",
@@ -90,7 +92,7 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "id": "media_123",
-    "status": "ready",
+    "status": "uploaded",
     "content_type": "image/jpeg",
     "size_bytes": 284192
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
+import { ApiInlineLink, EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -14,7 +14,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "media_id", type: "string", description: "Media library ID to use in later publish calls." },
   { name: "upload_url", type: "string", description: "Presigned storage URL for the raw file bytes." },
-  { name: "status", type: "string", description: <>Media lifecycle state. Reserve responses start as pending.<EnumValues values={["pending", "uploaded", "attached", "deleted"]} /></> },
+  { name: "status", type: "string", description: <>Media lifecycle state. Reserve responses start as pending; publish calls should wait for uploaded.<EnumValues values={["pending", "uploaded", "attached", "deleted"]} /></> },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED".' },
@@ -38,20 +38,33 @@ const SNIPPETS = [
   {
     lang: "js",
     label: "Node.js",
-    code: `import { UniPost } from "@unipost/sdk";
+    code: `import { readFile } from "node:fs/promises";
+import { UniPost } from "@unipost/sdk";
 
 const client = new UniPost();
+const fileBuffer = await readFile("photo.jpg");
 
 const { mediaId, uploadUrl } = await client.media.upload({
   filename: "photo.jpg",
   contentType: "image/jpeg",
-  sizeBytes: 284192,
+  sizeBytes: fileBuffer.byteLength,
 });
 
 await fetch(uploadUrl, {
   method: "PUT",
+  headers: { "Content-Type": "image/jpeg" },
   body: fileBuffer,
 });
+
+let media = await client.media.get(mediaId);
+while (media.status === "pending") {
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  media = await client.media.get(mediaId);
+}
+
+if (media.status !== "uploaded" && media.status !== "attached") {
+  throw new Error(\`media upload failed with status \${media.status}\`);
+}
 
 console.log(mediaId);`,
   },
@@ -70,7 +83,11 @@ reservation = client.media.upload(
 )
 
 with open("photo.jpg", "rb") as f:
-  requests.put(reservation["data"]["upload_url"], data=f)
+  requests.put(
+    reservation["data"]["upload_url"],
+    data=f,
+    headers={"Content-Type": "image/jpeg"},
+  )
 
 print(reservation["data"]["media_id"])`,
   },
@@ -100,6 +117,7 @@ func main() {
   }
 
   // PUT raw bytes to reservation.UploadURL with your HTTP client of choice.
+  // Poll GET /v1/media/{media_id} until status is uploaded before publishing.
   fmt.Println(reservation.MediaID)
 }`,
   },
@@ -169,7 +187,7 @@ export default function ReserveMediaPage() {
     <SingleEndpointReferencePage
       section="publishing"
       title="Reserve media upload"
-      description="Creates a media library row and returns a presigned upload URL. Use it before uploading raw file bytes into UniPost-managed storage."
+      description={<>Creates a media library row and returns a presigned upload URL. After the PUT succeeds, poll <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until status is uploaded before using the media ID in <ApiInlineLink endpoint="POST /v1/posts" />.</>}
       method="POST"
       path="/v1/media"
       requestSections={[
