@@ -12,6 +12,69 @@ const SUMMARY_LABELS: Record<keyof Omit<PlatformSummary, "connection">, string> 
   inbox: "Inbox",
 };
 
+const INSTAGRAM_LOCAL_FILE_SNIPPETS = [
+  {
+    label: "Node.js",
+    lang: "javascript",
+    code: `import { readFile } from "node:fs/promises";
+import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost();
+const accountId = "sa_instagram_123";
+const fileBuffer = await readFile("campaign-photo.jpg");
+
+const { mediaId, uploadUrl } = await client.media.upload({
+  filename: "campaign-photo.jpg",
+  contentType: "image/jpeg",
+  sizeBytes: fileBuffer.byteLength,
+});
+
+await fetch(uploadUrl, {
+  method: "PUT",
+  headers: { "Content-Type": "image/jpeg" },
+  body: fileBuffer,
+});
+
+let media = await client.media.get(mediaId);
+while (media.status === "pending") {
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  media = await client.media.get(mediaId);
+}
+
+if (media.status !== "uploaded" && media.status !== "attached") {
+  throw new Error(\`media upload failed with status \${media.status}\`);
+}
+
+const validation = await client.posts.validate({
+  platformPosts: [
+    {
+      accountId,
+      caption: "New seasonal item is available today.",
+      mediaIds: [mediaId],
+      platformOptions: { mediaType: "feed" },
+    },
+  ],
+});
+
+if (!validation.valid) {
+  throw new Error(JSON.stringify(validation.errors, null, 2));
+}
+
+const post = await client.posts.create({
+  platformPosts: [
+    {
+      accountId,
+      caption: "New seasonal item is available today.",
+      mediaIds: [mediaId],
+      platformOptions: { mediaType: "feed" },
+    },
+  ],
+});
+
+console.log(post.id);`,
+  },
+];
+
 function summaryBadge(value: "full" | "limited" | "none") {
   if (value === "full") return "Supported";
   if (value === "limited") return "Limited";
@@ -98,6 +161,32 @@ export default async function PlatformDetailPage({
           <code>media_ids</code>. Full flow in{" "}
           <Link href="/docs/api/media">Media API</Link>.
         </p>
+      ) : null}
+
+      {platform === "instagram" ? (
+        <>
+          <h2 id="local-file-flow">Publish an Instagram post from a local file</h2>
+          <p className="docs-note">
+            Use this flow when your app has a local image or video file instead of
+            a public media URL. Instagram requires media, so the post request
+            should only be sent after the media row reports <code>uploaded</code>.
+            <ApiInlineLink endpoint="POST /v1/posts" /> returns <code>202</code>;
+            read the final result with <ApiInlineLink endpoint="GET /v1/posts/:post_id" />{" "}
+            or webhooks.
+          </p>
+          <DocsTable
+            columns={["Step", "API call", "Purpose"]}
+            rows={[
+              ["1", <ApiInlineLink key="connect" endpoint="POST /v1/oauth/connect" />, "Connect the Instagram Business or Creator account, then list accounts to keep its account_id."],
+              ["2", <ApiInlineLink key="reserve" endpoint="POST /v1/media" />, "Reserve a media row and receive a presigned upload_url."],
+              ["3", <code key="put">PUT upload_url</code>, "Upload the raw image or video bytes directly to storage."],
+              ["4", <ApiInlineLink key="get-media" endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" />, "Poll until status is uploaded or attached."],
+              ["5", <ApiInlineLink key="validate" endpoint="POST /v1/posts/validate" />, "Optional preflight check for Instagram media rules and account state."],
+              ["6", <ApiInlineLink key="create" endpoint="POST /v1/posts" />, "Create the post with platform_posts[].media_ids and platform_options.mediaType."],
+            ]}
+          />
+          <DocsCodeTabs snippets={INSTAGRAM_LOCAL_FILE_SNIPPETS} />
+        </>
       ) : null}
 
       {data.mediaSpecs ? (
