@@ -145,6 +145,40 @@ export default async function PlatformDetailPage({
         </div>
       </div>
 
+      {platform === "instagram" ? (
+        <>
+          <h2 id="post-api-guide">Post API Guide</h2>
+          <p className="docs-note">
+            Start here when you want to publish an Instagram post through the API.
+            Hosted media can go straight into <code>media_urls</code>. Local files
+            need one upload step first, then the final publish call uses{" "}
+            <code>media_ids</code>. <ApiInlineLink endpoint="POST /v1/posts" />{" "}
+            returns <code>202</code>; read the final result with{" "}
+            <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> or webhooks.
+          </p>
+          <DocsTable
+            columns={["Pattern", "API path", "When to use it"]}
+            rows={[
+              ["Hosted media URL", <ApiInlineLink key="hosted-create" endpoint="POST /v1/posts" />, "Your image or video already has a public URL. Pass it in platform_posts[].media_urls."],
+              ["Local file upload", <ApiInlineLink key="local-reserve" endpoint="POST /v1/media" />, "Your app has raw file bytes. Reserve media, upload bytes, poll until uploaded, then publish with platform_posts[].media_ids."],
+            ]}
+          />
+          <h3 id="local-file-flow">Local file flow</h3>
+          <DocsTable
+            columns={["Step", "API call", "Purpose"]}
+            rows={[
+              ["1", <ApiInlineLink key="connect" endpoint="POST /v1/oauth/connect" />, "Connect the Instagram Business or Creator account, then list accounts to keep its account_id."],
+              ["2", <ApiInlineLink key="reserve" endpoint="POST /v1/media" />, "Reserve a media row and receive a presigned upload_url."],
+              ["3", <code key="put">PUT upload_url</code>, "Upload the raw image or video bytes directly to storage."],
+              ["4", <ApiInlineLink key="get-media" endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" />, "Poll until status is uploaded or attached."],
+              ["5", <ApiInlineLink key="validate" endpoint="POST /v1/posts/validate" />, "Optional preflight check for Instagram media rules and account state."],
+              ["6", <ApiInlineLink key="create" endpoint="POST /v1/posts" />, "Create the post with platform_posts[].media_ids and platform_options.mediaType."],
+            ]}
+          />
+          <DocsCodeTabs snippets={INSTAGRAM_LOCAL_FILE_SNIPPETS} />
+        </>
+      ) : null}
+
       <h2 id="feature-matrix">Feature matrix</h2>
       <DocsTable columns={["Feature", "Support", "Notes"]} rows={data.capabilities} />
 
@@ -161,32 +195,6 @@ export default async function PlatformDetailPage({
           <code>media_ids</code>. Full flow in{" "}
           <Link href="/docs/api/media">Media API</Link>.
         </p>
-      ) : null}
-
-      {platform === "instagram" ? (
-        <>
-          <h2 id="local-file-flow">Publish an Instagram post from a local file</h2>
-          <p className="docs-note">
-            Use this flow when your app has a local image or video file instead of
-            a public media URL. Instagram requires media, so the post request
-            should only be sent after the media row reports <code>uploaded</code>.
-            <ApiInlineLink endpoint="POST /v1/posts" /> returns <code>202</code>;
-            read the final result with <ApiInlineLink endpoint="GET /v1/posts/:post_id" />{" "}
-            or webhooks.
-          </p>
-          <DocsTable
-            columns={["Step", "API call", "Purpose"]}
-            rows={[
-              ["1", <ApiInlineLink key="connect" endpoint="POST /v1/oauth/connect" />, "Connect the Instagram Business or Creator account, then list accounts to keep its account_id."],
-              ["2", <ApiInlineLink key="reserve" endpoint="POST /v1/media" />, "Reserve a media row and receive a presigned upload_url."],
-              ["3", <code key="put">PUT upload_url</code>, "Upload the raw image or video bytes directly to storage."],
-              ["4", <ApiInlineLink key="get-media" endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" />, "Poll until status is uploaded or attached."],
-              ["5", <ApiInlineLink key="validate" endpoint="POST /v1/posts/validate" />, "Optional preflight check for Instagram media rules and account state."],
-              ["6", <ApiInlineLink key="create" endpoint="POST /v1/posts" />, "Create the post with platform_posts[].media_ids and platform_options.mediaType."],
-            ]}
-          />
-          <DocsCodeTabs snippets={INSTAGRAM_LOCAL_FILE_SNIPPETS} />
-        </>
       ) : null}
 
       {data.mediaSpecs ? (
