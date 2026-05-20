@@ -495,7 +495,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Threads", no, "Not a Twitter-style thread platform"],
     ],
     requirements: [
-      ["media_urls or media_ids", "Required", "1 image, 1 video, or 2-10 carousel items", "Media is required. Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`."],
+      ["media_urls or media_ids", "Required", "1 image, 1 video, or 2-10 carousel items", "Media is required. Use `media_urls` for hosted assets, or upload local files with `POST /v1/media` and wait until the media row is `uploaded` before publishing with `media_ids`."],
       ["caption", "Optional", "2,200 chars", "Commonly sent with media"],
       ["platform_options.instagram.mediaType", "Optional", "feed / reels / story", "Defaults to `feed`. Use it to force Reels or Story behavior and trigger Instagram-specific preflight validation."],
       ["first_comment", "Optional", "text", "Supported after publish"],
@@ -667,6 +667,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["invalid_instagram_media_type", "Instagram mediaType must be `feed`, `reels`, or `story`"],
       ["instagram_reels_require_video", "Reels require exactly one video"],
       ["instagram_story_single_media_only", "Stories require exactly one image or video"],
+      ["media_not_uploaded", "A supplied `media_id` is still pending — PUT the bytes to the upload_url, then poll `GET /v1/media/{media_id}` until uploaded"],
       ["mixed_media_unsupported", "Mixed media outside a valid Instagram carousel flow"],
     ],
     limitations: [
