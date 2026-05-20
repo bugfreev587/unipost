@@ -67,6 +67,9 @@ const API_SIDEBAR_MIN_WIDTH = 280;
 const API_SIDEBAR_MAX_WIDTH = 520;
 const API_REFERENCE_SIDEBAR_VISUAL_REDUCTION = 36;
 const API_SIDEBAR_STORAGE_KEY = "unipost-docs-api-sidebar-width";
+const DOCS_TOC_MIN_ACTIVATION_OFFSET = 132;
+const DOCS_TOC_ACTIVATION_VIEWPORT_RATIO = 0.5;
+const DOCS_TOC_PAGE_END_THRESHOLD = 4;
 const DOCS_USER_PATH_KEY = "unipost-docs-user-path";
 const DOCS_USER_CHOOSER_HIDE_KEY = "unipost-docs-user-chooser-hide";
 
@@ -2486,7 +2489,25 @@ function collectObservedNodes() {
     if (!id || seen.has(id)) return false;
     seen.add(id);
     return true;
+  }).sort((left, right) => {
+    if (left === right) return 0;
+    return left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
   });
+}
+
+function getDocsTocActivationOffset() {
+  return Math.max(
+    DOCS_TOC_MIN_ACTIVATION_OFFSET,
+    window.innerHeight * DOCS_TOC_ACTIVATION_VIEWPORT_RATIO
+  );
+}
+
+function isScrolledToPageEnd() {
+  const pageHeight = Math.max(
+    document.documentElement.scrollHeight,
+    document.body.scrollHeight
+  );
+  return window.scrollY + window.innerHeight >= pageHeight - DOCS_TOC_PAGE_END_THRESHOLD;
 }
 
 function areHeadingItemsEqual(left: HeadingItem[], right: HeadingItem[]) {
@@ -2569,15 +2590,19 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
     let frame = 0;
 
     const syncActiveHeading = () => {
-      const activationOffset = 132;
+      const activationOffset = getDocsTocActivationOffset();
       let nextActive = headingNodes[0]?.id || "";
 
-      for (const node of headingNodes) {
-        const top = node.getBoundingClientRect().top;
-        if (top <= activationOffset) {
-          nextActive = node.id;
-        } else {
-          break;
+      if (isScrolledToPageEnd()) {
+        nextActive = headingNodes[headingNodes.length - 1]?.id || nextActive;
+      } else {
+        for (const node of headingNodes) {
+          const top = node.getBoundingClientRect().top;
+          if (top <= activationOffset) {
+            nextActive = node.id;
+          } else {
+            break;
+          }
         }
       }
 
