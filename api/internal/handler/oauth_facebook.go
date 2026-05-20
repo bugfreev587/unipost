@@ -54,12 +54,12 @@ type pendingFacebookPage struct {
 // what it takes to render the pick list. Tokens stay server-side
 // until finalize.
 type pendingConnectionResponse struct {
-	ID          string                 `json:"id"`
-	Platform    string                 `json:"platform"`
-	ProfileID   string                 `json:"profile_id"`
-	MetaUser    metaUserDescriptor     `json:"meta_user"`
-	Pages       []pendingPageDescriptor `json:"pages"`
-	ExpiresAt   time.Time              `json:"expires_at"`
+	ID        string                  `json:"id"`
+	Platform  string                  `json:"platform"`
+	ProfileID string                  `json:"profile_id"`
+	MetaUser  metaUserDescriptor      `json:"meta_user"`
+	Pages     []pendingPageDescriptor `json:"pages"`
+	ExpiresAt time.Time               `json:"expires_at"`
 }
 
 type metaUserDescriptor struct {
@@ -67,12 +67,12 @@ type metaUserDescriptor struct {
 }
 
 type pendingPageDescriptor struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	Category        string   `json:"category"`
-	PictureURL      string   `json:"picture_url"`
-	Tasks           []string `json:"tasks"`
-	CanPublish      bool     `json:"can_publish"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Category   string   `json:"category"`
+	PictureURL string   `json:"picture_url"`
+	Tasks      []string `json:"tasks"`
+	CanPublish bool     `json:"can_publish"`
 }
 
 func (h *OAuthHandler) handleFacebookCallback(
@@ -154,13 +154,13 @@ func (h *OAuthHandler) handleFacebookCallback(
 	}
 
 	row, err := h.queries.CreatePendingConnection(r.Context(), db.CreatePendingConnectionParams{
-		WorkspaceID:         profile.WorkspaceID,
-		ProfileID:           oauthState.ProfileID,
-		Platform:            "facebook",
-		MetaUserID:          metaUserID,
-		UserTokenEncrypted:  encLLToken,
-		UserTokenExpiresAt:  pgtype.Timestamptz{Time: llExpiresAt, Valid: true},
-		PagesJson:           pagesJSON,
+		WorkspaceID:        profile.WorkspaceID,
+		ProfileID:          oauthState.ProfileID,
+		Platform:           "facebook",
+		MetaUserID:         metaUserID,
+		UserTokenEncrypted: encLLToken,
+		UserTokenExpiresAt: pgtype.Timestamptz{Time: llExpiresAt, Valid: true},
+		PagesJson:          pagesJSON,
 	})
 	if err != nil {
 		slog.Error("facebook: failed to write pending connection", "err", err)
@@ -317,10 +317,10 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 	// account creation fails we still want "Add another Page"
 	// later to work without a full re-OAuth.
 	if _, err := h.queries.UpsertMetaUserToken(r.Context(), db.UpsertMetaUserTokenParams{
-		WorkspaceID:              workspaceID,
-		MetaUserID:               row.MetaUserID,
+		WorkspaceID:             workspaceID,
+		MetaUserID:              row.MetaUserID,
 		LongLivedTokenEncrypted: row.UserTokenEncrypted,
-		ExpiresAt:                row.UserTokenExpiresAt,
+		ExpiresAt:               row.UserTokenExpiresAt,
 	}); err != nil {
 		slog.Error("facebook finalize: upsert meta_user_tokens failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to store user token")
@@ -346,12 +346,20 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 		})
 		if findErr == nil && existing.ID != "" {
 			// Reactivate existing account with the fresh Page Token.
-			_, _ = h.queries.ReactivateSocialAccount(r.Context(), db.ReactivateSocialAccountParams{
-				ID:             existing.ID,
-				AccessToken:    page.PageAccessTokenEncrypted,
-				RefreshToken:   pgtype.Text{Valid: false},
-				TokenExpiresAt: pgtype.Timestamptz{Valid: false},
-			})
+			if _, err := h.queries.ReactivateSocialAccount(r.Context(), db.ReactivateSocialAccountParams{
+				ID:               existing.ID,
+				AccessToken:      page.PageAccessTokenEncrypted,
+				RefreshToken:     pgtype.Text{Valid: false},
+				TokenExpiresAt:   pgtype.Timestamptz{Valid: false},
+				AccountName:      pgtype.Text{String: page.Name, Valid: page.Name != ""},
+				AccountAvatarUrl: pgtype.Text{String: page.PictureURL, Valid: page.PictureURL != ""},
+				Metadata:         metadataJSON,
+			}); err != nil {
+				slog.Error("facebook finalize: reactivate social_account failed", "err", err, "account_id", existing.ID, "page_id", page.ID)
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+					fmt.Sprintf("Failed to reconnect Page %q", page.Name))
+				return
+			}
 			createdAccounts = append(createdAccounts, existing.ID)
 			h.subscribePageToWebhooks(r, fbAdapter, page)
 			continue
