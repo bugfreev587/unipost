@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DocsCodeTabs, DocsPage, DocsRichText, DocsTable } from "../../_components/docs-shell";
 import { ApiInlineLink } from "../../api/_components/doc-components";
-import { PLATFORMS, type PlatformSummary } from "./_data";
+import { PLATFORMS, type PlatformDoc, type PlatformSummary } from "./_data";
 import { toExampleSnippets } from "./_snippets";
 
 const SUMMARY_LABELS: Record<keyof Omit<PlatformSummary, "connection">, string> = {
@@ -637,6 +637,65 @@ function summaryTone(value: "full" | "limited" | "none") {
   return "muted";
 }
 
+function PlatformApiExamples({
+  examples,
+  headingLevel = 2,
+}: {
+  examples: PlatformDoc["examples"];
+  headingLevel?: 2 | 3;
+}) {
+  const Heading = headingLevel === 3 ? "h3" : "h2";
+  const renderExampleTitle = (title: string) => {
+    const id = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+    if (headingLevel === 3) {
+      return (
+        <div
+          id={id}
+          style={{
+            color: "var(--docs-text)",
+            fontSize: 18,
+            fontWeight: 680,
+            letterSpacing: "-.015em",
+            lineHeight: 1.3,
+            margin: "22px 0 10px",
+          }}
+        >
+          {title}
+        </div>
+      );
+    }
+
+    return (
+      <h3 id={id}>
+        {title}
+      </h3>
+    );
+  };
+
+  return (
+    <>
+      <Heading id="api-examples">API Examples</Heading>
+      <p className="docs-note">
+        Each example calls <ApiInlineLink endpoint="POST /v1/posts" /> with Bearer
+        auth. Swap the <code>account_ids</code> for your own, then copy the snippet
+        for your language.
+      </p>
+      {examples.map((example) => (
+        <div key={example.title}>
+          {renderExampleTitle(example.title)}
+          {example.note ? (
+            <p className="docs-note">
+              <DocsRichText text={example.note} />
+            </p>
+          ) : null}
+          <DocsCodeTabs snippets={toExampleSnippets(example.body)} />
+        </div>
+      ))}
+    </>
+  );
+}
+
 export default async function PlatformDetailPage({
   params,
 }: {
@@ -738,6 +797,7 @@ export default async function PlatformDetailPage({
           />
           <h3 id="code-examples">Code Examples</h3>
           <DocsCodeTabs snippets={INSTAGRAM_LOCAL_FILE_SNIPPETS} />
+          <PlatformApiExamples examples={data.examples} headingLevel={3} />
         </>
       ) : null}
 
@@ -836,27 +896,7 @@ export default async function PlatformDetailPage({
       />
       {data.setupNote ? <p className="docs-note">{data.setupNote}</p> : null}
 
-      <h2 id="api-examples">API examples</h2>
-      <p className="docs-note">
-        Each example calls <ApiInlineLink endpoint="POST /v1/posts" /> with Bearer
-        auth. Swap the <code>account_ids</code> for your own, then copy the snippet
-        for your language.
-      </p>
-      {data.examples.map((example) => (
-        <div key={example.title}>
-          <h3
-            id={example.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}
-          >
-            {example.title}
-          </h3>
-          {example.note ? (
-            <p className="docs-note">
-              <DocsRichText text={example.note} />
-            </p>
-          ) : null}
-          <DocsCodeTabs snippets={toExampleSnippets(example.body)} />
-        </div>
-      ))}
+      {platform === "instagram" ? null : <PlatformApiExamples examples={data.examples} />}
 
       <h2 id="limitations">Limitations</h2>
       <DocsTable columns={["Limitation", "Why"]} rows={data.limitations} />
