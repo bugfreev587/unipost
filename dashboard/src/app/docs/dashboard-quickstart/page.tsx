@@ -52,7 +52,7 @@ export default function DashboardQuickstartPage() {
       </p>
 
       <p>
-        <strong>Building an integration instead?</strong> Start with the <Link href="/docs/quickstart">API Quickstart</Link> if you want to publish programmatically rather than through the dashboard UI.
+        <strong>Building an integration instead?</strong> Start with <Link href="/docs/quickstart">Quickstart Mode</Link> if you want to publish programmatically rather than through the dashboard UI.
       </p>
     </DocsPage>
   );

@@ -39,7 +39,7 @@ const CREATE_PROFILE_SNIPPETS = [
   {
     label: "Node.js",
     code: `const profile = await client.profiles.create({
-  name: "API Quickstart",
+  name: "Quickstart Mode",
 });
 
 console.log(profile.id);`,
@@ -47,7 +47,7 @@ console.log(profile.id);`,
   {
     label: "Python",
     code: `profile = client.profiles.create(
-  name="API Quickstart",
+  name="Quickstart Mode",
 )
 
 print(profile["data"]["id"])`,
@@ -55,7 +55,7 @@ print(profile["data"]["id"])`,
   {
     label: "Go",
     code: `profile, err := client.Profiles.Create(ctx, &unipost.CreateProfileParams{
-  Name: "API Quickstart",
+  Name: "Quickstart Mode",
 })
 if err != nil {
   log.Fatal(err)
@@ -66,7 +66,7 @@ fmt.Println(profile.ID)`,
   {
     label: "Java",
     code: `var profile = client.profiles().create(Map.of(
-    "name", "API Quickstart"
+    "name", "Quickstart Mode"
 ));
 
 System.out.println(profile.get("id").asText());`,
@@ -201,8 +201,8 @@ export default function QuickstartPage() {
   return (
     <DocsPage
       className="docs-page-wide"
-      eyebrow="API Quickstart"
-      title="API Quickstart"
+      eyebrow="Quickstart Mode"
+      title="Quickstart Mode"
       lead="Create an API key, create a profile, connect your first social account, and publish your first post."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
@@ -355,7 +355,7 @@ export default function QuickstartPage() {
         </Link>
         <Link href="/docs/white-label" className="qs-next-card">
           <div className="qs-next-kicker">For customer accounts</div>
-          <div className="qs-next-title">White-label</div>
+          <div className="qs-next-title">White-label Mode</div>
           <div className="qs-next-body">Customer-owned onboarding with Connect Sessions, external_user_id, and branded OAuth.</div>
         </Link>
         <Link href="/docs/api/posts/create" className="qs-next-card">

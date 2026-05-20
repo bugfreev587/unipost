@@ -289,18 +289,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Using the API",
       items: [
-        { label: "API Quickstart", href: "/docs/quickstart" },
-        { label: "Publishing guide", href: "/docs/publishing" },
-        { label: "SDKs", href: "/docs/sdk" },
-        { label: "CLI", href: "/docs/cli" },
-        { label: "MCP", href: "/docs/mcp" },
-      ],
-    },
-    {
-      title: "Advanced",
-      items: [
+        { label: "Quickstart Mode", href: "/docs/quickstart" },
         {
-          label: "White-label",
+          label: "White-label Mode",
           children: [
             { label: "Overview", href: "/docs/white-label" },
             { label: "Meta", href: "/docs/white-label/meta" },
@@ -310,6 +301,15 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "X / Twitter", href: "/docs/white-label/twitter" },
           ],
         },
+        { label: "SDKs", href: "/docs/sdk" },
+        { label: "Publishing guide", href: "/docs/publishing" },
+      ],
+    },
+    {
+      title: "Advanced",
+      items: [
+        { label: "CLI", href: "/docs/cli" },
+        { label: "MCP", href: "/docs/mcp" },
       ],
     },
   ],
@@ -2970,7 +2970,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
               </button>
               <button type="button" className="docs-chooser-option" onClick={() => handleChooseDocsPath("/docs/quickstart")}>
                 <span className="docs-chooser-option-title">Use the API</span>
-                <span className="docs-chooser-option-body">Publish programmatically with API keys, SDKs, CLI, or MCP.</span>
+                <span className="docs-chooser-option-body">Publish programmatically with API keys, SDKs, or hosted Connect sessions.</span>
               </button>
             </div>
             <div className="docs-chooser-footer">

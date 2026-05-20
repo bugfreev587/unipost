@@ -118,12 +118,12 @@ export const TUTORIAL_REGISTRY: TutorialDefinition[] = [
     handoff: {
       tutorialId: "post_with_api",
       prompt: "Ready to publish programmatically next?",
-      ctaLabel: "Start API Quickstart",
+      ctaLabel: "Start Quickstart Mode",
     },
   },
   {
     id: "post_with_api",
-    title: "API Quickstart",
+    title: "Quickstart Mode",
     description: "Create an API key and send your first post programmatically.",
     required: false,
     prerequisites: ["quickstart"],
