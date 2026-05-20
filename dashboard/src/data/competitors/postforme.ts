@@ -82,7 +82,7 @@ export const POSTFORME = {
     { q: "Can I use UniPost if I'm already using PostForMe?", a: "Yes. You can run both in parallel during migration. UniPost's permanent Free tier (100 posts/mo) lets you test without any financial commitment — PostForMe has no free tier." },
     { q: "PostForMe is open-source. Is UniPost?", a: "No. UniPost is a managed SaaS product. You get reliability, uptime, and zero infrastructure management. If you need open-source and want to self-host, PostForMe is a good choice (AGPL-3.0)." },
     { q: "Does UniPost support X/Twitter?", a: "Yes — on paid plans (API $10/mo and up). UniPost supports the same 9 platforms PostForMe supports." },
-    { q: "Does UniPost have a free trial?", a: "Yes — the Free plan (100 posts/month) is permanent, not a time-limited trial. No credit card required. X publishing is reserved for paid plans. PostForMe has no free tier — its lowest plan is $10/mo." },
+    { q: "Does UniPost have a free plan?", a: "Yes — the Free plan includes 100 posts/month, no credit card, and no time limit. X publishing is reserved for paid plans. PostForMe has no free tier — its lowest plan is $10/mo." },
     { q: "How does UniPost API ($10) compare to PostForMe ($10)?", a: "Same price, same 1,000-post quota, same 9 platforms. UniPost API also includes a native MCP server for AI-agent workflows, which PostForMe does not have. Step up to UniPost Basic ($19/mo) if you also want an Inbox for DMs and comments — PostForMe doesn't ship an inbox." },
     { q: "How long does migration take?", a: "Most developers complete the switch in under an hour. The main change is the endpoint URL and field names." },
   ],

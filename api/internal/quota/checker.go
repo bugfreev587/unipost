@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 )
 
 type QuotaStatus struct {
@@ -29,7 +30,9 @@ func NewChecker(queries *db.Queries) *Checker {
 	return &Checker{queries: queries}
 }
 
-// Check returns the quota status for a workspace. Never blocks — soft limit only.
+// Check returns the quota status for a workspace. Paid plans use soft
+// overage semantics; Free can be hard-blocked by
+// FreePlanHardBlockStatus at publish-admission call sites.
 func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
 	sub, err := c.queries.GetSubscriptionByWorkspace(ctx, workspaceID)
 	if err != nil {
@@ -76,6 +79,33 @@ func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
 	}
 
 	return status
+}
+
+// FreePlanHardBlockStatus reports whether accepting additional publish
+// units would push a Free workspace beyond its monthly post quota.
+//
+// The behavior is feature-flagged because it changes user-visible write
+// semantics. Paid plans deliberately keep the existing soft-overage model.
+func (c *Checker) FreePlanHardBlockStatus(ctx context.Context, workspaceID string, additionalPosts int) (QuotaStatus, bool) {
+	status := c.Check(ctx, workspaceID)
+	if additionalPosts <= 0 || status.Limit < 0 {
+		return status, false
+	}
+
+	if !featureflags.Enabled(ctx, featureflags.FreePlanHardPostQuota, featureflags.Target{
+		WorkspaceID: workspaceID,
+	}) {
+		return status, false
+	}
+
+	return status, shouldHardBlockFreePlanQuota(c.PlanIDFor(ctx, workspaceID), status, additionalPosts)
+}
+
+func shouldHardBlockFreePlanQuota(planID string, status QuotaStatus, additionalPosts int) bool {
+	if planID != "free" || additionalPosts <= 0 || status.Limit < 0 {
+		return false
+	}
+	return status.Usage+additionalPosts > status.Limit
 }
 
 // PlanIDFor returns the plan ID associated with a workspace, or

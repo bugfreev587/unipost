@@ -170,7 +170,6 @@ export default function AdminBillingPage() {
                           {row.status}
                         </span>
                         {row.cancel_at_period_end ? <span className="ad-badge ad-b-gray">cancel at end</span> : null}
-                        {!row.trial_used ? <span className="ad-badge ad-b-blue">trial eligible</span> : null}
                       </div>
                     </td>
                     <td>

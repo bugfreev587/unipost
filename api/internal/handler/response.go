@@ -73,6 +73,10 @@ var normalizedErrorCodeMap = map[string]string{
 	// plans that don't unlock those features. 402 — clients should
 	// surface an upgrade CTA rather than retrying.
 	"PLAN_FEATURE_NOT_AVAILABLE": "plan_feature_not_available",
+	// Free plan monthly quota gate: paid plans keep soft overage
+	// behavior, but Free workspaces cannot accept new publish work
+	// once doing so would exceed their monthly quota.
+	"PLAN_POST_QUOTA_EXCEEDED": "plan_post_quota_exceeded",
 	// Profile-create cap (migration 059, PR-B): workspace already at
 	// the per-plan profile cap. 402 with the cap value in the
 	// message so clients can render an exact upgrade prompt.

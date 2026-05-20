@@ -366,6 +366,20 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 			Disconnected: ok && acc.DisconnectedAt.Valid,
 		}
 	}
+	quotaUnits := countPublishQuotaUnits(parsed, accountMap)
+	if status, blocked := h.checkFreePlanPostQuota(ctx, post.WorkspaceID, quotaUnits); blocked {
+		message := freePlanQuotaExceededMessage(status, quotaUnits)
+		_ = h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+			ID:          post.ID,
+			Status:      "failed",
+			PublishedAt: pgtype.Timestamptz{},
+		})
+		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+			ID:      post.ID,
+			Column2: message,
+		})
+		return fmt.Errorf("%s", message)
+	}
 	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap)
 	return err
 }

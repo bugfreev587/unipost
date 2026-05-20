@@ -285,7 +285,9 @@ function BillingSettingsContent() {
           }}
         >
           {billing.warning === "over_limit"
-            ? "Monthly post quota exceeded. Posting continues for now — sustained overage will require an upgrade."
+            ? billing.plan === "free"
+              ? "Free monthly post quota reached. Upgrade to keep posting this month."
+              : "Monthly post quota exceeded. Posting continues for now — sustained overage will require an upgrade."
             : `${pct}% of monthly post quota used. Consider upgrading.`}
         </div>
       )}
@@ -293,11 +295,6 @@ function BillingSettingsContent() {
       <div style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
           <div className="dt-body" style={{ fontWeight: 600 }}>Upgrade Plan</div>
-          {billing?.trial_eligible && billing?.plan === "free" && (
-            <span className="dbadge dbadge-green" style={{ fontSize: 10 }}>
-              14-day trial on any paid plan
-            </span>
-          )}
         </div>
         <div className="dt-body-sm">
           Plans are product-stage tiers (Free / API / Basic / Growth / Team). See the full feature matrix at <a href="/pricing" style={{ color: "var(--daccent)", textDecoration: "underline" }}>unipost.dev/pricing</a>.

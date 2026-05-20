@@ -12,9 +12,10 @@
 // on POST /v1/social-posts, where the database uniqueness constraint
 // can backstop replay safety.
 //
-// Quota counts each post individually. If a workspace hits its quota
-// halfway through the batch, the remaining posts get a quota_exceeded
-// error result rather than failing the batch.
+// Quota counts each post individually. If a Free workspace hits its
+// monthly quota halfway through the batch, the remaining posts get a
+// PLAN_POST_QUOTA_EXCEEDED error result rather than failing the batch.
+// Paid workspaces keep soft-overage behavior.
 //
 // Drafts and scheduled posts are NOT supported in bulk — they're
 // rejected per-post with a clean validation error. The bulk path is
@@ -112,8 +113,13 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := make([]bulkResultEntry, len(body.Posts))
+	acceptedQuotaUnits := 0
 	for i, postBody := range body.Posts {
-		results[i] = h.processBulkOne(r, workspaceID, postBody, accountMap)
+		result, quotaUnits := h.processBulkOne(r, workspaceID, postBody, accountMap, acceptedQuotaUnits)
+		if result.Error == nil {
+			acceptedQuotaUnits += quotaUnits
+		}
+		results[i] = result
 	}
 
 	writeSuccess(w, results)
@@ -128,13 +134,14 @@ func (h *SocialPostHandler) processBulkOne(
 	workspaceID string,
 	body publishRequestBody,
 	accountMap map[string]platform.ValidateAccount,
-) bulkResultEntry {
+	acceptedQuotaUnits int,
+) (bulkResultEntry, int) {
 	parsed, status, msg := parsePublishRequest(body)
 	if status != 0 {
 		return bulkResultEntry{
 			Status: status,
 			Error:  &bulkErrorEnvelope{Code: "VALIDATION_ERROR", Message: msg},
-		}
+		}, 0
 	}
 
 	// Bulk doesn't support drafts or scheduled posts.
@@ -145,7 +152,7 @@ func (h *SocialPostHandler) processBulkOne(
 				Code:    "VALIDATION_ERROR",
 				Message: "drafts are not supported in bulk publish — use POST /v1/social-posts",
 			},
-		}
+		}, 0
 	}
 	if parsed.ScheduledAt != nil {
 		return bulkResultEntry{
@@ -154,7 +161,7 @@ func (h *SocialPostHandler) processBulkOne(
 				Code:    "VALIDATION_ERROR",
 				Message: "scheduled posts are not supported in bulk publish — use POST /v1/social-posts",
 			},
-		}
+		}, 0
 	}
 
 	// Validate.
@@ -169,7 +176,18 @@ func (h *SocialPostHandler) processBulkOne(
 				Code:    "VALIDATION_ERROR",
 				Message: fatal[0].Message,
 			},
-		}
+		}, 0
+	}
+
+	quotaUnits := countPublishQuotaUnits(parsed.Posts, accountMap)
+	if status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, acceptedQuotaUnits+quotaUnits); blocked {
+		return bulkResultEntry{
+			Status: http.StatusPaymentRequired,
+			Error: &bulkErrorEnvelope{
+				Code:    "PLAN_POST_QUOTA_EXCEEDED",
+				Message: freePlanQuotaExceededMessage(status, quotaUnits),
+			},
+		}, 0
 	}
 
 	// Publish.
@@ -178,7 +196,7 @@ func (h *SocialPostHandler) processBulkOne(
 		return bulkResultEntry{
 			Status: http.StatusInternalServerError,
 			Error:  &bulkErrorEnvelope{Code: "INTERNAL_ERROR", Message: err.Error()},
-		}
+		}, 0
 	}
-	return bulkResultEntry{Status: http.StatusOK, Data: &resp}
+	return bulkResultEntry{Status: http.StatusOK, Data: &resp}, quotaUnits
 }

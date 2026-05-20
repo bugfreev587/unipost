@@ -69,6 +69,54 @@ func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, q
 	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus, storage: store, limiter: limiter, ilog: ilog}
 }
 
+func countPublishQuotaUnits(posts []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount) int {
+	if len(posts) == 0 {
+		return 0
+	}
+	if accountMap == nil {
+		return len(posts)
+	}
+	units := 0
+	for _, post := range posts {
+		account := accountMap[post.AccountID]
+		if account.Platform == "" || account.Disconnected {
+			continue
+		}
+		units++
+	}
+	return units
+}
+
+func freePlanQuotaExceededMessage(status quota.QuotaStatus, requestedUnits int) string {
+	if requestedUnits < 1 {
+		requestedUnits = 1
+	}
+	return fmt.Sprintf(
+		"Free plan monthly post quota exceeded. You have used %d of %d posts this month, and this request needs %d more. Upgrade to continue posting.",
+		status.Usage,
+		status.Limit,
+		requestedUnits,
+	)
+}
+
+func (h *SocialPostHandler) checkFreePlanPostQuota(ctx context.Context, workspaceID string, requestedUnits int) (quota.QuotaStatus, bool) {
+	if h.quota == nil || requestedUnits <= 0 {
+		return quota.QuotaStatus{}, false
+	}
+	return h.quota.FreePlanHardBlockStatus(ctx, workspaceID, requestedUnits)
+}
+
+func (h *SocialPostHandler) rejectFreePlanPostQuotaExceeded(w http.ResponseWriter, r *http.Request, workspaceID string, requestedUnits int) bool {
+	status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, requestedUnits)
+	if !blocked {
+		return false
+	}
+	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", status.Usage, status.Limit))
+	w.Header().Set("X-UniPost-Warning", "over_limit")
+	writeError(w, http.StatusPaymentRequired, "PLAN_POST_QUOTA_EXCEEDED", freePlanQuotaExceededMessage(status, requestedUnits))
+	return true
+}
+
 type postResultResponse struct {
 	// ID is the social_post_results row ID. Required by the dashboard
 	// for the per-platform retry path — without it the frontend can't
@@ -348,7 +396,8 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Metadata:    summarizePublishRequest(body, parsed),
 	})
 
-	// Quota headers (soft — never blocks).
+	// Initial quota headers. The Free-plan hard gate runs later once
+	// validation tells us how many publish units this request can accept.
 	quotaStatus := h.quota.Check(r.Context(), workspaceID)
 	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", quotaStatus.Usage, quotaStatus.Limit))
 	if quotaStatus.Warning != "" {
@@ -409,6 +458,9 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
 			return
 		}
+		if h.rejectFreePlanPostQuotaExceeded(w, r, workspaceID, countPublishQuotaUnits(parsed.Posts, accountMap)) {
+			return
+		}
 		if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{
 			enqueue:      true,
 			enqueueUnits: 1,
@@ -419,6 +471,9 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.rejectFreePlanPostQuotaExceeded(w, r, workspaceID, countPublishQuotaUnits(parsed.Posts, accountMap)) {
+		return
+	}
 	if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{
 		enqueue:      true,
 		depth:        true,

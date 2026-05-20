@@ -201,6 +201,10 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		writeValidationErrors(w, fatal)
 		return
 	}
+	if h.rejectFreePlanPostQuotaExceeded(w, r, workspaceID, countPublishQuotaUnits(posts, accountMap)) {
+		_ = h.rollbackToDraft(r, claimed.ID)
+		return
+	}
 
 	// Reuse the existing publish loop. createImmediatePost will
 	// re-create the parent row, but we already have one — instead,

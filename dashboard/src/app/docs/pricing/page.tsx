@@ -40,9 +40,12 @@ export default function DocsPricingPage() {
       <h2 id="usage-controls">Usage and safety controls</h2>
       <p>Two limits apply to every plan:</p>
       <ul>
-        <li><strong>Monthly post quota</strong> — the post number in the table above. Soft limit: posting continues over the cap, but sustained overage triggers an upgrade conversation. No surprise billing.</li>
+        <li><strong>Monthly post quota</strong> — the post number in the table above. Free is a hard cap: once a Free workspace reaches 100 posts/month, new publish requests are rejected until the next month or an upgrade. Paid plans use soft overage: posting continues over the cap, but sustained overage triggers an upgrade conversation. No surprise billing.</li>
         <li><strong>Per-account daily safety caps</strong> — each connected account has a daily ceiling to keep it from being flagged as a spam bot by the platform itself: X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. UTC-day window. Failed posts don&apos;t count.</li>
       </ul>
+
+      <h2 id="free-plan">Free plan and trials</h2>
+      <p>The Free plan is the public trial path: 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial by default; upgrade when you need X publishing, higher volume, Inbox, Analytics, white-label, or team workflows.</p>
 
       <h2 id="full-pricing">Full pricing</h2>
       <p>Side-by-side feature comparison and FAQs:</p>
