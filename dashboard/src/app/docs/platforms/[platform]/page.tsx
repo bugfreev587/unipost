@@ -470,15 +470,7 @@ console.log(publishingResult.results);`,
   },
 ];
 
-const INSTAGRAM_SEQUENCE_ACTORS = [
-  { label: "Client", x: 130 },
-  { label: "UniPost API", x: 455 },
-  { label: "R2", x: 650 },
-  { label: "Worker", x: 845 },
-  { label: "Instagram", x: 1060 },
-] as const;
-
-const INSTAGRAM_SEQUENCE_MESSAGES: readonly {
+const PLATFORM_SEQUENCE_MESSAGES: readonly {
   from: number;
   label: string;
   response?: boolean;
@@ -499,10 +491,18 @@ const INSTAGRAM_SEQUENCE_MESSAGES: readonly {
   { from: 130, to: 455, y: 650, label: "GET /v1/posts/{post_id}" },
 ] as const;
 
-function InstagramApiSequenceDiagram() {
+function PlatformApiSequenceDiagram({ platformName }: { platformName: string }) {
+  const actors = [
+    { label: "Client", x: 130 },
+    { label: "UniPost API", x: 455 },
+    { label: "R2", x: 650 },
+    { label: "Worker", x: 845 },
+    { label: platformName, x: 1060 },
+  ] as const;
+
   return (
     <div
-      aria-label="Instagram post API call sequence"
+      aria-label={`${platformName} post API call sequence`}
       style={{
         background: "#171717",
         border: "1px solid #333333",
@@ -520,9 +520,9 @@ function InstagramApiSequenceDiagram() {
           height: "auto",
           minWidth: 980,
           width: "100%",
-        }}
-      >
-        <title id="instagram-sequence-title">Instagram local file publishing sequence</title>
+          }}
+        >
+        <title id="instagram-sequence-title">{platformName} local file publishing sequence</title>
         <defs>
           <marker
             id="instagram-sequence-arrow"
@@ -537,7 +537,7 @@ function InstagramApiSequenceDiagram() {
           </marker>
         </defs>
         <rect fill="#171717" height="770" rx="16" width="1180" x="0" y="0" />
-        {INSTAGRAM_SEQUENCE_ACTORS.map((actor) => (
+        {actors.map((actor) => (
           <line
             key={`${actor.label}-lifeline`}
             stroke="#a3a3a3"
@@ -548,7 +548,7 @@ function InstagramApiSequenceDiagram() {
             y2="690"
           />
         ))}
-        {INSTAGRAM_SEQUENCE_MESSAGES.map((message) => (
+        {PLATFORM_SEQUENCE_MESSAGES.map((message) => (
           <g key={`${message.label}-${message.y}`}>
             <line
               markerEnd="url(#instagram-sequence-arrow)"
@@ -572,7 +572,7 @@ function InstagramApiSequenceDiagram() {
             </text>
           </g>
         ))}
-        {INSTAGRAM_SEQUENCE_ACTORS.map((actor) => (
+        {actors.map((actor) => (
           <g key={`${actor.label}-top`}>
             <rect
               fill="#303030"
@@ -596,7 +596,7 @@ function InstagramApiSequenceDiagram() {
             </text>
           </g>
         ))}
-        {INSTAGRAM_SEQUENCE_ACTORS.map((actor) => (
+        {actors.map((actor) => (
           <g key={`${actor.label}-bottom`}>
             <rect
               fill="#303030"
@@ -745,47 +745,154 @@ function MediaSpecsSection({ data }: { data: PlatformDoc }) {
   );
 }
 
-function InstagramInputModeCards() {
+function PlatformInputModeCards({
+  mediaRequired,
+  supportsManagedUploads,
+}: {
+  mediaRequired: boolean;
+  supportsManagedUploads: boolean;
+}) {
   return (
     <div className="docs-decision-grid">
       <article className="docs-decision-card">
-        <div className="docs-decision-kicker">Hosted media URL</div>
+        <div className="docs-decision-kicker">Direct publish</div>
         <div className="docs-decision-endpoint">
           <ApiInlineLink endpoint="POST /v1/posts" />
         </div>
-        <p>
-          Use this when your image or video already has a public URL. Pass it in{" "}
-          <code>platform_posts[].media_urls</code> and publish directly.
-        </p>
+        {mediaRequired ? (
+          <p>
+            Use this when your image or video already has a public URL. Pass hosted
+            assets in <code>platform_posts[].media_urls</code>.
+          </p>
+        ) : (
+          <p>
+            Use this for text-only posts or when your media already has a public URL.
+            Pass hosted assets in <code>platform_posts[].media_urls</code>.
+          </p>
+        )}
       </article>
-      <article className="docs-decision-card">
-        <div className="docs-decision-kicker">Local file upload</div>
-        <div className="docs-decision-endpoint">
-          <ApiInlineLink endpoint="POST /v1/media" />
-          <span>then</span>
-          <ApiInlineLink endpoint="POST /v1/posts" />
-        </div>
-        <p>
-          Use this when your app has raw file bytes. Reserve media, PUT the bytes,
-          poll until uploaded, then publish with <code>platform_posts[].media_ids</code>.
-        </p>
-        <a className="docs-decision-link" href="#local-file-flow">
-          See the 7-step flow
-        </a>
-      </article>
+      {supportsManagedUploads ? (
+        <article className="docs-decision-card">
+          <div className="docs-decision-kicker">Local file upload</div>
+          <div className="docs-decision-endpoint">
+            <ApiInlineLink endpoint="POST /v1/media" />
+            <span>then</span>
+            <ApiInlineLink endpoint="POST /v1/posts" />
+          </div>
+          <p>
+            Use this when your app has raw file bytes. Reserve media, PUT the bytes,
+            poll until uploaded, then publish with <code>platform_posts[].media_ids</code>.
+          </p>
+          <a className="docs-decision-link" href="#local-file-flow">
+            See the 7-step flow
+          </a>
+        </article>
+      ) : (
+        <article className="docs-decision-card">
+          <div className="docs-decision-kicker">Preflight first</div>
+          <div className="docs-decision-endpoint">
+            <ApiInlineLink endpoint="POST /v1/posts/validate" />
+          </div>
+          <p>
+            Use validation before publish when platform limits, account state, or
+            required metadata can block the request.
+          </p>
+        </article>
+      )}
     </div>
   );
 }
 
-function InstagramNextSteps() {
+function PublishGuideSection({
+  data,
+  isInstagram,
+  mediaRequired,
+  supportsManagedUploads,
+}: {
+  data: PlatformDoc;
+  isInstagram: boolean;
+  mediaRequired: boolean;
+  supportsManagedUploads: boolean;
+}) {
+  return (
+    <>
+      <h2 id="post-api-guide">Publish guide</h2>
+      <h3 id="media-input-options">Choose input mode</h3>
+      <p className="docs-note">
+        Start here when you want to publish to {data.title} through the API.
+        Direct publish uses <ApiInlineLink endpoint="POST /v1/posts" /> with{" "}
+        {mediaRequired ? "hosted media URLs and platform-specific metadata" : "text, hosted media URLs, or platform-specific metadata"}.
+        {supportsManagedUploads ? (
+          <>
+            {" "}Local files need one upload step first, then the final publish call uses <code>media_ids</code>.
+          </>
+        ) : null}{" "}
+        <ApiInlineLink endpoint="POST /v1/posts" /> returns <code>202</code>; read
+        the final result with <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> or webhooks.
+      </p>
+      <PlatformInputModeCards
+        mediaRequired={mediaRequired}
+        supportsManagedUploads={supportsManagedUploads}
+      />
+      {supportsManagedUploads ? (
+        <>
+          <h3 id="local-file-flow">Local File Flow</h3>
+          <p className="docs-note">
+            The diagram shows the same local-file publish path as the table below:
+            reserve media, upload to storage, confirm the media is ready, publish,
+            then read or receive the asynchronous result.
+          </p>
+          <PlatformApiSequenceDiagram platformName={data.title} />
+          <DocsTable
+            columns={["Step", "API call", "Purpose"]}
+            rows={[
+              ["1", <ApiInlineLink key="connect" endpoint="POST /v1/oauth/connect" />, `Connect the ${data.title} account, then list accounts to keep its account_id.`],
+              ["2", <ApiInlineLink key="reserve" endpoint="POST /v1/media" />, "Reserve a media row and receive a presigned upload_url."],
+              ["3", <code key="put">PUT upload_url</code>, "Upload the raw image or video bytes directly to storage."],
+              ["4", <ApiInlineLink key="get-media" endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" />, "Poll until status is uploaded or attached."],
+              ["5", <ApiInlineLink key="validate" endpoint="POST /v1/posts/validate" />, "Optional preflight check for platform media rules, required metadata, and account state."],
+              ["6", <ApiInlineLink key="create" endpoint="POST /v1/posts" />, "Create the post with platform_posts[].media_ids and any required platform_options."],
+              [
+                "7",
+                <ApiInlineLink key="get-post" endpoint="GET /v1/posts/:post_id" />,
+                <span key="get-post-purpose">
+                  Get the async publishing status and result. You can also receive final status through webhooks; see{" "}
+                  <Link href="/docs/api/posts/create#publishing-result">Publishing Result</Link>.
+                </span>,
+              ],
+            ]}
+          />
+        </>
+      ) : null}
+      {isInstagram ? (
+        <>
+          <h3 id="code-examples">End-to-end local file example</h3>
+          <DocsCodeTabs snippets={INSTAGRAM_LOCAL_FILE_SNIPPETS} />
+        </>
+      ) : null}
+      <PlatformApiExamples
+        examples={data.examples}
+        headingLevel={3}
+        title="Publish examples by surface"
+      />
+    </>
+  );
+}
+
+function PlatformNextSteps({
+  data,
+  platform,
+}: {
+  data: PlatformDoc;
+  platform: string;
+}) {
   return (
     <div className="docs-next-grid">
-      <Link href="/docs/platforms/instagram#api-examples" className="docs-next-card">
+      <Link href={`/docs/platforms/${platform}#api-examples`} className="docs-next-card">
         <div className="docs-next-kicker">Publish surfaces</div>
-        <div className="docs-next-title">Build a carousel post</div>
+        <div className="docs-next-title">Start from a {data.title} example</div>
         <div className="docs-next-body">
-          Start from the Instagram carousel payload and swap in your own account
-          and media.
+          Pick the closest payload shape and swap in your own account, caption, and media.
         </div>
       </Link>
       <Link href="/docs/api/posts/create#publishing-result" className="docs-next-card">
@@ -803,12 +910,11 @@ function InstagramNextSteps() {
           backend.
         </div>
       </Link>
-      <Link href="/docs/white-label/meta" className="docs-next-card">
+      <Link href="/docs/white-label" className="docs-next-card">
         <div className="docs-next-kicker">Customer accounts</div>
-        <div className="docs-next-title">Prepare Meta app review</div>
+        <div className="docs-next-title">Plan account connection</div>
         <div className="docs-next-body">
-          Use your own Meta app when customers connect Instagram accounts through
-          your branded flow.
+          Choose Quickstart or White-label based on who owns the social accounts.
         </div>
       </Link>
     </div>
@@ -826,6 +932,9 @@ export default async function PlatformDetailPage({
 
   const supportsManagedUploads = data.requirements.some(
     (row) => row[0].includes("media_urls") || row[0].includes("media_ids"),
+  );
+  const mediaRequired = data.requirements.some(
+    (row) => row[0].includes("media_urls") && String(row[1]).toLowerCase() === "required",
   );
   const isInstagram = platform === "instagram";
 
@@ -845,23 +954,13 @@ export default async function PlatformDetailPage({
         </div>
         <div className="docs-guide-intro-body">
           <div className="docs-guide-intro-title">{data.tagline}</div>
-          {isInstagram ? null : (
-            <div className="docs-badge-row">
-              {data.badges.map((badge) => (
-                <span className="docs-badge" key={badge}>
-                  {badge}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
-      {isInstagram ? (
+      {data.setupNote ? (
         <div className="docs-callout docs-callout-warning docs-callout-compact">
-          <strong>Instagram account requirement</strong>
-          Connected accounts must be Instagram Business or Creator accounts linked
-          to a Facebook Page. White-label public use also requires Meta app review.
+          <strong>{data.title} account requirement</strong>
+          {data.setupNote}
         </div>
       ) : null}
 
@@ -876,23 +975,13 @@ export default async function PlatformDetailPage({
             </div>
           );
         })}
-        {isInstagram ? null : (
-          <div className="docs-summary-card docs-summary-card-wide">
-            <div className="docs-summary-label">Connection</div>
-            <div className="docs-summary-copy">
-              {data.summary.connection}
-            </div>
-          </div>
-        )}
       </div>
-      {isInstagram ? (
-        <div className="docs-summary-connection">
-          <div className="docs-summary-label">Connection</div>
-          <div className="docs-summary-copy">
-            {data.summary.connection}
-          </div>
+      <div className="docs-summary-connection">
+        <div className="docs-summary-label">Connection</div>
+        <div className="docs-summary-copy">
+          {data.summary.connection}
         </div>
-      ) : null}
+      </div>
 
       <h2 id="feature-matrix">Feature matrix</h2>
       <DocsTable columns={["Feature", "Support", "Notes"]} rows={data.capabilities} />
@@ -900,54 +989,12 @@ export default async function PlatformDetailPage({
       <h2 id="limitations">Known constraints</h2>
       <DocsTable columns={["Limitation", "Why"]} rows={data.limitations} />
 
-      {isInstagram ? (
-        <>
-          <h2 id="post-api-guide">Publish guide</h2>
-          <h3 id="media-input-options">Choose input mode</h3>
-          <p className="docs-note">
-            Start here when you want to publish an Instagram post through the API.
-            Hosted media can go straight into <code>media_urls</code>. Local files
-            need one upload step first, then the final publish call uses{" "}
-            <code>media_ids</code>. <ApiInlineLink endpoint="POST /v1/posts" />{" "}
-            returns <code>202</code>; read the final result with{" "}
-            <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> or webhooks.
-          </p>
-          <InstagramInputModeCards />
-          <h3 id="local-file-flow">Local File Flow</h3>
-          <p className="docs-note">
-            The diagram shows the same local-file publish path as the table below:
-            reserve media, upload to storage, confirm the media is ready, publish,
-            then read or receive the asynchronous result.
-          </p>
-          <InstagramApiSequenceDiagram />
-          <DocsTable
-            columns={["Step", "API call", "Purpose"]}
-            rows={[
-              ["1", <ApiInlineLink key="connect" endpoint="POST /v1/oauth/connect" />, "Connect the Instagram Business or Creator account, then list accounts to keep its account_id."],
-              ["2", <ApiInlineLink key="reserve" endpoint="POST /v1/media" />, "Reserve a media row and receive a presigned upload_url."],
-              ["3", <code key="put">PUT upload_url</code>, "Upload the raw image or video bytes directly to storage."],
-              ["4", <ApiInlineLink key="get-media" endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" />, "Poll until status is uploaded or attached."],
-              ["5", <ApiInlineLink key="validate" endpoint="POST /v1/posts/validate" />, "Optional preflight check for Instagram media rules and account state."],
-              ["6", <ApiInlineLink key="create" endpoint="POST /v1/posts" />, "Create the post with platform_posts[].media_ids and platform_options.mediaType."],
-              [
-                "7",
-                <ApiInlineLink key="get-post" endpoint="GET /v1/posts/:post_id" />,
-                <span key="get-post-purpose">
-                  Get the async publishing status and result. You can also receive final status through webhooks; see{" "}
-                  <Link href="/docs/api/posts/create#publishing-result">Publishing Result</Link>.
-                </span>,
-              ],
-            ]}
-          />
-          <h3 id="code-examples">End-to-end local file example</h3>
-          <DocsCodeTabs snippets={INSTAGRAM_LOCAL_FILE_SNIPPETS} />
-          <PlatformApiExamples
-            examples={data.examples}
-            headingLevel={3}
-            title="Publish examples by surface"
-          />
-        </>
-      ) : null}
+      <PublishGuideSection
+        data={data}
+        isInstagram={isInstagram}
+        mediaRequired={mediaRequired}
+        supportsManagedUploads={supportsManagedUploads}
+      />
 
       <h2 id="media-requirements">Media &amp; field requirements</h2>
       <DocsTable
@@ -1001,44 +1048,11 @@ export default async function PlatformDetailPage({
       />
       {data.setupNote ? <p className="docs-note">{data.setupNote}</p> : null}
 
-      {isInstagram ? null : <PlatformApiExamples examples={data.examples} />}
-
       <h2 id="validation-errors">Validation errors</h2>
       <DocsTable columns={["Code", "What it means"]} rows={data.errors} />
 
       <h2 id="next-steps">Next steps</h2>
-      {isInstagram ? <InstagramNextSteps /> : (
-        <div className="docs-next-grid">
-        <Link href="/docs/quickstart" className="docs-next-card">
-          <div className="docs-next-kicker">Start publishing</div>
-          <div className="docs-next-title">Quickstart</div>
-          <div className="docs-next-body">
-            Get an API key, connect this platform, and send your first post.
-          </div>
-        </Link>
-        <Link href="/docs/api/posts/create" className="docs-next-card">
-          <div className="docs-next-kicker">API reference</div>
-          <div className="docs-next-title">Create post</div>
-          <div className="docs-next-body">
-            Full request / response schema for the publish endpoint.
-          </div>
-        </Link>
-        <Link href="/docs/api/posts/validate" className="docs-next-card">
-          <div className="docs-next-kicker">Preflight</div>
-          <div className="docs-next-title">Validate post</div>
-          <div className="docs-next-body">
-            Catch caption and media issues before you hit publish.
-          </div>
-        </Link>
-        <Link href="/docs/white-label" className="docs-next-card">
-          <div className="docs-next-kicker">For customer accounts</div>
-          <div className="docs-next-title">White-label</div>
-          <div className="docs-next-body">
-            Branded Connect flows that run against your own OAuth app.
-          </div>
-        </Link>
-        </div>
-      )}
+      <PlatformNextSteps data={data} platform={platform} />
     </DocsPage>
   );
 }
