@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { ApiInlineLink, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -44,7 +44,7 @@ const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
   {
     name: "platform_posts[].media_ids?",
     type: "string[]",
-    description: "Media library IDs to validate for that destination.",
+    description: <>Media library IDs to validate for that destination. Poll <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until uploaded before publishing.</>,
   },
   {
     name: "platform_posts[].thread_position?",
@@ -103,6 +103,11 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     name: "errors[].message",
     type: "string",
     description: "Human-readable validation message.",
+  },
+  {
+    name: "errors[].actual?",
+    type: "any",
+    description: "Structured details for issue-specific recovery steps, when available.",
   },
   {
     name: "errors[].severity",
@@ -255,6 +260,34 @@ const RESPONSE_SNIPPETS = [
         "field": "caption",
         "code": "exceeds_max_length",
         "message": "Caption exceeds maximum length for twitter (280 characters)",
+        "severity": "error"
+      }
+    ],
+    "warnings": []
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "200 (media pending)",
+    code: `{
+  "data": {
+    "valid": false,
+    "errors": [
+      {
+        "platform_post_index": 0,
+        "account_id": "sa_instagram_123",
+        "platform": "instagram",
+        "field": "media_ids",
+        "code": "media_not_uploaded",
+        "message": "media_id media_123 is in status pending; PUT bytes to the upload_url returned by POST /v1/media, then poll GET /v1/media/media_123 until status is uploaded before publishing",
+        "actual": {
+          "media_id": "media_123",
+          "media_status": "pending",
+          "next_step": "PUT bytes to upload_url, then poll GET /v1/media/{media_id} until status=uploaded",
+          "docs_url": "https://unipost.dev/docs/api/media/reserve"
+        },
         "severity": "error"
       }
     ],

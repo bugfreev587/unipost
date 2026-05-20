@@ -232,6 +232,11 @@ func (h *SocialPostHandler) loadValidateMedia(r *http.Request, workspaceID strin
 			// just leave it absent from the map.
 			continue
 		}
+		if row.Status == "pending" && h.storage != nil {
+			if hydrated, ok := hydrateMediaRow(r.Context(), h.queries, h.storage, row); ok {
+				row = hydrated
+			}
+		}
 		out[mid] = platform.ValidateMedia{
 			Status:      row.Status,
 			ContentType: row.ContentType,

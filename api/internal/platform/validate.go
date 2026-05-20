@@ -266,8 +266,8 @@ const (
 	// "we checked and it's fine" from "we couldn't check" without
 	// having to remember which media_ids had probe metadata.
 	CodeFacebookVideoMetadataUnknown = "facebook_video_metadata_unknown"
-	CodePinterestBoardRequired   = "pinterest_board_required"
-	CodeInvalidPinterestLink     = "invalid_pinterest_link"
+	CodePinterestBoardRequired       = "pinterest_board_required"
+	CodeInvalidPinterestLink         = "invalid_pinterest_link"
 )
 
 // MaxPlatformPosts is the upper bound on how many entries one
@@ -992,7 +992,7 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 	imageCount := len(FilterByKind(mediaItems, MediaKindImage, MediaKindGIF, MediaKindUnknown))
 	videoCount := len(FilterByKind(mediaItems, MediaKindVideo))
 
-	if cap.Media.RequiresMedia && len(mediaItems) == 0 {
+	if cap.Media.RequiresMedia && len(mediaItems) == 0 && len(post.MediaIDs) == 0 {
 		res.Errors = append(res.Errors, Issue{
 			PlatformPostIndex: i,
 			AccountID:         post.AccountID,
@@ -1412,8 +1412,14 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 					Platform:          plat,
 					Field:             "media_ids",
 					Code:              CodeMediaNotUploaded,
-					Message:           "media_id " + mid + " is in status " + m.Status + "; PUT the bytes to the presigned URL first",
-					Severity:          SeverityError,
+					Message:           "media_id " + mid + " is in status " + m.Status + "; PUT bytes to the upload_url returned by POST /v1/media, then poll GET /v1/media/" + mid + " until status is uploaded before publishing",
+					Actual: map[string]any{
+						"media_id":     mid,
+						"media_status": m.Status,
+						"next_step":    "PUT bytes to upload_url, then poll GET /v1/media/{media_id} until status=uploaded",
+						"docs_url":     "https://unipost.dev/docs/api/media/reserve",
+					},
+					Severity: SeverityError,
 				})
 				continue
 			}
