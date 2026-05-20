@@ -26,6 +26,12 @@ type Checker struct {
 	queries *db.Queries
 }
 
+type FreePlanHardBlockGate struct {
+	Status  QuotaStatus
+	planID  string
+	enabled bool
+}
+
 func NewChecker(queries *db.Queries) *Checker {
 	return &Checker{queries: queries}
 }
@@ -87,18 +93,34 @@ func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
 // The behavior is feature-flagged because it changes user-visible write
 // semantics. Paid plans deliberately keep the existing soft-overage model.
 func (c *Checker) FreePlanHardBlockStatus(ctx context.Context, workspaceID string, additionalPosts int) (QuotaStatus, bool) {
-	status := c.Check(ctx, workspaceID)
-	if additionalPosts <= 0 || status.Limit < 0 {
-		return status, false
-	}
+	gate := c.FreePlanHardBlockGate(ctx, workspaceID)
+	return gate.Status, gate.Blocked(additionalPosts)
+}
 
+// FreePlanHardBlockGate snapshots the quota state for one request so
+// batch callers can project accepted posts without re-reading quota for
+// every item.
+func (c *Checker) FreePlanHardBlockGate(ctx context.Context, workspaceID string) FreePlanHardBlockGate {
+	status := c.Check(ctx, workspaceID)
+	gate := FreePlanHardBlockGate{Status: status}
+	if status.Limit < 0 {
+		return gate
+	}
 	if !featureflags.Enabled(ctx, featureflags.FreePlanHardPostQuota, featureflags.Target{
 		WorkspaceID: workspaceID,
 	}) {
-		return status, false
+		return gate
 	}
+	gate.enabled = true
+	gate.planID = c.PlanIDFor(ctx, workspaceID)
+	return gate
+}
 
-	return status, shouldHardBlockFreePlanQuota(c.PlanIDFor(ctx, workspaceID), status, additionalPosts)
+func (g FreePlanHardBlockGate) Blocked(additionalPosts int) bool {
+	if !g.enabled {
+		return false
+	}
+	return shouldHardBlockFreePlanQuota(g.planID, g.Status, additionalPosts)
 }
 
 func shouldHardBlockFreePlanQuota(planID string, status QuotaStatus, additionalPosts int) bool {

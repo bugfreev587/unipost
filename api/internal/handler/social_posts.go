@@ -74,6 +74,9 @@ func countPublishQuotaUnits(posts []platform.PlatformPostInput, accountMap map[s
 		return 0
 	}
 	if accountMap == nil {
+		// Conservative fallback for tests and defensive callers: without
+		// account state we over-count rather than risk accepting work that
+		// should have been quota-gated.
 		return len(posts)
 	}
 	units := 0
@@ -111,10 +114,14 @@ func (h *SocialPostHandler) rejectFreePlanPostQuotaExceeded(w http.ResponseWrite
 	if !blocked {
 		return false
 	}
+	writeFreePlanPostQuotaExceeded(w, status, requestedUnits)
+	return true
+}
+
+func writeFreePlanPostQuotaExceeded(w http.ResponseWriter, status quota.QuotaStatus, requestedUnits int) {
 	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", status.Usage, status.Limit))
 	w.Header().Set("X-UniPost-Warning", "over_limit")
 	writeError(w, http.StatusPaymentRequired, "PLAN_POST_QUOTA_EXCEEDED", freePlanQuotaExceededMessage(status, requestedUnits))
-	return true
 }
 
 type postResultResponse struct {

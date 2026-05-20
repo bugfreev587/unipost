@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // draftResponse is the payload returned by createDraft + PublishDraft +
@@ -201,8 +203,9 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		writeValidationErrors(w, fatal)
 		return
 	}
-	if h.rejectFreePlanPostQuotaExceeded(w, r, workspaceID, countPublishQuotaUnits(posts, accountMap)) {
-		_ = h.rollbackToDraft(r, claimed.ID)
+	quotaUnits := countPublishQuotaUnits(posts, accountMap)
+	if status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, quotaUnits); blocked {
+		h.rollbackDraftAndWriteFreePlanQuotaError(w, r, claimed.ID, status, quotaUnits)
 		return
 	}
 
@@ -222,6 +225,15 @@ func (h *SocialPostHandler) rollbackToDraft(r *http.Request, postID string) erro
 		Status:      "draft",
 		PublishedAt: pgtype.Timestamptz{},
 	})
+}
+
+func (h *SocialPostHandler) rollbackDraftAndWriteFreePlanQuotaError(w http.ResponseWriter, r *http.Request, postID string, status quota.QuotaStatus, requestedUnits int) {
+	if err := h.rollbackToDraft(r, postID); err != nil {
+		slog.Error("publish draft: failed to roll back after quota rejection", "post_id", postID, "error", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to restore draft after quota check. Please refresh and contact support if the draft is not editable.")
+		return
+	}
+	writeFreePlanPostQuotaExceeded(w, status, requestedUnits)
 }
 
 type socialPostLifecyclePatch struct {

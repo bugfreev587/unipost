@@ -45,7 +45,7 @@ export default function DocsPricingPage() {
       </ul>
 
       <h2 id="free-plan">Free plan and trials</h2>
-      <p>The Free plan is the public trial path: 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial by default; upgrade when you need X publishing, higher volume, Inbox, Analytics, white-label, or team workflows.</p>
+      <p>The Free plan is the public trial path: 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial; upgrade when you need X publishing, higher volume, Inbox, Analytics, white-label, or team workflows.</p>
 
       <h2 id="full-pricing">Full pricing</h2>
       <p>Side-by-side feature comparison and FAQs:</p>

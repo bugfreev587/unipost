@@ -30,6 +30,7 @@ import (
 	"net/http"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // MaxBulkPosts is the per-request cap. 50 is large enough to batch
@@ -111,11 +112,12 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 	if quotaStatus.Warning != "" {
 		w.Header().Set("X-UniPost-Warning", quotaStatus.Warning)
 	}
+	quotaGate := h.quota.FreePlanHardBlockGate(r.Context(), workspaceID)
 
 	results := make([]bulkResultEntry, len(body.Posts))
 	acceptedQuotaUnits := 0
 	for i, postBody := range body.Posts {
-		result, quotaUnits := h.processBulkOne(r, workspaceID, postBody, accountMap, acceptedQuotaUnits)
+		result, quotaUnits := h.processBulkOne(r, workspaceID, postBody, accountMap, quotaGate, acceptedQuotaUnits)
 		if result.Error == nil {
 			acceptedQuotaUnits += quotaUnits
 		}
@@ -134,6 +136,7 @@ func (h *SocialPostHandler) processBulkOne(
 	workspaceID string,
 	body publishRequestBody,
 	accountMap map[string]platform.ValidateAccount,
+	quotaGate quota.FreePlanHardBlockGate,
 	acceptedQuotaUnits int,
 ) (bulkResultEntry, int) {
 	parsed, status, msg := parsePublishRequest(body)
@@ -180,12 +183,12 @@ func (h *SocialPostHandler) processBulkOne(
 	}
 
 	quotaUnits := countPublishQuotaUnits(parsed.Posts, accountMap)
-	if status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, acceptedQuotaUnits+quotaUnits); blocked {
+	if quotaGate.Blocked(acceptedQuotaUnits + quotaUnits) {
 		return bulkResultEntry{
 			Status: http.StatusPaymentRequired,
 			Error: &bulkErrorEnvelope{
 				Code:    "PLAN_POST_QUOTA_EXCEEDED",
-				Message: freePlanQuotaExceededMessage(status, quotaUnits),
+				Message: freePlanQuotaExceededMessage(quotaGate.Status, quotaUnits),
 			},
 		}, 0
 	}

@@ -92,7 +92,7 @@ export const ZERNIO = {
     { q: "What's the real-money difference at the entry tier?", a: "Zernio Build is $19/mo and excludes Inbox and Analytics — you add those as $9/mo each, bringing the realistic total to ~$37/mo. UniPost Basic is $19/mo with both bundled in. Same price, more value." },
     { q: "Does UniPost support all the platforms Zernio supports?", a: "UniPost supports 9 platforms (X, Instagram, Facebook, Threads, TikTok, YouTube, LinkedIn, Pinterest, Bluesky). Zernio advertises 15. If you need a network beyond UniPost's nine, check our roadmap or contact us." },
     { q: "Both have MCP — what's the difference?", a: "UniPost ships MCP as a core feature on every plan including Free. Zernio's MCP server (Tools API) is gated by tier. Same protocol, different packaging." },
-    { q: "Does UniPost have a free plan?", a: "Yes — the Free plan includes 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial by default." },
+    { q: "Does UniPost have a free plan?", a: "Yes — the Free plan includes 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial." },
     { q: "Does UniPost support white-label OAuth?", a: "Yes — UniPost ships white-label (Native mode) on the Growth tier ($59/mo) so your users see your app name on the OAuth screen. Zernio's docs only describe standard OAuth 2.1, not branded white-label." },
     { q: "How long does migration take?", a: "Most developers complete the switch in under an hour. The main change is the endpoint URL and field names." },
   ],
