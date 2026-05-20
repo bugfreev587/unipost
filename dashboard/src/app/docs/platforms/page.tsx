@@ -205,6 +205,11 @@ export default function PlatformsPage() {
       />
 
       <h2 id="getting-started">Getting Started</h2>
+      <p>
+        The platform pages below explain destination-specific limits and payload
+        options. For the shared post creation, local media upload, and async result
+        flow, use the <Link href="/docs/publishing">Publishing guide</Link>.
+      </p>
 
       <div className="docs-step-flow">
         <div className="docs-step-row">

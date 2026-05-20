@@ -290,6 +290,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Using the API",
       items: [
         { label: "API Quickstart", href: "/docs/quickstart" },
+        { label: "Publishing guide", href: "/docs/publishing" },
         { label: "SDKs", href: "/docs/sdk" },
         { label: "CLI", href: "/docs/cli" },
         { label: "MCP", href: "/docs/mcp" },
@@ -2299,6 +2300,7 @@ function isOverviewGuidePath(current: string) {
     current === "/docs"
     || current === "/docs/dashboard-quickstart"
     || current === "/docs/quickstart"
+    || current === "/docs/publishing"
     || current === "/docs/sdk"
     || current === "/docs/cli"
     || current === "/docs/mcp"
