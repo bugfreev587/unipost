@@ -38,6 +38,7 @@ export type PlatformDoc = {
     rows: readonly (readonly string[])[];
   };
   setup: readonly (readonly ReactNode[])[];
+  setupNote?: ReactNode;
   examples: ReadonlyArray<{ title: string; body: string; note?: string }>;
   errors: readonly (readonly string[])[];
   limitations: readonly (readonly string[])[];
@@ -613,8 +614,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     setup: [
       modeQuickstart,
       modeWhitelabel,
-      ["Requirement", "Connected IG must be Business or Creator linked to a Facebook Page", "Meta app review required for public use", "—"],
     ],
+    setupNote: "White-label requirement: connected Instagram accounts must be Business or Creator accounts linked to a Facebook Page. Your Meta app must pass app review before public use.",
     examples: [
       {
         title: "Single image",
@@ -882,8 +883,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     setup: [
       modeQuickstart,
       modeWhitelabel,
-      ["Requirement", "TikTok app must pass audit for public use", "Sandbox apps limit posting to allowlisted accounts", "—"],
     ],
+    setupNote: "White-label/public-use requirement: your TikTok app must pass audit before posting to non-allowlisted accounts. Sandbox apps are limited to allowlisted accounts.",
     examples: [
       {
         title: "Video post",
@@ -1181,8 +1182,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     setup: [
       modeQuickstart,
       modeWhitelabel,
-      ["Requirement", "A Pinterest board must exist before publishing", "Sandbox mode may only see boards created through the same API environment", "—"],
     ],
+    setupNote: "Platform requirement: create a Pinterest board before publishing. Sandbox mode may only see boards created through the same API environment.",
     examples: [
       {
         title: "Image Pin",
@@ -1354,8 +1355,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     setup: [
       modeQuickstart,
       modeWhitelabel,
-      ["Requirement", "Connected account must be a Facebook Page you manage", "Meta app review required for public use", "—"],
     ],
+    setupNote: "White-label requirement: the connected account must be a Facebook Page you manage. Your Meta app must pass app review before public use.",
     examples: [
       {
         title: "Text-only post",
