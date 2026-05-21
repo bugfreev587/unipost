@@ -147,6 +147,7 @@ type adminLandingVisitorsResponse struct {
 	Signups         int64                         `json:"signups"`
 	Rows            []adminLandingVisitorRow      `json:"rows"`
 	Trend           []adminLandingVisitorTrendRow `json:"trend"`
+	Countries       []adminCountryBreakdownRow    `json:"countries"`
 	SourceOptions   []string                      `json:"source_options"`
 	CampaignOptions []string                      `json:"campaign_options"`
 }
@@ -421,6 +422,7 @@ func (h *LandingAttributionHandler) GetAdminVisitors(w http.ResponseWriter, r *h
 		RangeDays: int64(days),
 		Rows:      []adminLandingVisitorRow{},
 		Trend:     []adminLandingVisitorTrendRow{},
+		Countries: []adminCountryBreakdownRow{},
 	}
 
 	if err := h.pool.QueryRow(r.Context(), `
@@ -477,6 +479,45 @@ ORDER BY day ASC`,
 	}
 	if err := trendRows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor trend")
+		return
+	}
+
+	countryRows, err := h.pool.Query(r.Context(), `
+WITH filtered AS (
+  SELECT *
+  FROM landing_visits
+  WHERE created_at >= NOW() - make_interval(days => $1)
+    AND ($2 = '' OR source_code = $2)
+    AND ($3 = '' OR attribution->>'utm_campaign' = $3)
+),
+session_countries AS (
+  SELECT DISTINCT ON (session_id)
+    session_id,
+    COALESCE(NULLIF(country_code, ''), '') AS country_code
+  FROM filtered
+  ORDER BY session_id, created_at ASC
+)
+SELECT country_code, COUNT(*)::BIGINT
+FROM session_countries
+GROUP BY country_code
+ORDER BY COUNT(*) DESC, country_code ASC`,
+		days, source, campaign,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load visitor countries")
+		return
+	}
+	defer countryRows.Close()
+	for countryRows.Next() {
+		var row adminCountryBreakdownRow
+		if err := countryRows.Scan(&row.CountryCode, &row.Count); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan visitor countries")
+			return
+		}
+		resp.Countries = append(resp.Countries, row)
+	}
+	if err := countryRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor countries")
 		return
 	}
 
