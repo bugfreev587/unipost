@@ -212,6 +212,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
 						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
 						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						AuthorAvatarUrl:  pgtype.Text{String: e.AuthorAvatarURL, Valid: e.AuthorAvatarURL != ""},
 						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 						IsOwn:            isOwn,
 						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
@@ -321,6 +322,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
 						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
 						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						AuthorAvatarUrl:  pgtype.Text{String: e.AuthorAvatarURL, Valid: e.AuthorAvatarURL != ""},
 						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 						IsOwn:            isOwn,
 						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
@@ -333,6 +335,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 					if uErr == nil {
 						recordNew(acc.WorkspaceID)
 					}
+					mergeInboxEntryAuthorMetadata(ctx, w.queries, acc.ID, e)
 				}
 			}
 
@@ -381,6 +384,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
 						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
 						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						AuthorAvatarUrl:  pgtype.Text{String: e.AuthorAvatarURL, Valid: e.AuthorAvatarURL != ""},
 						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 						IsOwn:            isOwn,
 						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
@@ -393,6 +397,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 					if uErr == nil {
 						recordNew(acc.WorkspaceID)
 					}
+					mergeInboxEntryAuthorMetadata(ctx, w.queries, acc.ID, e)
 				}
 			}
 
@@ -445,4 +450,17 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 			})
 		}
 	}
+}
+
+func mergeInboxEntryAuthorMetadata(ctx context.Context, queries *db.Queries, socialAccountID string, entry platform.InboxEntry) {
+	if entry.AuthorName == "" && entry.AuthorID == "" && entry.AuthorAvatarURL == "" {
+		return
+	}
+	_, _ = queries.MergeInboxItemAuthorMetadataByExternalID(ctx, db.MergeInboxItemAuthorMetadataByExternalIDParams{
+		SocialAccountID: socialAccountID,
+		ExternalID:      entry.ExternalID,
+		AuthorName:      entry.AuthorName,
+		AuthorID:        entry.AuthorID,
+		AuthorAvatarUrl: entry.AuthorAvatarURL,
+	})
 }

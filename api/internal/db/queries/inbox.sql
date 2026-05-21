@@ -44,6 +44,53 @@ SET author_name = NULLIF(@author_name::TEXT, ''),
 WHERE id = @id
   AND workspace_id = @workspace_id;
 
+-- name: MergeInboxItemAuthorMetadataByExternalID :execrows
+WITH incoming AS (
+  SELECT
+    NULLIF(@author_name::TEXT, '') AS author_name,
+    NULLIF(@author_id::TEXT, '') AS author_id,
+    NULLIF(@author_avatar_url::TEXT, '') AS author_avatar_url
+)
+UPDATE inbox_items AS i
+SET
+  author_name = CASE
+    WHEN incoming.author_name IS NOT NULL
+      AND LOWER(incoming.author_name) <> 'facebook user'
+      AND (i.author_name IS NULL OR i.author_name = '' OR LOWER(i.author_name) = 'facebook user')
+    THEN incoming.author_name
+    ELSE i.author_name
+  END,
+  author_id = CASE
+    WHEN incoming.author_id IS NOT NULL
+      AND (i.author_id IS NULL OR i.author_id = '')
+    THEN incoming.author_id
+    ELSE i.author_id
+  END,
+  author_avatar_url = CASE
+    WHEN incoming.author_avatar_url IS NOT NULL
+      AND (i.author_avatar_url IS NULL OR i.author_avatar_url = '')
+    THEN incoming.author_avatar_url
+    ELSE i.author_avatar_url
+  END
+FROM incoming
+WHERE i.social_account_id = @social_account_id
+  AND i.external_id = @external_id
+  AND (
+    (
+      incoming.author_name IS NOT NULL
+      AND LOWER(incoming.author_name) <> 'facebook user'
+      AND (i.author_name IS NULL OR i.author_name = '' OR LOWER(i.author_name) = 'facebook user')
+    )
+    OR (
+      incoming.author_id IS NOT NULL
+      AND (i.author_id IS NULL OR i.author_id = '')
+    )
+    OR (
+      incoming.author_avatar_url IS NOT NULL
+      AND (i.author_avatar_url IS NULL OR i.author_avatar_url = '')
+    )
+  );
+
 -- name: MarkAllInboxItemsRead :execrows
 UPDATE inbox_items
 SET is_read = true

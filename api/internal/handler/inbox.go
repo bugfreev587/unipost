@@ -173,7 +173,9 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Best-effort Facebook author enrichment. Some Page comment webhooks
 	// arrive without sender metadata, which leaves the UI showing
 	// "unknown". When we have a Page token and the item is missing author
-	// fields, fetch the comment's `from` block and persist it.
+	// fields, fetch the comment's `from` block and persist it. If the
+	// comment-object lookup is denied but we still know the parent post,
+	// fall back to reading the post's comments edge and matching the row.
 	decryptedTokens := map[string]string{}
 	fbAdapter := platform.NewFacebookAdapter()
 	for idx := range items {
@@ -198,10 +200,36 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 			decryptedTokens[item.SocialAccountID] = decrypted
 		}
 		author, fetchErr := fbAdapter.FetchCommentAuthor(r.Context(), accessToken, item.ExternalID)
-		if fetchErr != nil || author == nil {
+		if (fetchErr != nil || author == nil || author.Name == "" || isFacebookPlaceholderAuthorName(author.Name)) && item.ParentExternalID.Valid && item.ParentExternalID.String != "" {
+			parentID := item.ParentExternalID.String
+			parentCandidates := []string{parentID}
+			if resolved := fbAdapter.ResolvePostID(account.ExternalAccountID, parentID); resolved != parentID {
+				parentCandidates = append(parentCandidates, resolved)
+			}
+			for _, parentCandidate := range parentCandidates {
+				entries, commentsErr := fbAdapter.FetchComments(r.Context(), accessToken, parentCandidate)
+				if commentsErr != nil {
+					continue
+				}
+				for _, entry := range entries {
+					if entry.ExternalID == item.ExternalID {
+						author = &platform.FacebookCommentAuthor{
+							ID:        entry.AuthorID,
+							Name:      entry.AuthorName,
+							AvatarURL: entry.AuthorAvatarURL,
+						}
+						break
+					}
+				}
+				if author != nil && author.Name != "" && !isFacebookPlaceholderAuthorName(author.Name) {
+					break
+				}
+			}
+		}
+		if author == nil {
 			continue
 		}
-		if author.Name != "" {
+		if author.Name != "" && !isFacebookPlaceholderAuthorName(author.Name) {
 			item.AuthorName = pgtype.Text{String: author.Name, Valid: true}
 		}
 		if author.ID != "" {
@@ -210,9 +238,9 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 		if author.AvatarURL != "" {
 			item.AuthorAvatarUrl = pgtype.Text{String: author.AvatarURL, Valid: true}
 		}
-		_, _ = h.queries.UpdateInboxItemAuthorMetadata(r.Context(), db.UpdateInboxItemAuthorMetadataParams{
-			ID:              item.ID,
-			WorkspaceID:     item.WorkspaceID,
+		_, _ = h.queries.MergeInboxItemAuthorMetadataByExternalID(r.Context(), db.MergeInboxItemAuthorMetadataByExternalIDParams{
+			SocialAccountID: item.SocialAccountID,
+			ExternalID:      item.ExternalID,
 			AuthorName:      author.Name,
 			AuthorID:        author.ID,
 			AuthorAvatarUrl: author.AvatarURL,
@@ -714,6 +742,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
 							AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
 							AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+							AuthorAvatarUrl:  pgtype.Text{String: e.AuthorAvatarURL, Valid: e.AuthorAvatarURL != ""},
 							Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 							IsOwn:            isOwn,
 							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
@@ -811,6 +840,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
 							AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
 							AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+							AuthorAvatarUrl:  pgtype.Text{String: e.AuthorAvatarURL, Valid: e.AuthorAvatarURL != ""},
 							Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 							IsOwn:            isOwn,
 							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
@@ -904,6 +934,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
 							AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
 							AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+							AuthorAvatarUrl:  pgtype.Text{String: e.AuthorAvatarURL, Valid: e.AuthorAvatarURL != ""},
 							Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 							IsOwn:            isOwn,
 							ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
@@ -916,6 +947,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						if uErr == nil {
 							totalNew++
 						}
+						mergeInboxItemAuthorMetadata(r.Context(), h.queries, acc.ID, e.ExternalID, e.AuthorName, e.AuthorID, e.AuthorAvatarURL)
 					}
 				}
 				detail.CommentsFound = facebookCommentsFetched
@@ -936,6 +968,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						ParentExternalID: pgtype.Text{String: e.ParentExternalID, Valid: e.ParentExternalID != ""},
 						AuthorName:       pgtype.Text{String: e.AuthorName, Valid: e.AuthorName != ""},
 						AuthorID:         pgtype.Text{String: e.AuthorID, Valid: e.AuthorID != ""},
+						AuthorAvatarUrl:  pgtype.Text{String: e.AuthorAvatarURL, Valid: e.AuthorAvatarURL != ""},
 						Body:             pgtype.Text{String: e.Body, Valid: e.Body != ""},
 						IsOwn:            isOwn,
 						ReceivedAt:       pgtype.Timestamptz{Time: e.Timestamp, Valid: true},
@@ -948,6 +981,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 					if uErr == nil {
 						totalNew++
 					}
+					mergeInboxItemAuthorMetadata(r.Context(), h.queries, acc.ID, e.ExternalID, e.AuthorName, e.AuthorID, e.AuthorAvatarURL)
 				}
 			}
 		}
@@ -970,5 +1004,22 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		"accounts_checked": len(accounts),
 		"errors":           errors,
 		"details":          details,
+	})
+}
+
+func isFacebookPlaceholderAuthorName(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), "facebook user")
+}
+
+func mergeInboxItemAuthorMetadata(ctx context.Context, queries *db.Queries, socialAccountID, externalID, authorName, authorID, authorAvatarURL string) {
+	if authorName == "" && authorID == "" && authorAvatarURL == "" {
+		return
+	}
+	_, _ = queries.MergeInboxItemAuthorMetadataByExternalID(ctx, db.MergeInboxItemAuthorMetadataByExternalIDParams{
+		SocialAccountID: socialAccountID,
+		ExternalID:      externalID,
+		AuthorName:      authorName,
+		AuthorID:        authorID,
+		AuthorAvatarUrl: authorAvatarURL,
 	})
 }

@@ -48,6 +48,14 @@ type FacebookCommentAuthor struct {
 	AvatarURL string
 }
 
+func normalizeFacebookAuthorName(name string) string {
+	name = strings.TrimSpace(name)
+	if strings.EqualFold(name, "facebook user") {
+		return ""
+	}
+	return name
+}
+
 func NewFacebookAdapter() *FacebookAdapter {
 	return &FacebookAdapter{client: debugrt.NewClient(60 * time.Second)}
 }
@@ -1982,7 +1990,7 @@ func (a *FacebookAdapter) FetchComments(ctx context.Context, accessToken string,
 			ExternalID:       c.ID,
 			ParentExternalID: parentID,
 			AuthorID:         c.From.ID,
-			AuthorName:       c.From.Name,
+			AuthorName:       normalizeFacebookAuthorName(c.From.Name),
 			AuthorAvatarURL:  c.From.Picture.Data.URL,
 			Body:             c.Message,
 			Timestamp:        parseFacebookCommentTime(c.CreatedTime),
@@ -1997,7 +2005,7 @@ func (a *FacebookAdapter) FetchComments(ctx context.Context, accessToken string,
 				ExternalID:       reply.ID,
 				ParentExternalID: replyParentID,
 				AuthorID:         reply.From.ID,
-				AuthorName:       reply.From.Name,
+				AuthorName:       normalizeFacebookAuthorName(reply.From.Name),
 				AuthorAvatarURL:  reply.From.Picture.Data.URL,
 				Body:             reply.Message,
 				Timestamp:        parseFacebookCommentTime(reply.CreatedTime),
@@ -2050,7 +2058,7 @@ func (a *FacebookAdapter) FetchCommentAuthor(ctx context.Context, accessToken, c
 	}
 	return &FacebookCommentAuthor{
 		ID:        parsed.From.ID,
-		Name:      parsed.From.Name,
+		Name:      normalizeFacebookAuthorName(parsed.From.Name),
 		AvatarURL: parsed.From.Picture.Data.URL,
 	}, nil
 }
@@ -2110,6 +2118,7 @@ func (a *FacebookAdapter) FetchUserProfile(ctx context.Context, accessToken, use
 		// not the joined display string.
 		displayName = strings.TrimSpace(parsed.FirstName + " " + parsed.LastName)
 	}
+	displayName = normalizeFacebookAuthorName(displayName)
 	if parsed.ID == "" && displayName == "" && parsed.ProfilePic == "" {
 		return nil, nil
 	}
@@ -2228,6 +2237,7 @@ func (a *FacebookAdapter) FetchConversations(ctx context.Context, accessToken st
 				}
 				avatar = p.Avatar
 			}
+			name = normalizeFacebookAuthorName(name)
 			entries = append(entries, InboxEntry{
 				ExternalID:       msg.ID,
 				ParentExternalID: conv.ID,
