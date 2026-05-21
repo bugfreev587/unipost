@@ -8,7 +8,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
-  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads"]} /></> },
+  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"]} /></> },
   { name: "profile_id?", type: "string", description: "Profile that should own the resulting connected account. Required when the workspace has multiple profiles." },
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
@@ -56,7 +56,7 @@ const SNIPPETS = [
 const client = new UniPost();
 
 const session = await client.connect.createSession({
-  platform: "instagram",
+  platform: "pinterest",
   profileId: "pr_brand_us",
   externalUserId: "user_123",
   externalUserEmail: "alex@acme.com",
@@ -183,7 +183,7 @@ export default function CreateConnectSessionPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Create connect session"
-      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow. For OAuth platforms, this endpoint defaults to white-label mode: the workspace must already have platform credentials uploaded unless you explicitly pass allow_quickstart_creds=true."
+      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow. For OAuth platforms, this endpoint defaults to white-label mode: the workspace must already have platform credentials uploaded unless you explicitly pass allow_quickstart_creds=true. Facebook Page sessions connect the first publishable Page returned by Meta for the authorizing user."
       method="POST"
       path="/v1/connect/sessions"
       requestSections={[

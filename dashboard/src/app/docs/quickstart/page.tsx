@@ -283,7 +283,7 @@ export default function QuickstartPage() {
 
       <h2 id="connect-account">2. Connect an account</h2>
       <p className="qs-note">
-        For OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, and Pinterest, call the connect URL API. It returns an <code>auth_url</code>. Open that URL in a browser and complete OAuth there.
+        For OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, Pinterest, and Facebook Page, call the connect URL API. It returns an <code>auth_url</code>. Open that URL in a browser and complete OAuth there.
       </p>
       <DocsCodeTabs snippets={CONNECT_AUTH_SNIPPETS} />
       <ul className="docs-checklist">

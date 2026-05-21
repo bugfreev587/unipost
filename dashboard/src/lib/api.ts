@@ -1387,7 +1387,9 @@ export type ConnectSessionPlatform =
   | "youtube"
   | "tiktok"
   | "instagram"
-  | "threads";
+  | "threads"
+  | "facebook"
+  | "pinterest";
 
 export interface ConnectSession {
   id: string;

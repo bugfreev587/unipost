@@ -14,13 +14,14 @@ import (
 type Flag string
 
 const (
-	TikTokAnalyticsScopes         Flag = "tiktok.analytics_scopes"
-	FacebookPageAnalytics         Flag = "facebook.page_analytics"
-	AttributionUTMSignupBindingV1 Flag = "attribution.utm_signup_binding_v1"
-	Inbox                         Flag = "inbox"
-	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
-	HostedConnectTikTokInstagram  Flag = "connect_sessions.tiktok_instagram"
-	HostedConnectThreads          Flag = "connect_sessions.threads"
+	TikTokAnalyticsScopes          Flag = "tiktok.analytics_scopes"
+	FacebookPageAnalytics          Flag = "facebook.page_analytics"
+	AttributionUTMSignupBindingV1  Flag = "attribution.utm_signup_binding_v1"
+	Inbox                          Flag = "inbox"
+	FreePlanHardPostQuota          Flag = "billing.free_plan_hard_post_quota"
+	HostedConnectTikTokInstagram   Flag = "connect_sessions.tiktok_instagram"
+	HostedConnectThreads           Flag = "connect_sessions.threads"
+	HostedConnectFacebookPinterest Flag = "connect_sessions.facebook_pinterest"
 )
 
 type Target struct {
@@ -108,6 +109,14 @@ var definitions = map[Flag]Definition{
 		Flag:        HostedConnectThreads,
 		EnvVar:      "FEATURE_CONNECT_SESSIONS_THREADS",
 		Description: "Enables hosted Connect Sessions for Threads managed account onboarding.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	HostedConnectFacebookPinterest: {
+		Flag:        HostedConnectFacebookPinterest,
+		EnvVar:      "FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST",
+		Description: "Enables hosted Connect Sessions for Facebook Page and Pinterest managed account onboarding.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},
