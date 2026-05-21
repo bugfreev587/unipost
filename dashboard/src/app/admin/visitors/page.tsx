@@ -8,6 +8,7 @@ import {
   type AdminLandingVisitorsResponse,
   type AdminLandingVisitorTrendRow,
 } from "@/lib/api";
+import { countryDisplay, countryNameFromCode } from "@/lib/countries";
 
 import { AdminShell, StatCard, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
@@ -57,6 +58,12 @@ function AttributionBadges({ row }: { row: AdminLandingVisitorRow }) {
   );
 }
 
+function CountryBadge({ code }: { code?: string | null }) {
+  const name = countryNameFromCode(code);
+  if (!name) return <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>;
+  return <span className="ad-badge ad-b-gray" title={countryDisplay(code)}>{name}</span>;
+}
+
 function VisitorsTrend({ rows }: { rows: AdminLandingVisitorTrendRow[] }) {
   const maxVisits = Math.max(1, ...rows.map((row) => row.visits));
   return (
@@ -102,6 +109,7 @@ function VisitorDetail({ row, onClose }: { row: AdminLandingVisitorRow; onClose:
         <div className="ad-panel-section-title">Visitor</div>
         <div className="av-detail-grid">
           <span>session</span><strong>{row.session_id}</strong>
+          <span>country</span><strong>{countryDisplay(row.country_code)}</strong>
           <span>user</span><strong>{row.user_email || row.user_id || "not bound"}</strong>
           <span>path</span><strong>{row.path}</strong>
         </div>
@@ -209,6 +217,7 @@ export default function AdminVisitorsPage() {
             <tr>
               <th>Time</th>
               <th>Source</th>
+              <th>Country</th>
               <th>UTM</th>
               <th>Path</th>
               <th>User</th>
@@ -226,7 +235,9 @@ export default function AdminVisitorsPage() {
                   <td>
                     <div style={{ fontWeight: 600 }}>{row.label}</div>
                     <span className="ad-badge ad-b-gray">{row.source_code}</span>
+                    <div className="ad-mono" style={{ marginTop: 4 }}>utm: {row.attribution.utm_source || "—"}</div>
                   </td>
+                  <td><CountryBadge code={row.country_code} /></td>
                   <td><AttributionBadges row={row} /></td>
                   <td>
                     <div className="av-path">{row.path}</div>
@@ -238,7 +249,7 @@ export default function AdminVisitorsPage() {
               ))
             ) : (
               <tr>
-                <td colSpan={6} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>
+                <td colSpan={7} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>
                   {loading ? "Loading…" : "No visitor data matched this filter."}
                 </td>
               </tr>

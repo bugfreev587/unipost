@@ -10,6 +10,21 @@ import {
   storeLandingSource,
 } from "@/lib/landing-attribution";
 
+function landingCountryCode() {
+  const match = document.cookie
+    .split("; ")
+    .find((part) => part.startsWith("unipost_country="));
+  let code = "";
+  if (match) {
+    try {
+      code = decodeURIComponent(match.split("=").slice(1).join("=")).trim().toUpperCase();
+    } catch {
+      code = "";
+    }
+  }
+  return /^[A-Z]{2}$/.test(code) && code !== "XX" && code !== "T1" ? code : undefined;
+}
+
 export function LandingAttribution() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -33,6 +48,7 @@ export function LandingAttribution() {
       source,
       session_id: sessionId,
       referrer: document.referrer || undefined,
+      country_code: landingCountryCode(),
       raw_query: window.location.search ? window.location.search.slice(1) : undefined,
       attribution,
     }).catch(() => {
