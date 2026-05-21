@@ -249,6 +249,10 @@ function isDMSource(source?: string | null): boolean {
   return source === "ig_dm" || source === "fb_dm";
 }
 
+function isMetaInboxPlatform(platform?: string | null): boolean {
+  return platform === "instagram" || platform === "threads" || platform === "facebook";
+}
+
 function conversationRootKey(item: InboxItem, source: ConversationGroup["source"]) {
   if (isDMSource(source)) {
     return item.thread_key || item.parent_external_id || item.author_id || item.external_id;
@@ -798,7 +802,7 @@ function InboxPageInner() {
   const reconnectAccounts = accounts.filter(
     (account) =>
       account.status === "reconnect_required" &&
-      (account.platform === "instagram" || account.platform === "threads")
+      isMetaInboxPlatform(account.platform)
   );
 
   const missingPermissionErrors = (syncData?.errors || []).filter((error) =>
@@ -813,6 +817,7 @@ function InboxPageInner() {
     dms: dmGroups.reduce((sum, group) => sum + group.unreadCount, 0),
     threads: threadsGroups.reduce((sum, group) => sum + group.unreadCount, 0),
   };
+  const metaAccountCount = accounts.filter((account) => isMetaInboxPlatform(account.platform)).length;
 
   async function handleSync() {
     if (!workspaceId) return;
@@ -1303,7 +1308,7 @@ function InboxPageInner() {
               </span>
             </div>
             <p className="dt-body-sm" style={{ margin: "4px 0 0", color: "var(--dmuted)" }}>
-              {accounts.filter((a) => a.platform === "instagram" || a.platform === "threads").length} Meta accounts · {counts.comments + counts.dms + counts.threads} unread
+              {metaAccountCount} Meta accounts · {counts.comments + counts.dms + counts.threads} unread
             </p>
           </div>
         </div>
