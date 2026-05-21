@@ -230,17 +230,55 @@ function PagesList({
     );
   }
 
+  const groups = groupPagesByBusiness(data.pages);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto", padding: "4px 0" }}>
-      {data.pages.map((page) => (
-        <PageRow key={page.id} page={page} checked={selected.has(page.id)} onToggle={() => onToggle(page.id)} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 360, overflowY: "auto", padding: "4px 0" }}>
+      {groups.map((group) => (
+        <section key={group.key} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "0 2px" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--dmuted)", textTransform: "uppercase", letterSpacing: 0 }}>
+              {group.label}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--dmuted)", whiteSpace: "nowrap" }}>
+              {group.pages.length} {group.pages.length === 1 ? "Page" : "Pages"}
+            </div>
+          </div>
+          {group.pages.map((page) => (
+            <PageRow key={page.id} page={page} checked={selected.has(page.id)} onToggle={() => onToggle(page.id)} />
+          ))}
+        </section>
       ))}
     </div>
   );
 }
 
+function groupPagesByBusiness(pages: PendingFacebookPage[]) {
+  const groups = new Map<string, { key: string; label: string; pages: PendingFacebookPage[] }>();
+  for (const page of pages) {
+    const key = page.business_id || "no-business";
+    const label = page.business_name || "Pages without Business context";
+    const existing = groups.get(key);
+    if (existing) {
+      existing.pages.push(page);
+    } else {
+      groups.set(key, { key, label, pages: [page] });
+    }
+  }
+  return Array.from(groups.values());
+}
+
 function PageRow({ page, checked, onToggle }: { page: PendingFacebookPage; checked: boolean; onToggle: () => void }) {
   const disabled = !page.can_publish;
+  const relationshipLabel =
+    page.business_relationship === "owned"
+      ? "owned asset"
+      : page.business_relationship === "client"
+        ? "client asset"
+        : page.business_name
+          ? "business asset"
+          : "";
+  const meta = [page.category, relationshipLabel, disabled ? "no publish permission" : ""].filter(Boolean).join(" · ");
   return (
     <label
       style={{
@@ -273,8 +311,7 @@ function PageRow({ page, checked, onToggle }: { page: PendingFacebookPage; check
           {page.name}
         </div>
         <div style={{ fontSize: 11, color: "var(--dmuted)" }}>
-          {page.category}
-          {disabled ? " · no publish permission" : ""}
+          {meta}
         </div>
       </div>
     </label>

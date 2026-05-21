@@ -102,6 +102,38 @@ any reply-to-incoming flows. UniPost is publish-only.
 
 ---
 
+## Facebook Business Management (`business_management`)
+
+UniPost supports Facebook Page publishing for SaaS products whose
+end users may manage Pages across several Meta Business Manager
+accounts. We need `business_management` to read the Business assets
+available to the authorizing user, then show the correct Business
+and Page context during connection.
+
+We use this permission exclusively to:
+
+1. Call `GET /me/businesses` to list Business Manager accounts the
+   user can access.
+2. Call each Business's `owned_pages` and `client_pages` edges to
+   identify which Business owns or manages each Page.
+3. Display that Business context in UniPost's Page Picker so the
+   user selects the intended Page before UniPost saves the
+   connection.
+
+We do NOT use this permission for ads, campaigns, billing, audience
+management, catalog management, or Business asset mutation. UniPost
+does not create, edit, or delete Business Manager assets. The data
+is used only at connection time and stored as minimal metadata on
+the connected Page row: Business ID, Business name, and whether the
+Page is owned or client-managed by that Business.
+
+**Data flow:** Meta Business Manager → UniPost API → UniPost Page
+Picker. Tokens remain server-side and encrypted at rest. End users
+can disconnect the Page at any time from the dashboard, which wipes
+the stored Page token.
+
+---
+
 ## Out of scope (NOT requested)
 
 UniPost intentionally does not request the following scopes
@@ -118,9 +150,6 @@ as a transparency signal to the reviewer:
   data-flow concern as insights. Out of scope.
 - `instagram_branded_content_brand` / `_creator` — UniPost has no
   branded-content product surface.
-- `pages_manage_posts` etc. — UniPost only supports user-context
-  publishing (the end user authorizes their own account), not
-  Pages-context posting via business managers.
 
 We may request some of these in the future as we build out
 analytics + inbox products, but they will be requested in

@@ -72,9 +72,96 @@ func TestFacebookOAuthScopesIncludeAnalyticsScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "pages_show_list pages_manage_posts pages_read_engagement pages_read_user_content pages_manage_engagement pages_messaging pages_manage_metadata read_insights"
+	want := "business_management pages_show_list pages_manage_posts pages_read_engagement pages_read_user_content pages_manage_engagement pages_messaging pages_manage_metadata read_insights"
 	if q := u.Query().Get("scope"); q != want {
 		t.Fatalf("scope = %q, want %q", q, want)
+	}
+}
+
+func TestFacebookFetchPagesCarriesBusinessMetadata(t *testing.T) {
+	adapter := NewFacebookAdapter()
+	adapter.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.URL.Path; got != "/v22.0/me/accounts" {
+			t.Fatalf("path = %q, want /me/accounts", got)
+		}
+		if fields := req.URL.Query().Get("fields"); !strings.Contains(fields, "business{id,name}") {
+			t.Fatalf("fields = %q, want business metadata field", fields)
+		}
+		body := `{
+			"data": [{
+				"id": "page_1",
+				"name": "Catherine's bakery store",
+				"access_token": "page-token",
+				"category": "Bakery",
+				"tasks": ["CREATE_CONTENT"],
+				"business": { "id": "biz_1", "name": "Bakery Group" },
+				"picture": { "data": { "url": "https://example.com/page.jpg" } }
+			}]
+		}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	pages, err := adapter.FetchPages(context.Background(), "user-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("len(pages) = %d, want 1", len(pages))
+	}
+	got := pages[0]
+	if got.BusinessID != "biz_1" {
+		t.Fatalf("BusinessID = %q, want biz_1", got.BusinessID)
+	}
+	if got.BusinessName != "Bakery Group" {
+		t.Fatalf("BusinessName = %q, want Bakery Group", got.BusinessName)
+	}
+	if got.BusinessRelationship != "page_business" {
+		t.Fatalf("BusinessRelationship = %q, want page_business", got.BusinessRelationship)
+	}
+}
+
+func TestFacebookFetchBusinessPageRelationships(t *testing.T) {
+	adapter := NewFacebookAdapter()
+	seen := map[string]bool{}
+	adapter.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		seen[req.URL.Path] = true
+		var body string
+		switch req.URL.Path {
+		case "/v22.0/biz_1/owned_pages":
+			body = `{"data":[{"id":"page_owned"}]}`
+		case "/v22.0/biz_1/client_pages":
+			body = `{"data":[{"id":"page_client"},{"id":"page_owned"}]}`
+		default:
+			t.Fatalf("unexpected path %q", req.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	got, err := adapter.FetchBusinessPageRelationships(context.Background(), "user-token", []FacebookBusiness{
+		{ID: "biz_1", Name: "Bakery Group"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seen["/v22.0/biz_1/owned_pages"] || !seen["/v22.0/biz_1/client_pages"] {
+		t.Fatalf("expected owned_pages and client_pages calls, saw %#v", seen)
+	}
+	if got["page_owned"].BusinessRelationship != "owned" {
+		t.Fatalf("owned relationship = %q, want owned", got["page_owned"].BusinessRelationship)
+	}
+	if got["page_client"].BusinessRelationship != "client" {
+		t.Fatalf("client relationship = %q, want client", got["page_client"].BusinessRelationship)
+	}
+	if got["page_client"].BusinessID != "biz_1" || got["page_client"].BusinessName != "Bakery Group" {
+		t.Fatalf("client business = %#v, want biz_1/Bakery Group", got["page_client"])
 	}
 }
 

@@ -1,7 +1,7 @@
 # Facebook Pages — App Review Evidence
 
 **App**: unipost-dev
-**Permissions requested**: 7 `pages_*` scopes + `read_insights`
+**Permissions requested**: `business_management` + 7 `pages_*` scopes + `read_insights`
 **Status**: Ready for App Review submission
 **Last updated**: 2026-05-21
 
@@ -13,13 +13,22 @@ This document maps each requested permission to the concrete code path that exer
 
 Every entry includes the permission name, where the user-facing feature lives in the product, the Graph API endpoint we call, and the Go file + function that issues the call.
 
-### 1. `pages_show_list`
+### 1. `business_management`
+**Feature**: Business-aware Page Picker shown after a user finishes Facebook OAuth in UniPost. UniPost reads the Business Manager assets available to the authorizing user so the picker can show which Business owns or manages each returned Page, avoiding accidental connection of the wrong Page when a user belongs to multiple businesses.
+**Endpoints**:
+- `GET /v22.0/me/businesses?fields=id,name`
+- `GET /v22.0/{business_id}/owned_pages?fields=id,name`
+- `GET /v22.0/{business_id}/client_pages?fields=id,name`
+**Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.FetchBusinesses`, `FacebookAdapter.FetchBusinessPageRelationships`; callback assembly in `api/internal/handler/oauth_facebook.go`.
+**User flow**: Connections → "Connect Facebook" → OAuth consent → modal groups Pages by Business → select the correct Business/Page asset → "Connect selected".
+
+### 2. `pages_show_list`
 **Feature**: Page Picker shown after a user finishes Facebook OAuth in UniPost. Lists every Page the authorizing user admins so they can pick which ones to connect.
-**Endpoint**: `GET /v22.0/me/accounts?fields=id,name,access_token,category,picture,tasks`
+**Endpoint**: `GET /v22.0/me/accounts?fields=id,name,access_token,category,picture,tasks,business`
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.FetchPages`
 **User flow**: Connections → "Connect Facebook" → OAuth consent → modal lists Pages → select → "Connect selected".
 
-### 2. `pages_manage_posts`
+### 3. `pages_manage_posts`
 **Feature**: Compose + publish a post from UniPost to a connected Page (text / link / photo / video).
 **Endpoints**:
 - `POST /v22.0/{page_id}/feed` (text / link)
@@ -28,7 +37,7 @@ Every entry includes the permission name, where the user-facing feature lives in
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.postFeed / postPhoto / postVideo`.
 **User flow**: Create post → select FB Page → compose → Publish now. Post appears on Page.
 
-### 3. `pages_read_engagement`
+### 4. `pages_read_engagement`
 **Feature**: Facebook Page analytics page in UniPost. Shows the connected Page profile, published Page posts, and post interaction counts so Page admins can review content performance.
 **Endpoints**:
 - `GET /v22.0/{page_id}?fields=id,name,category,username,picture{url},link,about,verification_status,fan_count,followers_count`
@@ -38,19 +47,19 @@ Every entry includes the permission name, where the user-facing feature lives in
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.FetchPageProfile`, `FacebookAdapter.FetchPagePosts`, `FacebookAdapter.GetAnalytics`; aggregate handler in `api/internal/handler/facebook_page_analytics.go`.
 **User flow**: Analytics → Platforms → Facebook Page → select connected Page → open a published post → UniPost renders published time, message, media, reactions, comments, shares, clicks, and video views when Meta returns them.
 
-### 4. `pages_read_user_content`
+### 5. `pages_read_user_content`
 **Feature**: Inbox — Comments tab surfaces every comment left on posts the user published via UniPost so they can read + reply.
 **Endpoint**: `GET /v22.0/{post_id}/comments?fields=id,message,from{id,name,picture},created_time&limit=25`
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.FetchComments`. Sync loop in `api/internal/worker/inbox_sync.go` (case "facebook"). Scoped to posts published via UniPost per our design decision to avoid scanning the whole Page timeline.
 **User flow**: Inbox → Comments tab → row per comment grouped by post.
 
-### 5. `pages_manage_engagement`
+### 6. `pages_manage_engagement`
 **Feature**: Reply to a comment from inside UniPost Inbox.
 **Endpoint**: `POST /v22.0/{comment_id}/comments?message=...`
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.ReplyToComment`. Dispatched by `api/internal/handler/inbox.go` in the `case "fb_comment"` branch of the reply handler.
 **User flow**: Inbox → Comments → Reply → message appears on Facebook as a reply from the Page.
 
-### 6. `pages_messaging`
+### 7. `pages_messaging`
 **Feature**: Inbox — DMs tab surfaces Messenger conversations and lets the user reply.
 **Endpoints**:
 - Read: `GET /v22.0/{page_id}/conversations?platform=messenger&fields=id,participants{id,name,picture{url}},messages.limit(25){id,message,from,created_time}`
@@ -58,13 +67,13 @@ Every entry includes the permission name, where the user-facing feature lives in
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.FetchConversations / SendDM`. 24-hour reply window enforced client-side with an amber banner above the input when closed.
 **User flow**: Inbox → DMs tab → select conversation → type → send. Outside the 24h window, the Send button is disabled.
 
-### 7. `pages_manage_metadata`
+### 8. `pages_manage_metadata`
 **Feature**: Page Picker displays Page category + profile picture + admin `tasks` so the user can tell Pages apart, and admin-permission rows grey out when the authorizing user's role on a given Page lacks publishing permission.
 **Endpoint**: same `/me/accounts` fields call as `pages_show_list`, plus webhook subscription management once webhooks are enabled: `POST /v22.0/{page_id}/subscribed_apps` to subscribe the app to the Page's feed + messages fields.
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.FetchPages` reads `tasks`, `PageHasPublishTask` decides can-publish; webhook subscription lives in `FacebookAdapter.SubscribePageToWebhooks` (POST `/{page_id}/subscribed_apps` for `feed,messages,messaging_postbacks`), called from `handler.OAuthHandler.PendingConnectionFinalize` right after each Page's `social_accounts` row is written. Inbound events land in `handler/meta_webhook.go` at `handleFacebookEntry`.
 **User flow**: Page Picker shows "no publish permission" hint when a returned Page's `tasks` doesn't include `CREATE_CONTENT`.
 
-### 8. `read_insights`
+### 9. `read_insights`
 **Feature**: Facebook Page Insights panel inside the Facebook Page analytics page. Shows Page-level follows, views, and post engagements for the selected date range when Meta returns Page Insights.
 **Endpoint**: `GET /v22.0/{page_id}/insights?metric=page_follows|page_media_view|page_post_engagements&period=day&since=...&until=...`
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.GetPageInsights`; aggregate handler in `api/internal/handler/facebook_page_analytics.go`.
@@ -116,7 +125,7 @@ Record once the reviewer-facing flow stabilizes. Keep it short — Meta reviewer
 
 ## Submission checklist
 
-- [x] Each of the 7 Page permissions plus `read_insights` documented above has a concrete API call in the product code.
+- [x] `business_management`, each of the 7 Page permissions, and `read_insights` documented above have concrete API calls in the product code.
 - [x] All endpoints use the `v22.0` API version consistently.
 - [x] Development Facebook flows remain gated, and the analytics surface is limited to the server-side admin allowlist while App Review validation continues.
 - [x] 24-hour window for Messenger surfaced in the UI before the user hits Send.
@@ -130,7 +139,7 @@ Record once the reviewer-facing flow stabilizes. Keep it short — Meta reviewer
 
 ## Notes for the reviewer
 
-- All 7 permissions are exercised in v1 — no "requested but unused" scopes.
+- All requested permissions are exercised in v1 — no "requested but unused" scopes.
 - Traffic is server-to-Graph; we do not surface Page Tokens to the browser.
 - The 24-hour Messenger window is enforced in both directions: client-side (disables the Send button) and server-side (Meta itself rejects, we show a clean error).
 - Page Insights below the 100-like threshold returns a `below_100_likes_notice=true` flag rather than a hard error so the dashboard can show a "Keep growing!" empty state.

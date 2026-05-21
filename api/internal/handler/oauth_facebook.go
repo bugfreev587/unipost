@@ -21,6 +21,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -46,8 +47,21 @@ type pendingFacebookPage struct {
 	Category                 string   `json:"category"`
 	PictureURL               string   `json:"picture_url"`
 	Tasks                    []string `json:"tasks"`
+	BusinessID               string   `json:"business_id,omitempty"`
+	BusinessName             string   `json:"business_name,omitempty"`
+	BusinessRelationship     string   `json:"business_relationship,omitempty"`
 	Scopes                   []string `json:"scopes,omitempty"`
 	PageAccessTokenEncrypted string   `json:"page_access_token_enc"`
+}
+
+type pendingFacebookBusiness struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type pendingFacebookConnection struct {
+	Pages      []pendingFacebookPage     `json:"pages"`
+	Businesses []pendingFacebookBusiness `json:"businesses,omitempty"`
 }
 
 // pendingConnectionResponse is the payload sent to the Dashboard
@@ -55,12 +69,13 @@ type pendingFacebookPage struct {
 // what it takes to render the pick list. Tokens stay server-side
 // until finalize.
 type pendingConnectionResponse struct {
-	ID        string                  `json:"id"`
-	Platform  string                  `json:"platform"`
-	ProfileID string                  `json:"profile_id"`
-	MetaUser  metaUserDescriptor      `json:"meta_user"`
-	Pages     []pendingPageDescriptor `json:"pages"`
-	ExpiresAt time.Time               `json:"expires_at"`
+	ID         string                      `json:"id"`
+	Platform   string                      `json:"platform"`
+	ProfileID  string                      `json:"profile_id"`
+	MetaUser   metaUserDescriptor          `json:"meta_user"`
+	Pages      []pendingPageDescriptor     `json:"pages"`
+	Businesses []pendingBusinessDescriptor `json:"businesses"`
+	ExpiresAt  time.Time                   `json:"expires_at"`
 }
 
 type metaUserDescriptor struct {
@@ -68,12 +83,20 @@ type metaUserDescriptor struct {
 }
 
 type pendingPageDescriptor struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Category   string   `json:"category"`
-	PictureURL string   `json:"picture_url"`
-	Tasks      []string `json:"tasks"`
-	CanPublish bool     `json:"can_publish"`
+	ID                   string   `json:"id"`
+	Name                 string   `json:"name"`
+	Category             string   `json:"category"`
+	PictureURL           string   `json:"picture_url"`
+	Tasks                []string `json:"tasks"`
+	BusinessID           string   `json:"business_id,omitempty"`
+	BusinessName         string   `json:"business_name,omitempty"`
+	BusinessRelationship string   `json:"business_relationship,omitempty"`
+	CanPublish           bool     `json:"can_publish"`
+}
+
+type pendingBusinessDescriptor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func (h *OAuthHandler) handleFacebookCallback(
@@ -109,6 +132,8 @@ func (h *OAuthHandler) handleFacebookCallback(
 		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to load Facebook Pages")
 		return
 	}
+	businesses, relationships := fetchFacebookBusinessContext(r, fbAdapter, llToken)
+	pages = applyFacebookBusinessContext(pages, businesses, relationships)
 
 	// Step 3: encrypt every sensitive field before persisting. The
 	// LL User Token + each Page Access Token live in pending rows
@@ -132,11 +157,27 @@ func (h *OAuthHandler) handleFacebookCallback(
 			Category:                 p.Category,
 			PictureURL:               p.PictureURL,
 			Tasks:                    p.Tasks,
+			BusinessID:               p.BusinessID,
+			BusinessName:             p.BusinessName,
+			BusinessRelationship:     p.BusinessRelationship,
 			Scopes:                   append([]string(nil), config.Scopes...),
 			PageAccessTokenEncrypted: encPageToken,
 		})
 	}
-	pagesJSON, err := json.Marshal(pendingPages)
+	pendingBusinesses := make([]pendingFacebookBusiness, 0, len(businesses))
+	for _, business := range businesses {
+		if business.ID == "" {
+			continue
+		}
+		pendingBusinesses = append(pendingBusinesses, pendingFacebookBusiness{
+			ID:   business.ID,
+			Name: business.Name,
+		})
+	}
+	pagesJSON, err := json.Marshal(pendingFacebookConnection{
+		Pages:      pendingPages,
+		Businesses: pendingBusinesses,
+	})
 	if err != nil {
 		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to serialize Pages")
 		return
@@ -185,8 +226,78 @@ func (h *OAuthHandler) handleFacebookCallback(
 		"profile_id", oauthState.ProfileID,
 		"workspace_id", profile.WorkspaceID,
 		"pending_id", row.ID,
-		"pages_count", len(pages))
+		"pages_count", len(pages),
+		"businesses_count", len(businesses))
 	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
+func fetchFacebookBusinessContext(r *http.Request, fb *platform.FacebookAdapter, llToken string) ([]platform.FacebookBusiness, map[string]platform.FacebookBusinessPageRelationship) {
+	businesses, err := fb.FetchBusinesses(r.Context(), llToken)
+	if err != nil {
+		slog.Warn("facebook: /me/businesses failed; continuing with Pages only", "err", err)
+		return nil, nil
+	}
+	if len(businesses) == 0 {
+		return businesses, nil
+	}
+	relationships, err := fb.FetchBusinessPageRelationships(r.Context(), llToken, businesses)
+	if err != nil {
+		slog.Warn("facebook: business Page relationship lookup failed; continuing with direct Page business metadata", "err", err)
+		return businesses, nil
+	}
+	return businesses, relationships
+}
+
+func applyFacebookBusinessContext(pages []platform.FacebookPage, businesses []platform.FacebookBusiness, relationships map[string]platform.FacebookBusinessPageRelationship) []platform.FacebookPage {
+	if len(pages) == 0 {
+		return pages
+	}
+	businessNames := make(map[string]string, len(businesses))
+	for _, business := range businesses {
+		if business.ID != "" {
+			businessNames[business.ID] = business.Name
+		}
+	}
+	for i := range pages {
+		if rel, ok := relationships[pages[i].ID]; ok {
+			pages[i].BusinessID = rel.BusinessID
+			pages[i].BusinessName = rel.BusinessName
+			pages[i].BusinessRelationship = rel.BusinessRelationship
+			continue
+		}
+		if pages[i].BusinessID != "" && pages[i].BusinessName == "" {
+			pages[i].BusinessName = businessNames[pages[i].BusinessID]
+		}
+		if pages[i].BusinessID != "" && pages[i].BusinessRelationship == "" {
+			pages[i].BusinessRelationship = "page_business"
+		}
+	}
+	return pages
+}
+
+func decodePendingFacebookConnection(raw []byte) (pendingFacebookConnection, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return pendingFacebookConnection{}, fmt.Errorf("empty pending pages payload")
+	}
+	if trimmed[0] == '[' {
+		var pages []pendingFacebookPage
+		if err := json.Unmarshal(trimmed, &pages); err != nil {
+			return pendingFacebookConnection{}, err
+		}
+		return pendingFacebookConnection{Pages: pages}, nil
+	}
+	var stored pendingFacebookConnection
+	if err := json.Unmarshal(trimmed, &stored); err != nil {
+		return pendingFacebookConnection{}, err
+	}
+	if stored.Pages == nil {
+		stored.Pages = []pendingFacebookPage{}
+	}
+	if stored.Businesses == nil {
+		stored.Businesses = []pendingFacebookBusiness{}
+	}
+	return stored, nil
 }
 
 // PendingConnectionGet handles
@@ -219,30 +330,44 @@ func (h *OAuthHandler) PendingConnectionGet(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var stored []pendingFacebookPage
-	if err := json.Unmarshal(row.PagesJson, &stored); err != nil {
+	stored, err := decodePendingFacebookConnection(row.PagesJson)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Corrupt pending connection data")
 		return
 	}
-	descriptors := make([]pendingPageDescriptor, 0, len(stored))
-	for _, p := range stored {
+	descriptors := make([]pendingPageDescriptor, 0, len(stored.Pages))
+	for _, p := range stored.Pages {
 		descriptors = append(descriptors, pendingPageDescriptor{
-			ID:         p.ID,
-			Name:       p.Name,
-			Category:   p.Category,
-			PictureURL: p.PictureURL,
-			Tasks:      p.Tasks,
-			CanPublish: platform.PageHasPublishTask(p.Tasks),
+			ID:                   p.ID,
+			Name:                 p.Name,
+			Category:             p.Category,
+			PictureURL:           p.PictureURL,
+			Tasks:                p.Tasks,
+			BusinessID:           p.BusinessID,
+			BusinessName:         p.BusinessName,
+			BusinessRelationship: p.BusinessRelationship,
+			CanPublish:           platform.PageHasPublishTask(p.Tasks),
+		})
+	}
+	businessDescriptors := make([]pendingBusinessDescriptor, 0, len(stored.Businesses))
+	for _, business := range stored.Businesses {
+		if business.ID == "" {
+			continue
+		}
+		businessDescriptors = append(businessDescriptors, pendingBusinessDescriptor{
+			ID:   business.ID,
+			Name: business.Name,
 		})
 	}
 
 	writeSuccess(w, pendingConnectionResponse{
-		ID:        row.ID,
-		Platform:  row.Platform,
-		ProfileID: row.ProfileID,
-		MetaUser:  metaUserDescriptor{MetaUserID: row.MetaUserID},
-		Pages:     descriptors,
-		ExpiresAt: row.ExpiresAt.Time,
+		ID:         row.ID,
+		Platform:   row.Platform,
+		ProfileID:  row.ProfileID,
+		MetaUser:   metaUserDescriptor{MetaUserID: row.MetaUserID},
+		Pages:      descriptors,
+		Businesses: businessDescriptors,
+		ExpiresAt:  row.ExpiresAt.Time,
 	})
 }
 
@@ -288,13 +413,13 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var stored []pendingFacebookPage
-	if err := json.Unmarshal(row.PagesJson, &stored); err != nil {
+	stored, err := decodePendingFacebookConnection(row.PagesJson)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Corrupt pending connection data")
 		return
 	}
-	byID := make(map[string]pendingFacebookPage, len(stored))
-	for _, p := range stored {
+	byID := make(map[string]pendingFacebookPage, len(stored.Pages))
+	for _, p := range stored.Pages {
 		byID[p.ID] = p
 	}
 
@@ -342,6 +467,11 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 			"page_category": page.Category,
 			"picture_url":   page.PictureURL,
 			"tasks":         page.Tasks,
+		}
+		if page.BusinessID != "" {
+			metadata["business_id"] = page.BusinessID
+			metadata["business_name"] = page.BusinessName
+			metadata["business_relationship"] = page.BusinessRelationship
 		}
 		metadataJSON, _ := json.Marshal(metadata)
 
