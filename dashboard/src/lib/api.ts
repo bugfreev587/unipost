@@ -1629,6 +1629,11 @@ export interface AdminLandingVisitorTrendRow {
   signups: number;
 }
 
+export interface AdminCountryBreakdownRow {
+  country_code: string;
+  count: number;
+}
+
 export interface AdminLandingVisitorsResponse {
   range_days: number;
   total_visits: number;
@@ -1636,6 +1641,7 @@ export interface AdminLandingVisitorsResponse {
   signups: number;
   rows: AdminLandingVisitorRow[];
   trend: AdminLandingVisitorTrendRow[];
+  countries: AdminCountryBreakdownRow[];
   source_options: string[];
   campaign_options: string[];
 }
@@ -1662,6 +1668,7 @@ export interface AdminUserSignupTrend {
   // Server returns events for a slightly wider window (range_days + 2)
   // to cover any IANA timezone offset.
   events: string[];
+  countries: AdminCountryBreakdownRow[];
 }
 
 export interface AdminUserWorkspace {
