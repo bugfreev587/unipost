@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { ArrowRight, BarChart3, Camera, CheckCircle2, Clock, FileText, MessageCircle, ThumbsUp, Video } from "lucide-react";
+import { ArrowRight, BarChart3, Camera, CheckCircle2, Clock, FileText, ImageIcon, MessageCircle, MousePointerClick, ThumbsUp, Video } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { getMe } from "@/lib/api";
 import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
@@ -111,6 +111,44 @@ export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
         </div>
       </Link>
 
+      <Link
+        href={`/projects/${profileId}/analytics/platforms/pinterest`}
+        style={{
+          display: "block",
+          textDecoration: "none",
+          color: "inherit",
+          border: "1px solid var(--dborder)",
+          borderRadius: 8,
+          background: "var(--surface1)",
+          padding: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="platform-icon-wrap"><PlatformIcon platform="pinterest" /></div>
+            <div>
+              <div style={{ color: "var(--dtext)", fontWeight: 700 }}>Pinterest</div>
+              <div style={{ color: "var(--dmuted)", fontSize: 12 }}>Pins, boards, saves, clicks</div>
+            </div>
+          </div>
+          <ArrowRight style={{ width: 16, height: 16, color: "var(--dmuted2)" }} />
+        </div>
+        <div style={{ display: "grid", gap: 9, fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <CheckCircle2 style={{ width: 14, height: 14, color: "var(--success)" }} />
+            pins:read / boards:read / user_accounts:read
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <ImageIcon style={{ width: 14, height: 14 }} />
+            UniPost-published Pin analytics
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <MousePointerClick style={{ width: 14, height: 14 }} />
+            Impressions, saves, outbound clicks, comments
+          </div>
+        </div>
+      </Link>
+
       {!loading && tiktokEnabled ? (
         <Link
           href={`/projects/${profileId}/analytics/platforms/tiktok`}
@@ -197,7 +235,7 @@ export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
           <div style={{ color: "var(--dtext)", fontWeight: 700 }}>More platforms</div>
         </div>
         <div style={{ fontSize: 13, lineHeight: 1.55 }}>
-          YouTube channel stats, Instagram account insights, and X account metrics can use this same drilldown pattern later.
+          YouTube channel stats and X account metrics can use this same drilldown pattern later.
         </div>
       </div>
     </div>
