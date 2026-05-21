@@ -151,7 +151,6 @@ func TestConnectSessionPlatformUsesOAuthApp(t *testing.T) {
 
 func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM", "true")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 
@@ -193,9 +192,34 @@ func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	}
 }
 
+func TestCreateConnectSession_TikTokInstagramEnabledInProduction(t *testing.T) {
+	t.Setenv("UNIPOST_ENV", "production")
+
+	for _, platform := range []string{"tiktok", "instagram"} {
+		t.Run(platform, func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: platform, allowQuickstart: true}
+			h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
+			body := fmt.Sprintf(`{
+				"platform": %q,
+				"profile_id": "pr_1",
+				"external_user_id": "user_123",
+				"allow_quickstart_creds": true
+			}`, platform)
+			req := httptest.NewRequest(http.MethodPost, "/v1/connect/sessions", strings.NewReader(body))
+			req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+			rec := httptest.NewRecorder()
+
+			h.Create(rec, req)
+
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM", "true")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 
 	for _, platform := range []string{"tiktok", "facebook", "pinterest"} {
@@ -226,7 +250,6 @@ func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 
 func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM", "true")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "false")
