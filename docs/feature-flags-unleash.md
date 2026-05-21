@@ -45,6 +45,7 @@ Start with the env provider:
 FEATURE_FLAGS_PROVIDER=env
 FEATURE_TIKTOK_ANALYTICS_SCOPES=false
 FEATURE_FACEBOOK_PAGE_ANALYTICS=false
+FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST=false
 ```
 
 After Unleash is live and the backend token is created:
@@ -79,6 +80,7 @@ The response is intentionally simple:
       "facebook.page_analytics": false,
       "connect_sessions.tiktok_instagram": false,
       "connect_sessions.threads": false,
+      "connect_sessions.facebook_pinterest": false,
       "inbox": true
     }
   }
@@ -144,6 +146,22 @@ fallback: off in production
 ```
 
 Owner area: Hosted Connect / Threads / Meta App Review. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for Threads. It depends on Meta approval for the Threads app scopes plus valid shared Quickstart app credentials for production. Production rollback is to disable `connect_sessions.threads`, which blocks new Threads hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected Threads accounts.
+
+Create this flag in Unleash:
+
+```text
+connect_sessions.facebook_pinterest
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Hosted Connect / Facebook Pages / Pinterest / App Review. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for Facebook Page and Pinterest. It depends on Meta approval for Facebook Page scopes, Pinterest app approval, and valid shared Quickstart app credentials for production. Facebook hosted Connect automatically connects the first publishable Page returned by Meta for the authorizing user. Production rollback is to disable `connect_sessions.facebook_pinterest`, which blocks new Facebook/Pinterest hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected accounts.
 
 Create this flag in Unleash:
 

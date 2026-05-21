@@ -263,6 +263,12 @@ func main() {
 	if th := connect.NewThreadsConnector(os.Getenv("THREADS_APP_ID"), os.Getenv("THREADS_APP_SECRET"), apiBaseURL); th != nil {
 		connectors = append(connectors, th)
 	}
+	if fb := connect.NewFacebookConnector(firstEnv("FACEBOOK_APP_ID", "INSTAGRAM_APP_ID"), firstEnv("FACEBOOK_APP_SECRET", "INSTAGRAM_APP_SECRET"), apiBaseURL); fb != nil {
+		connectors = append(connectors, fb)
+	}
+	if pin := connect.NewPinterestConnector(firstEnv("PINTEREST_APP_ID", "PINTEREST_CLIENT_ID"), firstEnv("PINTEREST_APP_SECRET", "PINTEREST_CLIENT_SECRET"), apiBaseURL); pin != nil {
+		connectors = append(connectors, pin)
+	}
 	if yt := connect.NewYouTubeConnector(os.Getenv("YOUTUBE_CLIENT_ID"), os.Getenv("YOUTUBE_CLIENT_SECRET"), apiBaseURL); yt != nil {
 		connectors = append(connectors, yt)
 	}
@@ -841,6 +847,15 @@ func corsAllowedOrigins() []string {
 	}
 
 	return origins
+}
+
+func firstEnv(names ...string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // syncStripePriceIDs writes the LIVE Stripe price IDs from env vars into the

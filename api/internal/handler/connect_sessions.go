@@ -78,9 +78,11 @@ var connectablePlatforms = map[string]bool{
 	"tiktok":    true,
 	"instagram": true,
 	"threads":   true,
+	"facebook":  true,
+	"pinterest": true,
 }
 
-const connectablePlatformList = "twitter, linkedin, bluesky, youtube, tiktok, instagram, threads"
+const connectablePlatformList = "twitter, linkedin, bluesky, youtube, tiktok, instagram, threads, facebook, pinterest"
 
 // connectSessionTTL is the wall-clock window during which a hosted
 // page link is honored. Stripe uses 24h for Connect — we go shorter
@@ -159,7 +161,7 @@ type publicBrandingPayload struct {
 
 func connectSessionPlatformUsesOAuthApp(platform string) bool {
 	switch platform {
-	case "twitter", "linkedin", "youtube", "instagram", "tiktok", "threads":
+	case "twitter", "linkedin", "youtube", "instagram", "tiktok", "threads", "facebook", "pinterest":
 		return true
 	default:
 		return false
@@ -174,6 +176,10 @@ func connectSessionPlatformFeatureEnabled(ctx context.Context, workspaceID, plat
 		})
 	case "threads":
 		return featureflags.Enabled(ctx, featureflags.HostedConnectThreads, featureflags.Target{
+			WorkspaceID: workspaceID,
+		})
+	case "facebook", "pinterest":
+		return featureflags.Enabled(ctx, featureflags.HostedConnectFacebookPinterest, featureflags.Target{
 			WorkspaceID: workspaceID,
 		})
 	default:

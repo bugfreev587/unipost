@@ -104,12 +104,12 @@ func TestNewConnectSessionHandler_NilQuotaOK(t *testing.T) {
 
 // TestConnectablePlatforms locks the currently supported platform allowlist.
 func TestConnectablePlatforms(t *testing.T) {
-	for _, p := range []string{"twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads"} {
+	for _, p := range []string{"twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"} {
 		if !connectablePlatforms[p] {
 			t.Errorf("%s should be connectable", p)
 		}
 	}
-	for _, p := range []string{"pinterest", "facebook"} {
+	for _, p := range []string{"reddit"} {
 		if connectablePlatforms[p] {
 			t.Errorf("%s should NOT be connectable yet", p)
 		}
@@ -117,7 +117,7 @@ func TestConnectablePlatforms(t *testing.T) {
 }
 
 func TestConnectSessionPlatformUsesOAuthApp(t *testing.T) {
-	for _, p := range []string{"twitter", "linkedin", "youtube", "tiktok", "instagram", "threads"} {
+	for _, p := range []string{"twitter", "linkedin", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"} {
 		if !connectSessionPlatformUsesOAuthApp(p) {
 			t.Errorf("%s should use OAuth app credentials", p)
 		}
@@ -131,8 +131,9 @@ func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM", "true")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
+	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 
-	for _, platform := range []string{"tiktok", "instagram", "threads"} {
+	for _, platform := range []string{"tiktok", "instagram", "threads", "facebook", "pinterest"} {
 		t.Run(platform, func(t *testing.T) {
 			fdb := &connectSessionTestDB{platform: platform, allowQuickstart: true}
 			h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
@@ -170,28 +171,34 @@ func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	}
 }
 
-func TestCreateConnectSession_TikTokMissingWhiteLabelCreds(t *testing.T) {
+func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM", "true")
+	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 
-	fdb := &connectSessionTestDB{platform: "tiktok", credentialErr: pgx.ErrNoRows}
-	h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
-	req := httptest.NewRequest(http.MethodPost, "/v1/connect/sessions", strings.NewReader(`{
-		"platform": "tiktok",
-		"profile_id": "pr_1",
-		"external_user_id": "user_123",
-		"allow_quickstart_creds": false
-	}`))
-	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
-	rec := httptest.NewRecorder()
+	for _, platform := range []string{"tiktok", "facebook", "pinterest"} {
+		t.Run(platform, func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: platform, credentialErr: pgx.ErrNoRows}
+			h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
+			body := fmt.Sprintf(`{
+				"platform": %q,
+				"profile_id": "pr_1",
+				"external_user_id": "user_123",
+				"allow_quickstart_creds": false
+			}`, platform)
+			req := httptest.NewRequest(http.MethodPost, "/v1/connect/sessions", strings.NewReader(body))
+			req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+			rec := httptest.NewRecorder()
 
-	h.Create(rec, req)
+			h.Create(rec, req)
 
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "workspace is missing tiktok platform credentials") {
-		t.Fatalf("unexpected body: %s", rec.Body.String())
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "workspace is missing "+platform+" platform credentials") {
+				t.Fatalf("unexpected body: %s", rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -199,6 +206,7 @@ func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM", "true")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
+	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "false")
 
 	cases := []struct {
@@ -222,6 +230,22 @@ func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 			),
 			wantURL:  "https://threads.net/oauth/authorize",
 			wantPart: "client_id=threads-client",
+		},
+		{
+			platform: "facebook",
+			registry: connect.NewRegistry(
+				connect.NewFacebookConnector("facebook-client", "secretXYZ", "https://api.example.com"),
+			),
+			wantURL:  "https://www.facebook.com/v22.0/dialog/oauth",
+			wantPart: "client_id=facebook-client",
+		},
+		{
+			platform: "pinterest",
+			registry: connect.NewRegistry(
+				connect.NewPinterestConnector("pinterest-client", "secretXYZ", "https://api.example.com"),
+			),
+			wantURL:  "https://www.pinterest.com/oauth/",
+			wantPart: "consumer_id=pinterest-client",
 		},
 	}
 	for _, tc := range cases {

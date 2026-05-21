@@ -9,6 +9,8 @@
 //	youtube.go   — OAuth 2.0 (offline access)
 //	instagram.go — OAuth 2.0 + long-lived token swap
 //	tiktok.go    — OAuth 2.0 with client_key/client_secret form exchange
+//	facebook.go  — OAuth 2.0 + first publishable Page selection
+//	pinterest.go — OAuth 2.0 with refreshable tokens
 //
 // Bluesky doesn't go through this package — it's an HTML form
 // handled in internal/handler/connect_bluesky.go because it has no
