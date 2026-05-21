@@ -104,6 +104,31 @@ respects user control end-to-end."
 
 ---
 
+## Video 4 — Facebook Business Asset Selection (45s)
+
+**Purpose:** Show `business_management` in use. UniPost reads the
+Business Manager assets the user can access, then helps them choose
+the correct Business/Page asset before saving the connection.
+
+**Script:**
+
+| Time | Action | What's on screen |
+|---|---|---|
+| 0:00 | Open UniPost dashboard, navigate to Connected Accounts | Facebook connection button |
+| 0:05 | Click "Connect Facebook" | Meta OAuth consent screen |
+| 0:15 | Select the test Pages and approve access | Meta Page selection and access review screens |
+| 0:25 | Return to UniPost | Page Picker grouped by Business name |
+| 0:35 | Select the intended Business/Page asset and click Connect selected | Page connects successfully |
+| 0:42 | Open account row details if needed | Connected Page shows the selected Page identity |
+
+**Voiceover:** "UniPost uses Business Manager access only to read
+which Business assets and Pages this user can manage. That lets the
+user pick the correct Page when they belong to multiple Businesses.
+We store the selected Page connection and its Business context so
+future publishing targets the intended asset."
+
+---
+
 ## After recording
 
 1. Trim each clip to under 60 seconds in QuickTime / iMovie

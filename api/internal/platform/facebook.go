@@ -79,6 +79,7 @@ func (a *FacebookAdapter) Platform() string { return "facebook" }
 const facebookGraphBase = "https://graph.facebook.com/v22.0"
 
 var facebookPagesBaseScopes = []string{
+	"business_management",
 	"pages_show_list",
 	"pages_manage_posts",
 	"pages_read_engagement",
@@ -258,12 +259,20 @@ func (a *FacebookAdapter) ExchangeForLongLivedUserToken(ctx context.Context, cli
 // Token), which the finalize handler encrypts before writing to
 // social_accounts.access_token.
 type FacebookPage struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	AccessToken string   `json:"access_token"`
-	Category    string   `json:"category"`
-	PictureURL  string   `json:"picture_url"`
-	Tasks       []string `json:"tasks"` // admin tasks granted to this user for this Page
+	ID                   string   `json:"id"`
+	Name                 string   `json:"name"`
+	AccessToken          string   `json:"access_token"`
+	Category             string   `json:"category"`
+	PictureURL           string   `json:"picture_url"`
+	Tasks                []string `json:"tasks"` // admin tasks granted to this user for this Page
+	BusinessID           string   `json:"business_id,omitempty"`
+	BusinessName         string   `json:"business_name,omitempty"`
+	BusinessRelationship string   `json:"business_relationship,omitempty"`
+}
+
+type FacebookBusiness struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // FetchPages calls /me/accounts and returns the Pages the user
@@ -278,7 +287,7 @@ type FacebookPage struct {
 func (a *FacebookAdapter) FetchPages(ctx context.Context, userAccessToken string) ([]FacebookPage, error) {
 	params := url.Values{
 		"access_token": {userAccessToken},
-		"fields":       {"id,name,access_token,category,picture{url},tasks"},
+		"fields":       {"id,name,access_token,category,picture{url},tasks,business{id,name}"},
 		"limit":        {"100"},
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", facebookGraphBase+"/me/accounts?"+params.Encode(), nil)
@@ -306,7 +315,11 @@ func (a *FacebookAdapter) FetchPages(ctx context.Context, userAccessToken string
 					URL string `json:"url"`
 				} `json:"data"`
 			} `json:"picture"`
-			Tasks []string `json:"tasks"`
+			Tasks    []string `json:"tasks"`
+			Business struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"business"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -315,15 +328,113 @@ func (a *FacebookAdapter) FetchPages(ctx context.Context, userAccessToken string
 	out := make([]FacebookPage, 0, len(parsed.Data))
 	for _, p := range parsed.Data {
 		out = append(out, FacebookPage{
-			ID:          p.ID,
-			Name:        p.Name,
-			AccessToken: p.AccessToken,
-			Category:    p.Category,
-			PictureURL:  p.Picture.Data.URL,
-			Tasks:       p.Tasks,
+			ID:                   p.ID,
+			Name:                 p.Name,
+			AccessToken:          p.AccessToken,
+			Category:             p.Category,
+			PictureURL:           p.Picture.Data.URL,
+			Tasks:                p.Tasks,
+			BusinessID:           p.Business.ID,
+			BusinessName:         p.Business.Name,
+			BusinessRelationship: "page_business",
 		})
 	}
 	return out, nil
+}
+
+type FacebookBusinessPageRelationship struct {
+	BusinessID           string
+	BusinessName         string
+	BusinessRelationship string
+}
+
+func (a *FacebookAdapter) FetchBusinesses(ctx context.Context, userAccessToken string) ([]FacebookBusiness, error) {
+	params := url.Values{
+		"access_token": {userAccessToken},
+		"fields":       {"id,name"},
+		"limit":        {"100"},
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", facebookGraphBase+"/me/businesses?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook /me/businesses: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("facebook /me/businesses (%d): %s", resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		Data []FacebookBusiness `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("facebook /me/businesses decode: %w", err)
+	}
+	return parsed.Data, nil
+}
+
+func (a *FacebookAdapter) FetchBusinessPageRelationships(ctx context.Context, userAccessToken string, businesses []FacebookBusiness) (map[string]FacebookBusinessPageRelationship, error) {
+	out := make(map[string]FacebookBusinessPageRelationship)
+	for _, business := range businesses {
+		if business.ID == "" {
+			continue
+		}
+		if err := a.fetchBusinessPages(ctx, userAccessToken, business, "owned_pages", "owned", out); err != nil {
+			return out, err
+		}
+		if err := a.fetchBusinessPages(ctx, userAccessToken, business, "client_pages", "client", out); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+func (a *FacebookAdapter) fetchBusinessPages(ctx context.Context, userAccessToken string, business FacebookBusiness, edge, relationship string, out map[string]FacebookBusinessPageRelationship) error {
+	params := url.Values{
+		"access_token": {userAccessToken},
+		"fields":       {"id,name"},
+		"limit":        {"100"},
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", facebookGraphBase+"/"+url.PathEscape(business.ID)+"/"+edge+"?"+params.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("facebook /%s/%s: %w", business.ID, edge, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("facebook /%s/%s (%d): %s", business.ID, edge, resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Errorf("facebook /%s/%s decode: %w", business.ID, edge, err)
+	}
+	for _, page := range parsed.Data {
+		if page.ID == "" {
+			continue
+		}
+		if existing, ok := out[page.ID]; ok && existing.BusinessRelationship == "owned" {
+			continue
+		}
+		out[page.ID] = FacebookBusinessPageRelationship{
+			BusinessID:           business.ID,
+			BusinessName:         business.Name,
+			BusinessRelationship: relationship,
+		}
+	}
+	return nil
 }
 
 // PageHasPublishTask returns true when the Page's tasks list includes

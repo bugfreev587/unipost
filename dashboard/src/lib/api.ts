@@ -552,11 +552,19 @@ export interface PendingFacebookPage {
   category: string;
   picture_url: string;
   tasks: string[];
+  business_id?: string;
+  business_name?: string;
+  business_relationship?: "owned" | "client" | "page_business" | string;
   // can_publish reflects whether the current user's admin role on
   // this Page includes content-publishing permissions. When false,
   // the picker should still show the row but disable selection so
   // the user understands why they can't connect it.
   can_publish: boolean;
+}
+
+export interface PendingFacebookBusiness {
+  id: string;
+  name: string;
 }
 
 export interface PendingConnection {
@@ -565,6 +573,7 @@ export interface PendingConnection {
   profile_id: string;
   meta_user: { meta_user_id: string };
   pages: PendingFacebookPage[];
+  businesses: PendingFacebookBusiness[];
   expires_at: string;
 }
 
