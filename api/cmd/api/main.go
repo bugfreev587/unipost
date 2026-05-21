@@ -615,7 +615,7 @@ func main() {
 		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/accounts/{id}/tiktok/profile", socialAccountHandler.TikTokProfile)
 		r.Get("/v1/accounts/{id}/tiktok/videos", socialAccountHandler.TikTokVideos)
-		r.With(handler.RequirePlanAnalytics(quotaChecker), handler.RequireFeatureFlag(featureflags.FacebookPageAnalytics)).
+		r.With(handler.RequirePlanAnalytics(quotaChecker), auth.AdminMiddleware(adminChecker)).
 			Get("/v1/accounts/{id}/facebook/page-analytics", socialAccountHandler.FacebookPageAnalytics)
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Post("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
@@ -638,7 +638,7 @@ func main() {
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/profile", socialAccountHandler.TikTokProfile)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/videos", socialAccountHandler.TikTokVideos)
-		r.With(handler.RequirePlanAnalytics(quotaChecker), handler.RequireFeatureFlag(featureflags.FacebookPageAnalytics)).
+		r.With(handler.RequirePlanAnalytics(quotaChecker), auth.AdminMiddleware(adminChecker)).
 			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-analytics", socialAccountHandler.FacebookPageAnalytics)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)

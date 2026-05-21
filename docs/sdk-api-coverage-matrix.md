@@ -90,7 +90,7 @@ These routes exist in the backend but are not yet covered by the hourly publishe
 | `GET /v1/accounts/{id}/metrics` | No | Useful for platform analytics dashboard coverage. |
 | `GET /v1/accounts/{id}/tiktok/profile` | No | Should be conditional on a connected TikTok fixture. |
 | `GET /v1/accounts/{id}/tiktok/videos` | No | Should be conditional on a connected TikTok fixture. |
-| `GET /v1/accounts/{id}/facebook/page-analytics` | No | Dashboard aggregate endpoint; should be conditional on a connected Facebook Page fixture and `facebook.page_analytics`. |
+| `GET /v1/accounts/{id}/facebook/page-analytics` | No | Dashboard aggregate endpoint; should be conditional on a connected Facebook Page fixture and admin allowlist access. |
 | `GET /v1/accounts/{id}/pinterest/boards` | No | Should be conditional on a connected Pinterest fixture. |
 | `POST /v1/accounts/{id}/pinterest/boards` | No | Requires safe sandbox/fixture rules before live regression. |
 | `GET /v1/accounts/{id}/facebook/webhook-status` | No | Dashboard operational endpoint. |
