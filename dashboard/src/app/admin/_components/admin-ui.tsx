@@ -7,7 +7,6 @@ import { useEffect, useState, type ComponentType, type SVGProps } from "react";
 import {
   AlertTriangle,
   CreditCard,
-  Flag,
   FileText,
   LayoutDashboard,
   MousePointerClick,
@@ -93,7 +92,6 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Posts", href: "/admin/posts", section: "Overview", enabled: true, icon: Send },
   { label: "Billing", href: "/admin/billing", section: "Revenue", enabled: true, icon: CreditCard },
   { label: "MRR", href: "/admin/mrr", section: "Revenue", enabled: true, icon: TrendingUp },
-  { label: "Features", href: "/admin/features", section: "System", enabled: true, icon: Flag },
   { label: "Logs", href: "/admin/logs", section: "System", enabled: true, icon: FileText },
   { label: "Errors", href: "/admin/errors", section: "System", enabled: true, icon: AlertTriangle },
   { label: "Settings", href: "/admin/settings", section: "System", enabled: true, icon: Settings },
