@@ -606,6 +606,76 @@ func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadPa
 	return err
 }
 
+const mergeInboxItemAuthorMetadataByExternalID = `-- name: MergeInboxItemAuthorMetadataByExternalID :execrows
+WITH incoming AS (
+  SELECT
+    NULLIF($3::TEXT, '') AS author_name,
+    NULLIF($4::TEXT, '') AS author_id,
+    NULLIF($5::TEXT, '') AS author_avatar_url
+)
+UPDATE inbox_items AS i
+SET
+  author_name = CASE
+    WHEN incoming.author_name IS NOT NULL
+      AND LOWER(incoming.author_name) <> 'facebook user'
+      AND (i.author_name IS NULL OR i.author_name = '' OR LOWER(i.author_name) = 'facebook user')
+    THEN incoming.author_name
+    ELSE i.author_name
+  END,
+  author_id = CASE
+    WHEN incoming.author_id IS NOT NULL
+      AND (i.author_id IS NULL OR i.author_id = '')
+    THEN incoming.author_id
+    ELSE i.author_id
+  END,
+  author_avatar_url = CASE
+    WHEN incoming.author_avatar_url IS NOT NULL
+      AND (i.author_avatar_url IS NULL OR i.author_avatar_url = '')
+    THEN incoming.author_avatar_url
+    ELSE i.author_avatar_url
+  END
+FROM incoming
+WHERE i.social_account_id = $1
+  AND i.external_id = $2
+  AND (
+    (
+      incoming.author_name IS NOT NULL
+      AND LOWER(incoming.author_name) <> 'facebook user'
+      AND (i.author_name IS NULL OR i.author_name = '' OR LOWER(i.author_name) = 'facebook user')
+    )
+    OR (
+      incoming.author_id IS NOT NULL
+      AND (i.author_id IS NULL OR i.author_id = '')
+    )
+    OR (
+      incoming.author_avatar_url IS NOT NULL
+      AND (i.author_avatar_url IS NULL OR i.author_avatar_url = '')
+    )
+  )
+`
+
+type MergeInboxItemAuthorMetadataByExternalIDParams struct {
+	SocialAccountID string `json:"social_account_id"`
+	ExternalID      string `json:"external_id"`
+	AuthorName      string `json:"author_name"`
+	AuthorID        string `json:"author_id"`
+	AuthorAvatarUrl string `json:"author_avatar_url"`
+}
+
+func (q *Queries) MergeInboxItemAuthorMetadataByExternalID(ctx context.Context, arg MergeInboxItemAuthorMetadataByExternalIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, mergeInboxItemAuthorMetadataByExternalID,
+		arg.SocialAccountID,
+		arg.ExternalID,
+		arg.AuthorName,
+		arg.AuthorID,
+		arg.AuthorAvatarUrl,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const reconcileDMThreadKeys = `-- name: ReconcileDMThreadKeys :execrows
 UPDATE inbox_items
 SET thread_key = $3,
