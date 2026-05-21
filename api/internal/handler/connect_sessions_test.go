@@ -151,8 +151,6 @@ func TestConnectSessionPlatformUsesOAuthApp(t *testing.T) {
 
 func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 
 	for _, platform := range []string{"tiktok", "instagram", "threads", "facebook", "pinterest"} {
 		t.Run(platform, func(t *testing.T) {
@@ -192,10 +190,10 @@ func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	}
 }
 
-func TestCreateConnectSession_PublicQuickstartPlatformsEnabledInProduction(t *testing.T) {
+func TestCreateConnectSession_OAuthQuickstartPlatformsEnabledInProduction(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "production")
 
-	for _, platform := range []string{"tiktok", "instagram", "pinterest"} {
+	for _, platform := range []string{"twitter", "linkedin", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"} {
 		t.Run(platform, func(t *testing.T) {
 			fdb := &connectSessionTestDB{platform: platform, allowQuickstart: true}
 			h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
@@ -218,35 +216,8 @@ func TestCreateConnectSession_PublicQuickstartPlatformsEnabledInProduction(t *te
 	}
 }
 
-func TestCreateConnectSession_FacebookDisabledInProductionByDefault(t *testing.T) {
-	t.Setenv("UNIPOST_ENV", "production")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "false")
-
-	fdb := &connectSessionTestDB{platform: "facebook", allowQuickstart: true}
-	h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
-	body := `{
-		"platform": "facebook",
-		"profile_id": "pr_1",
-		"external_user_id": "user_123",
-		"allow_quickstart_creds": true
-	}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/connect/sessions", strings.NewReader(body))
-	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
-	rec := httptest.NewRecorder()
-
-	h.Create(rec, req)
-
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "facebook hosted connect sessions are not enabled") {
-		t.Fatalf("unexpected body: %s", rec.Body.String())
-	}
-}
-
 func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 
 	for _, platform := range []string{"tiktok", "facebook", "pinterest"} {
 		t.Run(platform, func(t *testing.T) {
@@ -276,8 +247,6 @@ func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 
 func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "false")
 
 	cases := []struct {

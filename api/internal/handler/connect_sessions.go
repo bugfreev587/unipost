@@ -37,7 +37,6 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
@@ -176,21 +175,6 @@ func connectSessionPlatformUsesOAuthApp(platform string) bool {
 	}
 }
 
-func connectSessionPlatformFeatureEnabled(ctx context.Context, workspaceID, platform string) bool {
-	switch platform {
-	case "threads":
-		return featureflags.Enabled(ctx, featureflags.HostedConnectThreads, featureflags.Target{
-			WorkspaceID: workspaceID,
-		})
-	case "facebook":
-		return featureflags.Enabled(ctx, featureflags.HostedConnectFacebookPinterest, featureflags.Target{
-			WorkspaceID: workspaceID,
-		})
-	default:
-		return true
-	}
-}
-
 // Create handles POST /v1/connect/sessions.
 //
 // Body: {platform, external_user_id, external_user_email?, return_url?}
@@ -234,11 +218,6 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !connectablePlatforms[body.Platform] {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
 			"platform must be one of "+connectablePlatformList)
-		return
-	}
-	if !connectSessionPlatformFeatureEnabled(r.Context(), workspaceID, body.Platform) {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
-			body.Platform+" hosted connect sessions are not enabled for this workspace")
 		return
 	}
 	// Plan gate (migration 057): block new X / Twitter connections on
