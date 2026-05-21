@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { EnumValues, type ApiFieldItem } from "../../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../../_components/single-endpoint-page";
 
@@ -9,7 +8,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
-  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow. Hosted Connect currently supports the values below; use <Link href="/docs/api/accounts/oauth-connect">OAuth connect</Link> for direct dashboard/API account linking on TikTok, Instagram, Threads, Pinterest, or Facebook.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube"]} /></> },
+  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"]} /></> },
   { name: "profile_id?", type: "string", description: "Profile that should own the resulting connected account. Required when the workspace has multiple profiles." },
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
@@ -21,6 +20,7 @@ const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Connect session ID." },
   { name: "url", type: "string", description: "Hosted onboarding URL to redirect the user to." },
   { name: "allow_quickstart_creds", type: "boolean", description: "Whether this session is allowed to fall back to UniPost's shared Quickstart OAuth app when no workspace-specific credentials exist." },
+  { name: "managed_account_id", type: "string", description: "Present after the session completes. Alias of completed_social_account_id for hosted Connect callers." },
   { name: "status", type: "string", description: <>Session lifecycle state. Create responses start as pending.<EnumValues values={["pending", "completed", "expired", "cancelled"]} /></> },
   { name: "expires_at", type: "string | null", description: "Expiration timestamp for the hosted session." },
 ];
@@ -40,12 +40,12 @@ const SNIPPETS = [
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "platform": "twitter",
+    "platform": "tiktok",
     "profile_id": "pr_brand_us",
     "external_user_id": "user_123",
     "external_user_email": "alex@acme.com",
     "return_url": "https://app.acme.com/integrations/done",
-    "allow_quickstart_creds": false
+    "allow_quickstart_creds": true
   }'`,
   },
   {
@@ -56,12 +56,12 @@ const SNIPPETS = [
 const client = new UniPost();
 
 const session = await client.connect.createSession({
-  platform: "twitter",
+  platform: "pinterest",
   profileId: "pr_brand_us",
   externalUserId: "user_123",
   externalUserEmail: "alex@acme.com",
   returnUrl: "https://app.acme.com/integrations/done",
-  allowQuickstartCreds: false,
+  allowQuickstartCreds: true,
 });
 
 console.log(session.url);`,
@@ -74,12 +74,12 @@ console.log(session.url);`,
 client = UniPost()
 
 session = client.connect.create_session(
-  platform="twitter",
+  platform="tiktok",
   profile_id="pr_brand_us",
   external_user_id="user_123",
   external_user_email="alex@acme.com",
   return_url="https://app.acme.com/integrations/done",
-  allow_quickstart_creds=False,
+  allow_quickstart_creds=True,
 )
 
 print(session["data"]["url"])`,
@@ -101,12 +101,12 @@ func main() {
   client := unipost.NewClient()
 
   session, err := client.Connect.CreateSession(context.Background(), &unipost.CreateConnectSessionParams{
-    Platform:             "twitter",
+    Platform:             "instagram",
     ProfileID:            "pr_brand_us",
     ExternalUserID:       "user_123",
     ExternalUserEmail:    "alex@acme.com",
     ReturnURL:            "https://app.acme.com/integrations/done",
-    AllowQuickstartCreds: false,
+    AllowQuickstartCreds: true,
   })
   if err != nil {
     log.Fatal(err)
@@ -125,12 +125,12 @@ import java.util.Map;
 UniPost client = new UniPost();
 
 var session = client.connect().createSession(Map.of(
-    "platform", "twitter",
+    "platform", "tiktok",
     "profile_id", "pr_brand_us",
     "external_user_id", "user_123",
     "external_user_email", "alex@acme.com",
     "return_url", "https://app.acme.com/integrations/done",
-    "allow_quickstart_creds", false
+    "allow_quickstart_creds", true
 ));
 
 System.out.println(session.get("url").asText());`,
@@ -144,8 +144,9 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "id": "cs_abc123",
-    "url": "https://connect.unipost.dev/session/cs_abc123",
-    "allow_quickstart_creds": false,
+    "platform": "tiktok",
+    "url": "https://app.unipost.dev/connect/tiktok?session=cs_abc123&state=state_123",
+    "allow_quickstart_creds": true,
     "status": "pending",
     "expires_at": "2026-04-22T18:00:00Z"
   }
@@ -165,12 +166,12 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
-    label: "402",
+    label: "422",
     code: `{
   "error": {
     "code": "VALIDATION_ERROR",
     "normalized_code": "validation_error",
-    "message": "workspace is missing twitter platform credentials; upload white-label credentials first or pass allow_quickstart_creds=true"
+    "message": "workspace is missing tiktok platform credentials; upload white-label credentials first or pass allow_quickstart_creds=true"
   },
   "request_id": "req_123"
 }`,
@@ -182,7 +183,7 @@ export default function CreateConnectSessionPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Create connect session"
-      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow. For OAuth platforms, this endpoint defaults to white-label mode: the workspace must already have platform credentials uploaded unless you explicitly pass allow_quickstart_creds=true."
+      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow. For OAuth platforms, this endpoint defaults to white-label mode: the workspace must already have platform credentials uploaded unless you explicitly pass allow_quickstart_creds=true. Facebook Page sessions connect the first publishable Page returned by Meta for the authorizing user."
       method="POST"
       path="/v1/connect/sessions"
       requestSections={[

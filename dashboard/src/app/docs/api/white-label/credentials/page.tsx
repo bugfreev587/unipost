@@ -22,7 +22,7 @@ export default function PlatformCredentialsPage() {
       <DocsTable
         columns={["Field", "Required", "Notes"]}
         rows={[
-          ["platform", "Yes", <>One of <code>instagram</code>, <code>linkedin</code>, <code>pinterest</code>, <code>tiktok</code>, <code>youtube</code>, or <code>twitter</code>. The dashboard groups Instagram and Threads under the Meta credential card. See <Link href="/docs/platforms#platform-names">available platform names</Link>.</>],
+          ["platform", "Yes", <>One of <code>facebook</code>, <code>instagram</code>, <code>linkedin</code>, <code>pinterest</code>, <code>tiktok</code>, <code>youtube</code>, or <code>twitter</code>. The dashboard groups Instagram and Threads under the Meta credential card; Facebook Page has its own row so Connect sessions can require Facebook-specific white-label credentials. See <Link href="/docs/platforms#platform-names">available platform names</Link>.</>],
           ["client_id", "Yes", "Client / App ID from the platform developer portal"],
           ["client_secret", "Yes", "Stored encrypted at rest (AES-256-GCM). Never returned in any read endpoint."],
         ]}

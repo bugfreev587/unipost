@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -70,10 +71,7 @@ func (a *FacebookAdapter) Platform() string { return "facebook" }
 // with Instagram/Threads when they're upgraded.
 const facebookGraphBase = "https://graph.facebook.com/v22.0"
 
-// FacebookPagesScopes is the full permission set the PRD lists for
-// Facebook Pages. Exported so tests + the dashboard docs page can
-// reference the canonical list.
-var FacebookPagesScopes = []string{
+var facebookPagesBaseScopes = []string{
 	"pages_show_list",
 	"pages_manage_posts",
 	"pages_read_engagement",
@@ -82,6 +80,16 @@ var FacebookPagesScopes = []string{
 	"pages_messaging",
 	"pages_manage_metadata",
 }
+
+var facebookPageAnalyticsScopes = []string{
+	"read_insights",
+}
+
+// FacebookPagesScopes is the full permission set the PRD lists for Facebook
+// Pages, including optional analytics scopes. Exported so tests and dashboard
+// docs can reference the canonical review list. OAuth requests use
+// FacebookOAuthScopes so production can keep unapproved read scopes disabled.
+var FacebookPagesScopes = append(append([]string(nil), facebookPagesBaseScopes...), facebookPageAnalyticsScopes...)
 
 func (a *FacebookAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 	// Meta reuses the same App for IG/Threads/Facebook Pages; the
@@ -103,8 +111,16 @@ func (a *FacebookAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig
 		AuthURL:      "https://www.facebook.com/v22.0/dialog/oauth",
 		TokenURL:     facebookGraphBase + "/oauth/access_token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/facebook",
-		Scopes:       FacebookPagesScopes,
+		Scopes:       FacebookOAuthScopes(),
 	}
+}
+
+func FacebookOAuthScopes() []string {
+	scopes := append([]string(nil), facebookPagesBaseScopes...)
+	if !featureflags.Enabled(context.Background(), featureflags.FacebookPageAnalytics, featureflags.Target{}) {
+		return scopes
+	}
+	return append(scopes, facebookPageAnalyticsScopes...)
 }
 
 func (a *FacebookAdapter) GetAuthURL(config OAuthConfig, state string) string {
@@ -661,12 +677,12 @@ func (a *FacebookAdapter) postVideo(ctx context.Context, accessToken, pageID, de
 // really done — no polling required before finish, no wedged
 // uploads, no silent no-ops.
 //
-// 1. start:    POST /{page_id}/video_reels?upload_phase=start
-//              → returns video_id + upload_url
-// 2. transfer: POST {upload_url} with bytes as body + offset=0 +
-//              file_size=<len> headers (synchronous)
-// 3. finish:   POST /{page_id}/video_reels?upload_phase=finish&
-//              video_id=&video_state=PUBLISHED[&description&title&...]
+//  1. start:    POST /{page_id}/video_reels?upload_phase=start
+//     → returns video_id + upload_url
+//  2. transfer: POST {upload_url} with bytes as body + offset=0 +
+//     file_size=<len> headers (synchronous)
+//  3. finish:   POST /{page_id}/video_reels?upload_phase=finish&
+//     video_id=&video_state=PUBLISHED[&description&title&...]
 //
 // After finish we poll /{video_id}?fields=status for up to ~60s just
 // like the Feed path, and return Status="processing" if Meta is still
@@ -1498,12 +1514,223 @@ func (a *FacebookAdapter) GetAnalytics(ctx context.Context, accessToken string, 
 type FacebookPageInsights struct {
 	Follows         int64 `json:"follows"`
 	Impressions     int64 `json:"impressions"`
+	Views           int64 `json:"views"`
 	PostEngagements int64 `json:"post_engagements"`
 	// Below100LikesNotice flips true when FB rejected the insights
 	// query because the Page hasn't crossed the 100-like floor;
 	// the dashboard renders a friendly "Keep growing!" state in
 	// that case instead of the raw error.
 	Below100LikesNotice bool `json:"below_100_likes_notice"`
+}
+
+// FacebookPageProfile is the Page identity block used by the platform
+// analytics dashboard. It is intentionally read-only and token-scoped to the
+// connected Page, so the browser never sees the Page access token.
+type FacebookPageProfile struct {
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Category           string `json:"category"`
+	Username           string `json:"username"`
+	PictureURL         string `json:"picture_url"`
+	Link               string `json:"link"`
+	About              string `json:"about"`
+	VerificationStatus string `json:"verification_status"`
+	FanCount           int64  `json:"fan_count"`
+	FollowersCount     int64  `json:"followers_count"`
+}
+
+// FacebookPagePost is a compact Page-post row returned by FetchPagePosts.
+// It carries the fields Meta reviewers care about for pages_read_engagement:
+// published content, media context, permalink, and interaction counts.
+type FacebookPagePost struct {
+	ID           string `json:"id"`
+	Message      string `json:"message"`
+	CreatedTime  string `json:"created_time"`
+	PermalinkURL string `json:"permalink_url"`
+	FullPicture  string `json:"full_picture"`
+	MediaURL     string `json:"media_url"`
+	MediaType    string `json:"media_type"`
+	Likes        int64  `json:"likes"`
+	Comments     int64  `json:"comments"`
+	Shares       int64  `json:"shares"`
+}
+
+// FetchPageProfile reads the connected Page's profile metadata with its Page
+// token. It is used by the Facebook platform analytics page to prove the app
+// can identify the Page it is reading from.
+func (a *FacebookAdapter) FetchPageProfile(ctx context.Context, accessToken, pageID string) (*FacebookPageProfile, error) {
+	if pageID == "" {
+		pid, err := a.fetchPageSelfID(ctx, accessToken)
+		if err != nil {
+			return nil, err
+		}
+		pageID = pid
+	}
+	params := url.Values{
+		"access_token": {accessToken},
+		"fields":       {"id,name,category,username,picture{url},link,about,verification_status,fan_count,followers_count"},
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", facebookGraphBase+"/"+pageID+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook page profile: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+	}
+
+	var parsed struct {
+		ID                 string `json:"id"`
+		Name               string `json:"name"`
+		Category           string `json:"category"`
+		Username           string `json:"username"`
+		Link               string `json:"link"`
+		About              string `json:"about"`
+		VerificationStatus string `json:"verification_status"`
+		FanCount           int64  `json:"fan_count"`
+		FollowersCount     int64  `json:"followers_count"`
+		Picture            struct {
+			Data struct {
+				URL string `json:"url"`
+			} `json:"data"`
+		} `json:"picture"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("facebook page profile decode: %w", err)
+	}
+	return &FacebookPageProfile{
+		ID:                 parsed.ID,
+		Name:               parsed.Name,
+		Category:           parsed.Category,
+		Username:           parsed.Username,
+		PictureURL:         parsed.Picture.Data.URL,
+		Link:               parsed.Link,
+		About:              parsed.About,
+		VerificationStatus: parsed.VerificationStatus,
+		FanCount:           parsed.FanCount,
+		FollowersCount:     parsed.FollowersCount,
+	}, nil
+}
+
+// FetchPagePosts reads the Page's published post inventory. The interaction
+// counts are returned as Graph field-expansion summaries so the first render
+// already proves pages_read_engagement without N+1 post detail calls.
+func (a *FacebookAdapter) FetchPagePosts(ctx context.Context, accessToken, pageID string, limit int) ([]FacebookPagePost, error) {
+	if pageID == "" {
+		pid, err := a.fetchPageSelfID(ctx, accessToken)
+		if err != nil {
+			return nil, err
+		}
+		pageID = pid
+	}
+	if limit <= 0 {
+		limit = 12
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	params := url.Values{
+		"access_token": {accessToken},
+		"limit":        {strconv.Itoa(limit)},
+		"fields": {
+			"id,message,created_time,permalink_url,full_picture," +
+				"attachments.limit(1){media{image{src}},media_type}," +
+				"reactions.summary(true).limit(0)," +
+				"comments.summary(true).limit(0)," +
+				"shares",
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", facebookGraphBase+"/"+pageID+"/posts?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("facebook page posts: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+	}
+
+	var parsed struct {
+		Data []struct {
+			ID           string `json:"id"`
+			Message      string `json:"message"`
+			CreatedTime  string `json:"created_time"`
+			PermalinkURL string `json:"permalink_url"`
+			FullPicture  string `json:"full_picture"`
+			Attachments  struct {
+				Data []struct {
+					MediaType string `json:"media_type"`
+					Media     struct {
+						Image struct {
+							Src string `json:"src"`
+						} `json:"image"`
+					} `json:"media"`
+				} `json:"data"`
+			} `json:"attachments"`
+			Reactions struct {
+				Summary struct {
+					TotalCount int64 `json:"total_count"`
+				} `json:"summary"`
+			} `json:"reactions"`
+			Comments struct {
+				Summary struct {
+					TotalCount int64 `json:"total_count"`
+				} `json:"summary"`
+			} `json:"comments"`
+			Shares struct {
+				Count int64 `json:"count"`
+			} `json:"shares"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("facebook page posts decode: %w", err)
+	}
+
+	out := make([]FacebookPagePost, 0, len(parsed.Data))
+	for _, p := range parsed.Data {
+		mediaURL := p.FullPicture
+		mediaType := "post"
+		if len(p.Attachments.Data) > 0 {
+			att := p.Attachments.Data[0]
+			if mediaURL == "" {
+				mediaURL = att.Media.Image.Src
+			}
+			switch strings.ToLower(att.MediaType) {
+			case "photo":
+				mediaType = "image"
+			case "video", "video_inline", "video_autoplay":
+				mediaType = "video"
+			case "share":
+				mediaType = "link"
+			default:
+				if att.MediaType != "" {
+					mediaType = strings.ToLower(att.MediaType)
+				}
+			}
+		}
+		out = append(out, FacebookPagePost{
+			ID:           p.ID,
+			Message:      p.Message,
+			CreatedTime:  p.CreatedTime,
+			PermalinkURL: p.PermalinkURL,
+			FullPicture:  p.FullPicture,
+			MediaURL:     mediaURL,
+			MediaType:    mediaType,
+			Likes:        p.Reactions.Summary.TotalCount,
+			Comments:     p.Comments.Summary.TotalCount,
+			Shares:       p.Shares.Count,
+		})
+	}
+	return out, nil
 }
 
 // GetPageInsights aggregates daily Page insights over the given
@@ -1517,9 +1744,41 @@ func (a *FacebookAdapter) GetPageInsights(ctx context.Context, accessToken, page
 		}
 		pageID = pid
 	}
+	out := &FacebookPageInsights{}
+	for _, metric := range []string{"page_follows", "page_media_view", "page_post_engagements"} {
+		total, belowThreshold, err := a.getPageInsightTotal(ctx, accessToken, pageID, metric, since, until)
+		if belowThreshold {
+			out.Below100LikesNotice = true
+			continue
+		}
+		if err != nil {
+			if looksLikeInvalidInsightMetric(err) {
+				slog.Warn("facebook page insights: skipping invalid metric", "metric", metric, "error", err)
+				continue
+			}
+			return nil, err
+		}
+		switch metric {
+		case "page_follows":
+			out.Follows = total
+		case "page_media_view":
+			out.Views = total
+			// Backward-compatible response field for the current dashboard
+			// type. Meta replaced Page impressions with views; keeping both
+			// populated avoids breaking older clients while the UI label moves
+			// to "Views".
+			out.Impressions = total
+		case "page_post_engagements":
+			out.PostEngagements = total
+		}
+	}
+	return out, nil
+}
+
+func (a *FacebookAdapter) getPageInsightTotal(ctx context.Context, accessToken, pageID, metric string, since, until time.Time) (int64, bool, error) {
 	params := url.Values{
 		"access_token": {accessToken},
-		"metric":       {"page_follows,page_impressions,page_post_engagements"},
+		"metric":       {metric},
 		"period":       {"day"},
 		"since":        {fmt.Sprintf("%d", since.Unix())},
 		"until":        {fmt.Sprintf("%d", until.Unix())},
@@ -1527,22 +1786,19 @@ func (a *FacebookAdapter) GetPageInsights(ctx context.Context, accessToken, page
 	endpoint := facebookGraphBase + "/" + pageID + "/insights?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
-		return nil, err
+		return 0, false, err
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("facebook page insights: %w", err)
+		return 0, false, fmt.Errorf("facebook page insights %s: %w", metric, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		// FB surfaces the <100-likes guard via error code 100.
-		// Detect that specifically so the caller can render the
-		// "Keep growing!" state rather than an opaque error.
 		if strings.Contains(string(body), "100 likes") || strings.Contains(string(body), "requires at least 100") {
-			return &FacebookPageInsights{Below100LikesNotice: true}, nil
+			return 0, true, nil
 		}
-		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+		return 0, false, wrapFacebookPublishError(resp.StatusCode, body)
 	}
 	var parsed struct {
 		Data []struct {
@@ -1553,24 +1809,24 @@ func (a *FacebookAdapter) GetPageInsights(ctx context.Context, accessToken, page
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("facebook page insights decode: %w", err)
+		return 0, false, fmt.Errorf("facebook page insights %s decode: %w", metric, err)
 	}
-	out := &FacebookPageInsights{}
+	var total int64
 	for _, m := range parsed.Data {
-		total := int64(0)
 		for _, v := range m.Values {
 			total += coerceInsightInt(v.Value)
 		}
-		switch m.Name {
-		case "page_follows":
-			out.Follows = total
-		case "page_impressions":
-			out.Impressions = total
-		case "page_post_engagements":
-			out.PostEngagements = total
-		}
 	}
-	return out, nil
+	return total, false, nil
+}
+
+func looksLikeInvalidInsightMetric(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "valid insights metric") ||
+		(strings.Contains(msg, "metric") && strings.Contains(msg, "invalid"))
 }
 
 // coerceInsightInt handles Meta's mix of number / object values in

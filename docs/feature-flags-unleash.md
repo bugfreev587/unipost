@@ -44,6 +44,8 @@ Start with the env provider:
 ```text
 FEATURE_FLAGS_PROVIDER=env
 FEATURE_TIKTOK_ANALYTICS_SCOPES=false
+FEATURE_FACEBOOK_PAGE_ANALYTICS=false
+FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST=false
 ```
 
 After Unleash is live and the backend token is created:
@@ -75,6 +77,10 @@ The response is intentionally simple:
     "provider": "unleash",
     "flags": {
       "tiktok.analytics_scopes": false,
+      "facebook.page_analytics": false,
+      "connect_sessions.tiktok_instagram": false,
+      "connect_sessions.threads": false,
+      "connect_sessions.facebook_pinterest": false,
       "inbox": true
     }
   }
@@ -108,6 +114,70 @@ video.list
 ```
 
 It also controls the dashboard TikTok platform analytics surface under `Analytics -> Platforms -> TikTok` and the backend endpoints that fetch TikTok profile, account metrics, and public video inventory. Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
+
+Create this flag in Unleash:
+
+```text
+connect_sessions.tiktok_instagram
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Hosted Connect / TailTales onboarding / OAuth. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for TikTok and Instagram. It depends on TikTok and Meta OAuth app approval plus valid shared Quickstart app credentials for production. The production default should stay off until the external-product rollout is approved. Emergency rollback is to disable `connect_sessions.tiktok_instagram` in the production environment; this blocks new TikTok/Instagram hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected accounts.
+
+Create this flag in Unleash:
+
+```text
+connect_sessions.threads
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Hosted Connect / Threads / Meta App Review. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for Threads. It depends on Meta approval for the Threads app scopes plus valid shared Quickstart app credentials for production. Production rollback is to disable `connect_sessions.threads`, which blocks new Threads hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected Threads accounts.
+
+Create this flag in Unleash:
+
+```text
+connect_sessions.facebook_pinterest
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Hosted Connect / Facebook Pages / Pinterest / App Review. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for Facebook Page and Pinterest. It depends on Meta approval for Facebook Page scopes, Pinterest app approval, and valid shared Quickstart app credentials for production. Facebook hosted Connect automatically connects the first publishable Page returned by Meta for the authorizing user. Production rollback is to disable `connect_sessions.facebook_pinterest`, which blocks new Facebook/Pinterest hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected accounts.
+
+Create this flag in Unleash:
+
+```text
+facebook.page_analytics
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Facebook / Analytics / Meta App Review. This flag controls the dashboard Facebook Page platform analytics surface under `Analytics -> Platforms -> Facebook Page` and the backend endpoints that fetch Page profile metadata, published Page posts, post engagement counts, and Page Insights. It depends on Meta approval for `pages_read_engagement` and `read_insights`; production should stay off until those reads are approved for the production app. Production rollback is to disable `facebook.page_analytics`, which hides the dashboard entry point and blocks the aggregate Facebook Page analytics endpoint without affecting existing Page publishing or Inbox flows.
 
 Create this flag in Unleash:
 

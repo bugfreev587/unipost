@@ -46,8 +46,8 @@ import (
 
 // ConnectCallbackHandler owns the OAuth dance for managed accounts.
 // It depends on the connect.Registry (populated at startup with the
-// Twitter + LinkedIn connectors) plus the standard db / encryptor /
-// event bus trio.
+// OAuth Connect connectors) plus the standard db / encryptor / event
+// bus trio.
 type ConnectCallbackHandler struct {
 	queries           *db.Queries
 	encryptor         *crypto.AESEncryptor
@@ -147,7 +147,7 @@ func (h *ConnectCallbackHandler) logOAuthEvent(ctx context.Context, workspaceID 
 // Authorize handles GET /v1/public/connect/sessions/{id}/authorize.
 //
 // The hosted dashboard page calls this when the user clicks
-// "Authorize with Twitter / LinkedIn". We look up the session by
+// "Authorize" on an OAuth platform. We look up the session by
 // oauth_state, build the platform's authorize URL via the connector,
 // and 302 the browser there. The PKCE verifier is already on the
 // session row from POST /v1/connect/sessions — we don't generate it
@@ -179,6 +179,10 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 	}
 
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
+	if !connectSessionPlatformFeatureEnabled(r.Context(), workspaceID, session.Platform) {
+		renderConnectError(w, http.StatusBadRequest, "Platform "+session.Platform+" is not enabled for hosted Connect.")
+		return
+	}
 	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds)
 	if err != nil {
 		slog.Error("connect.authorize: resolve connector", "platform", session.Platform, "workspace_id", workspaceID, "err", err)
@@ -306,6 +310,10 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
+	if !connectSessionPlatformFeatureEnabled(r.Context(), workspaceID, platformName) {
+		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "platform_not_enabled", false)
+		return
+	}
 	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds)
 	if err != nil {
 		slog.Error("connect.callback: resolve connector failed", "platform", platformName, "workspace_id", workspaceID, "err", err)

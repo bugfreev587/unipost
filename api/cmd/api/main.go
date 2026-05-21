@@ -254,30 +254,20 @@ func main() {
 	if li := connect.NewLinkedInConnector(os.Getenv("LINKEDIN_CLIENT_ID"), os.Getenv("LINKEDIN_CLIENT_SECRET"), apiBaseURL); li != nil {
 		connectors = append(connectors, li)
 	}
-	// Sprint 5 PR3: Instagram Connect, gated behind a feature flag.
-	// Two doors must both be open before Instagram becomes a real
-	// Connect platform: (a) the credentials must be present, and (b)
-	// CONNECT_INSTAGRAM_ENABLED must be truthy. The flag exists so we
-	// can ship this code to production well before launch and only
-	// flip it on when the Meta App Review is approved — this avoids
-	// a "what's that broken Instagram tile in the Connect picker?"
-	// support thread on day 1. Keep the legacy fail-fast nil check
-	// in NewInstagramConnector for the credentials half.
-	if instagramConnectEnabled() {
-		if ig := connect.NewInstagramConnector(os.Getenv("INSTAGRAM_APP_ID"), os.Getenv("INSTAGRAM_APP_SECRET"), apiBaseURL); ig != nil {
-			connectors = append(connectors, ig)
-		}
+	if ig := connect.NewInstagramConnector(os.Getenv("INSTAGRAM_APP_ID"), os.Getenv("INSTAGRAM_APP_SECRET"), apiBaseURL); ig != nil {
+		connectors = append(connectors, ig)
 	}
-	// Sprint 5 PR4: Threads Connect, gated behind a feature flag for
-	// the same reasons as Instagram (Sprint 5 PR3) — Meta App Review
-	// approval is decoupled from code shipping. Same THREADS_APP_ID /
-	// THREADS_APP_SECRET env vars the BYO/dashboard path already
-	// reads, so a single set of credentials covers both connection
-	// types.
-	if threadsConnectEnabled() {
-		if th := connect.NewThreadsConnector(os.Getenv("THREADS_APP_ID"), os.Getenv("THREADS_APP_SECRET"), apiBaseURL); th != nil {
-			connectors = append(connectors, th)
-		}
+	if tt := connect.NewTikTokConnector(os.Getenv("TIKTOK_CLIENT_KEY"), os.Getenv("TIKTOK_CLIENT_SECRET"), apiBaseURL); tt != nil {
+		connectors = append(connectors, tt)
+	}
+	if th := connect.NewThreadsConnector(os.Getenv("THREADS_APP_ID"), os.Getenv("THREADS_APP_SECRET"), apiBaseURL); th != nil {
+		connectors = append(connectors, th)
+	}
+	if fb := connect.NewFacebookConnector(firstEnv("FACEBOOK_APP_ID", "INSTAGRAM_APP_ID"), firstEnv("FACEBOOK_APP_SECRET", "INSTAGRAM_APP_SECRET"), apiBaseURL); fb != nil {
+		connectors = append(connectors, fb)
+	}
+	if pin := connect.NewPinterestConnector(firstEnv("PINTEREST_APP_ID", "PINTEREST_CLIENT_ID"), firstEnv("PINTEREST_APP_SECRET", "PINTEREST_CLIENT_SECRET"), apiBaseURL); pin != nil {
+		connectors = append(connectors, pin)
 	}
 	if yt := connect.NewYouTubeConnector(os.Getenv("YOUTUBE_CLIENT_ID"), os.Getenv("YOUTUBE_CLIENT_SECRET"), apiBaseURL); yt != nil {
 		connectors = append(connectors, yt)
@@ -625,6 +615,8 @@ func main() {
 		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/accounts/{id}/tiktok/profile", socialAccountHandler.TikTokProfile)
 		r.Get("/v1/accounts/{id}/tiktok/videos", socialAccountHandler.TikTokVideos)
+		r.With(handler.RequirePlanAnalytics(quotaChecker), handler.RequireFeatureFlag(featureflags.FacebookPageAnalytics)).
+			Get("/v1/accounts/{id}/facebook/page-analytics", socialAccountHandler.FacebookPageAnalytics)
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Post("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
@@ -646,6 +638,8 @@ func main() {
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/profile", socialAccountHandler.TikTokProfile)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/videos", socialAccountHandler.TikTokVideos)
+		r.With(handler.RequirePlanAnalytics(quotaChecker), handler.RequireFeatureFlag(featureflags.FacebookPageAnalytics)).
+			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-analytics", socialAccountHandler.FacebookPageAnalytics)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
@@ -855,6 +849,15 @@ func corsAllowedOrigins() []string {
 	return origins
 }
 
+func firstEnv(names ...string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // syncStripePriceIDs writes the LIVE Stripe price IDs from env vars into the
 // plans.stripe_price_id column on startup. The column is now a legacy cache —
 // the actual price ID used at checkout time is resolved per-mode by
@@ -925,24 +928,4 @@ func (h fanoutHandler) WithGroup(name string) slog.Handler {
 		handlers[i] = handler.WithGroup(name)
 	}
 	return fanoutHandler{handlers: handlers}
-}
-
-// instagramConnectEnabled is the Sprint 5 PR3 feature flag for the
-// Instagram Connect path. Returns true when CONNECT_INSTAGRAM_ENABLED
-// is set to a truthy value (1, true, yes, on — case-insensitive).
-// Anything else (including the unset default) keeps the platform out
-// of the Connect registry, so customer dashboards don't show an
-// Instagram tile that bounces them off Meta App Review failures.
-func instagramConnectEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("CONNECT_INSTAGRAM_ENABLED")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
-}
-
-// threadsConnectEnabled is the Sprint 5 PR4 feature flag for the
-// Threads Connect path. Same shape and semantics as the Instagram
-// gate above — keeps the platform out of the Connect registry until
-// Meta App Review approves the Threads app.
-func threadsConnectEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("CONNECT_THREADS_ENABLED")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
 }

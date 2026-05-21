@@ -14,10 +14,14 @@ import (
 type Flag string
 
 const (
-	TikTokAnalyticsScopes         Flag = "tiktok.analytics_scopes"
-	AttributionUTMSignupBindingV1 Flag = "attribution.utm_signup_binding_v1"
-	Inbox                         Flag = "inbox"
-	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
+	TikTokAnalyticsScopes          Flag = "tiktok.analytics_scopes"
+	FacebookPageAnalytics          Flag = "facebook.page_analytics"
+	AttributionUTMSignupBindingV1  Flag = "attribution.utm_signup_binding_v1"
+	Inbox                          Flag = "inbox"
+	FreePlanHardPostQuota          Flag = "billing.free_plan_hard_post_quota"
+	HostedConnectTikTokInstagram   Flag = "connect_sessions.tiktok_instagram"
+	HostedConnectThreads           Flag = "connect_sessions.threads"
+	HostedConnectFacebookPinterest Flag = "connect_sessions.facebook_pinterest"
 )
 
 type Target struct {
@@ -61,6 +65,14 @@ var definitions = map[Flag]Definition{
 			return !isProduction(target.Env)
 		},
 	},
+	FacebookPageAnalytics: {
+		Flag:        FacebookPageAnalytics,
+		EnvVar:      "FEATURE_FACEBOOK_PAGE_ANALYTICS",
+		Description: "Enables Facebook Page platform analytics: Page profile, Page Insights, published Page posts, and post engagement reads.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
 	AttributionUTMSignupBindingV1: {
 		Flag:        AttributionUTMSignupBindingV1,
 		EnvVar:      "FEATURE_ATTRIBUTION_UTM_SIGNUP_BINDING_V1",
@@ -81,6 +93,30 @@ var definitions = map[Flag]Definition{
 		Flag:        FreePlanHardPostQuota,
 		EnvVar:      "FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA",
 		Description: "Hard-blocks Free plan publish acceptance once the workspace would exceed its monthly post quota. Paid plans keep soft overage behavior.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	HostedConnectTikTokInstagram: {
+		Flag:        HostedConnectTikTokInstagram,
+		EnvVar:      "FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM",
+		Description: "Enables hosted Connect Sessions for TikTok and Instagram managed account onboarding.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	HostedConnectThreads: {
+		Flag:        HostedConnectThreads,
+		EnvVar:      "FEATURE_CONNECT_SESSIONS_THREADS",
+		Description: "Enables hosted Connect Sessions for Threads managed account onboarding.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	HostedConnectFacebookPinterest: {
+		Flag:        HostedConnectFacebookPinterest,
+		EnvVar:      "FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST",
+		Description: "Enables hosted Connect Sessions for Facebook Page and Pinterest managed account onboarding.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

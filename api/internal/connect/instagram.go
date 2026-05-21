@@ -29,12 +29,10 @@
 //     refresh_token, so the same access token is reused as the
 //     "refresh token" stored in the social_accounts row.
 //
-// Feature flag: registration of this connector lives in
-// cmd/api/main.go behind CONNECT_INSTAGRAM_ENABLED. When the flag
-// is unset, the platform isn't in the registry and any inbound
-// connect_session for "instagram" gets "platform not supported" —
-// so this code is dead weight in production until we flip the
-// flag, by design (Sprint 5 PRD: feature-flagged ship).
+// Feature flag: the Connect Session handler gates new hosted
+// Instagram sessions via Unleash. This connector is still registered
+// whenever credentials exist so an approved flag rollout does not
+// require an API restart.
 
 package connect
 

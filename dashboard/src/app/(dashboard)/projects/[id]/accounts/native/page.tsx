@@ -18,6 +18,7 @@ import {
 
 const CRED_PLATFORMS = [
   { id: "instagram", name: "Meta (Instagram / Threads)", idLabel: "App ID", secretLabel: "App Secret", whiteLabelDocs: "/docs/white-label/meta", developerPortal: "https://developers.facebook.com" },
+  { id: "facebook", name: "Facebook Page", idLabel: "App ID", secretLabel: "App Secret", whiteLabelDocs: "/docs/white-label/meta", developerPortal: "https://developers.facebook.com" },
   { id: "linkedin", name: "LinkedIn", idLabel: "Client ID", secretLabel: "Client Secret", whiteLabelDocs: "/docs/white-label/linkedin", developerPortal: "https://developer.linkedin.com" },
   { id: "pinterest", name: "Pinterest", idLabel: "App ID", secretLabel: "App Secret", whiteLabelDocs: null, developerPortal: "https://developers.pinterest.com" },
   { id: "tiktok", name: "TikTok", idLabel: "Client Key", secretLabel: "Client Secret", whiteLabelDocs: "/docs/white-label/tiktok", developerPortal: "https://developers.tiktok.com" },

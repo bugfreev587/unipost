@@ -11,7 +11,10 @@ func TestNewManagedConnector(t *testing.T) {
 		{platform: "linkedin", wantType: "*connect.LinkedInConnector"},
 		{platform: "youtube", wantType: "*connect.YouTubeConnector"},
 		{platform: "instagram", wantType: "*connect.InstagramConnector"},
+		{platform: "tiktok", wantType: "*connect.TikTokConnector"},
 		{platform: "threads", wantType: "*connect.ThreadsConnector"},
+		{platform: "facebook", wantType: "*connect.FacebookConnector"},
+		{platform: "pinterest", wantType: "*connect.PinterestConnector"},
 	}
 
 	for _, tc := range cases {
