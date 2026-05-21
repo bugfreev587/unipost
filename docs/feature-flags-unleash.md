@@ -78,6 +78,7 @@ The response is intentionally simple:
       "tiktok.analytics_scopes": false,
       "facebook.page_analytics": false,
       "connect_sessions.tiktok_instagram": false,
+      "connect_sessions.threads": false,
       "inbox": true
     }
   }
@@ -127,6 +128,22 @@ fallback: off in production
 ```
 
 Owner area: Hosted Connect / TailTales onboarding / OAuth. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for TikTok and Instagram. It depends on TikTok and Meta OAuth app approval plus valid shared Quickstart app credentials for production. The production default should stay off until the external-product rollout is approved. Emergency rollback is to disable `connect_sessions.tiktok_instagram` in the production environment; this blocks new TikTok/Instagram hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected accounts.
+
+Create this flag in Unleash:
+
+```text
+connect_sessions.threads
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Hosted Connect / Threads / Meta App Review. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for Threads. It depends on Meta approval for the Threads app scopes plus valid shared Quickstart app credentials for production. Production rollback is to disable `connect_sessions.threads`, which blocks new Threads hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected Threads accounts.
 
 Create this flag in Unleash:
 

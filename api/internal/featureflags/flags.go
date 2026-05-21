@@ -20,6 +20,7 @@ const (
 	Inbox                         Flag = "inbox"
 	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
 	HostedConnectTikTokInstagram  Flag = "connect_sessions.tiktok_instagram"
+	HostedConnectThreads          Flag = "connect_sessions.threads"
 )
 
 type Target struct {
@@ -99,6 +100,14 @@ var definitions = map[Flag]Definition{
 		Flag:        HostedConnectTikTokInstagram,
 		EnvVar:      "FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM",
 		Description: "Enables hosted Connect Sessions for TikTok and Instagram managed account onboarding.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	HostedConnectThreads: {
+		Flag:        HostedConnectThreads,
+		EnvVar:      "FEATURE_CONNECT_SESSIONS_THREADS",
+		Description: "Enables hosted Connect Sessions for Threads managed account onboarding.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

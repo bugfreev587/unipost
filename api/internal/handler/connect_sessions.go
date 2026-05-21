@@ -77,9 +77,10 @@ var connectablePlatforms = map[string]bool{
 	"youtube":   true,
 	"tiktok":    true,
 	"instagram": true,
+	"threads":   true,
 }
 
-const connectablePlatformList = "twitter, linkedin, bluesky, youtube, tiktok, instagram"
+const connectablePlatformList = "twitter, linkedin, bluesky, youtube, tiktok, instagram, threads"
 
 // connectSessionTTL is the wall-clock window during which a hosted
 // page link is honored. Stripe uses 24h for Connect — we go shorter
@@ -169,6 +170,10 @@ func connectSessionPlatformFeatureEnabled(ctx context.Context, workspaceID, plat
 	switch platform {
 	case "tiktok", "instagram":
 		return featureflags.Enabled(ctx, featureflags.HostedConnectTikTokInstagram, featureflags.Target{
+			WorkspaceID: workspaceID,
+		})
+	case "threads":
+		return featureflags.Enabled(ctx, featureflags.HostedConnectThreads, featureflags.Target{
 			WorkspaceID: workspaceID,
 		})
 	default:

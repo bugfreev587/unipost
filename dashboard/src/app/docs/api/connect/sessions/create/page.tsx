@@ -8,7 +8,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
-  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram"]} /></> },
+  { name: "platform", type: "string", description: <>Destination platform for the hosted onboarding flow.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads"]} /></> },
   { name: "profile_id?", type: "string", description: "Profile that should own the resulting connected account. Required when the workspace has multiple profiles." },
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
