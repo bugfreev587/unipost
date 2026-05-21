@@ -87,9 +87,11 @@ func (a *ThreadsAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 		ExternalAccountID: profile.id,
 		AccountName:       profile.username,
 		AvatarURL:         profile.profilePicURL,
+		Scopes:            config.Scopes,
 		Metadata: map[string]any{
 			"threads_user_id": profile.id,
 			"username":        profile.username,
+			"granted_scopes":  config.Scopes,
 		},
 	}, nil
 }
@@ -395,7 +397,7 @@ func (a *ThreadsAdapter) FetchComments(ctx context.Context, accessToken string, 
 			AuthorName:       r.Username,
 			Body:             r.Text,
 			Timestamp:        ts,
-			Source:            "threads_reply",
+			Source:           "threads_reply",
 		})
 	}
 	return entries, nil
@@ -504,6 +506,8 @@ func (a *ThreadsAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	m := &PostMetrics{}
+	reposts := int64(0)
+	quotes := int64(0)
 	for _, metric := range result.Data {
 		val := int64(0)
 		if len(metric.Values) > 0 {
@@ -521,9 +525,15 @@ func (a *ThreadsAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 			m.Comments = val
 		case "reposts":
 			m.Shares = val
+			reposts = val
 		case "quotes":
 			m.Shares += val
+			quotes = val
 		}
+	}
+	m.PlatformSpecific = map[string]any{
+		"reposts": reposts,
+		"quotes":  quotes,
 	}
 
 	// EngagementRate is computed by the analytics handler.
@@ -532,9 +542,9 @@ func (a *ThreadsAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 
 func (a *ThreadsAdapter) exchangeForLongLivedToken(_ context.Context, config OAuthConfig, shortToken string) (string, int, error) {
 	params := url.Values{
-		"grant_type":   {"th_exchange_token"},
+		"grant_type":    {"th_exchange_token"},
 		"client_secret": {config.ClientSecret},
-		"access_token": {shortToken},
+		"access_token":  {shortToken},
 	}
 
 	resp, err := a.client.Get("https://graph.threads.net/access_token?" + params.Encode())
@@ -559,6 +569,173 @@ type threadsProfile struct {
 	id            string
 	username      string
 	profilePicURL string
+}
+
+type ThreadsProfile struct {
+	ID                string `json:"id"`
+	Username          string `json:"username"`
+	ProfilePictureURL string `json:"threads_profile_picture_url"`
+}
+
+func (a *ThreadsAdapter) FetchProfile(ctx context.Context, accessToken string) (*ThreadsProfile, error) {
+	userID, err := a.getUserID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	profile, err := a.getProfile(ctx, accessToken, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &ThreadsProfile{
+		ID:                profile.id,
+		Username:          profile.username,
+		ProfilePictureURL: profile.profilePicURL,
+	}, nil
+}
+
+type ThreadsAccountInsights struct {
+	Views          int64 `json:"views"`
+	Likes          int64 `json:"likes"`
+	Replies        int64 `json:"replies"`
+	Reposts        int64 `json:"reposts"`
+	Quotes         int64 `json:"quotes"`
+	FollowersCount int64 `json:"followers_count"`
+}
+
+func (a *ThreadsAdapter) FetchAccountInsights(ctx context.Context, accessToken, userID string) (*ThreadsAccountInsights, error) {
+	if strings.TrimSpace(userID) == "" {
+		var err error
+		userID, err = a.getUserID(ctx, accessToken)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	params := url.Values{}
+	params.Set("metric", "views,likes,replies,reposts,quotes,followers_count")
+	params.Set("access_token", accessToken)
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads_insights?%s", userID, params.Encode()), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("threads account insights: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("threads account insights (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []struct {
+			Name   string `json:"name"`
+			Values []struct {
+				Value int64 `json:"value"`
+			} `json:"values"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("threads account insights decode: %w", err)
+	}
+
+	insights := &ThreadsAccountInsights{}
+	for _, metric := range result.Data {
+		val := int64(0)
+		if len(metric.Values) > 0 {
+			val = metric.Values[len(metric.Values)-1].Value
+		}
+		switch metric.Name {
+		case "views":
+			insights.Views = val
+		case "likes":
+			insights.Likes = val
+		case "replies":
+			insights.Replies = val
+		case "reposts":
+			insights.Reposts = val
+		case "quotes":
+			insights.Quotes = val
+		case "followers_count":
+			insights.FollowersCount = val
+		}
+	}
+	return insights, nil
+}
+
+func (a *ThreadsAdapter) GetAccountMetrics(ctx context.Context, accessToken, externalAccountID string) (*AccountMetrics, error) {
+	insights, err := a.FetchAccountInsights(ctx, accessToken, externalAccountID)
+	if err != nil {
+		return nil, err
+	}
+	return &AccountMetrics{
+		FollowerCount: insights.FollowersCount,
+		PlatformSpecific: map[string]any{
+			"views":   insights.Views,
+			"likes":   insights.Likes,
+			"replies": insights.Replies,
+			"reposts": insights.Reposts,
+			"quotes":  insights.Quotes,
+		},
+	}, nil
+}
+
+type ThreadsPost struct {
+	ID        string `json:"id"`
+	Text      string `json:"text"`
+	MediaType string `json:"media_type"`
+	MediaURL  string `json:"media_url"`
+	Permalink string `json:"permalink"`
+	Timestamp string `json:"timestamp"`
+}
+
+type ThreadsPostList struct {
+	Posts []ThreadsPost `json:"posts"`
+}
+
+func (a *ThreadsAdapter) ListPosts(ctx context.Context, accessToken string, limit int) (*ThreadsPostList, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	userID, err := a.getUserID(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	params.Set("fields", "id,text,media_type,media_url,permalink,timestamp")
+	params.Set("limit", fmt.Sprintf("%d", limit))
+	params.Set("access_token", accessToken)
+
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("https://graph.threads.net/v1.0/%s/threads?%s", userID, params.Encode()), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("threads posts list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("threads posts list (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []ThreadsPost `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("threads posts list decode: %w", err)
+	}
+	if result.Data == nil {
+		result.Data = []ThreadsPost{}
+	}
+	return &ThreadsPostList{Posts: result.Data}, nil
 }
 
 func (a *ThreadsAdapter) getProfile(ctx context.Context, accessToken string, userID string) (*threadsProfile, error) {

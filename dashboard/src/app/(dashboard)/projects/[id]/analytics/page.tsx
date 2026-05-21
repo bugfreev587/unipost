@@ -860,6 +860,14 @@ function ByPlatformTable({ rows, profileId }: { rows: PlatformAnalytics[]; profi
                           View TikTok analytics
                         </Link>
                       )}
+                      {(r.platform === "instagram" || r.platform === "threads") && (
+                        <Link
+                          href={`/projects/${profileId}/analytics/platforms/${r.platform}`}
+                          style={{ color: "var(--daccent)", fontSize: 12, textDecoration: "none", marginLeft: 4 }}
+                        >
+                          View {r.platform === "instagram" ? "Instagram" : "Threads"} analytics
+                        </Link>
+                      )}
                     </span>
                   </td>
                   <td style={tdRight}>{formatNumber(r.posts)}</td>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { ArrowRight, BarChart3, CheckCircle2, Clock, FileText, ThumbsUp, Video } from "lucide-react";
+import { ArrowRight, BarChart3, Camera, CheckCircle2, Clock, FileText, MessageCircle, ThumbsUp, Video } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { getMe } from "@/lib/api";
 import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
@@ -35,6 +35,82 @@ export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+      <Link
+        href={`/projects/${profileId}/analytics/platforms/instagram`}
+        style={{
+          display: "block",
+          textDecoration: "none",
+          color: "inherit",
+          border: "1px solid var(--dborder)",
+          borderRadius: 8,
+          background: "var(--surface1)",
+          padding: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="platform-icon-wrap"><PlatformIcon platform="instagram" /></div>
+            <div>
+              <div style={{ color: "var(--dtext)", fontWeight: 700 }}>Instagram</div>
+              <div style={{ color: "var(--dmuted)", fontSize: 12 }}>Business profile, media, insights</div>
+            </div>
+          </div>
+          <ArrowRight style={{ width: 16, height: 16, color: "var(--dmuted2)" }} />
+        </div>
+        <div style={{ display: "grid", gap: 9, fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <CheckCircle2 style={{ width: 14, height: 14, color: "var(--success)" }} />
+            instagram_business_basic / manage_insights
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <Camera style={{ width: 14, height: 14 }} />
+            Recent media with reach, likes, comments, shares, saves
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <Clock style={{ width: 14, height: 14 }} />
+            Live data from connected Business accounts
+          </div>
+        </div>
+      </Link>
+
+      <Link
+        href={`/projects/${profileId}/analytics/platforms/threads`}
+        style={{
+          display: "block",
+          textDecoration: "none",
+          color: "inherit",
+          border: "1px solid var(--dborder)",
+          borderRadius: 8,
+          background: "var(--surface1)",
+          padding: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="platform-icon-wrap"><PlatformIcon platform="threads" /></div>
+            <div>
+              <div style={{ color: "var(--dtext)", fontWeight: 700 }}>Threads</div>
+              <div style={{ color: "var(--dmuted)", fontSize: 12 }}>Profile, posts, account insights</div>
+            </div>
+          </div>
+          <ArrowRight style={{ width: 16, height: 16, color: "var(--dmuted2)" }} />
+        </div>
+        <div style={{ display: "grid", gap: 9, fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <CheckCircle2 style={{ width: 14, height: 14, color: "var(--success)" }} />
+            threads_basic / threads_manage_insights
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <MessageCircle style={{ width: 14, height: 14 }} />
+            Views, likes, replies, reposts, and quotes
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <Clock style={{ width: 14, height: 14 }} />
+            Live data from connected Threads profiles
+          </div>
+        </div>
+      </Link>
+
       {!loading && tiktokEnabled ? (
         <Link
           href={`/projects/${profileId}/analytics/platforms/tiktok`}

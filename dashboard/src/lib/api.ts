@@ -762,6 +762,123 @@ export async function getTikTokVideos(
   );
 }
 
+export interface InstagramProfile {
+  social_account_id: string;
+  platform: "instagram";
+  id: string;
+  username: string;
+  profile_picture_url: string;
+  followers_count: number;
+  follows_count: number;
+  media_count: number;
+  fetched_at: string;
+}
+
+export interface InstagramMedia {
+  id: string;
+  caption?: string;
+  media_type?: string;
+  media_url?: string;
+  thumbnail_url?: string;
+  permalink?: string;
+  timestamp?: string;
+  like_count: number;
+  comments_count: number;
+  reach: number;
+  shares: number;
+  saves: number;
+  metrics_unavailable_reason?: string;
+}
+
+export interface InstagramMediaResponse {
+  media: InstagramMedia[];
+  fetched_at: string;
+  limit: number;
+}
+
+export async function getInstagramProfile(
+  token: string,
+  profileId: string,
+  accountId: string
+): Promise<ApiResponse<InstagramProfile>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/instagram/profile`,
+    token
+  );
+}
+
+export async function getInstagramMedia(
+  token: string,
+  profileId: string,
+  accountId: string,
+  opts?: { limit?: number }
+): Promise<ApiResponse<InstagramMediaResponse>> {
+  const qs = new URLSearchParams();
+  if (opts?.limit) qs.set("limit", String(opts.limit));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/instagram/media${suffix}`,
+    token
+  );
+}
+
+export interface ThreadsProfile {
+  social_account_id: string;
+  platform: "threads";
+  id: string;
+  username: string;
+  threads_profile_picture_url: string;
+  fetched_at: string;
+}
+
+export interface ThreadsPost {
+  id: string;
+  text?: string;
+  media_type?: string;
+  media_url?: string;
+  permalink?: string;
+  timestamp?: string;
+  views: number;
+  likes: number;
+  replies: number;
+  reposts: number;
+  quotes: number;
+  shares: number;
+  metrics_unavailable_reason?: string;
+}
+
+export interface ThreadsPostsResponse {
+  posts: ThreadsPost[];
+  fetched_at: string;
+  limit: number;
+}
+
+export async function getThreadsProfile(
+  token: string,
+  profileId: string,
+  accountId: string
+): Promise<ApiResponse<ThreadsProfile>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/threads/profile`,
+    token
+  );
+}
+
+export async function getThreadsPosts(
+  token: string,
+  profileId: string,
+  accountId: string,
+  opts?: { limit?: number }
+): Promise<ApiResponse<ThreadsPostsResponse>> {
+  const qs = new URLSearchParams();
+  if (opts?.limit) qs.set("limit", String(opts.limit));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/threads/posts${suffix}`,
+    token
+  );
+}
+
 export interface FacebookPageProfile {
   id: string;
   name: string;
