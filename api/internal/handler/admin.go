@@ -434,6 +434,7 @@ type adminUserRow struct {
 	ID             string     `json:"id"`
 	Email          string     `json:"email"`
 	CreatedAt      time.Time  `json:"created_at"`
+	SignupCountry  string     `json:"signup_country_code"`
 	WorkspaceCount int64      `json:"workspace_count"`
 	APIKeyCount    int64      `json:"api_key_count"`
 	PlatformCount  int64      `json:"platform_count"`
@@ -514,6 +515,15 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 WITH base AS (
   SELECT
     u.id, u.email, u.created_at,
+    COALESCE((
+      SELECT NULLIF(lv.country_code, '')
+      FROM landing_session_users lsu
+      JOIN landing_visits lv ON lv.session_id = lsu.session_id
+      WHERE lsu.user_id = u.id
+        AND NULLIF(lv.country_code, '') IS NOT NULL
+      ORDER BY lsu.first_bound_at ASC, lv.created_at ASC
+      LIMIT 1
+    ), '') AS signup_country_code,
     (SELECT COUNT(*) FROM workspaces w WHERE w.user_id = u.id) AS workspace_count,
     (SELECT COUNT(*)
        FROM api_keys ak
@@ -572,6 +582,7 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 		var lastPostAt *time.Time
 		if err := rows.Scan(
 			&u.ID, &u.Email, &u.CreatedAt,
+			&u.SignupCountry,
 			&u.WorkspaceCount, &u.APIKeyCount, &u.PlatformCount,
 			&u.Platforms,
 			&u.PostsUsed, &u.PostLimit,
@@ -669,6 +680,7 @@ type adminUserDetailResponse struct {
 	Email              string               `json:"email"`
 	Name               string               `json:"name"`
 	CreatedAt          time.Time            `json:"created_at"`
+	SignupCountry      string               `json:"signup_country_code"`
 	WorkspaceCount     int64                `json:"workspace_count"`
 	APIKeyCount        int64                `json:"api_key_count"`
 	PlatformCount      int64                `json:"platform_count"`
@@ -1314,6 +1326,15 @@ func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	err := h.pool.QueryRow(r.Context(), `
 SELECT
   u.id, u.email, u.name, u.created_at,
+  COALESCE((
+    SELECT NULLIF(lv.country_code, '')
+    FROM landing_session_users lsu
+    JOIN landing_visits lv ON lv.session_id = lsu.session_id
+    WHERE lsu.user_id = u.id
+      AND NULLIF(lv.country_code, '') IS NOT NULL
+    ORDER BY lsu.first_bound_at ASC, lv.created_at ASC
+    LIMIT 1
+  ), ''),
   (SELECT COUNT(*) FROM workspaces w WHERE w.user_id = u.id),
   (SELECT COUNT(*) FROM api_keys ak JOIN workspaces w ON w.id = ak.workspace_id WHERE w.user_id = u.id AND ak.revoked_at IS NULL),
   (SELECT COUNT(*) FROM social_accounts sa JOIN profiles p ON p.id = sa.profile_id JOIN workspaces w ON w.id = p.workspace_id WHERE w.user_id = u.id AND sa.disconnected_at IS NULL),
@@ -1328,6 +1349,7 @@ FROM users u
 WHERE u.id = $1
 `, userID).Scan(
 		&d.ID, &d.Email, &name, &d.CreatedAt,
+		&d.SignupCountry,
 		&d.WorkspaceCount, &d.APIKeyCount, &d.PlatformCount,
 		&d.Platforms,
 		&d.PostsUsedThisMonth, &d.PostLimit, &d.MRRCents,
