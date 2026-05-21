@@ -20,6 +20,19 @@ func TestTikTokAnalyticsScopesDefaultByEnvironment(t *testing.T) {
 	}
 }
 
+func TestFacebookPageAnalyticsDefaultByEnvironment(t *testing.T) {
+	SetProvider(EnvProvider{})
+	t.Cleanup(func() { SetProvider(EnvProvider{}) })
+	unsetenv(t, "FEATURE_FACEBOOK_PAGE_ANALYTICS")
+
+	if Enabled(context.Background(), FacebookPageAnalytics, Target{Env: "production"}) {
+		t.Fatal("Facebook Page analytics should default off in production")
+	}
+	if !Enabled(context.Background(), FacebookPageAnalytics, Target{Env: "development"}) {
+		t.Fatal("Facebook Page analytics should default on outside production")
+	}
+}
+
 func TestEnvProviderExplicitFlagOverridesDefault(t *testing.T) {
 	SetProvider(EnvProvider{})
 	t.Cleanup(func() { SetProvider(EnvProvider{}) })

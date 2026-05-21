@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, BarChart3, CheckCircle2, Clock, Video } from "lucide-react";
+import { ArrowRight, BarChart3, CheckCircle2, Clock, FileText, ThumbsUp, Video } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
 import { useFeatureFlags } from "@/lib/use-feature-flags";
@@ -9,6 +9,7 @@ import { useFeatureFlags } from "@/lib/use-feature-flags";
 export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
   const { flags, loading } = useFeatureFlags();
   const tiktokEnabled = flags[FEATURE_FLAG_KEYS.tiktokAnalyticsScopes];
+  const facebookEnabled = flags[FEATURE_FLAG_KEYS.facebookPageAnalytics];
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
@@ -52,13 +53,53 @@ export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
         </Link>
       ) : null}
 
+      {!loading && facebookEnabled ? (
+        <Link
+          href={`/projects/${profileId}/analytics/platforms/facebook`}
+          style={{
+            display: "block",
+            textDecoration: "none",
+            color: "inherit",
+            border: "1px solid var(--dborder)",
+            borderRadius: 8,
+            background: "var(--surface1)",
+            padding: 16,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="platform-icon-wrap"><PlatformIcon platform="facebook" /></div>
+              <div>
+                <div style={{ color: "var(--dtext)", fontWeight: 700 }}>Facebook Page</div>
+                <div style={{ color: "var(--dmuted)", fontSize: 12 }}>Page profile, posts, engagement</div>
+              </div>
+            </div>
+            <ArrowRight style={{ width: 16, height: 16, color: "var(--dmuted2)" }} />
+          </div>
+          <div style={{ display: "grid", gap: 9, fontSize: 13 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+              <CheckCircle2 style={{ width: 14, height: 14, color: "var(--success)" }} />
+              pages_read_engagement / read_insights
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+              <FileText style={{ width: 14, height: 14 }} />
+              Published Page posts with message, media, and permalink
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+              <ThumbsUp style={{ width: 14, height: 14 }} />
+              Likes, comments, shares, clicks, and Page Insights
+            </div>
+          </div>
+        </Link>
+      ) : null}
+
       <div style={{ border: "1px dashed var(--dborder2)", borderRadius: 8, background: "var(--surface1)", padding: 16, color: "var(--dmuted)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
           <BarChart3 style={{ width: 18, height: 18 }} />
           <div style={{ color: "var(--dtext)", fontWeight: 700 }}>More platforms</div>
         </div>
         <div style={{ fontSize: 13, lineHeight: 1.55 }}>
-          Facebook Page Insights, YouTube channel stats, Instagram account insights, and X account metrics can use this same drilldown pattern later.
+          YouTube channel stats, Instagram account insights, and X account metrics can use this same drilldown pattern later.
         </div>
       </div>
     </div>

@@ -47,6 +47,7 @@ type NavSubItem = {
   href: string;
   label: string;
   backendFlag?: string;
+  backendFlagsAny?: string[];
 };
 
 type NavItem = {
@@ -55,6 +56,7 @@ type NavItem = {
   icon: LucideIcon;
   exactMatch?: boolean;
   backendFlag?: string;
+  backendFlagsAny?: string[];
   submenu?: NavSubItem[];
 };
 
@@ -74,7 +76,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/logs", label: "Logs", icon: FileText },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
-    { href: "/analytics/platforms", label: "Platforms", backendFlag: FEATURE_FLAG_KEYS.tiktokAnalyticsScopes },
+    { href: "/analytics/platforms", label: "Platforms", backendFlagsAny: [FEATURE_FLAG_KEYS.tiktokAnalyticsScopes, FEATURE_FLAG_KEYS.facebookPageAnalytics] },
     { href: "/analytics/api", label: "API" },
   ]},
 ];
@@ -99,10 +101,15 @@ function getServerSnapshot() {
 function filterNavItems(backendFlags?: Record<string, boolean>) {
   return ALL_NAV_ITEMS.filter((item) => {
     if (item.backendFlag && !backendFlags?.[item.backendFlag]) return false;
+    if (item.backendFlagsAny && !item.backendFlagsAny.some((flag) => backendFlags?.[flag])) return false;
     return true;
   }).map((item) => {
     if (!item.submenu) return item;
-    const filteredSub = item.submenu.filter((sub) => !sub.backendFlag || backendFlags?.[sub.backendFlag]);
+    const filteredSub = item.submenu.filter((sub) => {
+      if (sub.backendFlag && !backendFlags?.[sub.backendFlag]) return false;
+      if (sub.backendFlagsAny && !sub.backendFlagsAny.some((flag) => backendFlags?.[flag])) return false;
+      return true;
+    });
     return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
   }).filter((item) => item.submenu === undefined || item.submenu.length > 0);
 }

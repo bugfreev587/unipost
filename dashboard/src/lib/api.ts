@@ -753,6 +753,75 @@ export async function getTikTokVideos(
   );
 }
 
+export interface FacebookPageProfile {
+  id: string;
+  name: string;
+  category: string;
+  username: string;
+  picture_url: string;
+  link: string;
+  about: string;
+  verification_status: string;
+  fan_count: number;
+  followers_count: number;
+}
+
+export interface FacebookPageInsights {
+  follows: number;
+  impressions: number;
+  post_engagements: number;
+  below_100_likes_notice: boolean;
+  since: string;
+  until: string;
+}
+
+export interface FacebookPageAnalyticsPost {
+  id: string;
+  message: string;
+  created_time: string;
+  permalink_url: string;
+  full_picture: string;
+  media_url: string;
+  media_type: string;
+  likes: number;
+  comments: number;
+  shares: number;
+  clicks: number;
+  video_views: number;
+  engagement_total: number;
+  metrics_unavailable_reason?: string;
+}
+
+export interface FacebookPageAnalytics {
+  social_account_id: string;
+  platform: "facebook";
+  page: FacebookPageProfile | null;
+  insights?: FacebookPageInsights;
+  insights_error?: string;
+  posts: FacebookPageAnalyticsPost[];
+  fetched_at: string;
+  post_limit: number;
+  granted_scopes?: string[];
+  required_scopes: string[];
+  recommended_scopes: string[];
+}
+
+export async function getFacebookPageAnalytics(
+  token: string,
+  profileId: string,
+  accountId: string,
+  opts?: { days?: number; limit?: number }
+): Promise<ApiResponse<FacebookPageAnalytics>> {
+  const qs = new URLSearchParams();
+  if (opts?.days) qs.set("days", String(opts.days));
+  if (opts?.limit) qs.set("limit", String(opts.limit));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/facebook/page-analytics${suffix}`,
+    token
+  );
+}
+
 export async function getOAuthConnectURL(
   token: string,
   profileId: string,
