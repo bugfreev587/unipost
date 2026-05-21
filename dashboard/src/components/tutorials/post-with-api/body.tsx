@@ -14,13 +14,15 @@
 //      onRequestComplete, which marks the tutorial complete on the
 //      server and shows the celebration screen.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Check, Lock, Loader2, ExternalLink, Copy } from "lucide-react";
 import {
   createApiKey,
+  listPinterestBoards,
   listSocialAccounts,
   type ApiKeyCreateResponse,
+  type PinterestBoard,
   type SocialAccount,
 } from "@/lib/api";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
@@ -28,19 +30,118 @@ import type { TutorialBodyProps } from "../registry";
 import { CodeBlock } from "./code-block";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-const APP_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const DEFAULT_CAPTION = "Hello from UniPost API!";
+// Permanent Cloudflare R2 assets from bucket `unipost-never-delete-assets`.
 const TUTORIAL_ASSET_BASE = "https://pub-2f07de189e1a4b3690d15ffbd8c556b6.r2.dev";
 const TUTORIAL_IMAGE_URL = `${TUTORIAL_ASSET_BASE}/Disneyland-public-photo.jpg`;
 const TUTORIAL_VIDEO_URL = `${TUTORIAL_ASSET_BASE}/TT-Post-Marketing-Demo.mp4`;
 const TUTORIAL_MEDIA_URLS: Partial<Record<SocialAccount["platform"], string>> = {
+  bluesky: TUTORIAL_IMAGE_URL,
+  linkedin: TUTORIAL_IMAGE_URL,
   instagram: TUTORIAL_IMAGE_URL,
   threads: TUTORIAL_IMAGE_URL,
-  linkedin: TUTORIAL_IMAGE_URL,
+  youtube: TUTORIAL_VIDEO_URL,
   tiktok: TUTORIAL_VIDEO_URL,
-  twitter: `${APP_BASE}/brand/unipost-icon-light.png`,
-  bluesky: TUTORIAL_IMAGE_URL,
+  pinterest: TUTORIAL_IMAGE_URL,
+  twitter: TUTORIAL_IMAGE_URL,
+  facebook: TUTORIAL_IMAGE_URL,
 };
+const TUTORIAL_ACCOUNT_PRIORITY = [
+  "bluesky",
+  "linkedin",
+  "instagram",
+  "threads",
+  "youtube",
+  "tiktok",
+  "pinterest",
+  "twitter",
+  "facebook",
+];
+
+type TutorialPostPayload = {
+  caption?: string;
+  account_ids?: string[];
+  media_urls?: string[];
+  platform_posts?: Array<{
+    account_id: string;
+    caption: string;
+    media_urls?: string[];
+    platform_options?: Record<string, string>;
+  }>;
+};
+
+function pickTutorialAccount(accounts: SocialAccount[]) {
+  for (const platform of TUTORIAL_ACCOUNT_PRIORITY) {
+    const match = accounts.find((account) => account.platform === platform);
+    if (match) return match;
+  }
+  return null;
+}
+
+function buildTutorialPostPayload(
+  account: SocialAccount,
+  caption: string,
+  mediaUrl?: string,
+  pinterestBoard?: PinterestBoard | null,
+): TutorialPostPayload | null {
+  if (account.platform === "pinterest") {
+    if (!mediaUrl || !pinterestBoard?.id) return null;
+    return {
+      platform_posts: [
+        {
+          account_id: account.id,
+          caption,
+          media_urls: [mediaUrl],
+          platform_options: {
+            board_id: pinterestBoard.id,
+          },
+        },
+      ],
+    };
+  }
+
+  if (account.platform === "youtube") {
+    if (!mediaUrl) return null;
+    return {
+      platform_posts: [
+        {
+          account_id: account.id,
+          caption,
+          media_urls: [mediaUrl],
+          platform_options: {
+            title: "UniPost API demo",
+            privacy_status: "public",
+            category_id: "22",
+            license: "youtube",
+            made_for_kids: "false",
+          },
+        },
+      ],
+    };
+  }
+
+  if (account.platform === "tiktok") {
+    if (!mediaUrl) return null;
+    return {
+      platform_posts: [
+        {
+          account_id: account.id,
+          caption,
+          media_urls: [mediaUrl],
+          platform_options: {
+            privacy_level: "PUBLIC_TO_EVERYONE",
+          },
+        },
+      ],
+    };
+  }
+
+  return {
+    caption,
+    account_ids: [account.id],
+    ...(mediaUrl ? { media_urls: [mediaUrl] } : {}),
+  };
+}
 
 export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyProps) {
   const { getToken } = useAuth();
@@ -63,6 +164,11 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
   // know at least one exists.
   const [account, setAccount] = useState<SocialAccount | null>(null);
   const [accountError, setAccountError] = useState("");
+  const [pinterestBoardState, setPinterestBoardState] = useState<
+    | { kind: "idle" }
+    | { kind: "ready"; accountId: string; board: PinterestBoard }
+    | { kind: "error"; accountId: string; message: string }
+  >({ kind: "idle" });
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -71,12 +177,15 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
         if (!token) return;
         const res = await listSocialAccounts(token, ctx.profileId);
         if (cancelled) return;
-        const active = (res.data || []).find((a) => a.status === "active");
+        const activeAccounts = (res.data || []).filter((a) => a.status === "active");
+        const active = pickTutorialAccount(activeAccounts);
         if (active) {
           setAccount(active);
         } else {
           setAccountError(
-            "No active connected accounts found. Connect one in the Accounts page, then come back.",
+            activeAccounts.length > 0
+              ? "Quickstart Mode needs an active account on X, LinkedIn, Bluesky, Threads, Instagram, Facebook, or Pinterest. Connect one, then come back."
+              : "No active connected accounts found. Connect one in the Accounts page, then come back.",
           );
         }
       } catch (err) {
@@ -85,6 +194,46 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
     })();
     return () => { cancelled = true; };
   }, [getToken, ctx.profileId]);
+
+  useEffect(() => {
+    if (!account || account.platform !== "pinterest") {
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) {
+          if (!cancelled) {
+            setPinterestBoardState({ kind: "error", accountId: account.id, message: "Session expired. Please sign in again." });
+          }
+          return;
+        }
+        const res = await listPinterestBoards(token, ctx.profileId, account.id);
+        if (cancelled) return;
+        const board = res.data?.boards?.[0];
+        if (board) {
+          setPinterestBoardState({ kind: "ready", accountId: account.id, board });
+          return;
+        }
+        setPinterestBoardState({
+          kind: "error",
+          accountId: account.id,
+          message: "Pinterest needs a board before Quickstart Mode can publish. Create a board for this account, then reopen the tutorial.",
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setPinterestBoardState({
+            kind: "error",
+            accountId: account.id,
+            message: (err as Error).message || "Failed to load Pinterest boards",
+          });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [account, getToken, ctx.profileId]);
 
   // Send state.
   const [sendState, setSendState] = useState<
@@ -99,6 +248,17 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
   const step2Completed = sendState.kind === "sent";
   const tutorialMediaUrl = account ? TUTORIAL_MEDIA_URLS[account.platform] : undefined;
   const shouldAttachTutorialImage = !!tutorialMediaUrl;
+  const isPinterestAccount = account?.platform === "pinterest";
+  const pinterestBoardStateAccountId = pinterestBoardState.kind === "idle" ? "" : pinterestBoardState.accountId;
+  const pinterestBoard = isPinterestAccount && pinterestBoardState.kind === "ready" && pinterestBoardState.accountId === account.id ? pinterestBoardState.board : null;
+  const isPinterestBoardLoading = isPinterestAccount && pinterestBoardStateAccountId !== account.id;
+  const pinterestBoardError = isPinterestAccount && pinterestBoardState.kind === "error" && pinterestBoardState.accountId === account.id
+    ? pinterestBoardState.message
+    : "";
+  const tutorialPostPayload = useMemo(
+    () => account ? buildTutorialPostPayload(account, DEFAULT_CAPTION, tutorialMediaUrl, pinterestBoard) : null,
+    [account, pinterestBoard, tutorialMediaUrl],
+  );
 
   async function handleCreateKey() {
     if (!workspace) {
@@ -140,6 +300,16 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
 
   async function handleSend() {
     if (keyState.kind !== "ready" || !account) return;
+    const payload = buildTutorialPostPayload(account, DEFAULT_CAPTION, tutorialMediaUrl, pinterestBoard);
+    if (!payload) {
+      setSendState({
+        kind: "error",
+        message: account.platform === "pinterest"
+          ? "Pinterest needs one sample media item and a destination board before publishing."
+          : "This connected account needs extra platform-specific fields before publishing.",
+      });
+      return;
+    }
     setSendState({ kind: "sending" });
     try {
       const res = await fetch(`${API_BASE}/v1/posts`, {
@@ -148,11 +318,7 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
           "Content-Type": "application/json",
           Authorization: `Bearer ${keyState.key}`,
         },
-        body: JSON.stringify({
-          caption: DEFAULT_CAPTION,
-          account_ids: [account.id],
-          ...(tutorialMediaUrl ? { media_urls: [tutorialMediaUrl] } : {}),
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -327,6 +493,14 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
           <div style={{ fontSize: 13, color: "var(--danger)" }}>{accountError}</div>
         ) : !account ? (
           <div className="dt-body-sm" style={{ color: "var(--dmuted)" }}>Loading your connected account…</div>
+        ) : isPinterestBoardLoading ? (
+          <div className="dt-body-sm" style={{ color: "var(--dmuted)" }}>Loading your Pinterest boards…</div>
+        ) : pinterestBoardError ? (
+          <div style={{ fontSize: 13, color: "var(--danger)" }}>{pinterestBoardError}</div>
+        ) : !tutorialPostPayload ? (
+          <div style={{ fontSize: 13, color: "var(--danger)" }}>
+            This account needs platform-specific setup before the API tutorial can publish. Connect a supported account, then try again.
+          </div>
         ) : (
           <div style={{ width: "100%", minWidth: 0 }}>
             <div className="dt-body-sm" style={{ color: "var(--dmuted)", marginBottom: 10 }}>
@@ -339,22 +513,20 @@ export function PostWithApiBody({ ctx, steps, onRequestComplete }: TutorialBodyP
             <CodeBlock
               apiBase={API_BASE}
               apiKey={keyState.kind === "ready" ? keyState.key : "your_api_key"}
-              accountId={account.id}
-              caption={DEFAULT_CAPTION}
-              mediaUrl={tutorialMediaUrl}
+              requestBody={tutorialPostPayload}
             />
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
               <button
                 type="button"
                 onClick={handleSend}
-                disabled={keyState.kind !== "ready" || sendState.kind === "sending" || sendState.kind === "sent"}
+                disabled={keyState.kind !== "ready" || !tutorialPostPayload || sendState.kind === "sending" || sendState.kind === "sent"}
                 className="dt-body-sm"
                 style={{
                   padding: "10px 18px", borderRadius: 8,
                   border: "none",
                   background: sendState.kind === "sent" ? "rgba(16,185,129,.15)" : "var(--daccent)",
                   color: sendState.kind === "sent" ? "var(--daccent)" : "var(--primary-foreground)",
-                  cursor: (keyState.kind === "ready" && sendState.kind === "idle") ? "pointer" : "not-allowed",
+                  cursor: (keyState.kind === "ready" && tutorialPostPayload && sendState.kind === "idle") ? "pointer" : "not-allowed",
                   fontFamily: "inherit", fontWeight: 600,
                   display: "inline-flex", alignItems: "center", gap: 8,
                   opacity: keyState.kind !== "ready" ? 0.5 : 1,
