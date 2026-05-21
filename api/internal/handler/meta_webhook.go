@@ -37,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -711,6 +712,9 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 				"account_id", account.ID, "comment_id", val.CommentID, "err", fetchErr)
 		}
 	}
+	if isFacebookPlaceholderAuthorName(authorName) {
+		authorName = ""
+	}
 
 	item, err := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
 		SocialAccountID:  account.ID,
@@ -731,6 +735,24 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 		LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, account.ID, parentID),
 	})
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			rows, mergeErr := h.queries.MergeInboxItemAuthorMetadataByExternalID(r.Context(), db.MergeInboxItemAuthorMetadataByExternalIDParams{
+				SocialAccountID: account.ID,
+				ExternalID:      val.CommentID,
+				AuthorName:      authorName,
+				AuthorID:        authorID,
+				AuthorAvatarUrl: authorAvatarURL,
+			})
+			if mergeErr != nil {
+				slog.Warn("meta webhook: merge facebook comment author failed", "err", mergeErr)
+			} else if rows > 0 {
+				ws.NotifyEvent(r.Context(), h.pool, account.WorkspaceID, map[string]any{
+					"type":      "inbox.sync_complete",
+					"new_items": 0,
+				})
+			}
+			return
+		}
 		slog.Warn("meta webhook: upsert facebook comment failed", "err", err)
 		return
 	}
