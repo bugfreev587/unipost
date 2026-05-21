@@ -37,7 +37,8 @@ const CSS = `
 .fbpa-post-row:hover td{background:color-mix(in srgb,var(--daccent) 7%,var(--surface))}
 .fbpa-post-row.active td{background:color-mix(in srgb,var(--daccent) 10%,var(--surface))}
 .fbpa-thumb{width:42px;height:42px;border-radius:7px;background:var(--surface2);display:grid;place-items:center;overflow:hidden;flex-shrink:0;color:var(--dmuted2);border:1px solid var(--dborder)}
-@media (max-width: 980px){.fbpa-layout{grid-template-columns:1fr}.fbpa-detail{position:static!important}}
+.fbpa-toolbar{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:16px;align-items:stretch}
+@media (max-width: 980px){.fbpa-layout,.fbpa-toolbar{grid-template-columns:1fr}.fbpa-detail{position:static!important}}
 `;
 
 const sectionLabelStyle: CSSProperties = {
@@ -201,29 +202,30 @@ export function FacebookPageAnalyticsView({ profileId }: FacebookPageAnalyticsVi
         </div>
       )}
 
-      <Controls
-        accounts={accounts}
-        selectedAccountId={selectedAccount?.id || ""}
-        setSelectedAccountId={setSelectedAccountId}
-        days={days}
-        setDays={setDays}
-        limit={limit}
-        setLimit={setLimit}
-      />
-
       {loading ? (
         <div style={{ color: "var(--dmuted)", padding: 40, textAlign: "center" }}>Loading Facebook Page analytics...</div>
       ) : !selectedAccount ? (
         <EmptyFacebookState profileId={profileId} />
       ) : (
         <>
-          <ScopeReadiness
-            grantedScopes={data?.granted_scopes || selectedAccount.scope || []}
-            requiredScopes={data?.required_scopes || ["pages_read_engagement"]}
-            recommendedScopes={data?.recommended_scopes || ["read_insights"]}
-            insightsError={data?.insights_error}
-            readAccessVerified={Boolean(data?.page || data?.posts.length)}
-          />
+          <div className="fbpa-toolbar">
+            <Controls
+              accounts={accounts}
+              selectedAccountId={selectedAccount.id}
+              setSelectedAccountId={setSelectedAccountId}
+              days={days}
+              setDays={setDays}
+              limit={limit}
+              setLimit={setLimit}
+            />
+            <ScopeReadiness
+              grantedScopes={data?.granted_scopes || selectedAccount.scope || []}
+              requiredScopes={data?.required_scopes || ["pages_read_engagement"]}
+              recommendedScopes={data?.recommended_scopes || ["read_insights"]}
+              insightsError={data?.insights_error}
+              readAccessVerified={Boolean(data?.page || data?.posts.length)}
+            />
+          </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
             {topStats.map((item) => <MetricTile key={item.label} {...item} />)}
@@ -266,7 +268,7 @@ function Controls({
   setLimit: (limit: number) => void;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface1)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minHeight: 64, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface1)" }}>
       {accounts.length > 1 && (
         <FilterSelect
           label="Page"
@@ -354,7 +356,7 @@ function ScopeReadiness({
   const missingRecommended = recommendedScopes.filter((scope) => !granted.has(scope));
   const ready = readAccessVerified || missingRequired.length === 0;
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16, padding: "12px 14px", borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface1)" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, minHeight: 64, padding: "12px 14px", borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface1)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
         <ShieldCheck style={{ width: 18, height: 18, color: ready ? "var(--success)" : "var(--warning)" }} />
         <div>
