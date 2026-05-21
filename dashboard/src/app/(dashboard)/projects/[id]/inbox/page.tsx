@@ -1575,7 +1575,15 @@ function InboxPageInner() {
           onMouseLeave={(e) => { e.currentTarget.style.background = "var(--dborder)"; }}
         />
 
-        <section style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, flex: 1, background: "var(--surface)" }}>
+        <section style={{
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+          minHeight: 0,
+          flex: 1,
+          background: "var(--surface)",
+          overflowY: selectedGroup && !isDMSource(selectedGroup.source) ? "auto" : "hidden",
+        }}>
           {!selectedGroup ? (
             <div style={{ padding: 28 }}>
               <SyncStateCard
@@ -1586,7 +1594,18 @@ function InboxPageInner() {
             </div>
           ) : (
             <>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 20px", borderBottom: "1px solid var(--dborder)", background: "var(--surface2)" }}>
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "18px 20px",
+                borderBottom: "1px solid var(--dborder)",
+                background: "var(--surface2)",
+                position: !isDMSource(selectedGroup.source) ? "sticky" : "relative",
+                top: 0,
+                zIndex: 2,
+              }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                     {sourceIcon(selectedGroup.source)}
@@ -1754,11 +1773,12 @@ function InboxPageInner() {
               ) : null}
 
               <div style={{
-                flex: 1, minHeight: 0, overflowY: "auto",
-                padding: isDMSource(selectedGroup.source) ? "16px 14px" : "16px 20px",
+                padding: isDMSource(selectedGroup.source) ? "16px 14px" : "16px 20px 28px",
                 display: "flex", flexDirection: "column",
                 gap: 0,
-                ...(isDMSource(selectedGroup.source) ? { justifyContent: "flex-end" } : {}),
+                ...(isDMSource(selectedGroup.source)
+                  ? { flex: 1, minHeight: 0, overflowY: "auto", justifyContent: "flex-end" }
+                  : { flex: "0 0 auto", minHeight: "auto", overflow: "visible" }),
               }}>
                 {isDMSource(selectedGroup.source)
                   ? selectedGroup.items.map((item) => renderConversationItem(item))
