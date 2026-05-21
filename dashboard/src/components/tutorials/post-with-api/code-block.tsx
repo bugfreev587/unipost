@@ -28,22 +28,18 @@ const LANGUAGES: Array<{ id: Language; label: string }> = [
 export function CodeBlock({
   apiBase,
   apiKey,
-  accountId,
-  caption,
-  mediaUrl,
+  requestBody,
 }: {
   apiBase: string;
   apiKey: string;
-  accountId: string;
-  caption: string;
-  mediaUrl?: string;
+  requestBody: object;
 }) {
   const [lang, setLang] = useState<Language>("curl");
   const [copied, setCopied] = useState(false);
 
   const snippet = useMemo(
-    () => buildSnippet(lang, { apiBase, apiKey, accountId, caption, mediaUrl }),
-    [lang, apiBase, apiKey, accountId, caption, mediaUrl],
+    () => buildSnippet(lang, { apiBase, apiKey, requestBody }),
+    [lang, apiBase, apiKey, requestBody],
   );
 
   async function handleCopy() {
@@ -154,78 +150,109 @@ function buildSnippet(
   {
     apiBase,
     apiKey,
-    accountId,
-    caption,
-    mediaUrl,
+    requestBody,
   }: {
     apiBase: string;
     apiKey: string;
-    accountId: string;
-    caption: string;
-    mediaUrl?: string;
+    requestBody: object;
   },
 ): string {
-  const mediaUrlsCurl = mediaUrl ? `,\n    "media_urls": ["${mediaUrl}"]` : "";
-  const mediaUrlsNode = mediaUrl ? `,\n  mediaUrls: ["${mediaUrl}"]` : "";
-  const mediaUrlsPython = mediaUrl ? `,\n    media_urls=["${mediaUrl}"]` : "";
-  const mediaUrlsGo = mediaUrl ? `,\n\t\tMediaURLs: []string{"${mediaUrl}"}` : "";
+  const requestBodyJson = JSON.stringify(requestBody, null, 2);
+  const indentedNodeBody = indent(requestBodyJson, 2);
+  const indentedPythonBody = indent(requestBodyJson, 4);
+  const indentedGoBody = indent(requestBodyJson, 1);
 
   switch (lang) {
     case "curl":
       return `curl -X POST "${apiBase}/v1/posts" \\
   -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
-  -d '{
-    "caption": "${escapeShell(caption)}",
-    "account_ids": ["${accountId}"]${mediaUrlsCurl}
-  }'`;
+  -d '${escapeShell(requestBodyJson)}'`;
 
     case "node":
-      return `import { UniPost } from "@unipost/sdk";
+      return `const payload = ${indentedNodeBody};
 
-const client = new UniPost({ apiKey: "${apiKey}" });
-
-const post = await client.posts.create({
-  caption: ${JSON.stringify(caption)},
-  accountIds: ["${accountId}"]${mediaUrlsNode}
+const response = await fetch("${apiBase}/v1/posts", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer ${apiKey}",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(payload),
 });
 
-console.log("Published:", post.id);`;
+if (!response.ok) {
+  throw new Error(await response.text());
+}
+
+const post = await response.json();
+console.log("Published:", post.data?.id ?? post.id);`;
 
     case "python":
-      return `from unipost import UniPost
+      return `import json
+import requests
 
-client = UniPost(api_key="${apiKey}")
+payload = json.loads(r'''${indentedPythonBody}''')
 
-post = client.posts.create(
-    caption=${JSON.stringify(caption)},
-    account_ids=["${accountId}"]${mediaUrlsPython}
+response = requests.post(
+    "${apiBase}/v1/posts",
+    headers={
+        "Authorization": "Bearer ${apiKey}",
+        "Content-Type": "application/json",
+    },
+    json=payload,
 )
+response.raise_for_status()
 
-print("Published:", post.id)`;
+post = response.json()
+print("Published:", post.get("data", {}).get("id") or post.get("id"))`;
 
     case "go":
       return `package main
 
 import (
+\t"bytes"
 \t"context"
 \t"fmt"
-
-\t"github.com/unipost-dev/sdk-go"
+\t"io"
+\t"net/http"
 )
 
 func main() {
-\tclient := unipost.NewClient("${apiKey}")
-\tpost, err := client.Posts.Create(context.Background(), &unipost.PostCreateParams{
-\t\tCaption:    ${JSON.stringify(caption)},
-\t\tAccountIDs: []string{"${accountId}"}${mediaUrlsGo},
-\t})
+\tbody := []byte(\`${indentedGoBody}\`)
+\treq, err := http.NewRequestWithContext(
+\t\tcontext.Background(),
+\t\thttp.MethodPost,
+\t\t"${apiBase}/v1/posts",
+\t\tbytes.NewReader(body),
+\t)
 \tif err != nil {
 \t\tpanic(err)
 \t}
-\tfmt.Println("Published:", post.ID)
+\treq.Header.Set("Authorization", "Bearer ${apiKey}")
+\treq.Header.Set("Content-Type", "application/json")
+
+\tresp, err := http.DefaultClient.Do(req)
+\tif err != nil {
+\t\tpanic(err)
+\t}
+\tdefer resp.Body.Close()
+
+\tresponseBody, _ := io.ReadAll(resp.Body)
+\tif resp.StatusCode < 200 || resp.StatusCode >= 300 {
+\t\tpanic(string(responseBody))
+\t}
+\tfmt.Println("Published:", string(responseBody))
 }`;
   }
+}
+
+function indent(s: string, level: number): string {
+  const prefix = "\t".repeat(level);
+  return s
+    .split("\n")
+    .map((line, index) => (index === 0 ? line : `${prefix}${line}`))
+    .join("\n");
 }
 
 function escapeShell(s: string): string {
