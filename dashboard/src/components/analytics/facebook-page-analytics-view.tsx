@@ -35,7 +35,7 @@ const CSS = `
 .fbpa-layout{display:grid;grid-template-columns:minmax(0,1.42fr) minmax(320px,.8fr);gap:16px;align-items:start}
 .fbpa-post-row{cursor:pointer;transition:background .12s ease}
 .fbpa-post-row:hover td{background:color-mix(in srgb,var(--daccent) 7%,var(--surface))}
-.fbpa-post-row.active td{background:color-mix(in srgb,var(--daccent) 10%,var(--surface));box-shadow:inset 3px 0 0 var(--daccent)}
+.fbpa-post-row.active td{background:color-mix(in srgb,var(--daccent) 10%,var(--surface))}
 .fbpa-thumb{width:42px;height:42px;border-radius:7px;background:var(--surface2);display:grid;place-items:center;overflow:hidden;flex-shrink:0;color:var(--dmuted2);border:1px solid var(--dborder)}
 @media (max-width: 980px){.fbpa-layout{grid-template-columns:1fr}.fbpa-detail{position:static!important}}
 `;
