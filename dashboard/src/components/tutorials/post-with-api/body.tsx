@@ -30,28 +30,32 @@ import type { TutorialBodyProps } from "../registry";
 import { CodeBlock } from "./code-block";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-const APP_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const DEFAULT_CAPTION = "Hello from UniPost API!";
+// Permanent Cloudflare R2 assets from bucket `unipost-never-delete-assets`.
 const TUTORIAL_ASSET_BASE = "https://pub-2f07de189e1a4b3690d15ffbd8c556b6.r2.dev";
 const TUTORIAL_IMAGE_URL = `${TUTORIAL_ASSET_BASE}/Disneyland-public-photo.jpg`;
 const TUTORIAL_VIDEO_URL = `${TUTORIAL_ASSET_BASE}/TT-Post-Marketing-Demo.mp4`;
 const TUTORIAL_MEDIA_URLS: Partial<Record<SocialAccount["platform"], string>> = {
+  bluesky: TUTORIAL_IMAGE_URL,
+  linkedin: TUTORIAL_IMAGE_URL,
   instagram: TUTORIAL_IMAGE_URL,
   threads: TUTORIAL_IMAGE_URL,
-  linkedin: TUTORIAL_IMAGE_URL,
+  youtube: TUTORIAL_VIDEO_URL,
   tiktok: TUTORIAL_VIDEO_URL,
-  twitter: `${APP_BASE}/brand/unipost-icon-light.png`,
-  bluesky: TUTORIAL_IMAGE_URL,
   pinterest: TUTORIAL_IMAGE_URL,
+  twitter: TUTORIAL_IMAGE_URL,
+  facebook: TUTORIAL_IMAGE_URL,
 };
 const TUTORIAL_ACCOUNT_PRIORITY = [
-  "twitter",
-  "linkedin",
   "bluesky",
-  "threads",
+  "linkedin",
   "instagram",
-  "facebook",
+  "threads",
+  "youtube",
+  "tiktok",
   "pinterest",
+  "twitter",
+  "facebook",
 ];
 
 type TutorialPostPayload = {
@@ -90,6 +94,42 @@ function buildTutorialPostPayload(
           media_urls: [mediaUrl],
           platform_options: {
             board_id: pinterestBoard.id,
+          },
+        },
+      ],
+    };
+  }
+
+  if (account.platform === "youtube") {
+    if (!mediaUrl) return null;
+    return {
+      platform_posts: [
+        {
+          account_id: account.id,
+          caption,
+          media_urls: [mediaUrl],
+          platform_options: {
+            title: "UniPost API demo",
+            privacy_status: "public",
+            category_id: "22",
+            license: "youtube",
+            made_for_kids: "false",
+          },
+        },
+      ],
+    };
+  }
+
+  if (account.platform === "tiktok") {
+    if (!mediaUrl) return null;
+    return {
+      platform_posts: [
+        {
+          account_id: account.id,
+          caption,
+          media_urls: [mediaUrl],
+          platform_options: {
+            privacy_level: "PUBLIC_TO_EVERYONE",
           },
         },
       ],
