@@ -116,6 +116,28 @@ func TestConnectablePlatforms(t *testing.T) {
 	}
 }
 
+func TestConnectablePlatformListMatchesAllowlist(t *testing.T) {
+	parts := strings.Split(connectablePlatformList, ", ")
+	if len(parts) != len(connectablePlatforms) {
+		t.Fatalf("list length %d != allowlist length %d (%q)", len(parts), len(connectablePlatforms), connectablePlatformList)
+	}
+	seen := map[string]bool{}
+	for _, p := range parts {
+		if !connectablePlatforms[p] {
+			t.Fatalf("%q is in error message list but not allowlist", p)
+		}
+		if seen[p] {
+			t.Fatalf("%q appears more than once in error message list", p)
+		}
+		seen[p] = true
+	}
+	for p := range connectablePlatforms {
+		if !seen[p] {
+			t.Fatalf("%q is allowlisted but missing from error message list", p)
+		}
+	}
+}
+
 func TestConnectSessionPlatformUsesOAuthApp(t *testing.T) {
 	for _, p := range []string{"twitter", "linkedin", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"} {
 		if !connectSessionPlatformUsesOAuthApp(p) {
@@ -245,7 +267,7 @@ func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 				connect.NewPinterestConnector("pinterest-client", "secretXYZ", "https://api.example.com"),
 			),
 			wantURL:  "https://www.pinterest.com/oauth/",
-			wantPart: "consumer_id=pinterest-client",
+			wantPart: "client_id=pinterest-client",
 		},
 	}
 	for _, tc := range cases {

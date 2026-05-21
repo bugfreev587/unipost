@@ -59,7 +59,7 @@ func (c *PinterestConnector) Platform() string { return "pinterest" }
 
 func (c *PinterestConnector) AuthorizeURL(session SessionView) (string, error) {
 	q := url.Values{}
-	q.Set("consumer_id", c.clientID)
+	q.Set("client_id", c.clientID)
 	q.Set("redirect_uri", c.redirectURI)
 	q.Set("response_type", "code")
 	q.Set("refreshable", "true")

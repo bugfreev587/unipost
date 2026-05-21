@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -57,6 +58,30 @@ func TestPinterestEndpointsHonorExplicitOverrides(t *testing.T) {
 	}
 	if got := pinterestAuthURL(); got != "https://example.test/oauth/" {
 		t.Fatalf("auth url = %q, want explicit override", got)
+	}
+}
+
+func TestPinterestGetAuthURLUsesClientID(t *testing.T) {
+	adapter := NewPinterestAdapter()
+	got := adapter.GetAuthURL(OAuthConfig{
+		ClientID:    "pin-client",
+		AuthURL:     pinterestOAuthEndpoint,
+		RedirectURL: "https://api.example.com/v1/oauth/callback/pinterest",
+		Scopes:      pinterestScopes,
+	}, "state-123")
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse auth url: %v", err)
+	}
+	q := parsed.Query()
+	if q.Get("client_id") != "pin-client" {
+		t.Fatalf("client_id = %q", q.Get("client_id"))
+	}
+	if q.Get("consumer_id") != "" {
+		t.Fatalf("consumer_id should not be sent, got %q", q.Get("consumer_id"))
+	}
+	if q.Get("state") != "state-123" || q.Get("response_type") != "code" {
+		t.Fatalf("unexpected auth params: %s", got)
 	}
 }
 

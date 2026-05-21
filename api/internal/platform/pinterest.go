@@ -90,7 +90,7 @@ func (a *PinterestAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfi
 
 func (a *PinterestAdapter) GetAuthURL(config OAuthConfig, state string) string {
 	q := url.Values{}
-	q.Set("consumer_id", config.ClientID)
+	q.Set("client_id", config.ClientID)
 	q.Set("redirect_uri", config.RedirectURL)
 	q.Set("response_type", "code")
 	q.Set("refreshable", "true")
