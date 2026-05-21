@@ -178,10 +178,6 @@ func connectSessionPlatformUsesOAuthApp(platform string) bool {
 
 func connectSessionPlatformFeatureEnabled(ctx context.Context, workspaceID, platform string) bool {
 	switch platform {
-	case "tiktok", "instagram":
-		return featureflags.Enabled(ctx, featureflags.HostedConnectTikTokInstagram, featureflags.Target{
-			WorkspaceID: workspaceID,
-		})
 	case "threads":
 		return featureflags.Enabled(ctx, featureflags.HostedConnectThreads, featureflags.Target{
 			WorkspaceID: workspaceID,
