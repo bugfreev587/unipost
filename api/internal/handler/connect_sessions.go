@@ -68,21 +68,29 @@ func (h *ConnectSessionHandler) SetIntegrationLogger(logger *integrationlogs.Log
 	return h
 }
 
-// connectablePlatforms is the allowlist for POST /v1/connect/sessions.
+// connectablePlatformNames is the allowlist for POST /v1/connect/sessions.
 // Keep this in sync with the connectors actually registered in main.go.
-var connectablePlatforms = map[string]bool{
-	"twitter":   true,
-	"linkedin":  true,
-	"bluesky":   true,
-	"youtube":   true,
-	"tiktok":    true,
-	"instagram": true,
-	"threads":   true,
-	"facebook":  true,
-	"pinterest": true,
+var connectablePlatformNames = []string{
+	"twitter",
+	"linkedin",
+	"bluesky",
+	"youtube",
+	"tiktok",
+	"instagram",
+	"threads",
+	"facebook",
+	"pinterest",
 }
 
-const connectablePlatformList = "twitter, linkedin, bluesky, youtube, tiktok, instagram, threads, facebook, pinterest"
+var connectablePlatforms = func() map[string]bool {
+	out := make(map[string]bool, len(connectablePlatformNames))
+	for _, platform := range connectablePlatformNames {
+		out[platform] = true
+	}
+	return out
+}()
+
+var connectablePlatformList = strings.Join(connectablePlatformNames, ", ")
 
 // connectSessionTTL is the wall-clock window during which a hosted
 // page link is honored. Stripe uses 24h for Connect — we go shorter

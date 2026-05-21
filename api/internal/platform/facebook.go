@@ -1826,7 +1826,7 @@ func looksLikeInvalidInsightMetric(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "valid insights metric") ||
-		strings.Contains(msg, "metric") && strings.Contains(msg, "invalid")
+		(strings.Contains(msg, "metric") && strings.Contains(msg, "invalid"))
 }
 
 // coerceInsightInt handles Meta's mix of number / object values in

@@ -19,7 +19,7 @@ func TestPinterestConnectorAuthorizeURL(t *testing.T) {
 		t.Fatalf("authorize url = %q", u)
 	}
 	for _, part := range []string{
-		"consumer_id=pin-client",
+		"client_id=pin-client",
 		"redirect_uri=https%3A%2F%2Fapi.example.com%2Fv1%2Fconnect%2Fcallback%2Fpinterest",
 		"refreshable=true",
 		"state=state_123",
