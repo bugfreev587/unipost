@@ -98,7 +98,7 @@ var definitions = map[Flag]Definition{
 	HostedConnectFacebookPinterest: {
 		Flag:        HostedConnectFacebookPinterest,
 		EnvVar:      "FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST",
-		Description: "Enables hosted Connect Sessions for Facebook Page and Pinterest managed account onboarding.",
+		Description: "Enables hosted Connect Sessions for Facebook Page managed account onboarding. The env var name is legacy from the former combined Facebook/Pinterest rollout.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

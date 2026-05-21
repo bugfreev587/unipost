@@ -44,7 +44,7 @@ Start with the env provider:
 ```text
 FEATURE_FLAGS_PROVIDER=env
 FEATURE_TIKTOK_ANALYTICS_SCOPES=false
-FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST=false
+FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST=false  # Legacy env name; gates Facebook Page hosted Connect only.
 ```
 
 After Unleash is live and the backend token is created:
@@ -144,7 +144,7 @@ production: off
 fallback: off in production
 ```
 
-Owner area: Hosted Connect / Facebook Pages / Pinterest / App Review. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for Facebook Page and Pinterest. It depends on Meta approval for Facebook Page scopes, Pinterest app approval, and valid shared Quickstart app credentials for production. Facebook hosted Connect automatically connects the first publishable Page returned by Meta for the authorizing user. Production rollback is to disable `connect_sessions.facebook_pinterest`, which blocks new Facebook/Pinterest hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected accounts.
+Owner area: Hosted Connect / Facebook Pages / App Review. This legacy-named flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for Facebook Page only. Pinterest hosted Connect is generally available after Pinterest app approval and no longer depends on this flag. Facebook depends on Meta approval for Facebook Page scopes plus valid shared Quickstart app credentials for production. Facebook hosted Connect automatically connects the first publishable Page returned by Meta for the authorizing user. Production rollback is to disable `connect_sessions.facebook_pinterest`, which blocks new Facebook hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected accounts.
 
 Create this flag in Unleash:
 

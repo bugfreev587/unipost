@@ -182,7 +182,7 @@ func connectSessionPlatformFeatureEnabled(ctx context.Context, workspaceID, plat
 		return featureflags.Enabled(ctx, featureflags.HostedConnectThreads, featureflags.Target{
 			WorkspaceID: workspaceID,
 		})
-	case "facebook", "pinterest":
+	case "facebook":
 		return featureflags.Enabled(ctx, featureflags.HostedConnectFacebookPinterest, featureflags.Target{
 			WorkspaceID: workspaceID,
 		})

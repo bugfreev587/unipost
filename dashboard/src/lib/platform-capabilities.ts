@@ -156,8 +156,6 @@ export function unsupportedReason(platform: string, metric: MetricKey): string {
         return "TikTok exposes view_count (video plays), not display impressions";
       case "facebook":
         return "Meta dropped post-level impressions in Graph API v22.0 — use the Page Insights tab for Page-level reach";
-      case "pinterest":
-        return "Pinterest analytics are unavailable in API sandbox; production access is required";
       default:
         return `${Pname} doesn't expose impressions via API`;
     }
@@ -168,8 +166,10 @@ export function unsupportedReason(platform: string, metric: MetricKey): string {
         return "Pinterest doesn't expose reach for individual Pins via this integration";
       case "shares":
         return "Pinterest doesn't expose share counts for individual Pins via this integration";
+      case "video_views":
+        return "Pinterest video view counts are not mapped by this integration yet";
       default:
-        return `Pinterest analytics are unavailable in API sandbox; production access is required`;
+        return `Pinterest doesn't expose ${metric} via this integration`;
     }
   }
   if (metric === "reach" && p === "facebook") {
