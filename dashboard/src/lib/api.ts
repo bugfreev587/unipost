@@ -769,6 +769,7 @@ export interface FacebookPageProfile {
 export interface FacebookPageInsights {
   follows: number;
   impressions: number;
+  views?: number;
   post_engagements: number;
   below_100_likes_notice: boolean;
   since: string;

@@ -46,6 +46,7 @@ type pendingFacebookPage struct {
 	Category                 string   `json:"category"`
 	PictureURL               string   `json:"picture_url"`
 	Tasks                    []string `json:"tasks"`
+	Scopes                   []string `json:"scopes,omitempty"`
 	PageAccessTokenEncrypted string   `json:"page_access_token_enc"`
 }
 
@@ -131,6 +132,7 @@ func (h *OAuthHandler) handleFacebookCallback(
 			Category:                 p.Category,
 			PictureURL:               p.PictureURL,
 			Tasks:                    p.Tasks,
+			Scopes:                   append([]string(nil), config.Scopes...),
 			PageAccessTokenEncrypted: encPageToken,
 		})
 	}
@@ -331,6 +333,10 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 
 	createdAccounts := make([]string, 0, len(selected))
 	for _, page := range selected {
+		scopes := page.Scopes
+		if len(scopes) == 0 {
+			scopes = platform.FacebookOAuthScopes()
+		}
 		metadata := map[string]any{
 			"meta_user_id":  row.MetaUserID,
 			"page_category": page.Category,
@@ -354,6 +360,7 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 				AccountName:      pgtype.Text{String: page.Name, Valid: page.Name != ""},
 				AccountAvatarUrl: pgtype.Text{String: page.PictureURL, Valid: page.PictureURL != ""},
 				Metadata:         metadataJSON,
+				Scope:            scopes,
 			}); err != nil {
 				slog.Error("facebook finalize: reactivate social_account failed", "err", err, "account_id", existing.ID, "page_id", page.ID)
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -375,6 +382,7 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 			AccountName:       pgtype.Text{String: page.Name, Valid: page.Name != ""},
 			AccountAvatarUrl:  pgtype.Text{String: page.PictureURL, Valid: page.PictureURL != ""},
 			Metadata:          metadataJSON,
+			Scope:             scopes,
 		})
 		if err != nil {
 			slog.Error("facebook finalize: create social_account failed", "err", err, "page_id", page.ID)

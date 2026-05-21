@@ -26,6 +26,7 @@ import (
 type facebookPageInsightsResponse struct {
 	Follows             int64  `json:"follows"`
 	Impressions         int64  `json:"impressions"`
+	Views               int64  `json:"views"`
 	PostEngagements     int64  `json:"post_engagements"`
 	Below100LikesNotice bool   `json:"below_100_likes_notice"`
 	Since               string `json:"since"`
@@ -100,6 +101,7 @@ func (h *SocialAccountHandler) FacebookPageInsights(w http.ResponseWriter, r *ht
 	writeSuccess(w, facebookPageInsightsResponse{
 		Follows:             stats.Follows,
 		Impressions:         stats.Impressions,
+		Views:               stats.Views,
 		PostEngagements:     stats.PostEngagements,
 		Below100LikesNotice: stats.Below100LikesNotice,
 		Since:               since.Format(time.RFC3339),

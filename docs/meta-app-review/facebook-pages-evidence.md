@@ -65,10 +65,10 @@ Every entry includes the permission name, where the user-facing feature lives in
 **User flow**: Page Picker shows "no publish permission" hint when a returned Page's `tasks` doesn't include `CREATE_CONTENT`.
 
 ### 8. `read_insights`
-**Feature**: Facebook Page Insights panel inside the Facebook Page analytics page. Shows Page-level follows, impressions, and post engagements for the selected date range when Meta returns Page Insights.
-**Endpoint**: `GET /v22.0/{page_id}/insights?metric=page_follows,page_impressions,page_post_engagements&period=day&since=...&until=...`
+**Feature**: Facebook Page Insights panel inside the Facebook Page analytics page. Shows Page-level follows, views, and post engagements for the selected date range when Meta returns Page Insights.
+**Endpoint**: `GET /v22.0/{page_id}/insights?metric=page_follows|page_media_view|page_post_engagements&period=day&since=...&until=...`
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.GetPageInsights`; aggregate handler in `api/internal/handler/facebook_page_analytics.go`.
-**User flow**: Analytics → Platforms → Facebook Page → Page Insights panel displays follows, impressions, and engagements. If the Page is below Meta's insights threshold, UniPost shows a threshold notice instead of failing the whole page.
+**User flow**: Analytics → Platforms → Facebook Page → Page Insights panel displays follows, views, and engagements. If the Page is below Meta's insights threshold, UniPost shows a threshold notice instead of failing the whole page.
 
 ---
 
@@ -110,7 +110,7 @@ Record once the reviewer-facing flow stabilizes. Keep it short — Meta reviewer
 - Show the Page profile card with Page name, avatar, category, and Page ID.
 - Show the published posts list from the connected Page.
 - Open one post detail and show published time, message/media, likes, comments, shares, clicks, and video views when available.
-- Show the Page Insights panel with follows, impressions, and post engagements; mention the 100-like threshold if Meta returns the below-threshold state.
+- Show the Page Insights panel with follows, views, and post engagements; mention the 100-like threshold if Meta returns the below-threshold state.
 
 ---
 
@@ -134,3 +134,4 @@ Record once the reviewer-facing flow stabilizes. Keep it short — Meta reviewer
 - Traffic is server-to-Graph; we do not surface Page Tokens to the browser.
 - The 24-hour Messenger window is enforced in both directions: client-side (disables the Send button) and server-side (Meta itself rejects, we show a clean error).
 - Page Insights below the 100-like threshold returns a `below_100_likes_notice=true` flag rather than a hard error so the dashboard can show a "Keep growing!" empty state.
+- Meta's deprecated Page impressions metric is no longer requested; the dashboard uses `page_media_view` for the Page-level views tile.
