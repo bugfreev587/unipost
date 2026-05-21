@@ -179,10 +179,6 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 	}
 
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
-	if !connectSessionPlatformFeatureEnabled(r.Context(), workspaceID, session.Platform) {
-		renderConnectError(w, http.StatusBadRequest, "Platform "+session.Platform+" is not enabled for hosted Connect.")
-		return
-	}
 	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds)
 	if err != nil {
 		slog.Error("connect.authorize: resolve connector", "platform", session.Platform, "workspace_id", workspaceID, "err", err)
@@ -310,10 +306,6 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
-	if !connectSessionPlatformFeatureEnabled(r.Context(), workspaceID, platformName) {
-		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "platform_not_enabled", false)
-		return
-	}
 	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds)
 	if err != nil {
 		slog.Error("connect.callback: resolve connector failed", "platform", platformName, "workspace_id", workspaceID, "err", err)

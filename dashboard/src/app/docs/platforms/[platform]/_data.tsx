@@ -1170,12 +1170,12 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["platform_options.pinterest.link", "URL", "Optional destination URL"],
     ],
     analytics: [
-      ["Impressions", yes, "Supported for production Pinterest API access"],
+      ["Impressions", yes, "Supported for approved Pinterest API access"],
       ["Likes / engagements", yes, "Mapped from Pinterest engagement metrics"],
       ["Comments", yes, "Comment count when returned by Pinterest"],
       ["Saves", yes, "Pinterest save count"],
       ["Clicks", yes, "Outbound click metrics"],
-      ["Video views", yes, "Video Pin views when applicable"],
+      ["Video views", no, "Not mapped by this integration yet"],
       ["Reach", no, "Not exposed by this integration"],
       ["Shares", no, "Not exposed by this integration"],
     ],
@@ -1224,7 +1224,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     limitations: [
       ["Daily safety cap", "50 publishes/day per connected Pinterest account (UTC reset). Failed posts do not count toward the cap."],
       ["Board ID required", "Call the Pinterest boards endpoint or use the dashboard board picker before publishing"],
-      ["Sandbox analytics caveat", "Pinterest analytics are unavailable in API sandbox; production access is required"],
+      ["Analytics account caveat", "Some organic analytics are only available when the connected Pinterest user has a business account"],
       ["No inbox surface", "Comment moderation is not in UniPost inbox today"],
     ],
   },

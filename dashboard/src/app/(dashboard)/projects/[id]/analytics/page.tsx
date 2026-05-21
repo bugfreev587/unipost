@@ -860,6 +860,14 @@ function ByPlatformTable({ rows, profileId }: { rows: PlatformAnalytics[]; profi
                           View TikTok analytics
                         </Link>
                       )}
+                      {(r.platform === "instagram" || r.platform === "threads") && (
+                        <Link
+                          href={`/projects/${profileId}/analytics/platforms/${r.platform}`}
+                          style={{ color: "var(--daccent)", fontSize: 12, textDecoration: "none", marginLeft: 4 }}
+                        >
+                          View {r.platform === "instagram" ? "Instagram" : "Threads"} analytics
+                        </Link>
+                      )}
                     </span>
                   </td>
                   <td style={tdRight}>{formatNumber(r.posts)}</td>
@@ -1271,9 +1279,7 @@ function ResultCard({
       {/* Published with no analytics yet → placeholder + external_id for support */}
       {!isFailed && !metrics && (
         <div style={{ fontSize: 12, color: "var(--dmuted2)", padding: "4px 0", lineHeight: 1.6 }}>
-          {platform === "pinterest"
-            ? "Published. Pinterest analytics are not available for Trial/Sandbox apps; production access is required."
-            : "Published. Analytics not yet available — click Refresh to fetch."}
+          Published. Analytics not yet available — click Refresh to fetch.
           {res.external_id && (
             <div style={{ marginTop: 6, fontFamily: "var(--mono, monospace)", fontSize: 10, color: "var(--dmuted)", wordBreak: "break-all" }}>
               ID: {res.external_id}

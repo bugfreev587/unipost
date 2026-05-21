@@ -6,11 +6,10 @@
 // are fresh — the alternative is caching, which is overkill for a
 // page customers open occasionally.
 //
-// Coverage in v1: X / Twitter only. Other platforms (Bluesky,
-// Threads, Instagram, LinkedIn, etc.) return 501 NOT_SUPPORTED so
-// callers can branch on platform without parsing error strings.
-// Adding a platform = implement platform.AccountMetricsAdapter on
-// its existing adapter; the route doesn't need to change.
+// Coverage in v1 started with X / Twitter and has expanded to platforms
+// that implement platform.AccountMetricsAdapter. Unsupported platforms
+// return 501 NOT_SUPPORTED so callers can branch on platform without
+// parsing error strings.
 
 package handler
 
@@ -104,6 +103,10 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		if acc.Platform == "tiktok" && (looksLikeTikTokAuthError(err) || looksLikeTikTokMissingScopeError(err)) {
 			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Reconnect TikTok to enable analytics.")
+			return
+		}
+		if (acc.Platform == "instagram" || acc.Platform == "threads") && looksLikeMetaAuthOrScopeError(err) {
+			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Reconnect "+acc.Platform+" to enable analytics.")
 			return
 		}
 		// Bubble up upstream errors as 502 — the request was valid,

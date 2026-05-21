@@ -104,9 +104,11 @@ func (a *InstagramAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 		ExternalAccountID: profile.id,
 		AccountName:       profile.username,
 		AvatarURL:         profile.profilePicURL,
+		Scopes:            config.Scopes,
 		Metadata: map[string]any{
-			"ig_user_id": profile.id,
-			"username":   profile.username,
+			"ig_user_id":     profile.id,
+			"username":       profile.username,
+			"granted_scopes": config.Scopes,
 		},
 	}, nil
 }
@@ -771,6 +773,15 @@ type igProfile struct {
 	profilePicURL string
 }
 
+type InstagramProfile struct {
+	ID                string `json:"id"`
+	Username          string `json:"username"`
+	ProfilePictureURL string `json:"profile_picture_url"`
+	FollowersCount    int64  `json:"followers_count"`
+	FollowsCount      int64  `json:"follows_count"`
+	MediaCount        int64  `json:"media_count"`
+}
+
 func (a *InstagramAdapter) getProfile(ctx context.Context, accessToken string) (*igProfile, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		"https://graph.instagram.com/v21.0/me?fields=id,username,profile_picture_url&access_token="+accessToken, nil)
@@ -806,6 +817,106 @@ func (a *InstagramAdapter) getProfile(ctx context.Context, accessToken string) (
 		username:      profile.Username,
 		profilePicURL: profile.ProfilePictureURL,
 	}, nil
+}
+
+func (a *InstagramAdapter) FetchProfile(ctx context.Context, accessToken string) (*InstagramProfile, error) {
+	params := url.Values{}
+	params.Set("fields", "id,username,profile_picture_url,followers_count,follows_count,media_count")
+	params.Set("access_token", accessToken)
+
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://graph.instagram.com/v22.0/me?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram profile: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("instagram profile (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var profile InstagramProfile
+	if err := json.Unmarshal(body, &profile); err != nil {
+		return nil, fmt.Errorf("instagram profile decode: %w", err)
+	}
+	if profile.ID == "" {
+		return nil, fmt.Errorf("instagram profile: empty id")
+	}
+	return &profile, nil
+}
+
+func (a *InstagramAdapter) GetAccountMetrics(ctx context.Context, accessToken, externalAccountID string) (*AccountMetrics, error) {
+	profile, err := a.FetchProfile(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	return &AccountMetrics{
+		FollowerCount:  profile.FollowersCount,
+		FollowingCount: profile.FollowsCount,
+		PostCount:      profile.MediaCount,
+		PlatformSpecific: map[string]any{
+			"media_count": profile.MediaCount,
+		},
+	}, nil
+}
+
+type InstagramMedia struct {
+	ID            string `json:"id"`
+	Caption       string `json:"caption"`
+	MediaType     string `json:"media_type"`
+	MediaURL      string `json:"media_url"`
+	ThumbnailURL  string `json:"thumbnail_url"`
+	Permalink     string `json:"permalink"`
+	Timestamp     string `json:"timestamp"`
+	LikeCount     int64  `json:"like_count"`
+	CommentsCount int64  `json:"comments_count"`
+}
+
+type InstagramMediaList struct {
+	Media []InstagramMedia `json:"media"`
+}
+
+func (a *InstagramAdapter) ListMedia(ctx context.Context, accessToken string, limit int) (*InstagramMediaList, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	params := url.Values{}
+	params.Set("fields", "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count")
+	params.Set("limit", fmt.Sprintf("%d", limit))
+	params.Set("access_token", accessToken)
+
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://graph.instagram.com/v22.0/me/media?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("instagram media list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("instagram media list (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []InstagramMedia `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("instagram media list decode: %w", err)
+	}
+	if result.Data == nil {
+		result.Data = []InstagramMedia{}
+	}
+	return &InstagramMediaList{Media: result.Data}, nil
 }
 
 func (a *InstagramAdapter) getIGUserID(ctx context.Context, accessToken string) (string, error) {

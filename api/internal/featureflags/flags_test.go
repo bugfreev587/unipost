@@ -20,19 +20,6 @@ func TestTikTokAnalyticsScopesDefaultByEnvironment(t *testing.T) {
 	}
 }
 
-func TestHostedConnectFacebookPinterestDefaultByEnvironment(t *testing.T) {
-	SetProvider(EnvProvider{})
-	t.Cleanup(func() { SetProvider(EnvProvider{}) })
-	unsetenv(t, "FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST")
-
-	if Enabled(context.Background(), HostedConnectFacebookPinterest, Target{Env: "production"}) {
-		t.Fatal("Facebook/Pinterest hosted Connect should default off in production")
-	}
-	if !Enabled(context.Background(), HostedConnectFacebookPinterest, Target{Env: "development"}) {
-		t.Fatal("Facebook/Pinterest hosted Connect should default on outside production")
-	}
-}
-
 func TestEnvProviderExplicitFlagOverridesDefault(t *testing.T) {
 	SetProvider(EnvProvider{})
 	t.Cleanup(func() { SetProvider(EnvProvider{}) })

@@ -151,8 +151,6 @@ func TestConnectSessionPlatformUsesOAuthApp(t *testing.T) {
 
 func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 
 	for _, platform := range []string{"tiktok", "instagram", "threads", "facebook", "pinterest"} {
 		t.Run(platform, func(t *testing.T) {
@@ -192,10 +190,10 @@ func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	}
 }
 
-func TestCreateConnectSession_TikTokInstagramEnabledInProduction(t *testing.T) {
+func TestCreateConnectSession_OAuthQuickstartPlatformsEnabledInProduction(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "production")
 
-	for _, platform := range []string{"tiktok", "instagram"} {
+	for _, platform := range []string{"twitter", "linkedin", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"} {
 		t.Run(platform, func(t *testing.T) {
 			fdb := &connectSessionTestDB{platform: platform, allowQuickstart: true}
 			h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
@@ -220,7 +218,6 @@ func TestCreateConnectSession_TikTokInstagramEnabledInProduction(t *testing.T) {
 
 func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 
 	for _, platform := range []string{"tiktok", "facebook", "pinterest"} {
 		t.Run(platform, func(t *testing.T) {
@@ -250,8 +247,6 @@ func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 
 func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
-	t.Setenv("FEATURE_CONNECT_SESSIONS_FACEBOOK_PINTEREST", "true")
 	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "false")
 
 	cases := []struct {

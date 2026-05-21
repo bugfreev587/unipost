@@ -78,7 +78,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/logs", label: "Logs", icon: FileText },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
-    { href: "/analytics/platforms", label: "Platforms", backendFlagsAny: [FEATURE_FLAG_KEYS.tiktokAnalyticsScopes], showWhenAdmin: true },
+    { href: "/analytics/platforms", label: "Platforms" },
     { href: "/analytics/api", label: "API" },
   ]},
 ];
