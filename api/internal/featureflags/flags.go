@@ -19,6 +19,7 @@ const (
 	AttributionUTMSignupBindingV1 Flag = "attribution.utm_signup_binding_v1"
 	Inbox                         Flag = "inbox"
 	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
+	HostedConnectTikTokInstagram  Flag = "connect_sessions.tiktok_instagram"
 )
 
 type Target struct {
@@ -90,6 +91,14 @@ var definitions = map[Flag]Definition{
 		Flag:        FreePlanHardPostQuota,
 		EnvVar:      "FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA",
 		Description: "Hard-blocks Free plan publish acceptance once the workspace would exceed its monthly post quota. Paid plans keep soft overage behavior.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	HostedConnectTikTokInstagram: {
+		Flag:        HostedConnectTikTokInstagram,
+		EnvVar:      "FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM",
+		Description: "Enables hosted Connect Sessions for TikTok and Instagram managed account onboarding.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

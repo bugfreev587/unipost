@@ -77,6 +77,7 @@ The response is intentionally simple:
     "flags": {
       "tiktok.analytics_scopes": false,
       "facebook.page_analytics": false,
+      "connect_sessions.tiktok_instagram": false,
       "inbox": true
     }
   }
@@ -110,6 +111,22 @@ video.list
 ```
 
 It also controls the dashboard TikTok platform analytics surface under `Analytics -> Platforms -> TikTok` and the backend endpoints that fetch TikTok profile, account metrics, and public video inventory. Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
+
+Create this flag in Unleash:
+
+```text
+connect_sessions.tiktok_instagram
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Hosted Connect / TailTales onboarding / OAuth. This flag enables `POST /v1/connect/sessions` and hosted authorize/callback handling for TikTok and Instagram. It depends on TikTok and Meta OAuth app approval plus valid shared Quickstart app credentials for production. The production default should stay off until the external-product rollout is approved. Emergency rollback is to disable `connect_sessions.tiktok_instagram` in the production environment; this blocks new TikTok/Instagram hosted connect sessions and stops authorize/callback exchange for in-flight links without affecting existing connected accounts.
 
 Create this flag in Unleash:
 

@@ -254,26 +254,17 @@ func main() {
 	if li := connect.NewLinkedInConnector(os.Getenv("LINKEDIN_CLIENT_ID"), os.Getenv("LINKEDIN_CLIENT_SECRET"), apiBaseURL); li != nil {
 		connectors = append(connectors, li)
 	}
-	// Sprint 5 PR3: Instagram Connect, gated behind a feature flag.
-	// Two doors must both be open before Instagram becomes a real
-	// Connect platform: (a) the credentials must be present, and (b)
-	// CONNECT_INSTAGRAM_ENABLED must be truthy. The flag exists so we
-	// can ship this code to production well before launch and only
-	// flip it on when the Meta App Review is approved — this avoids
-	// a "what's that broken Instagram tile in the Connect picker?"
-	// support thread on day 1. Keep the legacy fail-fast nil check
-	// in NewInstagramConnector for the credentials half.
-	if instagramConnectEnabled() {
-		if ig := connect.NewInstagramConnector(os.Getenv("INSTAGRAM_APP_ID"), os.Getenv("INSTAGRAM_APP_SECRET"), apiBaseURL); ig != nil {
-			connectors = append(connectors, ig)
-		}
+	if ig := connect.NewInstagramConnector(os.Getenv("INSTAGRAM_APP_ID"), os.Getenv("INSTAGRAM_APP_SECRET"), apiBaseURL); ig != nil {
+		connectors = append(connectors, ig)
 	}
-	// Sprint 5 PR4: Threads Connect, gated behind a feature flag for
-	// the same reasons as Instagram (Sprint 5 PR3) — Meta App Review
-	// approval is decoupled from code shipping. Same THREADS_APP_ID /
-	// THREADS_APP_SECRET env vars the BYO/dashboard path already
-	// reads, so a single set of credentials covers both connection
-	// types.
+	if tt := connect.NewTikTokConnector(os.Getenv("TIKTOK_CLIENT_KEY"), os.Getenv("TIKTOK_CLIENT_SECRET"), apiBaseURL); tt != nil {
+		connectors = append(connectors, tt)
+	}
+	// Sprint 5 PR4: Threads Connect, gated behind a feature flag so
+	// Meta App Review approval is decoupled from code shipping. Same
+	// THREADS_APP_ID / THREADS_APP_SECRET env vars the BYO/dashboard
+	// path already reads, so a single set of credentials covers both
+	// connection types.
 	if threadsConnectEnabled() {
 		if th := connect.NewThreadsConnector(os.Getenv("THREADS_APP_ID"), os.Getenv("THREADS_APP_SECRET"), apiBaseURL); th != nil {
 			connectors = append(connectors, th)
@@ -931,21 +922,9 @@ func (h fanoutHandler) WithGroup(name string) slog.Handler {
 	return fanoutHandler{handlers: handlers}
 }
 
-// instagramConnectEnabled is the Sprint 5 PR3 feature flag for the
-// Instagram Connect path. Returns true when CONNECT_INSTAGRAM_ENABLED
-// is set to a truthy value (1, true, yes, on — case-insensitive).
-// Anything else (including the unset default) keeps the platform out
-// of the Connect registry, so customer dashboards don't show an
-// Instagram tile that bounces them off Meta App Review failures.
-func instagramConnectEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("CONNECT_INSTAGRAM_ENABLED")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
-}
-
 // threadsConnectEnabled is the Sprint 5 PR4 feature flag for the
-// Threads Connect path. Same shape and semantics as the Instagram
-// gate above — keeps the platform out of the Connect registry until
-// Meta App Review approves the Threads app.
+// Threads Connect path. Keeps the platform out of the Connect
+// registry until Meta App Review approves the Threads app.
 func threadsConnectEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("CONNECT_THREADS_ENABLED")))
 	return v == "1" || v == "true" || v == "yes" || v == "on"
