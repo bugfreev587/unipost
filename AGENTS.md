@@ -15,11 +15,13 @@
 - After implementation is complete and tests pass, merge the task branch back into local `dev`.
 - Run the relevant validation again on local `dev`.
 - If validation passes, push local `dev` to `origin/dev`.
-- Before creating any pull request, run the local CI-equivalent checks for the changed surface:
+- Do not automatically create a pull request from `dev` to `main` after finishing and pushing work to `origin/dev`.
+- Create a pull request from `dev` to `main` only when the user explicitly asks for a PR.
+- Before creating any explicitly requested pull request, run the local CI-equivalent checks for the changed surface:
   1. Backend/API changes: from `api/`, run `GOCACHE=/tmp/unipost-go-build go test ./...`.
   2. Dashboard/frontend/docs changes: from `dashboard/`, run `npm run build`.
   3. Dashboard routing, auth, onboarding, analytics, posting, account connection, docs shell, or shared UI shell changes: from `dashboard/`, run `npm run test:regression:dashboard` when Playwright browsers are installed.
-- Create a pull request from `dev` to `main` only after the local CI-equivalent checks pass, or explicitly report any skipped check and why.
+- If the user explicitly asks for a PR and a required check cannot be run, report the skipped check and why before creating the PR.
 
 ## Safety rules
 
