@@ -1380,29 +1380,40 @@ export async function dismissManagedUserDisconnected(
 
 // Connect sessions (Sprint 3 PR2 — multi-tenant Connect)
 
+export type ConnectSessionPlatform =
+  | "twitter"
+  | "linkedin"
+  | "bluesky"
+  | "youtube"
+  | "tiktok"
+  | "instagram";
+
 export interface ConnectSession {
   id: string;
-  platform: "twitter" | "linkedin" | "bluesky";
+  platform: ConnectSessionPlatform;
   profile_id?: string;
   external_user_id: string;
   external_user_email?: string;
   return_url?: string;
+  allow_quickstart_creds?: boolean;
   status: "pending" | "completed" | "expired" | "cancelled";
   url?: string;
   expires_at: string;
   created_at: string;
   completed_at?: string;
   completed_social_account_id?: string;
+  managed_account_id?: string;
 }
 
 export async function createConnectSession(
   token: string,
   data: {
-    platform: "twitter" | "linkedin" | "bluesky";
+    platform: ConnectSessionPlatform;
     profile_id?: string;
     external_user_id: string;
     external_user_email?: string;
     return_url?: string;
+    allow_quickstart_creds?: boolean;
   }
 ): Promise<ApiResponse<ConnectSession>> {
   return request(`/v1/connect/sessions`, token, {

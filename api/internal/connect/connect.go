@@ -4,8 +4,11 @@
 //
 // Each platform has one Connector implementation:
 //
-//	twitter.go  — OAuth 2.0 PKCE
-//	linkedin.go — OAuth 2.0 (no PKCE)
+//	twitter.go   — OAuth 2.0 PKCE
+//	linkedin.go  — OAuth 2.0 (no PKCE)
+//	youtube.go   — OAuth 2.0 (offline access)
+//	instagram.go — OAuth 2.0 + long-lived token swap
+//	tiktok.go    — OAuth 2.0 with client_key/client_secret form exchange
 //
 // Bluesky doesn't go through this package — it's an HTML form
 // handled in internal/handler/connect_bluesky.go because it has no
@@ -90,10 +93,10 @@ type Connector interface {
 // (which would be a circular import waiting to happen, since
 // internal/handler imports internal/connect).
 type SessionView struct {
-	ID            string
-	OAuthState    string
-	PKCEVerifier  string // empty for non-PKCE platforms
-	RedirectURI   string // the callback URL we registered with the platform
+	ID           string
+	OAuthState   string
+	PKCEVerifier string // empty for non-PKCE platforms
+	RedirectURI  string // the callback URL we registered with the platform
 }
 
 // Registry holds all available connectors keyed by Platform().

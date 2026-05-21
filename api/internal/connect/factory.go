@@ -17,6 +17,8 @@ func NewManagedConnector(platform, clientID, clientSecret, callbackBaseURL strin
 		return NewYouTubeConnector(clientID, clientSecret, callbackBaseURL)
 	case "instagram":
 		return NewInstagramConnector(clientID, clientSecret, callbackBaseURL)
+	case "tiktok":
+		return NewTikTokConnector(clientID, clientSecret, callbackBaseURL)
 	case "threads":
 		return NewThreadsConnector(clientID, clientSecret, callbackBaseURL)
 	default:

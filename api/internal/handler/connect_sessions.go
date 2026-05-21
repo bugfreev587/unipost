@@ -37,6 +37,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
@@ -70,11 +71,15 @@ func (h *ConnectSessionHandler) SetIntegrationLogger(logger *integrationlogs.Log
 // connectablePlatforms is the allowlist for POST /v1/connect/sessions.
 // Keep this in sync with the connectors actually registered in main.go.
 var connectablePlatforms = map[string]bool{
-	"twitter":  true,
-	"linkedin": true,
-	"bluesky":  true,
-	"youtube":  true,
+	"twitter":   true,
+	"linkedin":  true,
+	"bluesky":   true,
+	"youtube":   true,
+	"tiktok":    true,
+	"instagram": true,
 }
+
+const connectablePlatformList = "twitter, linkedin, bluesky, youtube, tiktok, instagram"
 
 // connectSessionTTL is the wall-clock window during which a hosted
 // page link is honored. Stripe uses 24h for Connect — we go shorter
@@ -96,6 +101,7 @@ type connectSessionResponse struct {
 	CreatedAt                time.Time  `json:"created_at"`
 	CompletedAt              *time.Time `json:"completed_at,omitempty"`
 	CompletedSocialAccountID string     `json:"completed_social_account_id,omitempty"`
+	ManagedAccountID         string     `json:"managed_account_id,omitempty"`
 }
 
 func toConnectSessionResponse(s db.ConnectSession, hostedURL string) connectSessionResponse {
@@ -121,6 +127,7 @@ func toConnectSessionResponse(s db.ConnectSession, hostedURL string) connectSess
 	}
 	if s.CompletedSocialAccountID.Valid {
 		resp.CompletedSocialAccountID = s.CompletedSocialAccountID.String
+		resp.ManagedAccountID = s.CompletedSocialAccountID.String
 	}
 	return resp
 }
@@ -151,10 +158,21 @@ type publicBrandingPayload struct {
 
 func connectSessionPlatformUsesOAuthApp(platform string) bool {
 	switch platform {
-	case "twitter", "linkedin", "youtube", "instagram", "threads":
+	case "twitter", "linkedin", "youtube", "instagram", "tiktok", "threads":
 		return true
 	default:
 		return false
+	}
+}
+
+func connectSessionPlatformFeatureEnabled(ctx context.Context, workspaceID, platform string) bool {
+	switch platform {
+	case "tiktok", "instagram":
+		return featureflags.Enabled(ctx, featureflags.HostedConnectTikTokInstagram, featureflags.Target{
+			WorkspaceID: workspaceID,
+		})
+	default:
+		return true
 	}
 }
 
@@ -200,7 +218,12 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if !connectablePlatforms[body.Platform] {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
-			"platform must be one of twitter, linkedin, bluesky, youtube")
+			"platform must be one of "+connectablePlatformList)
+		return
+	}
+	if !connectSessionPlatformFeatureEnabled(r.Context(), workspaceID, body.Platform) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+			body.Platform+" hosted connect sessions are not enabled for this workspace")
 		return
 	}
 	// Plan gate (migration 057): block new X / Twitter connections on
