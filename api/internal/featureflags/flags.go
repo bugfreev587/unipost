@@ -15,7 +15,6 @@ type Flag string
 
 const (
 	TikTokAnalyticsScopes          Flag = "tiktok.analytics_scopes"
-	FacebookPageAnalytics          Flag = "facebook.page_analytics"
 	AttributionUTMSignupBindingV1  Flag = "attribution.utm_signup_binding_v1"
 	Inbox                          Flag = "inbox"
 	FreePlanHardPostQuota          Flag = "billing.free_plan_hard_post_quota"
@@ -60,14 +59,6 @@ var definitions = map[Flag]Definition{
 		EnvVar:        "FEATURE_TIKTOK_ANALYTICS_SCOPES",
 		LegacyEnvVars: []string{"TIKTOK_ANALYTICS_SCOPES_ENABLED"},
 		Description:   "Requests TikTok analytics OAuth scopes: user.info.profile, user.info.stats, and video.list.",
-		DefaultEnabled: func(target Target) bool {
-			return !isProduction(target.Env)
-		},
-	},
-	FacebookPageAnalytics: {
-		Flag:        FacebookPageAnalytics,
-		EnvVar:      "FEATURE_FACEBOOK_PAGE_ANALYTICS",
-		Description: "Enables Facebook Page platform analytics: Page profile, Page Insights, published Page posts, and post engagement reads.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

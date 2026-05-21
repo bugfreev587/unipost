@@ -1,15 +1,37 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useAuth } from "@clerk/nextjs";
 import { ArrowRight, BarChart3, CheckCircle2, Clock, FileText, ThumbsUp, Video } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
+import { getMe } from "@/lib/api";
 import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
 import { useFeatureFlags } from "@/lib/use-feature-flags";
 
 export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
+  const { getToken } = useAuth();
   const { flags, loading } = useFeatureFlags();
+  const [isAdmin, setIsAdmin] = useState(false);
   const tiktokEnabled = flags[FEATURE_FLAG_KEYS.tiktokAnalyticsScopes];
-  const facebookEnabled = flags[FEATURE_FLAG_KEYS.facebookPageAnalytics];
+  const facebookEnabled = isAdmin;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await getMe(token);
+        if (!cancelled) setIsAdmin(!!res.data.is_admin);
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken]);
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
