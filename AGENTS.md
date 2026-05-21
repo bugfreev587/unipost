@@ -45,9 +45,11 @@ For frontend, dashboard, landing page, component styling, layout, typography, or
 
 ## Feature flag and production isolation rules
 
-- Any new feature that can affect production users, third-party OAuth scopes, billing, writes, background jobs, external API calls, user-visible workflow changes, or data access must be protected by a feature flag before it is merged to `main`.
+- Before starting implementation for API-layer changes or Dashboard-layer changes, proactively ask the user whether the change should be protected by a feature flag.
+- Add a feature flag only when the user explicitly says the change needs one, including when they answer yes to the pre-implementation flag prompt. Otherwise, do not add a feature flag.
+- When the user says a feature flag is needed, create the flag in Unleash at `https://flags.unipost.dev` before wiring the flag into code. If you cannot access or log in to `flags.unipost.dev`, ask the user for help.
 - Use Unleash as the remote feature flag provider. The UniPost backend is the authority for sensitive decisions; the frontend may hide or show UI from `/v1/me/features`, but it must not connect to Unleash directly or receive Unleash tokens.
-- Production defaults must be conservative. New risky flags should be `off` in `production`, and may be `on` in `development` only after the backend fallback is safe.
+- Production defaults must be conservative. New flags should be `off` in `production`, and may be `on` in `development` only after the backend fallback is safe.
 - Backend checks must go through `api/internal/featureflags` or the existing shared feature flag API. Do not add scattered environment-variable reads for individual features unless they are part of the provider fallback.
 - Frontend checks must use the backend feature surface, currently `GET /v1/me/features`, so browser behavior matches backend-evaluated flags.
 - When adding a flag, document its key, owner area, production default, rollback action, and any third-party approval dependency in `docs/feature-flags-unleash.md`.
