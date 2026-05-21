@@ -446,13 +446,19 @@ type adminUserRow struct {
 	LastPostAt     *time.Time `json:"last_post_at"`
 }
 
+type adminCountryBreakdownRow struct {
+	CountryCode string `json:"country_code"`
+	Count       int64  `json:"count"`
+}
+
 // adminUserSignupTrendResponse returns raw signup timestamps so the
 // dashboard can bucket them in the viewer's local timezone. Server-side
 // bucketing was using the DB session timezone (UTC) which shifted late-
 // evening signups in the Americas to the next calendar day.
 type adminUserSignupTrendResponse struct {
-	RangeDays int         `json:"range_days"`
-	Events    []time.Time `json:"events"`
+	RangeDays int                        `json:"range_days"`
+	Events    []time.Time                `json:"events"`
+	Countries []adminCountryBreakdownRow `json:"countries"`
 }
 
 var adminUserSortOrders = map[string]string{
@@ -643,6 +649,7 @@ ORDER BY u.created_at ASC`
 	resp := adminUserSignupTrendResponse{
 		RangeDays: days,
 		Events:    []time.Time{},
+		Countries: []adminCountryBreakdownRow{},
 	}
 	for rows.Next() {
 		var t time.Time
@@ -654,6 +661,43 @@ ORDER BY u.created_at ASC`
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to iterate signup events: "+err.Error())
+		return
+	}
+
+	countryRows, err := h.pool.Query(r.Context(), `
+WITH signup_countries AS (
+  SELECT COALESCE((
+    SELECT NULLIF(lv.country_code, '')
+    FROM landing_session_users lsu
+    JOIN landing_visits lv ON lv.session_id = lsu.session_id
+    WHERE lsu.user_id = u.id
+      AND NULLIF(lv.country_code, '') IS NOT NULL
+    ORDER BY lsu.first_bound_at ASC, lv.created_at ASC
+    LIMIT 1
+  ), '') AS country_code
+  FROM users u
+  WHERE u.created_at >= NOW() - ($1::int * INTERVAL '1 day')
+    AND u.id != ALL($2)
+)
+SELECT country_code, COUNT(*)::BIGINT
+FROM signup_countries
+GROUP BY country_code
+ORDER BY COUNT(*) DESC, country_code ASC`, days, excluded)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load signup countries: "+err.Error())
+		return
+	}
+	defer countryRows.Close()
+	for countryRows.Next() {
+		var row adminCountryBreakdownRow
+		if err := countryRows.Scan(&row.CountryCode, &row.Count); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan signup countries: "+err.Error())
+			return
+		}
+		resp.Countries = append(resp.Countries, row)
+	}
+	if err := countryRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to iterate signup countries: "+err.Error())
 		return
 	}
 

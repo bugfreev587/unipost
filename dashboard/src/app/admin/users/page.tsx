@@ -26,6 +26,7 @@ import {
 } from "@/lib/api";
 import { countryDisplay, countryNameFromCode } from "@/lib/countries";
 
+import { CountryDonut } from "../_components/country-donut";
 import { AdminShell, PanelRow, bucketByLocalDay, fmtCents, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
 function CountryBadge({ code }: { code?: string | null }) {
@@ -149,6 +150,7 @@ export default function AdminUsersPage() {
 
   return (
     <AdminShell title="Users" loading={loading} onRefresh={loadUsers}>
+      <style>{usersCss}</style>
       {error && (
         <div style={{ background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 22%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
           {error}
@@ -160,56 +162,58 @@ export default function AdminUsersPage() {
         <div className="ad-section-meta">Cross-tenant customer listing</div>
       </div>
 
-      <div
-        style={{
-          background: "var(--surface-raised)",
-          border: "1px solid var(--dborder)",
-          borderRadius: 12,
-          padding: 16,
-          height: 280,
-          marginBottom: 16,
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Signups per day</div>
-          <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
-            Last {signups?.range_days ?? 30} days
-            {signups ? ` · ${fmtNumber(signupTotal)} total` : ""}
+      <div className="au-signup-grid">
+        <div className="au-chart-panel">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Signups per day</div>
+            <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
+              Last {signups?.range_days ?? 30} days
+              {signups ? ` · ${fmtNumber(signupTotal)} total` : ""}
+            </div>
+          </div>
+          <div className="au-chart-body">
+            {signups && signupRows.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={signupRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--dborder)" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11, fill: "var(--dmuted)" }}
+                    tickFormatter={(v: string) => v.slice(5)}
+                    stroke="var(--dborder)"
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tick={{ fontSize: 11, fill: "var(--dmuted)" }}
+                    stroke="var(--dborder)"
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--surface-raised)",
+                      border: "1px solid var(--dborder)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                    labelStyle={{ color: "var(--dtext)" }}
+                    formatter={(value) => [fmtNumber(Number(value ?? 0)), "Signups"]}
+                  />
+                  <Bar dataKey="count" name="Signups" fill="var(--daccent)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dmuted)", fontSize: 13 }}>
+                {loading ? "Loading chart…" : "No signup data yet"}
+              </div>
+            )}
           </div>
         </div>
-        {signups && signupRows.length > 0 ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={signupRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--dborder)" />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 11, fill: "var(--dmuted)" }}
-                tickFormatter={(v: string) => v.slice(5)}
-                stroke="var(--dborder)"
-              />
-              <YAxis
-                allowDecimals={false}
-                tick={{ fontSize: 11, fill: "var(--dmuted)" }}
-                stroke="var(--dborder)"
-              />
-              <Tooltip
-                contentStyle={{
-                  background: "var(--surface-raised)",
-                  border: "1px solid var(--dborder)",
-                  borderRadius: 8,
-                  fontSize: 12,
-                }}
-                labelStyle={{ color: "var(--dtext)" }}
-                formatter={(value) => [fmtNumber(Number(value ?? 0)), "Signups"]}
-              />
-              <Bar dataKey="count" name="Signups" fill="var(--daccent)" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <div style={{ height: "calc(100% - 28px)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dmuted)", fontSize: 13 }}>
-            {loading ? "Loading chart…" : "No signup data yet"}
-          </div>
-        )}
+        <CountryDonut
+          title="User countries"
+          subtitle={`Last ${signups?.range_days ?? 30} days`}
+          rows={signups?.countries ?? []}
+          loading={loading}
+          valueLabel="users"
+        />
       </div>
 
       <div className="ad-filter-bar">
@@ -468,3 +472,27 @@ export default function AdminUsersPage() {
     </AdminShell>
   );
 }
+
+const usersCss = `
+.au-signup-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(300px, 0.85fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.au-chart-panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--dborder);
+  border-radius: 8px;
+  padding: 14px 16px 16px;
+  min-height: 280px;
+}
+.au-chart-body {
+  height: 230px;
+}
+@media (max-width: 1120px) {
+  .au-signup-grid {
+    grid-template-columns: 1fr;
+  }
+}
+`;
