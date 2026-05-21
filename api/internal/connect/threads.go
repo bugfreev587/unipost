@@ -29,10 +29,10 @@
 //     access token is reused as the "refresh token" stored in the
 //     social_accounts row.
 //
-// Feature flag: registration of this connector lives in
-// cmd/api/main.go behind CONNECT_THREADS_ENABLED. When the flag is
-// unset, the platform isn't in the registry — same fail-safe shape
-// as the Sprint 5 PR3 Instagram gate.
+// Feature flag: the Connect Session handler gates new hosted Threads
+// sessions via Unleash. This connector is still registered whenever
+// credentials exist so an approved flag rollout does not require an
+// API restart.
 
 package connect
 
@@ -48,11 +48,11 @@ import (
 )
 
 const (
-	threadsAuthorizeEndpoint  = "https://threads.net/oauth/authorize"
-	threadsTokenEndpoint      = "https://graph.threads.net/oauth/access_token"
-	threadsLongLivedEndpoint  = "https://graph.threads.net/access_token"
-	threadsRefreshEndpoint    = "https://graph.threads.net/refresh_access_token"
-	threadsProfileEndpoint    = "https://graph.threads.net/v1.0/me"
+	threadsAuthorizeEndpoint = "https://threads.net/oauth/authorize"
+	threadsTokenEndpoint     = "https://graph.threads.net/oauth/access_token"
+	threadsLongLivedEndpoint = "https://graph.threads.net/access_token"
+	threadsRefreshEndpoint   = "https://graph.threads.net/refresh_access_token"
+	threadsProfileEndpoint   = "https://graph.threads.net/v1.0/me"
 
 	// Comma-separated like Instagram. Threads inherits the IG-style
 	// scope serialization since the API was shipped as a thin layer

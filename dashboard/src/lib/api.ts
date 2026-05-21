@@ -1386,7 +1386,8 @@ export type ConnectSessionPlatform =
   | "bluesky"
   | "youtube"
   | "tiktok"
-  | "instagram";
+  | "instagram"
+  | "threads";
 
 export interface ConnectSession {
   id: string;

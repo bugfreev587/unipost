@@ -104,12 +104,12 @@ func TestNewConnectSessionHandler_NilQuotaOK(t *testing.T) {
 
 // TestConnectablePlatforms locks the currently supported platform allowlist.
 func TestConnectablePlatforms(t *testing.T) {
-	for _, p := range []string{"twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram"} {
+	for _, p := range []string{"twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads"} {
 		if !connectablePlatforms[p] {
 			t.Errorf("%s should be connectable", p)
 		}
 	}
-	for _, p := range []string{"threads", "facebook"} {
+	for _, p := range []string{"pinterest", "facebook"} {
 		if connectablePlatforms[p] {
 			t.Errorf("%s should NOT be connectable yet", p)
 		}
@@ -117,7 +117,7 @@ func TestConnectablePlatforms(t *testing.T) {
 }
 
 func TestConnectSessionPlatformUsesOAuthApp(t *testing.T) {
-	for _, p := range []string{"twitter", "linkedin", "youtube", "tiktok", "instagram"} {
+	for _, p := range []string{"twitter", "linkedin", "youtube", "tiktok", "instagram", "threads"} {
 		if !connectSessionPlatformUsesOAuthApp(p) {
 			t.Errorf("%s should use OAuth app credentials", p)
 		}
@@ -127,11 +127,12 @@ func TestConnectSessionPlatformUsesOAuthApp(t *testing.T) {
 	}
 }
 
-func TestCreateConnectSession_TikTokInstagramQuickstart(t *testing.T) {
+func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM", "true")
+	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
 
-	for _, platform := range []string{"tiktok", "instagram"} {
+	for _, platform := range []string{"tiktok", "instagram", "threads"} {
 		t.Run(platform, func(t *testing.T) {
 			fdb := &connectSessionTestDB{platform: platform, allowQuickstart: true}
 			h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
@@ -194,32 +195,59 @@ func TestCreateConnectSession_TikTokMissingWhiteLabelCreds(t *testing.T) {
 	}
 }
 
-func TestConnectAuthorize_ResolvesTikTokConnector(t *testing.T) {
+func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
 	t.Setenv("FEATURE_CONNECT_SESSIONS_TIKTOK_INSTAGRAM", "true")
+	t.Setenv("FEATURE_CONNECT_SESSIONS_THREADS", "true")
 	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "false")
 
-	fdb := &connectSessionTestDB{platform: "tiktok", allowQuickstart: true, credentialErr: pgx.ErrNoRows}
-	registry := connect.NewRegistry(connect.NewTikTokConnector("client-key", "secretXYZ", "https://api.example.com"))
-	h := &ConnectCallbackHandler{
-		queries:  db.New(fdb),
-		registry: registry,
+	cases := []struct {
+		platform string
+		registry *connect.Registry
+		wantURL  string
+		wantPart string
+	}{
+		{
+			platform: "tiktok",
+			registry: connect.NewRegistry(
+				connect.NewTikTokConnector("client-key", "secretXYZ", "https://api.example.com"),
+			),
+			wantURL:  "https://www.tiktok.com/v2/auth/authorize/",
+			wantPart: "client_key=client-key",
+		},
+		{
+			platform: "threads",
+			registry: connect.NewRegistry(
+				connect.NewThreadsConnector("threads-client", "secretXYZ", "https://api.example.com"),
+			),
+			wantURL:  "https://threads.net/oauth/authorize",
+			wantPart: "client_id=threads-client",
+		},
 	}
-	req := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
-	req = withChiParam(req, "id", "cs_1")
-	rec := httptest.NewRecorder()
+	for _, tc := range cases {
+		t.Run(tc.platform, func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: tc.platform, allowQuickstart: true, credentialErr: pgx.ErrNoRows}
+			h := &ConnectCallbackHandler{
+				queries:  db.New(fdb),
+				registry: tc.registry,
+			}
+			req := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
+			req = withChiParam(req, "id", "cs_1")
+			rec := httptest.NewRecorder()
 
-	h.Authorize(rec, req)
+			h.Authorize(rec, req)
 
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	location := rec.Header().Get("Location")
-	if !strings.Contains(location, "https://www.tiktok.com/v2/auth/authorize/") {
-		t.Fatalf("location = %q", location)
-	}
-	if !strings.Contains(location, "client_key=client-key") {
-		t.Fatalf("location missing tiktok connector client key: %q", location)
+			if rec.Code != http.StatusFound {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			location := rec.Header().Get("Location")
+			if !strings.Contains(location, tc.wantURL) {
+				t.Fatalf("location = %q", location)
+			}
+			if !strings.Contains(location, tc.wantPart) {
+				t.Fatalf("location missing connector credentials: %q", location)
+			}
+		})
 	}
 }
 

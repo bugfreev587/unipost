@@ -260,15 +260,8 @@ func main() {
 	if tt := connect.NewTikTokConnector(os.Getenv("TIKTOK_CLIENT_KEY"), os.Getenv("TIKTOK_CLIENT_SECRET"), apiBaseURL); tt != nil {
 		connectors = append(connectors, tt)
 	}
-	// Sprint 5 PR4: Threads Connect, gated behind a feature flag so
-	// Meta App Review approval is decoupled from code shipping. Same
-	// THREADS_APP_ID / THREADS_APP_SECRET env vars the BYO/dashboard
-	// path already reads, so a single set of credentials covers both
-	// connection types.
-	if threadsConnectEnabled() {
-		if th := connect.NewThreadsConnector(os.Getenv("THREADS_APP_ID"), os.Getenv("THREADS_APP_SECRET"), apiBaseURL); th != nil {
-			connectors = append(connectors, th)
-		}
+	if th := connect.NewThreadsConnector(os.Getenv("THREADS_APP_ID"), os.Getenv("THREADS_APP_SECRET"), apiBaseURL); th != nil {
+		connectors = append(connectors, th)
 	}
 	if yt := connect.NewYouTubeConnector(os.Getenv("YOUTUBE_CLIENT_ID"), os.Getenv("YOUTUBE_CLIENT_SECRET"), apiBaseURL); yt != nil {
 		connectors = append(connectors, yt)
@@ -920,12 +913,4 @@ func (h fanoutHandler) WithGroup(name string) slog.Handler {
 		handlers[i] = handler.WithGroup(name)
 	}
 	return fanoutHandler{handlers: handlers}
-}
-
-// threadsConnectEnabled is the Sprint 5 PR4 feature flag for the
-// Threads Connect path. Keeps the platform out of the Connect
-// registry until Meta App Review approves the Threads app.
-func threadsConnectEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("CONNECT_THREADS_ENABLED")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
 }

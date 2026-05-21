@@ -27,7 +27,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev";
 type SessionStatus = "pending" | "completed" | "expired" | "cancelled";
 
 type PublicConnectSession = {
-  platform: "twitter" | "linkedin" | "bluesky" | "youtube" | "tiktok" | "instagram";
+  platform: "twitter" | "linkedin" | "bluesky" | "youtube" | "tiktok" | "instagram" | "threads";
   profile_name: string;
   status: SessionStatus;
   return_url?: string;
@@ -51,6 +51,7 @@ const PLATFORM_LABEL: Record<string, string> = {
   youtube: "YouTube",
   tiktok: "TikTok",
   instagram: "Instagram",
+  threads: "Threads",
 };
 
 // Server-side fetch of the public session view. Forwards the
