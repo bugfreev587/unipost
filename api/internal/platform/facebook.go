@@ -88,7 +88,7 @@ var facebookPageAnalyticsScopes = []string{
 // FacebookPagesScopes is the full permission set the PRD lists for Facebook
 // Pages, including optional analytics scopes. Exported so tests and dashboard
 // docs can reference the canonical review list. OAuth requests use
-// facebookOAuthScopes so production can keep unapproved read scopes disabled.
+// FacebookOAuthScopes so production can keep unapproved read scopes disabled.
 var FacebookPagesScopes = append(append([]string(nil), facebookPagesBaseScopes...), facebookPageAnalyticsScopes...)
 
 func (a *FacebookAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
@@ -111,11 +111,11 @@ func (a *FacebookAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig
 		AuthURL:      "https://www.facebook.com/v22.0/dialog/oauth",
 		TokenURL:     facebookGraphBase + "/oauth/access_token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/facebook",
-		Scopes:       facebookOAuthScopes(),
+		Scopes:       FacebookOAuthScopes(),
 	}
 }
 
-func facebookOAuthScopes() []string {
+func FacebookOAuthScopes() []string {
 	scopes := append([]string(nil), facebookPagesBaseScopes...)
 	if !featureflags.Enabled(context.Background(), featureflags.FacebookPageAnalytics, featureflags.Target{}) {
 		return scopes
@@ -1514,6 +1514,7 @@ func (a *FacebookAdapter) GetAnalytics(ctx context.Context, accessToken string, 
 type FacebookPageInsights struct {
 	Follows         int64 `json:"follows"`
 	Impressions     int64 `json:"impressions"`
+	Views           int64 `json:"views"`
 	PostEngagements int64 `json:"post_engagements"`
 	// Below100LikesNotice flips true when FB rejected the insights
 	// query because the Page hasn't crossed the 100-like floor;
@@ -1743,9 +1744,41 @@ func (a *FacebookAdapter) GetPageInsights(ctx context.Context, accessToken, page
 		}
 		pageID = pid
 	}
+	out := &FacebookPageInsights{}
+	for _, metric := range []string{"page_follows", "page_media_view", "page_post_engagements"} {
+		total, belowThreshold, err := a.getPageInsightTotal(ctx, accessToken, pageID, metric, since, until)
+		if belowThreshold {
+			out.Below100LikesNotice = true
+			continue
+		}
+		if err != nil {
+			if looksLikeInvalidInsightMetric(err) {
+				slog.Warn("facebook page insights: skipping invalid metric", "metric", metric, "error", err)
+				continue
+			}
+			return nil, err
+		}
+		switch metric {
+		case "page_follows":
+			out.Follows = total
+		case "page_media_view":
+			out.Views = total
+			// Backward-compatible response field for the current dashboard
+			// type. Meta replaced Page impressions with views; keeping both
+			// populated avoids breaking older clients while the UI label moves
+			// to "Views".
+			out.Impressions = total
+		case "page_post_engagements":
+			out.PostEngagements = total
+		}
+	}
+	return out, nil
+}
+
+func (a *FacebookAdapter) getPageInsightTotal(ctx context.Context, accessToken, pageID, metric string, since, until time.Time) (int64, bool, error) {
 	params := url.Values{
 		"access_token": {accessToken},
-		"metric":       {"page_follows,page_impressions,page_post_engagements"},
+		"metric":       {metric},
 		"period":       {"day"},
 		"since":        {fmt.Sprintf("%d", since.Unix())},
 		"until":        {fmt.Sprintf("%d", until.Unix())},
@@ -1753,22 +1786,19 @@ func (a *FacebookAdapter) GetPageInsights(ctx context.Context, accessToken, page
 	endpoint := facebookGraphBase + "/" + pageID + "/insights?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
-		return nil, err
+		return 0, false, err
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("facebook page insights: %w", err)
+		return 0, false, fmt.Errorf("facebook page insights %s: %w", metric, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		// FB surfaces the <100-likes guard via error code 100.
-		// Detect that specifically so the caller can render the
-		// "Keep growing!" state rather than an opaque error.
 		if strings.Contains(string(body), "100 likes") || strings.Contains(string(body), "requires at least 100") {
-			return &FacebookPageInsights{Below100LikesNotice: true}, nil
+			return 0, true, nil
 		}
-		return nil, wrapFacebookPublishError(resp.StatusCode, body)
+		return 0, false, wrapFacebookPublishError(resp.StatusCode, body)
 	}
 	var parsed struct {
 		Data []struct {
@@ -1779,24 +1809,24 @@ func (a *FacebookAdapter) GetPageInsights(ctx context.Context, accessToken, page
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("facebook page insights decode: %w", err)
+		return 0, false, fmt.Errorf("facebook page insights %s decode: %w", metric, err)
 	}
-	out := &FacebookPageInsights{}
+	var total int64
 	for _, m := range parsed.Data {
-		total := int64(0)
 		for _, v := range m.Values {
 			total += coerceInsightInt(v.Value)
 		}
-		switch m.Name {
-		case "page_follows":
-			out.Follows = total
-		case "page_impressions":
-			out.Impressions = total
-		case "page_post_engagements":
-			out.PostEngagements = total
-		}
 	}
-	return out, nil
+	return total, false, nil
+}
+
+func looksLikeInvalidInsightMetric(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "valid insights metric") ||
+		strings.Contains(msg, "metric") && strings.Contains(msg, "invalid")
 }
 
 // coerceInsightInt handles Meta's mix of number / object values in

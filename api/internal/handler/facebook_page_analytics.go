@@ -85,6 +85,7 @@ func (h *SocialAccountHandler) FacebookPageAnalytics(w http.ResponseWriter, r *h
 		insightsResp = &facebookPageInsightsResponse{
 			Follows:             stats.Follows,
 			Impressions:         stats.Impressions,
+			Views:               stats.Views,
 			PostEngagements:     stats.PostEngagements,
 			Below100LikesNotice: stats.Below100LikesNotice,
 			Since:               since.Format(time.RFC3339),

@@ -222,6 +222,7 @@ export function FacebookPageAnalyticsView({ profileId }: FacebookPageAnalyticsVi
             requiredScopes={data?.required_scopes || ["pages_read_engagement"]}
             recommendedScopes={data?.recommended_scopes || ["read_insights"]}
             insightsError={data?.insights_error}
+            readAccessVerified={Boolean(data?.page || data?.posts.length)}
           />
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
@@ -340,16 +341,18 @@ function ScopeReadiness({
   requiredScopes,
   recommendedScopes,
   insightsError,
+  readAccessVerified,
 }: {
   grantedScopes: string[];
   requiredScopes: string[];
   recommendedScopes: string[];
   insightsError?: string;
+  readAccessVerified?: boolean;
 }) {
   const granted = new Set(grantedScopes);
   const missingRequired = requiredScopes.filter((scope) => !granted.has(scope));
   const missingRecommended = recommendedScopes.filter((scope) => !granted.has(scope));
-  const ready = missingRequired.length === 0;
+  const ready = readAccessVerified || missingRequired.length === 0;
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16, padding: "12px 14px", borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface1)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
@@ -357,7 +360,9 @@ function ScopeReadiness({
         <div>
           <div style={{ color: "var(--dtext)", fontSize: 13, fontWeight: 650 }}>{ready ? "Facebook Page reads ready" : "Reconnect required for Page reads"}</div>
           <div style={{ color: "var(--dmuted)", fontSize: 12, marginTop: 3 }}>
-            {missingRequired.length > 0
+            {readAccessVerified
+              ? "Verified by live Page profile and published post reads"
+              : missingRequired.length > 0
               ? `Missing: ${missingRequired.join(", ")}`
               : missingRecommended.length > 0
                 ? `Recommended for Page Insights: ${missingRecommended.join(", ")}`
@@ -448,7 +453,7 @@ function PageInsightsPanel({ data, days }: { data: FacebookPageAnalytics | null;
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
             <MiniMetric label="Follows" value={insights?.follows || 0} />
-            <MiniMetric label="Impressions" value={insights?.impressions || 0} />
+            <MiniMetric label="Views" value={insights?.views ?? insights?.impressions ?? 0} />
             <MiniMetric label="Engagements" value={insights?.post_engagements || 0} />
           </div>
         )}
