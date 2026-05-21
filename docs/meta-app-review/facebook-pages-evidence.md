@@ -1,9 +1,9 @@
 # Facebook Pages — App Review Evidence
 
 **App**: unipost-dev
-**Permissions requested**: 7 `pages_*` scopes
+**Permissions requested**: 7 `pages_*` scopes + `read_insights`
 **Status**: Ready for App Review submission
-**Last updated**: 2026-04-21
+**Last updated**: 2026-05-21
 
 This document maps each requested permission to the concrete code path that exercises it. Meta App Review requires evidence that every permission is actually used by the product — not just requested. Screencast script at the bottom covers the end-to-end flow a reviewer will replay.
 
@@ -29,10 +29,14 @@ Every entry includes the permission name, where the user-facing feature lives in
 **User flow**: Create post → select FB Page → compose → Publish now. Post appears on Page.
 
 ### 3. `pages_read_engagement`
-**Feature**: Per-post analytics (impressions, reach, clicks, engaged users) shown in UniPost's Analytics dashboard.
-**Endpoint**: `GET /v22.0/{post_id}?fields=reactions.summary(true),comments.summary(true),shares,insights.metric(post_impressions,post_impressions_unique,post_clicks,post_engaged_users,post_video_views)`
-**Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.GetAnalytics`
-**User flow**: Analytics → by-post drill-in renders these numbers.
+**Feature**: Facebook Page analytics page in UniPost. Shows the connected Page profile, published Page posts, and post interaction counts so Page admins can review content performance.
+**Endpoints**:
+- `GET /v22.0/{page_id}?fields=id,name,category,username,picture{url},link,about,verification_status,fan_count,followers_count`
+- `GET /v22.0/{page_id}/posts?fields=id,message,created_time,permalink_url,full_picture,attachments.limit(1){media{image{src}},media_type},reactions.summary(true).limit(0),comments.summary(true).limit(0),shares`
+- `GET /v22.0/{post_id}?fields=reactions.summary(true).limit(0),comments.summary(true).limit(0),shares`
+- `GET /v22.0/{post_id}/insights?metric=post_clicks_by_type,post_video_views_organic,post_video_views_paid`
+**Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.FetchPageProfile`, `FacebookAdapter.FetchPagePosts`, `FacebookAdapter.GetAnalytics`; aggregate handler in `api/internal/handler/facebook_page_analytics.go`.
+**User flow**: Analytics → Platforms → Facebook Page → select connected Page → open a published post → UniPost renders published time, message, media, reactions, comments, shares, clicks, and video views when Meta returns them.
 
 ### 4. `pages_read_user_content`
 **Feature**: Inbox — Comments tab surfaces every comment left on posts the user published via UniPost so they can read + reply.
@@ -60,6 +64,12 @@ Every entry includes the permission name, where the user-facing feature lives in
 **Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.FetchPages` reads `tasks`, `PageHasPublishTask` decides can-publish; webhook subscription lives in `FacebookAdapter.SubscribePageToWebhooks` (POST `/{page_id}/subscribed_apps` for `feed,messages,messaging_postbacks`), called from `handler.OAuthHandler.PendingConnectionFinalize` right after each Page's `social_accounts` row is written. Inbound events land in `handler/meta_webhook.go` at `handleFacebookEntry`.
 **User flow**: Page Picker shows "no publish permission" hint when a returned Page's `tasks` doesn't include `CREATE_CONTENT`.
 
+### 8. `read_insights`
+**Feature**: Facebook Page Insights panel inside the Facebook Page analytics page. Shows Page-level follows, impressions, and post engagements for the selected date range when Meta returns Page Insights.
+**Endpoint**: `GET /v22.0/{page_id}/insights?metric=page_follows,page_impressions,page_post_engagements&period=day&since=...&until=...`
+**Code**: `api/internal/platform/facebook.go` — `FacebookAdapter.GetPageInsights`; aggregate handler in `api/internal/handler/facebook_page_analytics.go`.
+**User flow**: Analytics → Platforms → Facebook Page → Page Insights panel displays follows, impressions, and engagements. If the Page is below Meta's insights threshold, UniPost shows a threshold notice instead of failing the whole page.
+
 ---
 
 ## Screencast script (≤ 3 minutes)
@@ -69,7 +79,7 @@ Record once the reviewer-facing flow stabilizes. Keep it short — Meta reviewer
 ### 1. Connect (0:00 – 0:30)
 - Open UniPost dashboard → Connections tab.
 - Click **Connect Facebook**.
-- OAuth consent screen appears — voice-over: "We request 7 Page permissions, each gated by SUPER_ADMINS during development."
+- OAuth consent screen appears — voice-over: "We request the Page permissions plus read_insights needed for publishing, inbox, and analytics."
 - Approve.
 - Page Picker modal opens showing the test Page (`Catherine's bakery store`).
 - Select → Connect selected.
@@ -96,16 +106,19 @@ Record once the reviewer-facing flow stabilizes. Keep it short — Meta reviewer
 - Back to Facebook Messenger → reply delivered.
 
 ### 5. Analytics (2:30 – 3:00)
-- Analytics tab → per-post row shows impressions + reactions + engagements from the post published earlier.
-- Optional: `/facebook/page-insights` endpoint can be hit via the Admin panel; mention the 100-like threshold and show the "Keep growing!" state if the Page is below that.
+- Analytics → Platforms → Facebook Page.
+- Show the Page profile card with Page name, avatar, category, and Page ID.
+- Show the published posts list from the connected Page.
+- Open one post detail and show published time, message/media, likes, comments, shares, clicks, and video views when available.
+- Show the Page Insights panel with follows, impressions, and post engagements; mention the 100-like threshold if Meta returns the below-threshold state.
 
 ---
 
 ## Submission checklist
 
-- [x] Each of the 7 permissions documented above has a concrete API call in the product code.
+- [x] Each of the 7 Page permissions plus `read_insights` documented above has a concrete API call in the product code.
 - [x] All endpoints use the `v22.0` API version consistently.
-- [x] Feature-flagged behind `SUPER_ADMINS` — no regular user can hit FB flows until App Review approves.
+- [x] Development Facebook flows remain gated, and the new analytics surface is additionally behind `facebook.page_analytics` so production can stay off until App Review approves the reads.
 - [x] 24-hour window for Messenger surfaced in the UI before the user hits Send.
 - [x] Page Tokens are stored encrypted (AES-256-GCM). User Token stored in `meta_user_tokens` for "add another Page" later.
 - [x] Webhook verify + receive endpoints signed with the App Secret (HMAC SHA-256) per Meta's spec.

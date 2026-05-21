@@ -44,6 +44,7 @@ Start with the env provider:
 ```text
 FEATURE_FLAGS_PROVIDER=env
 FEATURE_TIKTOK_ANALYTICS_SCOPES=false
+FEATURE_FACEBOOK_PAGE_ANALYTICS=false
 ```
 
 After Unleash is live and the backend token is created:
@@ -75,6 +76,7 @@ The response is intentionally simple:
     "provider": "unleash",
     "flags": {
       "tiktok.analytics_scopes": false,
+      "facebook.page_analytics": false,
       "inbox": true
     }
   }
@@ -108,6 +110,22 @@ video.list
 ```
 
 It also controls the dashboard TikTok platform analytics surface under `Analytics -> Platforms -> TikTok` and the backend endpoints that fetch TikTok profile, account metrics, and public video inventory. Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
+
+Create this flag in Unleash:
+
+```text
+facebook.page_analytics
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Facebook / Analytics / Meta App Review. This flag controls the dashboard Facebook Page platform analytics surface under `Analytics -> Platforms -> Facebook Page` and the backend endpoints that fetch Page profile metadata, published Page posts, post engagement counts, and Page Insights. It depends on Meta approval for `pages_read_engagement` and `read_insights`; production should stay off until those reads are approved for the production app. Production rollback is to disable `facebook.page_analytics`, which hides the dashboard entry point and blocks the aggregate Facebook Page analytics endpoint without affecting existing Page publishing or Inbox flows.
 
 Create this flag in Unleash:
 
