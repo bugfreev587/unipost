@@ -93,6 +93,7 @@ type recordLandingVisitRequest struct {
 	Source      string            `json:"source"`
 	SessionID   string            `json:"session_id"`
 	Referrer    string            `json:"referrer"`
+	CountryCode string            `json:"country_code"`
 	Attribution map[string]string `json:"attribution"`
 	RawQuery    string            `json:"raw_query"`
 }
@@ -125,6 +126,7 @@ type adminLandingVisitorRow struct {
 	Label       string            `json:"label"`
 	Referrer    string            `json:"referrer"`
 	SessionID   string            `json:"session_id"`
+	CountryCode string            `json:"country_code"`
 	UserID      *string           `json:"user_id"`
 	UserEmail   *string           `json:"user_email"`
 	RawQuery    string            `json:"raw_query"`
@@ -193,6 +195,8 @@ func (h *LandingAttributionHandler) RecordVisit(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	countryCode := landingCountryCodeFromRequest(r, body.CountryCode)
+
 	utmEnabled := featureflags.Enabled(r.Context(), featureflags.AttributionUTMSignupBindingV1, featureflags.Target{
 		SessionID: sessionID,
 	})
@@ -212,8 +216,8 @@ func (h *LandingAttributionHandler) RecordVisit(w http.ResponseWriter, r *http.R
 	}
 
 	_, err = h.pool.Exec(r.Context(), `
-INSERT INTO landing_visits (path, source_code, referer, session_id, user_agent, attribution, raw_query)
-SELECT $1, $2, $3, $4, $5, $6::jsonb, $7
+INSERT INTO landing_visits (path, source_code, referer, session_id, user_agent, attribution, raw_query, country_code)
+SELECT $1, $2, $3, $4, $5, $6::jsonb, $7, $8
 WHERE NOT EXISTS (
   SELECT 1
   FROM landing_visits
@@ -222,7 +226,7 @@ WHERE NOT EXISTS (
     AND source_code = $2
     AND created_at >= NOW() - INTERVAL '30 minutes'
 )`,
-		path, sourceCode, referer, sessionID, userAgent, string(attributionJSON), rawQuery,
+		path, sourceCode, referer, sessionID, userAgent, string(attributionJSON), rawQuery, countryCode,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to record landing visit")
@@ -484,6 +488,7 @@ SELECT
   lv.source_code,
   lv.referer,
   lv.session_id,
+  COALESCE(lv.country_code, ''),
   lv.raw_query,
   lv.attribution,
   lsu.user_id,
@@ -512,10 +517,10 @@ LIMIT $4`,
 	for visitRows.Next() {
 		var id int64
 		var createdAt time.Time
-		var path, sourceCode, referer, sessionID, rawQuery string
+		var path, sourceCode, referer, sessionID, countryCode, rawQuery string
 		var attributionBytes []byte
 		var userID, userEmail *string
-		if err := visitRows.Scan(&id, &createdAt, &path, &sourceCode, &referer, &sessionID, &rawQuery, &attributionBytes, &userID, &userEmail); err != nil {
+		if err := visitRows.Scan(&id, &createdAt, &path, &sourceCode, &referer, &sessionID, &countryCode, &rawQuery, &attributionBytes, &userID, &userEmail); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan visitor rows")
 			return
 		}
@@ -531,6 +536,7 @@ LIMIT $4`,
 			Label:       h.labelFor(sourceCode),
 			Referrer:    referer,
 			SessionID:   sessionID,
+			CountryCode: countryCode,
 			UserID:      userID,
 			UserEmail:   userEmail,
 			RawQuery:    rawQuery,
@@ -750,6 +756,34 @@ func sanitizeLandingText(raw string, max int) string {
 		}
 	}
 	return b.String()
+}
+
+func landingCountryCodeFromRequest(r *http.Request, bodyCode string) string {
+	for _, raw := range []string{
+		bodyCode,
+		r.Header.Get("X-Vercel-IP-Country"),
+		r.Header.Get("CF-IPCountry"),
+		r.Header.Get("CloudFront-Viewer-Country"),
+		r.Header.Get("X-Country-Code"),
+	} {
+		if code := normalizeLandingCountryCode(raw); code != "" {
+			return code
+		}
+	}
+	return ""
+}
+
+func normalizeLandingCountryCode(raw string) string {
+	code := strings.ToUpper(strings.TrimSpace(raw))
+	if len(code) != 2 || code == "XX" || code == "T1" {
+		return ""
+	}
+	for _, r := range code {
+		if r < 'A' || r > 'Z' {
+			return ""
+		}
+	}
+	return code
 }
 
 func isLandingBotUserAgent(userAgent string) bool {

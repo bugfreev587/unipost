@@ -2,6 +2,33 @@ import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 const APP_HOST = process.env.NEXT_PUBLIC_APP_HOST || "app.unipost.dev";
+const COUNTRY_COOKIE = "unipost_country";
+
+function countryCodeFromHeaders(headers: Headers) {
+  for (const header of [
+    "x-vercel-ip-country",
+    "cf-ipcountry",
+    "cloudfront-viewer-country",
+    "x-country-code",
+  ]) {
+    const value = (headers.get(header) || "").trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(value) && value !== "XX" && value !== "T1") {
+      return value;
+    }
+  }
+  return "";
+}
+
+function withCountryCookie(response: NextResponse, request: Request) {
+  const country = countryCodeFromHeaders(request.headers);
+  if (!country) return response;
+  response.cookies.set(COUNTRY_COOKIE, country, {
+    path: "/",
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+  return response;
+}
 
 export default clerkMiddleware(async (auth, request) => {
   const hostname = request.headers.get("host") || "";
@@ -35,7 +62,7 @@ export default clerkMiddleware(async (auth, request) => {
     pathname.startsWith("/connect") ||
     pathname.endsWith("-api"); // platform landing pages: /twitter-api, /instagram-api, etc.
   if (isPublicPage) {
-    return NextResponse.next();
+    return withCountryCookie(NextResponse.next(), request);
   }
 
   if (!isDashboard) {
@@ -43,7 +70,7 @@ export default clerkMiddleware(async (auth, request) => {
     if (pathname === "/") {
       const url = request.nextUrl.clone();
       url.pathname = "/marketing";
-      return NextResponse.rewrite(url);
+      return withCountryCookie(NextResponse.rewrite(url), request);
     }
     // Other paths on landing domain → redirect to dashboard domain
     const url = new URL(pathname, `https://${APP_HOST}`);

@@ -1601,6 +1601,7 @@ export interface AdminLandingVisitorRow {
   label: string;
   referrer: string;
   session_id: string;
+  country_code: string;
   user_id: string | null;
   user_email: string | null;
   raw_query: string;
@@ -1634,6 +1635,7 @@ export interface AdminUserRow {
   id: string;
   email: string;
   created_at: string;
+  signup_country_code: string;
   workspace_count: number;
   api_key_count: number;
   platform_count: number;
@@ -1671,6 +1673,7 @@ export interface AdminUserDetail {
   email: string;
   name: string;
   created_at: string;
+  signup_country_code: string;
   workspace_count: number;
   api_key_count: number;
   platform_count: number;
@@ -2247,6 +2250,7 @@ export async function recordLandingVisit(data: {
   source?: string;
   session_id: string;
   referrer?: string;
+  country_code?: string;
   raw_query?: string;
   attribution?: {
     r?: string;

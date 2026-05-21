@@ -24,8 +24,15 @@ import {
   type AdminUserPostFailure,
   type AdminUserRow,
 } from "@/lib/api";
+import { countryDisplay, countryNameFromCode } from "@/lib/countries";
 
 import { AdminShell, PanelRow, bucketByLocalDay, fmtCents, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
+
+function CountryBadge({ code }: { code?: string | null }) {
+  const name = countryNameFromCode(code);
+  if (!name) return <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>;
+  return <span className="ad-badge ad-b-gray" title={countryDisplay(code)}>{name}</span>;
+}
 
 export default function AdminUsersPage() {
   const { getToken } = useAuth();
@@ -231,6 +238,7 @@ export default function AdminUsersPage() {
             <tr>
               <th>User</th>
               <th>Sign Up</th>
+              <th>Country</th>
               <th>Plan</th>
               <th>MRR</th>
               <th>Workspaces</th>
@@ -243,9 +251,9 @@ export default function AdminUsersPage() {
           </thead>
           <tbody>
             {loading && users.length === 0 ? (
-              <tr><td colSpan={10} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
+              <tr><td colSpan={11} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={10} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
+              <tr><td colSpan={11} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
             ) : (
               users.map((u) => {
                 const usagePct = u.post_limit > 0 ? Math.min(100, (u.posts_used / u.post_limit) * 100) : 0;
@@ -260,6 +268,7 @@ export default function AdminUsersPage() {
                       <div>{fmtDate(u.created_at)}</div>
                       <div style={{ fontSize: 11, color: "var(--dmuted2)" }}>{fmtRelative(u.created_at)}</div>
                     </td>
+                    <td><CountryBadge code={u.signup_country_code} /></td>
                     <td>
                       {u.is_paid ? (
                         <span className="ad-badge ad-b-blue">{fmtCents(u.mrr_cents)}/mo</span>
@@ -328,6 +337,7 @@ export default function AdminUsersPage() {
                   <div className="ad-panel-section-title">Account</div>
                   <PanelRow k="User ID" v={<span className="ad-mono">{detail.id}</span>} />
                   <PanelRow k="Signed up" v={fmtDate(detail.created_at)} />
+                  <PanelRow k="Signup country" v={countryDisplay(detail.signup_country_code)} />
                   {detail.name ? <PanelRow k="Name" v={detail.name} /> : null}
                   <PanelRow k="Last post" v={fmtRelative(detail.last_post_at)} />
                 </div>
