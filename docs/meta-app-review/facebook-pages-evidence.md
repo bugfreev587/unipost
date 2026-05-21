@@ -118,7 +118,7 @@ Record once the reviewer-facing flow stabilizes. Keep it short — Meta reviewer
 
 - [x] Each of the 7 Page permissions plus `read_insights` documented above has a concrete API call in the product code.
 - [x] All endpoints use the `v22.0` API version consistently.
-- [x] Development Facebook flows remain gated, and the new analytics surface is additionally behind `facebook.page_analytics` so production can stay off until App Review approves the reads.
+- [x] Development Facebook flows remain gated, and the analytics surface is limited to the server-side admin allowlist while App Review validation continues.
 - [x] 24-hour window for Messenger surfaced in the UI before the user hits Send.
 - [x] Page Tokens are stored encrypted (AES-256-GCM). User Token stored in `meta_user_tokens` for "add another Page" later.
 - [x] Webhook verify + receive endpoints signed with the App Secret (HMAC SHA-256) per Meta's spec.

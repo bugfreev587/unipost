@@ -48,6 +48,7 @@ type NavSubItem = {
   label: string;
   backendFlag?: string;
   backendFlagsAny?: string[];
+  showWhenAdmin?: boolean;
 };
 
 type NavItem = {
@@ -57,6 +58,7 @@ type NavItem = {
   exactMatch?: boolean;
   backendFlag?: string;
   backendFlagsAny?: string[];
+  showWhenAdmin?: boolean;
   submenu?: NavSubItem[];
 };
 
@@ -76,7 +78,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/logs", label: "Logs", icon: FileText },
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
-    { href: "/analytics/platforms", label: "Platforms", backendFlagsAny: [FEATURE_FLAG_KEYS.tiktokAnalyticsScopes, FEATURE_FLAG_KEYS.facebookPageAnalytics] },
+    { href: "/analytics/platforms", label: "Platforms", backendFlagsAny: [FEATURE_FLAG_KEYS.tiktokAnalyticsScopes], showWhenAdmin: true },
     { href: "/analytics/api", label: "API" },
   ]},
 ];
@@ -97,17 +99,19 @@ function getServerSnapshot() {
   return false;
 }
 
-// Filter nav items based only on feature flags.
-function filterNavItems(backendFlags?: Record<string, boolean>) {
+// Filter nav items based on backend feature flags plus internal admin-only surfaces.
+function filterNavItems(backendFlags?: Record<string, boolean>, isAdmin = false) {
   return ALL_NAV_ITEMS.filter((item) => {
-    if (item.backendFlag && !backendFlags?.[item.backendFlag]) return false;
-    if (item.backendFlagsAny && !item.backendFlagsAny.some((flag) => backendFlags?.[flag])) return false;
+    const adminAllowed = isAdmin && item.showWhenAdmin;
+    if (item.backendFlag && !backendFlags?.[item.backendFlag] && !adminAllowed) return false;
+    if (item.backendFlagsAny && !item.backendFlagsAny.some((flag) => backendFlags?.[flag]) && !adminAllowed) return false;
     return true;
   }).map((item) => {
     if (!item.submenu) return item;
     const filteredSub = item.submenu.filter((sub) => {
-      if (sub.backendFlag && !backendFlags?.[sub.backendFlag]) return false;
-      if (sub.backendFlagsAny && !sub.backendFlagsAny.some((flag) => backendFlags?.[flag])) return false;
+      const adminAllowed = isAdmin && sub.showWhenAdmin;
+      if (sub.backendFlag && !backendFlags?.[sub.backendFlag] && !adminAllowed) return false;
+      if (sub.backendFlagsAny && !sub.backendFlagsAny.some((flag) => backendFlags?.[flag]) && !adminAllowed) return false;
       return true;
     });
     return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
@@ -160,7 +164,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     Boolean(profileId) && inboxFeatureEnabled,
   );
 
-  const navItems = filterNavItems(backendFeatureFlags);
+  const navItems = filterNavItems(backendFeatureFlags, isAdmin);
 
   // Auto-expand the submenu that matches the current URL on navigation,
   // but only when the pathname actually changes — not on every render.

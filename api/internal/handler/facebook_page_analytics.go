@@ -7,11 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
-	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 type facebookPageAnalyticsResponse struct {
@@ -154,10 +151,6 @@ func (h *SocialAccountHandler) loadFacebookForAnalytics(w http.ResponseWriter, r
 		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Account is not a Facebook Page")
 		return nil, nil, "", false
 	}
-	if !facebookPageAnalyticsEnabled(r) {
-		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "Facebook Page analytics is not enabled in this environment.")
-		return nil, nil, "", false
-	}
 
 	adapter, err := platform.Get("facebook")
 	if err != nil {
@@ -177,14 +170,6 @@ func (h *SocialAccountHandler) loadFacebookForAnalytics(w http.ResponseWriter, r
 		return nil, nil, "", false
 	}
 	return acc, fb, accessToken, true
-}
-
-func facebookPageAnalyticsEnabled(r *http.Request) bool {
-	return featureflags.Enabled(r.Context(), featureflags.FacebookPageAnalytics, featureflags.Target{
-		UserID:      auth.GetUserID(r.Context()),
-		WorkspaceID: auth.GetWorkspaceID(r.Context()),
-		Env:         runtimeenv.Current(),
-	})
 }
 
 func parseClampedInt(raw string, fallback, min, max int) int {

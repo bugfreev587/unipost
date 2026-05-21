@@ -2,10 +2,7 @@ package platform
 
 import (
 	"net/url"
-	"os"
 	"testing"
-
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 )
 
 // TestResolvePostID exercises the pure-string canonicalizer the
@@ -57,50 +54,7 @@ func TestResolvePostID(t *testing.T) {
 	}
 }
 
-func TestFacebookOAuthScopesDefaultToApprovedProductionSet(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-	t.Setenv("UNIPOST_ENV", "production")
-	unsetenvForFacebookTest(t, "FEATURE_FACEBOOK_PAGE_ANALYTICS")
-
-	adapter := NewFacebookAdapter()
-	config := adapter.DefaultOAuthConfig("https://api.unipost.dev")
-	got := adapter.GetAuthURL(config, "state-1")
-	u, err := url.Parse(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "pages_show_list pages_manage_posts pages_read_engagement pages_read_user_content pages_manage_engagement pages_messaging pages_manage_metadata"
-	if q := u.Query().Get("scope"); q != want {
-		t.Fatalf("scope = %q, want %q", q, want)
-	}
-}
-
-func TestFacebookOAuthScopesIncludeReadInsightsWhenEnabled(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-	t.Setenv("UNIPOST_ENV", "production")
-	t.Setenv("FEATURE_FACEBOOK_PAGE_ANALYTICS", "true")
-
-	adapter := NewFacebookAdapter()
-	config := adapter.DefaultOAuthConfig("https://api.unipost.dev")
-	got := adapter.GetAuthURL(config, "state-1")
-	u, err := url.Parse(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "pages_show_list pages_manage_posts pages_read_engagement pages_read_user_content pages_manage_engagement pages_messaging pages_manage_metadata read_insights"
-	if q := u.Query().Get("scope"); q != want {
-		t.Fatalf("scope = %q, want %q", q, want)
-	}
-}
-
-func TestFacebookOAuthScopesIncludeReadInsightsByDefaultOutsideProduction(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-	t.Setenv("UNIPOST_ENV", "development")
-	unsetenvForFacebookTest(t, "FEATURE_FACEBOOK_PAGE_ANALYTICS")
-
+func TestFacebookOAuthScopesIncludeAnalyticsScopes(t *testing.T) {
 	adapter := NewFacebookAdapter()
 	config := adapter.DefaultOAuthConfig("https://dev-api.unipost.dev")
 	got := adapter.GetAuthURL(config, "state-1")
@@ -112,19 +66,4 @@ func TestFacebookOAuthScopesIncludeReadInsightsByDefaultOutsideProduction(t *tes
 	if q := u.Query().Get("scope"); q != want {
 		t.Fatalf("scope = %q, want %q", q, want)
 	}
-}
-
-func unsetenvForFacebookTest(t *testing.T, name string) {
-	t.Helper()
-	old, ok := os.LookupEnv(name)
-	if err := os.Unsetenv(name); err != nil {
-		t.Fatalf("unset %s: %v", name, err)
-	}
-	t.Cleanup(func() {
-		if ok {
-			_ = os.Setenv(name, old)
-		} else {
-			_ = os.Unsetenv(name)
-		}
-	})
 }

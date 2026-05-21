@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -116,11 +115,7 @@ func (a *FacebookAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig
 }
 
 func FacebookOAuthScopes() []string {
-	scopes := append([]string(nil), facebookPagesBaseScopes...)
-	if !featureflags.Enabled(context.Background(), featureflags.FacebookPageAnalytics, featureflags.Target{}) {
-		return scopes
-	}
-	return append(scopes, facebookPageAnalyticsScopes...)
+	return append(append([]string(nil), facebookPagesBaseScopes...), facebookPageAnalyticsScopes...)
 }
 
 func (a *FacebookAdapter) GetAuthURL(config OAuthConfig, state string) string {
