@@ -270,8 +270,8 @@ export const blogPosts: BlogPost[] = [
         items: [
           "AI agents can draft social posts but rarely publish them—the bottleneck is OAuth, media validation, and per-platform delivery, not text generation.",
           "MCP standardizes how an agent discovers and calls tools, but it does not solve the authentication and delivery work behind those tools. The MCP server has to.",
-          "UniPost ships an `@unipost/mcp-server` package that turns nine social platforms into a handful of `unipost_*` tools, including `unipost_create_draft` and `unipost_publish_draft`.",
-          "OAuth stays user-initiated through a [hosted Connect Session](/docs/api/connect/sessions/create) the agent never touches; the agent only receives the resulting `social_account_id`.",
+          "UniPost exposes an MCP server that turns nine social platforms into a handful of `unipost_*` tools, including `unipost_create_draft` and `unipost_publish_draft`.",
+          "OAuth stays user-initiated through a [hosted Connect Session](/docs/api/connect/sessions/create) the agent never touches; after completion, your app gives the agent the returned account id (`completed_social_account_id`, also exposed as `managed_account_id`).",
         ],
       },
       {
@@ -313,7 +313,7 @@ export const blogPosts: BlogPost[] = [
       {
         type: "paragraph",
         text:
-          "UniPost's MCP server sits in exactly that gap. The flow is `Agent → MCP → UniPost API → 9 social platforms`. The agent calls a flat `unipost_*` tool, UniPost handles the per-platform shape, and OAuth tokens stay on the UniPost side—bound to a `social_account_id` the user created out of band.",
+          "UniPost's MCP server sits in exactly that gap. The flow is `Agent → MCP → UniPost API → 9 social platforms`. The agent calls a flat `unipost_*` tool, UniPost handles the per-platform shape, and OAuth tokens stay on the UniPost side—bound to the account id the user created out of band.",
       },
       {
         type: "heading",
@@ -322,7 +322,7 @@ export const blogPosts: BlogPost[] = [
       {
         type: "paragraph",
         text:
-          "`@unipost/mcp-server` is published on npm and runs on stdio, so it drops into Claude Desktop's `claude_desktop_config.json` like any other MCP server.",
+          "Use UniPost's hosted Streamable HTTP MCP endpoint in Claude Desktop. That keeps Claude on the current tool surface without running a local stdio proxy.",
       },
       {
         type: "code",
@@ -330,10 +330,9 @@ export const blogPosts: BlogPost[] = [
         code: `{
   "mcpServers": {
     "unipost": {
-      "command": "npx",
-      "args": ["-y", "@unipost/mcp-server"],
-      "env": {
-        "UNIPOST_API_KEY": "sk_live_..."
+      "url": "https://mcp.unipost.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer up_live_..."
       }
     }
   }
@@ -342,7 +341,7 @@ export const blogPosts: BlogPost[] = [
       {
         type: "paragraph",
         text:
-          "Restart Claude Desktop and the `unipost_list_accounts`, `unipost_create_draft`, `unipost_publish_draft`, `unipost_create_connect_session`, and a dozen other `unipost_*` tools become available in the next conversation. Cursor, Cline, and Continue.dev use the same config shape with their own MCP host paths.",
+          "Restart Claude Desktop and the `unipost_list_accounts`, `unipost_create_draft`, `unipost_publish_draft`, `unipost_create_connect_session`, and other current `unipost_*` tools become available in the next conversation. Cursor, Cline, and Continue.dev have their own MCP config files; use the same URL and authorization header in their MCP server entry.",
       },
       {
         type: "heading",
@@ -383,7 +382,7 @@ Claude: [tool: unipost_publish_draft id="dr_8H2k"]
       {
         type: "paragraph",
         text:
-          "The agent saw three tool calls. The user saw a single confirmation step. UniPost saw a [POST /v1/posts](/docs/api/posts/create) with two `platform_posts[]` entries and dispatched the per-platform delivery to X and LinkedIn behind the scenes.",
+          "The agent saw three tool calls. The user saw a single confirmation step. Under the hood, `unipost_create_draft` creates a draft with [POST /v1/posts](/docs/api/posts/create) using `status: \"draft\"` and two `platform_posts[]` entries. `unipost_publish_draft` then publishes that draft through [POST /v1/posts/:post_id/publish](/docs/api/posts/drafts/publish), where UniPost dispatches the per-platform delivery to X and LinkedIn behind the scenes.",
       },
       {
         type: "heading",
@@ -392,7 +391,7 @@ Claude: [tool: unipost_publish_draft id="dr_8H2k"]
       {
         type: "paragraph",
         text:
-          "They should not. The `social_account_id` an agent uses (`sa_x_kCqz` above) is created earlier through a UniPost hosted Connect Session, and that step belongs to the user, not the agent. Your app—or even a one-time CLI run—opens the session, the user clicks through in a browser, and UniPost returns the `social_account_id` the agent uses from that point on.",
+          "They should not. The account id an agent uses (`sa_x_kCqz` above) is created earlier through a UniPost hosted Connect Session, and that step belongs to the user, not the agent. Your app—or even a one-time CLI run—opens the session, the user clicks through in a browser, and UniPost exposes the completed account as `completed_social_account_id` (`managed_account_id` for hosted Connect callers). That is the id the agent uses from that point on.",
       },
       {
         type: "code",
@@ -408,7 +407,8 @@ Claude: [tool: unipost_publish_draft id="dr_8H2k"]
   }'
 
 # Response → send the user to the returned \`url\`.
-# When they return, the \`completed_social_account_id\` is what the agent uses.`,
+# After completion, read \`completed_social_account_id\` (or \`managed_account_id\`)
+# from the session response and give that account id to the agent.`,
       },
       {
         type: "paragraph",
@@ -424,7 +424,7 @@ Claude: [tool: unipost_publish_draft id="dr_8H2k"]
         items: [
           "Draft-and-publish agents: Claude composes, the user confirms in one turn, the post ships.",
           "Scheduled content agents: a daily routine drafts and queues posts to the right accounts without anyone watching.",
-          "Reply-to-comment agents: with the [Inbox API](/docs/api/inbox), an agent can read DMs and comments and draft replies under the same authorization model.",
+          "Reply-to-comment agents: pair the MCP publishing tools with direct [Inbox API](/docs/api/inbox) calls, or your own MCP wrapper, so an agent can read supported DMs and comments and draft replies under the same authorization model.",
           "Multi-account broadcast from one prompt: same intent, per-platform variants, one tool call.",
         ],
       },
@@ -466,7 +466,7 @@ Claude: [tool: unipost_publish_draft id="dr_8H2k"]
           {
             question: "Can my AI agent post without the user's explicit authorization?",
             answer:
-              "No, and it should not try. OAuth happens through a hosted Connect Session the user opens in a browser. The agent only receives the resulting `social_account_id` and uses it for subsequent publish calls.",
+              "No, and it should not try. OAuth happens through a hosted Connect Session the user opens in a browser. After the session completes, the agent only receives the resulting account id (`completed_social_account_id` / `managed_account_id`) and uses it for subsequent publish calls.",
           },
           {
             question: "Does this only work with Claude?",
