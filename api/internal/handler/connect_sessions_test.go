@@ -315,6 +315,24 @@ func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 	}
 }
 
+func TestOAuthCallbackRedirectsConnectSessionState(t *testing.T) {
+	fdb := &connectSessionTestDB{platform: "tiktok", allowQuickstart: true}
+	h := &OAuthHandler{queries: db.New(fdb)}
+	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/callback/tiktok?code=auth-code-1&state=state_1", nil)
+	req = withChiParam(req, "platform", "tiktok")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	location := rec.Header().Get("Location")
+	if location != "/v1/connect/callback/tiktok?code=auth-code-1&state=state_1" {
+		t.Fatalf("location = %q", location)
+	}
+}
+
 func TestGetConnectSession_CompletedReturnsManagedAccountID(t *testing.T) {
 	fdb := &connectSessionTestDB{
 		platform:        "instagram",
