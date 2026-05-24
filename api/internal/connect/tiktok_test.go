@@ -32,7 +32,7 @@ func TestTikTokAuthorizeURL(t *testing.T) {
 	checks := map[string]string{
 		"response_type": "code",
 		"client_key":    "client-key",
-		"redirect_uri":  "https://api.example.com/v1/connect/callback/tiktok",
+		"redirect_uri":  "https://api.example.com/v1/oauth/callback/tiktok",
 		"scope":         "video.publish,video.upload,user.info.basic",
 		"state":         "state-abc",
 	}
@@ -54,7 +54,7 @@ func TestTikTokExchangeCode_HappyPath(t *testing.T) {
 		if r.FormValue("client_key") != "client-key" || r.FormValue("client_secret") != "secretXYZ" {
 			t.Errorf("creds in form: key=%q secret=%q", r.FormValue("client_key"), r.FormValue("client_secret"))
 		}
-		if r.FormValue("redirect_uri") != "https://api.example.com/v1/connect/callback/tiktok" {
+		if r.FormValue("redirect_uri") != "https://api.example.com/v1/oauth/callback/tiktok" {
 			t.Errorf("redirect_uri: %q", r.FormValue("redirect_uri"))
 		}
 		_, _ = io.WriteString(w, `{"data":{"access_token":"AT-1","refresh_token":"RT-1","expires_in":3600}}`)

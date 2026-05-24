@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -167,6 +168,10 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	errorParam := r.URL.Query().Get("error")
 	workspaceID := ""
+
+	if h.redirectConnectSessionCallbackIfNeeded(w, r, platformName, state) {
+		return
+	}
 
 	if errorParam != "" {
 		errorDesc := r.URL.Query().Get("error_description")
@@ -627,4 +632,20 @@ func (h *OAuthHandler) redirectWithError(w http.ResponseWriter, r *http.Request,
 		sep = "&"
 	}
 	http.Redirect(w, r, redirectURL+sep+"status=error&error="+errMsg, http.StatusFound)
+}
+
+func (h *OAuthHandler) redirectConnectSessionCallbackIfNeeded(w http.ResponseWriter, r *http.Request, platformName, state string) bool {
+	if state == "" {
+		return false
+	}
+	session, err := h.queries.GetConnectSessionByOAuthState(r.Context(), state)
+	if err != nil || session.Platform != platformName {
+		return false
+	}
+	target := "/v1/connect/callback/" + url.PathEscape(platformName)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+	return true
 }
