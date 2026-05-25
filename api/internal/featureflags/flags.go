@@ -16,6 +16,7 @@ type Flag string
 const (
 	TikTokAnalyticsScopes         Flag = "tiktok.analytics_scopes"
 	AttributionUTMSignupBindingV1 Flag = "attribution.utm_signup_binding_v1"
+	LoopsIntegrationV1            Flag = "email.loops_integration_v1"
 	Inbox                         Flag = "inbox"
 	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
 )
@@ -65,6 +66,14 @@ var definitions = map[Flag]Definition{
 		Flag:        AttributionUTMSignupBindingV1,
 		EnvVar:      "FEATURE_ATTRIBUTION_UTM_SIGNUP_BINDING_V1",
 		Description: "Captures lightweight UTM attribution and binds landing sessions to signed-in users for Admin conversion reporting.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	LoopsIntegrationV1: {
+		Flag:        LoopsIntegrationV1,
+		EnvVar:      "FEATURE_EMAIL_LOOPS_INTEGRATION_V1",
+		Description: "Controls Loops contact sync and lifecycle event delivery for UniPost dashboard users.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

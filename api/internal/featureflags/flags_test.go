@@ -56,6 +56,19 @@ func TestInboxDefaultsEnabled(t *testing.T) {
 	}
 }
 
+func TestLoopsIntegrationDefaultsOffInProduction(t *testing.T) {
+	SetProvider(EnvProvider{})
+	t.Cleanup(func() { SetProvider(EnvProvider{}) })
+	unsetenv(t, "FEATURE_EMAIL_LOOPS_INTEGRATION_V1")
+
+	if Enabled(context.Background(), LoopsIntegrationV1, Target{Env: "production"}) {
+		t.Fatal("Loops integration should default off in production")
+	}
+	if !Enabled(context.Background(), LoopsIntegrationV1, Target{Env: "development"}) {
+		t.Fatal("Loops integration should default on outside production")
+	}
+}
+
 func unsetenv(t *testing.T, name string) {
 	t.Helper()
 	old, ok := os.LookupEnv(name)
