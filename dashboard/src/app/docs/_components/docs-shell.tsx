@@ -293,6 +293,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Using the API",
       items: [
         { label: "Quickstart Mode", href: "/docs/quickstart" },
+        { label: "Connect Sessions", href: "/docs/connect-sessions" },
         {
           label: "White-label Mode",
           children: [
@@ -2339,6 +2340,7 @@ function isOverviewGuidePath(current: string) {
     current === "/docs"
     || current === "/docs/dashboard-quickstart"
     || current === "/docs/quickstart"
+    || current === "/docs/connect-sessions"
     || current === "/docs/publishing"
     || current === "/docs/sdk"
     || current === "/docs/cli"

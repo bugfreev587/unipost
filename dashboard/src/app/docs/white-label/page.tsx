@@ -77,6 +77,7 @@ export default function WhiteLabelPage() {
           ["Control level", "Basic: 1 branded platform with UniPost attribution. Growth+: full multi-platform control with optional attribution removal."],
           ["Best use case", "SaaS products where customers bring their own social accounts"],
           ["Tier", "Basic and up — Quickstart is free"],
+          ["Connect Sessions", <Link key="connect-sessions" href="/docs/connect-sessions">Same API as Quickstart Connect Sessions</Link>],
         ]}
       />
 
@@ -103,9 +104,9 @@ export default function WhiteLabelPage() {
         <div className="wl-pick-card">
           <div className="wl-pick-kicker">Pick Quickstart if</div>
           <ul className="wl-pick-list">
-            <li>You publish to social accounts your team owns</li>
+            <li>You can use UniPost-managed OAuth apps</li>
             <li>You&apos;re validating a prototype or internal tool</li>
-            <li>You don&apos;t need your brand on the Connect surface</li>
+            <li>Your customer-facing flow can show UniPost on the platform consent screen</li>
           </ul>
         </div>
         <div className="wl-pick-card wl-pick-card-accent">
@@ -261,9 +262,9 @@ export default function WhiteLabelPage() {
           ["Your brand on Connect page", "No", "Yes (Basic+)"],
           ["Your app on platform consent", "No", "Yes (Basic+ for 1 platform, Growth+ for all supported platforms)"],
           ["Remove Powered by UniPost", "No", "Growth / Team only"],
-          ["Onboard customers at scale", "No", "Yes"],
+          ["Onboard customers at scale", "Yes via Connect Sessions with UniPost consent branding", "Yes via Connect Sessions with your consent branding"],
           ["Own platform rate-limit tier", "No", "Yes"],
-          ["`external_user_id` mapping", "No", "Yes"],
+          ["`external_user_id` mapping", "Yes via Connect Sessions", "Yes"],
         ]}
       />
 
@@ -305,7 +306,10 @@ export default function WhiteLabelPage() {
       <h2 id="api-examples">API examples</h2>
 
       <h3 id="create-session">Create a Connect session</h3>
-      <p className="wl-note">Start the branded OAuth flow for one end user.</p>
+      <p className="wl-note">
+        Start the branded OAuth flow for one end user. For the mode-neutral flow,
+        see the <Link href="/docs/connect-sessions">Connect Sessions guide</Link>.
+      </p>
       <DocsCodeTabs snippets={CREATE_SESSION_SNIPPETS} />
 
       <h3 id="upload-credentials">Upload platform credentials</h3>
@@ -330,10 +334,10 @@ export default function WhiteLabelPage() {
 
       <h2 id="next-steps">Next steps</h2>
       <div className="wl-next">
-        <Link href="/docs/api/connect/sessions" className="wl-next-card">
-          <div className="wl-next-kicker">API reference</div>
+        <Link href="/docs/connect-sessions" className="wl-next-card">
+          <div className="wl-next-kicker">Hosted onboarding</div>
           <div className="wl-next-title">Connect sessions</div>
-          <div className="wl-next-body">Full request / response schema for <code>POST /v1/connect/sessions</code>.</div>
+          <div className="wl-next-body">Mode-neutral guide for Quickstart and white-label customer account onboarding.</div>
         </Link>
         <Link href="/docs/api/white-label/credentials" className="wl-next-card">
           <div className="wl-next-kicker">API reference</div>
