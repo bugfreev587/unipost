@@ -312,9 +312,8 @@ export default function AccountsPage() {
         <div>
           <div className="dt-page-title">Quickstart Mode</div>
           <div className="dt-subtitle" style={{ maxWidth: 620, lineHeight: 1.6 }}>
-            Connect social accounts instantly — no developer approvals or platform credentials needed.
-            UniPost handles OAuth with its shared app credentials so you can start posting in minutes.
-            White-label credentials saved under Accounts → White-label do not change this Quickstart flow.
+            Connect accounts with UniPost-managed OAuth and start posting in minutes, no approvals or platform credentials required.
+            White-label credentials stay separate from Quickstart.
           </div>
           {profiles.length > 1 && (
             <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>

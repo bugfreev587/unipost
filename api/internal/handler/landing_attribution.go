@@ -140,6 +140,12 @@ type adminLandingVisitorTrendRow struct {
 	Signups        int64  `json:"signups"`
 }
 
+type adminPathBreakdownRow struct {
+	Path  string `json:"path"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
 type adminLandingVisitorsResponse struct {
 	RangeDays       int64                         `json:"range_days"`
 	TotalVisits     int64                         `json:"total_visits"`
@@ -148,6 +154,7 @@ type adminLandingVisitorsResponse struct {
 	Rows            []adminLandingVisitorRow      `json:"rows"`
 	Trend           []adminLandingVisitorTrendRow `json:"trend"`
 	Countries       []adminCountryBreakdownRow    `json:"countries"`
+	Paths           []adminPathBreakdownRow       `json:"paths"`
 	SourceOptions   []string                      `json:"source_options"`
 	CampaignOptions []string                      `json:"campaign_options"`
 }
@@ -423,6 +430,7 @@ func (h *LandingAttributionHandler) GetAdminVisitors(w http.ResponseWriter, r *h
 		Rows:      []adminLandingVisitorRow{},
 		Trend:     []adminLandingVisitorTrendRow{},
 		Countries: []adminCountryBreakdownRow{},
+		Paths:     []adminPathBreakdownRow{},
 	}
 
 	if err := h.pool.QueryRow(r.Context(), `
@@ -518,6 +526,46 @@ ORDER BY COUNT(*) DESC, country_code ASC`,
 	}
 	if err := countryRows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor countries")
+		return
+	}
+
+	pathBreakdownRows, err := h.pool.Query(r.Context(), `
+WITH filtered AS (
+  SELECT *
+  FROM landing_visits
+  WHERE created_at >= NOW() - make_interval(days => $1)
+    AND ($2 = '' OR source_code = $2)
+    AND ($3 = '' OR attribution->>'utm_campaign' = $3)
+),
+session_paths AS (
+  SELECT DISTINCT ON (session_id)
+    session_id,
+    COALESCE(NULLIF(path, ''), '/') AS path
+  FROM filtered
+  ORDER BY session_id, created_at ASC
+)
+SELECT path, COUNT(*)::BIGINT
+FROM session_paths
+GROUP BY path
+ORDER BY COUNT(*) DESC, path ASC`,
+		days, source, campaign,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load visitor paths")
+		return
+	}
+	defer pathBreakdownRows.Close()
+	for pathBreakdownRows.Next() {
+		var path string
+		var count int64
+		if err := pathBreakdownRows.Scan(&path, &count); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan visitor paths")
+			return
+		}
+		resp.Paths = append(resp.Paths, h.adminPathBreakdownRow(path, count))
+	}
+	if err := pathBreakdownRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor paths")
 		return
 	}
 
@@ -637,6 +685,17 @@ ORDER BY 1 ASC`, days)
 	}
 
 	writeSuccess(w, resp)
+}
+
+func (h *LandingAttributionHandler) adminPathBreakdownRow(path string, count int64) adminPathBreakdownRow {
+	if strings.TrimSpace(path) == "" {
+		path = "/"
+	}
+	return adminPathBreakdownRow{
+		Path:  path,
+		Label: path,
+		Count: count,
+	}
 }
 
 func (h *LandingAttributionHandler) resolveSource(explicitSource string, referrer string) string {

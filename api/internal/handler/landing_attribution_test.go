@@ -53,6 +53,22 @@ func TestResolveSourceWithAttributionUsesOtherForUnknownUTM(t *testing.T) {
 	}
 }
 
+func TestAdminPathBreakdownRowUsesPathLabel(t *testing.T) {
+	h := NewLandingAttributionHandler(nil)
+
+	got := h.adminPathBreakdownRow("/docs/api", 12)
+
+	if got.Path != "/docs/api" {
+		t.Fatalf("Path = %q, want /docs/api", got.Path)
+	}
+	if got.Label != "/docs/api" {
+		t.Fatalf("Label = %q, want /docs/api", got.Label)
+	}
+	if got.Count != 12 {
+		t.Fatalf("Count = %d, want 12", got.Count)
+	}
+}
+
 func TestSanitizeLandingAttributionKeepsAllowedKeys(t *testing.T) {
 	got := sanitizeLandingAttribution(map[string]string{
 		"utm_source":   "ProductHunt",

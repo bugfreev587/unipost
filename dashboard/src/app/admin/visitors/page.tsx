@@ -10,7 +10,7 @@ import {
 } from "@/lib/api";
 import { countryDisplay, countryNameFromCode } from "@/lib/countries";
 
-import { CountryDonut } from "../_components/country-donut";
+import { CountryDonut, PathDonut } from "../_components/country-donut";
 import { AdminShell, StatCard, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
 const RANGE_OPTIONS = [7, 30, 90, 180] as const;
@@ -199,18 +199,26 @@ export default function AdminVisitorsPage() {
         <StatCard label="Latest Visit" value={latest ? fmtRelative(latest) : "—"} sub={latest ? fmtDate(latest) : "—"} />
       </div>
 
-      <div className="av-insight-grid">
-        <div className="av-panel">
-          <div className="ad-section-header">
-            <div className="ad-section-title">Daily trend</div>
-            <div className="ad-section-meta">bars show visits; green ticks indicate bound signups</div>
-          </div>
-          <VisitorsTrend rows={trend} />
+      <div className="av-panel av-trend-panel">
+        <div className="ad-section-header">
+          <div className="ad-section-title">Daily trend</div>
+          <div className="ad-section-meta">bars show visits; green ticks indicate bound signups</div>
         </div>
+        <VisitorsTrend rows={trend} />
+      </div>
+
+      <div className="av-breakdown-grid">
         <CountryDonut
           title="Visitor countries"
           subtitle={`Last ${data?.range_days ?? days} days`}
           rows={data?.countries ?? []}
+          loading={loading}
+          valueLabel="visitors"
+        />
+        <PathDonut
+          title="Visitor paths"
+          subtitle={`Last ${data?.range_days ?? days} days`}
+          rows={data?.paths ?? []}
           loading={loading}
           valueLabel="visitors"
         />
@@ -274,9 +282,12 @@ export default function AdminVisitorsPage() {
 }
 
 const visitorsCss = `
-.av-insight-grid {
+.av-trend-panel {
+  margin-bottom: 10px;
+}
+.av-breakdown-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(300px, 0.85fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -373,6 +384,6 @@ const visitorsCss = `
 }
 @media (max-width: 1100px) {
   .ad-stat-grid { grid-template-columns: repeat(2, 1fr); }
-  .av-insight-grid { grid-template-columns: 1fr; }
+  .av-breakdown-grid { grid-template-columns: 1fr; }
 }
 `;

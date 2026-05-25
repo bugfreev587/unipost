@@ -1751,6 +1751,12 @@ export interface AdminCountryBreakdownRow {
   count: number;
 }
 
+export interface AdminPathBreakdownRow {
+  path: string;
+  label: string;
+  count: number;
+}
+
 export interface AdminLandingVisitorsResponse {
   range_days: number;
   total_visits: number;
@@ -1759,6 +1765,7 @@ export interface AdminLandingVisitorsResponse {
   rows: AdminLandingVisitorRow[];
   trend: AdminLandingVisitorTrendRow[];
   countries: AdminCountryBreakdownRow[];
+  paths: AdminPathBreakdownRow[];
   source_options: string[];
   campaign_options: string[];
 }
