@@ -140,6 +140,12 @@ type adminLandingVisitorTrendRow struct {
 	Signups        int64  `json:"signups"`
 }
 
+type adminSourceBreakdownRow struct {
+	SourceCode string `json:"source_code"`
+	Label      string `json:"label"`
+	Count      int64  `json:"count"`
+}
+
 type adminLandingVisitorsResponse struct {
 	RangeDays       int64                         `json:"range_days"`
 	TotalVisits     int64                         `json:"total_visits"`
@@ -148,6 +154,7 @@ type adminLandingVisitorsResponse struct {
 	Rows            []adminLandingVisitorRow      `json:"rows"`
 	Trend           []adminLandingVisitorTrendRow `json:"trend"`
 	Countries       []adminCountryBreakdownRow    `json:"countries"`
+	Sources         []adminSourceBreakdownRow     `json:"sources"`
 	SourceOptions   []string                      `json:"source_options"`
 	CampaignOptions []string                      `json:"campaign_options"`
 }
@@ -423,6 +430,7 @@ func (h *LandingAttributionHandler) GetAdminVisitors(w http.ResponseWriter, r *h
 		Rows:      []adminLandingVisitorRow{},
 		Trend:     []adminLandingVisitorTrendRow{},
 		Countries: []adminCountryBreakdownRow{},
+		Sources:   []adminSourceBreakdownRow{},
 	}
 
 	if err := h.pool.QueryRow(r.Context(), `
@@ -518,6 +526,46 @@ ORDER BY COUNT(*) DESC, country_code ASC`,
 	}
 	if err := countryRows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor countries")
+		return
+	}
+
+	sourceBreakdownRows, err := h.pool.Query(r.Context(), `
+WITH filtered AS (
+  SELECT *
+  FROM landing_visits
+  WHERE created_at >= NOW() - make_interval(days => $1)
+    AND ($2 = '' OR source_code = $2)
+    AND ($3 = '' OR attribution->>'utm_campaign' = $3)
+),
+session_sources AS (
+  SELECT DISTINCT ON (session_id)
+    session_id,
+    COALESCE(NULLIF(source_code, ''), 'direct') AS source_code
+  FROM filtered
+  ORDER BY session_id, created_at ASC
+)
+SELECT source_code, COUNT(*)::BIGINT
+FROM session_sources
+GROUP BY source_code
+ORDER BY COUNT(*) DESC, source_code ASC`,
+		days, source, campaign,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load visitor sources")
+		return
+	}
+	defer sourceBreakdownRows.Close()
+	for sourceBreakdownRows.Next() {
+		var sourceCode string
+		var count int64
+		if err := sourceBreakdownRows.Scan(&sourceCode, &count); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan visitor sources")
+			return
+		}
+		resp.Sources = append(resp.Sources, h.adminSourceBreakdownRow(sourceCode, count))
+	}
+	if err := sourceBreakdownRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to read visitor sources")
 		return
 	}
 
@@ -637,6 +685,14 @@ ORDER BY 1 ASC`, days)
 	}
 
 	writeSuccess(w, resp)
+}
+
+func (h *LandingAttributionHandler) adminSourceBreakdownRow(sourceCode string, count int64) adminSourceBreakdownRow {
+	return adminSourceBreakdownRow{
+		SourceCode: sourceCode,
+		Label:      h.labelFor(sourceCode),
+		Count:      count,
+	}
 }
 
 func (h *LandingAttributionHandler) resolveSource(explicitSource string, referrer string) string {
