@@ -10,7 +10,7 @@ import {
 } from "@/lib/api";
 import { countryDisplay, countryNameFromCode } from "@/lib/countries";
 
-import { CountryDonut, SourceDonut } from "../_components/country-donut";
+import { CountryDonut, PathDonut } from "../_components/country-donut";
 import { AdminShell, StatCard, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
 const RANGE_OPTIONS = [7, 30, 90, 180] as const;
@@ -215,10 +215,10 @@ export default function AdminVisitorsPage() {
           loading={loading}
           valueLabel="visitors"
         />
-        <SourceDonut
-          title="Visitor sources"
+        <PathDonut
+          title="Visitor paths"
           subtitle={`Last ${data?.range_days ?? days} days`}
-          rows={data?.sources ?? []}
+          rows={data?.paths ?? []}
           loading={loading}
           valueLabel="visitors"
         />

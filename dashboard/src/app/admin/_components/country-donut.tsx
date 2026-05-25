@@ -11,8 +11,8 @@ export type CountryBreakdownRow = {
   count: number;
 };
 
-export type SourceBreakdownRow = {
-  source_code: string;
+export type PathBreakdownRow = {
+  path: string;
   label: string;
   count: number;
 };
@@ -24,7 +24,7 @@ type BreakdownDonutRow = {
 };
 
 const BREAKDOWN_COLORS = ["#059669", "#2563eb", "#d97706", "#dc2626", "#7c3aed", "#64748b"];
-const SOURCE_COLORS = ["#0f766e", "#2563eb", "#b45309", "#be123c", "#475569", "#52525b"];
+const PATH_COLORS = ["#0f766e", "#2563eb", "#b45309", "#be123c", "#475569", "#52525b"];
 
 function compactRows(rows: BreakdownDonutRow[]) {
   const top = rows.slice(0, 5).map((row) => ({
@@ -163,7 +163,7 @@ export function CountryDonut({
   );
 }
 
-export function SourceDonut({
+export function PathDonut({
   title,
   subtitle,
   rows,
@@ -172,7 +172,7 @@ export function SourceDonut({
 }: {
   title: string;
   subtitle: string;
-  rows: SourceBreakdownRow[];
+  rows: PathBreakdownRow[];
   loading?: boolean;
   valueLabel: string;
 }) {
@@ -181,16 +181,16 @@ export function SourceDonut({
       title={title}
       subtitle={subtitle}
       rows={rows.map((row) => ({
-        key: row.source_code || "__unknown_source",
-        label: row.label || row.source_code || "Unknown",
+        key: row.path || "__unknown_path",
+        label: row.label || row.path || "/",
         count: row.count,
       }))}
       loading={loading}
       valueLabel={valueLabel}
-      centerLabel="sources"
-      loadingLabel="Loading source mix..."
-      emptyLabel="No source data yet"
-      colors={SOURCE_COLORS}
+      centerLabel="paths"
+      loadingLabel="Loading path mix..."
+      emptyLabel="No path data yet"
+      colors={PATH_COLORS}
     />
   );
 }

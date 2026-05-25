@@ -53,16 +53,16 @@ func TestResolveSourceWithAttributionUsesOtherForUnknownUTM(t *testing.T) {
 	}
 }
 
-func TestAdminSourceBreakdownRowUsesDisplayLabel(t *testing.T) {
+func TestAdminPathBreakdownRowUsesPathLabel(t *testing.T) {
 	h := NewLandingAttributionHandler(nil)
 
-	got := h.adminSourceBreakdownRow("ph", 12)
+	got := h.adminPathBreakdownRow("/docs/api", 12)
 
-	if got.SourceCode != "ph" {
-		t.Fatalf("SourceCode = %q, want ph", got.SourceCode)
+	if got.Path != "/docs/api" {
+		t.Fatalf("Path = %q, want /docs/api", got.Path)
 	}
-	if got.Label != "Product Hunt" {
-		t.Fatalf("Label = %q, want Product Hunt", got.Label)
+	if got.Label != "/docs/api" {
+		t.Fatalf("Label = %q, want /docs/api", got.Label)
 	}
 	if got.Count != 12 {
 		t.Fatalf("Count = %d, want 12", got.Count)
