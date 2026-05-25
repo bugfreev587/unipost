@@ -9,7 +9,7 @@ const QUICKSTART_SESSION_SNIPPETS = [
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "platform": "tiktok",
+    "platform": "linkedin",
     "profile_id": "pr_brand_us",
     "external_user_id": "creator-user-42",
     "external_user_email": "creator@example.com",
@@ -24,7 +24,7 @@ const QUICKSTART_SESSION_SNIPPETS = [
 const client = new UniPost();
 
 const session = await client.connect.createSession({
-  platform: "tiktok",
+  platform: "linkedin",
   profileId: "pr_brand_us",
   externalUserId: "creator-user-42",
   externalUserEmail: "creator@example.com",
@@ -70,6 +70,25 @@ console.log(session.url);`,
   },
 ];
 
+const WEBHOOK_SNIPPETS = [
+  {
+    label: "account.connected",
+    lang: "json",
+    code: `{
+  "event": "account.connected",
+  "timestamp": "2026-04-08T10:00:00Z",
+  "data": {
+    "social_account_id": "sa_linkedin_123",
+    "profile_id": "pr_brand_us",
+    "platform": "linkedin",
+    "account_name": "Example Company",
+    "external_user_id": "creator-user-42",
+    "connection_type": "managed"
+  }
+}`,
+  },
+];
+
 const POLLING_SNIPPETS = [
   {
     label: "cURL",
@@ -78,11 +97,30 @@ const POLLING_SNIPPETS = [
   },
   {
     label: "Node.js",
-    code: `const session = await client.connect.getSession("cs_abc123");
+    code: `const terminal = new Set(["completed", "expired", "cancelled"]);
+const deadline = Date.now() + 31 * 60 * 1000;
+let connectedAccountId = null;
 
-if (session.status === "completed") {
-  console.log(session.managedAccountId);
-}`,
+while (Date.now() < deadline) {
+  const session = await client.connect.getSession("cs_abc123");
+
+  if (session.status === "completed") {
+    connectedAccountId = session.managedAccountId;
+    break;
+  }
+
+  if (terminal.has(session.status)) {
+    throw new Error(\`Connect session ended with status: \${session.status}\`);
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+}
+
+if (!connectedAccountId) {
+  throw new Error("Connect session did not complete before timeout");
+}
+
+console.log(connectedAccountId);`,
   },
 ];
 
@@ -118,13 +156,17 @@ export default function ConnectSessionsGuidePage() {
           ["What you store", <><code>external_user_id</code> plus the completed <code>managed_account_id</code></>],
           ["What you publish with", <><code>managed_account_id</code>, used as the UniPost <code>account_id</code> in <code>platform_posts</code></>],
           ["Credential modes", "Quickstart credentials or white-label credentials"],
+          ["Session lifetime", "30 minutes. Polling after the TTL returns expired for sessions still pending."],
+          ["Plan gates", "Some platforms can require a paid plan before account connection. For example, X / Twitter may return 402 PLAN_PLATFORM_NOT_ALLOWED."],
         ]}
       />
 
       <h2 id="credential-modes">Credential modes</h2>
       <p className="cs-note">
         The endpoint is the same in both modes. The difference is which OAuth app
-        the platform sees during authorization.
+        the platform sees during authorization. If you omit{" "}
+        <code>allow_quickstart_creds</code>, it defaults to <code>false</code>,
+        so OAuth platforms require uploaded white-label credentials.
       </p>
       <DocsTable
         columns={["Mode", "How to create it", "OAuth app used", "Best for"]}
@@ -148,6 +190,11 @@ export default function ConnectSessionsGuidePage() {
         uses those credentials. <code>allow_quickstart_creds=true</code> only
         permits fallback to UniPost&apos;s shared app when workspace credentials are
         missing.
+      </p>
+      <p className="cs-note">
+        These credential modes apply to OAuth platforms. Bluesky uses app
+        passwords instead of OAuth apps, so <code>allow_quickstart_creds</code>{" "}
+        does not change the Bluesky Connect Session path.
       </p>
 
       <h2 id="quickstart-session">Quickstart Connect Session</h2>
@@ -191,11 +238,27 @@ export default function ConnectSessionsGuidePage() {
         them with your <code>return_url</code>.
       </p>
 
-      <h2 id="polling">Poll for completion</h2>
+      <h2 id="completion">Handle completion</h2>
       <p className="cs-note">
-        The hosted URL is browser-facing. Your backend should poll the session
-        until it becomes <code>completed</code>, then store the returned managed
-        account id for publishing.
+        The hosted URL is browser-facing. Your backend should subscribe to the{" "}
+        <code>account.connected</code> webhook and store the returned{" "}
+        <code>social_account_id</code> as the account id for future publishing.
+        This is the recommended production path because UniPost pushes the result
+        as soon as the account is connected.
+      </p>
+      <DocsCodeTabs snippets={WEBHOOK_SNIPPETS} />
+      <p className="cs-note">
+        See <Link href="/docs/api/webhooks">Developer webhooks</Link> for
+        subscription setup, signatures, and retry behavior.
+      </p>
+
+      <h2 id="polling-fallback">Poll as a fallback</h2>
+      <p className="cs-note">
+        Poll <ApiInlineLink endpoint="GET /v1/connect/sessions/:session_id" />{" "}
+        for local development, CLI demos, or integrations that cannot receive
+        webhooks. Stop polling on every terminal state:
+        <code> completed</code>, <code>expired</code>, or <code>cancelled</code>.
+        A pending session expires after 30 minutes.
       </p>
       <DocsCodeTabs snippets={POLLING_SNIPPETS} />
 
@@ -209,7 +272,7 @@ export default function ConnectSessionsGuidePage() {
         <Link href="/docs/api/connect/sessions/get" className="cs-next-card">
           <div className="cs-next-kicker">API reference</div>
           <div className="cs-next-title">Get session</div>
-          <div className="cs-next-body">Poll status and read the completed managed account id.</div>
+          <div className="cs-next-body">Fallback polling for status and the completed managed account id.</div>
         </Link>
         <Link href="/docs/white-label" className="cs-next-card">
           <div className="cs-next-kicker">Branded OAuth</div>

@@ -1,6 +1,7 @@
 "use client";
 
-import type { ApiFieldItem } from "../../../_components/doc-components";
+import Link from "next/link";
+import { EnumValues, type ApiFieldItem } from "../../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -11,9 +12,11 @@ const PATH_FIELDS: ApiFieldItem[] = [
 ];
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Connect session ID." },
-  { name: "status", type: "string", description: 'Session state such as "pending", "completed", or "expired".' },
+  { name: "status", type: "string", description: <>Session lifecycle state.<EnumValues values={["pending", "completed", "expired", "cancelled"]} /></> },
   { name: "managed_account_id", type: "string | null", description: "Resulting UniPost account when the flow completes." },
+  { name: "completed_social_account_id", type: "string | null", description: "Alias of managed_account_id for completed sessions." },
   { name: "external_user_id", type: "string", description: "Your user identifier associated with the flow." },
+  { name: "expires_at", type: "string", description: "Expiration timestamp for the hosted session. Pending sessions expire after 30 minutes." },
 ];
 const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED" or "NOT_FOUND".' },
@@ -92,7 +95,9 @@ const RESPONSE_SNIPPETS = [
     "id": "cs_abc123",
     "status": "completed",
     "managed_account_id": "sa_twitter_123",
-    "external_user_id": "user_123"
+    "completed_social_account_id": "sa_twitter_123",
+    "external_user_id": "user_123",
+    "expires_at": "2026-04-22T18:00:00Z"
   }
 }`,
   },
@@ -115,7 +120,14 @@ export default function GetConnectSessionPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Get connect session"
-      description="Returns the current status of a hosted Connect session. Use it when polling for completion during onboarding."
+      description={
+        <>
+          Returns the current status of a hosted Connect session. Subscribe to
+          the <code>account.connected</code> webhook for production completion
+          handling; use this endpoint for local development, CLI demos, or
+          fallback polling.
+        </>
+      }
       method="GET"
       path="/v1/connect/sessions/:session_id"
       requestSections={[
@@ -130,6 +142,16 @@ export default function GetConnectSessionPage() {
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
-    />
+    >
+      <section className="api-field-section">
+        <h2 className="api-field-section-title">Polling behavior</h2>
+        <p>
+          Poll only until the session reaches a terminal state:{" "}
+          <code>completed</code>, <code>expired</code>, or <code>cancelled</code>.
+          New sessions expire after 30 minutes. For production integrations,
+          prefer <Link href="/docs/api/webhooks">developer webhooks</Link>.
+        </p>
+      </section>
+    </SingleEndpointReferencePage>
   );
 }
