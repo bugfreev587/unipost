@@ -29,6 +29,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
 	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
@@ -302,6 +303,19 @@ func main() {
 	} else {
 		slog.Info("notifications: RESEND_API_KEY unset, using NoopMailer")
 	}
+
+	var loopsSyncer *loops.Syncer
+	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
+		loopsClient := loops.NewClient(loops.Config{
+			APIKey:  key,
+			BaseURL: os.Getenv("LOOPS_BASE_URL"),
+		})
+		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{})
+		slog.Info("loops: lifecycle sync configured")
+	} else {
+		slog.Info("loops: LOOPS_API_KEY unset, lifecycle sync disabled")
+	}
+
 	notificationDispatcher := worker.NewNotificationDispatcher(queries)
 	notificationWorker := worker.NewNotificationDeliveryWorker(queries, mailer, os.Getenv("APP_BASE_URL"))
 	go notificationWorker.Start(workerCtx)
@@ -371,7 +385,7 @@ func main() {
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
-	webhookHandler := handler.NewWebhookHandler(queries, mailer, os.Getenv("APP_BASE_URL"))
+	webhookHandler := handler.NewWebhookHandler(queries, mailer, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
 	profileHandler := handler.NewProfileHandler(queries, quotaChecker)
 	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
