@@ -53,7 +53,7 @@ func NewTikTokConnector(clientKey, clientSecret, callbackBaseURL string) *TikTok
 	return &TikTokConnector{
 		clientKey:         clientKey,
 		clientSecret:      clientSecret,
-		redirectURI:       strings.TrimRight(callbackBaseURL, "/") + "/v1/oauth/callback/tiktok",
+		redirectURI:       strings.TrimRight(callbackBaseURL, "/") + "/v1/connect/callback/tiktok",
 		httpClient:        &http.Client{Timeout: 15 * time.Second},
 		AuthorizeEndpoint: tiktokAuthorizeEndpoint,
 		TokenEndpoint:     tiktokTokenEndpoint,
