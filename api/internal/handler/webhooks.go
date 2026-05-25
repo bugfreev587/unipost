@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,13 +18,15 @@ import (
 	svix "github.com/svix/svix-webhooks/go"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
 
 type WebhookHandler struct {
-	queries    *db.Queries
-	mailer     mail.Mailer
-	appBaseURL string
+	queries     *db.Queries
+	mailer      mail.Mailer
+	appBaseURL  string
+	loopsSyncer loopsDashboardUserSyncer
 }
 
 func NewWebhookHandler(queries *db.Queries, mailer mail.Mailer, appBaseURL string) *WebhookHandler {
@@ -35,6 +38,15 @@ func NewWebhookHandler(queries *db.Queries, mailer mail.Mailer, appBaseURL strin
 		mailer:     mailer,
 		appBaseURL: strings.TrimRight(appBaseURL, "/"),
 	}
+}
+
+type loopsDashboardUserSyncer interface {
+	SyncDashboardUser(context.Context, loops.DashboardUser) error
+}
+
+func (h *WebhookHandler) SetLoopsSyncer(syncer loopsDashboardUserSyncer) *WebhookHandler {
+	h.loopsSyncer = syncer
+	return h
 }
 
 type clerkWebhookEvent struct {
@@ -166,7 +178,12 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 	// dashboard has something to show on first login.
 	existing, _ := h.queries.ListWorkspacesByUser(r.Context(), userData.ID)
 	createdWorkspace := false
+	workspaceID := ""
 	workspaceName := ""
+	if len(existing) > 0 {
+		workspaceID = existing[0].ID
+		workspaceName = existing[0].Name
+	}
 	if len(existing) == 0 {
 		wsName := "Default Workspace"
 		if name != "" {
@@ -213,10 +230,13 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 				})
 				log.Printf("Created workspace '%s' + Default profile for user %s", wsName, userData.ID)
 				createdWorkspace = true
+				workspaceID = ws.ID
 				workspaceName = wsName
 			}
 		}
 	}
+
+	h.syncLoopsDashboardUser(r.Context(), eventType, userData, email, name, workspaceID, workspaceName)
 
 	if eventType == "user.created" && createdWorkspace && email != "" {
 		slog.Info("welcome email: sending",
@@ -248,6 +268,24 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 
 	log.Printf("Synced user %s (%s)", userData.ID, email)
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *WebhookHandler) syncLoopsDashboardUser(ctx context.Context, eventType string, userData clerkUserData, email, name, workspaceID, workspaceName string) {
+	if h == nil || h.loopsSyncer == nil {
+		return
+	}
+	if err := h.loopsSyncer.SyncDashboardUser(ctx, loops.DashboardUser{
+		ID:            userData.ID,
+		Email:         email,
+		Name:          name,
+		FirstName:     userData.FirstName,
+		LastName:      userData.LastName,
+		WorkspaceID:   workspaceID,
+		WorkspaceName: workspaceName,
+		Event:         eventType,
+	}); err != nil {
+		slog.Warn("loops: dashboard user sync failed", "user_id", userData.ID, "email", email, "event", eventType, "error", err)
+	}
 }
 
 func renderWelcomeEmail(to, userName, workspaceName, appBaseURL string) mail.Message {

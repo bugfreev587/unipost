@@ -146,6 +146,22 @@ Owner area: Inbox / Dashboard. This flag controls the UniPost Inbox surface, inc
 Create this flag in Unleash:
 
 ```text
+email.loops_integration_v1
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Growth lifecycle / Backend API. This flag controls Loops contact sync and lifecycle event delivery for UniPost dashboard users. When enabled and `LOOPS_API_KEY` is configured, Clerk `user.created` and `user.updated` webhooks upsert dashboard users into Loops contacts, and `user.created` emits a `user_signed_up` event. Production rollback is to disable `email.loops_integration_v1`; the backend then keeps normal signup/webhook behavior but stops making outbound Loops calls. Third-party dependency: Loops API availability and account configuration.
+
+Create this flag in Unleash:
+
+```text
 billing.free_plan_hard_post_quota
 ```
 
