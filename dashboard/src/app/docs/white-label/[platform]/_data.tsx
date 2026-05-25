@@ -596,7 +596,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
     dashboardCard: "TikTok",
     clientIdLabel: "Client Key",
     clientSecretLabel: "Client Secret",
-    callbacks: ["https://api.unipost.dev/v1/oauth/callback/tiktok"],
+    callbacks: ["https://api.unipost.dev/v1/connect/callback/tiktok"],
     bestFor: "Products that need customer TikTok connections and are ready for a more compliance-heavy setup than LinkedIn.",
     appReview: "Expect more scrutiny than LinkedIn. Build time for audit / review into the rollout plan, not after engineering is done.",
     beforeYouStart: [
