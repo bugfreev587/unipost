@@ -11,36 +11,56 @@ export type CountryBreakdownRow = {
   count: number;
 };
 
-const COUNTRY_COLORS = ["#059669", "#2563eb", "#d97706", "#dc2626", "#7c3aed", "#64748b"];
+export type SourceBreakdownRow = {
+  source_code: string;
+  label: string;
+  count: number;
+};
 
-function compactRows(rows: CountryBreakdownRow[]) {
+type BreakdownDonutRow = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+const BREAKDOWN_COLORS = ["#059669", "#2563eb", "#d97706", "#dc2626", "#7c3aed", "#64748b"];
+const SOURCE_COLORS = ["#0f766e", "#2563eb", "#b45309", "#be123c", "#475569", "#52525b"];
+
+function compactRows(rows: BreakdownDonutRow[]) {
   const top = rows.slice(0, 5).map((row) => ({
     ...row,
-    label: countryDisplay(row.country_code),
   }));
   const rest = rows.slice(5).reduce((sum, row) => sum + row.count, 0);
   if (rest > 0) {
-    top.push({ country_code: "", count: rest, label: "Other" });
+    top.push({ key: "__other", count: rest, label: "Other" });
   }
   return top;
 }
 
-export function CountryDonut({
+function BreakdownDonut({
   title,
   subtitle,
   rows,
   loading,
   valueLabel,
+  centerLabel,
+  loadingLabel,
+  emptyLabel,
+  colors = BREAKDOWN_COLORS,
 }: {
   title: string;
   subtitle: string;
-  rows: CountryBreakdownRow[];
+  rows: BreakdownDonutRow[];
   loading?: boolean;
   valueLabel: string;
+  centerLabel: string;
+  loadingLabel: string;
+  emptyLabel: string;
+  colors?: string[];
 }) {
   const data = compactRows(rows.filter((row) => row.count > 0));
   const total = rows.reduce((sum, row) => sum + row.count, 0);
-  const countryCount = rows.filter((row) => row.count > 0).length;
+  const itemCount = rows.filter((row) => row.count > 0).length;
 
   return (
     <div className="ad-country-card">
@@ -72,7 +92,7 @@ export function CountryDonut({
                   strokeWidth={2}
                 >
                   {data.map((entry, index) => (
-                    <Cell key={entry.country_code || `other-${index}`} fill={COUNTRY_COLORS[index % COUNTRY_COLORS.length]} />
+                    <Cell key={entry.key || `other-${index}`} fill={colors[index % colors.length]} />
                   ))}
                 </Pie>
                 <Tooltip
@@ -87,16 +107,16 @@ export function CountryDonut({
               </PieChart>
             </ResponsiveContainer>
             <div className="ad-country-center">
-              <strong>{countryCount}</strong>
-              <span>countries</span>
+              <strong>{itemCount}</strong>
+              <span>{centerLabel}</span>
             </div>
           </div>
           <div className="ad-country-list">
             {data.map((row, index) => {
               const pct = total > 0 ? (row.count / total) * 100 : 0;
               return (
-                <div className="ad-country-row" key={row.country_code || `other-row-${index}`}>
-                  <span className="ad-country-dot" style={{ background: COUNTRY_COLORS[index % COUNTRY_COLORS.length] }} />
+                <div className="ad-country-row" key={row.key || `other-row-${index}`}>
+                  <span className="ad-country-dot" style={{ background: colors[index % colors.length] }} />
                   <span className="ad-country-label">{row.label}</span>
                   <span className="ad-country-count">{fmtNumber(row.count)}</span>
                   <span className="ad-country-pct">{pct.toFixed(0)}%</span>
@@ -106,9 +126,72 @@ export function CountryDonut({
           </div>
         </div>
       ) : (
-        <div className="ad-country-empty">{loading ? "Loading country mix..." : "No country data yet"}</div>
+        <div className="ad-country-empty">{loading ? loadingLabel : emptyLabel}</div>
       )}
     </div>
+  );
+}
+
+export function CountryDonut({
+  title,
+  subtitle,
+  rows,
+  loading,
+  valueLabel,
+}: {
+  title: string;
+  subtitle: string;
+  rows: CountryBreakdownRow[];
+  loading?: boolean;
+  valueLabel: string;
+}) {
+  return (
+    <BreakdownDonut
+      title={title}
+      subtitle={subtitle}
+      rows={rows.map((row) => ({
+        key: row.country_code || "__unknown_country",
+        label: countryDisplay(row.country_code),
+        count: row.count,
+      }))}
+      loading={loading}
+      valueLabel={valueLabel}
+      centerLabel="countries"
+      loadingLabel="Loading country mix..."
+      emptyLabel="No country data yet"
+    />
+  );
+}
+
+export function SourceDonut({
+  title,
+  subtitle,
+  rows,
+  loading,
+  valueLabel,
+}: {
+  title: string;
+  subtitle: string;
+  rows: SourceBreakdownRow[];
+  loading?: boolean;
+  valueLabel: string;
+}) {
+  return (
+    <BreakdownDonut
+      title={title}
+      subtitle={subtitle}
+      rows={rows.map((row) => ({
+        key: row.source_code || "__unknown_source",
+        label: row.label || row.source_code || "Unknown",
+        count: row.count,
+      }))}
+      loading={loading}
+      valueLabel={valueLabel}
+      centerLabel="sources"
+      loadingLabel="Loading source mix..."
+      emptyLabel="No source data yet"
+      colors={SOURCE_COLORS}
+    />
   );
 }
 

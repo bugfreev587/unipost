@@ -53,6 +53,22 @@ func TestResolveSourceWithAttributionUsesOtherForUnknownUTM(t *testing.T) {
 	}
 }
 
+func TestAdminSourceBreakdownRowUsesDisplayLabel(t *testing.T) {
+	h := NewLandingAttributionHandler(nil)
+
+	got := h.adminSourceBreakdownRow("ph", 12)
+
+	if got.SourceCode != "ph" {
+		t.Fatalf("SourceCode = %q, want ph", got.SourceCode)
+	}
+	if got.Label != "Product Hunt" {
+		t.Fatalf("Label = %q, want Product Hunt", got.Label)
+	}
+	if got.Count != 12 {
+		t.Fatalf("Count = %d, want 12", got.Count)
+	}
+}
+
 func TestSanitizeLandingAttributionKeepsAllowedKeys(t *testing.T) {
 	got := sanitizeLandingAttribution(map[string]string{
 		"utm_source":   "ProductHunt",
