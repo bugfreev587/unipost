@@ -170,11 +170,12 @@ function PlatformNextSteps({
           backend.
         </div>
       </Link>
-      <Link href="/docs/white-label" className="docs-next-card">
+      <Link href="/docs/connect-sessions" className="docs-next-card">
         <div className="docs-next-kicker">Customer accounts</div>
         <div className="docs-next-title">Plan account connection</div>
         <div className="docs-next-body">
-          Choose Quickstart or White-label based on who owns the social accounts.
+          Use Connect Sessions for customer-owned accounts, with Quickstart or
+          white-label credentials.
         </div>
       </Link>
     </div>
@@ -301,9 +302,11 @@ export default async function PlatformDetailPage({
       <h2 id="setup-modes">Connection modes</h2>
       <p className="docs-note">
         Pick the setup that matches how the account is owned. Quickstart is fastest
-        when you publish to your own accounts; White-label is required when your
-        customers bring their own accounts through a branded flow. Full setup
-        details in <Link href="/docs/quickstart">Quickstart</Link> and{" "}
+        when you publish to your own accounts; Connect Sessions are for
+        customer-owned account onboarding; White-label controls whether the
+        platform consent screen uses your app credentials and brand. Full setup
+        details in <Link href="/docs/quickstart">Quickstart</Link>,{" "}
+        <Link href="/docs/connect-sessions">Connect Sessions</Link>, and{" "}
         <Link href="/docs/white-label">White-label</Link>.
       </p>
       <DocsTable

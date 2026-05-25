@@ -6,7 +6,7 @@ export default function DocsHomePage() {
     <DocsPage
       eyebrow="Overview"
       title="Choose the fastest path into UniPost"
-      lead="UniPost supports two common starting points: publishing from the dashboard UI, or publishing programmatically through the API. Pick the path that matches how you want to work first."
+      lead="UniPost supports dashboard publishing, programmatic publishing, and hosted account connection flows. Pick the path that matches how you want to work first."
     >
       <div className="docs-grid">
         <Link href="/docs/dashboard-quickstart" className="docs-card" style={{ textDecoration: "none" }}>
@@ -16,6 +16,10 @@ export default function DocsHomePage() {
         <Link href="/docs/quickstart" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Quickstart Mode</div>
           <p>Create an API key, connect accounts, and publish programmatically with the REST API or SDKs.</p>
+        </Link>
+        <Link href="/docs/connect-sessions" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Connect Sessions</div>
+          <p>Let end users connect customer-owned accounts with hosted OAuth, using Quickstart or white-label credentials.</p>
         </Link>
       </div>
 
@@ -41,7 +45,9 @@ export default function DocsHomePage() {
       </p>
 
       <p>
-        <strong>Customer-owned accounts:</strong> if you are embedding UniPost into your own product, see <Link href="/docs/white-label">White-label Mode</Link>.
+        <strong>Customer-owned accounts:</strong> if you are embedding UniPost into your own product, start with{" "}
+        <Link href="/docs/connect-sessions">Connect Sessions</Link>. Use <Link href="/docs/white-label">White-label Mode</Link>{" "}
+        when you need your own OAuth app and branded consent screens.
       </p>
     </DocsPage>
   );
