@@ -263,7 +263,7 @@ export default function QuickstartPage() {
           ["OAuth style", "Self-owned account connection via auth_url"],
           ["What you get back", "A profile_id, then an auth_url, then one or more account IDs"],
           ["Best for", "Prototypes, internal tools, your own brand accounts"],
-          ["Need customer onboarding?", <Link key="quickstart-wl" href="/docs/white-label">Use White-label / Connect Sessions instead</Link>],
+          ["Need customer onboarding?", <Link key="quickstart-sessions" href="/docs/connect-sessions">Use Connect Sessions</Link>],
         ]}
       />
 
@@ -295,6 +295,12 @@ export default function QuickstartPage() {
       <p className="qs-note">
         You can optionally add <code>redirect_url</code> in the request body if you want OAuth to land on your own app afterward, but Quickstart leaves it out to keep the first connection as simple as possible. Endpoint reference:{" "}
         <ApiInlineLink endpoint="POST /v1/oauth/connect" />.
+      </p>
+      <p className="qs-note">
+        If your product needs end users to connect customer-owned accounts, use{" "}
+        <Link href="/docs/connect-sessions">Connect Sessions</Link> instead.
+        Pass <code>allow_quickstart_creds=true</code> to use UniPost&apos;s shared
+        Quickstart OAuth apps without uploading your own platform credentials.
       </p>
       <p className="qs-note">
         Bluesky is the exception. It uses an app password, not OAuth, so connect it through <ApiInlineLink endpoint="POST /v1/accounts/connect" /> instead.
@@ -336,7 +342,7 @@ export default function QuickstartPage() {
         columns={["Flow", "Use this page?", "Where to go instead"]}
         rows={[
           ["Connect your own accounts with OAuth auth_url", "Yes", "This page"],
-          ["Connect customer-owned accounts", "No", <Link key="wl" href="/docs/white-label">White-label / Connect Sessions</Link>],
+          ["Connect customer-owned accounts", "No", <Link key="connect-sessions" href="/docs/connect-sessions">Connect Sessions</Link>],
           ["Connect Bluesky with app password", "Partially", <Link key="acct-connect" href="/docs/api/accounts/connect">POST /v1/accounts/connect</Link>],
         ]}
       />
@@ -353,10 +359,10 @@ export default function QuickstartPage() {
           <div className="qs-next-title">Connect account</div>
           <div className="qs-next-body">Use this direct-connect endpoint for Bluesky and other non-OAuth credential flows.</div>
         </Link>
-        <Link href="/docs/white-label" className="qs-next-card">
+        <Link href="/docs/connect-sessions" className="qs-next-card">
           <div className="qs-next-kicker">For customer accounts</div>
-          <div className="qs-next-title">White-label Mode</div>
-          <div className="qs-next-body">Customer-owned onboarding with Connect Sessions, external_user_id, and branded OAuth.</div>
+          <div className="qs-next-title">Connect Sessions</div>
+          <div className="qs-next-body">Customer-owned onboarding with hosted OAuth, external_user_id, and optional Quickstart credentials.</div>
         </Link>
         <Link href="/docs/api/posts/create" className="qs-next-card">
           <div className="qs-next-kicker">Publish</div>

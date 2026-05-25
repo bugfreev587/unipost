@@ -636,7 +636,14 @@ export function PublishingLocalFileFlow() {
       <DocsTable
         columns={["Step", "API call", "Purpose"]}
         rows={[
-          ["1", <ApiInlineLink key="connect" endpoint="POST /v1/oauth/connect" />, "Connect the platform account, then list accounts to keep its account_id."],
+          [
+            "1",
+            <span key="connect">
+              <ApiInlineLink endpoint="POST /v1/oauth/connect" /> or{" "}
+              <ApiInlineLink endpoint="POST /v1/connect/sessions" />
+            </span>,
+            "Connect the platform account, then keep the returned account_id or completed managed_account_id.",
+          ],
           ["2", <ApiInlineLink key="reserve" endpoint="POST /v1/media" />, "Reserve a media row and receive a presigned upload_url."],
           ["3", <code key="put">PUT upload_url</code>, "Upload the raw image or video bytes directly to storage."],
           ["4", <ApiInlineLink key="get-media" endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" />, "Poll until status is uploaded or attached."],

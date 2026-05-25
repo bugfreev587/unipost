@@ -23,6 +23,12 @@ export default function PublishingGuidePage() {
         Platform pages still define which media counts, formats, surfaces, and
         options are valid for each destination.
       </p>
+      <p className="docs-note">
+        This guide starts after an account exists. Connect workspace-owned accounts
+        with <ApiInlineLink endpoint="POST /v1/oauth/connect" />, or onboard
+        customer-owned accounts with{" "}
+        <Link href="/docs/connect-sessions">Connect Sessions</Link>.
+      </p>
       <PublishingInputModeCards />
 
       <PublishingLocalFileFlow />

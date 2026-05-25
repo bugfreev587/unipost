@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { EnumValues, type ApiFieldItem } from "../../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../../_components/single-endpoint-page";
 
@@ -12,17 +13,17 @@ const BODY_FIELDS: ApiFieldItem[] = [
   { name: "profile_id?", type: "string", description: "Profile that should own the resulting connected account. Required when the workspace has multiple profiles." },
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
-  { name: "return_url?", type: "string", description: "Where UniPost redirects the user after completion." },
-  { name: "allow_quickstart_creds?", type: "boolean", description: "Optional escape hatch for OAuth platforms. Defaults to false. When false, the workspace must already have white-label platform credentials uploaded for that platform. Set true only if you intentionally want this session to fall back to UniPost's shared Quickstart OAuth app." },
+  { name: "return_url?", type: "string", description: "Where UniPost redirects the user after completion, cancellation, or a handled OAuth failure. This is not the OAuth callback URL or platform redirect_uri." },
+  { name: "allow_quickstart_creds?", type: "boolean", description: "Optional escape hatch for OAuth platforms. Defaults to false. When false, the workspace must already have white-label platform credentials uploaded for that platform. When true, UniPost may fall back to the shared Quickstart OAuth app if no workspace credentials exist; workspace credentials still take priority when present." },
 ];
 
 const RESPONSE_201_FIELDS: ApiFieldItem[] = [
   { name: "id", type: "string", description: "Connect session ID." },
   { name: "url", type: "string", description: "Hosted onboarding URL to redirect the user to." },
-  { name: "allow_quickstart_creds", type: "boolean", description: "Whether this session is allowed to fall back to UniPost's shared Quickstart OAuth app when no workspace-specific credentials exist." },
+  { name: "allow_quickstart_creds", type: "boolean", description: "Whether this session is allowed to fall back to UniPost's shared Quickstart OAuth app when no workspace-specific credentials exist. Workspace credentials still take priority when present." },
   { name: "managed_account_id", type: "string", description: "Present after the session completes. Alias of completed_social_account_id for hosted Connect callers." },
   { name: "status", type: "string", description: <>Session lifecycle state. Create responses start as pending.<EnumValues values={["pending", "completed", "expired", "cancelled"]} /></> },
-  { name: "expires_at", type: "string | null", description: "Expiration timestamp for the hosted session." },
+  { name: "expires_at", type: "string | null", description: "Expiration timestamp for the hosted session. New sessions expire after 30 minutes." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
@@ -40,7 +41,7 @@ const SNIPPETS = [
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "platform": "tiktok",
+    "platform": "linkedin",
     "profile_id": "pr_brand_us",
     "external_user_id": "user_123",
     "external_user_email": "alex@acme.com",
@@ -74,7 +75,7 @@ console.log(session.url);`,
 client = UniPost()
 
 session = client.connect.create_session(
-  platform="tiktok",
+  platform="linkedin",
   profile_id="pr_brand_us",
   external_user_id="user_123",
   external_user_email="alex@acme.com",
@@ -125,7 +126,7 @@ import java.util.Map;
 UniPost client = new UniPost();
 
 var session = client.connect().createSession(Map.of(
-    "platform", "tiktok",
+    "platform", "linkedin",
     "profile_id", "pr_brand_us",
     "external_user_id", "user_123",
     "external_user_email", "alex@acme.com",
@@ -144,8 +145,8 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "id": "cs_abc123",
-    "platform": "tiktok",
-    "url": "https://app.unipost.dev/connect/tiktok?session=cs_abc123&state=state_123",
+    "platform": "linkedin",
+    "url": "https://app.unipost.dev/connect/linkedin?session=cs_abc123&state=state_123",
     "allow_quickstart_creds": true,
     "status": "pending",
     "expires_at": "2026-04-22T18:00:00Z"
@@ -183,7 +184,19 @@ export default function CreateConnectSessionPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Create connect session"
-      description="Creates a hosted onboarding session for a customer-owned social account. Use the returned URL to send the end user into UniPost's managed Connect flow. For OAuth platforms, this endpoint defaults to white-label mode: the workspace must already have platform credentials uploaded unless you explicitly pass allow_quickstart_creds=true. Facebook Page sessions connect the first publishable Page returned by Meta for the authorizing user."
+      description={
+        <>
+          Creates a hosted onboarding session for a customer-owned social account.
+          Use the returned URL to send the end user into UniPost&apos;s managed
+          Connect flow. For OAuth platforms, this endpoint defaults to
+          white-label mode: the workspace must already have platform credentials
+          uploaded unless you explicitly pass <code>allow_quickstart_creds=true</code>.
+          Facebook Page sessions connect the first publishable Page returned by
+          Meta for the authorizing user.
+          See the <Link href="/docs/connect-sessions">Connect Sessions guide</Link>{" "}
+          for Quickstart and white-label credential behavior.
+        </>
+      }
       method="POST"
       path="/v1/connect/sessions"
       requestSections={[
@@ -199,6 +212,17 @@ export default function CreateConnectSessionPage() {
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
-    />
+    >
+      <section className="api-field-section">
+        <h2 className="api-field-section-title">Callback URLs</h2>
+        <p>
+          <code>return_url</code> only controls where the browser lands after
+          UniPost finishes handling the session. Platform OAuth callback URLs are
+          generated by UniPost. Quickstart sessions use UniPost&apos;s registered
+          callbacks; white-label apps must allow-list the exact callback URL
+          shown in the <Link href="/docs/white-label">white-label platform guides</Link>.
+        </p>
+      </section>
+    </SingleEndpointReferencePage>
   );
 }
