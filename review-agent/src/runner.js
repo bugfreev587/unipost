@@ -1,6 +1,7 @@
 import { validateScript } from "./script-contract.js";
+import { buildReviewSessionCookie } from "./session-cookie.js";
 
-export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null } = {}) {
+export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "" } = {}) {
   const valid = validateScript(script);
   if (dryRun) {
     out.write(`Review script ${valid.job_id} (${valid.steps.length} steps)\n`);
@@ -19,6 +20,10 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     },
     recordVideo: undefined,
   });
+  const sessionCookie = buildReviewSessionCookie(valid, sessionToken);
+  if (sessionCookie) {
+    await context.addCookies([sessionCookie]);
+  }
   const page = await context.newPage();
   const markers = [];
   let currentStepId = "";

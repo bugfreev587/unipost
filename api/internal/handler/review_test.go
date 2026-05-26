@@ -171,8 +171,8 @@ func TestReviewCreateJobIssuesTokensAndPinnedCommand(t *testing.T) {
 	if env.Data.AgentVersion != reviewAgentVersion {
 		t.Fatalf("agent version = %q", env.Data.AgentVersion)
 	}
-	if !strings.Contains(env.Data.AgentCommand, "npx --yes @unipost/review-agent@0.1.0 run --token revtok_fixed") {
-		t.Fatalf("command not version pinned: %q", env.Data.AgentCommand)
+	if !strings.Contains(env.Data.AgentCommand, "npx --yes @unipost/review-agent@0.1.0 run --token revtok_fixed --session-token revsess_fixed") {
+		t.Fatalf("command not version pinned with session token: %q", env.Data.AgentCommand)
 	}
 	if store.createdAgentToken.TokenHash != "hash:revtok_fixed" || store.createdSession.TokenHash != "hash:revsess_fixed" {
 		t.Fatalf("tokens not hashed into store: agent=%+v session=%+v", store.createdAgentToken, store.createdSession)
@@ -253,6 +253,37 @@ func TestReviewAgentScriptRejectsMissingBearerToken(t *testing.T) {
 	}
 }
 
+func TestReviewPublicSessionUsesCookieAndCreatesTikTokConnectSession(t *testing.T) {
+	store := &reviewStoreFake{
+		reviewSessionByHash: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", ReviewKitID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", TokenHash: hashReviewToken("revsess_live"), ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
+		kit:                 db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1", BrandSnapshot: []byte(`{"profile_id":"prof_1"}`)},
+		domain:              db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready", TlsStatus: "issued"},
+		profile:             db.Profile{ID: "prof_1", WorkspaceID: "ws_1", Name: "Acme"},
+	}
+	h := NewReviewHandler(store).WithTokenGenerator(fixedReviewTokenGenerator).WithAPIBaseURL("https://api.example.com")
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/session", nil)
+	req.AddCookie(&http.Cookie{Name: reviewSessionCookieName, Value: "revsess_live"})
+	rec := httptest.NewRecorder()
+
+	h.GetPublicReviewSession(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.createdConnectSession.ProfileID != "prof_1" || store.createdConnectSession.Platform != "tiktok" {
+		t.Fatalf("connect session not created: %+v", store.createdConnectSession)
+	}
+	var env struct {
+		Data reviewPublicSessionResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(env.Data.ConnectAuthorizeURL, "https://api.example.com/v1/public/connect/sessions/csess_1/authorize?state=rvstate_fixed") {
+		t.Fatalf("missing authorize url: %+v", env.Data)
+	}
+}
+
 func TestReviewAgentEventRecordsEventAndMarksJobRunning(t *testing.T) {
 	store := &reviewStoreFake{
 		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
@@ -328,21 +359,24 @@ type reviewStoreFake struct {
 	session              db.ReviewSession
 	platformCredential   db.PlatformCredential
 	agentToken           db.ReviewAgentToken
+	reviewSessionByHash  db.ReviewSession
+	profile              db.Profile
 	agentTokenHashLookup string
 	credentialErr        error
 	now                  time.Time
 
-	createdDomain      db.CreateReviewDomainParams
-	updatedDomain      db.UpdateReviewDomainVerificationParams
-	createdKit         db.CreateReviewKitParams
-	createdJob         db.CreateReviewJobParams
-	createdSession     db.CreateReviewSessionParams
-	createdAgentToken  db.CreateReviewAgentTokenParams
-	createdEvent       db.CreateReviewJobEventParams
-	markedRunningJobID string
-	markedWaitingJobID string
-	completedJob       db.CompleteReviewJobParams
-	failedJob          db.FailReviewJobParams
+	createdDomain         db.CreateReviewDomainParams
+	updatedDomain         db.UpdateReviewDomainVerificationParams
+	createdKit            db.CreateReviewKitParams
+	createdJob            db.CreateReviewJobParams
+	createdSession        db.CreateReviewSessionParams
+	createdAgentToken     db.CreateReviewAgentTokenParams
+	createdConnectSession db.CreateConnectSessionParams
+	createdEvent          db.CreateReviewJobEventParams
+	markedRunningJobID    string
+	markedWaitingJobID    string
+	completedJob          db.CompleteReviewJobParams
+	failedJob             db.FailReviewJobParams
 }
 
 func (f *reviewStoreFake) CreateReviewDomain(_ context.Context, arg db.CreateReviewDomainParams) (db.ReviewDomain, error) {
@@ -375,6 +409,16 @@ func (f *reviewStoreFake) GetReviewKit(_ context.Context, arg db.GetReviewKitPar
 	}
 	return f.kit, nil
 }
+func (f *reviewStoreFake) GetProfile(_ context.Context, id string) (db.Profile, error) {
+	if f.profile.ID == "" {
+		return db.Profile{}, pgx.ErrNoRows
+	}
+	return f.profile, nil
+}
+func (f *reviewStoreFake) CreateConnectSession(_ context.Context, arg db.CreateConnectSessionParams) (db.ConnectSession, error) {
+	f.createdConnectSession = arg
+	return db.ConnectSession{ID: "csess_1", ProfileID: arg.ProfileID, Platform: arg.Platform, ExternalUserID: arg.ExternalUserID, ReturnUrl: arg.ReturnUrl, OauthState: arg.OauthState, ExpiresAt: arg.ExpiresAt}, nil
+}
 func (f *reviewStoreFake) CreateReviewJob(_ context.Context, arg db.CreateReviewJobParams) (db.ReviewJob, error) {
 	f.createdJob = arg
 	return db.ReviewJob{ID: "rvjob_1", ReviewKitID: arg.ReviewKitID, WorkspaceID: arg.WorkspaceID, Platform: arg.Platform, Status: arg.Status, AgentVersion: arg.AgentVersion}, nil
@@ -394,6 +438,12 @@ func (f *reviewStoreFake) GetActiveReviewSessionForJob(_ context.Context, arg db
 		return db.ReviewSession{}, pgx.ErrNoRows
 	}
 	return f.session, nil
+}
+func (f *reviewStoreFake) GetReviewSessionByTokenHash(_ context.Context, hash string) (db.ReviewSession, error) {
+	if f.reviewSessionByHash.ID == "" {
+		return db.ReviewSession{}, pgx.ErrNoRows
+	}
+	return f.reviewSessionByHash, nil
 }
 func (f *reviewStoreFake) AttachReviewSessionToJob(_ context.Context, arg db.AttachReviewSessionToJobParams) (db.ReviewJob, error) {
 	return db.ReviewJob{ID: arg.ID, WorkspaceID: arg.WorkspaceID, ReviewSessionTokenID: arg.ReviewSessionTokenID}, nil

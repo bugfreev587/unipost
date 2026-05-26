@@ -146,6 +146,7 @@ function AppReviewAutopilotContent() {
         redirect_uri_attested: redirectAttested,
         required_scopes: REQUIRED_TIKTOK_SCOPES,
         brand_snapshot: { review_domain: reviewDomain.domain },
+        profile_id: profileId,
       });
       setReviewKit(res.data);
     } catch (err) {

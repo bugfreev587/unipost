@@ -488,6 +488,7 @@ export async function createReviewKit(
     review_domain_id: string;
     redirect_uri_attested: boolean;
     brand_snapshot?: Record<string, unknown>;
+    profile_id?: string;
     required_scopes: string[];
   }
 ): Promise<ApiResponse<ReviewKit>> {

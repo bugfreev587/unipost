@@ -54,6 +54,7 @@ type ReviewHandler struct {
 	now            func() time.Time
 	tokenGenerator reviewTokenGenerator
 	domainChecker  reviewDomainChecker
+	apiBaseURL     string
 }
 
 type reviewStore interface {
@@ -63,10 +64,13 @@ type reviewStore interface {
 	GetPlatformCredential(context.Context, db.GetPlatformCredentialParams) (db.PlatformCredential, error)
 	CreateReviewKit(context.Context, db.CreateReviewKitParams) (db.ReviewKit, error)
 	GetReviewKit(context.Context, db.GetReviewKitParams) (db.ReviewKit, error)
+	GetProfile(context.Context, string) (db.Profile, error)
+	CreateConnectSession(context.Context, db.CreateConnectSessionParams) (db.ConnectSession, error)
 	CreateReviewJob(context.Context, db.CreateReviewJobParams) (db.ReviewJob, error)
 	GetReviewJob(context.Context, db.GetReviewJobParams) (db.ReviewJob, error)
 	CreateReviewSession(context.Context, db.CreateReviewSessionParams) (db.ReviewSession, error)
 	GetActiveReviewSessionForJob(context.Context, db.GetActiveReviewSessionForJobParams) (db.ReviewSession, error)
+	GetReviewSessionByTokenHash(context.Context, string) (db.ReviewSession, error)
 	AttachReviewSessionToJob(context.Context, db.AttachReviewSessionToJobParams) (db.ReviewJob, error)
 	CreateReviewAgentToken(context.Context, db.CreateReviewAgentTokenParams) (db.ReviewAgentToken, error)
 	GetReviewAgentTokenByHash(context.Context, string) (db.ReviewAgentToken, error)
@@ -122,12 +126,22 @@ type reviewAgentJobStateResponse struct {
 	Status string `json:"status"`
 }
 
+type reviewPublicSessionResponse struct {
+	JobID               string `json:"job_id"`
+	Platform            string `json:"platform"`
+	ReviewDomain        string `json:"review_domain"`
+	Status              string `json:"status"`
+	ExpiresAt           string `json:"expires_at"`
+	ConnectAuthorizeURL string `json:"connect_authorize_url,omitempty"`
+}
+
 func NewReviewHandler(store reviewStore) *ReviewHandler {
 	return &ReviewHandler{
 		store:          store,
 		now:            time.Now,
 		tokenGenerator: defaultReviewTokenGenerator,
 		domainChecker:  defaultReviewDomainChecker,
+		apiBaseURL:     "https://api.unipost.dev",
 	}
 }
 
@@ -148,6 +162,13 @@ func (h *ReviewHandler) WithNow(fn func() time.Time) *ReviewHandler {
 func (h *ReviewHandler) WithDomainChecker(fn reviewDomainChecker) *ReviewHandler {
 	if fn != nil {
 		h.domainChecker = fn
+	}
+	return h
+}
+
+func (h *ReviewHandler) WithAPIBaseURL(value string) *ReviewHandler {
+	if strings.TrimSpace(value) != "" {
+		h.apiBaseURL = strings.TrimRight(strings.TrimSpace(value), "/")
 	}
 	return h
 }
@@ -253,6 +274,7 @@ func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
 		ReviewDomainID      string         `json:"review_domain_id"`
 		RedirectURIAttested bool           `json:"redirect_uri_attested"`
 		BrandSnapshot       map[string]any `json:"brand_snapshot"`
+		ProfileID           string         `json:"profile_id"`
 		RequiredScopes      []string       `json:"required_scopes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -301,6 +323,14 @@ func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
 	brandSnapshot := req.BrandSnapshot
 	if brandSnapshot == nil {
 		brandSnapshot = map[string]any{}
+	}
+	if profileID := strings.TrimSpace(req.ProfileID); profileID != "" {
+		profile, err := h.store.GetProfile(r.Context(), profileID)
+		if err != nil || profile.WorkspaceID != workspaceID {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "profile_id must belong to this workspace")
+			return
+		}
+		brandSnapshot["profile_id"] = profile.ID
 	}
 	brandJSON, err := json.Marshal(brandSnapshot)
 	if err != nil {
@@ -371,7 +401,6 @@ func (h *ReviewHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 
 	expiresAt := h.now().UTC().Add(reviewTokenTTL)
 	sessionRaw, sessionHash, err := h.tokenGenerator("revsess_")
-	_ = sessionRaw
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate review session token")
 		return
@@ -420,7 +449,7 @@ func (h *ReviewHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Platform:       kit.Platform,
 		Status:         job.Status,
 		AgentVersion:   reviewAgentVersion,
-		AgentCommand:   "npx --yes @unipost/review-agent@" + reviewAgentVersion + " run --token " + agentRaw,
+		AgentCommand:   "npx --yes @unipost/review-agent@" + reviewAgentVersion + " run --token " + agentRaw + " --session-token " + sessionRaw,
 		TokenExpiresAt: expiresAt.Format(time.RFC3339),
 	})
 }
@@ -436,6 +465,81 @@ func (h *ReviewHandler) GetJobScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSuccess(w, script)
+}
+
+func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Request) {
+	rawToken := bearerToken(r)
+	if rawToken == "" {
+		if cookie, err := r.Cookie(reviewSessionCookieName); err == nil {
+			rawToken = strings.TrimSpace(cookie.Value)
+		}
+	}
+	if rawToken == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing review session token")
+		return
+	}
+	session, err := h.store.GetReviewSessionByTokenHash(r.Context(), hashReviewToken(rawToken))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid or expired review session token")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review session")
+		return
+	}
+	if !featureflags.Enabled(r.Context(), featureflags.AppReviewAutopilotV1, featureflags.Target{WorkspaceID: session.WorkspaceID, Env: runtimeenv.Current()}) {
+		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
+		return
+	}
+	kit, err := h.store.GetReviewKit(r.Context(), db.GetReviewKitParams{ID: session.ReviewKitID, WorkspaceID: session.WorkspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review kit not found", "Failed to load review kit")
+		return
+	}
+	domain, err := h.store.GetReviewDomain(r.Context(), db.GetReviewDomainParams{ID: kit.ReviewDomainID, WorkspaceID: session.WorkspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review domain not found", "Failed to load review domain")
+		return
+	}
+	expiresAt := ""
+	if session.ExpiresAt.Valid {
+		expiresAt = session.ExpiresAt.Time.UTC().Format(time.RFC3339)
+	}
+	resp := reviewPublicSessionResponse{
+		JobID:        session.ReviewJobID,
+		Platform:     session.Platform,
+		ReviewDomain: domain.Domain,
+		Status:       "ready",
+		ExpiresAt:    expiresAt,
+	}
+	profileID := reviewKitProfileID(kit)
+	if profileID != "" {
+		profile, err := h.store.GetProfile(r.Context(), profileID)
+		if err != nil || profile.WorkspaceID != session.WorkspaceID {
+			writeError(w, http.StatusConflict, "CONFLICT", "Review kit profile is unavailable")
+			return
+		}
+		oauthState, _, err := h.tokenGenerator("rvstate_")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate review connect state")
+			return
+		}
+		connectSession, err := h.store.CreateConnectSession(r.Context(), db.CreateConnectSessionParams{
+			ProfileID:            profile.ID,
+			Platform:             session.Platform,
+			ExternalUserID:       "app-review:" + session.ReviewJobID,
+			ReturnUrl:            pgtype.Text{String: "https://" + domain.Domain + "/tiktok/posting?connect_status=success", Valid: true},
+			OauthState:           oauthState,
+			ExpiresAt:            session.ExpiresAt,
+			AllowQuickstartCreds: false,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create TikTok review connect session")
+			return
+		}
+		resp.ConnectAuthorizeURL = h.apiBaseURL + "/v1/public/connect/sessions/" + connectSession.ID + "/authorize?state=" + connectSession.OauthState
+	}
+	writeSuccess(w, resp)
 }
 
 func (h *ReviewHandler) GetAgentJobScript(w http.ResponseWriter, r *http.Request) {
@@ -671,6 +775,15 @@ func reviewKitFromDB(row db.ReviewKit) reviewKitResponse {
 		RequiredScopes: row.RequiredScopes,
 		Status:         row.Status,
 	}
+}
+
+func reviewKitProfileID(kit db.ReviewKit) string {
+	var snapshot map[string]any
+	if len(kit.BrandSnapshot) == 0 || json.Unmarshal(kit.BrandSnapshot, &snapshot) != nil {
+		return ""
+	}
+	profileID, _ := snapshot["profile_id"].(string)
+	return strings.TrimSpace(profileID)
 }
 
 func marshalReviewJSON(value map[string]any) ([]byte, error) {
