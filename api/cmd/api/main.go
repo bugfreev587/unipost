@@ -457,6 +457,7 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
+	reviewHandler := handler.NewReviewHandler(queries)
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
 
 	// Public routes
@@ -707,6 +708,17 @@ func main() {
 			Post("/v1/platform-credentials", platformCredHandler.Create)
 		r.With(auth.RequireRole(auth.RoleAdmin)).
 			Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
+
+		// App Review Autopilot. Beta-gated separately from white-label
+		// credentials so we can keep production closed while the review
+		// recording flow is being hardened.
+		r.Route("/v1/review", func(r chi.Router) {
+			r.Use(handler.RequireFeatureFlag(featureflags.AppReviewAutopilotV1))
+			r.Post("/domains", reviewHandler.CreateDomain)
+			r.Post("/kits", reviewHandler.CreateKit)
+			r.Post("/jobs", reviewHandler.CreateJob)
+			r.Get("/jobs/{id}/script", reviewHandler.GetJobScript)
+		})
 
 		// Posts.
 		r.Get("/v1/posts", socialPostHandler.List)
