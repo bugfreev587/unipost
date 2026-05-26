@@ -273,8 +273,10 @@ WHERE spr.status = 'published'
   AND spr.published_at IS NOT NULL
   AND spr.published_at > NOW() - INTERVAL '90 days'
   AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
   AND (
     pa.fetched_at IS NULL
+    OR (sa.last_refreshed_at IS NOT NULL AND pa.fetched_at < sa.last_refreshed_at)
     OR (spr.published_at >  NOW() - INTERVAL '24 hours' AND pa.fetched_at < NOW() - INTERVAL '1 hour')
     OR (spr.published_at <= NOW() - INTERVAL '24 hours' AND spr.published_at > NOW() - INTERVAL '7 days' AND pa.fetched_at < NOW() - INTERVAL '6 hours')
     OR (spr.published_at <= NOW() - INTERVAL '7 days'  AND pa.fetched_at < NOW() - INTERVAL '24 hours')

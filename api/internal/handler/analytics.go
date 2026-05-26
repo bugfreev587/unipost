@@ -95,9 +95,19 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
+		// Load the account before checking the analytics cache. If the account
+		// was reconnected or its token was refreshed after a previous failed
+		// fetch, the old cached failure must not keep rendering in the dashboard.
+		acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID)
+		if accErr != nil {
+			slog.Warn("analytics refresh: load social account failed",
+				"post_id", post.ID, "result_id", res.ID, "err", accErr)
+			continue
+		}
+
 		// Check cache (1 hour) unless forceRefresh is set.
 		cached, err := h.queries.GetPostAnalytics(r.Context(), res.ID)
-		if !forceRefresh && err == nil && cached.FetchedAt.Time.After(time.Now().Add(-1*time.Hour)) {
+		if err == nil && cachedPostAnalyticsFresh(cached, acc, forceRefresh, time.Now()) {
 			var ps map[string]any
 			if len(cached.PlatformSpecific) > 0 {
 				_ = json.Unmarshal(cached.PlatformSpecific, &ps)
@@ -105,6 +115,7 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 			analytics = append(analytics, analyticsResponse{
 				PostID:              post.ID,
 				SocialAccountID:     res.SocialAccountID,
+				Platform:            acc.Platform,
 				ExternalID:          res.ExternalID.String,
 				Impressions:         cached.Impressions.Int64,
 				Reach:               cached.Reach.Int64,
@@ -121,14 +132,6 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 				ConsecutiveFailures: cached.ConsecutiveFailures,
 				LastFailureReason:   cached.LastFailureReason.String,
 			})
-			continue
-		}
-
-		// Fetch from platform
-		acc, accErr := h.queries.GetSocialAccount(r.Context(), res.SocialAccountID)
-		if accErr != nil {
-			slog.Warn("analytics refresh: load social account failed",
-				"post_id", post.ID, "result_id", res.ID, "err", accErr)
 			continue
 		}
 
@@ -163,9 +166,16 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 			// Record the failure so consecutive_failures is tracked and the UI
 			// can eventually surface the error (the background worker also
 			// uses this path).
+			failureReason := analyticsFailureReason(acc.Platform, metErr)
+			if acc.Platform == "pinterest" && looksLikePinterestAuthError(metErr) {
+				if _, markErr := h.queries.MarkSocialAccountReconnectRequired(r.Context(), acc.ID); markErr != nil {
+					slog.Warn("analytics refresh: mark reconnect required failed",
+						"platform", acc.Platform, "account_id", acc.ID, "err", markErr)
+				}
+			}
 			if touchErr := h.queries.TouchPostAnalyticsFetchedAt(r.Context(), db.TouchPostAnalyticsFetchedAtParams{
 				SocialPostResultID: res.ID,
-				LastFailureReason:  pgtype.Text{String: metErr.Error(), Valid: true},
+				LastFailureReason:  pgtype.Text{String: failureReason, Valid: true},
 			}); touchErr != nil {
 				slog.Warn("analytics refresh: touch fetched_at failed",
 					"result_id", res.ID, "err", touchErr)
@@ -220,6 +230,26 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeSuccess(w, analytics)
+}
+
+func cachedPostAnalyticsFresh(cached db.PostAnalytic, account db.SocialAccount, forceRefresh bool, now time.Time) bool {
+	if forceRefresh || !cached.FetchedAt.Valid {
+		return false
+	}
+	if !cached.FetchedAt.Time.After(now.Add(-1 * time.Hour)) {
+		return false
+	}
+	if account.LastRefreshedAt.Valid && cached.FetchedAt.Time.Before(account.LastRefreshedAt.Time) {
+		return false
+	}
+	return true
+}
+
+func analyticsFailureReason(platformName string, err error) string {
+	if platformName == "pinterest" && looksLikePinterestAuthError(err) {
+		return "Pinterest rejected the analytics token. Reconnect Pinterest to refresh analytics access; contact support if this continues after reconnecting."
+	}
+	return err.Error()
 }
 
 func (h *AnalyticsHandler) getWorkspaceID(r *http.Request) string {

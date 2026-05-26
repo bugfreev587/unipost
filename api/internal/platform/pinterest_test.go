@@ -85,6 +85,53 @@ func TestPinterestGetAuthURLUsesClientID(t *testing.T) {
 	}
 }
 
+func TestPinterestExchangeCodeStoresReturnedScopes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "pin-access",
+				"refresh_token": "pin-refresh",
+				"expires_in":    3600,
+				"scope":         "boards:read pins:read pins:write user_accounts:read",
+			})
+		case "/user_account":
+			if got := r.Header.Get("Authorization"); got != "Bearer pin-access" {
+				t.Fatalf("Authorization = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":           "pin-user-123",
+				"username":     "bugfreev587",
+				"account_type": "BUSINESS",
+			})
+		default:
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL)
+	adapter := &PinterestAdapter{client: srv.Client()}
+	result, err := adapter.ExchangeCode(context.Background(), OAuthConfig{
+		ClientID:     "pin-client",
+		ClientSecret: "pin-secret",
+		TokenURL:     srv.URL + "/oauth/token",
+		RedirectURL:  "https://api.example.com/v1/oauth/callback/pinterest",
+	}, "code-123")
+	if err != nil {
+		t.Fatalf("ExchangeCode failed: %v", err)
+	}
+	want := []string{"boards:read", "pins:read", "pins:write", "user_accounts:read"}
+	if len(result.Scopes) != len(want) {
+		t.Fatalf("scopes = %#v, want %#v", result.Scopes, want)
+	}
+	for i := range want {
+		if result.Scopes[i] != want[i] {
+			t.Fatalf("scopes = %#v, want %#v", result.Scopes, want)
+		}
+	}
+}
+
 func TestPinterestCreateBoardUsesBoardsEndpoint(t *testing.T) {
 	var gotMethod, gotAuth string
 	var gotBody []byte
