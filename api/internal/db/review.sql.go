@@ -122,6 +122,44 @@ func (q *Queries) CompleteReviewJob(ctx context.Context, arg CompleteReviewJobPa
 	return i, err
 }
 
+const createReviewAgentToken = `-- name: CreateReviewAgentToken :one
+INSERT INTO review_agent_tokens (
+  review_job_id, workspace_id, platform, token_hash, expires_at
+) VALUES ($1, $2, $3, $4, $5)
+RETURNING id, review_job_id, workspace_id, platform, token_hash, expires_at, used_at, revoked_at, created_at
+`
+
+type CreateReviewAgentTokenParams struct {
+	ReviewJobID string             `json:"review_job_id"`
+	WorkspaceID string             `json:"workspace_id"`
+	Platform    string             `json:"platform"`
+	TokenHash   string             `json:"token_hash"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) CreateReviewAgentToken(ctx context.Context, arg CreateReviewAgentTokenParams) (ReviewAgentToken, error) {
+	row := q.db.QueryRow(ctx, createReviewAgentToken,
+		arg.ReviewJobID,
+		arg.WorkspaceID,
+		arg.Platform,
+		arg.TokenHash,
+		arg.ExpiresAt,
+	)
+	var i ReviewAgentToken
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewJobID,
+		&i.WorkspaceID,
+		&i.Platform,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createReviewDomain = `-- name: CreateReviewDomain :one
 INSERT INTO review_domains (
   workspace_id, domain, provider, status, verification_token, cname_target, tls_status
@@ -410,6 +448,31 @@ func (q *Queries) GetActiveReviewSessionForJob(ctx context.Context, arg GetActiv
 		&i.TokenHash,
 		&i.ExpiresAt,
 		&i.ClaimedAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getReviewAgentTokenByHash = `-- name: GetReviewAgentTokenByHash :one
+SELECT id, review_job_id, workspace_id, platform, token_hash, expires_at, used_at, revoked_at, created_at FROM review_agent_tokens
+WHERE token_hash = $1
+  AND revoked_at IS NULL
+  AND used_at IS NULL
+  AND expires_at > NOW()
+`
+
+func (q *Queries) GetReviewAgentTokenByHash(ctx context.Context, tokenHash string) (ReviewAgentToken, error) {
+	row := q.db.QueryRow(ctx, getReviewAgentTokenByHash, tokenHash)
+	var i ReviewAgentToken
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewJobID,
+		&i.WorkspaceID,
+		&i.Platform,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
 		&i.RevokedAt,
 		&i.CreatedAt,
 	)
@@ -721,6 +784,33 @@ func (q *Queries) ListReviewKitsByWorkspace(ctx context.Context, workspaceID str
 	return items, nil
 }
 
+const markReviewAgentTokenUsed = `-- name: MarkReviewAgentTokenUsed :one
+UPDATE review_agent_tokens
+SET used_at = COALESCE(used_at, NOW())
+WHERE id = $1
+  AND revoked_at IS NULL
+  AND used_at IS NULL
+  AND expires_at > NOW()
+RETURNING id, review_job_id, workspace_id, platform, token_hash, expires_at, used_at, revoked_at, created_at
+`
+
+func (q *Queries) MarkReviewAgentTokenUsed(ctx context.Context, id string) (ReviewAgentToken, error) {
+	row := q.db.QueryRow(ctx, markReviewAgentTokenUsed, id)
+	var i ReviewAgentToken
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewJobID,
+		&i.WorkspaceID,
+		&i.Platform,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const markReviewJobRunning = `-- name: MarkReviewJobRunning :one
 UPDATE review_jobs
 SET status = 'running',
@@ -790,6 +880,35 @@ func (q *Queries) MarkReviewJobWaitingForUser(ctx context.Context, arg MarkRevie
 		&i.ArtifactsJson,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const revokeReviewAgentToken = `-- name: RevokeReviewAgentToken :one
+UPDATE review_agent_tokens
+SET revoked_at = NOW()
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, review_job_id, workspace_id, platform, token_hash, expires_at, used_at, revoked_at, created_at
+`
+
+type RevokeReviewAgentTokenParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) RevokeReviewAgentToken(ctx context.Context, arg RevokeReviewAgentTokenParams) (ReviewAgentToken, error) {
+	row := q.db.QueryRow(ctx, revokeReviewAgentToken, arg.ID, arg.WorkspaceID)
+	var i ReviewAgentToken
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewJobID,
+		&i.WorkspaceID,
+		&i.Platform,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }

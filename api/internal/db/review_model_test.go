@@ -34,16 +34,23 @@ func TestReviewSQLCModelsExposeRequiredFields(t *testing.T) {
 		ReviewSessionTokenID: pgtype.Text{String: "rvsess_1", Valid: true},
 	}
 	sessionParams := CreateReviewSessionParams{
-		ReviewJobID:   "rvjob_1",
-		ReviewKitID:   "rvkit_1",
-		WorkspaceID:   "ws_1",
-		Platform:      "tiktok",
-		ReviewDomain:  "review.example.com",
-		TokenHash:     "hash",
-		ExpiresAt:     pgtype.Timestamptz{Valid: true},
+		ReviewJobID:  "rvjob_1",
+		ReviewKitID:  "rvkit_1",
+		WorkspaceID:  "ws_1",
+		Platform:     "tiktok",
+		ReviewDomain: "review.example.com",
+		TokenHash:    "hash",
+		ExpiresAt:    pgtype.Timestamptz{Valid: true},
+	}
+	agentTokenParams := CreateReviewAgentTokenParams{
+		ReviewJobID: "rvjob_1",
+		WorkspaceID: "ws_1",
+		Platform:    "tiktok",
+		TokenHash:   "agent_hash",
+		ExpiresAt:   pgtype.Timestamptz{Valid: true},
 	}
 
-	if domainParams.WorkspaceID != "ws_1" || kitParams.Platform != "tiktok" || jobParams.Platform != "tiktok" || sessionParams.Platform != "tiktok" {
+	if domainParams.WorkspaceID != "ws_1" || kitParams.Platform != "tiktok" || jobParams.Platform != "tiktok" || sessionParams.Platform != "tiktok" || agentTokenParams.Platform != "tiktok" {
 		t.Fatal("review sqlc params should preserve TikTok platform fields")
 	}
 }

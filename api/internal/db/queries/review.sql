@@ -152,3 +152,31 @@ WHERE review_job_id = $1
   AND expires_at > NOW()
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- name: CreateReviewAgentToken :one
+INSERT INTO review_agent_tokens (
+  review_job_id, workspace_id, platform, token_hash, expires_at
+) VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: GetReviewAgentTokenByHash :one
+SELECT * FROM review_agent_tokens
+WHERE token_hash = $1
+  AND revoked_at IS NULL
+  AND used_at IS NULL
+  AND expires_at > NOW();
+
+-- name: MarkReviewAgentTokenUsed :one
+UPDATE review_agent_tokens
+SET used_at = COALESCE(used_at, NOW())
+WHERE id = $1
+  AND revoked_at IS NULL
+  AND used_at IS NULL
+  AND expires_at > NOW()
+RETURNING *;
+
+-- name: RevokeReviewAgentToken :one
+UPDATE review_agent_tokens
+SET revoked_at = NOW()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;

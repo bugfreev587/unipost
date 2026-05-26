@@ -331,6 +331,18 @@ type Profile struct {
 	BrandingHidePoweredBy bool               `json:"branding_hide_powered_by"`
 }
 
+type ReviewAgentToken struct {
+	ID          string             `json:"id"`
+	ReviewJobID string             `json:"review_job_id"`
+	WorkspaceID string             `json:"workspace_id"`
+	Platform    string             `json:"platform"`
+	TokenHash   string             `json:"token_hash"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	UsedAt      pgtype.Timestamptz `json:"used_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type ReviewDomain struct {
 	ID                string             `json:"id"`
 	WorkspaceID       string             `json:"workspace_id"`
