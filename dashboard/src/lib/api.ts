@@ -451,14 +451,27 @@ export interface ReviewKit {
   status: string;
 }
 
+export interface ReviewJobEvent {
+  event_type: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  elapsed_ms: number;
+  created_at?: string;
+}
+
 export interface ReviewJob {
   id: string;
   review_kit_id: string;
   platform: string;
   status: string;
   agent_version: string;
-  agent_command: string;
-  token_expires_at: string;
+  agent_command?: string;
+  token_expires_at?: string;
+  video_file_id?: string;
+  video_download_url?: string;
+  failure_reason?: string;
+  artifacts?: Record<string, unknown>;
+  events?: ReviewJobEvent[];
 }
 
 export async function createReviewDomain(
@@ -506,6 +519,13 @@ export async function createReviewJob(
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+export async function getReviewJob(
+  token: string,
+  jobId: string
+): Promise<ApiResponse<ReviewJob>> {
+  return request(`/v1/review/jobs/${jobId}`, token);
 }
 
 // API Keys (workspace-scoped)

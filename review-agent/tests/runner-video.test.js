@@ -30,7 +30,8 @@ test("completion artifacts include the recorded video path and marker timeline",
     format: "webm",
     local_path: "/tmp/unipost-review-videos/rvjob-video.webm",
     capture_mode: "playwright-page-video",
-    note: "Beta artifact captures the page viewport. Native browser-window capture is required before claiming address-bar coverage.",
+    includes_address_bar: false,
+    note: "Fallback artifact captures the page viewport only. It does not satisfy address-bar evidence requirements.",
   });
 });
 
@@ -81,4 +82,74 @@ test("runScript uses the recording context and reports the finalized video artif
   assert.equal(completionArtifacts.video.local_path, "/tmp/unipost-review-videos/run-video.webm");
   assert.equal(completionArtifacts.markers[0].step_id, "marker");
   assert.equal(typeof completionArtifacts.markers[0].elapsed_ms, "number");
+});
+
+
+test("runScript uploads the finalized video before completing the job", async () => {
+  let completedVideoFileID = "";
+  let uploadedPath = "";
+  const script = {
+    job_id: "rvjob_upload_video",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    steps: [{ id: "marker", action: "emit_marker", marker: "Open review app" }],
+  };
+  const page = { video: () => ({ path: async () => "/tmp/unipost-review-videos/run-video.webm" }) };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async () => {},
+    uploadArtifact: async (artifact) => {
+      uploadedPath = artifact.path;
+      return "review-artifacts/ws_1/rvjob_upload_video/demo-video.webm";
+    },
+    complete: async (_artifacts, videoFileID) => { completedVideoFileID = videoFileID; },
+    fail: async () => assert.fail("runScript should complete"),
+  };
+
+  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, out: { write() {} } });
+
+  assert.equal(uploadedPath, "/tmp/unipost-review-videos/run-video.webm");
+  assert.equal(completedVideoFileID, "review-artifacts/ws_1/rvjob_upload_video/demo-video.webm");
+});
+
+
+test("runScript prefers native browser-window capture when address-bar evidence is required", async () => {
+  let completionArtifacts;
+  let uploadedContentType = "";
+  const script = {
+    job_id: "rvjob_native_video",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    recording: { window_width: 1200, window_height: 900, show_address_bar: true, capture_mode: "native-browser-window" },
+    steps: [{ id: "marker", action: "emit_marker", marker: "Open review app" }],
+  };
+  const page = { video: () => ({ path: async () => assert.fail("page video should not be used when native capture succeeds") }) };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async () => {},
+    uploadArtifact: async (artifact) => {
+      uploadedContentType = artifact.contentType;
+      return "review-artifacts/ws_1/rvjob_native_video/demo-video.mov";
+    },
+    complete: async (artifacts) => { completionArtifacts = artifacts; },
+    fail: async () => assert.fail("runScript should complete"),
+  };
+  const nativeCaptureImpl = async () => ({
+    mode: "macos-screencapture-region",
+    localPath: "/tmp/unipost-review-videos/rvjob-native.mov",
+    includesAddressBar: true,
+    bounds: { left: 80, top: 80, width: 1200, height: 900 },
+    stop: async () => {},
+  });
+
+  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, nativeCaptureImpl, out: { write() {} } });
+
+  assert.equal(completionArtifacts.video.capture_mode, "macos-screencapture-region");
+  assert.equal(completionArtifacts.video.includes_address_bar, true);
+  assert.equal(completionArtifacts.video.local_path, "/tmp/unipost-review-videos/rvjob-native.mov");
+  assert.equal(uploadedContentType, "video/quicktime");
 });

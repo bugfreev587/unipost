@@ -40,8 +40,19 @@ const (
 
 var requiredTikTokReviewScopes = []string{"user.info.basic", "video.publish", "video.upload"}
 
+const (
+	reviewArtifactUploadTTL   = 15 * time.Minute
+	reviewArtifactDownloadTTL = 30 * time.Minute
+	reviewArtifactMaxBytes    = 1024 * 1024 * 1024
+)
+
 type reviewTokenGenerator func(prefix string) (raw string, hash string, err error)
 type reviewDomainChecker func(context.Context, db.ReviewDomain) reviewDomainCheckResult
+
+type reviewArtifactStorage interface {
+	PresignPut(context.Context, string, string, time.Duration) (string, error)
+	PresignGet(context.Context, string, time.Duration) (string, error)
+}
 
 type reviewDomainCheckResult struct {
 	DNSReady  bool
@@ -50,11 +61,12 @@ type reviewDomainCheckResult struct {
 }
 
 type ReviewHandler struct {
-	store          reviewStore
-	now            func() time.Time
-	tokenGenerator reviewTokenGenerator
-	domainChecker  reviewDomainChecker
-	apiBaseURL     string
+	store           reviewStore
+	now             func() time.Time
+	tokenGenerator  reviewTokenGenerator
+	domainChecker   reviewDomainChecker
+	apiBaseURL      string
+	artifactStorage reviewArtifactStorage
 }
 
 type reviewStore interface {
@@ -75,6 +87,7 @@ type reviewStore interface {
 	CreateReviewAgentToken(context.Context, db.CreateReviewAgentTokenParams) (db.ReviewAgentToken, error)
 	GetReviewAgentTokenByHash(context.Context, string) (db.ReviewAgentToken, error)
 	CreateReviewJobEvent(context.Context, db.CreateReviewJobEventParams) (db.ReviewJobEvent, error)
+	ListReviewJobEvents(context.Context, db.ListReviewJobEventsParams) ([]db.ReviewJobEvent, error)
 	MarkReviewJobRunning(context.Context, db.MarkReviewJobRunningParams) (db.ReviewJob, error)
 	MarkReviewJobWaitingForUser(context.Context, db.MarkReviewJobWaitingForUserParams) (db.ReviewJob, error)
 	CompleteReviewJob(context.Context, db.CompleteReviewJobParams) (db.ReviewJob, error)
@@ -135,6 +148,36 @@ type reviewPublicSessionResponse struct {
 	ConnectAuthorizeURL string `json:"connect_authorize_url,omitempty"`
 }
 
+type reviewAgentArtifactUploadResponse struct {
+	FileID      string            `json:"file_id"`
+	UploadURL   string            `json:"upload_url"`
+	Method      string            `json:"method"`
+	Headers     map[string]string `json:"headers"`
+	ExpiresAt   string            `json:"expires_at"`
+	ContentType string            `json:"content_type"`
+}
+
+type reviewJobDetailResponse struct {
+	ID               string                     `json:"id"`
+	ReviewKitID      string                     `json:"review_kit_id"`
+	Platform         string                     `json:"platform"`
+	Status           string                     `json:"status"`
+	AgentVersion     string                     `json:"agent_version"`
+	VideoFileID      string                     `json:"video_file_id,omitempty"`
+	VideoDownloadURL string                     `json:"video_download_url,omitempty"`
+	FailureReason    string                     `json:"failure_reason,omitempty"`
+	Artifacts        map[string]any             `json:"artifacts"`
+	Events           []reviewJobEventDetailItem `json:"events"`
+}
+
+type reviewJobEventDetailItem struct {
+	EventType string         `json:"event_type"`
+	Message   string         `json:"message"`
+	Metadata  map[string]any `json:"metadata"`
+	ElapsedMs int64          `json:"elapsed_ms"`
+	CreatedAt string         `json:"created_at,omitempty"`
+}
+
 func NewReviewHandler(store reviewStore) *ReviewHandler {
 	return &ReviewHandler{
 		store:          store,
@@ -170,6 +213,11 @@ func (h *ReviewHandler) WithAPIBaseURL(value string) *ReviewHandler {
 	if strings.TrimSpace(value) != "" {
 		h.apiBaseURL = strings.TrimRight(strings.TrimSpace(value), "/")
 	}
+	return h
+}
+
+func (h *ReviewHandler) WithArtifactStorage(store reviewArtifactStorage) *ReviewHandler {
+	h.artifactStorage = store
 	return h
 }
 
@@ -625,6 +673,11 @@ func (h *ReviewHandler) CompleteAgentJob(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
 		return
 	}
+	videoFileID := strings.TrimSpace(req.VideoFileID)
+	if videoFileID != "" && !strings.HasPrefix(videoFileID, reviewArtifactDirectory(agentToken.WorkspaceID, agentToken.ReviewJobID)+"/") {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "video_file_id must belong to the current review job")
+		return
+	}
 	artifactsJSON, err := marshalReviewJSON(req.Artifacts)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "artifacts must be valid JSON")
@@ -633,7 +686,7 @@ func (h *ReviewHandler) CompleteAgentJob(w http.ResponseWriter, r *http.Request)
 	job, err := h.store.CompleteReviewJob(r.Context(), db.CompleteReviewJobParams{
 		ID:            agentToken.ReviewJobID,
 		WorkspaceID:   agentToken.WorkspaceID,
-		VideoFileID:   pgtype.Text{String: strings.TrimSpace(req.VideoFileID), Valid: strings.TrimSpace(req.VideoFileID) != ""},
+		VideoFileID:   pgtype.Text{String: videoFileID, Valid: videoFileID != ""},
 		ArtifactsJson: artifactsJSON,
 	})
 	if err != nil {
@@ -677,6 +730,184 @@ func (h *ReviewHandler) FailAgentJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSuccess(w, reviewAgentJobStateResponse{ID: job.ID, Status: job.Status})
+}
+
+func (h *ReviewHandler) GetJob(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := reviewWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+	jobID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if jobID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Review job id is required")
+		return
+	}
+	job, err := h.store.GetReviewJob(r.Context(), db.GetReviewJobParams{ID: jobID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review job not found", "Failed to load review job")
+		return
+	}
+	events, err := h.store.ListReviewJobEvents(r.Context(), db.ListReviewJobEventsParams{ReviewJobID: jobID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review job events")
+		return
+	}
+	resp, err := h.toReviewJobDetail(r.Context(), job, events)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to build review job response")
+		return
+	}
+	writeSuccess(w, resp)
+}
+
+func (h *ReviewHandler) CreateAgentArtifactUpload(w http.ResponseWriter, r *http.Request) {
+	agentToken, ok := h.authenticateReviewAgent(w, r)
+	if !ok {
+		return
+	}
+	if h.artifactStorage == nil {
+		writeError(w, http.StatusServiceUnavailable, "STORAGE_NOT_CONFIGURED", "Review artifact storage is not configured")
+		return
+	}
+	var req struct {
+		ArtifactType string `json:"artifact_type"`
+		ContentType  string `json:"content_type"`
+		SizeBytes    int64  `json:"size_bytes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	contentType := strings.ToLower(strings.TrimSpace(req.ContentType))
+	fileID, err := reviewArtifactFileID(agentToken.WorkspaceID, agentToken.ReviewJobID, req.ArtifactType, contentType)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	if req.SizeBytes <= 0 {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "size_bytes must be greater than 0")
+		return
+	}
+	if req.SizeBytes > reviewArtifactMaxBytes {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "review artifact exceeds the maximum upload size")
+		return
+	}
+	uploadURL, err := h.artifactStorage.PresignPut(r.Context(), fileID, contentType, reviewArtifactUploadTTL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create review artifact upload URL")
+		return
+	}
+	expiresAt := h.now().Add(reviewArtifactUploadTTL)
+	writeCreated(w, reviewAgentArtifactUploadResponse{
+		FileID:      fileID,
+		UploadURL:   uploadURL,
+		Method:      http.MethodPut,
+		Headers:     map[string]string{"Content-Type": contentType},
+		ExpiresAt:   expiresAt.UTC().Format(time.RFC3339),
+		ContentType: contentType,
+	})
+}
+
+func (h *ReviewHandler) toReviewJobDetail(ctx context.Context, job db.ReviewJob, events []db.ReviewJobEvent) (reviewJobDetailResponse, error) {
+	artifacts := map[string]any{}
+	if len(job.ArtifactsJson) > 0 {
+		if err := json.Unmarshal(job.ArtifactsJson, &artifacts); err != nil {
+			return reviewJobDetailResponse{}, err
+		}
+	}
+	agentVersion := reviewAgentVersion
+	if job.AgentVersion.Valid && strings.TrimSpace(job.AgentVersion.String) != "" {
+		agentVersion = job.AgentVersion.String
+	}
+	resp := reviewJobDetailResponse{
+		ID:           job.ID,
+		ReviewKitID:  job.ReviewKitID,
+		Platform:     job.Platform,
+		Status:       job.Status,
+		AgentVersion: agentVersion,
+		Artifacts:    artifacts,
+		Events:       make([]reviewJobEventDetailItem, 0, len(events)),
+	}
+	if job.FailureReason.Valid {
+		resp.FailureReason = job.FailureReason.String
+	}
+	if job.VideoFileID.Valid && strings.TrimSpace(job.VideoFileID.String) != "" {
+		resp.VideoFileID = strings.TrimSpace(job.VideoFileID.String)
+		if h.artifactStorage != nil {
+			downloadURL, err := h.artifactStorage.PresignGet(ctx, resp.VideoFileID, reviewArtifactDownloadTTL)
+			if err != nil {
+				return reviewJobDetailResponse{}, err
+			}
+			resp.VideoDownloadURL = downloadURL
+		}
+	}
+	for _, event := range events {
+		metadata := map[string]any{}
+		if len(event.Metadata) > 0 {
+			_ = json.Unmarshal(event.Metadata, &metadata)
+		}
+		item := reviewJobEventDetailItem{
+			EventType: event.EventType,
+			Message:   event.Message,
+			Metadata:  metadata,
+		}
+		if event.ElapsedMs.Valid {
+			item.ElapsedMs = event.ElapsedMs.Int64
+		}
+		if event.CreatedAt.Valid {
+			item.CreatedAt = event.CreatedAt.Time.UTC().Format(time.RFC3339)
+		}
+		resp.Events = append(resp.Events, item)
+	}
+	return resp, nil
+}
+
+func reviewArtifactFileID(workspaceID string, jobID string, artifactType string, contentType string) (string, error) {
+	slug, ok := reviewArtifactSlug(strings.TrimSpace(artifactType))
+	if !ok {
+		return "", errors.New("artifact_type must be one of: demo_video, execution_evidence")
+	}
+	ext, ok := reviewArtifactExtension(contentType)
+	if !ok {
+		return "", errors.New("content_type must be one of: video/mp4, video/webm, video/quicktime, application/json")
+	}
+	if slug == "execution-evidence" && contentType != "application/json" {
+		return "", errors.New("execution_evidence artifacts must use application/json")
+	}
+	if slug == "demo-video" && !strings.HasPrefix(contentType, "video/") {
+		return "", errors.New("demo_video artifacts must use a video content type")
+	}
+	return reviewArtifactDirectory(workspaceID, jobID) + "/" + slug + ext, nil
+}
+
+func reviewArtifactDirectory(workspaceID string, jobID string) string {
+	return "review-artifacts/" + workspaceID + "/" + jobID
+}
+
+func reviewArtifactSlug(value string) (string, bool) {
+	switch value {
+	case "demo_video":
+		return "demo-video", true
+	case "execution_evidence":
+		return "execution-evidence", true
+	default:
+		return "", false
+	}
+}
+
+func reviewArtifactExtension(contentType string) (string, bool) {
+	switch contentType {
+	case "video/mp4":
+		return ".mp4", true
+	case "video/webm":
+		return ".webm", true
+	case "video/quicktime":
+		return ".mov", true
+	case "application/json":
+		return ".json", true
+	default:
+		return "", false
+	}
 }
 
 func (h *ReviewHandler) authenticateReviewAgent(w http.ResponseWriter, r *http.Request) (db.ReviewAgentToken, bool) {

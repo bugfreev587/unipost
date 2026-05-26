@@ -12,6 +12,7 @@ export const ALLOWED_ACTIONS = Object.freeze(new Set([
 ]));
 
 const SELECTOR_ACTIONS = new Set(["click", "fill", "assert_visible"]);
+const ALLOWED_CAPTURE_MODES = new Set(["native-browser-window", "playwright-page-video"]);
 
 export function validateScript(script) {
   if (!script || typeof script !== "object") {
@@ -29,6 +30,7 @@ export function validateScript(script) {
   if (!isNonEmptyString(script.start_url) || !isHttpURL(script.start_url)) {
     throw new Error("script.start_url must be an http(s) URL");
   }
+  validateRecording(script.recording || {});
   if (!Array.isArray(script.steps) || script.steps.length === 0) {
     throw new Error("script.steps must be a non-empty array");
   }
@@ -51,6 +53,15 @@ export function validateStep(step, index) {
   }
   if (SELECTOR_ACTIONS.has(step.action) && !isNonEmptyString(step.selector)) {
     throw new Error(`steps[${index}].selector is required for ${step.action}`);
+  }
+}
+
+function validateRecording(recording) {
+  if (recording.capture_mode && !ALLOWED_CAPTURE_MODES.has(recording.capture_mode)) {
+    throw new Error(`recording.capture_mode is not allowed: ${recording.capture_mode}`);
+  }
+  if (recording.show_address_bar && recording.capture_mode === "playwright-page-video") {
+    throw new Error("recording.show_address_bar requires native-browser-window capture");
   }
 }
 

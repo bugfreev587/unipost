@@ -1,6 +1,7 @@
-import { completeReviewJob, failReviewJob, postReviewEvent } from "./client.js";
+import { readFile, stat } from "node:fs/promises";
+import { completeReviewJob, createReviewArtifactUpload, failReviewJob, postReviewEvent, putReviewArtifact } from "./client.js";
 
-export function createAgentReporter({ token, apiUrl, fetchImpl = globalThis.fetch, now = Date.now } = {}) {
+export function createAgentReporter({ token, apiUrl, fetchImpl = globalThis.fetch, now = Date.now, readFileImpl = readFile, statImpl = stat } = {}) {
   const startedAt = now();
   const elapsed = () => Math.max(0, now() - startedAt);
   return {
@@ -16,6 +17,22 @@ export function createAgentReporter({ token, apiUrl, fetchImpl = globalThis.fetc
           elapsed_ms: elapsed(),
         },
       });
+    },
+    async uploadArtifact({ artifactType, contentType, path }) {
+      const info = await statImpl(path);
+      const upload = await createReviewArtifactUpload({
+        token,
+        apiUrl,
+        fetchImpl,
+        artifact: {
+          artifact_type: artifactType,
+          content_type: contentType,
+          size_bytes: info.size,
+        },
+      });
+      const bytes = await readFileImpl(path);
+      await putReviewArtifact({ upload, bytes, fetchImpl });
+      return upload.file_id;
     },
     complete(artifacts = {}, videoFileId = "") {
       return completeReviewJob({

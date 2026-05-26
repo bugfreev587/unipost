@@ -40,6 +40,9 @@ func TestBuildTikTokScriptUsesClosedActionSet(t *testing.T) {
 	if script.AgentVersion != "0.1.0" {
 		t.Fatalf("unexpected agent version: %s", script.AgentVersion)
 	}
+	if script.Recording.CaptureMode != "native-browser-window" || !script.Recording.ShowAddressBar {
+		t.Fatalf("unexpected recording settings: %+v", script.Recording)
+	}
 
 	seen := map[Action]bool{}
 	for _, step := range script.Steps {
@@ -55,5 +58,23 @@ func TestBuildTikTokScriptUsesClosedActionSet(t *testing.T) {
 		if !seen[action] {
 			t.Fatalf("expected script to include action %s", action)
 		}
+	}
+}
+
+func TestValidateRequiresNativeCaptureForAddressBar(t *testing.T) {
+	script := Script{
+		JobID:        "rvjob_1",
+		Platform:     "tiktok",
+		AgentVersion: "0.1.0",
+		StartURL:     "https://review.example.com/tiktok/posting",
+		Recording: RecordingSpec{
+			CaptureMode:    "playwright-page-video",
+			ShowAddressBar: true,
+		},
+		Steps: []Step{{ID: "open", Action: ActionGoto, URL: "https://review.example.com/tiktok/posting"}},
+	}
+
+	if err := script.Validate(); err == nil {
+		t.Fatal("expected address-bar script to require native capture")
 	}
 }

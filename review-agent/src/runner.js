@@ -1,11 +1,12 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { startNativeBrowserCapture } from "./native-capture.js";
 import { validateScript } from "./script-contract.js";
 import { buildReviewSessionCookie } from "./session-cookie.js";
 
-const VIDEO_ARTIFACT_NOTE = "Beta artifact captures the page viewport. Native browser-window capture is required before claiming address-bar coverage.";
+const PAGE_VIDEO_ARTIFACT_NOTE = "Fallback artifact captures the page viewport only. It does not satisfy address-bar evidence requirements.";
 
-export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", playwrightImpl = null } = {}) {
+export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture } = {}) {
   const valid = validateScript(script);
   if (dryRun) {
     out.write(`Review script ${valid.job_id} (${valid.steps.length} steps)\n`);
@@ -26,11 +27,21 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     await context.addCookies([sessionCookie]);
   }
   const page = await context.newPage();
+  let nativeCapture = null;
   const markers = [];
   const recordingStartedAt = Date.now();
   let currentStepId = "";
-  await reportEvent(reporter, "recording_started", "Recorder started", { job_id: valid.job_id }, out);
   try {
+    try {
+      nativeCapture = await nativeCaptureImpl({ script: valid, browser, page, out });
+    } catch (err) {
+      throw new Error(`Native browser-window recording is required for address-bar evidence but could not start. ${err.message}`);
+    }
+    await reportEvent(reporter, "recording_started", "Recorder started", {
+      job_id: valid.job_id,
+      capture_mode: nativeCapture?.mode || "playwright-page-video",
+      includes_address_bar: Boolean(nativeCapture?.includesAddressBar),
+    }, out);
     for (const step of valid.steps) {
       currentStepId = step.id;
       if (step.marker) markers.push({ step_id: step.id, label: step.marker, elapsed_ms: Date.now() - recordingStartedAt });
@@ -41,14 +52,22 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
       await runStep(page, step, out);
       await reportEvent(reporter, "step_completed", step.marker || step.id, { step_id: step.id, action: step.action }, out);
     }
-    const video = page.video?.();
+    const nativeVideo = nativeCapture ? await stopNativeCapture(nativeCapture, out) : null;
+    const video = nativeVideo ? null : page.video?.();
     await context.close();
     contextClosed = true;
-    const artifacts = await buildCompletionArtifacts({ markers, video });
-    await reportComplete(reporter, artifacts, out);
+    const artifacts = await buildCompletionArtifacts({ markers, video, nativeVideo });
+    const videoFileID = await uploadVideoArtifact(reporter, artifacts.video, out);
+    await reportComplete(reporter, artifacts, out, videoFileID);
     return { status: "completed", jobId: valid.job_id };
   } catch (err) {
-    const video = page.video?.();
+    let nativeVideo = null;
+    try {
+      if (nativeCapture) nativeVideo = await stopNativeCapture(nativeCapture, out);
+    } catch (captureErr) {
+      out.write("[recording warning] " + captureErr.message + "\n");
+    }
+    const video = nativeVideo ? null : page.video?.();
     try {
       if (!contextClosed) {
         await context.close();
@@ -57,7 +76,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     } catch (closeErr) {
       out.write("[recording warning] " + closeErr.message + "\n");
     }
-    const artifacts = await buildCompletionArtifacts({ markers, video });
+    const artifacts = await buildCompletionArtifacts({ markers, video, nativeVideo });
     await reportFail(reporter, err, { ...artifacts, last_step: currentStepId }, out);
     throw err;
   } finally {
@@ -80,8 +99,18 @@ export function buildBrowserContextOptions(script, { videoDir = defaultVideoDir(
   };
 }
 
-export async function buildCompletionArtifacts({ markers = [], video = null } = {}) {
+export async function buildCompletionArtifacts({ markers = [], video = null, nativeVideo = null } = {}) {
   const artifacts = { markers };
+  if (nativeVideo?.local_path) {
+    artifacts.video = {
+      format: videoFormat(nativeVideo.local_path),
+      local_path: nativeVideo.local_path,
+      capture_mode: nativeVideo.capture_mode,
+      includes_address_bar: nativeVideo.includes_address_bar,
+      bounds: nativeVideo.bounds,
+    };
+    return artifacts;
+  }
   if (!video?.path) return artifacts;
   const localPath = await video.path();
   if (!localPath) return artifacts;
@@ -89,7 +118,8 @@ export async function buildCompletionArtifacts({ markers = [], video = null } = 
     format: videoFormat(localPath),
     local_path: localPath,
     capture_mode: "playwright-page-video",
-    note: VIDEO_ARTIFACT_NOTE,
+    includes_address_bar: false,
+    note: PAGE_VIDEO_ARTIFACT_NOTE,
   };
   return artifacts;
 }
@@ -186,6 +216,36 @@ async function hideOverlay(page) {
   await page.evaluate(() => document.querySelector("[data-unipost-review-overlay]")?.remove());
 }
 
+async function stopNativeCapture(nativeCapture, out) {
+  await nativeCapture.stop();
+  out.write("[recording] native browser-window capture finalized\n");
+  return {
+    local_path: nativeCapture.localPath,
+    capture_mode: nativeCapture.mode,
+    includes_address_bar: Boolean(nativeCapture.includesAddressBar),
+    bounds: nativeCapture.bounds,
+  };
+}
+
+async function uploadVideoArtifact(reporter, video, out) {
+  if (!reporter?.uploadArtifact || !video?.local_path) return "";
+  const contentType = videoContentType(video.format);
+  const fileID = await reporter.uploadArtifact({
+    artifactType: "demo_video",
+    contentType,
+    path: video.local_path,
+  });
+  out.write("[artifact] uploaded demo video: " + fileID + "\n");
+  video.file_id = fileID;
+  return fileID;
+}
+
+function videoContentType(format) {
+  if (format === "mp4") return "video/mp4";
+  if (format === "mov" || format === "quicktime") return "video/quicktime";
+  return "video/webm";
+}
+
 async function reportEvent(reporter, eventType, message, metadata, out) {
   if (!reporter?.event) return;
   try {
@@ -195,10 +255,10 @@ async function reportEvent(reporter, eventType, message, metadata, out) {
   }
 }
 
-async function reportComplete(reporter, artifacts, out) {
+async function reportComplete(reporter, artifacts, out, videoFileID = "") {
   if (!reporter?.complete) return;
   try {
-    await reporter.complete(artifacts);
+    await reporter.complete(artifacts, videoFileID);
   } catch (err) {
     out.write("[report warning] " + err.message + "\n");
   }

@@ -15,6 +15,12 @@ async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (command === "run") {
+    const checks = runDoctor();
+    printDoctor(checks);
+    const hardFailure = checks.find((check) => !check.ok && !check.warning);
+    if (hardFailure) {
+      throw new Error(`pre-flight check failed: ${hardFailure.id}`);
+    }
     const args = parseArgs(rest);
     const token = args.token || process.env.UNIPOST_REVIEW_TOKEN;
     const sessionToken = args.sessionToken || process.env.UNIPOST_REVIEW_SESSION_TOKEN || "";

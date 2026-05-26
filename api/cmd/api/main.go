@@ -457,7 +457,7 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
-	reviewHandler := handler.NewReviewHandler(queries).WithAPIBaseURL(apiBaseURL)
+	reviewHandler := handler.NewReviewHandler(queries).WithAPIBaseURL(apiBaseURL).WithArtifactStorage(storageClient)
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
 
 	// Public routes

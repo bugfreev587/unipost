@@ -51,9 +51,10 @@ type SessionSpec struct {
 }
 
 type RecordingSpec struct {
-	WindowWidth    int  `json:"window_width"`
-	WindowHeight   int  `json:"window_height"`
-	ShowAddressBar bool `json:"show_address_bar"`
+	WindowWidth    int    `json:"window_width"`
+	WindowHeight   int    `json:"window_height"`
+	CaptureMode    string `json:"capture_mode"`
+	ShowAddressBar bool   `json:"show_address_bar"`
 }
 
 type Step struct {
@@ -88,6 +89,12 @@ func (s Script) Validate() error {
 	}
 	if _, err := url.ParseRequestURI(s.StartURL); err != nil {
 		return fmt.Errorf("start_url is invalid: %w", err)
+	}
+	if s.Recording.CaptureMode != "" && s.Recording.CaptureMode != "native-browser-window" && s.Recording.CaptureMode != "playwright-page-video" {
+		return fmt.Errorf("recording.capture_mode %q is not allowed", s.Recording.CaptureMode)
+	}
+	if s.Recording.ShowAddressBar && s.Recording.CaptureMode == "playwright-page-video" {
+		return fmt.Errorf("recording.show_address_bar requires native-browser-window capture")
 	}
 	if len(s.Steps) == 0 {
 		return fmt.Errorf("steps are required")
@@ -138,6 +145,7 @@ func BuildTikTokScript(input BuildTikTokScriptInput) Script {
 		Recording: RecordingSpec{
 			WindowWidth:    width,
 			WindowHeight:   height,
+			CaptureMode:    captureMode(input.RequireAddressBar),
 			ShowAddressBar: input.RequireAddressBar,
 		},
 		Steps: []Step{
@@ -185,6 +193,13 @@ func BuildTikTokScript(input BuildTikTokScriptInput) Script {
 			},
 		},
 	}
+}
+
+func captureMode(requireAddressBar bool) string {
+	if requireAddressBar {
+		return "native-browser-window"
+	}
+	return "playwright-page-video"
 }
 
 func requiresSelector(action Action) bool {

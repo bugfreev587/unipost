@@ -44,3 +44,17 @@ test("doctor warns macOS users about screen recording permission", () => {
   const checks = runDoctor({ platform: "darwin", nodeVersion: "20.11.1" });
   assert.ok(checks.some((check) => check.id === "macos-screen-recording" && check.warning));
 });
+
+
+test("requires native capture when script asks to show the browser address bar", () => {
+  assert.throws(() => validateScript({
+    ...validScript,
+    recording: { show_address_bar: true, capture_mode: "playwright-page-video" },
+  }), /requires native-browser-window/);
+
+  const script = validateScript({
+    ...validScript,
+    recording: { show_address_bar: true, capture_mode: "native-browser-window" },
+  });
+  assert.equal(script.recording.capture_mode, "native-browser-window");
+});

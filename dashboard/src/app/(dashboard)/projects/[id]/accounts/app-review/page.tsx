@@ -7,10 +7,12 @@ import { useAuth } from "@clerk/nextjs";
 import {
   Check,
   Clipboard,
+  Download,
   ExternalLink,
   KeyRound,
   Loader2,
   Play,
+  RefreshCw,
   ShieldCheck,
   Terminal,
   Video,
@@ -21,6 +23,7 @@ import {
   createReviewDomain,
   createReviewJob,
   createReviewKit,
+  getReviewJob,
   listPlatformCredentials,
   verifyReviewDomain,
   type PlatformCredential,
@@ -59,6 +62,7 @@ function AppReviewAutopilotContent() {
   const [copied, setCopied] = useState<string | null>(null);
   const [loadingCreds, setLoadingCreds] = useState(true);
   const [working, setWorking] = useState<"domain" | "verify" | "kit" | "job" | null>(null);
+  const [pollingJob, setPollingJob] = useState(false);
   const [error, setError] = useState("");
   const copyTimerRef = useRef<number | null>(null);
 
@@ -79,6 +83,52 @@ function AppReviewAutopilotContent() {
     loadCredentials();
   }, [loadCredentials]);
 
+  const refreshReviewJob = useCallback(async (jobId: string) => {
+    const token = await getToken();
+    if (!token) return;
+    const res = await getReviewJob(token, jobId);
+    setReviewJob((current) => ({
+      ...res.data,
+      agent_command: res.data.agent_command ?? current?.agent_command,
+      token_expires_at: res.data.token_expires_at ?? current?.token_expires_at,
+    }));
+  }, [getToken]);
+
+  useEffect(() => {
+    if (!reviewJob?.id) return;
+    let cancelled = false;
+    let interval: number | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      setPollingJob(true);
+      try {
+        const token = await getToken();
+        if (!token || cancelled) return;
+        const res = await getReviewJob(token, reviewJob.id);
+        if (cancelled) return;
+        setReviewJob((current) => ({
+          ...res.data,
+          agent_command: res.data.agent_command ?? current?.agent_command,
+          token_expires_at: res.data.token_expires_at ?? current?.token_expires_at,
+        }));
+        if ((res.data.status === "completed" || res.data.status === "failed") && interval !== null) {
+          window.clearInterval(interval);
+          interval = null;
+        }
+      } catch {
+        // Keep the local command visible; users can refresh explicitly.
+      } finally {
+        if (!cancelled) setPollingJob(false);
+      }
+    };
+    void tick();
+    interval = window.setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      if (interval !== null) window.clearInterval(interval);
+    };
+  }, [getToken, reviewJob?.id]);
+
   useEffect(() => () => {
     if (copyTimerRef.current !== null) {
       window.clearTimeout(copyTimerRef.current);
@@ -89,6 +139,7 @@ function AppReviewAutopilotContent() {
   const domainReady = reviewDomain?.status === "ready" && (!reviewDomain.tls_status || reviewDomain.tls_status === "issued");
   const normalizedDomain = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*/, "");
   const redirectURI = normalizedDomain ? `https://${normalizedDomain}/v1/connect/callback/tiktok` : "https://your-review-domain/v1/connect/callback/tiktok";
+  const artifactDownloadURL = reviewJob?.artifacts ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(reviewJob.artifacts, null, 2))}` : "";
 
   const steps = useMemo(() => [
     { label: "TikTok credentials", detail: "Client Key and Client Secret saved in White-label.", state: hasTikTokCredential ? "done" : "blocked" as StepState },
@@ -165,10 +216,24 @@ function AppReviewAutopilotContent() {
       if (!token) return;
       const res = await createReviewJob(token, { review_kit_id: reviewKit.id });
       setReviewJob(res.data);
+      void refreshReviewJob(res.data.id);
     } catch (err) {
       setError((err as Error).message || "Failed to create recording job");
     } finally {
       setWorking(null);
+    }
+  }
+
+  async function handleRefreshJob() {
+    if (!reviewJob?.id) return;
+    setError("");
+    setPollingJob(true);
+    try {
+      await refreshReviewJob(reviewJob.id);
+    } catch (err) {
+      setError((err as Error).message || "Failed to refresh recording job");
+    } finally {
+      setPollingJob(false);
     }
   }
 
@@ -317,7 +382,7 @@ function AppReviewAutopilotContent() {
                 {working === "kit" ? <ButtonLoading label="Creating kit" /> : reviewKit ? "Kit ready" : "Create review kit"}
               </button>
               <button className="dbtn" onClick={handleCreateJob} disabled={!reviewKit || working === "job"} style={{ width: "100%", justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7 }}>
-                {working === "job" ? <ButtonLoading label="Starting" /> : <><Play size={14} /> Start recording</>}
+                {working === "job" ? <ButtonLoading label="Starting" /> : <><Play size={14} /> {reviewJob ? "Re-record" : "Start recording"}</>}
               </button>
               {error && (
                 <div style={{ padding: "10px 12px", borderRadius: 8, background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", color: "var(--danger)", fontSize: 13, lineHeight: 1.5 }}>
@@ -327,18 +392,60 @@ function AppReviewAutopilotContent() {
             </div>
           </section>
 
+          {reviewJob && (
+            <section className="settings-section" style={{ marginBottom: 0 }}>
+              <div className="settings-section-header">
+                <span>Recording status</span>
+                <span className="dbadge dbadge-gray" style={{ fontSize: 10 }}>{formatJobStatus(reviewJob.status)}</span>
+              </div>
+              <div className="settings-section-body" style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: "var(--dtext)", fontWeight: 650 }}>{reviewJob.id}</div>
+                    <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 3 }}>{recordingStatusDetail(reviewJob)}</div>
+                  </div>
+                  <button className="dbtn" onClick={handleRefreshJob} disabled={pollingJob} style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                    <RefreshCw size={13} className={pollingJob ? "animate-spin" : ""} /> Refresh
+                  </button>
+                </div>
+                {reviewJob.failure_reason && (
+                  <div style={{ padding: "10px 12px", borderRadius: 8, background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", color: "var(--danger)", fontSize: 13, lineHeight: 1.5 }}>
+                    {reviewJob.failure_reason}
+                  </div>
+                )}
+                {reviewJob.video_download_url && (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <video src={reviewJob.video_download_url} controls style={{ width: "100%", borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)", aspectRatio: "16 / 9" }} />
+                    <a className="dbtn dbtn-primary" href={reviewJob.video_download_url} download style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7, textDecoration: "none" }}>
+                      <Download size={14} /> Download video
+                    </a>
+                  </div>
+                )}
+                {artifactDownloadURL && (
+                  <a className="dbtn" href={artifactDownloadURL} download={`unipost-review-${reviewJob.id}-artifacts.json`} style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7, textDecoration: "none" }}>
+                    <Download size={14} /> Download artifacts
+                  </a>
+                )}
+              </div>
+            </section>
+          )}
+
           <section className="settings-section" style={{ marginBottom: 0 }}>
             <div className="settings-section-header">Local agent</div>
             <div className="settings-section-body">
               {reviewJob ? (
                 <div style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--success)", fontSize: 13, fontWeight: 650 }}>
-                    <ShieldCheck size={15} /> Token minted, expires {formatTime(reviewJob.token_expires_at)}
+                    <ShieldCheck size={15} /> Token minted, expires {formatTime(reviewJob.token_expires_at || "")}
                   </div>
-                  <pre style={{ margin: 0, padding: 12, borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)", color: "var(--dtext)", fontSize: 12, lineHeight: 1.6, overflowX: "auto" }}><code>{reviewJob.agent_command}</code></pre>
-                  <button className="dbtn dbtn-primary" onClick={() => copyText("agent", reviewJob.agent_command)} style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7 }}>
-                    {copied === "agent" ? <Check size={14} /> : <Terminal size={14} />} Copy command
-                  </button>
+                  {reviewJob.agent_command && (
+                    <>
+                      <pre style={{ margin: 0, padding: 12, borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)", color: "var(--dtext)", fontSize: 12, lineHeight: 1.6, overflowX: "auto" }}><code>{reviewJob.agent_command}</code></pre>
+                      <button className="dbtn dbtn-primary" onClick={() => copyText("agent", reviewJob.agent_command || "")} style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7 }}>
+                        {copied === "agent" ? <Check size={14} /> : <Terminal size={14} />} Copy command
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.65 }}>
@@ -386,6 +493,18 @@ function DNSRecordRow({ record, copied, onCopy }: { record: ReviewDNSRecord; cop
 
 function ButtonLoading({ label }: { label: string }) {
   return <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><Loader2 size={14} className="animate-spin" /> {label}</span>;
+}
+
+function formatJobStatus(status: string) {
+  return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function recordingStatusDetail(job: ReviewJob) {
+  if (job.status === "completed") return "Recording completed. Review the generated video and artifact bundle before submitting.";
+  if (job.status === "failed") return "Recording failed. Re-recording will reuse the same domain, credentials, and kit setup.";
+  if (job.status === "waiting_for_user") return "Waiting for the user-controlled TikTok login or OAuth consent step.";
+  if (job.status === "running") return "The local agent is recording and reporting progress.";
+  return "Run the local command to start recording.";
 }
 
 function formatTime(value: string) {

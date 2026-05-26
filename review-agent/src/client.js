@@ -19,6 +19,25 @@ export async function failReviewJob({ token, apiUrl = DEFAULT_API_URL, fetchImpl
   return agentRequest("/v1/review/agent/fail", { token, apiUrl, fetchImpl, method: "POST", body: data });
 }
 
+export async function createReviewArtifactUpload({ token, apiUrl = DEFAULT_API_URL, fetchImpl = globalThis.fetch, artifact } = {}) {
+  const body = await agentRequest("/v1/review/agent/artifacts", { token, apiUrl, fetchImpl, method: "POST", body: artifact });
+  return body.data;
+}
+
+export async function putReviewArtifact({ upload, bytes, fetchImpl = globalThis.fetch } = {}) {
+  if (!upload?.upload_url) {
+    throw new Error("review artifact upload URL is required");
+  }
+  const response = await fetchImpl(upload.upload_url, {
+    method: upload.method || "PUT",
+    headers: upload.headers || {},
+    body: bytes,
+  });
+  if (!response.ok) {
+    throw new Error("review artifact upload failed: " + response.status);
+  }
+}
+
 async function agentRequest(path, { token, apiUrl = DEFAULT_API_URL, fetchImpl = globalThis.fetch, method = "GET", body } = {}) {
   if (!token || typeof token !== "string") {
     throw new Error("review agent token is required");

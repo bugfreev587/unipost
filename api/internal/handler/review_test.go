@@ -320,7 +320,7 @@ func TestReviewAgentCompleteAndFailUseBearerToken(t *testing.T) {
 	}
 	h := NewReviewHandler(store)
 	completeReq := httptest.NewRequest(http.MethodPost, "/v1/review/agent/complete", strings.NewReader(`{
-		"video_file_id":"file_123",
+		"video_file_id":"review-artifacts/ws_1/rvjob_1/demo-video.webm",
 		"artifacts":{"markers":[{"elapsed_ms":42,"label":"Open customer review domain"}]}
 	}`))
 	completeReq.Header.Set("Authorization", "Bearer revtok_live")
@@ -331,7 +331,7 @@ func TestReviewAgentCompleteAndFailUseBearerToken(t *testing.T) {
 	if completeRec.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeRec.Code, completeRec.Body.String())
 	}
-	if store.completedJob.ID != "rvjob_1" || store.completedJob.VideoFileID.String != "file_123" {
+	if store.completedJob.ID != "rvjob_1" || store.completedJob.VideoFileID.String != "review-artifacts/ws_1/rvjob_1/demo-video.webm" {
 		t.Fatalf("job was not completed: %+v", store.completedJob)
 	}
 
@@ -352,6 +352,101 @@ func TestReviewAgentCompleteAndFailUseBearerToken(t *testing.T) {
 	}
 }
 
+func TestReviewAgentCompleteRejectsForeignArtifactID(t *testing.T) {
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	h := NewReviewHandler(store)
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/agent/complete", strings.NewReader(`{
+		"video_file_id":"review-artifacts/ws_other/rvjob_other/demo-video.webm",
+		"artifacts":{}
+	}`))
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.CompleteAgentJob(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.completedJob.ID != "" {
+		t.Fatalf("foreign artifact should not complete job: %+v", store.completedJob)
+	}
+}
+
+func TestReviewAgentCreatesArtifactUploadURL(t *testing.T) {
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	artifacts := &reviewArtifactStorageFake{putURL: "https://uploads.example.com/review-video"}
+	h := NewReviewHandler(store).WithArtifactStorage(artifacts)
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/agent/artifacts", strings.NewReader(`{
+		"artifact_type":"demo_video",
+		"content_type":"video/webm",
+		"size_bytes":1234
+	}`))
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.CreateAgentArtifactUpload(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if artifacts.putKey != "review-artifacts/ws_1/rvjob_1/demo-video.webm" || artifacts.putContentType != "video/webm" {
+		t.Fatalf("unexpected presign args: key=%q content_type=%q", artifacts.putKey, artifacts.putContentType)
+	}
+	var env struct {
+		Data reviewAgentArtifactUploadResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.FileID != "review-artifacts/ws_1/rvjob_1/demo-video.webm" || env.Data.UploadURL != artifacts.putURL {
+		t.Fatalf("unexpected upload response: %+v", env.Data)
+	}
+}
+
+func TestReviewGetJobReturnsVideoDownloadAndEvents(t *testing.T) {
+	store := &reviewStoreFake{
+		job: db.ReviewJob{
+			ID: "rvjob_1", WorkspaceID: "ws_1", ReviewKitID: "rvkit_1", Platform: "tiktok", Status: "completed",
+			VideoFileID:   pgtype.Text{String: "review-artifacts/ws_1/rvjob_1/demo-video.webm", Valid: true},
+			ArtifactsJson: []byte(`{"markers":[{"label":"Publish test video","elapsed_ms":42000}]}`),
+		},
+		events: []db.ReviewJobEvent{{ReviewJobID: "rvjob_1", EventType: "recording_started", Message: "Recorder started", ElapsedMs: pgtype.Int8{Int64: 0, Valid: true}}},
+	}
+	artifacts := &reviewArtifactStorageFake{getURL: "https://downloads.example.com/review-video"}
+	h := NewReviewHandler(store).WithArtifactStorage(artifacts)
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/jobs/rvjob_1", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "rvjob_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.GetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if artifacts.getKey != "review-artifacts/ws_1/rvjob_1/demo-video.webm" {
+		t.Fatalf("unexpected download key: %q", artifacts.getKey)
+	}
+	var env struct {
+		Data reviewJobDetailResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.VideoDownloadURL != artifacts.getURL || len(env.Data.Events) != 1 {
+		t.Fatalf("missing artifact detail: %+v", env.Data)
+	}
+	if env.Data.Artifacts["markers"] == nil {
+		t.Fatalf("missing artifacts json: %+v", env.Data.Artifacts)
+	}
+}
+
 type reviewStoreFake struct {
 	domain               db.ReviewDomain
 	kit                  db.ReviewKit
@@ -361,6 +456,7 @@ type reviewStoreFake struct {
 	agentToken           db.ReviewAgentToken
 	reviewSessionByHash  db.ReviewSession
 	profile              db.Profile
+	events               []db.ReviewJobEvent
 	agentTokenHashLookup string
 	credentialErr        error
 	now                  time.Time
@@ -463,6 +559,9 @@ func (f *reviewStoreFake) CreateReviewJobEvent(_ context.Context, arg db.CreateR
 	f.createdEvent = arg
 	return db.ReviewJobEvent{ID: 1, ReviewJobID: arg.ReviewJobID, EventType: arg.EventType, Message: arg.Message, Metadata: arg.Metadata, ElapsedMs: arg.ElapsedMs}, nil
 }
+func (f *reviewStoreFake) ListReviewJobEvents(_ context.Context, _ db.ListReviewJobEventsParams) ([]db.ReviewJobEvent, error) {
+	return f.events, nil
+}
 func (f *reviewStoreFake) MarkReviewJobRunning(_ context.Context, arg db.MarkReviewJobRunningParams) (db.ReviewJob, error) {
 	f.markedRunningJobID = arg.ID
 	return db.ReviewJob{ID: arg.ID, WorkspaceID: arg.WorkspaceID, Status: "running"}, nil
@@ -482,4 +581,23 @@ func (f *reviewStoreFake) FailReviewJob(_ context.Context, arg db.FailReviewJobP
 
 func fixedReviewTokenGenerator(prefix string) (string, string, error) {
 	return prefix + "fixed", "hash:" + prefix + "fixed", nil
+}
+
+type reviewArtifactStorageFake struct {
+	putKey         string
+	putContentType string
+	putURL         string
+	getKey         string
+	getURL         string
+}
+
+func (f *reviewArtifactStorageFake) PresignPut(_ context.Context, key string, contentType string, _ time.Duration) (string, error) {
+	f.putKey = key
+	f.putContentType = contentType
+	return f.putURL, nil
+}
+
+func (f *reviewArtifactStorageFake) PresignGet(_ context.Context, key string, _ time.Duration) (string, error) {
+	f.getKey = key
+	return f.getURL, nil
 }
