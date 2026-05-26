@@ -1,6 +1,6 @@
 # API Reference Gap Audit
 
-Last reviewed: April 23, 2026
+Last reviewed: May 26, 2026
 
 This audit compares the public API routes registered in [api/cmd/api/main.go](/Users/xiaoboyu/unipost/api/cmd/api/main.go) against the dedicated endpoint pages currently present under [dashboard/src/app/docs/api](/Users/xiaoboyu/unipost/dashboard/src/app/docs/api).
 
@@ -15,6 +15,12 @@ This audit compares the public API routes registered in [api/cmd/api/main.go](/U
 - `DELETE /v1/accounts/{id}`
 - `GET /v1/accounts/{id}/capabilities`
 - `GET /v1/accounts/{id}/tiktok/creator-info`
+- `GET /v1/analytics/posts`
+- `GET /v1/analytics/posts/export`
+- `GET /v1/analytics/rollup`
+- `GET /v1/analytics/platforms`
+- `GET /v1/analytics/platforms/{platform}`
+- `POST /v1/analytics/refresh`
 
 ## Still missing dedicated API Reference pages
 
@@ -48,7 +54,6 @@ This audit compares the public API routes registered in [api/cmd/api/main.go](/U
 
 - `GET /v1/analytics/trend`
 - `GET /v1/analytics/by-platform`
-- `GET /v1/analytics/rollup`
 
 ### Webhooks
 

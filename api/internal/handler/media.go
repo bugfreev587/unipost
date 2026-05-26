@@ -31,6 +31,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -60,6 +61,8 @@ func NewMediaHandler(queries *db.Queries, store *storage.Client) *MediaHandler {
 // scheduled for hard delete two hours after the publish that
 // consumed it, keeping R2 occupancy near zero for large files.
 const MediaSizeHardCap = 4 * 1024 * 1024 * 1024
+
+const mediaSizeBytesRequiredMessage = "size_bytes must be greater than 0 when reserving an upload with POST /v1/media. Use POST /v1/media only for raw file bytes; if your media already has a public URL, skip this endpoint and send the URL in platform_posts[].media_urls on POST /v1/posts."
 
 // allowedMimeTypes is the union of every adapter's accepted formats.
 // We could derive this from the capabilities map but a static set
@@ -150,7 +153,7 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.SizeBytes <= 0 {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "size_bytes must be > 0")
+		writeMediaSizeBytesRequiredError(w, body.SizeBytes)
 		return
 	}
 	if body.SizeBytes > MediaSizeHardCap {
@@ -258,6 +261,46 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	resp.UploadURL = uploadURL
 	resp.ExpiresAt = expiresAt
 	writeCreated(w, resp)
+}
+
+func writeMediaSizeBytesRequiredError(w http.ResponseWriter, actual int64) {
+	type fieldValidationIssue struct {
+		Field    string `json:"field"`
+		Code     string `json:"code"`
+		Message  string `json:"message"`
+		Actual   any    `json:"actual,omitempty"`
+		Limit    any    `json:"limit,omitempty"`
+		Severity string `json:"severity"`
+	}
+	type fieldValidationErrorBody struct {
+		Code           string                 `json:"code"`
+		NormalizedCode string                 `json:"normalized_code,omitempty"`
+		Message        string                 `json:"message"`
+		Issues         []fieldValidationIssue `json:"issues,omitempty"`
+	}
+	type fieldValidationErrorResponse struct {
+		Error     fieldValidationErrorBody `json:"error"`
+		RequestID string                   `json:"request_id,omitempty"`
+	}
+
+	writeJSON(w, http.StatusUnprocessableEntity, fieldValidationErrorResponse{
+		Error: fieldValidationErrorBody{
+			Code:           "VALIDATION_ERROR",
+			NormalizedCode: normalizeErrorCode("VALIDATION_ERROR"),
+			Message:        mediaSizeBytesRequiredMessage,
+			Issues: []fieldValidationIssue{
+				{
+					Field:    "size_bytes",
+					Code:     platform.CodeMissingRequired,
+					Message:  mediaSizeBytesRequiredMessage,
+					Actual:   actual,
+					Limit:    int64(1),
+					Severity: platform.SeverityError,
+				},
+			},
+		},
+		RequestID: requestIDFromResponse(w),
+	})
 }
 
 // Get handles GET /v1/media/{id}. Returns the row + a fresh signed

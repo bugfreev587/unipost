@@ -71,7 +71,7 @@ export default function AnalyticsRefreshPage() {
       path="/v1/analytics/refresh"
       requestSections={[
         { title: "Authorization", items: AUTH_FIELDS },
-        { title: "JSON Body", items: BODY_FIELDS },
+        { title: "Request Body", items: BODY_FIELDS },
       ]}
       responses={[
         { code: "202", fields: RESPONSE_FIELDS },

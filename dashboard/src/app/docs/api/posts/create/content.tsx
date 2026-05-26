@@ -47,7 +47,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "media_urls?",
     type: "string[]",
-    description: "Public URLs for hosted media. Ignored when platform_posts overrides are used.",
+    description: <>Public URLs for hosted media. Do not reserve these with <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />; that endpoint is only for raw file uploads that have a known byte size. Ignored when platform_posts overrides are used.</>,
   },
   {
     name: "media_ids?",
@@ -88,7 +88,7 @@ const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
   {
     name: "platform_posts[].media_urls?",
     type: "string[]",
-    description: "Account-specific hosted asset URLs.",
+    description: <>Account-specific hosted asset URLs. Use this field directly when the asset already has a public URL; <code>size_bytes</code> is only needed for <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" /> local-file uploads.</>,
   },
   {
     name: "platform_posts[].media_ids?",
@@ -525,6 +525,20 @@ export function CreatePostContent() {
       responseSnippets={RESPONSE_SNIPPETS}
     >
       <div style={{ paddingTop: 8 }}>
+        <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
+          <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>
+            Media Inputs
+          </h2>
+          <div style={{ display: "grid", gap: 12, maxWidth: 880 }}>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              <strong style={{ color: "var(--docs-text)" }}>Hosted URL:</strong> if your image or video is already publicly reachable, send it in <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform_posts[].media_urls</code>. Do not call <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" /> for this path.
+            </p>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              <strong style={{ color: "var(--docs-text)" }}>Local file bytes:</strong> reserve an upload with <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />, pass a <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>size_bytes</code> value greater than <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>0</code>, PUT the bytes to the returned upload URL, then publish with <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform_posts[].media_ids</code>.
+            </p>
+          </div>
+        </section>
+
         <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
           <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>
             Publishing Result

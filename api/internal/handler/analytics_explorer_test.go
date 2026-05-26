@@ -1,8 +1,16 @@
 package handler
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 )
 
 func TestNormalizeAnalyticsPostsLimitDefaultsAndCaps(t *testing.T) {
@@ -107,4 +115,90 @@ func TestRollupEngagementRateUsesSavesAndClicks(t *testing.T) {
 	if got != 0.25 {
 		t.Fatalf("rollup engagement = %.4f, want 0.2500", got)
 	}
+}
+
+func TestAnalyticsExplorerListPostsRequiresWorkspace(t *testing.T) {
+	h := NewAnalyticsExplorerHandler(nil)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/analytics/posts", nil)
+
+	h.ListPosts(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAnalyticsExplorerListPostsRejectsUnsafeSortBeforeDB(t *testing.T) {
+	h := NewAnalyticsExplorerHandler(nil)
+	w := httptest.NewRecorder()
+	req := analyticsExplorerRequest(http.MethodGet, "/v1/analytics/posts?sort=published_at%3BDROP%20TABLE%20post_analytics", nil)
+
+	h.ListPosts(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestAnalyticsExplorerExportPostsRejectsInvalidCursorBeforeDB(t *testing.T) {
+	h := NewAnalyticsExplorerHandler(nil)
+	w := httptest.NewRecorder()
+	req := analyticsExplorerRequest(http.MethodGet, "/v1/analytics/posts/export?cursor=-1", nil)
+
+	h.ExportPostsCSV(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestAnalyticsExplorerListPlatformsRejectsInvalidDateBeforeDB(t *testing.T) {
+	h := NewAnalyticsExplorerHandler(nil)
+	w := httptest.NewRecorder()
+	req := analyticsExplorerRequest(http.MethodGet, "/v1/analytics/platforms?from=05-01-2026", nil)
+
+	h.ListPlatforms(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestAnalyticsExplorerGetPlatformRejectsUnknownPlatformBeforeDB(t *testing.T) {
+	h := NewAnalyticsExplorerHandler(nil)
+	w := httptest.NewRecorder()
+	req := analyticsExplorerRequest(http.MethodGet, "/v1/analytics/platforms/mastodon", nil)
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("platform", "mastodon")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+
+	h.GetPlatform(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestAnalyticsExplorerRequestRefreshRejectsUnknownPlatformBeforeDB(t *testing.T) {
+	h := NewAnalyticsExplorerHandler(nil)
+	w := httptest.NewRecorder()
+	req := analyticsExplorerRequest(http.MethodPost, "/v1/analytics/refresh", strings.NewReader(`{"platform":"mastodon"}`))
+
+	h.RequestRefresh(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func analyticsExplorerRequest(method, target string, body *strings.Reader) *http.Request {
+	var reader *strings.Reader
+	if body != nil {
+		reader = body
+	} else {
+		reader = strings.NewReader("")
+	}
+	req := httptest.NewRequest(method, target, reader)
+	return req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_test"))
 }

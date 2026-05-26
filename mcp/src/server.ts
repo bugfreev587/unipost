@@ -39,6 +39,8 @@ import { z } from "zod";
 
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const PORT = parseInt(process.env.PORT || "3001", 10);
+const HOSTED_URL_GUIDANCE =
+  "If you are creating a post from an already-public media URL, pass that URL directly under platform_posts[].media_urls in unipost_create_post. Use unipost_upload_media only when you need UniPost to store raw bytes and return a media_id.";
 
 // ── API helper (uses per-request API key) ──
 async function apiRequest(path: string, apiKey: string, options?: RequestInit) {
@@ -85,7 +87,11 @@ async function uploadMediaToLibrary(
     const lenHeader = head.headers.get("content-length");
     sizeBytes = lenHeader ? parseInt(lenHeader, 10) : 0;
     if (!sizeBytes) {
-      return { error: "Error: could not determine size of remote URL via HEAD." };
+      return {
+        error:
+          "Error: could not determine size of remote URL via HEAD, so UniPost cannot reserve a /v1/media upload with size_bytes > 0. " +
+          HOSTED_URL_GUIDANCE,
+      };
     }
   }
 
@@ -98,8 +104,15 @@ async function uploadMediaToLibrary(
     }),
   });
   if (!created?.data?.upload_url) {
+    const apiMessage = created?.error?.message ? ` ${created.error.message}` : "";
     return {
-      error: "Error: API did not return an upload URL: " + JSON.stringify(created),
+      error:
+        "Error: API did not return an upload URL." +
+        apiMessage +
+        " " +
+        HOSTED_URL_GUIDANCE +
+        " Raw API response: " +
+        JSON.stringify(created),
     };
   }
 
@@ -404,8 +417,11 @@ function createMcpServer(apiKey: string): McpServer {
   //   local file. The MCP server forwards the bytes to R2 via the
   //   API's two-step presign flow. Cap is ~4 MB after base64 inflation.
   // - url is for callers that already have the file hosted (Slack
-  //   attachment, public URL, etc). The API fetches it server-side
-  //   via the legacy media_urls path and stores it under a media_id.
+  //   attachment, public URL, etc) but still need a UniPost media_id.
+  //   For ordinary post creation with an already-public URL, callers
+  //   should skip this tool and use platform_posts[].media_urls.
+  //   This tool HEADs the URL to reserve /v1/media with size_bytes,
+  //   then fetches and PUTs the bytes into UniPost storage.
   // base64_data takes precedence if both are set.
   server.tool(
     "unipost_upload_media",
@@ -413,8 +429,12 @@ function createMcpServer(apiKey: string): McpServer {
       "Upload an image or video to UniPost's media library and return a media_id.",
       "",
       "Pass EITHER base64_data (for local files, ≤ 4 MB after base64 inflation)",
-      "OR url (for files already hosted publicly somewhere). base64_data wins",
-      "if both are set.",
+      "OR url (for hosted files that still need to become a UniPost media_id).",
+      "base64_data wins if both are set.",
+      "",
+      "If you are simply creating a post from a public media URL, do not upload",
+      "it here. Pass that URL directly as platform_posts[].media_urls in",
+      "unipost_create_post.",
       "",
       "The returned media_id can be used in subsequent unipost_create_post or",
       "unipost_create_draft calls under platform_posts[].media_ids.",
@@ -429,7 +449,7 @@ function createMcpServer(apiKey: string): McpServer {
       url: z
         .string()
         .optional()
-        .describe("Publicly fetchable URL the API can download from. Required when base64_data is not set."),
+        .describe("Publicly fetchable URL to copy into UniPost storage when you need a media_id. For normal hosted-URL posting, use platform_posts[].media_urls in unipost_create_post instead."),
     },
     async (args) => {
       const uploaded = await uploadMediaToLibrary(apiKey, {

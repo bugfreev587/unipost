@@ -12,6 +12,13 @@ const publicRoutes = [
   { path: "/tools/instagram-analytics", marker: /Instagram Analytics/i },
   { path: "/tools/threads-analytics", marker: /Threads Analytics/i },
   { path: "/tools/pinterest-analytics", marker: /Pinterest Analytics/i },
+  { path: "/docs/api", marker: /List analytics posts|Export analytics posts/i },
+  { path: "/docs/api/analytics/posts-list", marker: /List analytics posts|GET\s+\/v1\/analytics\/posts/i },
+  { path: "/docs/api/analytics/posts/export", marker: /Export analytics posts|GET\s+\/v1\/analytics\/posts\/export/i },
+  { path: "/docs/api/analytics/rollup", marker: /Analytics rollup|GET\s+\/v1\/analytics\/rollup/i },
+  { path: "/docs/api/analytics/platforms", marker: /Analytics platforms|GET\s+\/v1\/analytics\/platforms/i },
+  { path: "/docs/api/analytics/platforms/detail", marker: /Get analytics platform|GET\s+\/v1\/analytics\/platforms\/\{platform\}/i },
+  { path: "/docs/api/analytics/refresh", marker: /Request analytics refresh|POST\s+\/v1\/analytics\/refresh/i },
 ];
 
 test.describe("public dashboard surfaces", () => {
@@ -25,7 +32,8 @@ test.describe("public dashboard surfaces", () => {
       });
 
       await page.goto(route.path, { waitUntil: "domcontentloaded" });
-      await expect(page.getByText(route.marker).first()).toBeVisible();
+      const surface = route.path.startsWith("/docs") ? page.locator("article").first() : page;
+      await expect(surface.getByText(route.marker).first()).toBeVisible();
       expect(serverErrors).toEqual([]);
     });
   }
