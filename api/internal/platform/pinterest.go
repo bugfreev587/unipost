@@ -145,6 +145,10 @@ func (a *PinterestAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 	if tokenResp.ExpiresIn == 0 {
 		expiresAt = time.Now().Add(30 * 24 * time.Hour)
 	}
+	scopes := splitPinterestOAuthScopes(tokenResp.Scope)
+	if len(scopes) == 0 {
+		scopes = append([]string(nil), config.Scopes...)
+	}
 
 	return &ConnectResult{
 		AccessToken:       tokenResp.AccessToken,
@@ -153,6 +157,7 @@ func (a *PinterestAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 		ExternalAccountID: profile.ID,
 		AccountName:       firstNonEmptyString(profile.Username, profile.AccountType, profile.ID),
 		AvatarURL:         profile.ProfileImage,
+		Scopes:            scopes,
 		Metadata: map[string]any{
 			"username":     profile.Username,
 			"account_type": profile.AccountType,
@@ -519,6 +524,19 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func splitPinterestOAuthScopes(scope string) []string {
+	parts := strings.FieldsFunc(scope, func(r rune) bool {
+		return r == ',' || r == ' '
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if s := strings.TrimSpace(part); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func pinterestAuthURL() string {

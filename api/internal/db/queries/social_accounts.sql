@@ -59,7 +59,8 @@ SET access_token = $2,
     token_expires_at = $4,
     metadata = COALESCE(metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     status = 'active',
-    disconnected_at = NULL
+    disconnected_at = NULL,
+    last_refreshed_at = NOW()
 WHERE id = $1;
 
 -- name: FindActiveManagedSocialAccountByExternalAccount :one
