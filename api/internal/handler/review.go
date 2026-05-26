@@ -1,0 +1,486 @@
+package handler
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/reviewscript"
+)
+
+const (
+	reviewAgentVersion        = "0.1.0"
+	reviewCnameTarget         = "review.unipost.dev"
+	reviewSessionCookieName   = "__unipost_review_session"
+	reviewTokenTTL            = 30 * time.Minute
+	reviewDefaultUseCase      = "content_posting"
+	reviewDefaultPlatform     = "tiktok"
+	reviewDomainStatusReady   = "ready"
+	reviewJobStatusQueued     = "queued"
+	reviewKitStatusReady      = "ready"
+	reviewDomainStatusPending = "dns_pending"
+	reviewTLSStatusIssued     = "issued"
+)
+
+var requiredTikTokReviewScopes = []string{"user.info.basic", "video.publish", "video.upload"}
+
+type reviewTokenGenerator func(prefix string) (raw string, hash string, err error)
+
+type ReviewHandler struct {
+	store          reviewStore
+	now            func() time.Time
+	tokenGenerator reviewTokenGenerator
+}
+
+type reviewStore interface {
+	CreateReviewDomain(context.Context, db.CreateReviewDomainParams) (db.ReviewDomain, error)
+	GetReviewDomain(context.Context, db.GetReviewDomainParams) (db.ReviewDomain, error)
+	GetPlatformCredential(context.Context, db.GetPlatformCredentialParams) (db.PlatformCredential, error)
+	CreateReviewKit(context.Context, db.CreateReviewKitParams) (db.ReviewKit, error)
+	GetReviewKit(context.Context, db.GetReviewKitParams) (db.ReviewKit, error)
+	CreateReviewJob(context.Context, db.CreateReviewJobParams) (db.ReviewJob, error)
+	GetReviewJob(context.Context, db.GetReviewJobParams) (db.ReviewJob, error)
+	CreateReviewSession(context.Context, db.CreateReviewSessionParams) (db.ReviewSession, error)
+	GetActiveReviewSessionForJob(context.Context, db.GetActiveReviewSessionForJobParams) (db.ReviewSession, error)
+	AttachReviewSessionToJob(context.Context, db.AttachReviewSessionToJobParams) (db.ReviewJob, error)
+	CreateReviewAgentToken(context.Context, db.CreateReviewAgentTokenParams) (db.ReviewAgentToken, error)
+	GetReviewAgentTokenByHash(context.Context, string) (db.ReviewAgentToken, error)
+	CreateReviewJobEvent(context.Context, db.CreateReviewJobEventParams) (db.ReviewJobEvent, error)
+	CompleteReviewJob(context.Context, db.CompleteReviewJobParams) (db.ReviewJob, error)
+	FailReviewJob(context.Context, db.FailReviewJobParams) (db.ReviewJob, error)
+}
+
+type reviewDomainResponse struct {
+	ID          string            `json:"id"`
+	Domain      string            `json:"domain"`
+	Status      string            `json:"status"`
+	CnameTarget string            `json:"cname_target"`
+	TLSStatus   string            `json:"tls_status"`
+	DNSRecords  []reviewDNSRecord `json:"dns_records"`
+}
+
+type reviewDNSRecord struct {
+	Type  string `json:"type"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type reviewKitResponse struct {
+	ID             string   `json:"id"`
+	Platform       string   `json:"platform"`
+	UseCase        string   `json:"use_case"`
+	ReviewDomainID string   `json:"review_domain_id"`
+	RequiredScopes []string `json:"required_scopes"`
+	Status         string   `json:"status"`
+}
+
+type reviewJobResponse struct {
+	ID             string `json:"id"`
+	ReviewKitID    string `json:"review_kit_id"`
+	Platform       string `json:"platform"`
+	Status         string `json:"status"`
+	AgentVersion   string `json:"agent_version"`
+	AgentCommand   string `json:"agent_command"`
+	TokenExpiresAt string `json:"token_expires_at"`
+}
+
+func NewReviewHandler(store reviewStore) *ReviewHandler {
+	return &ReviewHandler{
+		store:          store,
+		now:            time.Now,
+		tokenGenerator: defaultReviewTokenGenerator,
+	}
+}
+
+func (h *ReviewHandler) WithTokenGenerator(fn reviewTokenGenerator) *ReviewHandler {
+	if fn != nil {
+		h.tokenGenerator = fn
+	}
+	return h
+}
+
+func (h *ReviewHandler) WithNow(fn func() time.Time) *ReviewHandler {
+	if fn != nil {
+		h.now = fn
+	}
+	return h
+}
+
+func (h *ReviewHandler) CreateDomain(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := reviewWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Domain   string `json:"domain"`
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	domain := normalizeReviewDomain(req.Domain)
+	if !isValidReviewDomain(domain) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Domain must be a hostname without scheme or path")
+		return
+	}
+	_, tokenHash, err := h.tokenGenerator("rvdns_")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate verification token")
+		return
+	}
+	verificationToken := "unipost-review=" + tokenHash
+
+	created, err := h.store.CreateReviewDomain(r.Context(), db.CreateReviewDomainParams{
+		WorkspaceID:       workspaceID,
+		Domain:            domain,
+		Provider:          pgtype.Text{String: strings.TrimSpace(req.Provider), Valid: strings.TrimSpace(req.Provider) != ""},
+		Status:            reviewDomainStatusPending,
+		VerificationToken: verificationToken,
+		CnameTarget:       reviewCnameTarget,
+		TlsStatus:         "pending",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create review domain")
+		return
+	}
+
+	writeCreated(w, reviewDomainFromDB(created))
+}
+
+func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := reviewWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Platform            string         `json:"platform"`
+		UseCase             string         `json:"use_case"`
+		ReviewDomainID      string         `json:"review_domain_id"`
+		RedirectURIAttested bool           `json:"redirect_uri_attested"`
+		BrandSnapshot       map[string]any `json:"brand_snapshot"`
+		RequiredScopes      []string       `json:"required_scopes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	platform := strings.ToLower(strings.TrimSpace(req.Platform))
+	useCase := strings.TrimSpace(req.UseCase)
+	if platform == "" {
+		platform = reviewDefaultPlatform
+	}
+	if useCase == "" {
+		useCase = reviewDefaultUseCase
+	}
+	if platform != reviewDefaultPlatform || useCase != reviewDefaultUseCase {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Only TikTok content_posting review kits are supported")
+		return
+	}
+	if !req.RedirectURIAttested {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Confirm that the OAuth redirect URI has been added in the TikTok developer portal before recording")
+		return
+	}
+	if missing := missingTikTokScopes(req.RequiredScopes); len(missing) > 0 {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "TikTok review requires scopes: "+strings.Join(requiredTikTokReviewScopes, ", "))
+		return
+	}
+
+	domain, err := h.store.GetReviewDomain(r.Context(), db.GetReviewDomainParams{ID: strings.TrimSpace(req.ReviewDomainID), WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review domain not found", "Failed to load review domain")
+		return
+	}
+	if !isReviewDomainReady(domain) {
+		writeError(w, http.StatusConflict, "CONFLICT", "Review domain DNS and TLS must be ready before creating a kit")
+		return
+	}
+	if _, err := h.store.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{WorkspaceID: workspaceID, Platform: platform}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "CONFLICT", "TikTok platform credentials are required before creating a review kit")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load TikTok credentials")
+		return
+	}
+
+	brandSnapshot := req.BrandSnapshot
+	if brandSnapshot == nil {
+		brandSnapshot = map[string]any{}
+	}
+	brandJSON, err := json.Marshal(brandSnapshot)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid brand snapshot")
+		return
+	}
+	created, err := h.store.CreateReviewKit(r.Context(), db.CreateReviewKitParams{
+		WorkspaceID:    workspaceID,
+		Platform:       platform,
+		UseCase:        useCase,
+		ReviewDomainID: domain.ID,
+		BrandSnapshot:  brandJSON,
+		RequiredScopes: append([]string(nil), requiredTikTokReviewScopes...),
+		Status:         reviewKitStatusReady,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create review kit")
+		return
+	}
+
+	writeCreated(w, reviewKitFromDB(created))
+}
+
+func (h *ReviewHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := reviewWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		ReviewKitID string `json:"review_kit_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	kit, err := h.store.GetReviewKit(r.Context(), db.GetReviewKitParams{ID: strings.TrimSpace(req.ReviewKitID), WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review kit not found", "Failed to load review kit")
+		return
+	}
+	if kit.Status != reviewKitStatusReady {
+		writeError(w, http.StatusConflict, "CONFLICT", "Review kit is not ready")
+		return
+	}
+	domain, err := h.store.GetReviewDomain(r.Context(), db.GetReviewDomainParams{ID: kit.ReviewDomainID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review domain not found", "Failed to load review domain")
+		return
+	}
+	if !isReviewDomainReady(domain) {
+		writeError(w, http.StatusConflict, "CONFLICT", "Review domain DNS and TLS must be ready before recording")
+		return
+	}
+
+	job, err := h.store.CreateReviewJob(r.Context(), db.CreateReviewJobParams{
+		ReviewKitID:          kit.ID,
+		WorkspaceID:          workspaceID,
+		Platform:             kit.Platform,
+		Status:               reviewJobStatusQueued,
+		AgentVersion:         pgtype.Text{String: reviewAgentVersion, Valid: true},
+		ReviewSessionTokenID: pgtype.Text{},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create review job")
+		return
+	}
+
+	expiresAt := h.now().UTC().Add(reviewTokenTTL)
+	sessionRaw, sessionHash, err := h.tokenGenerator("revsess_")
+	_ = sessionRaw
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate review session token")
+		return
+	}
+	session, err := h.store.CreateReviewSession(r.Context(), db.CreateReviewSessionParams{
+		ReviewJobID:  job.ID,
+		ReviewKitID:  kit.ID,
+		WorkspaceID:  workspaceID,
+		Platform:     kit.Platform,
+		ReviewDomain: domain.Domain,
+		TokenHash:    sessionHash,
+		ExpiresAt:    pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create review session")
+		return
+	}
+	if _, err := h.store.AttachReviewSessionToJob(r.Context(), db.AttachReviewSessionToJobParams{
+		ID:                   job.ID,
+		WorkspaceID:          workspaceID,
+		ReviewSessionTokenID: pgtype.Text{String: session.ID, Valid: true},
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to attach review session")
+		return
+	}
+
+	agentRaw, agentHash, err := h.tokenGenerator("revtok_")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate agent token")
+		return
+	}
+	if _, err := h.store.CreateReviewAgentToken(r.Context(), db.CreateReviewAgentTokenParams{
+		ReviewJobID: job.ID,
+		WorkspaceID: workspaceID,
+		Platform:    kit.Platform,
+		TokenHash:   agentHash,
+		ExpiresAt:   pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create agent token")
+		return
+	}
+
+	writeCreated(w, reviewJobResponse{
+		ID:             job.ID,
+		ReviewKitID:    kit.ID,
+		Platform:       kit.Platform,
+		Status:         job.Status,
+		AgentVersion:   reviewAgentVersion,
+		AgentCommand:   "npx --yes @unipost/review-agent@" + reviewAgentVersion + " run --token " + agentRaw,
+		TokenExpiresAt: expiresAt.Format(time.RFC3339),
+	})
+}
+
+func (h *ReviewHandler) GetJobScript(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := reviewWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+	jobID := chi.URLParam(r, "id")
+	job, err := h.store.GetReviewJob(r.Context(), db.GetReviewJobParams{ID: jobID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review job not found", "Failed to load review job")
+		return
+	}
+	kit, err := h.store.GetReviewKit(r.Context(), db.GetReviewKitParams{ID: job.ReviewKitID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review kit not found", "Failed to load review kit")
+		return
+	}
+	domain, err := h.store.GetReviewDomain(r.Context(), db.GetReviewDomainParams{ID: kit.ReviewDomainID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review domain not found", "Failed to load review domain")
+		return
+	}
+	session, err := h.store.GetActiveReviewSessionForJob(r.Context(), db.GetActiveReviewSessionForJobParams{ReviewJobID: job.ID, WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Active review session not found", "Failed to load review session")
+		return
+	}
+
+	agentVersion := reviewAgentVersion
+	if job.AgentVersion.Valid && strings.TrimSpace(job.AgentVersion.String) != "" {
+		agentVersion = job.AgentVersion.String
+	}
+	expiresAt := ""
+	if session.ExpiresAt.Valid {
+		expiresAt = session.ExpiresAt.Time.UTC().Format(time.RFC3339)
+	}
+	script := reviewscript.BuildTikTokScript(reviewscript.BuildTikTokScriptInput{
+		JobID:               job.ID,
+		AgentVersion:        agentVersion,
+		ReviewDomain:        domain.Domain,
+		SessionCookieName:   reviewSessionCookieName,
+		SessionExpiresAt:    expiresAt,
+		RequireAddressBar:   true,
+		BrowserWindowWidth:  1440,
+		BrowserWindowHeight: 1000,
+	})
+	if err := script.Validate(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Review script is invalid")
+		return
+	}
+	writeSuccess(w, script)
+}
+
+func reviewWorkspaceID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return "", false
+	}
+	return workspaceID, true
+}
+
+func reviewDomainFromDB(row db.ReviewDomain) reviewDomainResponse {
+	return reviewDomainResponse{
+		ID:          row.ID,
+		Domain:      row.Domain,
+		Status:      row.Status,
+		CnameTarget: row.CnameTarget,
+		TLSStatus:   row.TlsStatus,
+		DNSRecords: []reviewDNSRecord{
+			{Type: "CNAME", Name: row.Domain, Value: row.CnameTarget},
+			{Type: "TXT", Name: "_unipost-review." + row.Domain, Value: row.VerificationToken},
+		},
+	}
+}
+
+func reviewKitFromDB(row db.ReviewKit) reviewKitResponse {
+	return reviewKitResponse{
+		ID:             row.ID,
+		Platform:       row.Platform,
+		UseCase:        row.UseCase,
+		ReviewDomainID: row.ReviewDomainID,
+		RequiredScopes: row.RequiredScopes,
+		Status:         row.Status,
+	}
+}
+
+func defaultReviewTokenGenerator(prefix string) (string, string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", err
+	}
+	raw := prefix + base64.RawURLEncoding.EncodeToString(buf)
+	digest := sha256.Sum256([]byte(raw))
+	return raw, hex.EncodeToString(digest[:]), nil
+}
+
+func normalizeReviewDomain(input string) string {
+	return strings.Trim(strings.ToLower(strings.TrimSpace(input)), ".")
+}
+
+func isValidReviewDomain(domain string) bool {
+	if domain == "" || strings.Contains(domain, "://") || strings.Contains(domain, "/") || strings.Contains(domain, " ") {
+		return false
+	}
+	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") || !strings.Contains(domain, ".") {
+		return false
+	}
+	return true
+}
+
+func isReviewDomainReady(domain db.ReviewDomain) bool {
+	if domain.Status != reviewDomainStatusReady {
+		return false
+	}
+	return domain.TlsStatus == "" || domain.TlsStatus == reviewTLSStatusIssued
+}
+
+func missingTikTokScopes(scopes []string) []string {
+	seen := map[string]bool{}
+	for _, scope := range scopes {
+		seen[strings.TrimSpace(scope)] = true
+	}
+	missing := []string{}
+	for _, scope := range requiredTikTokReviewScopes {
+		if !seen[scope] {
+			missing = append(missing, scope)
+		}
+	}
+	return missing
+}
+
+func writeNotFoundOrInternal(w http.ResponseWriter, err error, notFoundMessage string, internalMessage string) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", notFoundMessage)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", internalMessage)
+}
