@@ -497,6 +497,7 @@ func main() {
 	r.Post("/v1/review/agent/events", reviewHandler.RecordAgentEvent)
 	r.Post("/v1/review/agent/complete", reviewHandler.CompleteAgentJob)
 	r.Post("/v1/review/agent/fail", reviewHandler.FailAgentJob)
+	r.Post("/v1/review/agent/artifacts", reviewHandler.CreateAgentArtifactUpload)
 	r.Get("/v1/review/session", reviewHandler.GetPublicReviewSession)
 
 	// RBAC Phase 4: invite preview. The dashboard's /invite/{token}
@@ -723,6 +724,7 @@ func main() {
 			r.Post("/domains/{id}/verify", reviewHandler.VerifyDomain)
 			r.Post("/kits", reviewHandler.CreateKit)
 			r.Post("/jobs", reviewHandler.CreateJob)
+			r.Get("/jobs/{id}", reviewHandler.GetJob)
 			r.Get("/jobs/{id}/script", reviewHandler.GetJobScript)
 		})
 
