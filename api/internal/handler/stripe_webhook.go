@@ -20,11 +20,12 @@ import (
 )
 
 type StripeWebhookHandler struct {
-	queries    *db.Queries
-	stripe     *billing.Manager
-	bus        events.EventBus
-	mailer     mail.Mailer
-	appBaseURL string
+	queries     *db.Queries
+	stripe      *billing.Manager
+	bus         events.EventBus
+	mailer      mail.Mailer
+	appBaseURL  string
+	loopsSyncer loopsLifecycleSyncer
 }
 
 func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager, bus events.EventBus, mailer mail.Mailer, appBaseURL string) *StripeWebhookHandler {
@@ -115,7 +116,7 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 
 	// Use upsert to handle both new and existing subscription rows
 	_, err := h.queries.CreateSubscription(r.Context(), db.CreateSubscriptionParams{
-		WorkspaceID:            workspaceID,
+		WorkspaceID:          workspaceID,
 		PlanID:               planID,
 		StripeCustomerID:     pgtype.Text{String: customerID, Valid: customerID != ""},
 		StripeSubscriptionID: pgtype.Text{String: subscriptionID, Valid: subscriptionID != ""},
@@ -136,6 +137,18 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 				"error", err)
 		}
 	}
+
+	oldPlanID := "free"
+	if previousSub != nil {
+		oldPlanID = previousSub.PlanID
+	}
+	h.syncLoopsPlanChanged(
+		r.Context(),
+		workspaceID,
+		oldPlanID,
+		planID,
+		fmt.Sprintf("plan_changed:stripe.checkout.completed:%s:%s:%s", session.ID, normalizePlanID(oldPlanID), normalizePlanID(planID)),
+	)
 }
 
 func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event stripe.Event) {
@@ -189,6 +202,14 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 		"status", status,
 		"plan_id", planID,
 		"cancel_at_period_end", sub.CancelAtPeriodEnd,
+	)
+
+	h.syncLoopsPlanChanged(
+		r.Context(),
+		localSub.WorkspaceID,
+		localSub.PlanID,
+		planID,
+		fmt.Sprintf("plan_changed:stripe.subscription.updated:%s:%s:%s:%d", sub.ID, normalizePlanID(localSub.PlanID), normalizePlanID(planID), subscriptionCurrentPeriodStart(&sub)),
 	)
 }
 

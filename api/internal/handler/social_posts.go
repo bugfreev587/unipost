@@ -55,8 +55,10 @@ type SocialPostHandler struct {
 	// April 2026 rate-limit PRD. Always non-nil — main.go injects
 	// either RedisLimiter or NoopLimiter — so call sites do not
 	// need a nil guard.
-	limiter ratelimit.Limiter
-	ilog    *integrationlogs.Logger
+	limiter     ratelimit.Limiter
+	ilog        *integrationlogs.Logger
+	loopsSyncer loopsLifecycleSyncer
+	appBaseURL  string
 }
 
 func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter, ilog *integrationlogs.Logger) *SocialPostHandler {
@@ -66,7 +68,7 @@ func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, q
 	if limiter == nil {
 		limiter = ratelimit.NoopLimiter{}
 	}
-	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus, storage: store, limiter: limiter, ilog: ilog}
+	return &SocialPostHandler{queries: queries, encryptor: encryptor, quota: quotaChecker, bus: bus, storage: store, limiter: limiter, ilog: ilog, appBaseURL: normalizeAppBaseURL("")}
 }
 
 func countPublishQuotaUnits(posts []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount) int {

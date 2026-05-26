@@ -116,6 +116,113 @@ func TestSyncerSwallowsProviderErrors(t *testing.T) {
 	}
 }
 
+func TestSyncerSendsPlanChangedEvent(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		Name:           "Alex Smith",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		EventName:      "plan_changed",
+		IdempotencyKey: "plan_changed:sub_123:basic",
+		Properties: map[string]any{
+			"old_plan_id": "free",
+			"new_plan_id": "basic",
+			"change_type": "upgrade",
+			"billing_url": "https://app.unipost.dev/settings/billing",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.contacts != 1 {
+		t.Fatalf("contacts = %d, want 1", client.contacts)
+	}
+	if client.events != 1 {
+		t.Fatalf("events = %d, want 1", client.events)
+	}
+	if client.lastEvent.Name != "plan_changed" {
+		t.Fatalf("event name = %q", client.lastEvent.Name)
+	}
+	if client.lastEvent.IdempotencyKey != "plan_changed:sub_123:basic" {
+		t.Fatalf("idempotency key = %q", client.lastEvent.IdempotencyKey)
+	}
+	assertProperty(t, client.lastEvent.Properties, "workspace_id", "ws_123")
+	assertProperty(t, client.lastEvent.Properties, "workspace_name", "Alex Workspace")
+	assertProperty(t, client.lastEvent.Properties, "old_plan_id", "free")
+	assertProperty(t, client.lastEvent.Properties, "new_plan_id", "basic")
+	assertProperty(t, client.lastEvent.Properties, "change_type", "upgrade")
+}
+
+func TestSyncerSendsAccountCanceledEventWithoutContactUpsert(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		EventName:      "user_account_canceled",
+		IdempotencyKey: "user_account_canceled:user_123",
+		SkipContact:    true,
+		Properties: map[string]any{
+			"canceled_at": "2026-05-25T12:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.contacts != 0 {
+		t.Fatalf("contacts = %d, want 0", client.contacts)
+	}
+	if client.events != 1 {
+		t.Fatalf("events = %d, want 1", client.events)
+	}
+	if client.lastEvent.Name != "user_account_canceled" {
+		t.Fatalf("event name = %q", client.lastEvent.Name)
+	}
+	assertProperty(t, client.lastEvent.Properties, "canceled_at", "2026-05-25T12:00:00Z")
+}
+
+func TestSyncerSendsPostFailedEvent(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		EventName:      "post_failed",
+		IdempotencyKey: "post_failed:job_123",
+		Properties: map[string]any{
+			"post_id":       "post_123",
+			"platform":      "youtube",
+			"error_code":    "quota_exceeded",
+			"dashboard_url": "https://app.unipost.dev/projects/profile_123/logs?post_id=post_123",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.events != 1 {
+		t.Fatalf("events = %d, want 1", client.events)
+	}
+	if client.lastEvent.Name != "post_failed" {
+		t.Fatalf("event name = %q", client.lastEvent.Name)
+	}
+	assertProperty(t, client.lastEvent.Properties, "platform", "youtube")
+	assertProperty(t, client.lastEvent.Properties, "error_code", "quota_exceeded")
+}
+
 type fakeLifecycleClient struct {
 	contacts    int
 	events      int

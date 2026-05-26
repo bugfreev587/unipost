@@ -26,6 +26,21 @@ type DashboardUser struct {
 	Event         string
 }
 
+type LifecycleEvent struct {
+	UserID         string
+	Email          string
+	Name           string
+	FirstName      string
+	LastName       string
+	WorkspaceID    string
+	WorkspaceName  string
+	PlanID         string
+	EventName      string
+	IdempotencyKey string
+	Properties     map[string]any
+	SkipContact    bool
+}
+
 type Options struct {
 	Enabled func(context.Context, DashboardUser) bool
 }
@@ -88,6 +103,57 @@ func (s *Syncer) SyncDashboardUser(ctx context.Context, user DashboardUser) erro
 	return nil
 }
 
+func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) error {
+	if s == nil || s.client == nil || !s.client.Enabled() {
+		return nil
+	}
+	if strings.TrimSpace(event.Email) == "" || strings.TrimSpace(event.EventName) == "" {
+		return nil
+	}
+
+	user := DashboardUser{
+		ID:            event.UserID,
+		Email:         event.Email,
+		Name:          event.Name,
+		FirstName:     event.FirstName,
+		LastName:      event.LastName,
+		WorkspaceID:   event.WorkspaceID,
+		WorkspaceName: event.WorkspaceName,
+		PlanID:        event.PlanID,
+		Event:         event.EventName,
+	}
+	if s.enabled != nil && !s.enabled(ctx, user) {
+		return nil
+	}
+
+	props := lifecycleEventProperties(event)
+	if !event.SkipContact {
+		if err := s.client.UpsertContact(ctx, Contact{
+			Email:      event.Email,
+			UserID:     event.UserID,
+			FirstName:  firstNonEmpty(event.FirstName, firstNameFromFullName(event.Name)),
+			LastName:   firstNonEmpty(event.LastName, lastNameFromFullName(event.Name)),
+			Source:     "unipost_dashboard",
+			UserGroup:  event.PlanID,
+			Properties: props,
+		}); err != nil {
+			slog.Warn("loops: lifecycle contact sync failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
+			return nil
+		}
+	}
+
+	if err := s.client.SendEvent(ctx, Event{
+		Email:          event.Email,
+		UserID:         event.UserID,
+		Name:           event.EventName,
+		IdempotencyKey: event.IdempotencyKey,
+		Properties:     props,
+	}); err != nil {
+		slog.Warn("loops: lifecycle event failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
+	}
+	return nil
+}
+
 func dashboardUserProperties(user DashboardUser) map[string]any {
 	props := map[string]any{
 		"source": "unipost_dashboard",
@@ -96,6 +162,20 @@ func dashboardUserProperties(user DashboardUser) map[string]any {
 	addProp(props, "workspace_name", user.WorkspaceName)
 	addProp(props, "plan_id", user.PlanID)
 	addProp(props, "clerk_user_id", user.ID)
+	return props
+}
+
+func lifecycleEventProperties(event LifecycleEvent) map[string]any {
+	props := map[string]any{
+		"source": "unipost_dashboard",
+	}
+	for key, value := range event.Properties {
+		props[key] = value
+	}
+	addProp(props, "workspace_id", event.WorkspaceID)
+	addProp(props, "workspace_name", event.WorkspaceName)
+	addProp(props, "plan_id", event.PlanID)
+	addProp(props, "clerk_user_id", event.UserID)
 	return props
 }
 

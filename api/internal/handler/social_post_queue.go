@@ -577,9 +577,10 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 		LastError:         pgtype.Text{String: msg, Valid: true},
 		NextRunAt:         pgtype.Timestamptz{},
 	})
-	h.recordPostFailure(ctx, postfailures.BuildParams(
+	failure := postfailures.BuildParams(
 		post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, job.Platform, "dispatch_prepare", msg, msg,
-	))
+	)
+	h.recordPostFailure(ctx, failure)
 	h.logPublishingEvent(ctx, integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
 		Level:           integrationlogs.LevelError,
@@ -601,6 +602,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 	})
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
+	h.syncLoopsPostFailed(ctx, post, res, job, failure, false)
 	return nil
 }
 
@@ -743,6 +745,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 			"debug_curl": oc.debugCurl,
 		},
 	})
+	h.syncLoopsPostFailed(ctx, post, res, job, failure, anotherAttempt)
 	return nil
 }
 
