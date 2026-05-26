@@ -1,7 +1,11 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { validateScript } from "./script-contract.js";
 import { buildReviewSessionCookie } from "./session-cookie.js";
 
-export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "" } = {}) {
+const VIDEO_ARTIFACT_NOTE = "Beta artifact captures the page viewport. Native browser-window capture is required before claiming address-bar coverage.";
+
+export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", playwrightImpl = null } = {}) {
   const valid = validateScript(script);
   if (dryRun) {
     out.write(`Review script ${valid.job_id} (${valid.steps.length} steps)\n`);
@@ -11,27 +15,25 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     return { status: "dry_run", jobId: valid.job_id };
   }
 
-  const { chromium } = await importPlaywright();
+  const { chromium } = playwrightImpl || await importPlaywright();
+  const contextOptions = buildBrowserContextOptions(valid);
+  await mkdir(contextOptions.recordVideo.dir, { recursive: true });
   const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext({
-    viewport: {
-      width: valid.recording?.window_width || 1440,
-      height: valid.recording?.window_height || 1000,
-    },
-    recordVideo: undefined,
-  });
+  const context = await browser.newContext(contextOptions);
+  let contextClosed = false;
   const sessionCookie = buildReviewSessionCookie(valid, sessionToken);
   if (sessionCookie) {
     await context.addCookies([sessionCookie]);
   }
   const page = await context.newPage();
   const markers = [];
+  const recordingStartedAt = Date.now();
   let currentStepId = "";
   await reportEvent(reporter, "recording_started", "Recorder started", { job_id: valid.job_id }, out);
   try {
     for (const step of valid.steps) {
       currentStepId = step.id;
-      if (step.marker) markers.push({ step_id: step.id, label: step.marker });
+      if (step.marker) markers.push({ step_id: step.id, label: step.marker, elapsed_ms: Date.now() - recordingStartedAt });
       await reportEvent(reporter, "step_started", step.marker || step.id, { step_id: step.id, action: step.action }, out);
       if (step.action === "manual_pause") {
         await reportEvent(reporter, "manual_pause", step.marker || "Waiting for user", { step_id: step.id }, out);
@@ -39,15 +41,66 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
       await runStep(page, step, out);
       await reportEvent(reporter, "step_completed", step.marker || step.id, { step_id: step.id, action: step.action }, out);
     }
-    await reportComplete(reporter, { markers }, out);
+    const video = page.video?.();
+    await context.close();
+    contextClosed = true;
+    const artifacts = await buildCompletionArtifacts({ markers, video });
+    await reportComplete(reporter, artifacts, out);
     return { status: "completed", jobId: valid.job_id };
   } catch (err) {
-    await reportFail(reporter, err, { last_step: currentStepId, markers }, out);
+    const video = page.video?.();
+    try {
+      if (!contextClosed) {
+        await context.close();
+        contextClosed = true;
+      }
+    } catch (closeErr) {
+      out.write("[recording warning] " + closeErr.message + "\n");
+    }
+    const artifacts = await buildCompletionArtifacts({ markers, video });
+    await reportFail(reporter, err, { ...artifacts, last_step: currentStepId }, out);
     throw err;
   } finally {
-    await context.close();
+    if (!contextClosed) {
+      await context.close();
+    }
     await browser.close();
   }
+}
+
+export function buildBrowserContextOptions(script, { videoDir = defaultVideoDir() } = {}) {
+  const width = script.recording?.window_width || 1440;
+  const height = script.recording?.window_height || 1000;
+  return {
+    viewport: { width, height },
+    recordVideo: {
+      dir: videoDir,
+      size: { width, height },
+    },
+  };
+}
+
+export async function buildCompletionArtifacts({ markers = [], video = null } = {}) {
+  const artifacts = { markers };
+  if (!video?.path) return artifacts;
+  const localPath = await video.path();
+  if (!localPath) return artifacts;
+  artifacts.video = {
+    format: videoFormat(localPath),
+    local_path: localPath,
+    capture_mode: "playwright-page-video",
+    note: VIDEO_ARTIFACT_NOTE,
+  };
+  return artifacts;
+}
+
+function defaultVideoDir() {
+  return process.env.UNIPOST_REVIEW_VIDEO_DIR || path.resolve(process.cwd(), ".unipost-review-videos");
+}
+
+function videoFormat(localPath) {
+  const ext = path.extname(localPath).replace(/^\./, "");
+  return ext || "webm";
 }
 
 async function importPlaywright() {
