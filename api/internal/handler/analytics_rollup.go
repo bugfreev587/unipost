@@ -65,13 +65,22 @@ const MaxRollupRangeDays = 366
 // rollupGroup is one row in the response — the dimension columns
 // are populated based on what the client asked for.
 type rollupGroup struct {
-	Platform        string `json:"platform,omitempty"`
-	SocialAccountID string `json:"social_account_id,omitempty"`
-	ExternalUserID  string `json:"external_user_id,omitempty"`
-	Status          string `json:"status,omitempty"`
-	PublishedCount  int    `json:"published_count"`
-	FailedCount     int    `json:"failed_count"`
-	PartialCount    int    `json:"partial_count"`
+	Platform        string  `json:"platform,omitempty"`
+	SocialAccountID string  `json:"social_account_id,omitempty"`
+	ExternalUserID  string  `json:"external_user_id,omitempty"`
+	Status          string  `json:"status,omitempty"`
+	PublishedCount  int     `json:"published_count"`
+	FailedCount     int     `json:"failed_count"`
+	PartialCount    int     `json:"partial_count"`
+	Impressions     int64   `json:"impressions"`
+	Reach           int64   `json:"reach"`
+	Likes           int64   `json:"likes"`
+	Comments        int64   `json:"comments"`
+	Shares          int64   `json:"shares"`
+	Saves           int64   `json:"saves"`
+	Clicks          int64   `json:"clicks"`
+	VideoViews      int64   `json:"video_views"`
+	EngagementRate  float64 `json:"engagement_rate"`
 }
 
 type rollupBucket struct {
@@ -139,10 +148,19 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 			%s,
 			COUNT(*) FILTER (WHERE spr.status = 'published')::INTEGER AS published_count,
 			COUNT(*) FILTER (WHERE spr.status = 'failed')::INTEGER    AS failed_count,
-			COUNT(*) FILTER (WHERE spr.status = 'partial')::INTEGER   AS partial_count
+			COUNT(*) FILTER (WHERE spr.status = 'partial')::INTEGER   AS partial_count,
+			COALESCE(SUM(pa.impressions), 0)::BIGINT                 AS impressions,
+			COALESCE(SUM(pa.reach), 0)::BIGINT                       AS reach,
+			COALESCE(SUM(pa.likes), 0)::BIGINT                       AS likes,
+			COALESCE(SUM(pa.comments), 0)::BIGINT                    AS comments,
+			COALESCE(SUM(pa.shares), 0)::BIGINT                      AS shares,
+			COALESCE(SUM(pa.saves), 0)::BIGINT                       AS saves,
+			COALESCE(SUM(pa.clicks), 0)::BIGINT                      AS clicks,
+			COALESCE(SUM(pa.video_views), 0)::BIGINT                 AS video_views
 		FROM social_post_results spr
 		JOIN social_posts sp ON spr.post_id = sp.id
 		JOIN social_accounts sa ON spr.social_account_id = sa.id
+		LEFT JOIN post_analytics pa ON pa.social_post_result_id = spr.id
 		WHERE sp.workspace_id = $1
 		  AND sp.deleted_at IS NULL
 		  AND sp.created_at >= $2
@@ -180,12 +198,14 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 			groupValPtrs[i] = &s
 		}
 		var published, failed, partial int
+		var impressions, reach, likes, comments, shares, saves, clicks, videoViews int64
 
 		// Build the scan target list dynamically.
-		dest := make([]any, 0, 2+len(groupBy)+3)
+		dest := make([]any, 0, 2+len(groupBy)+11)
 		dest = append(dest, &bucket)
 		dest = append(dest, groupValPtrs...)
 		dest = append(dest, &published, &failed, &partial)
+		dest = append(dest, &impressions, &reach, &likes, &comments, &shares, &saves, &clicks, &videoViews)
 
 		if err := rows.Scan(dest...); err != nil {
 			slog.Error("analytics rollup scan failed", "err", err)
@@ -200,6 +220,15 @@ func (h *AnalyticsRollupHandler) GetRollup(w http.ResponseWriter, r *http.Reques
 			PublishedCount: published,
 			FailedCount:    failed,
 			PartialCount:   partial,
+			Impressions:    impressions,
+			Reach:          reach,
+			Likes:          likes,
+			Comments:       comments,
+			Shares:         shares,
+			Saves:          saves,
+			Clicks:         clicks,
+			VideoViews:     videoViews,
+			EngagementRate: rollupEngagementRate(impressions, likes, comments, shares, saves, clicks),
 		}
 		for i, g := range groupBy {
 			pp := groupValPtrs[i].(**string)

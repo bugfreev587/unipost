@@ -442,6 +442,10 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           children: [
             { label: "Workspace summary", href: "/docs/api/analytics/summary", method: "GET" },
             { label: "Post analytics", href: "/docs/api/analytics/posts", method: "GET" },
+            { label: "List analytics posts", href: "/docs/api/analytics/posts-list", method: "GET" },
+            { label: "Analytics rollup", href: "/docs/api/analytics/rollup", method: "GET" },
+            { label: "Analytics platforms", href: "/docs/api/analytics/platforms", method: "GET" },
+            { label: "Request analytics refresh", href: "/docs/api/analytics/refresh", method: "POST" },
           ],
         },
       ],
