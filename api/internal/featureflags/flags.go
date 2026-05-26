@@ -73,7 +73,7 @@ var definitions = map[Flag]Definition{
 	LoopsIntegrationV1: {
 		Flag:        LoopsIntegrationV1,
 		EnvVar:      "FEATURE_EMAIL_LOOPS_INTEGRATION_V1",
-		Description: "Controls Loops contact sync and lifecycle event delivery for UniPost dashboard users.",
+		Description: "Controls Loops contact sync, welcome lifecycle events, and transactional lifecycle notifications for UniPost dashboard users.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

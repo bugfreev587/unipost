@@ -2,6 +2,7 @@ package loops
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -12,6 +13,7 @@ type LifecycleClient interface {
 	Enabled() bool
 	UpsertContact(ctx context.Context, contact Contact) error
 	SendEvent(ctx context.Context, event Event) error
+	SendTransactional(ctx context.Context, email TransactionalEmail) error
 }
 
 type DashboardUser struct {
@@ -42,12 +44,20 @@ type LifecycleEvent struct {
 }
 
 type Options struct {
-	Enabled func(context.Context, DashboardUser) bool
+	Enabled          func(context.Context, DashboardUser) bool
+	TransactionalIDs TransactionalIDs
+}
+
+type TransactionalIDs struct {
+	PlanChanged     string
+	AccountCanceled string
+	PostFailed      string
 }
 
 type Syncer struct {
-	client  LifecycleClient
-	enabled func(context.Context, DashboardUser) bool
+	client           LifecycleClient
+	enabled          func(context.Context, DashboardUser) bool
+	transactionalIDs TransactionalIDs
 }
 
 func NewSyncer(client LifecycleClient, opts Options) *Syncer {
@@ -61,7 +71,7 @@ func NewSyncer(client LifecycleClient, opts Options) *Syncer {
 			})
 		}
 	}
-	return &Syncer{client: client, enabled: enabled}
+	return &Syncer{client: client, enabled: enabled, transactionalIDs: opts.TransactionalIDs}
 }
 
 func (s *Syncer) SyncDashboardUser(ctx context.Context, user DashboardUser) error {
@@ -142,6 +152,19 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 		}
 	}
 
+	if transactionalID := s.transactionalIDFor(event.EventName); transactionalID != "" {
+		if err := s.client.SendTransactional(ctx, TransactionalEmail{
+			TransactionalID: transactionalID,
+			Email:           event.Email,
+			UserID:          event.UserID,
+			IdempotencyKey:  event.IdempotencyKey,
+			DataVariables:   lifecycleTransactionalDataVariables(event, props),
+		}); err != nil {
+			slog.Warn("loops: lifecycle transactional email failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
+		}
+		return nil
+	}
+
 	if err := s.client.SendEvent(ctx, Event{
 		Email:          event.Email,
 		UserID:         event.UserID,
@@ -152,6 +175,22 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 		slog.Warn("loops: lifecycle event failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
 	}
 	return nil
+}
+
+func (s *Syncer) transactionalIDFor(eventName string) string {
+	if s == nil {
+		return ""
+	}
+	switch strings.TrimSpace(eventName) {
+	case "plan_changed":
+		return strings.TrimSpace(s.transactionalIDs.PlanChanged)
+	case "user_account_canceled":
+		return strings.TrimSpace(s.transactionalIDs.AccountCanceled)
+	case "post_failed":
+		return strings.TrimSpace(s.transactionalIDs.PostFailed)
+	default:
+		return ""
+	}
 }
 
 func dashboardUserProperties(user DashboardUser) map[string]any {
@@ -177,6 +216,68 @@ func lifecycleEventProperties(event LifecycleEvent) map[string]any {
 	addProp(props, "plan_id", event.PlanID)
 	addProp(props, "clerk_user_id", event.UserID)
 	return props
+}
+
+func lifecycleTransactionalDataVariables(event LifecycleEvent, props map[string]any) map[string]any {
+	vars := map[string]any{}
+	switch strings.TrimSpace(event.EventName) {
+	case "plan_changed":
+		addTransactionalValue(vars, "old_plan_id", props["old_plan_id"])
+		addTransactionalValue(vars, "new_plan_id", props["new_plan_id"])
+	case "post_failed":
+		addTransactionalValue(vars, "platform", props["platform"])
+		addTransactionalValue(vars, "error_code", props["error_code"])
+	}
+	return vars
+}
+
+func addTransactionalValue(vars map[string]any, key string, value any) {
+	if strings.TrimSpace(key) == "" {
+		return
+	}
+	if normalized, ok := transactionalValue(value); ok {
+		if s, ok := normalized.(string); ok && strings.TrimSpace(s) == "" {
+			return
+		}
+		vars[key] = normalized
+	}
+}
+
+func transactionalValue(value any) (any, bool) {
+	switch v := value.(type) {
+	case nil:
+		return nil, false
+	case string:
+		return v, true
+	case bool:
+		return fmt.Sprintf("%t", v), true
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	default:
+		return fmt.Sprint(v), true
+	}
 }
 
 func addProp(props map[string]any, key, value string) {

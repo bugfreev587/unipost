@@ -310,7 +310,13 @@ func main() {
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
 		})
-		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{})
+		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{
+			TransactionalIDs: loops.TransactionalIDs{
+				PlanChanged:     os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
+				AccountCanceled: os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
+				PostFailed:      os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
+			},
+		})
 		slog.Info("loops: lifecycle sync configured")
 	} else {
 		slog.Info("loops: LOOPS_API_KEY unset, lifecycle sync disabled")
