@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -228,9 +229,17 @@ func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePost
 		// query that only bumps fetched_at + increments the failure
 		// counter, preserving any real metrics from a prior successful
 		// fetch (important for transient errors).
+		failureReason := metErr.Error()
+		if r.Platform == "pinterest" && looksLikePinterestAuthError(metErr) {
+			failureReason = "Pinterest rejected the analytics token. Reconnect Pinterest to refresh analytics access; contact support if this continues after reconnecting."
+			if _, markErr := w.queries.MarkSocialAccountReconnectRequired(ctx, r.SocialAccountID); markErr != nil {
+				slog.Warn("analytics refresh: mark reconnect required failed",
+					"result_id", r.SocialPostResultID, "platform", r.Platform, "account_id", r.SocialAccountID, "error", markErr)
+			}
+		}
 		_ = w.queries.TouchPostAnalyticsFetchedAt(ctx, db.TouchPostAnalyticsFetchedAtParams{
 			SocialPostResultID: r.SocialPostResultID,
-			LastFailureReason:  pgtype.Text{String: metErr.Error(), Valid: true},
+			LastFailureReason:  pgtype.Text{String: failureReason, Valid: true},
 		})
 		return
 	}
@@ -276,4 +285,17 @@ func numericFromFloat(f float64) pgtype.Numeric {
 	var n pgtype.Numeric
 	_ = n.Scan(f)
 	return n
+}
+
+func looksLikePinterestAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unauthorized") ||
+		strings.Contains(msg, "(401)") ||
+		strings.Contains(msg, "(403)") ||
+		strings.Contains(msg, "invalid_token") ||
+		strings.Contains(msg, "invalid access token") ||
+		strings.Contains(msg, "expired")
 }

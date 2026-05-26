@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { getAnalyticsTool, PublicAnalyticsToolPage } from "../_components/public-analytics-tool";
 
-const tool = getAnalyticsTool("tiktok");
+const tool = getAnalyticsTool("instagram");
 
 export const metadata: Metadata = {
   title: tool.seoTitle,
@@ -11,6 +11,6 @@ export const metadata: Metadata = {
   },
 };
 
-export default function TikTokAnalyticsToolPage() {
+export default function InstagramAnalyticsToolPage() {
   return <PublicAnalyticsToolPage tool={tool} />;
 }

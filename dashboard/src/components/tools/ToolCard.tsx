@@ -1,40 +1,60 @@
 "use client";
 
 import Link from "next/link";
+import { BarChart3, Bot, Ruler, type LucideIcon } from "lucide-react";
+import { PlatformIcon } from "@/components/platform-icons";
+
+export type ToolIconKey =
+  | "agentpost"
+  | "character-counter"
+  | "tiktok"
+  | "instagram"
+  | "threads"
+  | "pinterest";
+
+const ICONS: Partial<Record<ToolIconKey, LucideIcon>> = {
+  agentpost: Bot,
+  "character-counter": Ruler,
+};
 
 export interface ToolCardData {
-  icon: string;
+  icon: ToolIconKey;
   name: string;
   description: string;
   href: string;
-  status: "live" | "coming_soon";
+  status: "live";
   badge?: string;
 }
 
 export function ToolCard({ tool }: { tool: ToolCardData }) {
-  const isLive = tool.status === "live";
-  const Tag = isLive ? Link : "div";
-
   return (
-    <Tag
+    <Link
       href={tool.href}
       className="tl-card"
-      style={!isLive ? { opacity: 0.72, cursor: "default" } : undefined}
     >
-      <span className="tl-card-icon">{tool.icon}</span>
+      <span className="tl-card-icon">
+        <ToolIcon icon={tool.icon} />
+      </span>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className="tl-card-name">{tool.name}</span>
         {tool.badge && (
           <span
-            className={`tl-card-badge${tool.status === "coming_soon" ? " tl-card-badge-muted" : ""}`}
+            className="tl-card-badge"
           >
             {tool.badge}
           </span>
         )}
       </div>
       <span className="tl-card-desc">{tool.description}</span>
-      {isLive && <span className="tl-card-cta">Try Free &rarr;</span>}
-      {!isLive && <span className="tl-card-soon">Coming Soon</span>}
-    </Tag>
+      <span className="tl-card-cta">Try Free &rarr;</span>
+    </Link>
   );
+}
+
+function ToolIcon({ icon }: { icon: ToolIconKey }) {
+  const Icon = ICONS[icon] || BarChart3;
+  if (icon === "tiktok" || icon === "instagram" || icon === "threads" || icon === "pinterest") {
+    return <PlatformIcon platform={icon} size={24} />;
+  }
+  return <Icon aria-hidden="true" />;
 }
