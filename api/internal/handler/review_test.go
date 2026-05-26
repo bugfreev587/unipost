@@ -170,14 +170,51 @@ func TestReviewJobScriptUsesClosedActions(t *testing.T) {
 	}
 }
 
+func TestReviewAgentScriptUsesBearerToken(t *testing.T) {
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+		job:        db.ReviewJob{ID: "rvjob_1", WorkspaceID: "ws_1", ReviewKitID: "rvkit_1", Platform: "tiktok", AgentVersion: pgtype.Text{String: reviewAgentVersion, Valid: true}},
+		kit:        db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1"},
+		domain:     db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready", TlsStatus: "issued"},
+		session:    db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
+	}
+	h := NewReviewHandler(store)
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/agent/script", nil)
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.GetAgentJobScript(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.agentTokenHashLookup != hashReviewToken("revtok_live") {
+		t.Fatalf("token hash lookup = %q", store.agentTokenHashLookup)
+	}
+}
+
+func TestReviewAgentScriptRejectsMissingBearerToken(t *testing.T) {
+	h := NewReviewHandler(&reviewStoreFake{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/agent/script", nil)
+	rec := httptest.NewRecorder()
+
+	h.GetAgentJobScript(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 type reviewStoreFake struct {
-	domain             db.ReviewDomain
-	kit                db.ReviewKit
-	job                db.ReviewJob
-	session            db.ReviewSession
-	platformCredential db.PlatformCredential
-	credentialErr      error
-	now                time.Time
+	domain               db.ReviewDomain
+	kit                  db.ReviewKit
+	job                  db.ReviewJob
+	session              db.ReviewSession
+	platformCredential   db.PlatformCredential
+	agentToken           db.ReviewAgentToken
+	agentTokenHashLookup string
+	credentialErr        error
+	now                  time.Time
 
 	createdDomain     db.CreateReviewDomainParams
 	createdKit        db.CreateReviewKitParams
@@ -240,7 +277,11 @@ func (f *reviewStoreFake) CreateReviewAgentToken(_ context.Context, arg db.Creat
 	return db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: arg.ReviewJobID, WorkspaceID: arg.WorkspaceID, Platform: arg.Platform, TokenHash: arg.TokenHash, ExpiresAt: arg.ExpiresAt}, nil
 }
 func (f *reviewStoreFake) GetReviewAgentTokenByHash(_ context.Context, hash string) (db.ReviewAgentToken, error) {
-	return db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hash}, nil
+	f.agentTokenHashLookup = hash
+	if f.agentToken.ID == "" {
+		return db.ReviewAgentToken{}, pgx.ErrNoRows
+	}
+	return f.agentToken, nil
 }
 func (f *reviewStoreFake) CreateReviewJobEvent(_ context.Context, arg db.CreateReviewJobEventParams) (db.ReviewJobEvent, error) {
 	return db.ReviewJobEvent{ID: 1, ReviewJobID: arg.ReviewJobID, EventType: arg.EventType, Message: arg.Message, Metadata: arg.Metadata, ElapsedMs: arg.ElapsedMs}, nil

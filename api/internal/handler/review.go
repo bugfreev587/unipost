@@ -18,7 +18,9 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/reviewscript"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 const (
@@ -351,26 +353,57 @@ func (h *ReviewHandler) GetJobScript(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	jobID := chi.URLParam(r, "id")
-	job, err := h.store.GetReviewJob(r.Context(), db.GetReviewJobParams{ID: jobID, WorkspaceID: workspaceID})
+	script, err := h.buildJobScript(r.Context(), chi.URLParam(r, "id"), workspaceID)
 	if err != nil {
-		writeNotFoundOrInternal(w, err, "Review job not found", "Failed to load review job")
+		writeNotFoundOrInternal(w, err, "Review job script not found", "Failed to load review job script")
 		return
 	}
-	kit, err := h.store.GetReviewKit(r.Context(), db.GetReviewKitParams{ID: job.ReviewKitID, WorkspaceID: workspaceID})
-	if err != nil {
-		writeNotFoundOrInternal(w, err, "Review kit not found", "Failed to load review kit")
+	writeSuccess(w, script)
+}
+
+func (h *ReviewHandler) GetAgentJobScript(w http.ResponseWriter, r *http.Request) {
+	rawToken := bearerToken(r)
+	if rawToken == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing review agent token")
 		return
 	}
-	domain, err := h.store.GetReviewDomain(r.Context(), db.GetReviewDomainParams{ID: kit.ReviewDomainID, WorkspaceID: workspaceID})
+	agentToken, err := h.store.GetReviewAgentTokenByHash(r.Context(), hashReviewToken(rawToken))
 	if err != nil {
-		writeNotFoundOrInternal(w, err, "Review domain not found", "Failed to load review domain")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid or expired review agent token")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review agent token")
 		return
 	}
-	session, err := h.store.GetActiveReviewSessionForJob(r.Context(), db.GetActiveReviewSessionForJobParams{ReviewJobID: job.ID, WorkspaceID: workspaceID})
-	if err != nil {
-		writeNotFoundOrInternal(w, err, "Active review session not found", "Failed to load review session")
+	if !featureflags.Enabled(r.Context(), featureflags.AppReviewAutopilotV1, featureflags.Target{WorkspaceID: agentToken.WorkspaceID, Env: runtimeenv.Current()}) {
+		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
 		return
+	}
+	script, err := h.buildJobScript(r.Context(), agentToken.ReviewJobID, agentToken.WorkspaceID)
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review job script not found", "Failed to load review job script")
+		return
+	}
+	writeSuccess(w, script)
+}
+
+func (h *ReviewHandler) buildJobScript(ctx context.Context, jobID, workspaceID string) (reviewscript.Script, error) {
+	job, err := h.store.GetReviewJob(ctx, db.GetReviewJobParams{ID: jobID, WorkspaceID: workspaceID})
+	if err != nil {
+		return reviewscript.Script{}, err
+	}
+	kit, err := h.store.GetReviewKit(ctx, db.GetReviewKitParams{ID: job.ReviewKitID, WorkspaceID: workspaceID})
+	if err != nil {
+		return reviewscript.Script{}, err
+	}
+	domain, err := h.store.GetReviewDomain(ctx, db.GetReviewDomainParams{ID: kit.ReviewDomainID, WorkspaceID: workspaceID})
+	if err != nil {
+		return reviewscript.Script{}, err
+	}
+	session, err := h.store.GetActiveReviewSessionForJob(ctx, db.GetActiveReviewSessionForJobParams{ReviewJobID: job.ID, WorkspaceID: workspaceID})
+	if err != nil {
+		return reviewscript.Script{}, err
 	}
 
 	agentVersion := reviewAgentVersion
@@ -392,10 +425,9 @@ func (h *ReviewHandler) GetJobScript(w http.ResponseWriter, r *http.Request) {
 		BrowserWindowHeight: 1000,
 	})
 	if err := script.Validate(); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Review script is invalid")
-		return
+		return reviewscript.Script{}, err
 	}
-	writeSuccess(w, script)
+	return script, nil
 }
 
 func reviewWorkspaceID(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -438,8 +470,24 @@ func defaultReviewTokenGenerator(prefix string) (string, string, error) {
 		return "", "", err
 	}
 	raw := prefix + base64.RawURLEncoding.EncodeToString(buf)
+	return raw, hashReviewToken(raw), nil
+}
+
+func hashReviewToken(raw string) string {
 	digest := sha256.Sum256([]byte(raw))
-	return raw, hex.EncodeToString(digest[:]), nil
+	return hex.EncodeToString(digest[:])
+}
+
+func bearerToken(r *http.Request) string {
+	header := strings.TrimSpace(r.Header.Get("Authorization"))
+	if header == "" {
+		return ""
+	}
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 func normalizeReviewDomain(input string) string {

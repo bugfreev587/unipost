@@ -493,6 +493,7 @@ func main() {
 	// hosted dashboard page reads it via ?state=<oauth_state> as the
 	// bearer. Returns a minimal projection of the session.
 	r.Get("/v1/public/connect/sessions/{id}", connectSessionHandler.PublicGet)
+	r.Get("/v1/review/agent/script", reviewHandler.GetAgentJobScript)
 
 	// RBAC Phase 4: invite preview. The dashboard's /invite/{token}
 	// page calls this BEFORE the user signs in to display "Acme Inc.
