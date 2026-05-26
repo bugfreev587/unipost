@@ -99,14 +99,55 @@ type InboxMediaCache struct {
 	FetchedAt       pgtype.Timestamptz `json:"fetched_at"`
 }
 
+type IntegrationLog struct {
+	ID               int64              `json:"id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	Ts               pgtype.Timestamptz `json:"ts"`
+	Level            string             `json:"level"`
+	Status           string             `json:"status"`
+	Category         string             `json:"category"`
+	Action           string             `json:"action"`
+	Source           string             `json:"source"`
+	Message          string             `json:"message"`
+	RequestID        pgtype.Text        `json:"request_id"`
+	TraceID          pgtype.Text        `json:"trace_id"`
+	ActorUserID      pgtype.Text        `json:"actor_user_id"`
+	ActorApiKeyID    pgtype.Text        `json:"actor_api_key_id"`
+	ProfileID        pgtype.Text        `json:"profile_id"`
+	SocialAccountID  pgtype.Text        `json:"social_account_id"`
+	PostID           pgtype.Text        `json:"post_id"`
+	PlatformPostID   pgtype.Text        `json:"platform_post_id"`
+	Platform         pgtype.Text        `json:"platform"`
+	Endpoint         pgtype.Text        `json:"endpoint"`
+	Method           pgtype.Text        `json:"method"`
+	HttpStatusCode   pgtype.Int4        `json:"http_status_code"`
+	RemoteStatusCode pgtype.Int4        `json:"remote_status_code"`
+	DurationMs       pgtype.Int4        `json:"duration_ms"`
+	ErrorCode        pgtype.Text        `json:"error_code"`
+	Metadata         []byte             `json:"metadata"`
+	RequestPayload   []byte             `json:"request_payload"`
+	ResponsePayload  []byte             `json:"response_payload"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type LandingSessionUser struct {
+	SessionID    string             `json:"session_id"`
+	UserID       string             `json:"user_id"`
+	FirstBoundAt pgtype.Timestamptz `json:"first_bound_at"`
+	LastSeenAt   pgtype.Timestamptz `json:"last_seen_at"`
+}
+
 type LandingVisit struct {
-	ID         int64              `json:"id"`
-	Path       string             `json:"path"`
-	SourceCode string             `json:"source_code"`
-	Referer    string             `json:"referer"`
-	SessionID  string             `json:"session_id"`
-	UserAgent  string             `json:"user_agent"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ID          int64              `json:"id"`
+	Path        string             `json:"path"`
+	SourceCode  string             `json:"source_code"`
+	Referer     string             `json:"referer"`
+	SessionID   string             `json:"session_id"`
+	UserAgent   string             `json:"user_agent"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Attribution []byte             `json:"attribution"`
+	RawQuery    string             `json:"raw_query"`
+	CountryCode string             `json:"country_code"`
 }
 
 type Media struct {
@@ -218,37 +259,6 @@ type PlatformCredential struct {
 	WorkspaceID  string             `json:"workspace_id"`
 }
 
-type IntegrationLog struct {
-	ID               int64              `json:"id"`
-	WorkspaceID      string             `json:"workspace_id"`
-	Ts               pgtype.Timestamptz `json:"ts"`
-	Level            string             `json:"level"`
-	Status           string             `json:"status"`
-	Category         string             `json:"category"`
-	Action           string             `json:"action"`
-	Source           string             `json:"source"`
-	Message          string             `json:"message"`
-	RequestID        pgtype.Text        `json:"request_id"`
-	TraceID          pgtype.Text        `json:"trace_id"`
-	ActorUserID      pgtype.Text        `json:"actor_user_id"`
-	ActorApiKeyID    pgtype.Text        `json:"actor_api_key_id"`
-	ProfileID        pgtype.Text        `json:"profile_id"`
-	SocialAccountID  pgtype.Text        `json:"social_account_id"`
-	PostID           pgtype.Text        `json:"post_id"`
-	PlatformPostID   pgtype.Text        `json:"platform_post_id"`
-	Platform         pgtype.Text        `json:"platform"`
-	Endpoint         pgtype.Text        `json:"endpoint"`
-	Method           pgtype.Text        `json:"method"`
-	HTTPStatusCode   pgtype.Int4        `json:"http_status_code"`
-	RemoteStatusCode pgtype.Int4        `json:"remote_status_code"`
-	DurationMs       pgtype.Int4        `json:"duration_ms"`
-	ErrorCode        pgtype.Text        `json:"error_code"`
-	Metadata         []byte             `json:"metadata"`
-	RequestPayload   []byte             `json:"request_payload"`
-	ResponsePayload  []byte             `json:"response_payload"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-}
-
 type PostAnalytic struct {
 	ID                  string             `json:"id"`
 	SocialPostResultID  string             `json:"social_post_result_id"`
@@ -317,8 +327,78 @@ type Profile struct {
 	BrandingLogoUrl       pgtype.Text        `json:"branding_logo_url"`
 	BrandingDisplayName   pgtype.Text        `json:"branding_display_name"`
 	BrandingPrimaryColor  pgtype.Text        `json:"branding_primary_color"`
-	BrandingHidePoweredBy bool               `json:"branding_hide_powered_by"`
 	WorkspaceID           string             `json:"workspace_id"`
+	BrandingHidePoweredBy bool               `json:"branding_hide_powered_by"`
+}
+
+type ReviewDomain struct {
+	ID                string             `json:"id"`
+	WorkspaceID       string             `json:"workspace_id"`
+	Domain            string             `json:"domain"`
+	Provider          pgtype.Text        `json:"provider"`
+	Status            string             `json:"status"`
+	VerificationToken string             `json:"verification_token"`
+	CnameTarget       string             `json:"cname_target"`
+	DnsVerifiedAt     pgtype.Timestamptz `json:"dns_verified_at"`
+	TlsStatus         string             `json:"tls_status"`
+	TlsIssuedAt       pgtype.Timestamptz `json:"tls_issued_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ReviewJob struct {
+	ID                   string             `json:"id"`
+	ReviewKitID          string             `json:"review_kit_id"`
+	WorkspaceID          string             `json:"workspace_id"`
+	Platform             string             `json:"platform"`
+	Status               string             `json:"status"`
+	StartedAt            pgtype.Timestamptz `json:"started_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	FailedAt             pgtype.Timestamptz `json:"failed_at"`
+	FailureReason        pgtype.Text        `json:"failure_reason"`
+	AgentVersion         pgtype.Text        `json:"agent_version"`
+	ReviewSessionTokenID pgtype.Text        `json:"review_session_token_id"`
+	VideoFileID          pgtype.Text        `json:"video_file_id"`
+	ArtifactsJson        []byte             `json:"artifacts_json"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ReviewJobEvent struct {
+	ID          int64              `json:"id"`
+	ReviewJobID string             `json:"review_job_id"`
+	EventType   string             `json:"event_type"`
+	Message     string             `json:"message"`
+	Metadata    []byte             `json:"metadata"`
+	ElapsedMs   pgtype.Int8        `json:"elapsed_ms"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type ReviewKit struct {
+	ID             string             `json:"id"`
+	WorkspaceID    string             `json:"workspace_id"`
+	Platform       string             `json:"platform"`
+	UseCase        string             `json:"use_case"`
+	ReviewDomainID string             `json:"review_domain_id"`
+	BrandSnapshot  []byte             `json:"brand_snapshot"`
+	RequiredScopes []string           `json:"required_scopes"`
+	Status         string             `json:"status"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ReviewSession struct {
+	ID           string             `json:"id"`
+	ReviewJobID  string             `json:"review_job_id"`
+	ReviewKitID  string             `json:"review_kit_id"`
+	WorkspaceID  string             `json:"workspace_id"`
+	Platform     string             `json:"platform"`
+	ReviewDomain string             `json:"review_domain"`
+	TokenHash    string             `json:"token_hash"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	ClaimedAt    pgtype.Timestamptz `json:"claimed_at"`
+	RevokedAt    pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type SocialAccount struct {
