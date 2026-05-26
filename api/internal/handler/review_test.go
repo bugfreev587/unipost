@@ -205,6 +205,74 @@ func TestReviewAgentScriptRejectsMissingBearerToken(t *testing.T) {
 	}
 }
 
+func TestReviewAgentEventRecordsEventAndMarksJobRunning(t *testing.T) {
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	h := NewReviewHandler(store)
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/agent/events", strings.NewReader(`{
+		"event_type":"recording_started",
+		"message":"Recorder started",
+		"metadata":{"step_id":"open_review_app"},
+		"elapsed_ms":42
+	}`))
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.RecordAgentEvent(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.createdEvent.ReviewJobID != "rvjob_1" || store.createdEvent.EventType != "recording_started" {
+		t.Fatalf("event not persisted correctly: %+v", store.createdEvent)
+	}
+	if store.markedRunningJobID != "rvjob_1" {
+		t.Fatalf("job was not marked running: %q", store.markedRunningJobID)
+	}
+	if !strings.Contains(string(store.createdEvent.Metadata), `"step_id":"open_review_app"`) {
+		t.Fatalf("metadata not encoded: %s", string(store.createdEvent.Metadata))
+	}
+}
+
+func TestReviewAgentCompleteAndFailUseBearerToken(t *testing.T) {
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	h := NewReviewHandler(store)
+	completeReq := httptest.NewRequest(http.MethodPost, "/v1/review/agent/complete", strings.NewReader(`{
+		"video_file_id":"file_123",
+		"artifacts":{"markers":[{"elapsed_ms":42,"label":"Open customer review domain"}]}
+	}`))
+	completeReq.Header.Set("Authorization", "Bearer revtok_live")
+	completeRec := httptest.NewRecorder()
+
+	h.CompleteAgentJob(completeRec, completeReq)
+
+	if completeRec.Code != http.StatusOK {
+		t.Fatalf("complete status = %d, body = %s", completeRec.Code, completeRec.Body.String())
+	}
+	if store.completedJob.ID != "rvjob_1" || store.completedJob.VideoFileID.String != "file_123" {
+		t.Fatalf("job was not completed: %+v", store.completedJob)
+	}
+
+	failReq := httptest.NewRequest(http.MethodPost, "/v1/review/agent/fail", strings.NewReader(`{
+		"failure_reason":"redirect URI mismatch",
+		"artifacts":{"last_step":"wait_for_oauth"}
+	}`))
+	failReq.Header.Set("Authorization", "Bearer revtok_live")
+	failRec := httptest.NewRecorder()
+
+	h.FailAgentJob(failRec, failReq)
+
+	if failRec.Code != http.StatusOK {
+		t.Fatalf("fail status = %d, body = %s", failRec.Code, failRec.Body.String())
+	}
+	if store.failedJob.ID != "rvjob_1" || store.failedJob.FailureReason.String != "redirect URI mismatch" {
+		t.Fatalf("job was not failed: %+v", store.failedJob)
+	}
+}
+
 type reviewStoreFake struct {
 	domain               db.ReviewDomain
 	kit                  db.ReviewKit
@@ -216,11 +284,16 @@ type reviewStoreFake struct {
 	credentialErr        error
 	now                  time.Time
 
-	createdDomain     db.CreateReviewDomainParams
-	createdKit        db.CreateReviewKitParams
-	createdJob        db.CreateReviewJobParams
-	createdSession    db.CreateReviewSessionParams
-	createdAgentToken db.CreateReviewAgentTokenParams
+	createdDomain      db.CreateReviewDomainParams
+	createdKit         db.CreateReviewKitParams
+	createdJob         db.CreateReviewJobParams
+	createdSession     db.CreateReviewSessionParams
+	createdAgentToken  db.CreateReviewAgentTokenParams
+	createdEvent       db.CreateReviewJobEventParams
+	markedRunningJobID string
+	markedWaitingJobID string
+	completedJob       db.CompleteReviewJobParams
+	failedJob          db.FailReviewJobParams
 }
 
 func (f *reviewStoreFake) CreateReviewDomain(_ context.Context, arg db.CreateReviewDomainParams) (db.ReviewDomain, error) {
@@ -284,12 +357,23 @@ func (f *reviewStoreFake) GetReviewAgentTokenByHash(_ context.Context, hash stri
 	return f.agentToken, nil
 }
 func (f *reviewStoreFake) CreateReviewJobEvent(_ context.Context, arg db.CreateReviewJobEventParams) (db.ReviewJobEvent, error) {
+	f.createdEvent = arg
 	return db.ReviewJobEvent{ID: 1, ReviewJobID: arg.ReviewJobID, EventType: arg.EventType, Message: arg.Message, Metadata: arg.Metadata, ElapsedMs: arg.ElapsedMs}, nil
 }
+func (f *reviewStoreFake) MarkReviewJobRunning(_ context.Context, arg db.MarkReviewJobRunningParams) (db.ReviewJob, error) {
+	f.markedRunningJobID = arg.ID
+	return db.ReviewJob{ID: arg.ID, WorkspaceID: arg.WorkspaceID, Status: "running"}, nil
+}
+func (f *reviewStoreFake) MarkReviewJobWaitingForUser(_ context.Context, arg db.MarkReviewJobWaitingForUserParams) (db.ReviewJob, error) {
+	f.markedWaitingJobID = arg.ID
+	return db.ReviewJob{ID: arg.ID, WorkspaceID: arg.WorkspaceID, Status: "waiting_for_user"}, nil
+}
 func (f *reviewStoreFake) CompleteReviewJob(_ context.Context, arg db.CompleteReviewJobParams) (db.ReviewJob, error) {
+	f.completedJob = arg
 	return db.ReviewJob{ID: arg.ID, WorkspaceID: arg.WorkspaceID, Status: "completed"}, nil
 }
 func (f *reviewStoreFake) FailReviewJob(_ context.Context, arg db.FailReviewJobParams) (db.ReviewJob, error) {
+	f.failedJob = arg
 	return db.ReviewJob{ID: arg.ID, WorkspaceID: arg.WorkspaceID, Status: "failed"}, nil
 }
 

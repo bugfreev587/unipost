@@ -1,6 +1,6 @@
 import { validateScript } from "./script-contract.js";
 
-export async function runScript(script, { dryRun = false, out = process.stdout } = {}) {
+export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null } = {}) {
   const valid = validateScript(script);
   if (dryRun) {
     out.write(`Review script ${valid.job_id} (${valid.steps.length} steps)\n`);
@@ -20,11 +20,25 @@ export async function runScript(script, { dryRun = false, out = process.stdout }
     recordVideo: undefined,
   });
   const page = await context.newPage();
+  const markers = [];
+  let currentStepId = "";
+  await reportEvent(reporter, "recording_started", "Recorder started", { job_id: valid.job_id }, out);
   try {
     for (const step of valid.steps) {
+      currentStepId = step.id;
+      if (step.marker) markers.push({ step_id: step.id, label: step.marker });
+      await reportEvent(reporter, "step_started", step.marker || step.id, { step_id: step.id, action: step.action }, out);
+      if (step.action === "manual_pause") {
+        await reportEvent(reporter, "manual_pause", step.marker || "Waiting for user", { step_id: step.id }, out);
+      }
       await runStep(page, step, out);
+      await reportEvent(reporter, "step_completed", step.marker || step.id, { step_id: step.id, action: step.action }, out);
     }
+    await reportComplete(reporter, { markers }, out);
     return { status: "completed", jobId: valid.job_id };
+  } catch (err) {
+    await reportFail(reporter, err, { last_step: currentStepId, markers }, out);
+    throw err;
   } finally {
     await context.close();
     await browser.close();
@@ -112,4 +126,31 @@ async function showOverlay(page, text) {
 
 async function hideOverlay(page) {
   await page.evaluate(() => document.querySelector("[data-unipost-review-overlay]")?.remove());
+}
+
+async function reportEvent(reporter, eventType, message, metadata, out) {
+  if (!reporter?.event) return;
+  try {
+    await reporter.event(eventType, message, metadata);
+  } catch (err) {
+    out.write("[report warning] " + err.message + "\n");
+  }
+}
+
+async function reportComplete(reporter, artifacts, out) {
+  if (!reporter?.complete) return;
+  try {
+    await reporter.complete(artifacts);
+  } catch (err) {
+    out.write("[report warning] " + err.message + "\n");
+  }
+}
+
+async function reportFail(reporter, err, artifacts, out) {
+  if (!reporter?.fail) return;
+  try {
+    await reporter.fail(err, artifacts);
+  } catch (reportErr) {
+    out.write("[report warning] " + reportErr.message + "\n");
+  }
 }

@@ -61,6 +61,8 @@ type reviewStore interface {
 	CreateReviewAgentToken(context.Context, db.CreateReviewAgentTokenParams) (db.ReviewAgentToken, error)
 	GetReviewAgentTokenByHash(context.Context, string) (db.ReviewAgentToken, error)
 	CreateReviewJobEvent(context.Context, db.CreateReviewJobEventParams) (db.ReviewJobEvent, error)
+	MarkReviewJobRunning(context.Context, db.MarkReviewJobRunningParams) (db.ReviewJob, error)
+	MarkReviewJobWaitingForUser(context.Context, db.MarkReviewJobWaitingForUserParams) (db.ReviewJob, error)
 	CompleteReviewJob(context.Context, db.CompleteReviewJobParams) (db.ReviewJob, error)
 	FailReviewJob(context.Context, db.FailReviewJobParams) (db.ReviewJob, error)
 }
@@ -97,6 +99,17 @@ type reviewJobResponse struct {
 	AgentVersion   string `json:"agent_version"`
 	AgentCommand   string `json:"agent_command"`
 	TokenExpiresAt string `json:"token_expires_at"`
+}
+
+type reviewAgentEventResponse struct {
+	ReviewJobID string `json:"review_job_id"`
+	EventType   string `json:"event_type"`
+	Status      string `json:"status"`
+}
+
+type reviewAgentJobStateResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
 }
 
 func NewReviewHandler(store reviewStore) *ReviewHandler {
@@ -362,22 +375,8 @@ func (h *ReviewHandler) GetJobScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ReviewHandler) GetAgentJobScript(w http.ResponseWriter, r *http.Request) {
-	rawToken := bearerToken(r)
-	if rawToken == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing review agent token")
-		return
-	}
-	agentToken, err := h.store.GetReviewAgentTokenByHash(r.Context(), hashReviewToken(rawToken))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid or expired review agent token")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review agent token")
-		return
-	}
-	if !featureflags.Enabled(r.Context(), featureflags.AppReviewAutopilotV1, featureflags.Target{WorkspaceID: agentToken.WorkspaceID, Env: runtimeenv.Current()}) {
-		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
+	agentToken, ok := h.authenticateReviewAgent(w, r)
+	if !ok {
 		return
 	}
 	script, err := h.buildJobScript(r.Context(), agentToken.ReviewJobID, agentToken.WorkspaceID)
@@ -386,6 +385,152 @@ func (h *ReviewHandler) GetAgentJobScript(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeSuccess(w, script)
+}
+
+func (h *ReviewHandler) RecordAgentEvent(w http.ResponseWriter, r *http.Request) {
+	agentToken, ok := h.authenticateReviewAgent(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		EventType string         `json:"event_type"`
+		Message   string         `json:"message"`
+		Metadata  map[string]any `json:"metadata"`
+		ElapsedMS *int64         `json:"elapsed_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	eventType := strings.TrimSpace(req.EventType)
+	if eventType == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "event_type is required")
+		return
+	}
+	metadataJSON, err := marshalReviewJSON(req.Metadata)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "metadata must be valid JSON")
+		return
+	}
+	elapsed := pgtype.Int8{}
+	if req.ElapsedMS != nil {
+		elapsed = pgtype.Int8{Int64: *req.ElapsedMS, Valid: true}
+	}
+	if _, err := h.store.CreateReviewJobEvent(r.Context(), db.CreateReviewJobEventParams{
+		ReviewJobID: agentToken.ReviewJobID,
+		EventType:   eventType,
+		Message:     strings.TrimSpace(req.Message),
+		Metadata:    metadataJSON,
+		ElapsedMs:   elapsed,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to record review agent event")
+		return
+	}
+	status := "event_recorded"
+	switch eventType {
+	case "recording_started":
+		if _, err := h.store.MarkReviewJobRunning(r.Context(), db.MarkReviewJobRunningParams{ID: agentToken.ReviewJobID, WorkspaceID: agentToken.WorkspaceID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark review job running")
+			return
+		}
+		status = "running"
+	case "manual_pause":
+		if _, err := h.store.MarkReviewJobWaitingForUser(r.Context(), db.MarkReviewJobWaitingForUserParams{ID: agentToken.ReviewJobID, WorkspaceID: agentToken.WorkspaceID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark review job waiting for user")
+			return
+		}
+		status = "waiting_for_user"
+	}
+	writeCreated(w, reviewAgentEventResponse{ReviewJobID: agentToken.ReviewJobID, EventType: eventType, Status: status})
+}
+
+func (h *ReviewHandler) CompleteAgentJob(w http.ResponseWriter, r *http.Request) {
+	agentToken, ok := h.authenticateReviewAgent(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		VideoFileID string         `json:"video_file_id"`
+		Artifacts   map[string]any `json:"artifacts"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	artifactsJSON, err := marshalReviewJSON(req.Artifacts)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "artifacts must be valid JSON")
+		return
+	}
+	job, err := h.store.CompleteReviewJob(r.Context(), db.CompleteReviewJobParams{
+		ID:            agentToken.ReviewJobID,
+		WorkspaceID:   agentToken.WorkspaceID,
+		VideoFileID:   pgtype.Text{String: strings.TrimSpace(req.VideoFileID), Valid: strings.TrimSpace(req.VideoFileID) != ""},
+		ArtifactsJson: artifactsJSON,
+	})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review job not found", "Failed to complete review job")
+		return
+	}
+	writeSuccess(w, reviewAgentJobStateResponse{ID: job.ID, Status: job.Status})
+}
+
+func (h *ReviewHandler) FailAgentJob(w http.ResponseWriter, r *http.Request) {
+	agentToken, ok := h.authenticateReviewAgent(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		FailureReason string         `json:"failure_reason"`
+		Artifacts     map[string]any `json:"artifacts"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	failureReason := strings.TrimSpace(req.FailureReason)
+	if failureReason == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "failure_reason is required")
+		return
+	}
+	artifactsJSON, err := marshalReviewJSON(req.Artifacts)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "artifacts must be valid JSON")
+		return
+	}
+	job, err := h.store.FailReviewJob(r.Context(), db.FailReviewJobParams{
+		ID:            agentToken.ReviewJobID,
+		WorkspaceID:   agentToken.WorkspaceID,
+		FailureReason: pgtype.Text{String: failureReason, Valid: true},
+		ArtifactsJson: artifactsJSON,
+	})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review job not found", "Failed to fail review job")
+		return
+	}
+	writeSuccess(w, reviewAgentJobStateResponse{ID: job.ID, Status: job.Status})
+}
+
+func (h *ReviewHandler) authenticateReviewAgent(w http.ResponseWriter, r *http.Request) (db.ReviewAgentToken, bool) {
+	rawToken := bearerToken(r)
+	if rawToken == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing review agent token")
+		return db.ReviewAgentToken{}, false
+	}
+	agentToken, err := h.store.GetReviewAgentTokenByHash(r.Context(), hashReviewToken(rawToken))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid or expired review agent token")
+			return db.ReviewAgentToken{}, false
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review agent token")
+		return db.ReviewAgentToken{}, false
+	}
+	if !featureflags.Enabled(r.Context(), featureflags.AppReviewAutopilotV1, featureflags.Target{WorkspaceID: agentToken.WorkspaceID, Env: runtimeenv.Current()}) {
+		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
+		return db.ReviewAgentToken{}, false
+	}
+	return agentToken, true
 }
 
 func (h *ReviewHandler) buildJobScript(ctx context.Context, jobID, workspaceID string) (reviewscript.Script, error) {
@@ -462,6 +607,13 @@ func reviewKitFromDB(row db.ReviewKit) reviewKitResponse {
 		RequiredScopes: row.RequiredScopes,
 		Status:         row.Status,
 	}
+}
+
+func marshalReviewJSON(value map[string]any) ([]byte, error) {
+	if value == nil {
+		value = map[string]any{}
+	}
+	return json.Marshal(value)
 }
 
 func defaultReviewTokenGenerator(prefix string) (string, string, error) {

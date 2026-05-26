@@ -3,6 +3,23 @@ import { validateScript } from "./script-contract.js";
 export const DEFAULT_API_URL = "https://api.unipost.dev";
 
 export async function fetchReviewScript({ token, apiUrl = DEFAULT_API_URL, fetchImpl = globalThis.fetch } = {}) {
+  const body = await agentRequest("/v1/review/agent/script", { token, apiUrl, fetchImpl });
+  return validateScript(body.data);
+}
+
+export async function postReviewEvent({ token, apiUrl = DEFAULT_API_URL, fetchImpl = globalThis.fetch, event } = {}) {
+  return agentRequest("/v1/review/agent/events", { token, apiUrl, fetchImpl, method: "POST", body: event });
+}
+
+export async function completeReviewJob({ token, apiUrl = DEFAULT_API_URL, fetchImpl = globalThis.fetch, data } = {}) {
+  return agentRequest("/v1/review/agent/complete", { token, apiUrl, fetchImpl, method: "POST", body: data });
+}
+
+export async function failReviewJob({ token, apiUrl = DEFAULT_API_URL, fetchImpl = globalThis.fetch, data } = {}) {
+  return agentRequest("/v1/review/agent/fail", { token, apiUrl, fetchImpl, method: "POST", body: data });
+}
+
+async function agentRequest(path, { token, apiUrl = DEFAULT_API_URL, fetchImpl = globalThis.fetch, method = "GET", body } = {}) {
   if (!token || typeof token !== "string") {
     throw new Error("review agent token is required");
   }
@@ -10,23 +27,24 @@ export async function fetchReviewScript({ token, apiUrl = DEFAULT_API_URL, fetch
     throw new Error("fetch is not available in this Node runtime");
   }
   const base = apiUrl.replace(/\/+$/, "");
-  const response = await fetchImpl(`${base}/v1/review/agent/script`, {
-    method: "GET",
+  const response = await fetchImpl(base + path, {
+    method,
     headers: {
       Accept: "application/json",
-      Authorization: `Bearer ${token}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      Authorization: "Bearer " + token,
     },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   if (!response.ok) {
-    let message = `script request failed: ${response.status}`;
+    let message = path + " request failed: " + response.status;
     try {
-      const body = await response.json();
-      message = body?.error?.message || message;
+      const errorBody = await response.json();
+      message = errorBody?.error?.message || message;
     } catch {
       // Ignore malformed error bodies; status is still actionable.
     }
     throw new Error(message);
   }
-  const body = await response.json();
-  return validateScript(body.data);
+  return response.json();
 }

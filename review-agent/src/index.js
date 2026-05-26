@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fetchReviewScript, DEFAULT_API_URL } from "./client.js";
 import { runDoctor, printDoctor } from "./doctor.js";
+import { createAgentReporter } from "./reporter.js";
 import { runScript } from "./runner.js";
 
 async function main(argv = process.argv.slice(2)) {
@@ -18,7 +19,8 @@ async function main(argv = process.argv.slice(2)) {
     const token = args.token || process.env.UNIPOST_REVIEW_TOKEN;
     const apiUrl = args.apiUrl || process.env.UNIPOST_API_URL || DEFAULT_API_URL;
     const script = await fetchReviewScript({ token, apiUrl });
-    await runScript(script, { dryRun: args.dryRun });
+    const reporter = args.dryRun ? null : createAgentReporter({ token, apiUrl });
+    await runScript(script, { dryRun: args.dryRun, reporter });
     return 0;
   }
   if (command === "resume") {

@@ -494,6 +494,9 @@ func main() {
 	// bearer. Returns a minimal projection of the session.
 	r.Get("/v1/public/connect/sessions/{id}", connectSessionHandler.PublicGet)
 	r.Get("/v1/review/agent/script", reviewHandler.GetAgentJobScript)
+	r.Post("/v1/review/agent/events", reviewHandler.RecordAgentEvent)
+	r.Post("/v1/review/agent/complete", reviewHandler.CompleteAgentJob)
+	r.Post("/v1/review/agent/fail", reviewHandler.FailAgentJob)
 
 	// RBAC Phase 4: invite preview. The dashboard's /invite/{token}
 	// page calls this BEFORE the user signs in to display "Acme Inc.
