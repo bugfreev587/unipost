@@ -471,6 +471,15 @@ export async function createReviewDomain(
   });
 }
 
+export async function verifyReviewDomain(
+  token: string,
+  domainId: string
+): Promise<ApiResponse<ReviewDomain>> {
+  return request("/v1/review/domains/" + domainId + "/verify", token, {
+    method: "POST",
+  });
+}
+
 export async function createReviewKit(
   token: string,
   data: {

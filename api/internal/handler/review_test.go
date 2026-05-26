@@ -46,6 +46,54 @@ func TestReviewCreateDomainReturnsDNSRecords(t *testing.T) {
 	}
 }
 
+func TestReviewVerifyDomainMarksReadyWhenDNSMatches(t *testing.T) {
+	store := &reviewStoreFake{
+		domain: db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "dns_pending", VerificationToken: "unipost-review=hash", CnameTarget: "review.unipost.dev", TlsStatus: "pending"},
+	}
+	h := NewReviewHandler(store).WithDomainChecker(func(context.Context, db.ReviewDomain) reviewDomainCheckResult {
+		return reviewDomainCheckResult{DNSReady: true, TLSIssued: true}
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/domains/rvdom_1/verify", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "rvdom_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.VerifyDomain(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.updatedDomain.Status != "ready" || store.updatedDomain.TlsStatus != "issued" {
+		t.Fatalf("domain not marked ready: %+v", store.updatedDomain)
+	}
+}
+
+func TestReviewVerifyDomainExplainsPendingDNS(t *testing.T) {
+	store := &reviewStoreFake{
+		domain: db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "dns_pending", VerificationToken: "unipost-review=hash", CnameTarget: "review.unipost.dev", TlsStatus: "pending"},
+	}
+	h := NewReviewHandler(store).WithDomainChecker(func(context.Context, db.ReviewDomain) reviewDomainCheckResult {
+		return reviewDomainCheckResult{DNSReady: false, TLSIssued: false, Message: "CNAME or TXT record has not propagated yet"}
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/domains/rvdom_1/verify", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "rvdom_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.VerifyDomain(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "CNAME or TXT") {
+		t.Fatalf("missing remediation: %s", rec.Body.String())
+	}
+}
+
 func TestReviewCreateKitRequiresReadyDomainCredentialsScopesAndRedirectAttestation(t *testing.T) {
 	store := &reviewStoreFake{
 		domain:             db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready"},
@@ -285,6 +333,7 @@ type reviewStoreFake struct {
 	now                  time.Time
 
 	createdDomain      db.CreateReviewDomainParams
+	updatedDomain      db.UpdateReviewDomainVerificationParams
 	createdKit         db.CreateReviewKitParams
 	createdJob         db.CreateReviewJobParams
 	createdSession     db.CreateReviewSessionParams
@@ -305,6 +354,10 @@ func (f *reviewStoreFake) GetReviewDomain(_ context.Context, arg db.GetReviewDom
 		return db.ReviewDomain{}, pgx.ErrNoRows
 	}
 	return f.domain, nil
+}
+func (f *reviewStoreFake) UpdateReviewDomainVerification(_ context.Context, arg db.UpdateReviewDomainVerificationParams) (db.ReviewDomain, error) {
+	f.updatedDomain = arg
+	return db.ReviewDomain{ID: arg.ID, WorkspaceID: arg.WorkspaceID, Domain: f.domain.Domain, Status: arg.Status, VerificationToken: f.domain.VerificationToken, CnameTarget: f.domain.CnameTarget, TlsStatus: arg.TlsStatus}, nil
 }
 func (f *reviewStoreFake) GetPlatformCredential(_ context.Context, arg db.GetPlatformCredentialParams) (db.PlatformCredential, error) {
 	if f.credentialErr != nil {

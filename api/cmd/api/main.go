@@ -719,6 +719,7 @@ func main() {
 		r.Route("/v1/review", func(r chi.Router) {
 			r.Use(handler.RequireFeatureFlag(featureflags.AppReviewAutopilotV1))
 			r.Post("/domains", reviewHandler.CreateDomain)
+			r.Post("/domains/{id}/verify", reviewHandler.VerifyDomain)
 			r.Post("/kits", reviewHandler.CreateKit)
 			r.Post("/jobs", reviewHandler.CreateJob)
 			r.Get("/jobs/{id}/script", reviewHandler.GetJobScript)

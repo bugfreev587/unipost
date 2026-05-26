@@ -22,6 +22,7 @@ import {
   createReviewJob,
   createReviewKit,
   listPlatformCredentials,
+  verifyReviewDomain,
   type PlatformCredential,
   type ReviewDNSRecord,
   type ReviewDomain,
@@ -57,7 +58,7 @@ function AppReviewAutopilotContent() {
   const [redirectAttested, setRedirectAttested] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [loadingCreds, setLoadingCreds] = useState(true);
-  const [working, setWorking] = useState<"domain" | "kit" | "job" | null>(null);
+  const [working, setWorking] = useState<"domain" | "verify" | "kit" | "job" | null>(null);
   const [error, setError] = useState("");
   const copyTimerRef = useRef<number | null>(null);
 
@@ -109,6 +110,22 @@ function AppReviewAutopilotContent() {
       setReviewDomain(res.data);
     } catch (err) {
       setError((err as Error).message || "Failed to create review domain");
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function handleVerifyDomain() {
+    if (!reviewDomain) return;
+    setWorking("verify");
+    setError("");
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await verifyReviewDomain(token, reviewDomain.id);
+      setReviewDomain(res.data);
+    } catch (err) {
+      setError((err as Error).message || "DNS is not ready yet");
     } finally {
       setWorking(null);
     }
@@ -235,8 +252,11 @@ function AppReviewAutopilotContent() {
                     onCopy={() => copyText(`dns-${index}`, `${record.type} ${record.name} ${record.value}`)}
                   />
                 ))}
+                <button className="dbtn" onClick={handleVerifyDomain} disabled={working === "verify" || domainReady} style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7 }}>
+                  {working === "verify" ? <ButtonLoading label="Checking DNS" /> : domainReady ? <><Check size={14} /> Domain ready</> : "Check DNS"}
+                </button>
                 <div style={{ fontSize: 12, color: "var(--dmuted)", lineHeight: 1.55 }}>
-                  Once DNS and certificate issuance are ready, create the review kit. If TikTok reports redirect mismatch during recording, update the redirect URI below and retry the same setup.
+                  Once DNS and certificate issuance are ready, create the review kit. If propagation is still pending, you can leave this page and check again later without changing the TikTok setup.
                 </div>
               </div>
             </section>

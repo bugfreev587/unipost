@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -40,16 +41,25 @@ const (
 var requiredTikTokReviewScopes = []string{"user.info.basic", "video.publish", "video.upload"}
 
 type reviewTokenGenerator func(prefix string) (raw string, hash string, err error)
+type reviewDomainChecker func(context.Context, db.ReviewDomain) reviewDomainCheckResult
+
+type reviewDomainCheckResult struct {
+	DNSReady  bool
+	TLSIssued bool
+	Message   string
+}
 
 type ReviewHandler struct {
 	store          reviewStore
 	now            func() time.Time
 	tokenGenerator reviewTokenGenerator
+	domainChecker  reviewDomainChecker
 }
 
 type reviewStore interface {
 	CreateReviewDomain(context.Context, db.CreateReviewDomainParams) (db.ReviewDomain, error)
 	GetReviewDomain(context.Context, db.GetReviewDomainParams) (db.ReviewDomain, error)
+	UpdateReviewDomainVerification(context.Context, db.UpdateReviewDomainVerificationParams) (db.ReviewDomain, error)
 	GetPlatformCredential(context.Context, db.GetPlatformCredentialParams) (db.PlatformCredential, error)
 	CreateReviewKit(context.Context, db.CreateReviewKitParams) (db.ReviewKit, error)
 	GetReviewKit(context.Context, db.GetReviewKitParams) (db.ReviewKit, error)
@@ -117,6 +127,7 @@ func NewReviewHandler(store reviewStore) *ReviewHandler {
 		store:          store,
 		now:            time.Now,
 		tokenGenerator: defaultReviewTokenGenerator,
+		domainChecker:  defaultReviewDomainChecker,
 	}
 }
 
@@ -130,6 +141,13 @@ func (h *ReviewHandler) WithTokenGenerator(fn reviewTokenGenerator) *ReviewHandl
 func (h *ReviewHandler) WithNow(fn func() time.Time) *ReviewHandler {
 	if fn != nil {
 		h.now = fn
+	}
+	return h
+}
+
+func (h *ReviewHandler) WithDomainChecker(fn reviewDomainChecker) *ReviewHandler {
+	if fn != nil {
+		h.domainChecker = fn
 	}
 	return h
 }
@@ -175,6 +193,52 @@ func (h *ReviewHandler) CreateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeCreated(w, reviewDomainFromDB(created))
+}
+
+func (h *ReviewHandler) VerifyDomain(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := reviewWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+	domain, err := h.store.GetReviewDomain(r.Context(), db.GetReviewDomainParams{ID: strings.TrimSpace(chi.URLParam(r, "id")), WorkspaceID: workspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review domain not found", "Failed to load review domain")
+		return
+	}
+	check := h.domainChecker(r.Context(), domain)
+	if !check.DNSReady {
+		message := strings.TrimSpace(check.Message)
+		if message == "" {
+			message = "Review domain DNS records have not propagated yet. Confirm the CNAME and TXT records, then try again."
+		}
+		writeError(w, http.StatusConflict, "CONFLICT", message)
+		return
+	}
+	status := reviewDomainStatusReady
+	tlsStatus := reviewTLSStatusIssued
+	tlsIssuedAt := pgtype.Timestamptz{Time: h.now().UTC(), Valid: true}
+	if !check.TLSIssued {
+		status = reviewDomainStatusPending
+		tlsStatus = "pending"
+		tlsIssuedAt = pgtype.Timestamptz{}
+	}
+	updated, err := h.store.UpdateReviewDomainVerification(r.Context(), db.UpdateReviewDomainVerificationParams{
+		ID:            domain.ID,
+		WorkspaceID:   workspaceID,
+		Status:        status,
+		DnsVerifiedAt: pgtype.Timestamptz{Time: h.now().UTC(), Valid: true},
+		TlsStatus:     tlsStatus,
+		TlsIssuedAt:   tlsIssuedAt,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update review domain verification")
+		return
+	}
+	if !check.TLSIssued {
+		writeSuccess(w, reviewDomainFromDB(updated))
+		return
+	}
+	writeSuccess(w, reviewDomainFromDB(updated))
 }
 
 func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
@@ -614,6 +678,25 @@ func marshalReviewJSON(value map[string]any) ([]byte, error) {
 		value = map[string]any{}
 	}
 	return json.Marshal(value)
+}
+
+func defaultReviewDomainChecker(ctx context.Context, domain db.ReviewDomain) reviewDomainCheckResult {
+	resolver := net.DefaultResolver
+	wantCNAME := strings.Trim(strings.ToLower(domain.CnameTarget), ".")
+	gotCNAME, cnameErr := resolver.LookupCNAME(ctx, domain.Domain)
+	if cnameErr != nil || strings.Trim(strings.ToLower(gotCNAME), ".") != wantCNAME {
+		return reviewDomainCheckResult{Message: "CNAME record has not propagated yet. Point " + domain.Domain + " to " + domain.CnameTarget + "."}
+	}
+	txtRecords, txtErr := resolver.LookupTXT(ctx, "_unipost-review."+domain.Domain)
+	if txtErr != nil {
+		return reviewDomainCheckResult{Message: "TXT verification record has not propagated yet."}
+	}
+	for _, record := range txtRecords {
+		if strings.TrimSpace(record) == domain.VerificationToken {
+			return reviewDomainCheckResult{DNSReady: true, TLSIssued: true}
+		}
+	}
+	return reviewDomainCheckResult{Message: "TXT verification record does not match the UniPost token."}
 }
 
 func defaultReviewTokenGenerator(prefix string) (string, string, error) {
