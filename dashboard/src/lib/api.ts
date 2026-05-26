@@ -1639,6 +1639,140 @@ export interface PlatformAnalytics {
   engagement_rate: number;
 }
 
+export interface AnalyticsPostListItem {
+  post_id: string;
+  social_post_result_id: string;
+  social_account_id: string;
+  profile_id: string;
+  platform: string;
+  external_id?: string;
+  external_user_id?: string;
+  result_status: string;
+  post_status: string;
+  caption?: string;
+  url?: string;
+  created_at: string;
+  published_at?: string;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  clicks: number;
+  video_views: number;
+  engagement_rate: number;
+  platform_specific?: Record<string, unknown>;
+  fetched_at?: string;
+  consecutive_failures: number;
+  last_failure_reason?: string;
+}
+
+export interface AnalyticsRollupGroup {
+  platform?: string;
+  social_account_id?: string;
+  external_user_id?: string;
+  status?: string;
+  published_count: number;
+  failed_count: number;
+  partial_count: number;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  clicks: number;
+  video_views: number;
+  engagement_rate: number;
+}
+
+export interface AnalyticsRollup {
+  granularity: "day" | "week" | "month";
+  group_by: string[];
+  series: Array<{
+    bucket: string;
+    groups: AnalyticsRollupGroup[];
+  }>;
+}
+
+export interface AnalyticsPlatformAvailability {
+  platform: string;
+  supported_metrics: string[];
+  refresh_supported: boolean;
+  account_count: number;
+  active_account_count: number;
+  needs_reconnect_count: number;
+  analytics_row_count: number;
+  last_successful_fetch_at?: string;
+  last_failure_reason?: string;
+  health: "not_connected" | "needs_reconnect" | "partial_reconnect_required" | "pending" | "degraded" | "ready" | string;
+  notes?: string[];
+}
+
+export interface AnalyticsPlatformSummary {
+  posts: number;
+  accounts: number;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  clicks: number;
+  video_views: number;
+  engagement_rate: number;
+}
+
+export interface AnalyticsPlatformDetail {
+  platform: string;
+  period: { start: string; end: string };
+  availability: AnalyticsPlatformAvailability;
+  summary: AnalyticsPlatformSummary;
+  trend: Array<{
+    date: string;
+    posts: number;
+    impressions: number;
+    reach: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    saves: number;
+    clicks: number;
+    video_views: number;
+  }>;
+  accounts: Array<{
+    social_account_id: string;
+    profile_id: string;
+    account_name?: string;
+    external_user_id?: string;
+    status: string;
+    post_count: number;
+    last_successful_fetch_at?: string;
+    last_failure_reason?: string;
+  }>;
+  top_posts: AnalyticsPostListItem[];
+}
+
+export interface AnalyticsRefreshRequest {
+  platform?: string;
+  profile_id?: string;
+  account_id?: string;
+  post_id?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export interface AnalyticsRefreshResponse {
+  status: "queued";
+  matched_count: number;
+  requested_count: number;
+  limit: number;
+  processed_by: "analytics_refresh_worker" | string;
+  filters: AnalyticsRefreshRequest;
+}
+
 export interface AnalyticsRangeParams {
   from?: string;       // YYYY-MM-DD
   to?: string;         // YYYY-MM-DD
@@ -1647,6 +1781,23 @@ export interface AnalyticsRangeParams {
   profile_id?: string;
   platform?: string;   // platform key, omit or "all" to disable
   status?: string;     // post status, omit or "all" to disable
+}
+
+export interface AnalyticsPostsParams extends AnalyticsRangeParams {
+  account_id?: string;
+  social_account_id?: string;
+  post_id?: string;
+  limit?: number;
+  cursor?: string;
+  sort?: "published_at" | "published_at_asc" | "created_at" | "created_at_asc" | "impressions" | "reach" | "likes" | "comments" | "shares" | "saves" | "clicks" | "video_views" | "engagement_rate" | `-${string}`;
+}
+
+export interface AnalyticsRollupParams {
+  from: string; // RFC3339
+  to: string;   // RFC3339
+  granularity?: "day" | "week" | "month";
+  group_by?: string | string[];
+  profile_id?: string;
 }
 
 function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string {
@@ -1660,6 +1811,28 @@ function rangeQuery(params?: AnalyticsRangeParams & { metric?: string }): string
   if (params.metric) qs.set("metric", params.metric);
   const s = qs.toString();
   return s ? `?${s}` : "";
+}
+
+function analyticsPostsQuery(params?: AnalyticsPostsParams): string {
+  const qs = new URLSearchParams(rangeQuery(params).replace(/^\?/, ""));
+  if (params?.account_id) qs.set("account_id", params.account_id);
+  if (params?.social_account_id) qs.set("social_account_id", params.social_account_id);
+  if (params?.post_id) qs.set("post_id", params.post_id);
+  if (typeof params?.limit === "number") qs.set("limit", String(params.limit));
+  if (params?.cursor) qs.set("cursor", params.cursor);
+  if (params?.sort) qs.set("sort", params.sort);
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+function analyticsRollupQuery(params: AnalyticsRollupParams): string {
+  const qs = new URLSearchParams();
+  qs.set("from", params.from);
+  qs.set("to", params.to);
+  if (params.granularity) qs.set("granularity", params.granularity);
+  if (params.group_by) qs.set("group_by", Array.isArray(params.group_by) ? params.group_by.join(",") : params.group_by);
+  if (params.profile_id && params.profile_id !== "all") qs.set("profile_id", params.profile_id);
+  return `?${qs.toString()}`;
 }
 
 export async function getAnalyticsSummary(
@@ -1681,6 +1854,62 @@ export async function getAnalyticsByPlatform(
   params?: AnalyticsRangeParams
 ): Promise<ApiResponse<PlatformAnalytics[]>> {
   return request(`/v1/analytics/by-platform${rangeQuery(params)}`, token);
+}
+
+export async function getAnalyticsPosts(
+  token: string,
+  params?: AnalyticsPostsParams
+): Promise<ApiResponse<AnalyticsPostListItem[]>> {
+  return request(`/v1/analytics/posts${analyticsPostsQuery(params)}`, token);
+}
+
+export async function exportAnalyticsPostsCSV(
+  token: string,
+  params?: AnalyticsPostsParams
+): Promise<string> {
+  const res = await fetch(`${API_URL}/v1/analytics/posts/export${analyticsPostsQuery(params)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = body as ApiError;
+    throw new Error(err.error?.message || `Request failed: ${res.status}`);
+  }
+  return res.text();
+}
+
+export async function getAnalyticsRollup(
+  token: string,
+  params: AnalyticsRollupParams
+): Promise<ApiResponse<AnalyticsRollup>> {
+  return request(`/v1/analytics/rollup${analyticsRollupQuery(params)}`, token);
+}
+
+export async function getAnalyticsPlatforms(
+  token: string,
+  params?: AnalyticsRangeParams
+): Promise<ApiResponse<AnalyticsPlatformAvailability[]>> {
+  return request(`/v1/analytics/platforms${rangeQuery(params)}`, token);
+}
+
+export async function getAnalyticsPlatform(
+  token: string,
+  platform: string,
+  params?: AnalyticsRangeParams
+): Promise<ApiResponse<AnalyticsPlatformDetail>> {
+  return request(`/v1/analytics/platforms/${encodeURIComponent(platform)}${rangeQuery(params)}`, token);
+}
+
+export async function requestAnalyticsRefresh(
+  token: string,
+  payload: AnalyticsRefreshRequest
+): Promise<ApiResponse<AnalyticsRefreshResponse>> {
+  return request(`/v1/analytics/refresh`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 // Admin

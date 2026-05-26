@@ -408,6 +408,7 @@ func main() {
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
 	// dynamic GROUP BY clause sqlc can't model.
 	analyticsRollupHandler := handler.NewAnalyticsRollupHandler(pool)
+	analyticsExplorerHandler := handler.NewAnalyticsExplorerHandler(pool)
 	platformHandler := handler.NewPlatformHandler(queries)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
@@ -749,6 +750,11 @@ func main() {
 		// Analytics. Plan-gated (migration 059): Free returns 402.
 		r.Group(func(r chi.Router) {
 			r.Use(handler.RequirePlanAnalytics(quotaChecker))
+			r.Get("/v1/analytics/posts", analyticsExplorerHandler.ListPosts)
+			r.Get("/v1/analytics/posts/export", analyticsExplorerHandler.ExportPostsCSV)
+			r.Get("/v1/analytics/platforms", analyticsExplorerHandler.ListPlatforms)
+			r.Get("/v1/analytics/platforms/{platform}", analyticsExplorerHandler.GetPlatform)
+			r.Post("/v1/analytics/refresh", analyticsExplorerHandler.RequestRefresh)
 			r.Get("/v1/analytics/summary", analyticsHandler.GetSummary)
 			r.Get("/v1/analytics/trend", analyticsHandler.GetTrend)
 			r.Get("/v1/analytics/by-platform", analyticsHandler.GetByPlatform)
