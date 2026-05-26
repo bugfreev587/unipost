@@ -26,6 +26,156 @@ export type BlogPost = {
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "social-media-analytics-api",
+    title: "Social Media Analytics API: Posts Overview and Platform Insights in UniPost",
+    seoTitle: "Social Media Analytics API for TikTok, Instagram, Threads, Pinterest",
+    description:
+      "How UniPost combines cross-platform post analytics with native platform analytics for TikTok, Instagram, Threads, and Pinterest.",
+    excerpt:
+      "UniPost analytics gives developers one place to inspect published post performance and platform-native metrics across TikTok, Instagram, Threads, and Pinterest.",
+    publishedAt: "2026-05-25",
+    updatedAt: "2026-05-25",
+    readingTime: "6 min read",
+    category: "Analytics",
+    author: "UniPost",
+    keywords: [
+      "social media analytics API",
+      "TikTok analytics API",
+      "Instagram analytics API",
+      "Threads analytics API",
+      "Pinterest analytics API",
+      "social media post analytics",
+      "cross-platform analytics API",
+    ],
+    blocks: [
+      {
+        type: "lead",
+        text:
+          "A social media API should not stop at publishing. Once your app sends posts to TikTok, Instagram, Threads, Pinterest, and the rest of your social stack, users immediately ask what happened next. UniPost Analytics gives developers a normalized Posts Overview plus platform-specific drilldowns for the networks that expose deeper native metrics.",
+      },
+      {
+        type: "summary",
+        title: "Key takeaways",
+        items: [
+          "Posts Overview shows cross-platform performance for content published through UniPost, including views, reach, likes, comments, shares, saves, and clicks where each platform supports them.",
+          "Platform Analytics gives native drilldowns for [TikTok](/tools/tiktok-analytics), [Instagram](/tools/instagram-analytics), [Threads](/tools/threads-analytics), and [Pinterest](/tools/pinterest-analytics).",
+          "UniPost normalizes the analytics shape without pretending every platform exposes the same metrics.",
+          "Developers can start with the [Analytics API docs](/docs/api/analytics), post-level analytics in [POST analytics](/docs/api/analytics/posts), and account metrics in [Account Metrics](/docs/api/accounts/metrics).",
+        ],
+      },
+      {
+        type: "paragraph",
+        text:
+          "Most teams begin with a publish button. The second feature request is usually a reporting screen: did the post publish, which platform performed best, and what should the product show when one network exposes reach while another exposes views or outbound clicks?",
+      },
+      {
+        type: "heading",
+        text: "Posts Overview: one place for published content performance",
+      },
+      {
+        type: "paragraph",
+        text:
+          "Posts Overview is the normalized layer. It answers how each piece of content performed after UniPost published it, regardless of whether the destination was a short video, an image post, a Thread, or a Pin. This is the right surface for product dashboards, customer reports, campaign tables, and agent workflows that need a reliable result after publishing.",
+      },
+      {
+        type: "list",
+        items: [
+          "Use [GET /v1/posts/:post_id/analytics](/docs/api/analytics/posts) to inspect one post across the accounts it was published to.",
+          "Use [GET /v1/analytics/summary](/docs/api/analytics/summary) for account-wide performance snapshots.",
+          "Use [GET /v1/analytics/by-platform](/docs/api/analytics) when your UI needs to compare platforms inside the same reporting period.",
+          "Keep unavailable metrics explicit. A platform that does not expose saves should show unavailable data, not a fabricated zero.",
+        ],
+      },
+      {
+        type: "heading",
+        text: "Platform Analytics: native metrics when the platform has more to say",
+      },
+      {
+        type: "paragraph",
+        text:
+          "Platform Analytics is the drilldown layer. It keeps the normalized analytics model, then adds the native fields a specific provider exposes. This is useful when users want to inspect the platform itself: TikTok public videos, Instagram Business media, Threads replies and reposts, or Pinterest board and Pin performance.",
+      },
+      {
+        type: "table",
+        caption: "Current platform analytics surfaces in UniPost",
+        headers: ["Platform", "Native surface", "Useful metrics", "Preview"],
+        rows: [
+          ["TikTok", "Profile, account stats, public videos", "Followers, likes, videos, views, comments, shares", "[TikTok Analytics](/tools/tiktok-analytics)"],
+          ["Instagram", "Business profile and recent media", "Reach, likes, comments, shares, saves, media count", "[Instagram Analytics](/tools/instagram-analytics)"],
+          ["Threads", "Profile and recent posts", "Views, likes, replies, reposts, quotes", "[Threads Analytics](/tools/threads-analytics)"],
+          ["Pinterest", "Boards and published Pins", "Impressions, saves, outbound clicks, comments", "[Pinterest Analytics](/tools/pinterest-analytics)"],
+        ],
+      },
+      {
+        type: "heading",
+        text: "Why platform metrics do not all match",
+      },
+      {
+        type: "paragraph",
+        text:
+          "Social platforms do not expose a universal analytics schema. Instagram Business accounts can expose reach and saves for media. TikTok's approved analytics scopes focus on profile stats and public video metrics. Threads centers conversation metrics like replies, reposts, and quotes. Pinterest cares about impressions, saves, and outbound clicks. UniPost keeps those differences visible so your product can make honest UI decisions.",
+      },
+      {
+        type: "note",
+        title: "A normalized API should not flatten away meaning",
+        text:
+          "The point of a unified analytics API is not to force every platform into the same numbers. It is to give your app one integration pattern while preserving the metrics users expect on each network.",
+      },
+      {
+        type: "heading",
+        text: "How a developer workflow fits together",
+      },
+      {
+        type: "paragraph",
+        text:
+          "A typical UniPost analytics workflow is: connect social accounts, publish posts, read delivery status, then fetch analytics for the published content. The same connected account IDs used for publishing are used when the dashboard drills into platform analytics.",
+      },
+      {
+        type: "code",
+        language: "bash",
+        code: `curl "https://api.unipost.dev/v1/posts/post_abc123/analytics?refresh=true" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"
+
+curl "https://api.unipost.dev/v1/analytics/by-platform?range=30d" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+      },
+      {
+        type: "paragraph",
+        text:
+          "For account-level metrics, use [Account Metrics](/docs/api/accounts/metrics). For post-level results, start with [Post Analytics](/docs/api/analytics/posts). If you want to see the productized platform surfaces first, compare the public previews for [TikTok](/tools/tiktok-analytics), [Instagram](/tools/instagram-analytics), [Threads](/tools/threads-analytics), and [Pinterest](/tools/pinterest-analytics).",
+      },
+      {
+        type: "heading",
+        text: "FAQ",
+      },
+      {
+        type: "faq",
+        items: [
+          {
+            question: "Is UniPost Analytics only for posts published through UniPost?",
+            answer:
+              "The normalized Posts Overview is centered on content published through UniPost because UniPost can reliably map each post to the connected account and platform result. Some platform drilldowns can also show native account or content inventory when the platform exposes it through approved scopes.",
+          },
+          {
+            question: "Why do some platforms show reach while others show views or impressions?",
+            answer:
+              "Each social network exposes different analytics fields. UniPost normalizes the API pattern and keeps platform-specific metric names visible so your UI can avoid misleading comparisons.",
+          },
+          {
+            question: "Which platform analytics pages are available now?",
+            answer:
+              "The first public analytics previews cover TikTok, Instagram, Threads, and Pinterest. They mirror the platform analytics surfaces available in the UniPost dashboard.",
+          },
+          {
+            question: "Do I need separate integrations for publishing and analytics?",
+            answer:
+              "No. UniPost uses the same account connection and post model for publishing, delivery status, and analytics. Your app calls one API surface instead of maintaining a separate provider integration for each network.",
+          },
+        ],
+      },
+    ],
+  },
+  {
     slug: "social-media-publishing-api",
     title: "How to Add Social Media Publishing to Your App Without Building 9 Integrations",
     seoTitle: "Social Media Publishing API: Post to X, LinkedIn, Instagram + 6 More",

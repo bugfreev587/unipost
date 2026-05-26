@@ -33,6 +33,21 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.8,
   }));
 
+  const toolPages: MetadataRoute.Sitemap = [
+    "/tools",
+    "/tools/agentpost",
+    "/tools/character-counter",
+    "/tools/tiktok-analytics",
+    "/tools/instagram-analytics",
+    "/tools/threads-analytics",
+    "/tools/pinterest-analytics",
+  ].map((path) => ({
+    url: `${BASE}${path}`,
+    lastModified: now,
+    changeFrequency: "weekly" as const,
+    priority: path === "/tools" ? 0.7 : 0.6,
+  }));
+
   const blogPages: MetadataRoute.Sitemap = blogPosts.map((post) => ({
     url: `${BASE}/blog/${post.slug}`,
     lastModified: new Date(post.updatedAt),
@@ -40,5 +55,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.6,
   }));
 
-  return [...staticPages, ...platformPages, ...blogPages];
+  return [...staticPages, ...platformPages, ...toolPages, ...blogPages];
 }

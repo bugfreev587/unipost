@@ -7,7 +7,11 @@ const configuredProfileId = process.env.DASHBOARD_TEST_PROFILE_ID;
 const publicRoutes = [
   { path: "/docs", marker: /UniPost|Dashboard|API/i },
   { path: "/pricing", marker: /Free|Basic|Growth|Team/i },
+  { path: "/tools", marker: /TikTok Analytics|Instagram Analytics|Threads Analytics|Pinterest Analytics/i },
   { path: "/tools/tiktok-analytics", marker: /TikTok Analytics/i },
+  { path: "/tools/instagram-analytics", marker: /Instagram Analytics/i },
+  { path: "/tools/threads-analytics", marker: /Threads Analytics/i },
+  { path: "/tools/pinterest-analytics", marker: /Pinterest Analytics/i },
 ];
 
 test.describe("public dashboard surfaces", () => {
@@ -25,6 +29,16 @@ test.describe("public dashboard surfaces", () => {
       expect(serverErrors).toEqual([]);
     });
   }
+
+  test("/tools only shows live tools", async ({ page }) => {
+    await page.goto("/tools", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("link", { name: /TikTok Analytics/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Instagram Analytics/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Threads Analytics/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Pinterest Analytics/i })).toBeVisible();
+    await expect(page.getByText(/Coming Soon/i)).toHaveCount(0);
+    await expect(page.getByText(/Thread Splitter|Caption Generator/i)).toHaveCount(0);
+  });
 });
 
 test.describe("authenticated dashboard smoke", () => {

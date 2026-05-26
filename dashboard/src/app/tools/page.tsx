@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 
 const TOOLS: ToolCardData[] = [
   {
-    icon: "\u{1F916}",
+    icon: "agentpost",
     name: "AgentPost",
     description: "AI-powered multi-platform social posting",
     href: "/tools/agentpost",
@@ -23,7 +23,7 @@ const TOOLS: ToolCardData[] = [
     badge: "New",
   },
   {
-    icon: "\u{1F4CF}",
+    icon: "character-counter",
     name: "Character Counter",
     description: "Check post length for every platform",
     href: "/tools/character-counter",
@@ -31,18 +31,32 @@ const TOOLS: ToolCardData[] = [
     badge: "New",
   },
   {
-    icon: "\u{1F9F5}",
-    name: "Thread Splitter",
-    description: "Split long text into Twitter threads",
-    href: "/tools/thread-splitter",
-    status: "coming_soon",
+    icon: "tiktok",
+    name: "TikTok Analytics",
+    description: "Preview TikTok profile, video, and post analytics",
+    href: "/tools/tiktok-analytics",
+    status: "live",
   },
   {
-    icon: "\u270D\uFE0F",
-    name: "Caption Generator",
-    description: "AI-written captions for every platform",
-    href: "/tools/caption-generator",
-    status: "coming_soon",
+    icon: "instagram",
+    name: "Instagram Analytics",
+    description: "Preview Instagram Business media and post insights",
+    href: "/tools/instagram-analytics",
+    status: "live",
+  },
+  {
+    icon: "threads",
+    name: "Threads Analytics",
+    description: "Preview Threads profile and post performance",
+    href: "/tools/threads-analytics",
+    status: "live",
+  },
+  {
+    icon: "pinterest",
+    name: "Pinterest Analytics",
+    description: "Preview Pin, board, save, and click analytics",
+    href: "/tools/pinterest-analytics",
+    status: "live",
   },
 ];
 

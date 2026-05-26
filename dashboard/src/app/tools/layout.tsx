@@ -34,16 +34,15 @@ body{background:var(--tl-bg);color:var(--tl-text);font-family:var(--tl-ui);font-
 .tl-hero-sub{font-size:17px;color:var(--tl-muted);line-height:1.7;max-width:680px}
 
 /* Tool card grid */
-.tl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:0 0 var(--tl-section-py)}
+.tl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:20px;padding:0 0 var(--tl-section-py)}
 .tl-card{background:var(--tl-s1);border:1px solid var(--tl-b2);border-radius:14px;padding:28px 26px;display:flex;flex-direction:column;gap:12px;transition:all .2s;text-decoration:none;color:inherit;min-height:220px;box-shadow:var(--tl-card-shadow)}
 .tl-card:hover{border-color:var(--tl-accent);background:var(--tl-s3);transform:translateY(-2px)}
-.tl-card-icon{font-size:32px;line-height:1}
+.tl-card-icon{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;color:var(--tl-text)}
+.tl-card-icon svg{width:28px;height:28px}
 .tl-card-name{font-size:18px;font-weight:700;letter-spacing:-.3px;color:var(--tl-text)}
 .tl-card-badge{display:inline-flex;padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;font-family:var(--tl-mono);background:var(--success-soft);color:var(--tl-accent);border:1px solid color-mix(in srgb,var(--tl-accent) 20%,transparent)}
-.tl-card-badge-muted{background:var(--tl-s2);color:var(--tl-muted2);border:1px solid var(--tl-b2)}
 .tl-card-desc{font-size:13.5px;color:var(--tl-muted);line-height:1.6;flex:1}
 .tl-card-cta{font-size:13px;font-weight:600;color:var(--tl-blue);margin-top:auto}
-.tl-card-soon{font-size:11px;font-weight:600;color:var(--tl-muted2);text-transform:uppercase;letter-spacing:.08em;font-family:var(--tl-mono);margin-top:auto}
 
 /* CTA section */
 .tl-cta{padding:0 0 var(--tl-section-py)}
