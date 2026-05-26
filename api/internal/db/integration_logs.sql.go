@@ -67,7 +67,7 @@ func (q *Queries) GetIntegrationLog(ctx context.Context, arg GetIntegrationLogPa
 		&i.Platform,
 		&i.Endpoint,
 		&i.Method,
-		&i.HttpStatusCode,
+		&i.HTTPStatusCode,
 		&i.RemoteStatusCode,
 		&i.DurationMs,
 		&i.ErrorCode,
@@ -122,7 +122,7 @@ type InsertIntegrationLogParams struct {
 	Platform         pgtype.Text        `json:"platform"`
 	Endpoint         pgtype.Text        `json:"endpoint"`
 	Method           pgtype.Text        `json:"method"`
-	HttpStatusCode   pgtype.Int4        `json:"http_status_code"`
+	HTTPStatusCode   pgtype.Int4        `json:"http_status_code"`
 	RemoteStatusCode pgtype.Int4        `json:"remote_status_code"`
 	DurationMs       pgtype.Int4        `json:"duration_ms"`
 	ErrorCode        pgtype.Text        `json:"error_code"`
@@ -152,7 +152,7 @@ func (q *Queries) InsertIntegrationLog(ctx context.Context, arg InsertIntegratio
 		arg.Platform,
 		arg.Endpoint,
 		arg.Method,
-		arg.HttpStatusCode,
+		arg.HTTPStatusCode,
 		arg.RemoteStatusCode,
 		arg.DurationMs,
 		arg.ErrorCode,
@@ -182,7 +182,7 @@ func (q *Queries) InsertIntegrationLog(ctx context.Context, arg InsertIntegratio
 		&i.Platform,
 		&i.Endpoint,
 		&i.Method,
-		&i.HttpStatusCode,
+		&i.HTTPStatusCode,
 		&i.RemoteStatusCode,
 		&i.DurationMs,
 		&i.ErrorCode,
@@ -202,7 +202,7 @@ SELECT id, workspace_id, ts, level, status, category, action, source, message,
        endpoint, method, http_status_code, remote_status_code, duration_ms,
        error_code, metadata, request_payload, response_payload, created_at
 FROM integration_logs
-WHERE workspace_id = $1
+WHERE workspace_id = $1::text
   AND ($2::TEXT = '' OR category = $2)
   AND ($3::TEXT = '' OR action = $3)
   AND ($4::TEXT = '' OR source = $4)
@@ -222,48 +222,48 @@ WHERE workspace_id = $1
     OR post_id ILIKE '%' || $13 || '%'
     OR error_code ILIKE '%' || $13 || '%'
   )
-  AND ts >= $14
-  AND ts <= $15
+  AND ts >= $14::timestamptz
+  AND ts <= $15::timestamptz
 ORDER BY ts DESC, id DESC
-LIMIT $16
+LIMIT $16::int
 `
 
 type ListIntegrationLogsParams struct {
-	WorkspaceID string             `json:"workspace_id"`
-	Column2     string             `json:"column_2"`
-	Column3     string             `json:"column_3"`
-	Column4     string             `json:"column_4"`
-	Column5     string             `json:"column_5"`
-	Column6     string             `json:"column_6"`
-	Column7     string             `json:"column_7"`
-	Column8     string             `json:"column_8"`
-	Column9     string             `json:"column_9"`
-	Column10    string             `json:"column_10"`
-	Column11    string             `json:"column_11"`
-	Column12    string             `json:"column_12"`
-	Column13    string             `json:"column_13"`
-	Ts          pgtype.Timestamptz `json:"ts"`
-	Ts_2        pgtype.Timestamptz `json:"ts_2"`
-	Limit       int32              `json:"limit"`
+	WorkspaceID     string             `json:"workspace_id"`
+	Category        string             `json:"category"`
+	Action          string             `json:"action"`
+	Source          string             `json:"source"`
+	Level           string             `json:"level"`
+	Status          string             `json:"status"`
+	Platform        string             `json:"platform"`
+	ProfileID       string             `json:"profile_id"`
+	SocialAccountID string             `json:"social_account_id"`
+	PostID          string             `json:"post_id"`
+	RequestID       string             `json:"request_id"`
+	ErrorCode       string             `json:"error_code"`
+	Query           string             `json:"query"`
+	FromTs          pgtype.Timestamptz `json:"from_ts"`
+	ToTs            pgtype.Timestamptz `json:"to_ts"`
+	Limit           int32              `json:"limit"`
 }
 
 func (q *Queries) ListIntegrationLogs(ctx context.Context, arg ListIntegrationLogsParams) ([]IntegrationLog, error) {
 	rows, err := q.db.Query(ctx, listIntegrationLogs,
 		arg.WorkspaceID,
-		arg.Column2,
-		arg.Column3,
-		arg.Column4,
-		arg.Column5,
-		arg.Column6,
-		arg.Column7,
-		arg.Column8,
-		arg.Column9,
-		arg.Column10,
-		arg.Column11,
-		arg.Column12,
-		arg.Column13,
-		arg.Ts,
-		arg.Ts_2,
+		arg.Category,
+		arg.Action,
+		arg.Source,
+		arg.Level,
+		arg.Status,
+		arg.Platform,
+		arg.ProfileID,
+		arg.SocialAccountID,
+		arg.PostID,
+		arg.RequestID,
+		arg.ErrorCode,
+		arg.Query,
+		arg.FromTs,
+		arg.ToTs,
 		arg.Limit,
 	)
 	if err != nil {
@@ -294,7 +294,7 @@ func (q *Queries) ListIntegrationLogs(ctx context.Context, arg ListIntegrationLo
 			&i.Platform,
 			&i.Endpoint,
 			&i.Method,
-			&i.HttpStatusCode,
+			&i.HTTPStatusCode,
 			&i.RemoteStatusCode,
 			&i.DurationMs,
 			&i.ErrorCode,

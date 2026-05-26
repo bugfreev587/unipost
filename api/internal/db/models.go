@@ -120,7 +120,7 @@ type IntegrationLog struct {
 	Platform         pgtype.Text        `json:"platform"`
 	Endpoint         pgtype.Text        `json:"endpoint"`
 	Method           pgtype.Text        `json:"method"`
-	HttpStatusCode   pgtype.Int4        `json:"http_status_code"`
+	HTTPStatusCode   pgtype.Int4        `json:"http_status_code"`
 	RemoteStatusCode pgtype.Int4        `json:"remote_status_code"`
 	DurationMs       pgtype.Int4        `json:"duration_ms"`
 	ErrorCode        pgtype.Text        `json:"error_code"`

@@ -999,56 +999,56 @@ func (q *Queries) ReactivateSocialAccount(ctx context.Context, arg ReactivateSoc
 
 const refreshConnectedSocialAccount = `-- name: RefreshConnectedSocialAccount :one
 UPDATE social_accounts
-SET access_token        = $2,
-    refresh_token       = $3,
-    token_expires_at    = $4,
-    external_account_id = $5,
-    account_name        = $6,
-    account_avatar_url  = $7,
-    metadata            = COALESCE($8, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
-    scope               = $9,
-    connection_type     = $10,
-    connect_session_id  = $11,
-    external_user_id    = $12,
-    external_user_email = $13,
+SET access_token        = $1,
+    refresh_token       = $2,
+    token_expires_at    = $3,
+    external_account_id = $4,
+    account_name        = $5,
+    account_avatar_url  = $6,
+    metadata            = COALESCE($7::jsonb, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    scope               = $8,
+    connection_type     = $9,
+    connect_session_id  = $10,
+    external_user_id    = $11,
+    external_user_email = $12,
     status              = 'active',
     disconnected_at     = NULL,
     last_refreshed_at   = NOW()
-WHERE id = $1
+WHERE id = $13
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `
 
 type RefreshConnectedSocialAccountParams struct {
-	ID                string             `json:"id"`
 	AccessToken       string             `json:"access_token"`
 	RefreshToken      pgtype.Text        `json:"refresh_token"`
 	TokenExpiresAt    pgtype.Timestamptz `json:"token_expires_at"`
 	ExternalAccountID string             `json:"external_account_id"`
 	AccountName       pgtype.Text        `json:"account_name"`
 	AccountAvatarUrl  pgtype.Text        `json:"account_avatar_url"`
-	Column8           interface{}        `json:"column_8"`
+	Metadata          []byte             `json:"metadata"`
 	Scope             []string           `json:"scope"`
 	ConnectionType    string             `json:"connection_type"`
 	ConnectSessionID  pgtype.Text        `json:"connect_session_id"`
 	ExternalUserID    pgtype.Text        `json:"external_user_id"`
 	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
+	ID                string             `json:"id"`
 }
 
 func (q *Queries) RefreshConnectedSocialAccount(ctx context.Context, arg RefreshConnectedSocialAccountParams) (SocialAccount, error) {
 	row := q.db.QueryRow(ctx, refreshConnectedSocialAccount,
-		arg.ID,
 		arg.AccessToken,
 		arg.RefreshToken,
 		arg.TokenExpiresAt,
 		arg.ExternalAccountID,
 		arg.AccountName,
 		arg.AccountAvatarUrl,
-		arg.Column8,
+		arg.Metadata,
 		arg.Scope,
 		arg.ConnectionType,
 		arg.ConnectSessionID,
 		arg.ExternalUserID,
 		arg.ExternalUserEmail,
+		arg.ID,
 	)
 	var i SocialAccount
 	err := row.Scan(
