@@ -264,6 +264,11 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeMediaSizeBytesRequiredError(w http.ResponseWriter, actual int64) {
+	// Keep this envelope local instead of using ErrorResponse/ErrorBody:
+	// ErrorBody.Issues is []platform.Issue, whose platform_post_index field
+	// is intentionally always serialized for post validation. This media
+	// endpoint error is not tied to a platform_posts[] item, so emitting
+	// platform_post_index: 0 would be misleading for clients.
 	type fieldValidationIssue struct {
 		Field    string `json:"field"`
 		Code     string `json:"code"`
