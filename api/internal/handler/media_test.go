@@ -1,6 +1,16 @@
 package handler
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
+)
 
 // TestPickExt covers the filename → extension fallback the media
 // handler uses to give R2 a recognizable storage_key.
@@ -50,5 +60,43 @@ func TestAllowedMimeTypes(t *testing.T) {
 		if !allowedMimeTypes[m] {
 			t.Errorf("required mime %q not in allowlist", m)
 		}
+	}
+}
+
+func TestCreateRejectsMissingSizeWithActionableIssue(t *testing.T) {
+	h := NewMediaHandler(nil, &storage.Client{})
+	body := strings.NewReader(`{"filename":"photo.jpg","content_type":"image/jpeg","size_bytes":0}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/media", body)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_test"))
+	rr := httptest.NewRecorder()
+
+	h.Create(rr, req)
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rr.Code)
+	}
+
+	var got ErrorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Error.Code != "VALIDATION_ERROR" || got.Error.NormalizedCode != "validation_error" {
+		t.Fatalf("error identifiers = %#v, want validation error", got.Error)
+	}
+	if !strings.Contains(got.Error.Message, "public URL") {
+		t.Fatalf("message = %q, want public URL guidance", got.Error.Message)
+	}
+	if len(got.Error.Issues) != 1 {
+		t.Fatalf("issues = %#v, want one structured issue", got.Error.Issues)
+	}
+	issue := got.Error.Issues[0]
+	if issue.Field != "size_bytes" || issue.Code != platform.CodeMissingRequired {
+		t.Fatalf("issue = %#v, want missing_required size_bytes issue", issue)
+	}
+	if issue.Actual != float64(0) || issue.Limit != float64(1) {
+		t.Fatalf("issue actual/limit = %#v/%#v, want 0/1", issue.Actual, issue.Limit)
+	}
+	if !strings.Contains(issue.Message, "platform_posts[].media_urls") {
+		t.Fatalf("issue message = %q, want create-post media_urls guidance", issue.Message)
 	}
 }

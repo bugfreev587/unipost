@@ -9,7 +9,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "filename", type: "string", description: "Original file name for the asset." },
   { name: "content_type", type: "string", description: "MIME type such as image/jpeg or video/mp4." },
-  { name: "size_bytes", type: "number", description: "Expected upload size in bytes." },
+  { name: "size_bytes", type: "number", description: <>Required upload size in bytes. Must be greater than <code>0</code>; use the raw file byte length before calling this endpoint. If the asset already has a public URL, skip <ApiInlineLink endpoint="POST /v1/media" /> and send that URL in <code>platform_posts[].media_urls</code> on <ApiInlineLink endpoint="POST /v1/posts" />.</> },
 ];
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "media_id", type: "string", description: "Media library ID to use in later publish calls." },
@@ -180,6 +180,28 @@ const RESPONSE_SNIPPETS = [
   "request_id": "req_123"
 }`,
   },
+  {
+    lang: "json",
+    label: "422",
+    code: `{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "normalized_code": "validation_error",
+    "message": "size_bytes must be greater than 0 when reserving an upload with POST /v1/media. Use POST /v1/media only for raw file bytes; if your media already has a public URL, skip this endpoint and send the URL in platform_posts[].media_urls on POST /v1/posts.",
+    "issues": [
+      {
+        "field": "size_bytes",
+        "code": "missing_required",
+        "message": "size_bytes must be greater than 0 when reserving an upload with POST /v1/media. Use POST /v1/media only for raw file bytes; if your media already has a public URL, skip this endpoint and send the URL in platform_posts[].media_urls on POST /v1/posts.",
+        "actual": 0,
+        "limit": 1,
+        "severity": "error"
+      }
+    ]
+  },
+  "request_id": "req_123"
+}`,
+  },
 ];
 
 export default function ReserveMediaPage() {
@@ -187,7 +209,7 @@ export default function ReserveMediaPage() {
     <SingleEndpointReferencePage
       section="publishing"
       title="Reserve media upload"
-      description={<>Creates a media library row and returns a presigned upload URL. After the PUT succeeds, poll <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until status is uploaded before using the media ID in <ApiInlineLink endpoint="POST /v1/posts" />.</>}
+      description={<>Creates a media library row and returns a presigned upload URL for local files or raw bytes. Hosted public URLs do not need this step; send them directly in <code>platform_posts[].media_urls</code> on <ApiInlineLink endpoint="POST /v1/posts" />. After the PUT succeeds, poll <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until status is uploaded before using the media ID in <ApiInlineLink endpoint="POST /v1/posts" />.</>}
       method="POST"
       path="/v1/media"
       requestSections={[

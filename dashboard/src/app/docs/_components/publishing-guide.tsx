@@ -467,7 +467,8 @@ export function PublishingInputModeCards() {
         </div>
         <p>
           Use this when your image or video already has a public URL. Pass hosted
-          assets in <code>platform_posts[].media_urls</code>.
+          assets in <code>platform_posts[].media_urls</code>; do not call
+          <code> POST /v1/media</code> for this path.
         </p>
       </article>
       <article className="docs-decision-card">
@@ -480,6 +481,7 @@ export function PublishingInputModeCards() {
         <p>
           Use this when your app has raw file bytes. Reserve media, PUT the bytes,
           poll until uploaded, then publish with <code>platform_posts[].media_ids</code>.
+          The reservation requires <code>size_bytes</code> greater than <code>0</code>.
         </p>
         <a className="docs-decision-link" href="#local-file-flow">
           See the 7-step flow
