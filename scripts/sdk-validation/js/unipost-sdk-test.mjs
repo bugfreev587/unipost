@@ -738,6 +738,38 @@ async function main() {
     assert(Array.isArray(res.series), 'Expected rollup series');
   });
 
+  await test('analytics.posts()', async () => {
+    const res = await client.analytics.posts({ from, to, limit: 5 });
+    assert(Array.isArray(res?.data), 'Expected analytics posts page');
+  });
+
+  await test('analytics.exportPostsCsv()', async () => {
+    const csv = await client.analytics.exportPostsCsv({ from, to, limit: 5 });
+    assert(typeof csv === 'string' && csv.includes('post_id'), 'Expected analytics CSV text');
+  });
+
+  await test('analytics.platforms()', async () => {
+    const res = await client.analytics.platforms({ from, to });
+    assert(Array.isArray(res), 'Expected analytics platforms array');
+  });
+
+  await test('analytics.platform()', async () => {
+    const res = await client.analytics.platform('tiktok', { from, to });
+    assert(res && res.platform === 'tiktok', 'Expected TikTok analytics platform detail');
+  });
+
+  await test('analytics.refresh() validation path', async () => {
+    try {
+      await client.analytics.refresh({ platform: 'mastodon', limit: 1 });
+    } catch (error) {
+      if (error instanceof UniPostError && error.code === 'validation_error') {
+        return;
+      }
+      throw error;
+    }
+    throw new Error('Expected validation_error for unsupported analytics platform');
+  });
+
   await test('usage.get()', async () => {
     const res = await client.usage.get();
     assert(typeof res.post_count === 'number', 'Expected usage payload');
