@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startNativeBrowserCapture } from "./native-capture.js";
 import { validateScript } from "./script-contract.js";
@@ -58,6 +58,8 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     contextClosed = true;
     const artifacts = await buildCompletionArtifacts({ markers, video, nativeVideo });
     const videoFileID = await uploadVideoArtifact(reporter, artifacts.video, out);
+    const evidenceFileID = await uploadExecutionEvidenceArtifact(reporter, valid.job_id, artifacts, out);
+    if (evidenceFileID) artifacts.execution_evidence = { file_id: evidenceFileID };
     await reportComplete(reporter, artifacts, out, videoFileID);
     return { status: "completed", jobId: valid.job_id };
   } catch (err) {
@@ -224,6 +226,37 @@ async function stopNativeCapture(nativeCapture, out) {
     capture_mode: nativeCapture.mode,
     includes_address_bar: Boolean(nativeCapture.includesAddressBar),
     bounds: nativeCapture.bounds,
+  };
+}
+
+async function uploadExecutionEvidenceArtifact(reporter, jobId, artifacts, out) {
+  if (!reporter?.uploadArtifact) return "";
+  const evidenceDir = defaultVideoDir();
+  await mkdir(evidenceDir, { recursive: true });
+  const evidencePath = path.join(evidenceDir, `${jobId}-execution-evidence.json`);
+  const evidence = buildExecutionEvidence({ jobId, artifacts });
+  await writeFile(evidencePath, JSON.stringify(evidence, null, 2), "utf8");
+  const fileID = await reporter.uploadArtifact({
+    artifactType: "execution_evidence",
+    contentType: "application/json",
+    path: evidencePath,
+  });
+  out.write("[artifact] uploaded execution evidence: " + fileID + "\n");
+  return fileID;
+}
+
+export function buildExecutionEvidence({ jobId, artifacts = {} } = {}) {
+  return {
+    job_id: jobId || "",
+    generated_at: new Date().toISOString(),
+    markers: artifacts.markers || [],
+    video: artifacts.video ? {
+      format: artifacts.video.format,
+      capture_mode: artifacts.video.capture_mode,
+      includes_address_bar: Boolean(artifacts.video.includes_address_bar),
+      file_id: artifacts.video.file_id || "",
+      note: artifacts.video.note || "",
+    } : null,
   };
 }
 

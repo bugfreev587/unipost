@@ -1412,10 +1412,31 @@ func defaultReviewDomainChecker(ctx context.Context, domain db.ReviewDomain) rev
 	}
 	for _, record := range txtRecords {
 		if strings.TrimSpace(record) == domain.VerificationToken {
+			if message := checkReviewDomainHTTPS(ctx, domain.Domain); message != "" {
+				return reviewDomainCheckResult{DNSReady: true, TLSIssued: false, Message: message}
+			}
 			return reviewDomainCheckResult{DNSReady: true, TLSIssued: true}
 		}
 	}
 	return reviewDomainCheckResult{Message: "TXT verification record does not match the UniPost token."}
+}
+
+func checkReviewDomainHTTPS(ctx context.Context, host string) string {
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, "https://"+host+"/tiktok/posting", nil)
+	if err != nil {
+		return "Review app URL could not be prepared for HTTPS verification."
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return "DNS is verified, but HTTPS is not ready yet. Wait for certificate issuance and review app routing, then try again."
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return "DNS and TLS responded, but the review app is not reachable yet. Try again after deployment finishes."
+	}
+	return ""
 }
 
 func defaultReviewTokenGenerator(prefix string) (string, string, error) {

@@ -85,9 +85,9 @@ test("runScript uses the recording context and reports the finalized video artif
 });
 
 
-test("runScript uploads the finalized video before completing the job", async () => {
+test("runScript uploads the finalized video and execution evidence before completing the job", async () => {
   let completedVideoFileID = "";
-  let uploadedPath = "";
+  const uploaded = [];
   const script = {
     job_id: "rvjob_upload_video",
     platform: "tiktok",
@@ -101,16 +101,23 @@ test("runScript uploads the finalized video before completing the job", async ()
   const reporter = {
     event: async () => {},
     uploadArtifact: async (artifact) => {
-      uploadedPath = artifact.path;
+      uploaded.push(artifact);
+      if (artifact.artifactType === "execution_evidence") return "review-artifacts/ws_1/rvjob_upload_video/execution-evidence.json";
       return "review-artifacts/ws_1/rvjob_upload_video/demo-video.webm";
     },
-    complete: async (_artifacts, videoFileID) => { completedVideoFileID = videoFileID; },
+    complete: async (artifacts, videoFileID) => {
+      completedVideoFileID = videoFileID;
+      assert.equal(artifacts.execution_evidence.file_id, "review-artifacts/ws_1/rvjob_upload_video/execution-evidence.json");
+    },
     fail: async () => assert.fail("runScript should complete"),
   };
 
   await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, out: { write() {} } });
 
-  assert.equal(uploadedPath, "/tmp/unipost-review-videos/run-video.webm");
+  assert.equal(uploaded[0].artifactType, "demo_video");
+  assert.equal(uploaded[0].path, "/tmp/unipost-review-videos/run-video.webm");
+  assert.equal(uploaded[1].artifactType, "execution_evidence");
+  assert.equal(uploaded[1].contentType, "application/json");
   assert.equal(completedVideoFileID, "review-artifacts/ws_1/rvjob_upload_video/demo-video.webm");
 });
 
@@ -132,8 +139,11 @@ test("runScript prefers native browser-window capture when address-bar evidence 
   const reporter = {
     event: async () => {},
     uploadArtifact: async (artifact) => {
-      uploadedContentType = artifact.contentType;
-      return "review-artifacts/ws_1/rvjob_native_video/demo-video.mov";
+      if (artifact.artifactType === "demo_video") {
+        uploadedContentType = artifact.contentType;
+        return "review-artifacts/ws_1/rvjob_native_video/demo-video.mov";
+      }
+      return "review-artifacts/ws_1/rvjob_native_video/execution-evidence.json";
     },
     complete: async (artifacts) => { completionArtifacts = artifacts; },
     fail: async () => assert.fail("runScript should complete"),
