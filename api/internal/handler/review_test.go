@@ -14,7 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
 func TestReviewCreateDomainReturnsDNSRecords(t *testing.T) {
@@ -253,6 +255,116 @@ func TestReviewAgentScriptRejectsMissingBearerToken(t *testing.T) {
 	}
 }
 
+func TestReviewPublicSessionReturnsConnectedAccountAndCreatorInfo(t *testing.T) {
+	encryptor := testReviewEncryptor(t)
+	accessToken, err := encryptor.Encrypt("access_live")
+	if err != nil {
+		t.Fatalf("encrypt access: %v", err)
+	}
+	store := &reviewStoreFake{
+		reviewSessionByHash: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", ReviewKitID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", TokenHash: hashReviewToken("revsess_live"), ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
+		kit:                 db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1", BrandSnapshot: []byte(`{"profile_id":"prof_1"}`)},
+		domain:              db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready", TlsStatus: "issued"},
+		profile:             db.Profile{ID: "prof_1", WorkspaceID: "ws_1", Name: "Acme"},
+		socialAccounts: []db.SocialAccount{{
+			ID:                "sa_review_1",
+			ProfileID:         "prof_1",
+			Platform:          "tiktok",
+			AccessToken:       accessToken,
+			ExternalAccountID: "open_123",
+			ExternalUserID:    pgtype.Text{String: "app-review:rvjob_1", Valid: true},
+			AccountName:       pgtype.Text{String: "Review Creator", Valid: true},
+			Scope:             []string{"user.info.basic", "video.publish", "video.upload"},
+		}},
+	}
+	adapter := &reviewTikTokAdapterFake{creatorInfo: &platform.TikTokCreatorInfo{CreatorNickname: "Review Creator", CreatorUsername: "reviewer", PrivacyLevelOptions: []string{"SELF_ONLY"}, MaxVideoPostDurationSec: 600}}
+	h := NewReviewHandler(store).WithEncryptor(encryptor).WithTikTokAdapter(adapter)
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/session", nil)
+	req.AddCookie(&http.Cookie{Name: reviewSessionCookieName, Value: "revsess_live"})
+	rec := httptest.NewRecorder()
+
+	h.GetPublicReviewSession(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewPublicSessionResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !env.Data.Connected || env.Data.ConnectAuthorizeURL != "" {
+		t.Fatalf("expected connected session without authorize url: %+v", env.Data)
+	}
+	if env.Data.Account == nil || env.Data.Account.ID != "sa_review_1" {
+		t.Fatalf("missing review account: %+v", env.Data.Account)
+	}
+	if env.Data.CreatorInfo == nil || env.Data.CreatorInfo.CreatorNickname != "Review Creator" {
+		t.Fatalf("missing creator_info: %+v", env.Data.CreatorInfo)
+	}
+	if adapter.creatorAccessToken != "access_live" {
+		t.Fatalf("creator_info used access token %q", adapter.creatorAccessToken)
+	}
+	if store.createdConnectSession.ProfileID != "" {
+		t.Fatalf("connected session should not create a new connect session: %+v", store.createdConnectSession)
+	}
+}
+
+func TestReviewPublishTikTokPostUsesAdapterAndRecordsEvent(t *testing.T) {
+	encryptor := testReviewEncryptor(t)
+	accessToken, err := encryptor.Encrypt("access_live")
+	if err != nil {
+		t.Fatalf("encrypt access: %v", err)
+	}
+	store := &reviewStoreFake{
+		reviewSessionByHash: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", ReviewKitID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", TokenHash: hashReviewToken("revsess_live"), ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
+		kit:                 db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1", BrandSnapshot: []byte(`{"profile_id":"prof_1"}`)},
+		profile:             db.Profile{ID: "prof_1", WorkspaceID: "ws_1", Name: "Acme"},
+		socialAccounts: []db.SocialAccount{{
+			ID:                "sa_review_1",
+			ProfileID:         "prof_1",
+			Platform:          "tiktok",
+			AccessToken:       accessToken,
+			ExternalAccountID: "open_123",
+			ExternalUserID:    pgtype.Text{String: "app-review:rvjob_1", Valid: true},
+			AccountName:       pgtype.Text{String: "Review Creator", Valid: true},
+		}},
+	}
+	adapter := &reviewTikTokAdapterFake{postResult: &platform.PostResult{ExternalID: "publish_123", Status: "processing"}}
+	h := NewReviewHandler(store).WithEncryptor(encryptor).WithTikTokAdapter(adapter).WithTikTokTestVideoURL("https://review.example.com/test-video.mp4")
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/session/tiktok/publish", strings.NewReader(`{"privacy_level":"SELF_ONLY"}`))
+	req.AddCookie(&http.Cookie{Name: reviewSessionCookieName, Value: "revsess_live"})
+	rec := httptest.NewRecorder()
+
+	h.PublishReviewTikTokPost(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if adapter.postAccessToken != "access_live" || adapter.postText != reviewDefaultCaption {
+		t.Fatalf("unexpected adapter call token=%q text=%q", adapter.postAccessToken, adapter.postText)
+	}
+	if len(adapter.postMedia) != 1 || adapter.postMedia[0].URL != "https://review.example.com/test-video.mp4" || adapter.postMedia[0].Kind != platform.MediaKindVideo {
+		t.Fatalf("unexpected media: %+v", adapter.postMedia)
+	}
+	if adapter.postOpts["privacy_level"] != "SELF_ONLY" || adapter.postOpts["disable_comment"] != true {
+		t.Fatalf("unexpected opts: %+v", adapter.postOpts)
+	}
+	if store.createdEvent.EventType != "review_publish_completed" || !strings.Contains(string(store.createdEvent.Metadata), "publish_123") {
+		t.Fatalf("publish event not recorded: %+v metadata=%s", store.createdEvent, string(store.createdEvent.Metadata))
+	}
+	var env struct {
+		Data reviewTikTokPublishResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.ExternalID != "publish_123" || env.Data.Status != "processing" {
+		t.Fatalf("unexpected publish response: %+v", env.Data)
+	}
+}
+
 func TestReviewPublicSessionUsesCookieAndCreatesTikTokConnectSession(t *testing.T) {
 	store := &reviewStoreFake{
 		reviewSessionByHash: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", ReviewKitID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", TokenHash: hashReviewToken("revsess_live"), ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
@@ -457,6 +569,8 @@ type reviewStoreFake struct {
 	reviewSessionByHash  db.ReviewSession
 	profile              db.Profile
 	events               []db.ReviewJobEvent
+	socialAccounts       []db.SocialAccount
+	listAccountsParams   db.ListSocialAccountsByProfileFilteredParams
 	agentTokenHashLookup string
 	credentialErr        error
 	now                  time.Time
@@ -469,6 +583,7 @@ type reviewStoreFake struct {
 	createdAgentToken     db.CreateReviewAgentTokenParams
 	createdConnectSession db.CreateConnectSessionParams
 	createdEvent          db.CreateReviewJobEventParams
+	updatedTokens         db.UpdateSocialAccountTokensParams
 	markedRunningJobID    string
 	markedWaitingJobID    string
 	completedJob          db.CompleteReviewJobParams
@@ -578,6 +693,28 @@ func (f *reviewStoreFake) FailReviewJob(_ context.Context, arg db.FailReviewJobP
 	f.failedJob = arg
 	return db.ReviewJob{ID: arg.ID, WorkspaceID: arg.WorkspaceID, Status: "failed"}, nil
 }
+func (f *reviewStoreFake) ListSocialAccountsByProfileFiltered(_ context.Context, arg db.ListSocialAccountsByProfileFilteredParams) ([]db.SocialAccount, error) {
+	f.listAccountsParams = arg
+	out := make([]db.SocialAccount, 0, len(f.socialAccounts))
+	for _, account := range f.socialAccounts {
+		if account.ProfileID != arg.ProfileID {
+			continue
+		}
+		if arg.ExternalUserID.Valid && (!account.ExternalUserID.Valid || account.ExternalUserID.String != arg.ExternalUserID.String) {
+			continue
+		}
+		if arg.Platform.Valid && account.Platform != arg.Platform.String {
+			continue
+		}
+		out = append(out, account)
+	}
+	return out, nil
+}
+
+func (f *reviewStoreFake) UpdateSocialAccountTokens(_ context.Context, arg db.UpdateSocialAccountTokensParams) error {
+	f.updatedTokens = arg
+	return nil
+}
 
 func fixedReviewTokenGenerator(prefix string) (string, string, error) {
 	return prefix + "fixed", "hash:" + prefix + "fixed", nil
@@ -600,4 +737,61 @@ func (f *reviewArtifactStorageFake) PresignPut(_ context.Context, key string, co
 func (f *reviewArtifactStorageFake) PresignGet(_ context.Context, key string, _ time.Duration) (string, error) {
 	f.getKey = key
 	return f.getURL, nil
+}
+
+func testReviewEncryptor(t *testing.T) *appcrypto.AESEncryptor {
+	t.Helper()
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("new encryptor: %v", err)
+	}
+	return encryptor
+}
+
+type reviewTikTokAdapterFake struct {
+	creatorInfo        *platform.TikTokCreatorInfo
+	creatorErr         error
+	creatorAccessToken string
+	postResult         *platform.PostResult
+	postErr            error
+	postAccessToken    string
+	postText           string
+	postMedia          []platform.MediaItem
+	postOpts           map[string]any
+	refreshAccess      string
+	refreshRefresh     string
+	refreshExpiresAt   time.Time
+	refreshErr         error
+}
+
+func (f *reviewTikTokAdapterFake) Post(_ context.Context, accessToken string, text string, media []platform.MediaItem, opts map[string]any) (*platform.PostResult, error) {
+	f.postAccessToken = accessToken
+	f.postText = text
+	f.postMedia = append([]platform.MediaItem(nil), media...)
+	f.postOpts = opts
+	if f.postErr != nil {
+		return nil, f.postErr
+	}
+	if f.postResult != nil {
+		return f.postResult, nil
+	}
+	return &platform.PostResult{ExternalID: "publish_default"}, nil
+}
+
+func (f *reviewTikTokAdapterFake) RefreshToken(_ context.Context, _ string) (string, string, time.Time, error) {
+	if f.refreshErr != nil {
+		return "", "", time.Time{}, f.refreshErr
+	}
+	return f.refreshAccess, f.refreshRefresh, f.refreshExpiresAt, nil
+}
+
+func (f *reviewTikTokAdapterFake) FetchCreatorInfo(_ context.Context, accessToken string) (*platform.TikTokCreatorInfo, error) {
+	f.creatorAccessToken = accessToken
+	if f.creatorErr != nil {
+		return nil, f.creatorErr
+	}
+	if f.creatorInfo != nil {
+		return f.creatorInfo, nil
+	}
+	return &platform.TikTokCreatorInfo{CreatorNickname: "Review Creator", PrivacyLevelOptions: []string{"SELF_ONLY"}}, nil
 }

@@ -35,6 +35,7 @@ import {
 
 const REQUIRED_TIKTOK_SCOPES = ["user.info.basic", "video.publish", "video.upload"];
 const TIKTOK_DEVELOPER_PORTAL = "https://developers.tiktok.com";
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev").replace(/\/+$/, "");
 
 type StepState = "ready" | "blocked" | "done";
 
@@ -138,7 +139,7 @@ function AppReviewAutopilotContent() {
   const hasTikTokCredential = credentials.some((cred) => cred.platform === "tiktok");
   const domainReady = reviewDomain?.status === "ready" && (!reviewDomain.tls_status || reviewDomain.tls_status === "issued");
   const normalizedDomain = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*/, "");
-  const redirectURI = normalizedDomain ? `https://${normalizedDomain}/v1/connect/callback/tiktok` : "https://your-review-domain/v1/connect/callback/tiktok";
+  const redirectURI = `${API_BASE_URL}/v1/connect/callback/tiktok`;
   const artifactDownloadURL = reviewJob?.artifacts ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(reviewJob.artifacts, null, 2))}` : "";
 
   const steps = useMemo(() => [
@@ -440,6 +441,9 @@ function AppReviewAutopilotContent() {
                   </div>
                   {reviewJob.agent_command && (
                     <>
+                      <div style={{ padding: "10px 12px", borderRadius: 8, background: "var(--warning-soft)", border: "1px solid color-mix(in srgb, var(--warning) 24%, transparent)", color: "var(--warning)", fontSize: 12, lineHeight: 1.55 }}>
+                        macOS may require granting Screen Recording permission to Terminal or iTerm once. If the agent stops at preflight, approve the permission in System Settings, restart the terminal, and run this same command again.
+                      </div>
                       <pre style={{ margin: 0, padding: 12, borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)", color: "var(--dtext)", fontSize: 12, lineHeight: 1.6, overflowX: "auto" }}><code>{reviewJob.agent_command}</code></pre>
                       <button className="dbtn dbtn-primary" onClick={() => copyText("agent", reviewJob.agent_command || "")} style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7 }}>
                         {copied === "agent" ? <Check size={14} /> : <Terminal size={14} />} Copy command
@@ -449,7 +453,7 @@ function AppReviewAutopilotContent() {
                 </div>
               ) : (
                 <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.65 }}>
-                  When recording starts, UniPost creates a single-use token and pins the CLI version. The local browser and recorder run on the user machine.
+                  When recording starts, UniPost creates a single-use token and pins the CLI version. On macOS, the first run may ask you to grant Screen Recording permission to Terminal, then restart the terminal command once.
                 </div>
               )}
             </div>

@@ -457,7 +457,7 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
-	reviewHandler := handler.NewReviewHandler(queries).WithAPIBaseURL(apiBaseURL).WithArtifactStorage(storageClient)
+	reviewHandler := handler.NewReviewHandler(queries).WithAPIBaseURL(apiBaseURL).WithArtifactStorage(storageClient).WithEncryptor(encryptor).WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL"))
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
 
 	// Public routes
@@ -499,6 +499,7 @@ func main() {
 	r.Post("/v1/review/agent/fail", reviewHandler.FailAgentJob)
 	r.Post("/v1/review/agent/artifacts", reviewHandler.CreateAgentArtifactUpload)
 	r.Get("/v1/review/session", reviewHandler.GetPublicReviewSession)
+	r.Post("/v1/review/session/tiktok/publish", reviewHandler.PublishReviewTikTokPost)
 
 	// RBAC Phase 4: invite preview. The dashboard's /invite/{token}
 	// page calls this BEFORE the user signs in to display "Acme Inc.

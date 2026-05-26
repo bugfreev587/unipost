@@ -8,6 +8,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -18,8 +21,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/reviewscript"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
@@ -36,6 +41,8 @@ const (
 	reviewKitStatusReady      = "ready"
 	reviewDomainStatusPending = "dns_pending"
 	reviewTLSStatusIssued     = "issued"
+	reviewDefaultTestVideoURL = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+	reviewDefaultCaption      = "UniPost app review test video"
 )
 
 var requiredTikTokReviewScopes = []string{"user.info.basic", "video.publish", "video.upload"}
@@ -54,6 +61,12 @@ type reviewArtifactStorage interface {
 	PresignGet(context.Context, string, time.Duration) (string, error)
 }
 
+type reviewTikTokAdapter interface {
+	Post(context.Context, string, string, []platform.MediaItem, map[string]any) (*platform.PostResult, error)
+	RefreshToken(context.Context, string) (string, string, time.Time, error)
+	FetchCreatorInfo(context.Context, string) (*platform.TikTokCreatorInfo, error)
+}
+
 type reviewDomainCheckResult struct {
 	DNSReady  bool
 	TLSIssued bool
@@ -67,6 +80,9 @@ type ReviewHandler struct {
 	domainChecker   reviewDomainChecker
 	apiBaseURL      string
 	artifactStorage reviewArtifactStorage
+	encryptor       *appcrypto.AESEncryptor
+	tiktokAdapter   reviewTikTokAdapter
+	testVideoURL    string
 }
 
 type reviewStore interface {
@@ -92,6 +108,8 @@ type reviewStore interface {
 	MarkReviewJobWaitingForUser(context.Context, db.MarkReviewJobWaitingForUserParams) (db.ReviewJob, error)
 	CompleteReviewJob(context.Context, db.CompleteReviewJobParams) (db.ReviewJob, error)
 	FailReviewJob(context.Context, db.FailReviewJobParams) (db.ReviewJob, error)
+	ListSocialAccountsByProfileFiltered(context.Context, db.ListSocialAccountsByProfileFilteredParams) ([]db.SocialAccount, error)
+	UpdateSocialAccountTokens(context.Context, db.UpdateSocialAccountTokensParams) error
 }
 
 type reviewDomainResponse struct {
@@ -140,12 +158,31 @@ type reviewAgentJobStateResponse struct {
 }
 
 type reviewPublicSessionResponse struct {
-	JobID               string `json:"job_id"`
-	Platform            string `json:"platform"`
-	ReviewDomain        string `json:"review_domain"`
-	Status              string `json:"status"`
-	ExpiresAt           string `json:"expires_at"`
-	ConnectAuthorizeURL string `json:"connect_authorize_url,omitempty"`
+	JobID               string                     `json:"job_id"`
+	Platform            string                     `json:"platform"`
+	ReviewDomain        string                     `json:"review_domain"`
+	Status              string                     `json:"status"`
+	ExpiresAt           string                     `json:"expires_at"`
+	Connected           bool                       `json:"connected"`
+	Account             *reviewSessionAccount      `json:"account,omitempty"`
+	CreatorInfo         *tiktokCreatorInfoResponse `json:"creator_info,omitempty"`
+	CreatorInfoError    string                     `json:"creator_info_error,omitempty"`
+	ConnectAuthorizeURL string                     `json:"connect_authorize_url,omitempty"`
+}
+
+type reviewSessionAccount struct {
+	ID                string   `json:"id"`
+	AccountName       string   `json:"account_name"`
+	ExternalAccountID string   `json:"external_account_id"`
+	Scope             []string `json:"scope,omitempty"`
+}
+
+type reviewTikTokPublishResponse struct {
+	Status       string `json:"status"`
+	ExternalID   string `json:"external_id,omitempty"`
+	URL          string `json:"url,omitempty"`
+	PrivacyLevel string `json:"privacy_level"`
+	VideoURL     string `json:"video_url"`
 }
 
 type reviewAgentArtifactUploadResponse struct {
@@ -185,6 +222,7 @@ func NewReviewHandler(store reviewStore) *ReviewHandler {
 		tokenGenerator: defaultReviewTokenGenerator,
 		domainChecker:  defaultReviewDomainChecker,
 		apiBaseURL:     "https://api.unipost.dev",
+		testVideoURL:   reviewDefaultTestVideoURL,
 	}
 }
 
@@ -218,6 +256,23 @@ func (h *ReviewHandler) WithAPIBaseURL(value string) *ReviewHandler {
 
 func (h *ReviewHandler) WithArtifactStorage(store reviewArtifactStorage) *ReviewHandler {
 	h.artifactStorage = store
+	return h
+}
+
+func (h *ReviewHandler) WithEncryptor(encryptor *appcrypto.AESEncryptor) *ReviewHandler {
+	h.encryptor = encryptor
+	return h
+}
+
+func (h *ReviewHandler) WithTikTokAdapter(adapter reviewTikTokAdapter) *ReviewHandler {
+	h.tiktokAdapter = adapter
+	return h
+}
+
+func (h *ReviewHandler) WithTikTokTestVideoURL(value string) *ReviewHandler {
+	if strings.TrimSpace(value) != "" {
+		h.testVideoURL = strings.TrimSpace(value)
+	}
 	return h
 }
 
@@ -515,7 +570,7 @@ func (h *ReviewHandler) GetJobScript(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, script)
 }
 
-func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Request) {
+func (h *ReviewHandler) authenticateReviewSession(w http.ResponseWriter, r *http.Request) (db.ReviewSession, bool) {
 	rawToken := bearerToken(r)
 	if rawToken == "" {
 		if cookie, err := r.Cookie(reviewSessionCookieName); err == nil {
@@ -524,19 +579,27 @@ func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Re
 	}
 	if rawToken == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing review session token")
-		return
+		return db.ReviewSession{}, false
 	}
 	session, err := h.store.GetReviewSessionByTokenHash(r.Context(), hashReviewToken(rawToken))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid or expired review session token")
-			return
+			return db.ReviewSession{}, false
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review session")
-		return
+		return db.ReviewSession{}, false
 	}
 	if !featureflags.Enabled(r.Context(), featureflags.AppReviewAutopilotV1, featureflags.Target{WorkspaceID: session.WorkspaceID, Env: runtimeenv.Current()}) {
 		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
+		return db.ReviewSession{}, false
+	}
+	return session, true
+}
+
+func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.authenticateReviewSession(w, r)
+	if !ok {
 		return
 	}
 	kit, err := h.store.GetReviewKit(r.Context(), db.GetReviewKitParams{ID: session.ReviewKitID, WorkspaceID: session.WorkspaceID})
@@ -565,6 +628,28 @@ func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Re
 		profile, err := h.store.GetProfile(r.Context(), profileID)
 		if err != nil || profile.WorkspaceID != session.WorkspaceID {
 			writeError(w, http.StatusConflict, "CONFLICT", "Review kit profile is unavailable")
+			return
+		}
+		account, connected, err := h.connectedReviewTikTokAccount(r.Context(), profile.ID, session)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load TikTok review account")
+			return
+		}
+		if connected {
+			resp.Connected = true
+			resp.Account = reviewSessionAccountFromDB(account)
+			adapter, err := h.getReviewTikTokAdapter()
+			if err != nil {
+				resp.Status = "creator_info_error"
+				resp.CreatorInfoError = err.Error()
+			} else if info, err := h.fetchReviewCreatorInfo(r.Context(), account, adapter); err != nil {
+				slog.Warn("review session: creator_info failed", "job_id", session.ReviewJobID, "account_id", account.ID, "error", err)
+				resp.Status = "creator_info_error"
+				resp.CreatorInfoError = err.Error()
+			} else {
+				resp.CreatorInfo = info
+			}
+			writeSuccess(w, resp)
 			return
 		}
 		oauthState, _, err := h.tokenGenerator("rvstate_")
@@ -908,6 +993,296 @@ func reviewArtifactExtension(contentType string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func (h *ReviewHandler) PublishReviewTikTokPost(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.authenticateReviewSession(w, r)
+	if !ok {
+		return
+	}
+	if session.Platform != reviewDefaultPlatform {
+		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Only TikTok review publishing is supported")
+		return
+	}
+	kit, err := h.store.GetReviewKit(r.Context(), db.GetReviewKitParams{ID: session.ReviewKitID, WorkspaceID: session.WorkspaceID})
+	if err != nil {
+		writeNotFoundOrInternal(w, err, "Review kit not found", "Failed to load review kit")
+		return
+	}
+	profileID := reviewKitProfileID(kit)
+	if profileID == "" {
+		writeError(w, http.StatusConflict, "CONFLICT", "Review kit profile is unavailable")
+		return
+	}
+	profile, err := h.store.GetProfile(r.Context(), profileID)
+	if err != nil || profile.WorkspaceID != session.WorkspaceID {
+		writeError(w, http.StatusConflict, "CONFLICT", "Review kit profile is unavailable")
+		return
+	}
+	account, connected, err := h.connectedReviewTikTokAccount(r.Context(), profile.ID, session)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load TikTok review account")
+		return
+	}
+	if !connected {
+		writeError(w, http.StatusConflict, "TIKTOK_NOT_CONNECTED", "Connect TikTok before publishing the review test video")
+		return
+	}
+	if events, err := h.store.ListReviewJobEvents(r.Context(), db.ListReviewJobEventsParams{ReviewJobID: session.ReviewJobID, WorkspaceID: session.WorkspaceID}); err == nil {
+		if prior, ok := previousReviewPublishResponse(events); ok {
+			writeSuccess(w, prior)
+			return
+		}
+	}
+
+	var req struct {
+		Caption            string `json:"caption"`
+		PrivacyLevel       string `json:"privacy_level"`
+		DisableComment     *bool  `json:"disable_comment"`
+		DisableDuet        *bool  `json:"disable_duet"`
+		DisableStitch      *bool  `json:"disable_stitch"`
+		BrandContentToggle *bool  `json:"brand_content_toggle"`
+		BrandOrganicToggle *bool  `json:"brand_organic_toggle"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+			return
+		}
+	}
+	caption := strings.TrimSpace(req.Caption)
+	if caption == "" {
+		caption = reviewDefaultCaption
+	}
+	privacyLevel := strings.TrimSpace(req.PrivacyLevel)
+	if privacyLevel == "" {
+		privacyLevel = "SELF_ONLY"
+	}
+	if !isAllowedTikTokPrivacy(privacyLevel) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid TikTok privacy_level")
+		return
+	}
+	videoURL := strings.TrimSpace(h.testVideoURL)
+	if videoURL == "" {
+		writeError(w, http.StatusServiceUnavailable, "TEST_VIDEO_UNAVAILABLE", "Review test video is not configured")
+		return
+	}
+	adapter, err := h.getReviewTikTokAdapter()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "TikTok adapter unavailable")
+		return
+	}
+	accessToken, err := h.reviewTikTokAccessToken(r.Context(), account, adapter)
+	if err != nil {
+		writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "TikTok credentials are unavailable. Reconnect the review account.")
+		return
+	}
+	opts := map[string]any{
+		"privacy_level":        privacyLevel,
+		"disable_comment":      reviewBoolDefault(req.DisableComment, true),
+		"disable_duet":         reviewBoolDefault(req.DisableDuet, true),
+		"disable_stitch":       reviewBoolDefault(req.DisableStitch, true),
+		"brand_content_toggle": reviewBoolDefault(req.BrandContentToggle, false),
+		"brand_organic_toggle": reviewBoolDefault(req.BrandOrganicToggle, false),
+	}
+	result, err := adapter.Post(r.Context(), accessToken, caption, []platform.MediaItem{{URL: videoURL, Kind: platform.MediaKindVideo}}, opts)
+	if err != nil {
+		h.recordReviewPublishEvent(r.Context(), session, "review_publish_failed", "TikTok review publish failed", map[string]any{
+			"error":         err.Error(),
+			"privacy_level": privacyLevel,
+			"video_url":     videoURL,
+		})
+		writeError(w, http.StatusBadGateway, "TIKTOK_PUBLISH_FAILED", err.Error())
+		return
+	}
+	status := "published"
+	if result != nil && strings.TrimSpace(result.Status) != "" {
+		status = strings.TrimSpace(result.Status)
+	}
+	resp := reviewTikTokPublishResponse{Status: status, PrivacyLevel: privacyLevel, VideoURL: videoURL}
+	if result != nil {
+		resp.ExternalID = result.ExternalID
+		resp.URL = result.URL
+	}
+	h.recordReviewPublishEvent(r.Context(), session, "review_publish_completed", "Published TikTok review test video", map[string]any{
+		"status":        resp.Status,
+		"external_id":   resp.ExternalID,
+		"url":           resp.URL,
+		"privacy_level": resp.PrivacyLevel,
+		"video_url":     resp.VideoURL,
+	})
+	writeSuccess(w, resp)
+}
+
+func (h *ReviewHandler) getReviewTikTokAdapter() (reviewTikTokAdapter, error) {
+	if h.tiktokAdapter != nil {
+		return h.tiktokAdapter, nil
+	}
+	adapter, err := platform.Get(reviewDefaultPlatform)
+	if err != nil {
+		return nil, err
+	}
+	tiktok, ok := adapter.(reviewTikTokAdapter)
+	if !ok {
+		return nil, fmt.Errorf("tiktok adapter does not expose review publishing methods")
+	}
+	return tiktok, nil
+}
+
+func (h *ReviewHandler) connectedReviewTikTokAccount(ctx context.Context, profileID string, session db.ReviewSession) (db.SocialAccount, bool, error) {
+	accounts, err := h.store.ListSocialAccountsByProfileFiltered(ctx, db.ListSocialAccountsByProfileFilteredParams{
+		ProfileID:      profileID,
+		ExternalUserID: pgtype.Text{String: "app-review:" + session.ReviewJobID, Valid: true},
+		Platform:       pgtype.Text{String: session.Platform, Valid: session.Platform != ""},
+	})
+	if err != nil {
+		return db.SocialAccount{}, false, err
+	}
+	if len(accounts) == 0 {
+		return db.SocialAccount{}, false, nil
+	}
+	return accounts[0], true, nil
+}
+
+func reviewSessionAccountFromDB(account db.SocialAccount) *reviewSessionAccount {
+	name := ""
+	if account.AccountName.Valid {
+		name = account.AccountName.String
+	}
+	return &reviewSessionAccount{
+		ID:                account.ID,
+		AccountName:       name,
+		ExternalAccountID: account.ExternalAccountID,
+		Scope:             append([]string(nil), account.Scope...),
+	}
+}
+
+func (h *ReviewHandler) fetchReviewCreatorInfo(ctx context.Context, account db.SocialAccount, adapter reviewTikTokAdapter) (*tiktokCreatorInfoResponse, error) {
+	accessToken, err := h.reviewTikTokAccessToken(ctx, account, adapter)
+	if err != nil {
+		return nil, err
+	}
+	info, err := adapter.FetchCreatorInfo(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	return reviewCreatorInfoResponse(info), nil
+}
+
+func (h *ReviewHandler) reviewTikTokAccessToken(ctx context.Context, account db.SocialAccount, adapter reviewTikTokAdapter) (string, error) {
+	if h.encryptor == nil {
+		return "", fmt.Errorf("review token decryptor is not configured")
+	}
+	accessToken, err := h.encryptor.Decrypt(account.AccessToken)
+	if err != nil {
+		return "", err
+	}
+	if accessToken == "" {
+		return "", fmt.Errorf("stored TikTok access token is empty")
+	}
+	if account.TokenExpiresAt.Valid && account.TokenExpiresAt.Time.Before(time.Now()) && account.RefreshToken.Valid {
+		refreshToken, err := h.encryptor.Decrypt(account.RefreshToken.String)
+		if err != nil {
+			return "", err
+		}
+		newAccess, newRefresh, expiresAt, err := adapter.RefreshToken(ctx, refreshToken)
+		if err != nil || newAccess == "" {
+			if err == nil {
+				err = fmt.Errorf("TikTok returned an empty refreshed access token")
+			}
+			return "", err
+		}
+		encAccess, encErr := h.encryptor.Encrypt(newAccess)
+		encRefresh, encRefreshErr := h.encryptor.Encrypt(newRefresh)
+		if encErr != nil || encRefreshErr != nil {
+			return "", fmt.Errorf("encrypt refreshed TikTok tokens: access=%v refresh=%v", encErr, encRefreshErr)
+		}
+		accessToken = newAccess
+		if err := h.store.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
+			ID:             account.ID,
+			AccessToken:    encAccess,
+			RefreshToken:   pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
+			TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: !expiresAt.IsZero()},
+		}); err != nil {
+			slog.Error("review session: update TikTok tokens failed", "account_id", account.ID, "error", err)
+		}
+	}
+	return accessToken, nil
+}
+
+func reviewCreatorInfoResponse(info *platform.TikTokCreatorInfo) *tiktokCreatorInfoResponse {
+	if info == nil {
+		return nil
+	}
+	return &tiktokCreatorInfoResponse{
+		CreatorAvatarURL:        info.CreatorAvatarURL,
+		CreatorUsername:         info.CreatorUsername,
+		CreatorNickname:         info.CreatorNickname,
+		PrivacyLevelOptions:     append([]string(nil), info.PrivacyLevelOptions...),
+		CommentDisabled:         info.CommentDisabled,
+		DuetDisabled:            info.DuetDisabled,
+		StitchDisabled:          info.StitchDisabled,
+		MaxVideoPostDurationSec: info.MaxVideoPostDurationSec,
+	}
+}
+
+func reviewBoolDefault(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func isAllowedTikTokPrivacy(value string) bool {
+	for _, allowed := range platform.TikTokPrivacyValues {
+		if value == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *ReviewHandler) recordReviewPublishEvent(ctx context.Context, session db.ReviewSession, eventType string, message string, metadata map[string]any) {
+	encoded, err := marshalReviewJSON(metadata)
+	if err != nil {
+		slog.Warn("review publish: encode event metadata failed", "job_id", session.ReviewJobID, "error", err)
+		encoded = []byte(`{}`)
+	}
+	if _, err := h.store.CreateReviewJobEvent(ctx, db.CreateReviewJobEventParams{
+		ReviewJobID: session.ReviewJobID,
+		EventType:   eventType,
+		Message:     message,
+		Metadata:    encoded,
+	}); err != nil {
+		slog.Warn("review publish: record event failed", "job_id", session.ReviewJobID, "event_type", eventType, "error", err)
+	}
+}
+
+func previousReviewPublishResponse(events []db.ReviewJobEvent) (reviewTikTokPublishResponse, bool) {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].EventType != "review_publish_completed" {
+			continue
+		}
+		var metadata map[string]any
+		if err := json.Unmarshal(events[i].Metadata, &metadata); err != nil {
+			return reviewTikTokPublishResponse{}, false
+		}
+		return reviewTikTokPublishResponse{
+			Status:       stringFromReviewMetadata(metadata, "status"),
+			ExternalID:   stringFromReviewMetadata(metadata, "external_id"),
+			URL:          stringFromReviewMetadata(metadata, "url"),
+			PrivacyLevel: stringFromReviewMetadata(metadata, "privacy_level"),
+			VideoURL:     stringFromReviewMetadata(metadata, "video_url"),
+		}, true
+	}
+	return reviewTikTokPublishResponse{}, false
+}
+
+func stringFromReviewMetadata(metadata map[string]any, key string) string {
+	if value, ok := metadata[key].(string); ok {
+		return value
+	}
+	return ""
 }
 
 func (h *ReviewHandler) authenticateReviewAgent(w http.ResponseWriter, r *http.Request) (db.ReviewAgentToken, bool) {
