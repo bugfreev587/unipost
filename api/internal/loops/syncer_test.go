@@ -159,6 +159,53 @@ func TestSyncerSendsPlanChangedEvent(t *testing.T) {
 	assertProperty(t, client.lastEvent.Properties, "change_type", "upgrade")
 }
 
+func TestSyncerSendsPlanChangedTransactionalEmailWhenTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			PlanChanged: "tmpl_plan_changed",
+		},
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		Name:           "Alex Smith",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		PlanID:         "basic",
+		EventName:      "plan_changed",
+		IdempotencyKey: "plan_changed:sub_123:basic",
+		Properties: map[string]any{
+			"old_plan_id": "free",
+			"new_plan_id": "basic",
+			"change_type": "upgrade",
+			"billing_url": "https://app.unipost.dev/settings/billing",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.contacts != 1 {
+		t.Fatalf("contacts = %d, want 1", client.contacts)
+	}
+	if client.events != 0 {
+		t.Fatalf("events = %d, want 0", client.events)
+	}
+	if client.transactionals != 1 {
+		t.Fatalf("transactionals = %d, want 1", client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_plan_changed" {
+		t.Fatalf("transactional ID = %q, want tmpl_plan_changed", client.lastTransactional.TransactionalID)
+	}
+	assertProperty(t, client.lastTransactional.DataVariables, "old_plan_id", "free")
+	assertProperty(t, client.lastTransactional.DataVariables, "new_plan_id", "basic")
+	assertMissingProperty(t, client.lastTransactional.DataVariables, "first_name")
+	assertMissingProperty(t, client.lastTransactional.DataVariables, "workspace_name")
+	assertMissingProperty(t, client.lastTransactional.DataVariables, "billing_url")
+}
+
 func TestSyncerSendsAccountCanceledEventWithoutContactUpsert(t *testing.T) {
 	client := &fakeLifecycleClient{}
 	syncer := NewSyncer(client, Options{
@@ -188,6 +235,46 @@ func TestSyncerSendsAccountCanceledEventWithoutContactUpsert(t *testing.T) {
 		t.Fatalf("event name = %q", client.lastEvent.Name)
 	}
 	assertProperty(t, client.lastEvent.Properties, "canceled_at", "2026-05-25T12:00:00Z")
+}
+
+func TestSyncerSendsAccountCanceledTransactionalEmailWithoutContactUpsert(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			AccountCanceled: "tmpl_account_canceled",
+		},
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		Name:           "Alex Smith",
+		EventName:      "user_account_canceled",
+		IdempotencyKey: "user_account_canceled:user_123",
+		SkipContact:    true,
+		Properties: map[string]any{
+			"canceled_at": "2026-05-25T12:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.contacts != 0 {
+		t.Fatalf("contacts = %d, want 0", client.contacts)
+	}
+	if client.events != 0 {
+		t.Fatalf("events = %d, want 0", client.events)
+	}
+	if client.transactionals != 1 {
+		t.Fatalf("transactionals = %d, want 1", client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_account_canceled" {
+		t.Fatalf("transactional ID = %q, want tmpl_account_canceled", client.lastTransactional.TransactionalID)
+	}
+	if len(client.lastTransactional.DataVariables) != 0 {
+		t.Fatalf("data variables = %#v, want none for account cancellation template", client.lastTransactional.DataVariables)
+	}
 }
 
 func TestSyncerSendsPostFailedEvent(t *testing.T) {
@@ -223,13 +310,61 @@ func TestSyncerSendsPostFailedEvent(t *testing.T) {
 	assertProperty(t, client.lastEvent.Properties, "error_code", "quota_exceeded")
 }
 
+func TestSyncerSendsPostFailedTransactionalEmailWhenTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			PostFailed: "tmpl_post_failed",
+		},
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		Name:           "Alex Smith",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		EventName:      "post_failed",
+		IdempotencyKey: "post_failed:job_123",
+		Properties: map[string]any{
+			"post_id":       "post_123",
+			"platform":      "youtube",
+			"error_code":    "quota_exceeded",
+			"dashboard_url": "https://app.unipost.dev/projects/profile_123/logs?post_id=post_123",
+			"retriable":     false,
+			"attempts":      1,
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.events != 0 {
+		t.Fatalf("events = %d, want 0", client.events)
+	}
+	if client.transactionals != 1 {
+		t.Fatalf("transactionals = %d, want 1", client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_post_failed" {
+		t.Fatalf("transactional ID = %q, want tmpl_post_failed", client.lastTransactional.TransactionalID)
+	}
+	assertProperty(t, client.lastTransactional.DataVariables, "platform", "youtube")
+	assertProperty(t, client.lastTransactional.DataVariables, "error_code", "quota_exceeded")
+	assertMissingProperty(t, client.lastTransactional.DataVariables, "dashboard_url")
+	assertMissingProperty(t, client.lastTransactional.DataVariables, "retriable")
+	assertMissingProperty(t, client.lastTransactional.DataVariables, "attempts")
+}
+
 type fakeLifecycleClient struct {
-	contacts    int
-	events      int
-	lastContact Contact
-	lastEvent   Event
-	contactErr  error
-	eventErr    error
+	contacts          int
+	events            int
+	transactionals    int
+	lastContact       Contact
+	lastEvent         Event
+	lastTransactional TransactionalEmail
+	contactErr        error
+	eventErr          error
+	transactionalErr  error
 }
 
 func (f *fakeLifecycleClient) Enabled() bool {
@@ -248,9 +383,22 @@ func (f *fakeLifecycleClient) SendEvent(_ context.Context, event Event) error {
 	return f.eventErr
 }
 
+func (f *fakeLifecycleClient) SendTransactional(_ context.Context, email TransactionalEmail) error {
+	f.transactionals++
+	f.lastTransactional = email
+	return f.transactionalErr
+}
+
 func assertProperty(t *testing.T, props map[string]any, key string, want any) {
 	t.Helper()
 	if got := props[key]; got != want {
 		t.Fatalf("property %s = %#v, want %#v", key, got, want)
+	}
+}
+
+func assertMissingProperty(t *testing.T, props map[string]any, key string) {
+	t.Helper()
+	if _, ok := props[key]; ok {
+		t.Fatalf("property %s is present, want missing", key)
 	}
 }

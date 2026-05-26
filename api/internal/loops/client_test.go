@@ -118,10 +118,12 @@ func TestClientSendEventUsesIdempotencyKey(t *testing.T) {
 
 func TestClientSendTransactionalEmail(t *testing.T) {
 	var gotPath string
+	var gotIDKey string
 	var payload map[string]any
 
 	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		gotPath = r.URL.Path
+		gotIDKey = r.Header.Get("Idempotency-Key")
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -138,6 +140,7 @@ func TestClientSendTransactionalEmail(t *testing.T) {
 		TransactionalID: "tmpl_123",
 		Email:           "alex@example.com",
 		UserID:          "user_123",
+		IdempotencyKey:  "txn_123",
 		DataVariables: map[string]any{
 			"first_name": "Alex",
 		},
@@ -148,9 +151,14 @@ func TestClientSendTransactionalEmail(t *testing.T) {
 	if gotPath != "/api/v1/transactional" {
 		t.Fatalf("path = %s, want /api/v1/transactional", gotPath)
 	}
+	if gotIDKey != "txn_123" {
+		t.Fatalf("Idempotency-Key = %q, want txn_123", gotIDKey)
+	}
 	assertPayloadValue(t, payload, "transactionalId", "tmpl_123")
 	assertPayloadValue(t, payload, "email", "alex@example.com")
-	assertPayloadValue(t, payload, "userId", "user_123")
+	if _, ok := payload["userId"]; ok {
+		t.Fatal("payload included userId, want transactional API body to omit it")
+	}
 	vars, ok := payload["dataVariables"].(map[string]any)
 	if !ok {
 		t.Fatalf("dataVariables = %#v, want object", payload["dataVariables"])

@@ -95,6 +95,7 @@ type TransactionalEmail struct {
 	TransactionalID string
 	Email           string
 	UserID          string
+	IdempotencyKey  string
 	DataVariables   map[string]any
 }
 
@@ -102,11 +103,10 @@ func (c *Client) SendTransactional(ctx context.Context, email TransactionalEmail
 	payload := map[string]any{}
 	set(payload, "transactionalId", email.TransactionalID)
 	set(payload, "email", email.Email)
-	set(payload, "userId", email.UserID)
 	if len(email.DataVariables) > 0 {
 		payload["dataVariables"] = email.DataVariables
 	}
-	return c.doJSON(ctx, http.MethodPost, "/v1/transactional", payload, "")
+	return c.doJSON(ctx, http.MethodPost, "/v1/transactional", payload, email.IdempotencyKey)
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, payload map[string]any, idempotencyKey string) error {
