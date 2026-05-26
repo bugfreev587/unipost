@@ -425,6 +425,79 @@ export async function deletePlatformCredential(
   );
 }
 
+// App Review Autopilot (workspace-scoped)
+
+export interface ReviewDNSRecord {
+  type: "CNAME" | "TXT" | string;
+  name: string;
+  value: string;
+}
+
+export interface ReviewDomain {
+  id: string;
+  domain: string;
+  status: string;
+  cname_target: string;
+  tls_status: string;
+  dns_records: ReviewDNSRecord[];
+}
+
+export interface ReviewKit {
+  id: string;
+  platform: string;
+  use_case: string;
+  review_domain_id: string;
+  required_scopes: string[];
+  status: string;
+}
+
+export interface ReviewJob {
+  id: string;
+  review_kit_id: string;
+  platform: string;
+  status: string;
+  agent_version: string;
+  agent_command: string;
+  token_expires_at: string;
+}
+
+export async function createReviewDomain(
+  token: string,
+  data: { domain: string; provider?: string }
+): Promise<ApiResponse<ReviewDomain>> {
+  return request(`/v1/review/domains`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createReviewKit(
+  token: string,
+  data: {
+    platform: "tiktok";
+    use_case: "content_posting";
+    review_domain_id: string;
+    redirect_uri_attested: boolean;
+    brand_snapshot?: Record<string, unknown>;
+    required_scopes: string[];
+  }
+): Promise<ApiResponse<ReviewKit>> {
+  return request(`/v1/review/kits`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createReviewJob(
+  token: string,
+  data: { review_kit_id: string }
+): Promise<ApiResponse<ReviewJob>> {
+  return request(`/v1/review/jobs`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 // API Keys (workspace-scoped)
 
 export async function listApiKeys(
