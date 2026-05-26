@@ -68,6 +68,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/accounts", label: "Connections", icon: Cable, submenu: [
     { href: "/accounts", label: "Quickstart" },
     { href: "/accounts/native", label: "White-label" },
+    { href: "/accounts/app-review", label: "App Review", backendFlag: FEATURE_FLAG_KEYS.appReviewAutopilotV1 },
     { href: "/users", label: "Developer App Users" },
   ]},
   { href: "/posts", label: "Posts", icon: Send, exactMatch: true },

@@ -457,6 +457,7 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
+	reviewHandler := handler.NewReviewHandler(queries).WithAPIBaseURL(apiBaseURL)
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
 
 	// Public routes
@@ -492,6 +493,11 @@ func main() {
 	// hosted dashboard page reads it via ?state=<oauth_state> as the
 	// bearer. Returns a minimal projection of the session.
 	r.Get("/v1/public/connect/sessions/{id}", connectSessionHandler.PublicGet)
+	r.Get("/v1/review/agent/script", reviewHandler.GetAgentJobScript)
+	r.Post("/v1/review/agent/events", reviewHandler.RecordAgentEvent)
+	r.Post("/v1/review/agent/complete", reviewHandler.CompleteAgentJob)
+	r.Post("/v1/review/agent/fail", reviewHandler.FailAgentJob)
+	r.Get("/v1/review/session", reviewHandler.GetPublicReviewSession)
 
 	// RBAC Phase 4: invite preview. The dashboard's /invite/{token}
 	// page calls this BEFORE the user signs in to display "Acme Inc.
@@ -707,6 +713,18 @@ func main() {
 			Post("/v1/platform-credentials", platformCredHandler.Create)
 		r.With(auth.RequireRole(auth.RoleAdmin)).
 			Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
+
+		// App Review Autopilot. Beta-gated separately from white-label
+		// credentials so we can keep production closed while the review
+		// recording flow is being hardened.
+		r.Route("/v1/review", func(r chi.Router) {
+			r.Use(handler.RequireFeatureFlag(featureflags.AppReviewAutopilotV1))
+			r.Post("/domains", reviewHandler.CreateDomain)
+			r.Post("/domains/{id}/verify", reviewHandler.VerifyDomain)
+			r.Post("/kits", reviewHandler.CreateKit)
+			r.Post("/jobs", reviewHandler.CreateJob)
+			r.Get("/jobs/{id}/script", reviewHandler.GetJobScript)
+		})
 
 		// Posts.
 		r.Get("/v1/posts", socialPostHandler.List)

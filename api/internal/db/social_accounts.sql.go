@@ -11,6 +11,94 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const armSocialAccountDisconnectNotification = `-- name: ArmSocialAccountDisconnectNotification :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('disconnect_notified_at', NOW()::TEXT)
+WHERE id = $1
+  AND COALESCE(metadata->>'disconnect_notified_at', '') = ''
+`
+
+func (q *Queries) ArmSocialAccountDisconnectNotification(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, armSocialAccountDisconnectNotification, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createManagedSocialAccount = `-- name: CreateManagedSocialAccount :one
+INSERT INTO social_accounts (
+  profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, metadata, scope,
+  connection_type, connect_session_id, external_user_id, external_user_email,
+  status, last_refreshed_at
+)
+VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8, $9, $10,
+  'managed', $11, $12, $13,
+  'active', NOW()
+)
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+`
+
+type CreateManagedSocialAccountParams struct {
+	ProfileID         string             `json:"profile_id"`
+	Platform          string             `json:"platform"`
+	AccessToken       string             `json:"access_token"`
+	RefreshToken      pgtype.Text        `json:"refresh_token"`
+	TokenExpiresAt    pgtype.Timestamptz `json:"token_expires_at"`
+	ExternalAccountID string             `json:"external_account_id"`
+	AccountName       pgtype.Text        `json:"account_name"`
+	AccountAvatarUrl  pgtype.Text        `json:"account_avatar_url"`
+	Metadata          []byte             `json:"metadata"`
+	Scope             []string           `json:"scope"`
+	ConnectSessionID  pgtype.Text        `json:"connect_session_id"`
+	ExternalUserID    pgtype.Text        `json:"external_user_id"`
+	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
+}
+
+func (q *Queries) CreateManagedSocialAccount(ctx context.Context, arg CreateManagedSocialAccountParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, createManagedSocialAccount,
+		arg.ProfileID,
+		arg.Platform,
+		arg.AccessToken,
+		arg.RefreshToken,
+		arg.TokenExpiresAt,
+		arg.ExternalAccountID,
+		arg.AccountName,
+		arg.AccountAvatarUrl,
+		arg.Metadata,
+		arg.Scope,
+		arg.ConnectSessionID,
+		arg.ExternalUserID,
+		arg.ExternalUserEmail,
+	)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+	)
+	return i, err
+}
+
 const createSocialAccount = `-- name: CreateSocialAccount :one
 INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata, scope)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -128,19 +216,48 @@ func (q *Queries) DismissSocialAccount(ctx context.Context, arg DismissSocialAcc
 	return result.RowsAffected(), nil
 }
 
-const armSocialAccountDisconnectNotification = `-- name: ArmSocialAccountDisconnectNotification :execrows
-UPDATE social_accounts
-SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('disconnect_notified_at', NOW()::TEXT)
-WHERE id = $1
-  AND COALESCE(metadata->>'disconnect_notified_at', '') = ''
+const findActiveManagedSocialAccountByExternalAccount = `-- name: FindActiveManagedSocialAccountByExternalAccount :one
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+FROM social_accounts
+WHERE profile_id = $1
+  AND platform = $2
+  AND external_account_id = $3
+  AND connection_type = 'managed'
+  AND disconnected_at IS NULL
+LIMIT 1
 `
 
-func (q *Queries) ArmSocialAccountDisconnectNotification(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.Exec(ctx, armSocialAccountDisconnectNotification, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type FindActiveManagedSocialAccountByExternalAccountParams struct {
+	ProfileID         string `json:"profile_id"`
+	Platform          string `json:"platform"`
+	ExternalAccountID string `json:"external_account_id"`
+}
+
+func (q *Queries) FindActiveManagedSocialAccountByExternalAccount(ctx context.Context, arg FindActiveManagedSocialAccountByExternalAccountParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, findActiveManagedSocialAccountByExternalAccount, arg.ProfileID, arg.Platform, arg.ExternalAccountID)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+	)
+	return i, err
 }
 
 const findSocialAccountByExternalID = `-- name: FindSocialAccountByExternalID :one
@@ -880,6 +997,84 @@ func (q *Queries) ReactivateSocialAccount(ctx context.Context, arg ReactivateSoc
 	return i, err
 }
 
+const refreshConnectedSocialAccount = `-- name: RefreshConnectedSocialAccount :one
+UPDATE social_accounts
+SET access_token        = $1,
+    refresh_token       = $2,
+    token_expires_at    = $3,
+    external_account_id = $4,
+    account_name        = $5,
+    account_avatar_url  = $6,
+    metadata            = COALESCE($7::jsonb, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    scope               = $8,
+    connection_type     = $9,
+    connect_session_id  = $10,
+    external_user_id    = $11,
+    external_user_email = $12,
+    status              = 'active',
+    disconnected_at     = NULL,
+    last_refreshed_at   = NOW()
+WHERE id = $13
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+`
+
+type RefreshConnectedSocialAccountParams struct {
+	AccessToken       string             `json:"access_token"`
+	RefreshToken      pgtype.Text        `json:"refresh_token"`
+	TokenExpiresAt    pgtype.Timestamptz `json:"token_expires_at"`
+	ExternalAccountID string             `json:"external_account_id"`
+	AccountName       pgtype.Text        `json:"account_name"`
+	AccountAvatarUrl  pgtype.Text        `json:"account_avatar_url"`
+	Metadata          []byte             `json:"metadata"`
+	Scope             []string           `json:"scope"`
+	ConnectionType    string             `json:"connection_type"`
+	ConnectSessionID  pgtype.Text        `json:"connect_session_id"`
+	ExternalUserID    pgtype.Text        `json:"external_user_id"`
+	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
+	ID                string             `json:"id"`
+}
+
+func (q *Queries) RefreshConnectedSocialAccount(ctx context.Context, arg RefreshConnectedSocialAccountParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, refreshConnectedSocialAccount,
+		arg.AccessToken,
+		arg.RefreshToken,
+		arg.TokenExpiresAt,
+		arg.ExternalAccountID,
+		arg.AccountName,
+		arg.AccountAvatarUrl,
+		arg.Metadata,
+		arg.Scope,
+		arg.ConnectionType,
+		arg.ConnectSessionID,
+		arg.ExternalUserID,
+		arg.ExternalUserEmail,
+		arg.ID,
+	)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+	)
+	return i, err
+}
+
 const updateManagedBlueskyAccount = `-- name: UpdateManagedBlueskyAccount :one
 UPDATE social_accounts
 SET access_token       = $2,
@@ -995,201 +1190,6 @@ func (q *Queries) UpdateSocialAccountTokens(ctx context.Context, arg UpdateSocia
 		arg.TokenExpiresAt,
 	)
 	return err
-}
-
-const findActiveManagedSocialAccountByExternalAccount = `-- name: FindActiveManagedSocialAccountByExternalAccount :one
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
-FROM social_accounts
-WHERE profile_id = $1
-  AND platform = $2
-  AND external_account_id = $3
-  AND connection_type = 'managed'
-  AND disconnected_at IS NULL
-LIMIT 1
-`
-
-type FindActiveManagedSocialAccountByExternalAccountParams struct {
-	ProfileID         string `json:"profile_id"`
-	Platform          string `json:"platform"`
-	ExternalAccountID string `json:"external_account_id"`
-}
-
-func (q *Queries) FindActiveManagedSocialAccountByExternalAccount(ctx context.Context, arg FindActiveManagedSocialAccountByExternalAccountParams) (SocialAccount, error) {
-	row := q.db.QueryRow(ctx, findActiveManagedSocialAccountByExternalAccount, arg.ProfileID, arg.Platform, arg.ExternalAccountID)
-	var i SocialAccount
-	err := row.Scan(
-		&i.ID,
-		&i.ProfileID,
-		&i.Platform,
-		&i.AccessToken,
-		&i.RefreshToken,
-		&i.TokenExpiresAt,
-		&i.ExternalAccountID,
-		&i.AccountName,
-		&i.AccountAvatarUrl,
-		&i.ConnectedAt,
-		&i.DisconnectedAt,
-		&i.Metadata,
-		&i.Scope,
-		&i.Status,
-		&i.ConnectionType,
-		&i.ConnectSessionID,
-		&i.ExternalUserID,
-		&i.ExternalUserEmail,
-		&i.LastRefreshedAt,
-	)
-	return i, err
-}
-
-const createManagedSocialAccount = `-- name: CreateManagedSocialAccount :one
-INSERT INTO social_accounts (
-  profile_id, platform, access_token, refresh_token, token_expires_at,
-  external_account_id, account_name, account_avatar_url, metadata, scope,
-  connection_type, connect_session_id, external_user_id, external_user_email,
-  status, last_refreshed_at
-)
-VALUES (
-  $1, $2, $3, $4, $5,
-  $6, $7, $8, $9, $10,
-  'managed', $11, $12, $13,
-  'active', NOW()
-)
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
-`
-
-type CreateManagedSocialAccountParams struct {
-	ProfileID         string             `json:"profile_id"`
-	Platform          string             `json:"platform"`
-	AccessToken       string             `json:"access_token"`
-	RefreshToken      pgtype.Text        `json:"refresh_token"`
-	TokenExpiresAt    pgtype.Timestamptz `json:"token_expires_at"`
-	ExternalAccountID string             `json:"external_account_id"`
-	AccountName       pgtype.Text        `json:"account_name"`
-	AccountAvatarUrl  pgtype.Text        `json:"account_avatar_url"`
-	Metadata          []byte             `json:"metadata"`
-	Scope             []string           `json:"scope"`
-	ConnectSessionID  pgtype.Text        `json:"connect_session_id"`
-	ExternalUserID    pgtype.Text        `json:"external_user_id"`
-	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
-}
-
-func (q *Queries) CreateManagedSocialAccount(ctx context.Context, arg CreateManagedSocialAccountParams) (SocialAccount, error) {
-	row := q.db.QueryRow(ctx, createManagedSocialAccount,
-		arg.ProfileID,
-		arg.Platform,
-		arg.AccessToken,
-		arg.RefreshToken,
-		arg.TokenExpiresAt,
-		arg.ExternalAccountID,
-		arg.AccountName,
-		arg.AccountAvatarUrl,
-		arg.Metadata,
-		arg.Scope,
-		arg.ConnectSessionID,
-		arg.ExternalUserID,
-		arg.ExternalUserEmail,
-	)
-	var i SocialAccount
-	err := row.Scan(
-		&i.ID,
-		&i.ProfileID,
-		&i.Platform,
-		&i.AccessToken,
-		&i.RefreshToken,
-		&i.TokenExpiresAt,
-		&i.ExternalAccountID,
-		&i.AccountName,
-		&i.AccountAvatarUrl,
-		&i.ConnectedAt,
-		&i.DisconnectedAt,
-		&i.Metadata,
-		&i.Scope,
-		&i.Status,
-		&i.ConnectionType,
-		&i.ConnectSessionID,
-		&i.ExternalUserID,
-		&i.ExternalUserEmail,
-		&i.LastRefreshedAt,
-	)
-	return i, err
-}
-
-const refreshConnectedSocialAccount = `-- name: RefreshConnectedSocialAccount :one
-UPDATE social_accounts
-SET access_token        = $2,
-    refresh_token       = $3,
-    token_expires_at    = $4,
-    external_account_id = $5,
-    account_name        = $6,
-    account_avatar_url  = $7,
-    metadata            = COALESCE($8, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
-    scope               = $9,
-    connection_type     = $10,
-    connect_session_id  = $11,
-    external_user_id    = $12,
-    external_user_email = $13,
-    status              = 'active',
-    disconnected_at     = NULL,
-    last_refreshed_at   = NOW()
-WHERE id = $1
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
-`
-
-type RefreshConnectedSocialAccountParams struct {
-	ID                string             `json:"id"`
-	AccessToken       string             `json:"access_token"`
-	RefreshToken      pgtype.Text        `json:"refresh_token"`
-	TokenExpiresAt    pgtype.Timestamptz `json:"token_expires_at"`
-	ExternalAccountID string             `json:"external_account_id"`
-	AccountName       pgtype.Text        `json:"account_name"`
-	AccountAvatarUrl  pgtype.Text        `json:"account_avatar_url"`
-	Metadata          []byte             `json:"metadata"`
-	Scope             []string           `json:"scope"`
-	ConnectionType    string             `json:"connection_type"`
-	ConnectSessionID  pgtype.Text        `json:"connect_session_id"`
-	ExternalUserID    pgtype.Text        `json:"external_user_id"`
-	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
-}
-
-func (q *Queries) RefreshConnectedSocialAccount(ctx context.Context, arg RefreshConnectedSocialAccountParams) (SocialAccount, error) {
-	row := q.db.QueryRow(ctx, refreshConnectedSocialAccount,
-		arg.ID,
-		arg.AccessToken,
-		arg.RefreshToken,
-		arg.TokenExpiresAt,
-		arg.ExternalAccountID,
-		arg.AccountName,
-		arg.AccountAvatarUrl,
-		arg.Metadata,
-		arg.Scope,
-		arg.ConnectionType,
-		arg.ConnectSessionID,
-		arg.ExternalUserID,
-		arg.ExternalUserEmail,
-	)
-	var i SocialAccount
-	err := row.Scan(
-		&i.ID,
-		&i.ProfileID,
-		&i.Platform,
-		&i.AccessToken,
-		&i.RefreshToken,
-		&i.TokenExpiresAt,
-		&i.ExternalAccountID,
-		&i.AccountName,
-		&i.AccountAvatarUrl,
-		&i.ConnectedAt,
-		&i.DisconnectedAt,
-		&i.Metadata,
-		&i.Scope,
-		&i.Status,
-		&i.ConnectionType,
-		&i.ConnectSessionID,
-		&i.ExternalUserID,
-		&i.ExternalUserEmail,
-		&i.LastRefreshedAt,
-	)
-	return i, err
 }
 
 const upsertManagedSocialAccount = `-- name: UpsertManagedSocialAccount :one

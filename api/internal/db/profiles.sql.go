@@ -28,7 +28,7 @@ func (q *Queries) CountProfilesByWorkspace(ctx context.Context, workspaceID stri
 const createProfile = `-- name: CreateProfile :one
 INSERT INTO profiles (workspace_id, name)
 VALUES ($1, $2)
-RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, branding_hide_powered_by, workspace_id
+RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by
 `
 
 type CreateProfileParams struct {
@@ -47,8 +47,8 @@ func (q *Queries) CreateProfile(ctx context.Context, arg CreateProfileParams) (P
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
-		&i.BrandingHidePoweredBy,
 		&i.WorkspaceID,
+		&i.BrandingHidePoweredBy,
 	)
 	return i, err
 }
@@ -63,7 +63,7 @@ func (q *Queries) DeleteProfile(ctx context.Context, id string) error {
 }
 
 const getProfile = `-- name: GetProfile :one
-SELECT id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, branding_hide_powered_by, workspace_id FROM profiles WHERE id = $1
+SELECT id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by FROM profiles WHERE id = $1
 `
 
 func (q *Queries) GetProfile(ctx context.Context, id string) (Profile, error) {
@@ -77,14 +77,14 @@ func (q *Queries) GetProfile(ctx context.Context, id string) (Profile, error) {
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
-		&i.BrandingHidePoweredBy,
 		&i.WorkspaceID,
+		&i.BrandingHidePoweredBy,
 	)
 	return i, err
 }
 
 const getProfileByIDAndWorkspaceOwner = `-- name: GetProfileByIDAndWorkspaceOwner :one
-SELECT p.id, p.name, p.created_at, p.updated_at, p.branding_logo_url, p.branding_display_name, p.branding_primary_color, p.branding_hide_powered_by, p.workspace_id FROM profiles p
+SELECT p.id, p.name, p.created_at, p.updated_at, p.branding_logo_url, p.branding_display_name, p.branding_primary_color, p.workspace_id, p.branding_hide_powered_by FROM profiles p
 JOIN workspaces w ON w.id = p.workspace_id
 WHERE p.id = $1 AND w.user_id = $2
 `
@@ -107,14 +107,14 @@ func (q *Queries) GetProfileByIDAndWorkspaceOwner(ctx context.Context, arg GetPr
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
-		&i.BrandingHidePoweredBy,
 		&i.WorkspaceID,
+		&i.BrandingHidePoweredBy,
 	)
 	return i, err
 }
 
 const listProfilesByWorkspace = `-- name: ListProfilesByWorkspace :many
-SELECT id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, branding_hide_powered_by, workspace_id FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC
+SELECT id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListProfilesByWorkspace(ctx context.Context, workspaceID string) ([]Profile, error) {
@@ -134,8 +134,8 @@ func (q *Queries) ListProfilesByWorkspace(ctx context.Context, workspaceID strin
 			&i.BrandingLogoUrl,
 			&i.BrandingDisplayName,
 			&i.BrandingPrimaryColor,
-			&i.BrandingHidePoweredBy,
 			&i.WorkspaceID,
+			&i.BrandingHidePoweredBy,
 		); err != nil {
 			return nil, err
 		}
@@ -150,7 +150,7 @@ func (q *Queries) ListProfilesByWorkspace(ctx context.Context, workspaceID strin
 const updateProfile = `-- name: UpdateProfile :one
 UPDATE profiles SET name = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, branding_hide_powered_by, workspace_id
+RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by
 `
 
 type UpdateProfileParams struct {
@@ -169,8 +169,8 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (P
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
-		&i.BrandingHidePoweredBy,
 		&i.WorkspaceID,
+		&i.BrandingHidePoweredBy,
 	)
 	return i, err
 }
@@ -183,14 +183,14 @@ SET branding_logo_url      = COALESCE($2::TEXT,      branding_logo_url),
     branding_hide_powered_by = COALESCE($5::BOOLEAN, branding_hide_powered_by),
     updated_at             = NOW()
 WHERE id = $1
-RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, branding_hide_powered_by, workspace_id
+RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by
 `
 
 type UpdateProfileBrandingParams struct {
-	ID           string      `json:"id"`
-	LogoUrl      pgtype.Text `json:"logo_url"`
-	DisplayName  pgtype.Text `json:"display_name"`
-	PrimaryColor pgtype.Text `json:"primary_color"`
+	ID            string      `json:"id"`
+	LogoUrl       pgtype.Text `json:"logo_url"`
+	DisplayName   pgtype.Text `json:"display_name"`
+	PrimaryColor  pgtype.Text `json:"primary_color"`
 	HidePoweredBy pgtype.Bool `json:"hide_powered_by"`
 }
 
@@ -211,8 +211,8 @@ func (q *Queries) UpdateProfileBranding(ctx context.Context, arg UpdateProfileBr
 		&i.BrandingLogoUrl,
 		&i.BrandingDisplayName,
 		&i.BrandingPrimaryColor,
-		&i.BrandingHidePoweredBy,
 		&i.WorkspaceID,
+		&i.BrandingHidePoweredBy,
 	)
 	return i, err
 }
