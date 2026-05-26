@@ -109,6 +109,22 @@ video.list
 
 It also controls the dashboard TikTok platform analytics surface under `Analytics -> Platforms -> TikTok` and the backend endpoints that fetch TikTok profile, account metrics, and public video inventory. Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
 
+Create this flag in Unleash:
+
+```text
+app_review.autopilot_v1
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: White-label / App Review Autopilot. This flag controls the App Review Autopilot beta, including white-label review readiness, review kit/job APIs, signed review sessions, customer-domain review app surfaces, and review-agent recording orchestration. Production should stay off until the TikTok Content Posting API review workflow, customer-domain DNS/TLS readiness flow, and local review-agent recording flow have been validated end to end. The emergency rollback is to disable `app_review.autopilot_v1` in the production environment, which hides dashboard entry points and blocks backend review-autopilot APIs while preserving stored review data for support/debugging.
+
 Hosted Connect Sessions are enabled directly in development and production. They are not gated by Unleash; platform readiness is handled by configured OAuth credentials, provider approval, and normal upstream failure handling.
 
 Create this flag in Unleash:
