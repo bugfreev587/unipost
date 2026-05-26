@@ -60,6 +60,9 @@ export default clerkMiddleware(async (auth, request) => {
     // `session=<id>&state=<oauth_state>` pair in the URL (verified
     // server-side against /v1/public/connect/sessions).
     pathname.startsWith("/connect") ||
+    // Customer-domain app review recording surface. The local review
+    // agent authenticates it with a short-lived review-session cookie.
+    pathname === "/tiktok/posting" ||
     pathname.endsWith("-api"); // platform landing pages: /twitter-api, /instagram-api, etc.
   if (isPublicPage) {
     return withCountryCookie(NextResponse.next(), request);
