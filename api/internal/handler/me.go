@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkuser "github.com/clerk/clerk-sdk-go/v2/user"
@@ -23,6 +24,7 @@ type MeHandler struct {
 	queries           *db.Queries
 	adminChecker      *auth.AdminChecker
 	superAdminChecker *auth.SuperAdminChecker
+	loopsSyncer       loopsLifecycleSyncer
 }
 
 func NewMeHandler(queries *db.Queries, adminChecker *auth.AdminChecker, superAdminChecker *auth.SuperAdminChecker) *MeHandler {
@@ -483,11 +485,17 @@ func (h *MeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	accountCanceledEvent, notifyLoops := h.prepareLoopsAccountCanceled(r.Context(), userID, time.Now())
+
 	clerk.SetKey(os.Getenv("CLERK_SECRET_KEY"))
 	if _, err := clerkuser.Delete(r.Context(), userID); err != nil {
 		slog.Error("delete account: clerk delete failed", "user_id", userID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete account: "+err.Error())
 		return
+	}
+
+	if notifyLoops {
+		h.sendLoopsAccountCanceled(r.Context(), accountCanceledEvent)
 	}
 
 	slog.Info("delete account: clerk user deleted", "user_id", userID)

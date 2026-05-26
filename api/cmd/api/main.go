@@ -324,7 +324,9 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher)
-	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger)
+	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
+		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
+		SetLoopsSyncer(loopsSyncer)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
@@ -395,7 +397,7 @@ func main() {
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
-	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, mailer, os.Getenv("APP_BASE_URL"))
+	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, mailer, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
 	// dynamic GROUP BY clause sqlc can't model.
@@ -406,7 +408,7 @@ func main() {
 	apiMetricsRecorder := metrics.NewRecorder(queries)
 	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
-	meHandler := handler.NewMeHandler(queries, adminChecker, superAdminChecker)
+	meHandler := handler.NewMeHandler(queries, adminChecker, superAdminChecker).SetLoopsSyncer(loopsSyncer)
 	aiPostAssistHandler := handler.NewAIPostAssistHandler(queries, superAdminChecker)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
