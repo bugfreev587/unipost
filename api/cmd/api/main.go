@@ -457,7 +457,12 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
-	reviewHandler := handler.NewReviewHandler(queries).WithAPIBaseURL(apiBaseURL).WithArtifactStorage(storageClient).WithEncryptor(encryptor).WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL"))
+	reviewHandler := handler.NewReviewHandler(queries).
+		WithAPIBaseURL(apiBaseURL).
+		WithReviewCnameTarget(os.Getenv("APP_REVIEW_CNAME_TARGET")).
+		WithArtifactStorage(storageClient).
+		WithEncryptor(encryptor).
+		WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL"))
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
 
 	// Public routes

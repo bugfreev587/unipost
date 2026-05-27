@@ -48,6 +48,34 @@ func TestReviewCreateDomainReturnsDNSRecords(t *testing.T) {
 	}
 }
 
+func TestReviewCreateDomainUsesConfiguredCnameTarget(t *testing.T) {
+	store := &reviewStoreFake{}
+	h := NewReviewHandler(store).
+		WithTokenGenerator(fixedReviewTokenGenerator).
+		WithReviewCnameTarget("Dev.UniPost.Dev.")
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/domains", strings.NewReader(`{"domain":"review.example.com","provider":"manual"}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.CreateDomain(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewDomainResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.CnameTarget != "dev.unipost.dev" {
+		t.Fatalf("cname target = %q", env.Data.CnameTarget)
+	}
+	if store.createdDomain.CnameTarget != "dev.unipost.dev" {
+		t.Fatalf("stored cname target = %q", store.createdDomain.CnameTarget)
+	}
+}
+
 func TestReviewVerifyDomainMarksReadyWhenDNSMatches(t *testing.T) {
 	store := &reviewStoreFake{
 		domain: db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "dns_pending", VerificationToken: "unipost-review=hash", CnameTarget: "review.unipost.dev", TlsStatus: "pending"},

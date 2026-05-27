@@ -31,7 +31,7 @@ import (
 
 const (
 	reviewAgentVersion        = "0.1.0"
-	reviewCnameTarget         = "review.unipost.dev"
+	reviewDefaultCnameTarget  = "review.unipost.dev"
 	reviewSessionCookieName   = "__unipost_review_session"
 	reviewTokenTTL            = 30 * time.Minute
 	reviewDefaultUseCase      = "content_posting"
@@ -78,6 +78,7 @@ type ReviewHandler struct {
 	now             func() time.Time
 	tokenGenerator  reviewTokenGenerator
 	domainChecker   reviewDomainChecker
+	cnameTarget     string
 	apiBaseURL      string
 	artifactStorage reviewArtifactStorage
 	encryptor       *appcrypto.AESEncryptor
@@ -221,6 +222,7 @@ func NewReviewHandler(store reviewStore) *ReviewHandler {
 		now:            time.Now,
 		tokenGenerator: defaultReviewTokenGenerator,
 		domainChecker:  defaultReviewDomainChecker,
+		cnameTarget:    reviewDefaultCnameTarget,
 		apiBaseURL:     "https://api.unipost.dev",
 		testVideoURL:   reviewDefaultTestVideoURL,
 	}
@@ -250,6 +252,13 @@ func (h *ReviewHandler) WithDomainChecker(fn reviewDomainChecker) *ReviewHandler
 func (h *ReviewHandler) WithAPIBaseURL(value string) *ReviewHandler {
 	if strings.TrimSpace(value) != "" {
 		h.apiBaseURL = strings.TrimRight(strings.TrimSpace(value), "/")
+	}
+	return h
+}
+
+func (h *ReviewHandler) WithReviewCnameTarget(value string) *ReviewHandler {
+	if strings.TrimSpace(value) != "" {
+		h.cnameTarget = strings.Trim(strings.ToLower(strings.TrimSpace(value)), ".")
 	}
 	return h
 }
@@ -308,7 +317,7 @@ func (h *ReviewHandler) CreateDomain(w http.ResponseWriter, r *http.Request) {
 		Provider:          pgtype.Text{String: strings.TrimSpace(req.Provider), Valid: strings.TrimSpace(req.Provider) != ""},
 		Status:            reviewDomainStatusPending,
 		VerificationToken: verificationToken,
-		CnameTarget:       reviewCnameTarget,
+		CnameTarget:       h.cnameTarget,
 		TlsStatus:         "pending",
 	})
 	if err != nil {
