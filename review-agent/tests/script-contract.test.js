@@ -59,6 +59,19 @@ test("requires native capture when script asks to show the browser address bar",
   assert.equal(script.recording.capture_mode, "native-browser-window");
 });
 
+test("validates recording split constraints for TikTok artifact uploads", () => {
+  const script = validateScript({
+    ...validScript,
+    recording: { max_artifact_bytes: 50_000_000, split_automatically: true },
+  });
+  assert.equal(script.recording.max_artifact_bytes, 50_000_000);
+
+  assert.throws(() => validateScript({
+    ...validScript,
+    recording: { max_artifact_bytes: -1, split_automatically: true },
+  }), /recording\.max_artifact_bytes/);
+});
+
 test("validates optional segment metadata", () => {
   const script = validateScript({
     ...validScript,

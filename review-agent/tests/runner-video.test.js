@@ -84,6 +84,69 @@ test("runScript reports segment lifecycle events from script metadata", async ()
   assert.equal(events.some((event) => event.eventType === "segment_completed" && event.metadata.key === "posting_part_1"), true);
 });
 
+test("runScript post-processes completed segments into uploadable 50MB video files", async () => {
+  const uploaded = [];
+  let postProcessInput;
+  let completedArtifacts;
+  const script = {
+    job_id: "rvjob_segment_postprocess",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    recording: {
+      window_width: 1920,
+      window_height: 1080,
+      show_address_bar: true,
+      capture_mode: "native-browser-window",
+      max_artifact_bytes: 50_000_000,
+      split_automatically: true,
+    },
+    segments: [
+      { key: "posting_part_1", title: "Posting Part 1", filename: "posting-part-1.mp4", scopes: ["user.info.basic", "video.upload"] },
+      { key: "posting_part_2", title: "Posting Part 2", filename: "posting-part-2.mp4", scopes: ["video.publish"] },
+    ],
+    steps: [
+      { id: "segment_posting_part_1", action: "emit_marker", marker: "Posting Part 1" },
+      { id: "segment_posting_part_2", action: "emit_marker", marker: "Posting Part 2" },
+    ],
+  };
+  const page = { video: () => ({ path: async () => assert.fail("native capture should provide the source video") }) };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async () => {},
+    uploadArtifact: async (artifact) => {
+      uploaded.push(artifact);
+      if (artifact.artifactType === "execution_evidence") return "review-artifacts/ws_1/rvjob_segment_postprocess/execution-evidence.json";
+      return `review-artifacts/ws_1/rvjob_segment_postprocess/demo-video-${artifact.segmentKey}.mp4`;
+    },
+    complete: async (artifacts) => { completedArtifacts = artifacts; },
+    fail: async () => assert.fail("runScript should complete"),
+  };
+  const nativeCaptureImpl = async () => ({
+    mode: "macos-screencapture-region",
+    localPath: "/tmp/unipost-review-videos/rvjob-full.mov",
+    includesAddressBar: true,
+    bounds: { left: 0, top: 0, width: 1920, height: 1080 },
+    stop: async () => {},
+  });
+  const videoPostProcessImpl = async (input) => {
+    postProcessInput = input;
+    return [
+      { segment_key: "posting_part_1", local_path: "/tmp/unipost-review-videos/posting-part-1.mp4", scopes: ["user.info.basic", "video.upload"], duration_sec: 35, size_bytes: 38_000_000 },
+      { segment_key: "posting_part_2", local_path: "/tmp/unipost-review-videos/posting-part-2.mp4", scopes: ["video.publish"], duration_sec: 33, size_bytes: 37_000_000 },
+    ];
+  };
+
+  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, nativeCaptureImpl, videoPostProcessImpl, out: { write() {} } });
+
+  assert.equal(postProcessInput.sourceVideo.local_path, "/tmp/unipost-review-videos/rvjob-full.mov");
+  assert.equal(postProcessInput.maxBytes, 50_000_000);
+  assert.equal(postProcessInput.segmentEvents.some((event) => event.key === "posting_part_1" && event.completed_elapsed_ms !== undefined), true);
+  assert.deepEqual(uploaded.filter((artifact) => artifact.artifactType === "demo_video").map((artifact) => artifact.segmentKey), ["posting_part_1", "posting_part_2"]);
+  assert.equal(completedArtifacts.video_segments[0].file_id, "review-artifacts/ws_1/rvjob_segment_postprocess/demo-video-posting_part_1.mp4");
+});
+
 
 test("runScript uses the recording context and reports the finalized video artifact", async () => {
   let contextOptions;

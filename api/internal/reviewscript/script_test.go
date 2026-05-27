@@ -128,6 +128,9 @@ func TestBuildTikTokScriptFromPlanIncludesPostingSegments(t *testing.T) {
 	if script.Recording.WindowWidth != 1920 || script.Recording.WindowHeight != 1080 {
 		t.Fatalf("expected 1080p window, got %+v", script.Recording)
 	}
+	if script.Recording.MaxArtifactBytes != 50000000 || !script.Recording.SplitAutomatically {
+		t.Fatalf("expected TikTok artifact split constraints, got %+v", script.Recording)
+	}
 	if script.Segments[0].Key != "posting_part_1" || !containsString(script.Segments[0].Scopes, "video.upload") {
 		t.Fatalf("missing segment metadata: %+v", script.Segments)
 	}

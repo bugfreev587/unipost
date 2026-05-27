@@ -63,10 +63,12 @@ type SessionSpec struct {
 }
 
 type RecordingSpec struct {
-	WindowWidth    int    `json:"window_width"`
-	WindowHeight   int    `json:"window_height"`
-	CaptureMode    string `json:"capture_mode"`
-	ShowAddressBar bool   `json:"show_address_bar"`
+	WindowWidth        int    `json:"window_width"`
+	WindowHeight       int    `json:"window_height"`
+	CaptureMode        string `json:"capture_mode"`
+	ShowAddressBar     bool   `json:"show_address_bar"`
+	MaxArtifactBytes   int64  `json:"max_artifact_bytes,omitempty"`
+	SplitAutomatically bool   `json:"split_automatically,omitempty"`
 }
 
 type Step struct {
@@ -165,14 +167,30 @@ func BuildTikTokScriptFromPlan(input BuildTikTokScriptInput) Script {
 			ExpiresAt: input.SessionExpiresAt,
 		},
 		Recording: RecordingSpec{
-			WindowWidth:    width,
-			WindowHeight:   height,
-			CaptureMode:    captureMode(input.RequireAddressBar),
-			ShowAddressBar: input.RequireAddressBar,
+			WindowWidth:        width,
+			WindowHeight:       height,
+			CaptureMode:        captureMode(input.RequireAddressBar),
+			ShowAddressBar:     input.RequireAddressBar,
+			MaxArtifactBytes:   maxArtifactBytes(input.Plan),
+			SplitAutomatically: splitAutomatically(input.Plan),
 		},
 		Segments: segmentSpecs(input.Plan),
 		Steps:    buildTikTokSteps(startURL, useCase, input.Plan),
 	}
+}
+
+func maxArtifactBytes(plan *reviewtemplate.TikTokDemoPlan) int64 {
+	if plan == nil || plan.Recording.MaxFileSizeMB <= 0 {
+		return 0
+	}
+	return int64(plan.Recording.MaxFileSizeMB) * 1000 * 1000
+}
+
+func splitAutomatically(plan *reviewtemplate.TikTokDemoPlan) bool {
+	if plan == nil {
+		return false
+	}
+	return plan.Recording.SplitAutomatically
 }
 
 func requestedScopes(plan *reviewtemplate.TikTokDemoPlan) []string {

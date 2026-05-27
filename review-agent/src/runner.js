@@ -3,10 +3,11 @@ import path from "node:path";
 import { startNativeBrowserCapture } from "./native-capture.js";
 import { validateScript } from "./script-contract.js";
 import { buildReviewSessionCookie } from "./session-cookie.js";
+import { processReviewVideoSegments } from "./video-postprocess.js";
 
 const PAGE_VIDEO_ARTIFACT_NOTE = "Fallback artifact captures the page viewport only. It does not satisfy address-bar evidence requirements.";
 
-export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture } = {}) {
+export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture, videoPostProcessImpl = processReviewVideoSegments } = {}) {
   const valid = validateScript(script);
   if (dryRun) {
     out.write(`Review script ${valid.job_id} (${valid.steps.length} steps)\n`);
@@ -75,6 +76,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     await context.close();
     contextClosed = true;
     const artifacts = await buildCompletionArtifacts({ markers, segments: valid.segments || [], segmentEvents, video, nativeVideo });
+    await maybePostProcessVideoSegments({ script: valid, artifacts, segmentEvents, videoPostProcessImpl, out });
     const videoFileID = await uploadVideoArtifacts(reporter, artifacts, out);
     const evidenceFileID = await uploadExecutionEvidenceArtifact(reporter, valid.job_id, artifacts, out);
     if (evidenceFileID) artifacts.execution_evidence = { file_id: evidenceFileID };
@@ -153,6 +155,31 @@ export async function buildCompletionArtifacts({ markers = [], segments = [], se
     note: PAGE_VIDEO_ARTIFACT_NOTE,
   };
   return artifacts;
+}
+
+async function maybePostProcessVideoSegments({ script, artifacts, segmentEvents, videoPostProcessImpl, out }) {
+  if (!videoPostProcessImpl || !artifacts?.video?.local_path || !script?.recording?.split_automatically) return;
+  if (!Array.isArray(script.segments) || script.segments.length === 0) return;
+  const videoSegments = await videoPostProcessImpl({
+    sourceVideo: artifacts.video,
+    segments: script.segments,
+    segmentEvents,
+    maxBytes: recordingMaxArtifactBytes(script.recording),
+    out,
+  });
+  if (Array.isArray(videoSegments) && videoSegments.length > 0) {
+    artifacts.video_segments = videoSegments.map((segment) => ({
+      ...segment,
+      segment_key: segment.segment_key || segment.key || "",
+      format: segment.format || videoFormat(segment.local_path || ""),
+    }));
+  }
+}
+
+function recordingMaxArtifactBytes(recording = {}) {
+  const configured = Number(recording.max_artifact_bytes || 0);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  return 50_000_000;
 }
 
 function defaultVideoDir() {

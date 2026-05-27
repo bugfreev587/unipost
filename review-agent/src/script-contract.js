@@ -84,6 +84,12 @@ function validateRecording(recording) {
   if (recording.show_address_bar && recording.capture_mode === "playwright-page-video") {
     throw new Error("recording.show_address_bar requires native-browser-window capture");
   }
+  if (recording.max_artifact_bytes !== undefined && (!Number.isFinite(recording.max_artifact_bytes) || recording.max_artifact_bytes <= 0)) {
+    throw new Error("recording.max_artifact_bytes must be a positive number");
+  }
+  if (recording.split_automatically !== undefined && typeof recording.split_automatically !== "boolean") {
+    throw new Error("recording.split_automatically must be a boolean");
+  }
 }
 
 function isNonEmptyString(value) {
