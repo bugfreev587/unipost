@@ -26,6 +26,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/reviewscript"
+	"github.com/xiaoboyu/unipost-api/internal/reviewtemplate"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
@@ -34,7 +35,6 @@ const (
 	reviewDefaultCnameTarget  = "review.unipost.dev"
 	reviewSessionCookieName   = "__unipost_review_session"
 	reviewTokenTTL            = 30 * time.Minute
-	reviewDefaultUseCase      = "content_posting"
 	reviewDefaultPlatform     = "tiktok"
 	reviewDomainStatusReady   = "ready"
 	reviewJobStatusQueued     = "queued"
@@ -44,8 +44,6 @@ const (
 	reviewDefaultTestVideoURL = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
 	reviewDefaultCaption      = "UniPost app review test video"
 )
-
-var requiredTikTokReviewScopes = []string{"user.info.basic", "video.publish", "video.upload"}
 
 const (
 	reviewArtifactUploadTTL   = 15 * time.Minute
@@ -434,6 +432,32 @@ func (h *ReviewHandler) VerifyDomain(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, reviewDomainFromDB(updated))
 }
 
+func (h *ReviewHandler) GetTikTokScopeTemplates(w http.ResponseWriter, r *http.Request) {
+	if _, ok := reviewWorkspaceID(w, r); !ok {
+		return
+	}
+	writeSuccess(w, reviewtemplate.ListTikTokScopeTemplates())
+}
+
+func (h *ReviewHandler) CreateTikTokDemoPlan(w http.ResponseWriter, r *http.Request) {
+	if _, ok := reviewWorkspaceID(w, r); !ok {
+		return
+	}
+	var req struct {
+		Scopes []string `json:"scopes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	plan, err := reviewtemplate.BuildTikTokDemoPlan(reviewtemplate.TikTokDemoPlanInput{Scopes: req.Scopes})
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	writeCreated(w, plan)
+}
+
 func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := reviewWorkspaceID(w, r)
 	if !ok {
@@ -458,19 +482,24 @@ func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
 	if platform == "" {
 		platform = reviewDefaultPlatform
 	}
-	if useCase == "" {
-		useCase = reviewDefaultUseCase
+	if platform != reviewDefaultPlatform {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Only TikTok review kits are supported")
+		return
 	}
-	if platform != reviewDefaultPlatform || useCase != reviewDefaultUseCase {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Only TikTok content_posting review kits are supported")
+	plan, err := reviewtemplate.BuildTikTokDemoPlan(reviewtemplate.TikTokDemoPlanInput{Scopes: req.RequiredScopes})
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	if useCase == "" {
+		useCase = plan.UseCase
+	}
+	if useCase != plan.UseCase {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "use_case must match the selected TikTok scopes")
 		return
 	}
 	if !req.RedirectURIAttested {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Confirm that the OAuth redirect URI has been added in the TikTok developer portal before recording")
-		return
-	}
-	if missing := missingTikTokScopes(req.RequiredScopes); len(missing) > 0 {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "TikTok review requires scopes: "+strings.Join(requiredTikTokReviewScopes, ", "))
 		return
 	}
 
@@ -496,6 +525,9 @@ func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
 	if brandSnapshot == nil {
 		brandSnapshot = map[string]any{}
 	}
+	brandSnapshot["scope_template_version"] = plan.TemplateVersion
+	brandSnapshot["oauth_reset_required"] = true
+	brandSnapshot["review_plan"] = plan
 	if profileID := strings.TrimSpace(req.ProfileID); profileID != "" {
 		profile, err := h.store.GetProfile(r.Context(), profileID)
 		if err != nil || profile.WorkspaceID != workspaceID {
@@ -515,7 +547,7 @@ func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
 		UseCase:        useCase,
 		ReviewDomainID: domain.ID,
 		BrandSnapshot:  brandJSON,
-		RequiredScopes: append([]string(nil), requiredTikTokReviewScopes...),
+		RequiredScopes: append([]string(nil), plan.RequestedScopes...),
 		Status:         reviewKitStatusReady,
 	})
 	if err != nil {
@@ -1472,7 +1504,7 @@ func selectReviewStateKit(kits []db.ReviewKit) *db.ReviewKit {
 	var fallback *db.ReviewKit
 	for i := range kits {
 		kit := &kits[i]
-		if kit.Platform != reviewDefaultPlatform || kit.UseCase != reviewDefaultUseCase {
+		if kit.Platform != reviewDefaultPlatform {
 			continue
 		}
 		if fallback == nil {
@@ -1600,20 +1632,6 @@ func isReviewDomainReady(domain db.ReviewDomain) bool {
 		return false
 	}
 	return domain.TlsStatus == "" || domain.TlsStatus == reviewTLSStatusIssued
-}
-
-func missingTikTokScopes(scopes []string) []string {
-	seen := map[string]bool{}
-	for _, scope := range scopes {
-		seen[strings.TrimSpace(scope)] = true
-	}
-	missing := []string{}
-	for _, scope := range requiredTikTokReviewScopes {
-		if !seen[scope] {
-			missing = append(missing, scope)
-		}
-	}
-	return missing
 }
 
 func writeNotFoundOrInternal(w http.ResponseWriter, err error, notFoundMessage string, internalMessage string) {

@@ -17,6 +17,7 @@ import (
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/reviewtemplate"
 )
 
 func TestReviewCreateDomainReturnsDNSRecords(t *testing.T) {
@@ -173,6 +174,92 @@ func TestReviewCreateKitRejectsMissingRedirectAttestation(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "redirect URI") {
 		t.Fatalf("expected redirect URI remediation, got %s", rec.Body.String())
+	}
+}
+
+func TestReviewTikTokScopeTemplatesReturnsSupportedScopes(t *testing.T) {
+	h := NewReviewHandler(&reviewStoreFake{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/tiktok/scope-templates", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.GetTikTokScopeTemplates(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data []reviewtemplate.TikTokScopeTemplate `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data) != 6 {
+		t.Fatalf("expected 6 templates, got %+v", env.Data)
+	}
+}
+
+func TestReviewTikTokDemoPlanReturnsOAuthPreludeAndSegments(t *testing.T) {
+	h := NewReviewHandler(&reviewStoreFake{})
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/tiktok/demo-plan", strings.NewReader(`{
+		"scopes":["user.info.basic","video.upload","video.publish"]
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.CreateTikTokDemoPlan(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewtemplate.TikTokDemoPlan `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.Platform != "tiktok" || !env.Data.OAuthPrelude.Required || len(env.Data.Segments) != 3 {
+		t.Fatalf("unexpected plan: %+v", env.Data)
+	}
+}
+
+func TestReviewCreateKitAcceptsAnalyticsScopesAndStoresGeneratedPlan(t *testing.T) {
+	store := &reviewStoreFake{
+		domain:             db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready"},
+		platformCredential: db.PlatformCredential{WorkspaceID: "ws_1", Platform: "tiktok"},
+	}
+	h := NewReviewHandler(store)
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/kits", strings.NewReader(`{
+		"platform":"tiktok",
+		"use_case":"analytics",
+		"review_domain_id":"rvdom_1",
+		"redirect_uri_attested":true,
+		"brand_snapshot":{"display_name":"Acme"},
+		"required_scopes":["user.info.profile","user.info.stats"]
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.CreateKit(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.createdKit.UseCase != "analytics" {
+		t.Fatalf("use case = %q", store.createdKit.UseCase)
+	}
+	if strings.Join(store.createdKit.RequiredScopes, ",") != "user.info.profile,user.info.stats" {
+		t.Fatalf("stored scopes = %+v", store.createdKit.RequiredScopes)
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(store.createdKit.BrandSnapshot, &snapshot); err != nil {
+		t.Fatalf("brand snapshot json: %v", err)
+	}
+	if snapshot["scope_template_version"] != reviewtemplate.TikTokTemplateVersion {
+		t.Fatalf("missing template version: %+v", snapshot)
+	}
+	if snapshot["review_plan"] == nil || snapshot["oauth_reset_required"] != true {
+		t.Fatalf("missing review plan metadata: %+v", snapshot)
 	}
 }
 
