@@ -307,6 +307,7 @@ func stepsForSegment(segment string, startURL string, includeVideoList bool) []S
 			{ID: "assert_preview", Action: ActionAssertVisible, Selector: "[data-review-step='post-preview']", Marker: "5. Preview And Publish"},
 			{ID: "publish", Action: ActionClick, Selector: "[data-review-step='publish-tiktok']", Marker: "Publish test video"},
 			{ID: "assert_result", Action: ActionAssertVisible, Selector: "[data-review-step='publish-result']", Marker: "Show publish result"},
+			{ID: "assert_post_verification", Action: ActionAssertVisible, Selector: "[data-review-step='post-verification']", Marker: "Show UniPost publish record"},
 		}
 	case "analytics_part_1":
 		return []Step{

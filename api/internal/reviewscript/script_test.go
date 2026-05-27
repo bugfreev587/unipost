@@ -128,6 +128,7 @@ func TestBuildTikTokScriptFromPlanIncludesPostingSegments(t *testing.T) {
 	assertStepDetails(t, script, "open_branded_content_policy", ActionOpenLink, "[data-review-step='branded-content-policy-link']", "bc-policy")
 	assertStep(t, script, "publish")
 	assertStep(t, script, "assert_result")
+	assertStep(t, script, "assert_post_verification")
 	if script.Recording.WindowWidth != 1920 || script.Recording.WindowHeight != 1080 {
 		t.Fatalf("expected 1080p window, got %+v", script.Recording)
 	}

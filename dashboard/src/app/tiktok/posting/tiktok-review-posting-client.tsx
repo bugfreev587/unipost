@@ -466,12 +466,38 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
         </section>
       </section>
 
-      <section className="result-band" data-review-step="publish-result">
+      <section className="result-band" data-review-step={published ? "publish-result" : "publish-result-pending"}>
         <div>
           <h2>{published ? "Publish Complete" : "Ready For Publish"}</h2>
           <p>{publishResult ? `TikTok accepted the ${publishResult.privacy_level} review post with status ${publishResult.status}.` : "The recording will show video selection, creator_info controls, policy confirmation, and the live publish result."}</p>
         </div>
         <div className={published ? "result-ok" : "result-pending"}>{publishResult ? `id: ${publishResult.external_id || "processing"}` : `expires: ${expires}`}</div>
+      </section>
+
+      <section className="verification-band" data-review-step={published ? "post-verification" : "post-verification-pending"}>
+        <div className="verification-copy">
+          <h2>UniPost Publish Record</h2>
+          <p>
+            {publishResult
+              ? "The reviewer can see the stored Direct Post response, review-safe visibility, source video, and TikTok result reference."
+              : "After publish, this area becomes the final verification record for the recorded demo."}
+          </p>
+        </div>
+        <div className="verification-grid">
+          <VerificationItem label="Status" value={publishResult?.status || "Waiting"} />
+          <VerificationItem label="TikTok publish id" value={publishResult?.external_id || "Pending"} mono />
+          <VerificationItem label="Visibility" value={publishResult?.privacy_level || form.privacyLevel || "Not selected"} />
+          <VerificationItem label="Video asset" value={publishResult?.video_url ? safeHost(publishResult.video_url) : videoHost} />
+        </div>
+        {publishResult?.url ? (
+          <a className="verification-link" data-review-step="published-tiktok-url" href={publishResult.url} target="_blank" rel="noreferrer">
+            Open TikTok result <ExternalLink size={14} />
+          </a>
+        ) : (
+          <p className="verification-note">
+            SELF_ONLY review posts may not expose a public TikTok URL. The Direct Post publish id and UniPost record remain visible for review evidence.
+          </p>
+        )}
       </section>
     </main>
   );
@@ -520,6 +546,15 @@ function InteractionToggle({
 
 function Hint({ tone, children }: { tone: "warning" | "error" | "info"; children: ReactNode }) {
   return <p className={`hint ${tone}`}>{children}</p>;
+}
+
+function VerificationItem({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="verification-item">
+      <span>{label}</span>
+      <strong className={mono ? "mono-value" : undefined}>{value}</strong>
+    </div>
+  );
 }
 
 function formatTime(value: string) {
@@ -612,12 +647,21 @@ const styles = `
   .hint.warning{color:#b54708}.hint.error{color:#b42318}.hint.info{color:#667085}
   .error-note{margin-top:10px;border:1px solid #fecaca;background:#fef2f2;color:#b42318;border-radius:8px;padding:10px 11px;font-size:12px;line-height:1.45}
   .muted-box{border:1px solid #dfe5ef;border-radius:8px;background:#f8fafc;color:#667085;padding:12px;font-size:13px}
-  .result-band{max-width:1280px;margin:18px auto 0;display:flex;align-items:center;justify-content:space-between;gap:20px}
+  .result-band,.verification-band{max-width:1280px;margin:18px auto 0;display:flex;align-items:center;justify-content:space-between;gap:20px}
+  .verification-band{align-items:flex-start;background:#fff;border:1px solid #dfe5ef;border-radius:8px;padding:18px 20px;display:grid;grid-template-columns:minmax(220px,1.1fr) minmax(360px,1.7fr);gap:16px}
+  .verification-copy p{margin-top:4px}
+  .verification-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .verification-item{border:1px solid #dfe5ef;border-radius:8px;background:#f8fafc;padding:10px;min-width:0}
+  .verification-item span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#667085;font-weight:760;margin-bottom:3px}
+  .verification-item strong{display:block;font-size:13px;color:#182230;overflow-wrap:anywhere}
+  .mono-value{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+  .verification-link{display:inline-flex;align-items:center;gap:6px;color:#047857;text-decoration:none;font-size:13px;font-weight:720;align-self:start}
+  .verification-note{grid-column:1 / -1;border-top:1px solid #e4e9f2;padding-top:12px;font-size:12px;color:#667085}
   .result-ok{background:#ecfdf3;border-color:#abefc6;color:#067647}
   .result-pending{background:#fffaeb;border-color:#fedf89;color:#b54708}
   .review-empty{max-width:520px;margin:12vh auto;background:#fff;border:1px solid #dfe5ef;border-radius:8px;padding:28px;text-align:center}
   .review-empty svg{color:#175cd3}
   .spin{animation:spin .8s linear infinite}
   @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-  @media (max-width:980px){.review-shell{padding:20px}.review-topbar,.result-band{flex-direction:column}.review-grid{grid-template-columns:1fr}.status-pill{align-self:flex-start}.privacy-options,.upload-evidence{grid-template-columns:1fr}}
+  @media (max-width:980px){.review-shell{padding:20px}.review-topbar,.result-band{flex-direction:column}.review-grid,.verification-band{grid-template-columns:1fr}.status-pill{align-self:flex-start}.privacy-options,.upload-evidence,.verification-grid{grid-template-columns:1fr}}
 `;
