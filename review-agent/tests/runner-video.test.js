@@ -301,6 +301,7 @@ test("runScript prefers native browser-window capture when address-bar evidence 
 test("manual pause overlay waits for the page body before injecting instructions", async () => {
   let bodyReady = false;
   let completed = false;
+  const events = [];
   const script = {
     job_id: "rvjob_manual_pause",
     platform: "tiktok",
@@ -328,7 +329,7 @@ test("manual pause overlay waits for the page body before injecting instructions
   const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
   const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
   const reporter = {
-    event: async () => {},
+    event: async (eventType, message, metadata) => events.push({ eventType, message, metadata }),
     uploadArtifact: async (artifact) => artifact.artifactType === "demo_video"
       ? "review-artifacts/ws_1/rvjob_manual_pause/demo-video.webm"
       : "review-artifacts/ws_1/rvjob_manual_pause/execution-evidence.json",
@@ -339,6 +340,10 @@ test("manual pause overlay waits for the page body before injecting instructions
   await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, out: { write() {} } });
 
   assert.equal(completed, true);
+  assert.deepEqual(
+    events.filter((event) => event.eventType.startsWith("manual_pause")).map((event) => event.eventType),
+    ["manual_pause_started", "manual_pause_completed"]
+  );
 });
 
 test("normalizes TikTok review OAuth URLs to content-posting scopes", () => {

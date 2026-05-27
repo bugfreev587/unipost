@@ -61,9 +61,12 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
       }
       await reportEvent(reporter, "step_started", step.marker || step.id, { step_id: step.id, action: step.action }, out);
       if (step.action === "manual_pause") {
-        await reportEvent(reporter, "manual_pause", step.marker || "Waiting for user", { step_id: step.id }, out);
+        await reportEvent(reporter, "manual_pause_started", step.marker || "Waiting for user", { step_id: step.id }, out);
       }
       await runStep(page, step, out, { reporter, script: valid });
+      if (step.action === "manual_pause") {
+        await reportEvent(reporter, "manual_pause_completed", step.marker || "User step completed", { step_id: step.id }, out);
+      }
       await reportEvent(reporter, "step_completed", step.marker || step.id, { step_id: step.id, action: step.action }, out);
     }
     if (activeSegment) {

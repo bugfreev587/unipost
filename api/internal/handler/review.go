@@ -857,12 +857,18 @@ func (h *ReviewHandler) RecordAgentEvent(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		status = "running"
-	case "manual_pause":
+	case "manual_pause", "manual_pause_started":
 		if _, err := h.store.MarkReviewJobWaitingForUser(r.Context(), db.MarkReviewJobWaitingForUserParams{ID: agentToken.ReviewJobID, WorkspaceID: agentToken.WorkspaceID}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark review job waiting for user")
 			return
 		}
 		status = "waiting_for_user"
+	case "manual_pause_completed":
+		if _, err := h.store.MarkReviewJobRunning(r.Context(), db.MarkReviewJobRunningParams{ID: agentToken.ReviewJobID, WorkspaceID: agentToken.WorkspaceID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark review job running")
+			return
+		}
+		status = "running"
 	}
 	writeCreated(w, reviewAgentEventResponse{ReviewJobID: agentToken.ReviewJobID, EventType: eventType, Status: status})
 }

@@ -656,6 +656,29 @@ func TestReviewAgentEventRecordsEventAndMarksJobRunning(t *testing.T) {
 	}
 }
 
+func TestReviewAgentManualPauseCompletedMarksJobRunning(t *testing.T) {
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	h := NewReviewHandler(store)
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/agent/events", strings.NewReader(`{
+		"event_type":"manual_pause_completed",
+		"message":"TikTok OAuth returned",
+		"metadata":{"step_id":"wait_for_oauth"}
+	}`))
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.RecordAgentEvent(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.markedRunningJobID != "rvjob_1" {
+		t.Fatalf("job was not marked running after pause completion: %q", store.markedRunningJobID)
+	}
+}
+
 func TestReviewAgentCompleteAndFailUseBearerToken(t *testing.T) {
 	store := &reviewStoreFake{
 		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
