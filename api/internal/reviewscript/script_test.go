@@ -124,6 +124,8 @@ func TestBuildTikTokScriptFromPlanIncludesPostingSegments(t *testing.T) {
 	assertStep(t, script, "select_video")
 	assertStep(t, script, "assert_video_upload_ready")
 	assertStep(t, script, "assert_music_confirmation")
+	assertStepDetails(t, script, "open_music_usage_confirmation", ActionOpenLink, "[data-review-step='music-usage-confirmation-link']", "music-usage-confirmation")
+	assertStepDetails(t, script, "open_branded_content_policy", ActionOpenLink, "[data-review-step='branded-content-policy-link']", "bc-policy")
 	assertStep(t, script, "publish")
 	assertStep(t, script, "assert_result")
 	if script.Recording.WindowWidth != 1920 || script.Recording.WindowHeight != 1080 {
@@ -199,6 +201,20 @@ func assertNoStep(t *testing.T, script Script, id string) {
 			t.Fatalf("step %q should not be present: %+v", id, script.Steps)
 		}
 	}
+}
+
+func assertStepDetails(t *testing.T, script Script, id string, action Action, selector string, value string) {
+	t.Helper()
+	for _, step := range script.Steps {
+		if step.ID != id {
+			continue
+		}
+		if step.Action != action || step.Selector != selector || step.Value != value {
+			t.Fatalf("unexpected step %q: %+v", id, step)
+		}
+		return
+	}
+	t.Fatalf("step %q not found in %+v", id, script.Steps)
 }
 
 func containsString(values []string, want string) bool {

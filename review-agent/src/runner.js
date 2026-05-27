@@ -238,6 +238,9 @@ async function runStep(page, step, out, { reporter = null, script = {} } = {}) {
     case "assert_visible":
       await page.locator(step.selector).first().waitFor({ state: "visible", timeout: 30000 });
       return;
+    case "open_link":
+      await openLinkForReview(page, step, out, reporter, script.recording || {});
+      return;
     case "assert_url_contains":
       if (!page.url().includes(step.value || step.text || "")) {
         throw new Error(`URL assertion failed for ${step.id}: ${page.url()}`);
@@ -262,6 +265,45 @@ async function runStep(page, step, out, { reporter = null, script = {} } = {}) {
     default:
       throw new Error(`unsupported action after validation: ${step.action}`);
   }
+}
+
+async function openLinkForReview(page, step, out, reporter, recording = {}) {
+  const expectedURLPart = step.value || step.text || step.url || "";
+  const popupPromise = typeof page.waitForEvent === "function"
+    ? page.waitForEvent("popup", { timeout: 8000 }).catch(() => null)
+    : Promise.resolve(null);
+  const [popup] = await Promise.all([
+    popupPromise,
+    page.locator(step.selector).click(),
+  ]);
+  const targetPage = popup || page;
+  if (typeof targetPage.waitForLoadState === "function") {
+    await targetPage.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+  }
+  const actualURL = typeof targetPage.url === "function" ? targetPage.url() : "";
+  if (expectedURLPart && !actualURL.includes(expectedURLPart)) {
+    throw new Error(`Policy link assertion failed for ${step.id}: expected URL containing ${expectedURLPart}, got ${actualURL}`);
+  }
+  await reportEvent(reporter, "external_policy_opened", step.marker || "Opened TikTok policy link", {
+    step_id: step.id,
+    selector: step.selector,
+    url: actualURL,
+    expected_url_part: expectedURLPart,
+  }, out);
+  await delay(policyLinkHoldDurationMs(recording));
+  if (popup && typeof popup.close === "function") {
+    await popup.close();
+    return;
+  }
+  if (!popup && typeof page.goBack === "function") {
+    await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {});
+  }
+}
+
+export function policyLinkHoldDurationMs(recording = {}) {
+  const configured = Number(recording.policy_link_hold_ms);
+  if (Number.isFinite(configured) && configured >= 0) return configured;
+  return 1200;
 }
 
 async function showOverlay(page, text) {

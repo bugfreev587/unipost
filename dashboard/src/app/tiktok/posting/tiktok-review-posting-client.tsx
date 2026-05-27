@@ -435,11 +435,11 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
               By posting, you agree to TikTok&apos;s{" "}
               {form.disclosureEnabled && form.brandedContent ? (
                 <>
-                  <a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer">Branded Content Policy</a>
+                  <a data-review-step="branded-content-policy-inline-link" href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer">Branded Content Policy</a>
                   {" "}and{" "}
                 </>
               ) : null}
-              <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer">Music Usage Confirmation</a>.
+              <a data-review-step="music-usage-confirmation-link" href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer">Music Usage Confirmation</a>.
             </p>
           </div>
 
@@ -447,7 +447,7 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
             <ShieldCheck size={17} />
             <p>
               Branded posts follow TikTok&apos;s{" "}
-              <a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer">Branded Content Policy</a>.
+              <a data-review-step="branded-content-policy-link" href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer">Branded Content Policy</a>.
               TailTales confirms the disclosure choice before publishing.
             </p>
           </div>

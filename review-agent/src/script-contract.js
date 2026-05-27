@@ -4,6 +4,7 @@ export const ALLOWED_ACTIONS = Object.freeze(new Set([
   "fill",
   "assert_visible",
   "assert_url_contains",
+  "open_link",
   "manual_pause",
   "wait_for_navigation",
   "wait_for_network_idle",
@@ -11,7 +12,7 @@ export const ALLOWED_ACTIONS = Object.freeze(new Set([
   "emit_marker",
 ]));
 
-const SELECTOR_ACTIONS = new Set(["click", "fill", "assert_visible"]);
+const SELECTOR_ACTIONS = new Set(["click", "fill", "assert_visible", "open_link"]);
 const ALLOWED_CAPTURE_MODES = new Set(["native-browser-window", "playwright-page-video"]);
 
 export function validateScript(script) {

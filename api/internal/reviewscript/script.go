@@ -16,6 +16,7 @@ const (
 	ActionFill               Action = "fill"
 	ActionAssertVisible      Action = "assert_visible"
 	ActionAssertURLContains  Action = "assert_url_contains"
+	ActionOpenLink           Action = "open_link"
 	ActionManualPause        Action = "manual_pause"
 	ActionWaitForNavigation  Action = "wait_for_navigation"
 	ActionWaitForNetworkIdle Action = "wait_for_network_idle"
@@ -29,6 +30,7 @@ var allowedActions = map[Action]bool{
 	ActionFill:               true,
 	ActionAssertVisible:      true,
 	ActionAssertURLContains:  true,
+	ActionOpenLink:           true,
 	ActionManualPause:        true,
 	ActionWaitForNavigation:  true,
 	ActionWaitForNetworkIdle: true,
@@ -295,7 +297,9 @@ func stepsForSegment(segment string, startURL string, includeVideoList bool) []S
 			{ID: "assert_privacy_management", Action: ActionAssertVisible, Selector: "[data-review-step='privacy-selector']", Marker: "3b. Privacy Management"},
 			{ID: "assert_interactions", Action: ActionAssertVisible, Selector: "[data-review-step='interaction-controls']", Marker: "Show interaction controls"},
 			{ID: "assert_music_confirmation", Action: ActionAssertVisible, Selector: "[data-review-step='music-confirmation']", Marker: "4. Compliance Requirements"},
+			{ID: "open_music_usage_confirmation", Action: ActionOpenLink, Selector: "[data-review-step='music-usage-confirmation-link']", Value: "music-usage-confirmation", Marker: "Open TikTok Music Usage Confirmation"},
 			{ID: "assert_branded_policy", Action: ActionAssertVisible, Selector: "[data-review-step='branded-content-policy']", Marker: "Show Branded Content Policy"},
+			{ID: "open_branded_content_policy", Action: ActionOpenLink, Selector: "[data-review-step='branded-content-policy-link']", Value: "bc-policy", Marker: "Open TikTok Branded Content Policy"},
 		}
 	case "posting_part_3":
 		return []Step{
@@ -349,7 +353,7 @@ func captureMode(requireAddressBar bool) string {
 
 func requiresSelector(action Action) bool {
 	switch action {
-	case ActionClick, ActionFill, ActionAssertVisible:
+	case ActionClick, ActionFill, ActionAssertVisible, ActionOpenLink:
 		return true
 	default:
 		return false

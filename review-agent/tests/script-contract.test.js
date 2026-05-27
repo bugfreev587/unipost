@@ -19,6 +19,19 @@ test("validates the closed review script contract", () => {
   assert.equal(validateScript(validScript).job_id, "rvjob_1");
 });
 
+test("validates policy link opening as a closed selector action", () => {
+  const script = validateScript({
+    ...validScript,
+    steps: [{ id: "open_music_policy", action: "open_link", selector: "[data-review-step='music-usage-confirmation-link']", value: "music-usage-confirmation" }],
+  });
+  assert.equal(script.steps[0].action, "open_link");
+
+  assert.throws(() => validateScript({
+    ...validScript,
+    steps: [{ id: "open_music_policy", action: "open_link", value: "music-usage-confirmation" }],
+  }), /selector is required/);
+});
+
 test("rejects arbitrary JavaScript actions", () => {
   assert.throws(() => validateScript({ ...validScript, steps: [{ id: "bad", action: "eval", value: "alert(1)" }] }), /not allowed/);
 });

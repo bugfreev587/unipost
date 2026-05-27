@@ -53,6 +53,12 @@ test("completion artifacts preserve split video segment paths", async () => {
   assert.equal(artifacts.video_segments[0].size_bytes, 42_000_000);
 });
 
+test("policy link hold duration keeps external policy tabs visible for recording", () => {
+  assert.equal(runner.policyLinkHoldDurationMs({}), 1200);
+  assert.equal(runner.policyLinkHoldDurationMs({ policy_link_hold_ms: 0 }), 0);
+  assert.equal(runner.policyLinkHoldDurationMs({ policy_link_hold_ms: 2500 }), 2500);
+});
+
 test("execution evidence preserves reviewer-facing segment metadata", () => {
   const evidence = runner.buildExecutionEvidence({
     jobId: "rvjob_evidence",
@@ -148,6 +154,50 @@ test("runScript shows recorded section title overlays for review markers", async
 
   assert.equal(evaluations.some((arg) => arg?.label === "1. Retrieve Creator Info" && arg?.stepId === "creator_info"), true);
   assert.equal(evaluations.some((arg) => arg?.remove === true), true);
+});
+
+test("runScript opens TikTok policy links in a temporary tab and closes them", async () => {
+  let clickedSelector = "";
+  let popupClosed = false;
+  const script = {
+    job_id: "rvjob_policy_link",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    recording: { policy_link_hold_ms: 0 },
+    steps: [{ id: "open_music_policy", action: "open_link", selector: "[data-review-step='music-usage-confirmation-link']", value: "music-usage-confirmation" }],
+  };
+  const popup = {
+    waitForLoadState: async (state) => assert.equal(state, "domcontentloaded"),
+    url: () => "https://www.tiktok.com/legal/page/global/music-usage-confirmation/en",
+    close: async () => {
+      popupClosed = true;
+    },
+  };
+  const page = {
+    video: () => ({ path: async () => "/tmp/unipost-review-videos/policy-link.webm" }),
+    waitForEvent: async (eventName) => {
+      assert.equal(eventName, "popup");
+      return popup;
+    },
+    locator: (selector) => ({
+      click: async () => {
+        clickedSelector = selector;
+      },
+    }),
+  };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async () => {},
+    complete: async () => {},
+    fail: async () => assert.fail("policy link step should complete"),
+  };
+
+  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, nativeCaptureImpl: async () => null, out: { write() {} } });
+
+  assert.equal(clickedSelector, "[data-review-step='music-usage-confirmation-link']");
+  assert.equal(popupClosed, true);
 });
 
 test("runScript post-processes completed segments into uploadable 50MB video files", async () => {
