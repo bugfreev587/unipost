@@ -37,14 +37,15 @@ var allowedActions = map[Action]bool{
 }
 
 type Script struct {
-	JobID         string        `json:"job_id"`
-	Platform      string        `json:"platform"`
-	AgentVersion  string        `json:"agent_version"`
-	StartURL      string        `json:"start_url"`
-	ReviewSession SessionSpec   `json:"review_session"`
-	Recording     RecordingSpec `json:"recording"`
-	Segments      []SegmentSpec `json:"segments,omitempty"`
-	Steps         []Step        `json:"steps"`
+	JobID           string        `json:"job_id"`
+	Platform        string        `json:"platform"`
+	AgentVersion    string        `json:"agent_version"`
+	StartURL        string        `json:"start_url"`
+	RequestedScopes []string      `json:"requested_scopes,omitempty"`
+	ReviewSession   SessionSpec   `json:"review_session"`
+	Recording       RecordingSpec `json:"recording"`
+	Segments        []SegmentSpec `json:"segments,omitempty"`
+	Steps           []Step        `json:"steps"`
 }
 
 type SegmentSpec struct {
@@ -153,10 +154,11 @@ func BuildTikTokScriptFromPlan(input BuildTikTokScriptInput) Script {
 	}
 
 	return Script{
-		JobID:        input.JobID,
-		Platform:     "tiktok",
-		AgentVersion: input.AgentVersion,
-		StartURL:     startURL,
+		JobID:           input.JobID,
+		Platform:        "tiktok",
+		AgentVersion:    input.AgentVersion,
+		StartURL:        startURL,
+		RequestedScopes: requestedScopes(input.Plan),
 		ReviewSession: SessionSpec{
 			Delivery:  "cookie",
 			Cookie:    cookieName,
@@ -171,6 +173,13 @@ func BuildTikTokScriptFromPlan(input BuildTikTokScriptInput) Script {
 		Segments: segmentSpecs(input.Plan),
 		Steps:    buildTikTokSteps(startURL, useCase, input.Plan),
 	}
+}
+
+func requestedScopes(plan *reviewtemplate.TikTokDemoPlan) []string {
+	if plan == nil {
+		return nil
+	}
+	return append([]string(nil), plan.RequestedScopes...)
 }
 
 func reviewStartURL(reviewDomain, useCase string) string {

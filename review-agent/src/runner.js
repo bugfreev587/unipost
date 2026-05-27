@@ -29,8 +29,11 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
   const page = await context.newPage();
   let nativeCapture = null;
   const markers = [];
+  const segmentMap = buildSegmentMap(valid.segments || []);
+  const segmentEvents = [];
   const recordingStartedAt = Date.now();
   let currentStepId = "";
+  let activeSegment = null;
   try {
     try {
       nativeCapture = await nativeCaptureImpl({ script: valid, browser, page, out });
@@ -45,18 +48,33 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     for (const step of valid.steps) {
       currentStepId = step.id;
       if (step.marker) markers.push({ step_id: step.id, label: step.marker, elapsed_ms: Date.now() - recordingStartedAt });
+      if (isSegmentMarker(step)) {
+        if (activeSegment) {
+          const completedAt = Date.now() - recordingStartedAt;
+          segmentEvents.push({ ...activeSegment, completed_elapsed_ms: completedAt });
+          await reportEvent(reporter, "segment_completed", activeSegment.title, activeSegment, out);
+        }
+        activeSegment = segmentMetadataForStep(step, segmentMap, recordingStartedAt);
+        segmentEvents.push(activeSegment);
+        await reportEvent(reporter, "segment_started", activeSegment.title, activeSegment, out);
+      }
       await reportEvent(reporter, "step_started", step.marker || step.id, { step_id: step.id, action: step.action }, out);
       if (step.action === "manual_pause") {
         await reportEvent(reporter, "manual_pause", step.marker || "Waiting for user", { step_id: step.id }, out);
       }
-      await runStep(page, step, out);
+      await runStep(page, step, out, { reporter, script: valid });
       await reportEvent(reporter, "step_completed", step.marker || step.id, { step_id: step.id, action: step.action }, out);
+    }
+    if (activeSegment) {
+      const completedAt = Date.now() - recordingStartedAt;
+      segmentEvents.push({ ...activeSegment, completed_elapsed_ms: completedAt });
+      await reportEvent(reporter, "segment_completed", activeSegment.title, activeSegment, out);
     }
     const nativeVideo = nativeCapture ? await stopNativeCapture(nativeCapture, out) : null;
     const video = nativeVideo ? null : page.video?.();
     await context.close();
     contextClosed = true;
-    const artifacts = await buildCompletionArtifacts({ markers, video, nativeVideo });
+    const artifacts = await buildCompletionArtifacts({ markers, segments: valid.segments || [], segmentEvents, video, nativeVideo });
     const videoFileID = await uploadVideoArtifact(reporter, artifacts.video, out);
     const evidenceFileID = await uploadExecutionEvidenceArtifact(reporter, valid.job_id, artifacts, out);
     if (evidenceFileID) artifacts.execution_evidence = { file_id: evidenceFileID };
@@ -78,7 +96,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     } catch (closeErr) {
       out.write("[recording warning] " + closeErr.message + "\n");
     }
-    const artifacts = await buildCompletionArtifacts({ markers, video, nativeVideo });
+    const artifacts = await buildCompletionArtifacts({ markers, segments: valid.segments || [], segmentEvents, video, nativeVideo });
     await reportFail(reporter, err, { ...artifacts, last_step: currentStepId }, out);
     throw err;
   } finally {
@@ -101,8 +119,10 @@ export function buildBrowserContextOptions(script, { videoDir = defaultVideoDir(
   };
 }
 
-export async function buildCompletionArtifacts({ markers = [], video = null, nativeVideo = null } = {}) {
+export async function buildCompletionArtifacts({ markers = [], segments = [], segmentEvents = [], video = null, nativeVideo = null } = {}) {
   const artifacts = { markers };
+  if (segments.length) artifacts.segments = segments;
+  if (segmentEvents.length) artifacts.segment_events = segmentEvents;
   if (nativeVideo?.local_path) {
     artifacts.video = {
       format: videoFormat(nativeVideo.local_path),
@@ -143,7 +163,7 @@ async function importPlaywright() {
   }
 }
 
-async function runStep(page, step, out) {
+async function runStep(page, step, out, { reporter = null, script = {} } = {}) {
   if (step.marker) {
     out.write(`[marker] ${step.marker}\n`);
   }
@@ -156,7 +176,14 @@ async function runStep(page, step, out) {
     case "click":
       await page.locator(step.selector).click();
       if (step.id === "connect_tiktok") {
-        await normalizeTikTokReviewOAuthScopes(page, out);
+        const oauth = await normalizeTikTokReviewOAuthScopes(page, out, script.requested_scopes || []);
+        if (oauth.seen) {
+          await reportEvent(reporter, "oauth_consent_seen", "TikTok OAuth authorization page was shown", { step_id: step.id, scopes: oauth.scopes }, out);
+        }
+        if (oauth.skipped) {
+          await reportEvent(reporter, "oauth_consent_skipped", "TikTok skipped the authorization page", { step_id: step.id, scopes: oauth.scopes }, out);
+          throw new Error("TikTok skipped the authorization page because this account is already authorized. Remove app access in TikTok mobile settings, then record again.");
+        }
       }
       return;
     case "fill":
@@ -241,21 +268,28 @@ function browserLaunchOptions() {
   };
 }
 
-async function normalizeTikTokReviewOAuthScopes(page, out) {
+async function normalizeTikTokReviewOAuthScopes(page, out, requestedScopes = []) {
+  const scopes = normalizeRequestedScopes(requestedScopes);
   try {
     await page.waitForURL((url) => url.hostname.endsWith("tiktok.com"), { timeout: 15000 });
     const current = page.url();
-    const normalized = normalizeTikTokReviewOAuthURL(current);
+    const normalized = normalizeTikTokReviewOAuthURL(current, scopes);
     if (normalized && normalized !== current) {
-      out.write("[oauth] normalized TikTok review scopes for content posting review\n");
+      out.write("[oauth] normalized TikTok review scopes for this review plan\n");
       await page.goto(normalized, { waitUntil: "domcontentloaded" });
     }
+    return { seen: true, skipped: false, scopes };
   } catch (err) {
+    const current = typeof page.url === "function" ? page.url() : "";
+    if (current.includes("connect_status=success")) {
+      return { seen: false, skipped: true, scopes };
+    }
     out.write("[oauth warning] " + err.message + "\n");
+    return { seen: false, skipped: false, scopes };
   }
 }
 
-export function normalizeTikTokReviewOAuthURL(rawURL) {
+export function normalizeTikTokReviewOAuthURL(rawURL, requestedScopes = []) {
   let parsed;
   try {
     parsed = new URL(rawURL);
@@ -263,7 +297,7 @@ export function normalizeTikTokReviewOAuthURL(rawURL) {
     return "";
   }
   if (!parsed.hostname.endsWith("tiktok.com")) return "";
-  const reviewScopes = "video.publish,video.upload,user.info.basic";
+  const reviewScopes = normalizeRequestedScopes(requestedScopes).join(",");
   if (parsed.pathname.startsWith("/v2/auth/authorize")) {
     if (parsed.searchParams.get("scope") === reviewScopes) return rawURL;
     parsed.searchParams.set("scope", reviewScopes);
@@ -282,6 +316,14 @@ export function normalizeTikTokReviewOAuthURL(rawURL) {
   nested.searchParams.set("scope", reviewScopes);
   parsed.searchParams.set("redirect_url", nested.toString());
   return parsed.toString();
+}
+
+export function normalizeRequestedScopes(scopes = []) {
+  const selected = [...new Set((Array.isArray(scopes) ? scopes : [])
+    .map((scope) => String(scope || "").trim())
+    .filter(Boolean))];
+  if (selected.length === 0) return ["video.publish", "video.upload", "user.info.basic"];
+  return selected;
 }
 
 async function stopNativeCapture(nativeCapture, out) {
@@ -316,6 +358,8 @@ export function buildExecutionEvidence({ jobId, artifacts = {} } = {}) {
     job_id: jobId || "",
     generated_at: new Date().toISOString(),
     markers: artifacts.markers || [],
+    segments: artifacts.segments || [],
+    segment_events: artifacts.segment_events || [],
     video: artifacts.video ? {
       format: artifacts.video.format,
       capture_mode: artifacts.video.capture_mode,
@@ -323,6 +367,31 @@ export function buildExecutionEvidence({ jobId, artifacts = {} } = {}) {
       file_id: artifacts.video.file_id || "",
       note: artifacts.video.note || "",
     } : null,
+  };
+}
+
+function buildSegmentMap(segments) {
+  const map = new Map();
+  for (const segment of segments || []) {
+    if (segment?.key) map.set(segment.key, segment);
+  }
+  return map;
+}
+
+function isSegmentMarker(step) {
+  return step?.action === "emit_marker" && typeof step.id === "string" && step.id.startsWith("segment_");
+}
+
+function segmentMetadataForStep(step, segmentMap, recordingStartedAt) {
+  const key = step.id.replace(/^segment_/, "");
+  const segment = segmentMap.get(key) || { key, title: step.marker || key, scopes: [] };
+  return {
+    key,
+    title: segment.title || step.marker || key,
+    filename: segment.filename || "",
+    scopes: Array.isArray(segment.scopes) ? segment.scopes : [],
+    estimated_duration_sec: segment.estimated_duration_sec || 0,
+    started_elapsed_ms: Date.now() - recordingStartedAt,
   };
 }
 

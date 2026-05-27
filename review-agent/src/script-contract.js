@@ -34,8 +34,29 @@ export function validateScript(script) {
   if (!Array.isArray(script.steps) || script.steps.length === 0) {
     throw new Error("script.steps must be a non-empty array");
   }
+  if (script.segments !== undefined) {
+    if (!Array.isArray(script.segments)) {
+      throw new Error("script.segments must be an array");
+    }
+    script.segments.forEach((segment, index) => validateSegment(segment, index));
+  }
   script.steps.forEach((step, index) => validateStep(step, index));
   return script;
+}
+
+function validateSegment(segment, index) {
+  if (!segment || typeof segment !== "object") {
+    throw new Error(`segments[${index}] must be an object`);
+  }
+  if (!isNonEmptyString(segment.key)) {
+    throw new Error(`segments[${index}].key is required`);
+  }
+  if (!isNonEmptyString(segment.title)) {
+    throw new Error(`segments[${index}].title is required`);
+  }
+  if (segment.scopes !== undefined && !Array.isArray(segment.scopes)) {
+    throw new Error(`segments[${index}].scopes must be an array`);
+  }
 }
 
 export function validateStep(step, index) {

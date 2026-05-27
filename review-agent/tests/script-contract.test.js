@@ -58,3 +58,16 @@ test("requires native capture when script asks to show the browser address bar",
   });
   assert.equal(script.recording.capture_mode, "native-browser-window");
 });
+
+test("validates optional segment metadata", () => {
+  const script = validateScript({
+    ...validScript,
+    segments: [{ key: "posting_part_1", title: "Posting Part 1", scopes: ["user.info.basic", "video.upload"] }],
+  });
+  assert.equal(script.segments[0].key, "posting_part_1");
+
+  assert.throws(() => validateScript({
+    ...validScript,
+    segments: [{ key: "", title: "Missing key" }],
+  }), /segments\[0\]\.key/);
+});

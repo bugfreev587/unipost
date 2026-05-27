@@ -22,10 +22,14 @@ test("browser context options record a page video at the scripted viewport size"
 test("completion artifacts include the recorded video path and marker timeline", async () => {
   const artifacts = await runner.buildCompletionArtifacts({
     markers: [{ step_id: "publish", label: "Publish test video", elapsed_ms: 1400 }],
+    segments: [{ key: "posting_part_1", title: "Posting Part 1", scopes: ["video.upload"] }],
+    segmentEvents: [{ key: "posting_part_1", title: "Posting Part 1", scopes: ["video.upload"], started_elapsed_ms: 0, completed_elapsed_ms: 1400 }],
     video: { path: async () => "/tmp/unipost-review-videos/rvjob-video.webm" },
   });
 
   assert.deepEqual(artifacts.markers, [{ step_id: "publish", label: "Publish test video", elapsed_ms: 1400 }]);
+  assert.equal(artifacts.segments[0].key, "posting_part_1");
+  assert.equal(artifacts.segment_events[0].completed_elapsed_ms, 1400);
   assert.deepEqual(artifacts.video, {
     format: "webm",
     local_path: "/tmp/unipost-review-videos/rvjob-video.webm",
@@ -33,6 +37,37 @@ test("completion artifacts include the recorded video path and marker timeline",
     includes_address_bar: false,
     note: "Fallback artifact captures the page viewport only. It does not satisfy address-bar evidence requirements.",
   });
+});
+
+test("runScript reports segment lifecycle events from script metadata", async () => {
+  const events = [];
+  const script = {
+    job_id: "rvjob_segments",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    segments: [{ key: "posting_part_1", title: "Posting Part 1", filename: "part-1.mp4", scopes: ["user.info.basic"], estimated_duration_sec: 60 }],
+    steps: [{ id: "segment_posting_part_1", action: "emit_marker", marker: "Posting Part 1" }],
+  };
+  const page = { video: () => ({ path: async () => "/tmp/unipost-review-videos/segments.webm" }) };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async (eventType, message, metadata) => events.push({ eventType, message, metadata }),
+    uploadArtifact: async (artifact) => artifact.artifactType === "demo_video"
+      ? "review-artifacts/ws_1/rvjob_segments/demo-video.webm"
+      : "review-artifacts/ws_1/rvjob_segments/execution-evidence.json",
+    complete: async (artifacts) => {
+      assert.equal(artifacts.segments[0].key, "posting_part_1");
+      assert.equal(artifacts.segment_events.some((event) => event.key === "posting_part_1"), true);
+    },
+    fail: async () => assert.fail("runScript should complete"),
+  };
+
+  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, out: { write() {} } });
+
+  assert.equal(events.some((event) => event.eventType === "segment_started" && event.metadata.key === "posting_part_1"), true);
+  assert.equal(events.some((event) => event.eventType === "segment_completed" && event.metadata.key === "posting_part_1"), true);
 });
 
 
@@ -217,4 +252,47 @@ test("normalizes TikTok review OAuth URLs to content-posting scopes", () => {
   const normalizedLogin = runner.normalizeTikTokReviewOAuthURL(login.toString());
   const nested = new URL(new URL(normalizedLogin).searchParams.get("redirect_url"));
   assert.equal(nested.searchParams.get("scope"), "video.publish,video.upload,user.info.basic");
+});
+
+test("normalizes TikTok review OAuth URLs to requested analytics scopes", () => {
+  const originalAuthorize = "https://www.tiktok.com/v2/auth/authorize/?client_key=ck&redirect_uri=https%3A%2F%2Fdev-api.unipost.dev%2Fv1%2Fconnect%2Fcallback%2Ftiktok&response_type=code&scope=video.publish%2Cvideo.upload%2Cuser.info.basic&state=rvstate_1";
+  const normalizedAuthorize = runner.normalizeTikTokReviewOAuthURL(originalAuthorize, ["user.info.profile", "user.info.stats"]);
+  assert.equal(new URL(normalizedAuthorize).searchParams.get("scope"), "user.info.profile,user.info.stats");
+});
+
+test("connect step fails clearly when TikTok skips OAuth consent", async () => {
+  const events = [];
+  let failedReason = "";
+  const script = {
+    job_id: "rvjob_oauth_skipped",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    requested_scopes: ["user.info.profile", "user.info.stats"],
+    start_url: "https://review.example.com/tiktok/analytics",
+    steps: [{ id: "connect_tiktok", action: "click", selector: "[data-review-step='connect-tiktok']" }],
+  };
+  const page = {
+    video: () => ({ path: async () => "/tmp/unipost-review-videos/oauth-skipped.webm" }),
+    url: () => "https://review.example.com/tiktok/analytics?connect_status=success",
+    waitForURL: async () => {
+      throw new Error("timed out waiting for TikTok");
+    },
+    locator: () => ({ click: async () => {} }),
+  };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async (eventType, message, metadata) => events.push({ eventType, message, metadata }),
+    fail: async (error) => {
+      failedReason = error.message;
+    },
+  };
+
+  await assert.rejects(
+    () => runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, nativeCaptureImpl: async () => null, out: { write() {} } }),
+    /TikTok skipped the authorization page/
+  );
+
+  assert.equal(events.some((event) => event.eventType === "oauth_consent_skipped"), true);
+  assert.match(failedReason, /Remove app access/);
 });
