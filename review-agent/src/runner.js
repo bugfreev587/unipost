@@ -28,6 +28,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     await context.addCookies([sessionCookie]);
   }
   const page = await context.newPage();
+  await bringPageToFront(page);
   let nativeCapture = null;
   const markers = [];
   const segmentMap = buildSegmentMap(valid.segments || []);
@@ -293,10 +294,18 @@ async function openLinkForReview(page, step, out, reporter, recording = {}) {
   await delay(policyLinkHoldDurationMs(recording));
   if (popup && typeof popup.close === "function") {
     await popup.close();
+    await bringPageToFront(page);
     return;
   }
   if (!popup && typeof page.goBack === "function") {
     await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {});
+    await bringPageToFront(page);
+  }
+}
+
+async function bringPageToFront(page) {
+  if (typeof page?.bringToFront === "function") {
+    await page.bringToFront();
   }
 }
 

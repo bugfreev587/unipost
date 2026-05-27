@@ -375,6 +375,7 @@ test("runScript uploads split video segments with segment keys when present", as
 test("runScript prefers native browser-window capture when address-bar evidence is required", async () => {
   let completionArtifacts;
   let uploadedContentType = "";
+  let pageWasFront = false;
   const script = {
     job_id: "rvjob_native_video",
     platform: "tiktok",
@@ -383,7 +384,10 @@ test("runScript prefers native browser-window capture when address-bar evidence 
     recording: { window_width: 1200, window_height: 900, show_address_bar: true, capture_mode: "native-browser-window" },
     steps: [{ id: "marker", action: "emit_marker", marker: "Open review app" }],
   };
-  const page = { video: () => ({ path: async () => assert.fail("page video should not be used when native capture succeeds") }) };
+  const page = {
+    bringToFront: async () => { pageWasFront = true; },
+    video: () => ({ path: async () => assert.fail("page video should not be used when native capture succeeds") }),
+  };
   const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
   const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
   const reporter = {
@@ -398,13 +402,16 @@ test("runScript prefers native browser-window capture when address-bar evidence 
     complete: async (artifacts) => { completionArtifacts = artifacts; },
     fail: async () => assert.fail("runScript should complete"),
   };
-  const nativeCaptureImpl = async () => ({
-    mode: "macos-screencapture-region",
-    localPath: "/tmp/unipost-review-videos/rvjob-native.mov",
-    includesAddressBar: true,
-    bounds: { left: 80, top: 80, width: 1200, height: 900 },
-    stop: async () => {},
-  });
+  const nativeCaptureImpl = async () => {
+    assert.equal(pageWasFront, true, "review page should be frontmost before native capture starts");
+    return {
+      mode: "macos-screencapture-region",
+      localPath: "/tmp/unipost-review-videos/rvjob-native.mov",
+      includesAddressBar: true,
+      bounds: { left: 80, top: 80, width: 1200, height: 900 },
+      stop: async () => {},
+    };
+  };
 
   await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, nativeCaptureImpl, out: { write() {} } });
 
