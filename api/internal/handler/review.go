@@ -32,6 +32,7 @@ import (
 
 const (
 	reviewAgentPackage        = "unipost-review-agent"
+	reviewAgentSourcePackage  = "https://codeload.github.com/bugfreev587/unipost/tar.gz/dev"
 	reviewAgentVersion        = "0.1.0"
 	reviewDefaultCnameTarget  = "review.unipost.dev"
 	reviewSessionCookieName   = "__unipost_review_session"
@@ -666,7 +667,7 @@ func (h *ReviewHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Platform:       kit.Platform,
 		Status:         job.Status,
 		AgentVersion:   reviewAgentVersion,
-		AgentCommand:   "npx --yes " + reviewAgentPackage + "@" + reviewAgentVersion + " run --token " + agentRaw + " --session-token " + sessionRaw + " --api-url " + h.apiBaseURL,
+		AgentCommand:   reviewAgentCommand(agentRaw, sessionRaw, h.apiBaseURL),
 		TokenExpiresAt: expiresAt.Format(time.RFC3339),
 	})
 }
@@ -1691,6 +1692,14 @@ func reviewKitDemoPlan(kit db.ReviewKit) *reviewtemplate.TikTokDemoPlan {
 		return nil
 	}
 	return &plan
+}
+
+func reviewAgentCommand(agentToken, sessionToken, apiBaseURL string) string {
+	args := " run --token " + agentToken + " --session-token " + sessionToken + " --api-url " + strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if runtimeenv.IsProduction() {
+		return "npx --yes " + reviewAgentPackage + "@" + reviewAgentVersion + args
+	}
+	return "npx --yes --package " + reviewAgentSourcePackage + " " + reviewAgentPackage + args
 }
 
 func marshalReviewJSON(value map[string]any) ([]byte, error) {

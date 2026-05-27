@@ -19,6 +19,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/reviewscript"
 	"github.com/xiaoboyu/unipost-api/internal/reviewtemplate"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 func TestReviewCreateDomainReturnsDNSRecords(t *testing.T) {
@@ -307,6 +308,7 @@ func TestReviewGetStateRestoresReadyKitDomainAndLatestJob(t *testing.T) {
 }
 
 func TestReviewCreateJobIssuesTokensAndPinnedCommand(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "production")
 	store := &reviewStoreFake{
 		kit:    db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1"},
 		domain: db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready"},
@@ -342,6 +344,40 @@ func TestReviewCreateJobIssuesTokensAndPinnedCommand(t *testing.T) {
 	}
 	if store.createdAgentToken.TokenHash != "hash:revtok_fixed" || store.createdSession.TokenHash != "hash:revsess_fixed" {
 		t.Fatalf("tokens not hashed into store: agent=%+v session=%+v", store.createdAgentToken, store.createdSession)
+	}
+}
+
+func TestReviewCreateJobUsesSourceTarballCommandInDevelopment(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "development")
+	store := &reviewStoreFake{
+		kit:    db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1"},
+		domain: db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready"},
+		now:    time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+	}
+	h := NewReviewHandler(store).
+		WithTokenGenerator(fixedReviewTokenGenerator).
+		WithNow(func() time.Time { return store.now }).
+		WithAPIBaseURL("https://dev-api.example.com")
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/jobs", strings.NewReader(`{"review_kit_id":"rvkit_1"}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.CreateJob(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewJobResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(env.Data.AgentCommand, "npx --yes --package https://codeload.github.com/bugfreev587/unipost/tar.gz/dev unipost-review-agent run --token revtok_fixed --session-token revsess_fixed") {
+		t.Fatalf("development command should use source tarball package: %q", env.Data.AgentCommand)
+	}
+	if !strings.Contains(env.Data.AgentCommand, "--api-url https://dev-api.example.com") {
+		t.Fatalf("command missing API base URL: %q", env.Data.AgentCommand)
 	}
 }
 
