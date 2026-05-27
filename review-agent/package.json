@@ -1,8 +1,13 @@
 {
-  "name": "@unipost/review-agent",
+  "name": "unipost-review-agent",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "unipost-review-agent": "src/index.js"
   },

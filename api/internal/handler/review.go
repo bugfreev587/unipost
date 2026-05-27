@@ -31,6 +31,7 @@ import (
 )
 
 const (
+	reviewAgentPackage        = "unipost-review-agent"
 	reviewAgentVersion        = "0.1.0"
 	reviewDefaultCnameTarget  = "review.unipost.dev"
 	reviewSessionCookieName   = "__unipost_review_session"
@@ -665,7 +666,7 @@ func (h *ReviewHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Platform:       kit.Platform,
 		Status:         job.Status,
 		AgentVersion:   reviewAgentVersion,
-		AgentCommand:   "npx --yes @unipost/review-agent@" + reviewAgentVersion + " run --token " + agentRaw + " --session-token " + sessionRaw + " --api-url " + h.apiBaseURL,
+		AgentCommand:   "npx --yes " + reviewAgentPackage + "@" + reviewAgentVersion + " run --token " + agentRaw + " --session-token " + sessionRaw + " --api-url " + h.apiBaseURL,
 		TokenExpiresAt: expiresAt.Format(time.RFC3339),
 	})
 }

@@ -334,7 +334,7 @@ func TestReviewCreateJobIssuesTokensAndPinnedCommand(t *testing.T) {
 	if env.Data.AgentVersion != reviewAgentVersion {
 		t.Fatalf("agent version = %q", env.Data.AgentVersion)
 	}
-	if !strings.Contains(env.Data.AgentCommand, "npx --yes @unipost/review-agent@0.1.0 run --token revtok_fixed --session-token revsess_fixed") {
+	if !strings.Contains(env.Data.AgentCommand, "npx --yes unipost-review-agent@0.1.0 run --token revtok_fixed --session-token revsess_fixed") {
 		t.Fatalf("command not version pinned with session token: %q", env.Data.AgentCommand)
 	}
 	if !strings.Contains(env.Data.AgentCommand, "--api-url https://dev-api.example.com") {
