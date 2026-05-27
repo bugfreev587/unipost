@@ -376,6 +376,7 @@ test("runScript prefers native browser-window capture when address-bar evidence 
   let completionArtifacts;
   let uploadedContentType = "";
   let pageWasFront = false;
+  const sequence = [];
   const script = {
     job_id: "rvjob_native_video",
     platform: "tiktok",
@@ -389,7 +390,11 @@ test("runScript prefers native browser-window capture when address-bar evidence 
     video: () => ({ path: async () => assert.fail("page video should not be used when native capture succeeds") }),
   };
   const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
-  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const playwrightImpl = { chromium: { launch: async () => {
+    assert.deepEqual(sequence, ["prepare"], "native capture browser prep must run before launch");
+    sequence.push("launch");
+    return { newContext: async () => context, close: async () => {} };
+  } } };
   const reporter = {
     event: async () => {},
     uploadArtifact: async (artifact) => {
@@ -413,8 +418,11 @@ test("runScript prefers native browser-window capture when address-bar evidence 
     };
   };
 
-  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, nativeCaptureImpl, out: { write() {} } });
+  const prepareBrowserImpl = async () => { sequence.push("prepare"); };
 
+  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, nativeCaptureImpl, prepareBrowserImpl, out: { write() {} } });
+
+  assert.deepEqual(sequence, ["prepare", "launch"]);
   assert.equal(completionArtifacts.video.capture_mode, "macos-screencapture-region");
   assert.equal(completionArtifacts.video.includes_address_bar, true);
   assert.equal(completionArtifacts.video.local_path, "/tmp/unipost-review-videos/rvjob-native.mov");

@@ -1,13 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 import { startNativeBrowserCapture } from "./native-capture.js";
 import { validateScript } from "./script-contract.js";
 import { buildReviewSessionCookie } from "./session-cookie.js";
 import { processReviewVideoSegments } from "./video-postprocess.js";
 
 const PAGE_VIDEO_ARTIFACT_NOTE = "Fallback artifact captures the page viewport only. It does not satisfy address-bar evidence requirements.";
+const execFileAsync = promisify(execFile);
 
-export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture, videoPostProcessImpl = processReviewVideoSegments } = {}) {
+export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture, videoPostProcessImpl = processReviewVideoSegments, prepareBrowserImpl = prepareBrowserForNativeCapture } = {}) {
   const valid = validateScript(script);
   if (dryRun) {
     out.write(`Review script ${valid.job_id} (${valid.steps.length} steps)\n`);
@@ -17,6 +20,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     return { status: "dry_run", jobId: valid.job_id };
   }
 
+  await prepareBrowserImpl({ script: valid, out });
   const { chromium } = playwrightImpl || await importPlaywright();
   const contextOptions = buildBrowserContextOptions(valid);
   await mkdir(contextOptions.recordVideo.dir, { recursive: true });
@@ -117,6 +121,24 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
       await context.close();
     }
     await browser.close();
+  }
+}
+
+export async function prepareBrowserForNativeCapture({ script = {}, out = process.stdout, platform = process.platform, execFileImpl = execFileAsync } = {}) {
+  const recording = script.recording || {};
+  const requestedMode = recording.capture_mode || (recording.show_address_bar ? "native-browser-window" : "playwright-page-video");
+  if (platform !== "darwin" || requestedMode !== "native-browser-window" || !recording.show_address_bar) return;
+  try {
+    await execFileImpl("osascript", [
+      "-e",
+      'tell application "System Events" to set chromeForTestingIsRunning to exists process "Google Chrome for Testing"',
+      "-e",
+      'if chromeForTestingIsRunning then tell application "Google Chrome for Testing" to quit',
+    ]);
+    await delay(500);
+    out.write("[browser] cleared stale Chrome for Testing windows before native capture\n");
+  } catch (err) {
+    out.write("[browser warning] could not clear stale Chrome for Testing windows: " + err.message + "\n");
   }
 }
 
