@@ -476,6 +476,62 @@ test("runScript prefers native browser-window capture when address-bar evidence 
   assert.equal(uploadedContentType, "video/quicktime");
 });
 
+test("runScript preloads the first review URL before native capture starts", async () => {
+  const sequence = [];
+  const script = {
+    job_id: "rvjob_native_preload",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    recording: { window_width: 1200, window_height: 900, show_address_bar: true, capture_mode: "native-browser-window" },
+    steps: [{ id: "open_review_app", action: "goto", url: "https://review.example.com/tiktok/posting" }],
+  };
+  const page = {
+    bringToFront: async () => { sequence.push("front"); },
+    goto: async (url) => { sequence.push(`goto:${url}`); },
+    video: () => ({ path: async () => assert.fail("page video should not be used when native capture succeeds") }),
+  };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({
+    newContext: async () => context,
+    close: async () => {},
+  }) } };
+  const reporter = {
+    event: async () => {},
+    uploadArtifact: async () => "review-artifacts/ws_1/rvjob_native_preload/demo-video.mov",
+    complete: async () => {},
+    fail: async () => assert.fail("runScript should complete"),
+  };
+  const nativeCaptureImpl = async () => {
+    assert.deepEqual(sequence.slice(0, 2), ["front", "goto:https://review.example.com/tiktok/posting"]);
+    sequence.push("capture");
+    return {
+      mode: "macos-screencapture-region",
+      localPath: "/tmp/unipost-review-videos/rvjob-native-preload.mov",
+      includesAddressBar: true,
+      bounds: { left: 80, top: 80, width: 1200, height: 900 },
+      stop: async () => {},
+    };
+  };
+
+  await runner.runScript(script, {
+    reporter,
+    sessionToken: "rvsession_test",
+    playwrightImpl,
+    nativeCaptureImpl,
+    prepareBrowserImpl: async () => {},
+    out: { write() {} },
+  });
+
+  assert.deepEqual(sequence, [
+    "front",
+    "goto:https://review.example.com/tiktok/posting",
+    "front",
+    "capture",
+    "goto:https://review.example.com/tiktok/posting",
+  ]);
+});
+
 test("manual pause overlay waits for the page body before injecting instructions", async () => {
   let bodyReady = false;
   let completed = false;

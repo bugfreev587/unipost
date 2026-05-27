@@ -35,6 +35,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
   }
   const page = await context.newPage();
   await bringPageToFront(page);
+  await preloadNativeCapturePage(page, valid);
   let nativeCapture = null;
   const markers = [];
   const segmentMap = buildSegmentMap(valid.segments || []);
@@ -349,6 +350,16 @@ async function bringPageToFront(page) {
   if (typeof page?.bringToFront === "function") {
     await page.bringToFront();
   }
+}
+
+async function preloadNativeCapturePage(page, script) {
+  if (!requiresNativeAddressBarCapture(script.recording || {})) return;
+  if (typeof page?.goto !== "function") return;
+  const firstStep = Array.isArray(script.steps) ? script.steps[0] : null;
+  const preloadURL = firstStep?.action === "goto" ? firstStep.url : script.start_url;
+  if (!preloadURL) return;
+  await page.goto(preloadURL, { waitUntil: "domcontentloaded" });
+  await bringPageToFront(page);
 }
 
 export function policyLinkHoldDurationMs(recording = {}) {
