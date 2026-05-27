@@ -966,6 +966,7 @@ func (h *ReviewHandler) CreateAgentArtifactUpload(w http.ResponseWriter, r *http
 	}
 	var req struct {
 		ArtifactType string `json:"artifact_type"`
+		SegmentKey   string `json:"segment_key"`
 		ContentType  string `json:"content_type"`
 		SizeBytes    int64  `json:"size_bytes"`
 	}
@@ -974,7 +975,7 @@ func (h *ReviewHandler) CreateAgentArtifactUpload(w http.ResponseWriter, r *http
 		return
 	}
 	contentType := strings.ToLower(strings.TrimSpace(req.ContentType))
-	fileID, err := reviewArtifactFileID(agentToken.WorkspaceID, agentToken.ReviewJobID, req.ArtifactType, contentType)
+	fileID, err := reviewArtifactFileID(agentToken.WorkspaceID, agentToken.ReviewJobID, req.ArtifactType, req.SegmentKey, contentType)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
 		return
@@ -1057,7 +1058,7 @@ func (h *ReviewHandler) toReviewJobDetail(ctx context.Context, job db.ReviewJob,
 	return resp, nil
 }
 
-func reviewArtifactFileID(workspaceID string, jobID string, artifactType string, contentType string) (string, error) {
+func reviewArtifactFileID(workspaceID string, jobID string, artifactType string, segmentKey string, contentType string) (string, error) {
 	slug, ok := reviewArtifactSlug(strings.TrimSpace(artifactType))
 	if !ok {
 		return "", errors.New("artifact_type must be one of: demo_video, execution_evidence")
@@ -1072,7 +1073,26 @@ func reviewArtifactFileID(workspaceID string, jobID string, artifactType string,
 	if slug == "demo-video" && !strings.HasPrefix(contentType, "video/") {
 		return "", errors.New("demo_video artifacts must use a video content type")
 	}
+	if slug == "demo-video" {
+		if segmentSlug := reviewArtifactSegmentSlug(segmentKey); segmentSlug != "" {
+			slug += "-" + segmentSlug
+		}
+	}
 	return reviewArtifactDirectory(workspaceID, jobID) + "/" + slug + ext, nil
+}
+
+func reviewArtifactSegmentSlug(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func reviewArtifactDirectory(workspaceID string, jobID string) string {

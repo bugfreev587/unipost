@@ -18,7 +18,7 @@ export function createAgentReporter({ token, apiUrl, fetchImpl = globalThis.fetc
         },
       });
     },
-    async uploadArtifact({ artifactType, contentType, path }) {
+    async uploadArtifact({ artifactType, segmentKey = "", contentType, path }) {
       const info = await statImpl(path);
       const upload = await createReviewArtifactUpload({
         token,
@@ -26,6 +26,7 @@ export function createAgentReporter({ token, apiUrl, fetchImpl = globalThis.fetc
         fetchImpl,
         artifact: {
           artifact_type: artifactType,
+          segment_key: segmentKey,
           content_type: contentType,
           size_bytes: info.size,
         },

@@ -75,7 +75,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     await context.close();
     contextClosed = true;
     const artifacts = await buildCompletionArtifacts({ markers, segments: valid.segments || [], segmentEvents, video, nativeVideo });
-    const videoFileID = await uploadVideoArtifact(reporter, artifacts.video, out);
+    const videoFileID = await uploadVideoArtifacts(reporter, artifacts, out);
     const evidenceFileID = await uploadExecutionEvidenceArtifact(reporter, valid.job_id, artifacts, out);
     if (evidenceFileID) artifacts.execution_evidence = { file_id: evidenceFileID };
     await reportComplete(reporter, artifacts, out, videoFileID);
@@ -119,10 +119,19 @@ export function buildBrowserContextOptions(script, { videoDir = defaultVideoDir(
   };
 }
 
-export async function buildCompletionArtifacts({ markers = [], segments = [], segmentEvents = [], video = null, nativeVideo = null } = {}) {
+export async function buildCompletionArtifacts({ markers = [], segments = [], segmentEvents = [], videoSegments = [], video = null, nativeVideo = null } = {}) {
   const artifacts = { markers };
   if (segments.length) artifacts.segments = segments;
   if (segmentEvents.length) artifacts.segment_events = segmentEvents;
+  if (videoSegments.length) {
+    artifacts.video_segments = videoSegments
+      .filter((segment) => segment?.local_path)
+      .map((segment) => ({
+        ...segment,
+        segment_key: segment.segment_key || segment.key || "",
+        format: segment.format || videoFormat(segment.local_path),
+      }));
+  }
   if (nativeVideo?.local_path) {
     artifacts.video = {
       format: videoFormat(nativeVideo.local_path),
@@ -367,6 +376,14 @@ export function buildExecutionEvidence({ jobId, artifacts = {} } = {}) {
       file_id: artifacts.video.file_id || "",
       note: artifacts.video.note || "",
     } : null,
+    video_segments: (artifacts.video_segments || []).map((segment) => ({
+      segment_key: segment.segment_key || "",
+      format: segment.format || "",
+      scopes: segment.scopes || [],
+      duration_sec: segment.duration_sec || 0,
+      size_bytes: segment.size_bytes || 0,
+      file_id: segment.file_id || "",
+    })),
   };
 }
 
@@ -406,6 +423,28 @@ async function uploadVideoArtifact(reporter, video, out) {
   out.write("[artifact] uploaded demo video: " + fileID + "\n");
   video.file_id = fileID;
   return fileID;
+}
+
+export async function uploadVideoArtifacts(reporter, artifacts, out) {
+  if (!reporter?.uploadArtifact) return "";
+  if (Array.isArray(artifacts?.video_segments) && artifacts.video_segments.length > 0) {
+    let firstFileID = "";
+    for (const segment of artifacts.video_segments) {
+      if (!segment?.local_path) continue;
+      const format = segment.format || videoFormat(segment.local_path);
+      const fileID = await reporter.uploadArtifact({
+        artifactType: "demo_video",
+        segmentKey: segment.segment_key || segment.key || "",
+        contentType: videoContentType(format),
+        path: segment.local_path,
+      });
+      out.write("[artifact] uploaded demo video segment: " + fileID + "\n");
+      segment.file_id = fileID;
+      if (!firstFileID) firstFileID = fileID;
+    }
+    return firstFileID;
+  }
+  return uploadVideoArtifact(reporter, artifacts?.video, out);
 }
 
 function videoContentType(format) {

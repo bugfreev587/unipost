@@ -39,6 +39,20 @@ test("completion artifacts include the recorded video path and marker timeline",
   });
 });
 
+test("completion artifacts preserve split video segment paths", async () => {
+  const artifacts = await runner.buildCompletionArtifacts({
+    videoSegments: [
+      { segment_key: "posting_part_1", local_path: "/tmp/part-1.mp4", scopes: ["video.upload"], duration_sec: 44, size_bytes: 42_000_000 },
+      { segment_key: "posting_part_2", local_path: "/tmp/part-2.mp4", scopes: ["video.publish"], duration_sec: 39, size_bytes: 41_000_000 },
+    ],
+  });
+
+  assert.equal(artifacts.video_segments.length, 2);
+  assert.equal(artifacts.video_segments[0].format, "mp4");
+  assert.equal(artifacts.video_segments[0].segment_key, "posting_part_1");
+  assert.equal(artifacts.video_segments[0].size_bytes, 42_000_000);
+});
+
 test("runScript reports segment lifecycle events from script metadata", async () => {
   const events = [];
   const script = {
@@ -154,6 +168,28 @@ test("runScript uploads the finalized video and execution evidence before comple
   assert.equal(uploaded[1].artifactType, "execution_evidence");
   assert.equal(uploaded[1].contentType, "application/json");
   assert.equal(completedVideoFileID, "review-artifacts/ws_1/rvjob_upload_video/demo-video.webm");
+});
+
+test("runScript uploads split video segments with segment keys when present", async () => {
+  const uploaded = [];
+  const artifacts = await runner.buildCompletionArtifacts({
+    videoSegments: [
+      { segment_key: "analytics_part_1", local_path: "/tmp/analytics-1.mp4", scopes: ["user.info.profile"], duration_sec: 41, size_bytes: 40_000_000 },
+      { segment_key: "analytics_part_2", local_path: "/tmp/analytics-2.mp4", scopes: ["user.info.stats"], duration_sec: 38, size_bytes: 39_000_000 },
+    ],
+  });
+  const reporter = {
+    uploadArtifact: async (artifact) => {
+      uploaded.push(artifact);
+      return `review-artifacts/ws_1/rvjob_segments/demo-video-${artifact.segmentKey}.mp4`;
+    },
+  };
+
+  const videoFileID = await runner.uploadVideoArtifacts(reporter, artifacts, { write() {} });
+
+  assert.equal(videoFileID, "review-artifacts/ws_1/rvjob_segments/demo-video-analytics_part_1.mp4");
+  assert.deepEqual(uploaded.map((artifact) => artifact.segmentKey), ["analytics_part_1", "analytics_part_2"]);
+  assert.equal(artifacts.video_segments[0].file_id, "review-artifacts/ws_1/rvjob_segments/demo-video-analytics_part_1.mp4");
 });
 
 

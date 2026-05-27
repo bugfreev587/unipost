@@ -749,6 +749,40 @@ func TestReviewAgentCreatesArtifactUploadURL(t *testing.T) {
 	}
 }
 
+func TestReviewAgentCreatesSegmentArtifactUploadURL(t *testing.T) {
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	artifacts := &reviewArtifactStorageFake{putURL: "https://uploads.example.com/review-video-part-1"}
+	h := NewReviewHandler(store).WithArtifactStorage(artifacts)
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/agent/artifacts", strings.NewReader(`{
+		"artifact_type":"demo_video",
+		"segment_key":"posting_part_1",
+		"content_type":"video/mp4",
+		"size_bytes":1234
+	}`))
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.CreateAgentArtifactUpload(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if artifacts.putKey != "review-artifacts/ws_1/rvjob_1/demo-video-posting_part_1.mp4" {
+		t.Fatalf("unexpected segment upload key: %q", artifacts.putKey)
+	}
+	var env struct {
+		Data reviewAgentArtifactUploadResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.FileID != artifacts.putKey {
+		t.Fatalf("file id = %q, want %q", env.Data.FileID, artifacts.putKey)
+	}
+}
+
 func TestReviewGetJobReturnsVideoDownloadAndEvents(t *testing.T) {
 	store := &reviewStoreFake{
 		job: db.ReviewJob{

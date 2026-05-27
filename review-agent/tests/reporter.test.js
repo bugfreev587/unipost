@@ -66,12 +66,14 @@ test("uploads review artifacts before completion", async () => {
 
   const fileID = await reporter.uploadArtifact({
     artifactType: "demo_video",
+    segmentKey: "posting_part_1",
     contentType: "video/webm",
     path: "/tmp/demo.webm",
   });
 
   assert.equal(fileID, "review-artifacts/ws_1/rvjob_1/demo-video.webm");
   assert.equal(requests[0].url, "https://api.example.com/v1/review/agent/artifacts");
+  assert.equal(requests[0].body.segment_key, "posting_part_1");
   assert.equal(requests[0].body.size_bytes, 11);
   assert.equal(requests[1].url, "https://uploads.example.com/video");
   assert.equal(requests[1].init.method, "PUT");
