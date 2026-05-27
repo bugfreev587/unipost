@@ -371,6 +371,34 @@ test("runScript uploads split video segments with segment keys when present", as
   assert.equal(artifacts.video_segments[0].file_id, "review-artifacts/ws_1/rvjob_segments/demo-video-analytics_part_1.mp4");
 });
 
+test("prepareBrowserForNativeCapture waits for stale Chrome for Testing to quit", async () => {
+  const calls = [];
+  const waits = [];
+  const runningStates = [true, true, false];
+  const execFileImpl = async (_cmd, args) => {
+    const script = args.join("\n");
+    if (script.includes("exists process")) {
+      calls.push("check");
+      return { stdout: String(runningStates.shift()) };
+    }
+    calls.push("quit");
+    return { stdout: "" };
+  };
+
+  await runner.prepareBrowserForNativeCapture({
+    script: {
+      recording: { show_address_bar: true, capture_mode: "native-browser-window" },
+    },
+    platform: "darwin",
+    execFileImpl,
+    delayImpl: async (ms) => { waits.push(ms); },
+    out: { write() {} },
+  });
+
+  assert.deepEqual(calls, ["check", "quit", "check", "check"]);
+  assert.deepEqual(waits, [250]);
+});
+
 
 test("runScript prefers native browser-window capture when address-bar evidence is required", async () => {
   let completionArtifacts;

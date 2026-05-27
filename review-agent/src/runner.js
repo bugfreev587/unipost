@@ -124,22 +124,32 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
   }
 }
 
-export async function prepareBrowserForNativeCapture({ script = {}, out = process.stdout, platform = process.platform, execFileImpl = execFileAsync } = {}) {
+export async function prepareBrowserForNativeCapture({ script = {}, out = process.stdout, platform = process.platform, execFileImpl = execFileAsync, delayImpl = delay } = {}) {
   const recording = script.recording || {};
   const requestedMode = recording.capture_mode || (recording.show_address_bar ? "native-browser-window" : "playwright-page-video");
   if (platform !== "darwin" || requestedMode !== "native-browser-window" || !recording.show_address_bar) return;
   try {
-    await execFileImpl("osascript", [
-      "-e",
-      'tell application "System Events" to set chromeForTestingIsRunning to exists process "Google Chrome for Testing"',
-      "-e",
-      'if chromeForTestingIsRunning then tell application "Google Chrome for Testing" to quit',
-    ]);
-    await delay(500);
-    out.write("[browser] cleared stale Chrome for Testing windows before native capture\n");
+    if (!await isChromeForTestingRunning(execFileImpl)) return;
+    await execFileImpl("osascript", ["-e", 'tell application "Google Chrome for Testing" to quit']);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (!await isChromeForTestingRunning(execFileImpl)) {
+        out.write("[browser] cleared stale Chrome for Testing windows before native capture\n");
+        return;
+      }
+      await delayImpl(250);
+    }
+    out.write("[browser warning] Chrome for Testing was still running after quit request; recording may capture the wrong window\n");
   } catch (err) {
     out.write("[browser warning] could not clear stale Chrome for Testing windows: " + err.message + "\n");
   }
+}
+
+async function isChromeForTestingRunning(execFileImpl) {
+  const result = await execFileImpl("osascript", [
+    "-e",
+    'tell application "System Events" to exists process "Google Chrome for Testing"',
+  ]);
+  return String(result?.stdout || "").trim() === "true";
 }
 
 export function buildBrowserContextOptions(script, { videoDir = defaultVideoDir() } = {}) {
