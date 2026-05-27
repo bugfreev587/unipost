@@ -68,12 +68,12 @@ func (c *TikTokConnector) AuthorizeURL(session SessionView) (string, error) {
 	q.Set("client_key", c.clientKey)
 	q.Set("redirect_uri", c.redirectURI)
 	q.Set("response_type", "code")
-	q.Set("scope", strings.Join(tiktokConnectScopes(), ","))
+	q.Set("scope", strings.Join(tiktokConnectScopesForSession(session), ","))
 	q.Set("state", session.OAuthState)
 	return c.AuthorizeEndpoint + "?" + q.Encode(), nil
 }
 
-func (c *TikTokConnector) ExchangeCode(ctx context.Context, _ SessionView, code string) (*TokenSet, error) {
+func (c *TikTokConnector) ExchangeCode(ctx context.Context, session SessionView, code string) (*TokenSet, error) {
 	form := url.Values{}
 	form.Set("client_key", c.clientKey)
 	form.Set("client_secret", c.clientSecret)
@@ -110,7 +110,7 @@ func (c *TikTokConnector) ExchangeCode(ctx context.Context, _ SessionView, code 
 		AccessToken:  tokenData.AccessToken,
 		RefreshToken: tokenData.RefreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(defaultInt(tokenData.ExpiresIn, 86400)) * time.Second),
-		Scopes:       tiktokConnectScopes(),
+		Scopes:       tiktokConnectScopesForSession(session),
 	}, nil
 }
 
@@ -260,11 +260,22 @@ func tiktokErrorMessage(v any) string {
 }
 
 func tiktokConnectScopes() []string {
+	return tiktokConnectScopesForSession(SessionView{})
+}
+
+func tiktokConnectScopesForSession(session SessionView) []string {
 	scopes := append([]string(nil), tiktokConnectBaseScopes...)
+	if isTikTokAppReviewSession(session) {
+		return scopes
+	}
 	if featureflags.Enabled(context.Background(), featureflags.TikTokAnalyticsScopes, featureflags.Target{}) {
 		scopes = append(scopes, tiktokConnectAnalyticsScopes...)
 	}
 	return scopes
+}
+
+func isTikTokAppReviewSession(session SessionView) bool {
+	return strings.HasPrefix(strings.TrimSpace(session.ExternalUserID), "app-review:")
 }
 
 func firstNonEmpty(values ...string) string {
