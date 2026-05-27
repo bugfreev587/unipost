@@ -373,6 +373,9 @@ func TestReviewPublicSessionReturnsConnectedAccountAndCreatorInfo(t *testing.T) 
 	if env.Data.CreatorInfo == nil || env.Data.CreatorInfo.CreatorNickname != "Review Creator" {
 		t.Fatalf("missing creator_info: %+v", env.Data.CreatorInfo)
 	}
+	if env.Data.TestVideoURL == "" || env.Data.DefaultCaption == "" {
+		t.Fatalf("missing review publish defaults: %+v", env.Data)
+	}
 	if adapter.creatorAccessToken != "access_live" {
 		t.Fatalf("creator_info used access token %q", adapter.creatorAccessToken)
 	}

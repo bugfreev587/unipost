@@ -45,8 +45,10 @@ func TestBuildTikTokScriptUsesClosedActionSet(t *testing.T) {
 	}
 
 	seen := map[Action]bool{}
+	seenSelector := map[string]bool{}
 	for _, step := range script.Steps {
 		seen[step.Action] = true
+		seenSelector[step.Selector] = true
 	}
 	for _, action := range []Action{
 		ActionGoto,
@@ -57,6 +59,17 @@ func TestBuildTikTokScriptUsesClosedActionSet(t *testing.T) {
 	} {
 		if !seen[action] {
 			t.Fatalf("expected script to include action %s", action)
+		}
+	}
+	for _, selector := range []string{
+		"[data-review-step='select-video']",
+		"[data-review-step='privacy-self-only']",
+		"[data-review-step='interaction-controls']",
+		"[data-review-step='content-disclosure']",
+		"[data-review-step='music-confirmation']",
+	} {
+		if !seenSelector[selector] {
+			t.Fatalf("expected script to include selector %s", selector)
 		}
 	}
 }

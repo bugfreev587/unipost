@@ -180,6 +180,36 @@ func BuildTikTokScript(input BuildTikTokScriptInput) Script {
 				Marker:   "Show TikTok creator_info",
 			},
 			{
+				ID:       "select_video",
+				Action:   ActionClick,
+				Selector: "[data-review-step='select-video']",
+				Marker:   "Select the TailTales review video",
+			},
+			{
+				ID:       "select_self_only",
+				Action:   ActionClick,
+				Selector: "[data-review-step='privacy-self-only']",
+				Marker:   "Choose TikTok visibility",
+			},
+			{
+				ID:       "assert_interactions",
+				Action:   ActionAssertVisible,
+				Selector: "[data-review-step='interaction-controls']",
+				Marker:   "Show interaction controls",
+			},
+			{
+				ID:       "assert_disclosure",
+				Action:   ActionAssertVisible,
+				Selector: "[data-review-step='content-disclosure']",
+				Marker:   "Show content disclosure controls",
+			},
+			{
+				ID:       "assert_music_confirmation",
+				Action:   ActionAssertVisible,
+				Selector: "[data-review-step='music-confirmation']",
+				Marker:   "Show Music Usage Confirmation",
+			},
+			{
 				ID:       "publish",
 				Action:   ActionClick,
 				Selector: "[data-review-step='publish-tiktok']",

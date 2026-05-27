@@ -173,6 +173,8 @@ type reviewPublicSessionResponse struct {
 	ReviewDomain        string                     `json:"review_domain"`
 	Status              string                     `json:"status"`
 	ExpiresAt           string                     `json:"expires_at"`
+	TestVideoURL        string                     `json:"test_video_url"`
+	DefaultCaption      string                     `json:"default_caption"`
 	Connected           bool                       `json:"connected"`
 	Account             *reviewSessionAccount      `json:"account,omitempty"`
 	CreatorInfo         *tiktokCreatorInfoResponse `json:"creator_info,omitempty"`
@@ -684,11 +686,13 @@ func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Re
 		expiresAt = session.ExpiresAt.Time.UTC().Format(time.RFC3339)
 	}
 	resp := reviewPublicSessionResponse{
-		JobID:        session.ReviewJobID,
-		Platform:     session.Platform,
-		ReviewDomain: domain.Domain,
-		Status:       "ready",
-		ExpiresAt:    expiresAt,
+		JobID:          session.ReviewJobID,
+		Platform:       session.Platform,
+		ReviewDomain:   domain.Domain,
+		Status:         "ready",
+		ExpiresAt:      expiresAt,
+		TestVideoURL:   strings.TrimSpace(h.testVideoURL),
+		DefaultCaption: reviewDefaultCaption,
 	}
 	profileID := reviewKitProfileID(kit)
 	if profileID != "" {
