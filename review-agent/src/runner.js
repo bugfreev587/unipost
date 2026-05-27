@@ -23,7 +23,9 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
   await prepareBrowserImpl({ script: valid, out });
   const { chromium } = playwrightImpl || await importPlaywright();
   const contextOptions = buildBrowserContextOptions(valid);
-  await mkdir(contextOptions.recordVideo.dir, { recursive: true });
+  if (contextOptions.recordVideo?.dir) {
+    await mkdir(contextOptions.recordVideo.dir, { recursive: true });
+  }
   const browser = await chromium.launch(browserLaunchOptions());
   const context = await browser.newContext(contextOptions);
   let contextClosed = false;
@@ -155,13 +157,21 @@ async function isChromeForTestingRunning(execFileImpl) {
 export function buildBrowserContextOptions(script, { videoDir = defaultVideoDir() } = {}) {
   const width = script.recording?.window_width || 1440;
   const height = script.recording?.window_height || 1000;
-  return {
+  const options = {
     viewport: { width, height },
-    recordVideo: {
+  };
+  if (!requiresNativeAddressBarCapture(script.recording || {})) {
+    options.recordVideo = {
       dir: videoDir,
       size: { width, height },
-    },
-  };
+    };
+  }
+  return options;
+}
+
+function requiresNativeAddressBarCapture(recording = {}) {
+  const requestedMode = recording.capture_mode || (recording.show_address_bar ? "native-browser-window" : "playwright-page-video");
+  return Boolean(recording.show_address_bar) && requestedMode === "native-browser-window";
 }
 
 export async function buildCompletionArtifacts({ markers = [], segments = [], segmentEvents = [], videoSegments = [], video = null, nativeVideo = null } = {}) {

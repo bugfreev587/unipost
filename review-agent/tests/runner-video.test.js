@@ -19,6 +19,25 @@ test("browser context options record a page video at the scripted viewport size"
   });
 });
 
+test("browser context options skip page video when native address-bar capture is required", () => {
+  const options = runner.buildBrowserContextOptions({
+    job_id: "rvjob_native_context",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    recording: {
+      window_width: 1280,
+      window_height: 720,
+      show_address_bar: true,
+      capture_mode: "native-browser-window",
+    },
+    steps: [{ id: "open", action: "goto", url: "https://review.example.com/tiktok/posting" }],
+  }, { videoDir: "/tmp/unipost-review-videos" });
+
+  assert.deepEqual(options.viewport, { width: 1280, height: 720 });
+  assert.equal(options.recordVideo, undefined);
+});
+
 test("completion artifacts include the recorded video path and marker timeline", async () => {
   const artifacts = await runner.buildCompletionArtifacts({
     markers: [{ step_id: "publish", label: "Publish test video", elapsed_ms: 1400 }],
