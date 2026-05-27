@@ -1443,8 +1443,9 @@ func (h *ReviewHandler) buildJobScript(ctx context.Context, jobID, workspaceID s
 		SessionCookieName:   reviewSessionCookieName,
 		SessionExpiresAt:    expiresAt,
 		RequireAddressBar:   true,
-		BrowserWindowWidth:  1440,
-		BrowserWindowHeight: 1000,
+		BrowserWindowWidth:  1920,
+		BrowserWindowHeight: 1080,
+		Plan:                reviewKitDemoPlan(kit),
 	})
 	if err := script.Validate(); err != nil {
 		return reviewscript.Script{}, err
@@ -1538,6 +1539,23 @@ func reviewKitProfileID(kit db.ReviewKit) string {
 	}
 	profileID, _ := snapshot["profile_id"].(string)
 	return strings.TrimSpace(profileID)
+}
+
+func reviewKitDemoPlan(kit db.ReviewKit) *reviewtemplate.TikTokDemoPlan {
+	var snapshot struct {
+		ReviewPlan json.RawMessage `json:"review_plan"`
+	}
+	if len(kit.BrandSnapshot) == 0 || json.Unmarshal(kit.BrandSnapshot, &snapshot) != nil || len(snapshot.ReviewPlan) == 0 {
+		return nil
+	}
+	var plan reviewtemplate.TikTokDemoPlan
+	if err := json.Unmarshal(snapshot.ReviewPlan, &plan); err != nil {
+		return nil
+	}
+	if plan.Platform != reviewDefaultPlatform || len(plan.Segments) == 0 {
+		return nil
+	}
+	return &plan
 }
 
 func marshalReviewJSON(value map[string]any) ([]byte, error) {

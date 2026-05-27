@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/xiaoboyu/unipost-api/internal/reviewtemplate"
 )
 
 type Action string
@@ -41,7 +43,16 @@ type Script struct {
 	StartURL      string        `json:"start_url"`
 	ReviewSession SessionSpec   `json:"review_session"`
 	Recording     RecordingSpec `json:"recording"`
+	Segments      []SegmentSpec `json:"segments,omitempty"`
 	Steps         []Step        `json:"steps"`
+}
+
+type SegmentSpec struct {
+	Key                  string   `json:"key"`
+	Title                string   `json:"title"`
+	Filename             string   `json:"filename"`
+	Scopes               []string `json:"scopes"`
+	EstimatedDurationSec int      `json:"estimated_duration_sec"`
 }
 
 type SessionSpec struct {
@@ -78,6 +89,7 @@ type BuildTikTokScriptInput struct {
 	RequireAddressBar   bool
 	BrowserWindowWidth  int
 	BrowserWindowHeight int
+	Plan                *reviewtemplate.TikTokDemoPlan
 }
 
 func (s Script) Validate() error {
@@ -117,8 +129,16 @@ func (s Script) Validate() error {
 }
 
 func BuildTikTokScript(input BuildTikTokScriptInput) Script {
+	return BuildTikTokScriptFromPlan(input)
+}
+
+func BuildTikTokScriptFromPlan(input BuildTikTokScriptInput) Script {
 	reviewDomain := strings.TrimSpace(input.ReviewDomain)
-	startURL := "https://" + strings.TrimPrefix(reviewDomain, "https://") + "/tiktok/posting"
+	useCase := "content_posting"
+	if input.Plan != nil && strings.TrimSpace(input.Plan.UseCase) != "" {
+		useCase = input.Plan.UseCase
+	}
+	startURL := reviewStartURL(reviewDomain, useCase)
 	cookieName := strings.TrimSpace(input.SessionCookieName)
 	if cookieName == "" {
 		cookieName = "__unipost_review_session"
@@ -148,80 +168,147 @@ func BuildTikTokScript(input BuildTikTokScriptInput) Script {
 			CaptureMode:    captureMode(input.RequireAddressBar),
 			ShowAddressBar: input.RequireAddressBar,
 		},
-		Steps: []Step{
-			{
-				ID:     "marker_start",
-				Action: ActionEmitMarker,
-				Marker: "Open customer review domain",
-			},
-			{
-				ID:     "open_review_app",
-				Action: ActionGoto,
-				URL:    startURL,
-				Marker: "Open customer review domain",
-			},
-			{
-				ID:       "connect_tiktok",
-				Action:   ActionClick,
-				Selector: "[data-review-step='connect-tiktok']",
-				Marker:   "Start TikTok OAuth",
-			},
-			{
-				ID:                    "wait_for_oauth",
-				Action:                ActionManualPause,
-				ResumeWhenURLContains: "/tiktok/posting",
-				Overlay:               "Log in to TikTok and approve access. UniPost cannot see or store your password or verification code.",
-				Marker:                "Customer completes TikTok login and consent",
-			},
-			{
-				ID:       "assert_creator_info",
-				Action:   ActionAssertVisible,
-				Selector: "[data-review-step='creator-info']",
-				Marker:   "Show TikTok creator_info",
-			},
-			{
-				ID:       "select_video",
-				Action:   ActionClick,
-				Selector: "[data-review-step='select-video']",
-				Marker:   "Select the TailTales review video",
-			},
-			{
-				ID:       "select_self_only",
-				Action:   ActionClick,
-				Selector: "[data-review-step='privacy-self-only']",
-				Marker:   "Choose TikTok visibility",
-			},
-			{
-				ID:       "assert_interactions",
-				Action:   ActionAssertVisible,
-				Selector: "[data-review-step='interaction-controls']",
-				Marker:   "Show interaction controls",
-			},
-			{
-				ID:       "assert_disclosure",
-				Action:   ActionAssertVisible,
-				Selector: "[data-review-step='content-disclosure']",
-				Marker:   "Show content disclosure controls",
-			},
-			{
-				ID:       "assert_music_confirmation",
-				Action:   ActionAssertVisible,
-				Selector: "[data-review-step='music-confirmation']",
-				Marker:   "Show Music Usage Confirmation",
-			},
-			{
-				ID:       "publish",
-				Action:   ActionClick,
-				Selector: "[data-review-step='publish-tiktok']",
-				Marker:   "Publish test video",
-			},
-			{
-				ID:       "assert_result",
-				Action:   ActionAssertVisible,
-				Selector: "[data-review-step='publish-result']",
-				Marker:   "Show publish result",
-			},
+		Segments: segmentSpecs(input.Plan),
+		Steps:    buildTikTokSteps(startURL, useCase, input.Plan),
+	}
+}
+
+func reviewStartURL(reviewDomain, useCase string) string {
+	host := strings.TrimPrefix(reviewDomain, "https://")
+	if useCase == "analytics" {
+		return "https://" + host + "/tiktok/analytics"
+	}
+	return "https://" + host + "/tiktok/posting"
+}
+
+func segmentSpecs(plan *reviewtemplate.TikTokDemoPlan) []SegmentSpec {
+	if plan == nil {
+		return nil
+	}
+	out := make([]SegmentSpec, 0, len(plan.Segments))
+	for _, segment := range plan.Segments {
+		out = append(out, SegmentSpec{
+			Key:                  segment.Key,
+			Title:                segment.Title,
+			Filename:             segment.Filename,
+			Scopes:               append([]string(nil), segment.Scopes...),
+			EstimatedDurationSec: segment.EstimatedDurationSec,
+		})
+	}
+	return out
+}
+
+func buildTikTokSteps(startURL string, useCase string, plan *reviewtemplate.TikTokDemoPlan) []Step {
+	segments := []string{"posting_part_1", "posting_part_2", "posting_part_3"}
+	videoListSegments := map[string]bool{}
+	if plan != nil && len(plan.Segments) > 0 {
+		segments = make([]string, 0, len(plan.Segments))
+		for _, segment := range plan.Segments {
+			segments = append(segments, segment.Key)
+			for _, step := range segment.Steps {
+				if step.Key == "video_list" {
+					videoListSegments[segment.Key] = true
+				}
+			}
+		}
+	}
+	steps := []Step{
+		{
+			ID:     "marker_start",
+			Action: ActionEmitMarker,
+			Marker: "Open customer review domain",
 		},
+		{
+			ID:     "open_review_app",
+			Action: ActionGoto,
+			URL:    startURL,
+			Marker: "Open customer review domain",
+		},
+		{
+			ID:       "connect_tiktok",
+			Action:   ActionClick,
+			Selector: "[data-review-step='connect-tiktok']",
+			Marker:   "Start TikTok OAuth",
+		},
+		{
+			ID:                    "wait_for_oauth",
+			Action:                ActionManualPause,
+			ResumeWhenURLContains: reviewResumePath(useCase),
+			Overlay:               "Log in to TikTok and approve access. UniPost cannot see or store your password or verification code.",
+			Marker:                "Customer completes TikTok login and consent",
+		},
+	}
+	for _, segment := range segments {
+		steps = append(steps, stepsForSegment(segment, startURL, videoListSegments[segment])...)
+	}
+	return steps
+}
+
+func reviewResumePath(useCase string) string {
+	if useCase == "analytics" {
+		return "/tiktok/analytics"
+	}
+	return "/tiktok/posting"
+}
+
+func stepsForSegment(segment string, startURL string, includeVideoList bool) []Step {
+	switch segment {
+	case "posting_part_1":
+		return []Step{
+			segmentMarker("posting_part_1", "Content Posting Part 1 - Creator Info, Upload, and Content Details"),
+			{ID: "assert_creator_info", Action: ActionAssertVisible, Selector: "[data-review-step='creator-info']", Marker: "1. Retrieve Creator Info"},
+			{ID: "select_video", Action: ActionClick, Selector: "[data-review-step='select-video']", Marker: "2. User Uploads Video And Enters Post Details"},
+			{ID: "select_self_only", Action: ActionClick, Selector: "[data-review-step='privacy-self-only']", Marker: "Choose TikTok visibility"},
+			{ID: "assert_disclosure", Action: ActionAssertVisible, Selector: "[data-review-step='content-disclosure']", Marker: "3a. Content Disclosure Settings"},
+		}
+	case "posting_part_2":
+		return []Step{
+			segmentMarker("posting_part_2", "Content Posting Part 2 - Privacy Management and Compliance"),
+			{ID: "assert_privacy_management", Action: ActionAssertVisible, Selector: "[data-review-step='privacy-selector']", Marker: "3b. Privacy Management"},
+			{ID: "assert_interactions", Action: ActionAssertVisible, Selector: "[data-review-step='interaction-controls']", Marker: "Show interaction controls"},
+			{ID: "assert_music_confirmation", Action: ActionAssertVisible, Selector: "[data-review-step='music-confirmation']", Marker: "4. Compliance Requirements"},
+			{ID: "assert_branded_policy", Action: ActionAssertVisible, Selector: "[data-review-step='branded-content-policy']", Marker: "Show Branded Content Policy"},
+		}
+	case "posting_part_3":
+		return []Step{
+			segmentMarker("posting_part_3", "Content Posting Part 3 - Preview, Publish, and Verification"),
+			{ID: "assert_preview", Action: ActionAssertVisible, Selector: "[data-review-step='post-preview']", Marker: "5. Preview And Publish"},
+			{ID: "publish", Action: ActionClick, Selector: "[data-review-step='publish-tiktok']", Marker: "Publish test video"},
+			{ID: "assert_result", Action: ActionAssertVisible, Selector: "[data-review-step='publish-result']", Marker: "Show publish result"},
+		}
+	case "analytics_part_1":
+		return []Step{
+			segmentMarker("analytics_part_1", "TikTok Analytics Part 1 - Login, OAuth, and Navigation"),
+			{ID: "open_tiktok_analytics", Action: ActionGoto, URL: analyticsStartURL(startURL), Marker: "Open TikTok Analytics"},
+			{ID: "assert_analytics_loading", Action: ActionAssertVisible, Selector: "[data-review-step='analytics-loading']", Marker: "Navigate to TikTok Analytics"},
+		}
+	case "analytics_part_2":
+		steps := []Step{
+			segmentMarker("analytics_part_2", "TikTok Analytics Part 2 - Profile and Stats Evidence"),
+			{ID: "assert_profile_card", Action: ActionAssertVisible, Selector: "[data-review-step='analytics-profile-card']", Marker: "1. user.info.profile"},
+			{ID: "assert_account_stats", Action: ActionAssertVisible, Selector: "[data-review-step='analytics-account-stats']", Marker: "2. user.info.stats"},
+		}
+		if includeVideoList {
+			steps = append(steps, Step{ID: "assert_video_list", Action: ActionAssertVisible, Selector: "[data-review-step='analytics-video-list']", Marker: "3. video.list"})
+		}
+		return steps
+	default:
+		return []Step{segmentMarker(segment, segment)}
+	}
+}
+
+func analyticsStartURL(startURL string) string {
+	if strings.Contains(startURL, "/tiktok/analytics") {
+		return startURL
+	}
+	return strings.Replace(startURL, "/tiktok/posting", "/tiktok/analytics", 1)
+}
+
+func segmentMarker(key, title string) Step {
+	return Step{
+		ID:     "segment_" + key,
+		Action: ActionEmitMarker,
+		Marker: title,
 	}
 }
 

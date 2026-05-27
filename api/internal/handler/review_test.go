@@ -17,6 +17,7 @@ import (
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/reviewscript"
 	"github.com/xiaoboyu/unipost-api/internal/reviewtemplate"
 )
 
@@ -397,6 +398,53 @@ func TestReviewAgentScriptUsesBearerToken(t *testing.T) {
 	}
 	if store.agentTokenHashLookup != hashReviewToken("revtok_live") {
 		t.Fatalf("token hash lookup = %q", store.agentTokenHashLookup)
+	}
+}
+
+func TestReviewJobScriptUsesStoredAnalyticsPlan(t *testing.T) {
+	plan, err := reviewtemplate.BuildTikTokDemoPlan(reviewtemplate.TikTokDemoPlanInput{Scopes: []string{"user.info.profile", "user.info.stats"}})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	brandSnapshot, err := json.Marshal(map[string]any{"review_plan": plan})
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	store := &reviewStoreFake{
+		job:     db.ReviewJob{ID: "rvjob_analytics", WorkspaceID: "ws_1", ReviewKitID: "rvkit_analytics", Platform: "tiktok", AgentVersion: pgtype.Text{String: reviewAgentVersion, Valid: true}},
+		kit:     db.ReviewKit{ID: "rvkit_analytics", WorkspaceID: "ws_1", Platform: "tiktok", UseCase: "analytics", Status: "ready", ReviewDomainID: "rvdom_1", BrandSnapshot: brandSnapshot},
+		domain:  db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready"},
+		session: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_analytics", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
+	}
+	h := NewReviewHandler(store)
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/jobs/rvjob_analytics/script", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "rvjob_analytics")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.GetJobScript(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewscript.Script `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.StartURL != "https://review.example.com/tiktok/analytics" {
+		t.Fatalf("unexpected start URL: %s", env.Data.StartURL)
+	}
+	if len(env.Data.Segments) != 2 || env.Data.Segments[0].Key != "analytics_part_1" {
+		t.Fatalf("missing analytics segment metadata: %+v", env.Data.Segments)
+	}
+	for _, step := range env.Data.Steps {
+		if step.ID == "assert_video_list" {
+			t.Fatalf("video.list step should not be present unless requested: %+v", env.Data.Steps)
+		}
 	}
 }
 
