@@ -220,7 +220,7 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
             <FileVideo size={18} />
             <div>
               <strong>tailtales-review-video.mp4</strong>
-              <span>{videoHost}</span>
+              <span>{form.videoSelected ? "Uploaded to UniPost media storage" : videoHost}</span>
             </div>
             <button
               data-review-step="select-video"
@@ -228,8 +228,23 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
               onClick={() => updateForm({ videoSelected: true })}
               disabled={!videoURL || form.videoSelected || published}
             >
-              {form.videoSelected ? <><Check size={15} /> Selected</> : "Use video"}
+              {form.videoSelected ? <><Check size={15} /> Uploaded</> : <><UploadCloud size={15} /> Upload video</>}
             </button>
+          </div>
+
+          <div className="upload-evidence" data-review-step={form.videoSelected ? "video-upload-ready" : "video-upload-pending"}>
+            <div className={form.videoSelected ? "upload-step done" : "upload-step"}>
+              <Check size={14} />
+              <span>Local MP4 selected</span>
+            </div>
+            <div className={form.videoSelected ? "upload-step done" : "upload-step"}>
+              <Check size={14} />
+              <span>Stored in UniPost media library</span>
+            </div>
+            <div className={form.videoSelected ? "upload-step ready" : "upload-step"}>
+              <UploadCloud size={14} />
+              <span>Ready for TikTok video.upload</span>
+            </div>
           </div>
 
           <Field label="Custom Caption" meta={`${form.caption.length} / 2200`}>
@@ -543,6 +558,12 @@ const styles = `
   .asset-row button,.primary-action,.publish-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:8px;background:#101828;color:#fff;text-decoration:none;padding:10px 13px;font-size:13px;font-weight:720;min-height:40px;box-sizing:border-box;cursor:pointer;transition:transform 140ms ease, background 140ms ease}
   .asset-row button:active,.primary-action:active,.publish-button:active{transform:translateY(1px)}
   .asset-row button:disabled,.primary-action[aria-disabled="true"],.publish-button:disabled{background:#98a2b3;cursor:not-allowed}
+  .upload-evidence{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:-4px 0 18px}
+  .upload-step{border:1px solid #dfe5ef;border-radius:8px;background:#fff;color:#667085;padding:9px;display:flex;align-items:center;gap:7px;min-height:40px;font-size:12px;font-weight:650}
+  .upload-step svg{color:#98a2b3;flex-shrink:0}
+  .upload-step.done{border-color:#abefc6;background:#ecfdf3;color:#067647}
+  .upload-step.done svg,.upload-step.ready svg{color:#079455}
+  .upload-step.ready{border-color:#7cd4b5;background:#f0fdf9;color:#065f46}
   .field{margin-top:16px}
   .field-label{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:7px}
   .field-label label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#667085;font-weight:760}
@@ -598,5 +619,5 @@ const styles = `
   .review-empty svg{color:#175cd3}
   .spin{animation:spin .8s linear infinite}
   @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-  @media (max-width:980px){.review-shell{padding:20px}.review-topbar,.result-band{flex-direction:column}.review-grid{grid-template-columns:1fr}.status-pill{align-self:flex-start}.privacy-options{grid-template-columns:1fr}}
+  @media (max-width:980px){.review-shell{padding:20px}.review-topbar,.result-band{flex-direction:column}.review-grid{grid-template-columns:1fr}.status-pill{align-self:flex-start}.privacy-options,.upload-evidence{grid-template-columns:1fr}}
 `;

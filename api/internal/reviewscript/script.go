@@ -285,6 +285,7 @@ func stepsForSegment(segment string, startURL string, includeVideoList bool) []S
 			segmentMarker("posting_part_1", "Content Posting Part 1 - Creator Info, Upload, and Content Details"),
 			{ID: "assert_creator_info", Action: ActionAssertVisible, Selector: "[data-review-step='creator-info']", Marker: "1. Retrieve Creator Info"},
 			{ID: "select_video", Action: ActionClick, Selector: "[data-review-step='select-video']", Marker: "2. User Uploads Video And Enters Post Details"},
+			{ID: "assert_video_upload_ready", Action: ActionAssertVisible, Selector: "[data-review-step='video-upload-ready']", Marker: "Confirm uploaded video is ready for TikTok video.upload"},
 			{ID: "select_self_only", Action: ActionClick, Selector: "[data-review-step='privacy-self-only']", Marker: "Choose TikTok visibility"},
 			{ID: "assert_disclosure", Action: ActionAssertVisible, Selector: "[data-review-step='content-disclosure']", Marker: "3a. Content Disclosure Settings"},
 		}

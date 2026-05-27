@@ -122,6 +122,7 @@ func TestBuildTikTokScriptFromPlanIncludesPostingSegments(t *testing.T) {
 	assertStep(t, script, "segment_posting_part_1")
 	assertStep(t, script, "assert_creator_info")
 	assertStep(t, script, "select_video")
+	assertStep(t, script, "assert_video_upload_ready")
 	assertStep(t, script, "assert_music_confirmation")
 	assertStep(t, script, "publish")
 	assertStep(t, script, "assert_result")
