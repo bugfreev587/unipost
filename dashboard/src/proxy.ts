@@ -47,6 +47,7 @@ export default clerkMiddleware(async (auth, request) => {
     pathname === "/sitemap.xml" ||
     pathname.startsWith("/docs") ||
     pathname.startsWith("/preview") ||
+    pathname.startsWith("/review/") ||
     pathname === "/pricing" ||
     pathname.startsWith("/blog") ||
     pathname === "/solutions" ||
