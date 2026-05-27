@@ -45,6 +45,11 @@ test("doctor warns macOS users about screen recording permission", () => {
   assert.ok(checks.some((check) => check.id === "macos-screen-recording" && check.warning));
 });
 
+test("doctor fails when ffmpeg is unavailable for review video splitting", () => {
+  const checks = runDoctor({ platform: "linux", nodeVersion: "20.11.1", ffmpegAvailable: false });
+  assert.ok(checks.some((check) => check.id === "ffmpeg" && !check.ok && !check.warning));
+});
+
 
 test("requires native capture when script asks to show the browser address bar", () => {
   assert.throws(() => validateScript({
