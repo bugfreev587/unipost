@@ -53,6 +53,31 @@ test("completion artifacts preserve split video segment paths", async () => {
   assert.equal(artifacts.video_segments[0].size_bytes, 42_000_000);
 });
 
+test("execution evidence preserves reviewer-facing segment metadata", () => {
+  const evidence = runner.buildExecutionEvidence({
+    jobId: "rvjob_evidence",
+    artifacts: {
+      video_segments: [{
+        segment_key: "posting_part_1",
+        title: "Content Posting Part 1 - Creator Info, Upload, and Content Details",
+        filename: "tiktok-content-posting-part-1.mp4",
+        local_path: "/tmp/tiktok-content-posting-part-1.mp4",
+        format: "mp4",
+        scopes: ["user.info.basic", "video.upload"],
+        start_sec: 0.25,
+        duration_sec: 42,
+        size_bytes: 42_000_000,
+        file_id: "review-artifacts/ws_1/rvjob_evidence/demo-video-posting_part_1.mp4",
+      }],
+    },
+  });
+
+  assert.equal(evidence.video_segments[0].filename, "tiktok-content-posting-part-1.mp4");
+  assert.equal(evidence.video_segments[0].title, "Content Posting Part 1 - Creator Info, Upload, and Content Details");
+  assert.equal(evidence.video_segments[0].start_sec, 0.25);
+  assert.deepEqual(evidence.video_segments[0].scopes, ["user.info.basic", "video.upload"]);
+});
+
 test("runScript reports segment lifecycle events from script metadata", async () => {
   const events = [];
   const script = {

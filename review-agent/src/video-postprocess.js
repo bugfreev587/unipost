@@ -53,13 +53,16 @@ export function buildSegmentClipSpecs({ outputDir = defaultVideoDir(), segments 
     const window = windows.get(key);
     if (!key || !window || !Number.isFinite(window.started_elapsed_ms) || !Number.isFinite(window.completed_elapsed_ms)) continue;
     if (window.completed_elapsed_ms <= window.started_elapsed_ms) continue;
+    const filename = sanitizeSegmentFilename(segment.filename || `${key}.mp4`);
     specs.push({
       segment_key: key,
       title: segment.title || key,
+      filename,
       scopes: Array.isArray(segment.scopes) ? segment.scopes : [],
       start_sec: roundSeconds(window.started_elapsed_ms / 1000),
       duration_sec: roundSeconds((window.completed_elapsed_ms - window.started_elapsed_ms) / 1000),
-      local_path: path.join(outputDir, sanitizeSegmentFilename(segment.filename || `${key}.mp4`)),
+      resolution: "1080p",
+      local_path: path.join(outputDir, filename),
     });
   }
   return specs;

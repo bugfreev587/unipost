@@ -477,9 +477,13 @@ export function buildExecutionEvidence({ jobId, artifacts = {} } = {}) {
     } : null,
     video_segments: (artifacts.video_segments || []).map((segment) => ({
       segment_key: segment.segment_key || "",
+      title: segment.title || "",
+      filename: segment.filename || "",
       format: segment.format || "",
       scopes: segment.scopes || [],
+      start_sec: segment.start_sec || 0,
       duration_sec: segment.duration_sec || 0,
+      resolution: segment.resolution || "",
       size_bytes: segment.size_bytes || 0,
       file_id: segment.file_id || "",
     })),

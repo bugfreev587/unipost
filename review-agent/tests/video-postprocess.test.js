@@ -22,9 +22,11 @@ test("buildSegmentClipSpecs converts segment lifecycle events into clip windows"
   assert.deepEqual(specs[0], {
     segment_key: "posting_part_1",
     title: "Posting Part 1",
+    filename: "posting-part-1.mp4",
     scopes: ["video.upload"],
     start_sec: 0.25,
     duration_sec: 3,
+    resolution: "1080p",
     local_path: "/tmp/unipost-review-videos/posting-part-1.mp4",
   });
   assert.equal(specs[1].duration_sec, 4.55);
