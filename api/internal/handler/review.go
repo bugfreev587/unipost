@@ -665,7 +665,7 @@ func (h *ReviewHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Platform:       kit.Platform,
 		Status:         job.Status,
 		AgentVersion:   reviewAgentVersion,
-		AgentCommand:   "npx --yes @unipost/review-agent@" + reviewAgentVersion + " run --token " + agentRaw + " --session-token " + sessionRaw,
+		AgentCommand:   "npx --yes @unipost/review-agent@" + reviewAgentVersion + " run --token " + agentRaw + " --session-token " + sessionRaw + " --api-url " + h.apiBaseURL,
 		TokenExpiresAt: expiresAt.Format(time.RFC3339),
 	})
 }
