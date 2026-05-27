@@ -84,6 +84,47 @@ test("runScript reports segment lifecycle events from script metadata", async ()
   assert.equal(events.some((event) => event.eventType === "segment_completed" && event.metadata.key === "posting_part_1"), true);
 });
 
+test("runScript shows recorded section title overlays for review markers", async () => {
+  const evaluations = [];
+  const script = {
+    job_id: "rvjob_marker_overlay",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    recording: { marker_overlay_ms: 1 },
+    steps: [{ id: "creator_info", action: "assert_visible", selector: "[data-review-step='creator-info']", marker: "1. Retrieve Creator Info" }],
+  };
+  const page = {
+    video: () => ({ path: async () => "/tmp/unipost-review-videos/marker-overlay.webm" }),
+    evaluate: async (_fn, arg) => {
+      evaluations.push(arg);
+    },
+    locator: (selector) => {
+      assert.equal(selector, "[data-review-step='creator-info']");
+      return {
+        first: () => ({
+          waitFor: async () => {},
+        }),
+      };
+    },
+  };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async () => {},
+    uploadArtifact: async (artifact) => artifact.artifactType === "demo_video"
+      ? "review-artifacts/ws_1/rvjob_marker_overlay/demo-video.webm"
+      : "review-artifacts/ws_1/rvjob_marker_overlay/execution-evidence.json",
+    complete: async () => {},
+    fail: async () => assert.fail("runScript should complete"),
+  };
+
+  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, out: { write() {} } });
+
+  assert.equal(evaluations.some((arg) => arg?.label === "1. Retrieve Creator Info" && arg?.stepId === "creator_info"), true);
+  assert.equal(evaluations.some((arg) => arg?.remove === true), true);
+});
+
 test("runScript post-processes completed segments into uploadable 50MB video files", async () => {
   const uploaded = [];
   let postProcessInput;

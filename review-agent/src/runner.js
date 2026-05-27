@@ -59,6 +59,13 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
         segmentEvents.push(activeSegment);
         await reportEvent(reporter, "segment_started", activeSegment.title, activeSegment, out);
       }
+      if (step.marker && step.action !== "manual_pause") {
+        await showMarkerOverlay(page, {
+          stepId: step.id,
+          label: step.marker,
+          durationMs: markerOverlayDurationMs(valid.recording || {}),
+        });
+      }
       await reportEvent(reporter, "step_started", step.marker || step.id, { step_id: step.id, action: step.action }, out);
       if (step.action === "manual_pause") {
         await reportEvent(reporter, "manual_pause_started", step.marker || "Waiting for user", { step_id: step.id }, out);
@@ -291,6 +298,68 @@ async function showOverlay(page, text) {
 
 async function hideOverlay(page) {
   await page.evaluate(() => document.querySelector("[data-unipost-review-overlay]")?.remove());
+}
+
+async function showMarkerOverlay(page, { stepId, label, durationMs }) {
+  if (!page?.evaluate) return;
+  await page.evaluate(({ stepId, label }) => {
+    const previous = document.querySelector("[data-unipost-review-marker]");
+    if (previous) previous.remove();
+    const mount = document.body || document.documentElement;
+    if (!mount) return;
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-unipost-review-marker", "true");
+    overlay.setAttribute("data-review-marker-step", stepId);
+    const kicker = document.createElement("div");
+    kicker.textContent = "TikTok App Review Demo";
+    const title = document.createElement("div");
+    title.textContent = label;
+    overlay.append(kicker, title);
+    Object.assign(overlay.style, {
+      position: "fixed",
+      left: "28px",
+      top: "28px",
+      zIndex: "2147483646",
+      maxWidth: "760px",
+      padding: "16px 18px",
+      borderRadius: "8px",
+      background: "rgba(17,24,39,.94)",
+      color: "#fff",
+      fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+      boxShadow: "0 20px 56px rgba(15,23,42,.30)",
+      border: "1px solid rgba(255,255,255,.18)",
+    });
+    Object.assign(kicker.style, {
+      fontSize: "12px",
+      letterSpacing: ".08em",
+      textTransform: "uppercase",
+      color: "rgba(255,255,255,.72)",
+      fontWeight: "700",
+      marginBottom: "5px",
+    });
+    Object.assign(title.style, {
+      fontSize: "26px",
+      lineHeight: "1.18",
+      fontWeight: "760",
+    });
+    mount.appendChild(overlay);
+  }, { stepId, label });
+  await delay(durationMs);
+  await page.evaluate(({ stepId }) => {
+    const overlay = document.querySelector(`[data-unipost-review-marker][data-review-marker-step="${stepId}"]`);
+    overlay?.remove();
+  }, { stepId, remove: true });
+}
+
+function markerOverlayDurationMs(recording = {}) {
+  const configured = Number(recording.marker_overlay_ms || "");
+  if (Number.isFinite(configured) && configured >= 0) return configured;
+  return 1300;
+}
+
+function delay(ms) {
+  if (!ms) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function manualPauseTimeoutMs() {
