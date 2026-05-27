@@ -407,6 +407,58 @@ func TestReviewAgentScriptUsesBearerToken(t *testing.T) {
 	}
 }
 
+func TestReviewAgentScriptRebuildsPlanFromStoredScopes(t *testing.T) {
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+		job:        db.ReviewJob{ID: "rvjob_1", WorkspaceID: "ws_1", ReviewKitID: "rvkit_1", Platform: "tiktok", AgentVersion: pgtype.Text{String: reviewAgentVersion, Valid: true}},
+		kit: db.ReviewKit{
+			ID:             "rvkit_1",
+			WorkspaceID:    "ws_1",
+			Platform:       "tiktok",
+			UseCase:        "content_posting",
+			Status:         "ready",
+			ReviewDomainID: "rvdom_1",
+			RequiredScopes: []string{"user.info.basic", "video.upload", "video.publish"},
+		},
+		domain:  db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready", TlsStatus: "issued"},
+		session: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
+	}
+	h := NewReviewHandler(store)
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/agent/script", nil)
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.GetAgentJobScript(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewscript.Script `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.RequestedScopes) != 3 || !containsReviewString(env.Data.RequestedScopes, "video.upload") {
+		t.Fatalf("missing requested scopes: %+v", env.Data.RequestedScopes)
+	}
+	if len(env.Data.Segments) != 3 || env.Data.Segments[0].Key != "posting_part_1" {
+		t.Fatalf("missing rebuilt segment metadata: %+v", env.Data.Segments)
+	}
+	if !env.Data.Recording.SplitAutomatically || env.Data.Recording.MaxArtifactBytes != 50000000 {
+		t.Fatalf("missing split recording constraints: %+v", env.Data.Recording)
+	}
+}
+
+func containsReviewString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestReviewJobScriptUsesStoredAnalyticsPlan(t *testing.T) {
 	plan, err := reviewtemplate.BuildTikTokDemoPlan(reviewtemplate.TikTokDemoPlanInput{Scopes: []string{"user.info.profile", "user.info.stats"}})
 	if err != nil {

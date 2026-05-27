@@ -1677,14 +1677,17 @@ func reviewKitDemoPlan(kit db.ReviewKit) *reviewtemplate.TikTokDemoPlan {
 	var snapshot struct {
 		ReviewPlan json.RawMessage `json:"review_plan"`
 	}
-	if len(kit.BrandSnapshot) == 0 || json.Unmarshal(kit.BrandSnapshot, &snapshot) != nil || len(snapshot.ReviewPlan) == 0 {
+	if len(kit.BrandSnapshot) > 0 && json.Unmarshal(kit.BrandSnapshot, &snapshot) == nil && len(snapshot.ReviewPlan) > 0 {
+		var plan reviewtemplate.TikTokDemoPlan
+		if err := json.Unmarshal(snapshot.ReviewPlan, &plan); err == nil && plan.Platform == reviewDefaultPlatform && len(plan.Segments) > 0 {
+			return &plan
+		}
+	}
+	if len(kit.RequiredScopes) == 0 {
 		return nil
 	}
-	var plan reviewtemplate.TikTokDemoPlan
-	if err := json.Unmarshal(snapshot.ReviewPlan, &plan); err != nil {
-		return nil
-	}
-	if plan.Platform != reviewDefaultPlatform || len(plan.Segments) == 0 {
+	plan, err := reviewtemplate.BuildTikTokDemoPlan(reviewtemplate.TikTokDemoPlanInput{Scopes: kit.RequiredScopes})
+	if err != nil || plan.Platform != reviewDefaultPlatform || len(plan.Segments) == 0 {
 		return nil
 	}
 	return &plan
