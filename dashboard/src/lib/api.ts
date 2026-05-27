@@ -445,10 +445,64 @@ export interface ReviewDomain {
 export interface ReviewKit {
   id: string;
   platform: string;
-  use_case: string;
+  use_case: "content_posting" | "analytics" | "mixed" | string;
   review_domain_id: string;
   required_scopes: string[];
   status: string;
+}
+
+export interface TikTokScopeTemplate {
+  scope: string;
+  label: string;
+  use_case: "content_posting" | "analytics" | string;
+  primary_surface: string;
+  required_evidence: string;
+}
+
+export interface TikTokDemoPlanStep {
+  key: string;
+  title: string;
+  surface: string;
+  evidence: string;
+  scopes: string[];
+  user_action: boolean;
+}
+
+export interface TikTokDemoPlanSegment {
+  key: string;
+  title: string;
+  filename: string;
+  description: string;
+  primary_surface: string;
+  scopes: string[];
+  estimated_duration_sec: number;
+  steps: TikTokDemoPlanStep[];
+}
+
+export interface TikTokDemoPlan {
+  template_version: string;
+  platform: "tiktok";
+  use_case: "content_posting" | "analytics" | "mixed";
+  requested_scopes: string[];
+  oauth_prelude: {
+    required: boolean;
+    title: string;
+    instructions: string[];
+  };
+  recording: {
+    resolution: string;
+    fps: number;
+    max_file_size_mb: number;
+    show_address_bar: boolean;
+    split_automatically: boolean;
+  };
+  segments: TikTokDemoPlanSegment[];
+  scope_coverage: Array<{
+    scope: string;
+    segments: string[];
+    evidence: string[];
+  }>;
+  warnings: string[];
 }
 
 export interface ReviewJobEvent {
@@ -486,6 +540,22 @@ export async function getReviewState(
   return request(`/v1/review/state`, token);
 }
 
+export async function getTikTokReviewScopeTemplates(
+  token: string
+): Promise<ApiResponse<TikTokScopeTemplate[]>> {
+  return request(`/v1/review/tiktok/scope-templates`, token);
+}
+
+export async function createTikTokReviewDemoPlan(
+  token: string,
+  data: { scopes: string[] }
+): Promise<ApiResponse<TikTokDemoPlan>> {
+  return request(`/v1/review/tiktok/demo-plan`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 export async function createReviewDomain(
   token: string,
   data: { domain: string; provider?: string }
@@ -509,7 +579,7 @@ export async function createReviewKit(
   token: string,
   data: {
     platform: "tiktok";
-    use_case: "content_posting";
+    use_case: "content_posting" | "analytics" | "mixed";
     review_domain_id: string;
     redirect_uri_attested: boolean;
     brand_snapshot?: Record<string, unknown>;

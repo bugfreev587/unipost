@@ -20,9 +20,11 @@ import {
 import { FeatureFlagGate } from "@/components/feature-flag-gate";
 import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
 import {
+  createTikTokReviewDemoPlan,
   createReviewDomain,
   createReviewJob,
   createReviewKit,
+  getTikTokReviewScopeTemplates,
   getReviewJob,
   getReviewState,
   listPlatformCredentials,
@@ -32,9 +34,27 @@ import {
   type ReviewDomain,
   type ReviewJob,
   type ReviewKit,
+  type TikTokDemoPlan,
+  type TikTokScopeTemplate,
 } from "@/lib/api";
 
-const REQUIRED_TIKTOK_SCOPES = ["user.info.basic", "video.publish", "video.upload"];
+const CONTENT_POSTING_SCOPES = ["user.info.basic", "video.upload", "video.publish"];
+const ANALYTICS_BASIC_SCOPES = ["user.info.profile", "user.info.stats"];
+const ANALYTICS_VIDEO_LIST_SCOPES = ["user.info.profile", "user.info.stats", "video.list"];
+const DEFAULT_TIKTOK_SCOPES = CONTENT_POSTING_SCOPES;
+const SCOPE_PRESETS = [
+  { key: "content", label: "Content Posting API", scopes: CONTENT_POSTING_SCOPES },
+  { key: "analytics", label: "Analytics Basic", scopes: ANALYTICS_BASIC_SCOPES },
+  { key: "analytics-video", label: "Analytics + Video List", scopes: ANALYTICS_VIDEO_LIST_SCOPES },
+];
+const FALLBACK_SCOPE_TEMPLATES: TikTokScopeTemplate[] = [
+  { scope: "user.info.basic", label: "Basic user info", use_case: "content_posting", primary_surface: "connection_flow,create_post_drawer", required_evidence: "Connected account identity and creator info-driven posting settings." },
+  { scope: "video.upload", label: "Upload videos", use_case: "content_posting", primary_surface: "create_post_drawer", required_evidence: "Video file upload, validation, and preview before publish." },
+  { scope: "video.publish", label: "Publish videos", use_case: "content_posting", primary_surface: "create_post_drawer,posts_list,tiktok_profile", required_evidence: "Publish action, status, and TikTok-side verification." },
+  { scope: "user.info.profile", label: "Profile info", use_case: "analytics", primary_surface: "tiktok_analytics", required_evidence: "Profile card, avatar, display name, and username." },
+  { scope: "user.info.stats", label: "Account stats", use_case: "analytics", primary_surface: "tiktok_analytics", required_evidence: "Followers, following, likes, and video count." },
+  { scope: "video.list", label: "Video list", use_case: "analytics", primary_surface: "tiktok_analytics,tiktok_profile", required_evidence: "Video list compared with TikTok profile." },
+];
 const TIKTOK_DEVELOPER_PORTAL = "https://developers.tiktok.com";
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev").replace(/\/+$/, "");
 
@@ -60,10 +80,16 @@ function AppReviewAutopilotContent() {
   const [reviewKit, setReviewKit] = useState<ReviewKit | null>(null);
   const [reviewJob, setReviewJob] = useState<ReviewJob | null>(null);
   const [credentials, setCredentials] = useState<PlatformCredential[]>([]);
+  const [scopeTemplates, setScopeTemplates] = useState<TikTokScopeTemplate[]>([]);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(DEFAULT_TIKTOK_SCOPES);
+  const [demoPlan, setDemoPlan] = useState<TikTokDemoPlan | null>(null);
   const [redirectAttested, setRedirectAttested] = useState(false);
+  const [oauthResetConfirmed, setOauthResetConfirmed] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [loadingCreds, setLoadingCreds] = useState(true);
   const [loadingState, setLoadingState] = useState(true);
+  const [loadingScopes, setLoadingScopes] = useState(true);
+  const [loadingPlan, setLoadingPlan] = useState(false);
   const [working, setWorking] = useState<"domain" | "verify" | "kit" | "job" | null>(null);
   const [pollingJob, setPollingJob] = useState(false);
   const [error, setError] = useState("");
@@ -86,6 +112,23 @@ function AppReviewAutopilotContent() {
     loadCredentials();
   }, [loadCredentials]);
 
+  const loadScopeTemplates = useCallback(async () => {
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await getTikTokReviewScopeTemplates(token);
+      setScopeTemplates(res.data ?? []);
+    } catch {
+      // The fixed presets still allow the page to render while the API is unavailable.
+    } finally {
+      setLoadingScopes(false);
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    loadScopeTemplates();
+  }, [loadScopeTemplates]);
+
   const loadReviewState = useCallback(async () => {
     try {
       const token = await getToken();
@@ -98,6 +141,9 @@ function AppReviewAutopilotContent() {
       if (res.data.kit) {
         setReviewKit(res.data.kit);
         setRedirectAttested(true);
+        if (res.data.kit.required_scopes?.length) {
+          setSelectedScopes(res.data.kit.required_scopes);
+        }
       }
       if (res.data.job) {
         setReviewJob(res.data.job);
@@ -112,6 +158,36 @@ function AppReviewAutopilotContent() {
   useEffect(() => {
     loadReviewState();
   }, [loadReviewState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const buildPlan = async () => {
+      if (selectedScopes.length === 0) {
+        setDemoPlan(null);
+        return;
+      }
+      setLoadingPlan(true);
+      try {
+        const token = await getToken();
+        if (!token || cancelled) return;
+        const res = await createTikTokReviewDemoPlan(token, { scopes: selectedScopes });
+        if (!cancelled) {
+          setDemoPlan(res.data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setDemoPlan(null);
+          setError((err as Error).message || "Failed to generate TikTok demo plan");
+        }
+      } finally {
+        if (!cancelled) setLoadingPlan(false);
+      }
+    };
+    void buildPlan();
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken, selectedScopes]);
 
   const refreshReviewJob = useCallback(async (jobId: string) => {
     const token = await getToken();
@@ -171,13 +247,18 @@ function AppReviewAutopilotContent() {
   const domainMatchesCurrentSetup = Boolean(reviewDomain && normalizedDomain && reviewDomain.domain === normalizedDomain);
   const redirectURI = `${API_BASE_URL}/v1/connect/callback/tiktok`;
   const artifactDownloadURL = reviewJob?.artifacts ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(reviewJob.artifacts, null, 2))}` : "";
+  const selectedScopeSet = useMemo(() => new Set(selectedScopes), [selectedScopes]);
+  const visibleScopeTemplates = scopeTemplates.length > 0 ? scopeTemplates : FALLBACK_SCOPE_TEMPLATES;
+  const planReady = Boolean(demoPlan && demoPlan.requested_scopes.length > 0);
 
   const steps = useMemo(() => [
     { label: "TikTok credentials", detail: "Client Key and Client Secret saved in White-label.", state: hasTikTokCredential ? "done" : "blocked" as StepState },
+    { label: "API scopes", detail: demoPlan ? `${demoPlan.requested_scopes.length} scopes mapped to ${demoPlan.segments.length} video segments.` : loadingPlan ? "Generating scope-based recording plan." : "Select the scopes requested in TikTok Developer Portal.", state: demoPlan ? "done" : selectedScopes.length ? "ready" : "blocked" as StepState },
     { label: "Review domain", detail: reviewDomain ? `${reviewDomain.domain} (${reviewDomain.status})` : loadingState ? "Loading existing review host." : "Create the customer-domain review host.", state: domainReady ? "done" : reviewDomain ? "ready" : "blocked" as StepState },
     { label: "Redirect URI", detail: "Added in the TikTok developer portal.", state: redirectAttested ? "done" : "blocked" as StepState },
-    { label: "Recording kit", detail: reviewKit ? `Ready: ${reviewKit.id}` : loadingState ? "Loading existing recording kit." : "Create after all checks pass.", state: reviewKit ? "done" : domainReady && hasTikTokCredential && redirectAttested ? "ready" : "blocked" as StepState },
-  ], [domainReady, hasTikTokCredential, loadingState, redirectAttested, reviewDomain, reviewKit]);
+    { label: "OAuth reset", detail: "Remove existing app access in TikTok mobile settings so the consent screen appears.", state: oauthResetConfirmed ? "done" : "blocked" as StepState },
+    { label: "Recording kit", detail: reviewKit ? `Ready: ${reviewKit.id}` : loadingState ? "Loading existing recording kit." : "Create after all checks pass.", state: reviewKit ? "done" : domainReady && hasTikTokCredential && redirectAttested && oauthResetConfirmed && planReady ? "ready" : "blocked" as StepState },
+  ], [demoPlan, domainReady, hasTikTokCredential, loadingPlan, loadingState, oauthResetConfirmed, planReady, redirectAttested, reviewDomain, reviewKit, selectedScopes.length]);
 
   async function handleCreateDomain() {
     if (!normalizedDomain) return;
@@ -213,8 +294,25 @@ function AppReviewAutopilotContent() {
     }
   }
 
+  function applyScopePreset(scopes: string[]) {
+    setReviewKit(null);
+    setReviewJob(null);
+    setSelectedScopes(scopes);
+  }
+
+  function toggleScope(scope: string) {
+    setReviewKit(null);
+    setReviewJob(null);
+    setSelectedScopes((current) => {
+      if (current.includes(scope)) {
+        return current.filter((item) => item !== scope);
+      }
+      return [...current, scope].sort((a, b) => a.localeCompare(b));
+    });
+  }
+
   async function handleCreateKit() {
-    if (!reviewDomain || !redirectAttested) return;
+    if (!reviewDomain || !redirectAttested || !demoPlan || !oauthResetConfirmed) return;
     setWorking("kit");
     setError("");
     setReviewJob(null);
@@ -223,11 +321,11 @@ function AppReviewAutopilotContent() {
       if (!token) return;
       const res = await createReviewKit(token, {
         platform: "tiktok",
-        use_case: "content_posting",
+        use_case: demoPlan.use_case,
         review_domain_id: reviewDomain.id,
         redirect_uri_attested: redirectAttested,
-        required_scopes: REQUIRED_TIKTOK_SCOPES,
-        brand_snapshot: { review_domain: reviewDomain.domain },
+        required_scopes: demoPlan.requested_scopes,
+        brand_snapshot: { review_domain: reviewDomain.domain, selected_scope_count: demoPlan.requested_scopes.length },
         profile_id: profileId,
       });
       setReviewKit(res.data);
@@ -378,10 +476,132 @@ function AppReviewAutopilotContent() {
                 <span>I added this redirect URI to the TikTok developer app.</span>
               </label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {REQUIRED_TIKTOK_SCOPES.map((scope) => (
+                {selectedScopes.map((scope) => (
                   <span key={scope} className="dbadge dbadge-gray" style={{ fontSize: 11 }}>{scope}</span>
                 ))}
               </div>
+            </div>
+          </section>
+
+          <section className="settings-section" style={{ marginBottom: 0 }}>
+            <div className="settings-section-header">
+              <span>TikTok API scopes</span>
+              <span className="dbadge dbadge-gray" style={{ fontSize: 10 }}>{demoPlan?.use_case ?? "select"}</span>
+            </div>
+            <div className="settings-section-body" style={{ display: "grid", gap: 14 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {SCOPE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.key}
+                    className="dbtn"
+                    onClick={() => applyScopePreset(preset.scopes)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 10px" }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {visibleScopeTemplates.map((template) => (
+                  <label
+                    key={template.scope}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "auto minmax(0, 1fr)",
+                      gap: 10,
+                      padding: 10,
+                      borderRadius: 8,
+                      border: "1px solid var(--dborder)",
+                      background: selectedScopeSet.has(template.scope) ? "color-mix(in srgb, var(--daccent) 7%, var(--surface2))" : "var(--surface2)",
+                      color: "var(--dtext)",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedScopeSet.has(template.scope)}
+                      onChange={() => toggleScope(template.scope)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
+                        <strong style={{ fontSize: 13 }}>{template.scope}</strong>
+                        <span className="dbadge dbadge-gray" style={{ fontSize: 10 }}>{template.use_case}</span>
+                      </span>
+                      <span style={{ display: "block", fontSize: 12, color: "var(--dmuted)", lineHeight: 1.45 }}>
+                        {template.required_evidence}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {loadingScopes && (
+                <div style={{ fontSize: 12, color: "var(--dmuted)" }}>Loading scope templates...</div>
+              )}
+            </div>
+          </section>
+
+          <section className="settings-section" style={{ marginBottom: 0 }}>
+            <div className="settings-section-header">
+              <span>Generated demo plan</span>
+              <span className="dbadge dbadge-gray" style={{ fontSize: 10 }}>{demoPlan?.recording.resolution ?? "1080p"}</span>
+            </div>
+            <div className="settings-section-body" style={{ display: "grid", gap: 12 }}>
+              {loadingPlan && (
+                <div style={{ fontSize: 13, color: "var(--dmuted)" }}>Generating reviewer-visible evidence steps...</div>
+              )}
+              {demoPlan ? (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+                    <PlanMetric label="Files" value={`${demoPlan.segments.length}`} />
+                    <PlanMetric label="Limit" value={`<${demoPlan.recording.max_file_size_mb}MB`} />
+                    <PlanMetric label="FPS" value={`${demoPlan.recording.fps}`} />
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {demoPlan.segments.map((segment) => (
+                      <div key={segment.key} style={{ padding: 10, borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)" }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 650, color: "var(--dtext)", marginBottom: 3 }}>{segment.title}</div>
+                            <div style={{ fontSize: 12, color: "var(--dmuted)", lineHeight: 1.45 }}>{segment.description}</div>
+                          </div>
+                          <span className="dbadge dbadge-gray" style={{ fontSize: 10, flexShrink: 0 }}>{Math.ceil(segment.estimated_duration_sec / 60)}m</span>
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                          {segment.scopes.map((scope) => (
+                            <span key={scope} className="dbadge dbadge-gray" style={{ fontSize: 10 }}>{scope}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {demoPlan.warnings.length > 0 && (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {demoPlan.warnings.map((warning) => (
+                        <div key={warning} style={{ fontSize: 12, color: "var(--warning)", lineHeight: 1.45 }}>
+                          {warning}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : !loadingPlan ? (
+                <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.55 }}>
+                  Select at least one supported TikTok scope to generate the recording plan.
+                </div>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="settings-section" style={{ marginBottom: 0 }}>
+            <div className="settings-section-header">OAuth consent reset</div>
+            <div className="settings-section-body" style={{ display: "grid", gap: 10 }}>
+              <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.6 }}>
+                Before recording, remove existing access in TikTok mobile app: Settings and privacy, Security and permissions, Apps and services permissions, then remove UniPost or your customer app. This forces TikTok to show the authorization scope page in the demo.
+              </div>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 13, color: "var(--dtext)", lineHeight: 1.5 }}>
+                <input type="checkbox" checked={oauthResetConfirmed} onChange={(event) => setOauthResetConfirmed(event.target.checked)} style={{ marginTop: 2 }} />
+                <span>I removed existing TikTok app authorization from TikTok mobile settings for this test account.</span>
+              </label>
             </div>
           </section>
         </div>
@@ -409,7 +629,7 @@ function AppReviewAutopilotContent() {
                 </div>
               </div>
 
-              <button className="dbtn dbtn-primary" onClick={handleCreateKit} disabled={!domainReady || !hasTikTokCredential || !redirectAttested || Boolean(reviewKit) || working === "kit"} style={{ width: "100%", justifyContent: "center" }}>
+              <button className="dbtn dbtn-primary" onClick={handleCreateKit} disabled={!domainReady || !hasTikTokCredential || !redirectAttested || !oauthResetConfirmed || !demoPlan || Boolean(reviewKit) || working === "kit"} style={{ width: "100%", justifyContent: "center" }}>
                 {working === "kit" ? <ButtonLoading label="Creating kit" /> : reviewKit ? "Kit ready" : "Create review kit"}
               </button>
               <button className="dbtn" onClick={handleCreateJob} disabled={!reviewKit || working === "job"} style={{ width: "100%", justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7 }}>
@@ -521,6 +741,15 @@ function DNSRecordRow({ record, copied, onCopy }: { record: ReviewDNSRecord; cop
       <button className="dbtn" onClick={onCopy} style={{ padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 5 }}>
         {copied ? <Check size={13} /> : <Clipboard size={13} />} Copy
       </button>
+    </div>
+  );
+}
+
+function PlanMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)", minWidth: 0 }}>
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, color: "var(--dmuted)", marginBottom: 3 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 13, color: "var(--dtext)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div>
     </div>
   );
 }
