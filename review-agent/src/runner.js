@@ -19,7 +19,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
   const { chromium } = playwrightImpl || await importPlaywright();
   const contextOptions = buildBrowserContextOptions(valid);
   await mkdir(contextOptions.recordVideo.dir, { recursive: true });
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch(browserLaunchOptions());
   const context = await browser.newContext(contextOptions);
   let contextClosed = false;
   const sessionCookie = buildReviewSessionCookie(valid, sessionToken);
@@ -155,6 +155,9 @@ async function runStep(page, step, out) {
       return;
     case "click":
       await page.locator(step.selector).click();
+      if (step.id === "connect_tiktok") {
+        await normalizeTikTokReviewOAuthScopes(page, out);
+      }
       return;
     case "fill":
       await page.locator(step.selector).fill(step.value || "");
@@ -170,7 +173,7 @@ async function runStep(page, step, out) {
     case "manual_pause":
       await showOverlay(page, step.overlay || "Complete the manual step, then UniPost will continue.");
       if (step.resume_when_url_contains) {
-        await page.waitForURL((url) => url.toString().includes(step.resume_when_url_contains), { timeout: 10 * 60 * 1000 });
+        await page.waitForURL((url) => url.toString().includes(step.resume_when_url_contains), { timeout: manualPauseTimeoutMs() });
       }
       await hideOverlay(page);
       return;
@@ -189,9 +192,15 @@ async function runStep(page, step, out) {
 }
 
 async function showOverlay(page, text) {
+  await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+  await page.locator("body").first().waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
   await page.evaluate((message) => {
     const previous = document.querySelector("[data-unipost-review-overlay]");
     if (previous) previous.remove();
+    const mount = document.body || document.documentElement;
+    if (!mount) {
+      throw new Error("review overlay cannot be mounted before the document is ready");
+    }
     const overlay = document.createElement("div");
     overlay.setAttribute("data-unipost-review-overlay", "true");
     overlay.textContent = message;
@@ -210,12 +219,69 @@ async function showOverlay(page, text) {
       lineHeight: "1.45",
       boxShadow: "0 18px 60px rgba(0,0,0,.28)",
     });
-    document.body.appendChild(overlay);
+    mount.appendChild(overlay);
   }, text);
 }
 
 async function hideOverlay(page) {
   await page.evaluate(() => document.querySelector("[data-unipost-review-overlay]")?.remove());
+}
+
+function manualPauseTimeoutMs() {
+  const configured = Number(process.env.UNIPOST_REVIEW_MANUAL_PAUSE_TIMEOUT_MS || "");
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  return 30 * 60 * 1000;
+}
+
+function browserLaunchOptions() {
+  const channel = (process.env.UNIPOST_REVIEW_BROWSER_CHANNEL || "").trim();
+  return {
+    headless: false,
+    ...(channel ? { channel } : {}),
+  };
+}
+
+async function normalizeTikTokReviewOAuthScopes(page, out) {
+  try {
+    await page.waitForURL((url) => url.hostname.endsWith("tiktok.com"), { timeout: 15000 });
+    const current = page.url();
+    const normalized = normalizeTikTokReviewOAuthURL(current);
+    if (normalized && normalized !== current) {
+      out.write("[oauth] normalized TikTok review scopes for content posting review\n");
+      await page.goto(normalized, { waitUntil: "domcontentloaded" });
+    }
+  } catch (err) {
+    out.write("[oauth warning] " + err.message + "\n");
+  }
+}
+
+export function normalizeTikTokReviewOAuthURL(rawURL) {
+  let parsed;
+  try {
+    parsed = new URL(rawURL);
+  } catch {
+    return "";
+  }
+  if (!parsed.hostname.endsWith("tiktok.com")) return "";
+  const reviewScopes = "video.publish,video.upload,user.info.basic";
+  if (parsed.pathname.startsWith("/v2/auth/authorize")) {
+    if (parsed.searchParams.get("scope") === reviewScopes) return rawURL;
+    parsed.searchParams.set("scope", reviewScopes);
+    return parsed.toString();
+  }
+  const redirectURL = parsed.searchParams.get("redirect_url");
+  if (!redirectURL) return "";
+  let nested;
+  try {
+    nested = new URL(redirectURL);
+  } catch {
+    return "";
+  }
+  if (!nested.hostname.endsWith("tiktok.com") || !nested.pathname.startsWith("/v2/auth/authorize")) return "";
+  if (nested.searchParams.get("scope") === reviewScopes) return rawURL;
+  nested.searchParams.set("scope", reviewScopes);
+  parsed.searchParams.set("redirect_url", nested.toString());
+  return parsed.toString();
 }
 
 async function stopNativeCapture(nativeCapture, out) {

@@ -726,6 +726,7 @@ func main() {
 		// recording flow is being hardened.
 		r.Route("/v1/review", func(r chi.Router) {
 			r.Use(handler.RequireFeatureFlag(featureflags.AppReviewAutopilotV1))
+			r.Get("/state", reviewHandler.GetState)
 			r.Post("/domains", reviewHandler.CreateDomain)
 			r.Post("/domains/{id}/verify", reviewHandler.VerifyDomain)
 			r.Post("/kits", reviewHandler.CreateKit)

@@ -163,3 +163,58 @@ test("runScript prefers native browser-window capture when address-bar evidence 
   assert.equal(completionArtifacts.video.local_path, "/tmp/unipost-review-videos/rvjob-native.mov");
   assert.equal(uploadedContentType, "video/quicktime");
 });
+
+test("manual pause overlay waits for the page body before injecting instructions", async () => {
+  let bodyReady = false;
+  let completed = false;
+  const script = {
+    job_id: "rvjob_manual_pause",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    steps: [{ id: "wait_for_oauth", action: "manual_pause", overlay: "Log in to TikTok." }],
+  };
+  const page = {
+    video: () => ({ path: async () => "/tmp/unipost-review-videos/manual-pause.webm" }),
+    waitForLoadState: async () => {},
+    locator: (selector) => {
+      assert.equal(selector, "body");
+      return {
+        first: () => ({
+          waitFor: async () => {
+            bodyReady = true;
+          },
+        }),
+      };
+    },
+    evaluate: async () => {
+      assert.equal(bodyReady, true, "overlay injection should wait until body is ready");
+    },
+  };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async () => {},
+    uploadArtifact: async (artifact) => artifact.artifactType === "demo_video"
+      ? "review-artifacts/ws_1/rvjob_manual_pause/demo-video.webm"
+      : "review-artifacts/ws_1/rvjob_manual_pause/execution-evidence.json",
+    complete: async () => { completed = true; },
+    fail: async () => assert.fail("manual pause should complete"),
+  };
+
+  await runner.runScript(script, { reporter, sessionToken: "rvsession_test", playwrightImpl, out: { write() {} } });
+
+  assert.equal(completed, true);
+});
+
+test("normalizes TikTok review OAuth URLs to content-posting scopes", () => {
+  const originalAuthorize = "https://www.tiktok.com/v2/auth/authorize/?client_key=ck&redirect_uri=https%3A%2F%2Fdev-api.unipost.dev%2Fv1%2Fconnect%2Fcallback%2Ftiktok&response_type=code&scope=video.publish%2Cvideo.upload%2Cuser.info.basic%2Cvideo.list&state=rvstate_1";
+  const normalizedAuthorize = runner.normalizeTikTokReviewOAuthURL(originalAuthorize);
+  assert.equal(new URL(normalizedAuthorize).searchParams.get("scope"), "video.publish,video.upload,user.info.basic");
+
+  const login = new URL("https://www.tiktok.com/login");
+  login.searchParams.set("redirect_url", originalAuthorize);
+  const normalizedLogin = runner.normalizeTikTokReviewOAuthURL(login.toString());
+  const nested = new URL(new URL(normalizedLogin).searchParams.get("redirect_url"));
+  assert.equal(nested.searchParams.get("scope"), "video.publish,video.upload,user.info.basic");
+});

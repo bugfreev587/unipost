@@ -474,6 +474,18 @@ export interface ReviewJob {
   events?: ReviewJobEvent[];
 }
 
+export interface ReviewState {
+  domain?: ReviewDomain;
+  kit?: ReviewKit;
+  job?: ReviewJob;
+}
+
+export async function getReviewState(
+  token: string
+): Promise<ApiResponse<ReviewState>> {
+  return request(`/v1/review/state`, token);
+}
+
 export async function createReviewDomain(
   token: string,
   data: { domain: string; provider?: string }

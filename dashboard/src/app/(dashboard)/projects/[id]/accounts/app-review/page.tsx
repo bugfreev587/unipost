@@ -24,6 +24,7 @@ import {
   createReviewJob,
   createReviewKit,
   getReviewJob,
+  getReviewState,
   listPlatformCredentials,
   verifyReviewDomain,
   type PlatformCredential,
@@ -62,6 +63,7 @@ function AppReviewAutopilotContent() {
   const [redirectAttested, setRedirectAttested] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [loadingCreds, setLoadingCreds] = useState(true);
+  const [loadingState, setLoadingState] = useState(true);
   const [working, setWorking] = useState<"domain" | "verify" | "kit" | "job" | null>(null);
   const [pollingJob, setPollingJob] = useState(false);
   const [error, setError] = useState("");
@@ -83,6 +85,33 @@ function AppReviewAutopilotContent() {
   useEffect(() => {
     loadCredentials();
   }, [loadCredentials]);
+
+  const loadReviewState = useCallback(async () => {
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await getReviewState(token);
+      if (res.data.domain) {
+        setReviewDomain(res.data.domain);
+        setDomain(res.data.domain.domain);
+      }
+      if (res.data.kit) {
+        setReviewKit(res.data.kit);
+        setRedirectAttested(true);
+      }
+      if (res.data.job) {
+        setReviewJob(res.data.job);
+      }
+    } catch {
+      // Users can still recreate or verify the setup manually from this page.
+    } finally {
+      setLoadingState(false);
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    loadReviewState();
+  }, [loadReviewState]);
 
   const refreshReviewJob = useCallback(async (jobId: string) => {
     const token = await getToken();
@@ -139,15 +168,16 @@ function AppReviewAutopilotContent() {
   const hasTikTokCredential = credentials.some((cred) => cred.platform === "tiktok");
   const domainReady = reviewDomain?.status === "ready" && (!reviewDomain.tls_status || reviewDomain.tls_status === "issued");
   const normalizedDomain = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*/, "");
+  const domainMatchesCurrentSetup = Boolean(reviewDomain && normalizedDomain && reviewDomain.domain === normalizedDomain);
   const redirectURI = `${API_BASE_URL}/v1/connect/callback/tiktok`;
   const artifactDownloadURL = reviewJob?.artifacts ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(reviewJob.artifacts, null, 2))}` : "";
 
   const steps = useMemo(() => [
     { label: "TikTok credentials", detail: "Client Key and Client Secret saved in White-label.", state: hasTikTokCredential ? "done" : "blocked" as StepState },
-    { label: "Review domain", detail: reviewDomain ? `${reviewDomain.domain} (${reviewDomain.status})` : "Create the customer-domain review host.", state: domainReady ? "done" : reviewDomain ? "ready" : "blocked" as StepState },
+    { label: "Review domain", detail: reviewDomain ? `${reviewDomain.domain} (${reviewDomain.status})` : loadingState ? "Loading existing review host." : "Create the customer-domain review host.", state: domainReady ? "done" : reviewDomain ? "ready" : "blocked" as StepState },
     { label: "Redirect URI", detail: "Added in the TikTok developer portal.", state: redirectAttested ? "done" : "blocked" as StepState },
-    { label: "Recording kit", detail: reviewKit ? `Ready: ${reviewKit.id}` : "Create after all checks pass.", state: reviewKit ? "done" : domainReady && hasTikTokCredential && redirectAttested ? "ready" : "blocked" as StepState },
-  ], [domainReady, hasTikTokCredential, redirectAttested, reviewDomain, reviewKit]);
+    { label: "Recording kit", detail: reviewKit ? `Ready: ${reviewKit.id}` : loadingState ? "Loading existing recording kit." : "Create after all checks pass.", state: reviewKit ? "done" : domainReady && hasTikTokCredential && redirectAttested ? "ready" : "blocked" as StepState },
+  ], [domainReady, hasTikTokCredential, loadingState, redirectAttested, reviewDomain, reviewKit]);
 
   async function handleCreateDomain() {
     if (!normalizedDomain) return;
@@ -294,8 +324,8 @@ function AppReviewAutopilotContent() {
                   value={domain}
                   onChange={(event) => setDomain(event.target.value)}
                 />
-                <button className="dbtn dbtn-primary" onClick={handleCreateDomain} disabled={!normalizedDomain || working === "domain"} style={{ minWidth: 142 }}>
-                  {working === "domain" ? <ButtonLoading label="Preparing" /> : "Prepare domain"}
+                <button className="dbtn dbtn-primary" onClick={handleCreateDomain} disabled={!normalizedDomain || domainMatchesCurrentSetup || working === "domain"} style={{ minWidth: 142 }}>
+                  {working === "domain" ? <ButtonLoading label="Preparing" /> : domainMatchesCurrentSetup ? "Domain prepared" : "Prepare domain"}
                 </button>
               </div>
               <div style={{ marginTop: 8, fontSize: 12, color: "var(--dmuted)", lineHeight: 1.55 }}>
@@ -379,7 +409,7 @@ function AppReviewAutopilotContent() {
                 </div>
               </div>
 
-              <button className="dbtn dbtn-primary" onClick={handleCreateKit} disabled={!domainReady || !hasTikTokCredential || !redirectAttested || working === "kit"} style={{ width: "100%", justifyContent: "center" }}>
+              <button className="dbtn dbtn-primary" onClick={handleCreateKit} disabled={!domainReady || !hasTikTokCredential || !redirectAttested || Boolean(reviewKit) || working === "kit"} style={{ width: "100%", justifyContent: "center" }}>
                 {working === "kit" ? <ButtonLoading label="Creating kit" /> : reviewKit ? "Kit ready" : "Create review kit"}
               </button>
               <button className="dbtn" onClick={handleCreateJob} disabled={!reviewKit || working === "job"} style={{ width: "100%", justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7 }}>

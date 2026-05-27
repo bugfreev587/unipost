@@ -89,14 +89,17 @@ type ReviewHandler struct {
 type reviewStore interface {
 	CreateReviewDomain(context.Context, db.CreateReviewDomainParams) (db.ReviewDomain, error)
 	GetReviewDomain(context.Context, db.GetReviewDomainParams) (db.ReviewDomain, error)
+	ListReviewDomainsByWorkspace(context.Context, string) ([]db.ReviewDomain, error)
 	UpdateReviewDomainVerification(context.Context, db.UpdateReviewDomainVerificationParams) (db.ReviewDomain, error)
 	GetPlatformCredential(context.Context, db.GetPlatformCredentialParams) (db.PlatformCredential, error)
 	CreateReviewKit(context.Context, db.CreateReviewKitParams) (db.ReviewKit, error)
 	GetReviewKit(context.Context, db.GetReviewKitParams) (db.ReviewKit, error)
+	ListReviewKitsByWorkspace(context.Context, string) ([]db.ReviewKit, error)
 	GetProfile(context.Context, string) (db.Profile, error)
 	CreateConnectSession(context.Context, db.CreateConnectSessionParams) (db.ConnectSession, error)
 	CreateReviewJob(context.Context, db.CreateReviewJobParams) (db.ReviewJob, error)
 	GetReviewJob(context.Context, db.GetReviewJobParams) (db.ReviewJob, error)
+	ListReviewJobsByKit(context.Context, db.ListReviewJobsByKitParams) ([]db.ReviewJob, error)
 	CreateReviewSession(context.Context, db.CreateReviewSessionParams) (db.ReviewSession, error)
 	GetActiveReviewSessionForJob(context.Context, db.GetActiveReviewSessionForJobParams) (db.ReviewSession, error)
 	GetReviewSessionByTokenHash(context.Context, string) (db.ReviewSession, error)
@@ -145,6 +148,12 @@ type reviewJobResponse struct {
 	AgentVersion   string `json:"agent_version"`
 	AgentCommand   string `json:"agent_command"`
 	TokenExpiresAt string `json:"token_expires_at"`
+}
+
+type reviewStateResponse struct {
+	Domain *reviewDomainResponse `json:"domain,omitempty"`
+	Kit    *reviewKitResponse    `json:"kit,omitempty"`
+	Job    *reviewJobResponse    `json:"job,omitempty"`
 }
 
 type reviewAgentEventResponse struct {
@@ -283,6 +292,55 @@ func (h *ReviewHandler) WithTikTokTestVideoURL(value string) *ReviewHandler {
 		h.testVideoURL = strings.TrimSpace(value)
 	}
 	return h
+}
+
+func (h *ReviewHandler) GetState(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := reviewWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+	domains, err := h.store.ListReviewDomainsByWorkspace(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review domains")
+		return
+	}
+	kits, err := h.store.ListReviewKitsByWorkspace(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review kits")
+		return
+	}
+
+	domainsByID := make(map[string]db.ReviewDomain, len(domains))
+	for _, domain := range domains {
+		domainsByID[domain.ID] = domain
+	}
+
+	var resp reviewStateResponse
+	if kit := selectReviewStateKit(kits); kit != nil {
+		kitResp := reviewKitFromDB(*kit)
+		resp.Kit = &kitResp
+		if domain, ok := domainsByID[kit.ReviewDomainID]; ok {
+			domainResp := reviewDomainFromDB(domain)
+			resp.Domain = &domainResp
+		}
+		jobs, err := h.store.ListReviewJobsByKit(r.Context(), db.ListReviewJobsByKitParams{ReviewKitID: kit.ID, WorkspaceID: workspaceID})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load review jobs")
+			return
+		}
+		if len(jobs) > 0 {
+			jobResp := reviewJobSummaryFromDB(jobs[0])
+			resp.Job = &jobResp
+		}
+	}
+	if resp.Domain == nil {
+		if domain := selectReviewStateDomain(domains); domain != nil {
+			domainResp := reviewDomainFromDB(*domain)
+			resp.Domain = &domainResp
+		}
+	}
+
+	writeSuccess(w, resp)
 }
 
 func (h *ReviewHandler) CreateDomain(w http.ResponseWriter, r *http.Request) {
@@ -1390,6 +1448,51 @@ func reviewKitFromDB(row db.ReviewKit) reviewKitResponse {
 		RequiredScopes: row.RequiredScopes,
 		Status:         row.Status,
 	}
+}
+
+func reviewJobSummaryFromDB(row db.ReviewJob) reviewJobResponse {
+	agentVersion := reviewAgentVersion
+	if row.AgentVersion.Valid && strings.TrimSpace(row.AgentVersion.String) != "" {
+		agentVersion = row.AgentVersion.String
+	}
+	return reviewJobResponse{
+		ID:           row.ID,
+		ReviewKitID:  row.ReviewKitID,
+		Platform:     row.Platform,
+		Status:       row.Status,
+		AgentVersion: agentVersion,
+	}
+}
+
+func selectReviewStateKit(kits []db.ReviewKit) *db.ReviewKit {
+	var fallback *db.ReviewKit
+	for i := range kits {
+		kit := &kits[i]
+		if kit.Platform != reviewDefaultPlatform || kit.UseCase != reviewDefaultUseCase {
+			continue
+		}
+		if fallback == nil {
+			fallback = kit
+		}
+		if kit.Status == reviewKitStatusReady {
+			return kit
+		}
+	}
+	return fallback
+}
+
+func selectReviewStateDomain(domains []db.ReviewDomain) *db.ReviewDomain {
+	var fallback *db.ReviewDomain
+	for i := range domains {
+		domain := &domains[i]
+		if fallback == nil {
+			fallback = domain
+		}
+		if isReviewDomainReady(*domain) {
+			return domain
+		}
+	}
+	return fallback
 }
 
 func reviewKitProfileID(kit db.ReviewKit) string {

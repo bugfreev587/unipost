@@ -176,6 +176,48 @@ func TestReviewCreateKitRejectsMissingRedirectAttestation(t *testing.T) {
 	}
 }
 
+func TestReviewGetStateRestoresReadyKitDomainAndLatestJob(t *testing.T) {
+	store := &reviewStoreFake{
+		reviewDomains: []db.ReviewDomain{
+			{ID: "rvdom_pending", WorkspaceID: "ws_1", Domain: "pending.example.com", Status: "dns_pending"},
+			{ID: "rvdom_ready", WorkspaceID: "ws_1", Domain: "tiktok-review.tailtales.ai", Status: "ready", TlsStatus: "issued", CnameTarget: "dev.unipost.dev"},
+		},
+		reviewKits: []db.ReviewKit{
+			{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", UseCase: "content_posting", Status: "ready", ReviewDomainID: "rvdom_ready", RequiredScopes: []string{"user.info.basic", "video.publish", "video.upload"}},
+		},
+		reviewJobsByKit: map[string][]db.ReviewJob{
+			"rvkit_1": {
+				{ID: "rvjob_latest", WorkspaceID: "ws_1", ReviewKitID: "rvkit_1", Platform: "tiktok", Status: "failed", AgentVersion: pgtype.Text{String: reviewAgentVersion, Valid: true}},
+			},
+		},
+	}
+	h := NewReviewHandler(store)
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/state", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.GetState(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewStateResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.Domain == nil || env.Data.Domain.Domain != "tiktok-review.tailtales.ai" || env.Data.Domain.Status != "ready" {
+		t.Fatalf("domain was not restored from ready kit: %+v", env.Data.Domain)
+	}
+	if env.Data.Kit == nil || env.Data.Kit.ID != "rvkit_1" {
+		t.Fatalf("kit was not restored: %+v", env.Data.Kit)
+	}
+	if env.Data.Job == nil || env.Data.Job.ID != "rvjob_latest" {
+		t.Fatalf("latest job was not restored: %+v", env.Data.Job)
+	}
+}
+
 func TestReviewCreateJobIssuesTokensAndPinnedCommand(t *testing.T) {
 	store := &reviewStoreFake{
 		kit:    db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1"},
@@ -597,6 +639,9 @@ type reviewStoreFake struct {
 	reviewSessionByHash  db.ReviewSession
 	profile              db.Profile
 	events               []db.ReviewJobEvent
+	reviewDomains        []db.ReviewDomain
+	reviewKits           []db.ReviewKit
+	reviewJobsByKit      map[string][]db.ReviewJob
 	socialAccounts       []db.SocialAccount
 	listAccountsParams   db.ListSocialAccountsByProfileFilteredParams
 	agentTokenHashLookup string
@@ -628,6 +673,15 @@ func (f *reviewStoreFake) GetReviewDomain(_ context.Context, arg db.GetReviewDom
 	}
 	return f.domain, nil
 }
+func (f *reviewStoreFake) ListReviewDomainsByWorkspace(_ context.Context, workspaceID string) ([]db.ReviewDomain, error) {
+	out := make([]db.ReviewDomain, 0, len(f.reviewDomains))
+	for _, domain := range f.reviewDomains {
+		if domain.WorkspaceID == workspaceID {
+			out = append(out, domain)
+		}
+	}
+	return out, nil
+}
 func (f *reviewStoreFake) UpdateReviewDomainVerification(_ context.Context, arg db.UpdateReviewDomainVerificationParams) (db.ReviewDomain, error) {
 	f.updatedDomain = arg
 	return db.ReviewDomain{ID: arg.ID, WorkspaceID: arg.WorkspaceID, Domain: f.domain.Domain, Status: arg.Status, VerificationToken: f.domain.VerificationToken, CnameTarget: f.domain.CnameTarget, TlsStatus: arg.TlsStatus}, nil
@@ -648,6 +702,15 @@ func (f *reviewStoreFake) GetReviewKit(_ context.Context, arg db.GetReviewKitPar
 	}
 	return f.kit, nil
 }
+func (f *reviewStoreFake) ListReviewKitsByWorkspace(_ context.Context, workspaceID string) ([]db.ReviewKit, error) {
+	out := make([]db.ReviewKit, 0, len(f.reviewKits))
+	for _, kit := range f.reviewKits {
+		if kit.WorkspaceID == workspaceID {
+			out = append(out, kit)
+		}
+	}
+	return out, nil
+}
 func (f *reviewStoreFake) GetProfile(_ context.Context, id string) (db.Profile, error) {
 	if f.profile.ID == "" {
 		return db.Profile{}, pgx.ErrNoRows
@@ -667,6 +730,16 @@ func (f *reviewStoreFake) GetReviewJob(_ context.Context, arg db.GetReviewJobPar
 		return db.ReviewJob{}, pgx.ErrNoRows
 	}
 	return f.job, nil
+}
+func (f *reviewStoreFake) ListReviewJobsByKit(_ context.Context, arg db.ListReviewJobsByKitParams) ([]db.ReviewJob, error) {
+	jobs := f.reviewJobsByKit[arg.ReviewKitID]
+	out := make([]db.ReviewJob, 0, len(jobs))
+	for _, job := range jobs {
+		if job.WorkspaceID == arg.WorkspaceID {
+			out = append(out, job)
+		}
+	}
+	return out, nil
 }
 func (f *reviewStoreFake) CreateReviewSession(_ context.Context, arg db.CreateReviewSessionParams) (db.ReviewSession, error) {
 	f.createdSession = arg
