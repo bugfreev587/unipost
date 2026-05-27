@@ -823,6 +823,52 @@ func TestReviewGetJobReturnsVideoDownloadAndEvents(t *testing.T) {
 	}
 }
 
+func TestReviewGetJobReturnsSegmentVideoDownloads(t *testing.T) {
+	store := &reviewStoreFake{
+		job: db.ReviewJob{
+			ID: "rvjob_1", WorkspaceID: "ws_1", ReviewKitID: "rvkit_1", Platform: "tiktok", Status: "completed",
+			ArtifactsJson: []byte(`{
+				"video_segments":[
+					{"segment_key":"posting_part_1","filename":"tiktok-content-posting-part-1.mp4","file_id":"review-artifacts/ws_1/rvjob_1/demo-video-posting_part_1.mp4","format":"mp4","duration_sec":42,"size_bytes":42000000,"scopes":["user.info.basic","video.upload"]},
+					{"segment_key":"posting_part_2","filename":"tiktok-content-posting-part-2.mp4","file_id":"review-artifacts/ws_1/rvjob_1/demo-video-posting_part_2.mp4","format":"mp4","duration_sec":39,"size_bytes":39000000,"scopes":["video.publish"]}
+				]
+			}`),
+		},
+	}
+	artifacts := &reviewArtifactStorageFake{getURLs: map[string]string{
+		"review-artifacts/ws_1/rvjob_1/demo-video-posting_part_1.mp4": "https://downloads.example.com/part-1",
+		"review-artifacts/ws_1/rvjob_1/demo-video-posting_part_2.mp4": "https://downloads.example.com/part-2",
+	}}
+	h := NewReviewHandler(store).WithArtifactStorage(artifacts)
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/jobs/rvjob_1", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "rvjob_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.GetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewJobDetailResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.VideoArtifacts) != 2 {
+		t.Fatalf("expected segment downloads, got %+v", env.Data.VideoArtifacts)
+	}
+	if env.Data.VideoArtifacts[0].SegmentKey != "posting_part_1" || env.Data.VideoArtifacts[0].DownloadURL != "https://downloads.example.com/part-1" {
+		t.Fatalf("unexpected first segment: %+v", env.Data.VideoArtifacts[0])
+	}
+	if env.Data.VideoArtifacts[1].Filename != "tiktok-content-posting-part-2.mp4" || env.Data.VideoArtifacts[1].SizeBytes != 39000000 {
+		t.Fatalf("unexpected second segment: %+v", env.Data.VideoArtifacts[1])
+	}
+}
+
 type reviewStoreFake struct {
 	domain               db.ReviewDomain
 	kit                  db.ReviewKit
@@ -1020,7 +1066,9 @@ type reviewArtifactStorageFake struct {
 	putContentType string
 	putURL         string
 	getKey         string
+	getKeys        []string
 	getURL         string
+	getURLs        map[string]string
 }
 
 func (f *reviewArtifactStorageFake) PresignPut(_ context.Context, key string, contentType string, _ time.Duration) (string, error) {
@@ -1031,6 +1079,12 @@ func (f *reviewArtifactStorageFake) PresignPut(_ context.Context, key string, co
 
 func (f *reviewArtifactStorageFake) PresignGet(_ context.Context, key string, _ time.Duration) (string, error) {
 	f.getKey = key
+	f.getKeys = append(f.getKeys, key)
+	if f.getURLs != nil {
+		if url := f.getURLs[key]; url != "" {
+			return url, nil
+		}
+	}
 	return f.getURL, nil
 }
 

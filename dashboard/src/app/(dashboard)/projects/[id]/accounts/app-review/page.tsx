@@ -247,6 +247,7 @@ function AppReviewAutopilotContent() {
   const domainMatchesCurrentSetup = Boolean(reviewDomain && normalizedDomain && reviewDomain.domain === normalizedDomain);
   const redirectURI = `${API_BASE_URL}/v1/connect/callback/tiktok`;
   const artifactDownloadURL = reviewJob?.artifacts ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(reviewJob.artifacts, null, 2))}` : "";
+  const videoArtifacts = reviewJob?.video_artifacts ?? [];
   const selectedScopeSet = useMemo(() => new Set(selectedScopes), [selectedScopes]);
   const visibleScopeTemplates = scopeTemplates.length > 0 ? scopeTemplates : FALLBACK_SCOPE_TEMPLATES;
   const planReady = Boolean(demoPlan && demoPlan.requested_scopes.length > 0);
@@ -664,7 +665,30 @@ function AppReviewAutopilotContent() {
                     {reviewJob.failure_reason}
                   </div>
                 )}
-                {reviewJob.video_download_url && (
+                {videoArtifacts.length > 0 ? (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {videoArtifacts.map((artifact, index) => (
+                      <div key={artifact.file_id || artifact.segment_key || index} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10, alignItems: "center", padding: 10, borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, color: "var(--dtext)", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {artifact.filename || artifact.segment_key || `Review video part ${index + 1}`}
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 5, fontSize: 11, color: "var(--dmuted)" }}>
+                            {artifact.segment_key && <span>{artifact.segment_key}</span>}
+                            {artifact.size_bytes ? <span>{formatBytes(artifact.size_bytes)}</span> : null}
+                            {artifact.duration_sec ? <span>{Math.round(artifact.duration_sec)}s</span> : null}
+                            {artifact.scopes?.length ? <span>{artifact.scopes.join(", ")}</span> : null}
+                          </div>
+                        </div>
+                        {artifact.download_url && (
+                          <a className="dbtn dbtn-primary" href={artifact.download_url} download style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7, textDecoration: "none" }}>
+                            <Download size={14} /> Part {index + 1}
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : reviewJob.video_download_url && (
                   <div style={{ display: "grid", gap: 10 }}>
                     <video src={reviewJob.video_download_url} controls style={{ width: "100%", borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)", aspectRatio: "16 / 9" }} />
                     <a className="dbtn dbtn-primary" href={reviewJob.video_download_url} download style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7, textDecoration: "none" }}>
@@ -774,4 +798,10 @@ function formatTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "soon";
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }

@@ -513,6 +513,17 @@ export interface ReviewJobEvent {
   created_at?: string;
 }
 
+export interface ReviewVideoArtifact {
+  segment_key?: string;
+  filename?: string;
+  file_id: string;
+  download_url?: string;
+  format?: string;
+  duration_sec?: number;
+  size_bytes?: number;
+  scopes?: string[];
+}
+
 export interface ReviewJob {
   id: string;
   review_kit_id: string;
@@ -523,6 +534,7 @@ export interface ReviewJob {
   token_expires_at?: string;
   video_file_id?: string;
   video_download_url?: string;
+  video_artifacts?: ReviewVideoArtifact[];
   failure_reason?: string;
   artifacts?: Record<string, unknown>;
   events?: ReviewJobEvent[];

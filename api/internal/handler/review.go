@@ -212,9 +212,21 @@ type reviewJobDetailResponse struct {
 	AgentVersion     string                     `json:"agent_version"`
 	VideoFileID      string                     `json:"video_file_id,omitempty"`
 	VideoDownloadURL string                     `json:"video_download_url,omitempty"`
+	VideoArtifacts   []reviewVideoArtifactItem  `json:"video_artifacts,omitempty"`
 	FailureReason    string                     `json:"failure_reason,omitempty"`
 	Artifacts        map[string]any             `json:"artifacts"`
 	Events           []reviewJobEventDetailItem `json:"events"`
+}
+
+type reviewVideoArtifactItem struct {
+	SegmentKey  string   `json:"segment_key,omitempty"`
+	Filename    string   `json:"filename,omitempty"`
+	FileID      string   `json:"file_id"`
+	DownloadURL string   `json:"download_url,omitempty"`
+	Format      string   `json:"format,omitempty"`
+	DurationSec float64  `json:"duration_sec,omitempty"`
+	SizeBytes   int64    `json:"size_bytes,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
 }
 
 type reviewJobEventDetailItem struct {
@@ -1037,6 +1049,13 @@ func (h *ReviewHandler) toReviewJobDetail(ctx context.Context, job db.ReviewJob,
 			resp.VideoDownloadURL = downloadURL
 		}
 	}
+	if h.artifactStorage != nil {
+		videoArtifacts, err := h.reviewVideoArtifactDownloads(ctx, job, artifacts)
+		if err != nil {
+			return reviewJobDetailResponse{}, err
+		}
+		resp.VideoArtifacts = videoArtifacts
+	}
 	for _, event := range events {
 		metadata := map[string]any{}
 		if len(event.Metadata) > 0 {
@@ -1056,6 +1075,85 @@ func (h *ReviewHandler) toReviewJobDetail(ctx context.Context, job db.ReviewJob,
 		resp.Events = append(resp.Events, item)
 	}
 	return resp, nil
+}
+
+func (h *ReviewHandler) reviewVideoArtifactDownloads(ctx context.Context, job db.ReviewJob, artifacts map[string]any) ([]reviewVideoArtifactItem, error) {
+	rawSegments, ok := artifacts["video_segments"].([]any)
+	if !ok || len(rawSegments) == 0 {
+		return nil, nil
+	}
+	prefix := reviewArtifactDirectory(job.WorkspaceID, job.ID) + "/"
+	out := make([]reviewVideoArtifactItem, 0, len(rawSegments))
+	for _, raw := range rawSegments {
+		segment, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		fileID := strings.TrimSpace(reviewStringField(segment, "file_id"))
+		if fileID == "" || !strings.HasPrefix(fileID, prefix) {
+			continue
+		}
+		downloadURL, err := h.artifactStorage.PresignGet(ctx, fileID, reviewArtifactDownloadTTL)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, reviewVideoArtifactItem{
+			SegmentKey:  reviewStringField(segment, "segment_key"),
+			Filename:    reviewStringField(segment, "filename"),
+			FileID:      fileID,
+			DownloadURL: downloadURL,
+			Format:      reviewStringField(segment, "format"),
+			DurationSec: reviewFloatField(segment, "duration_sec"),
+			SizeBytes:   reviewIntField(segment, "size_bytes"),
+			Scopes:      reviewStringSliceField(segment, "scopes"),
+		})
+	}
+	return out, nil
+}
+
+func reviewStringField(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func reviewFloatField(values map[string]any, key string) float64 {
+	switch value := values[key].(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	case int64:
+		return float64(value)
+	default:
+		return 0
+	}
+}
+
+func reviewIntField(values map[string]any, key string) int64 {
+	switch value := values[key].(type) {
+	case float64:
+		return int64(value)
+	case int:
+		return int64(value)
+	case int64:
+		return value
+	default:
+		return 0
+	}
+}
+
+func reviewStringSliceField(values map[string]any, key string) []string {
+	raw, ok := values[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+			out = append(out, strings.TrimSpace(value))
+		}
+	}
+	return out
 }
 
 func reviewArtifactFileID(workspaceID string, jobID string, artifactType string, segmentKey string, contentType string) (string, error) {
