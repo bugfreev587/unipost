@@ -764,7 +764,7 @@ func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Re
 			ProfileID:            profile.ID,
 			Platform:             session.Platform,
 			ExternalUserID:       "app-review:" + session.ReviewJobID,
-			ReturnUrl:            pgtype.Text{String: "https://" + domain.Domain + "/tiktok/posting?connect_status=success", Valid: true},
+			ReturnUrl:            pgtype.Text{String: "https://" + domain.Domain + reviewReturnPath(kit) + "?connect_status=success", Valid: true},
 			OauthState:           oauthState,
 			ExpiresAt:            session.ExpiresAt,
 			AllowQuickstartCreds: false,
@@ -776,6 +776,13 @@ func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Re
 		resp.ConnectAuthorizeURL = h.apiBaseURL + "/v1/public/connect/sessions/" + connectSession.ID + "/authorize?state=" + connectSession.OauthState
 	}
 	writeSuccess(w, resp)
+}
+
+func reviewReturnPath(kit db.ReviewKit) string {
+	if kit.UseCase == "analytics" {
+		return "/tiktok/analytics"
+	}
+	return "/tiktok/posting"
 }
 
 func (h *ReviewHandler) GetAgentJobScript(w http.ResponseWriter, r *http.Request) {

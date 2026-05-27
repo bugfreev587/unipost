@@ -290,7 +290,7 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
           </div>
 
           <Field label="Who Can View This Video">
-            <div className="privacy-options" data-review-step="privacy-options">
+            <div className="privacy-options" data-review-step="privacy-selector">
               {privacyOptions.length ? (
                 privacyOptions.map((option) => {
                   const lockedByBrand = form.disclosureEnabled && form.brandedContent && option === "SELF_ONLY";
@@ -396,6 +396,24 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
             )}
           </div>
 
+          <div className="post-preview" data-review-step="post-preview">
+            <div className="preview-media">
+              {videoURL ? (
+                <video src={videoURL} muted playsInline preload="metadata" />
+              ) : (
+                <FileVideo size={20} />
+              )}
+            </div>
+            <div>
+              <div className="preview-title">TikTok post preview</div>
+              <p>{form.caption || "Caption will appear here before publishing."}</p>
+              <div className="preview-meta">
+                <span>{form.privacyLevel || "Visibility required"}</span>
+                <span>{form.videoSelected ? "Video selected" : "Video not selected"}</span>
+              </div>
+            </div>
+          </div>
+
           <div className="music-confirmation" data-review-step="music-confirmation">
             <Music2 size={17} />
             <p>
@@ -407,6 +425,15 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
                 </>
               ) : null}
               <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer">Music Usage Confirmation</a>.
+            </p>
+          </div>
+
+          <div className="music-confirmation" data-review-step="branded-content-policy">
+            <ShieldCheck size={17} />
+            <p>
+              Branded posts follow TikTok&apos;s{" "}
+              <a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer">Branded Content Policy</a>.
+              TailTales confirms the disclosure choice before publishing.
             </p>
           </div>
 
@@ -550,6 +577,12 @@ const styles = `
   .check-line small{display:block;font-size:12px;color:#667085;line-height:1.45;margin-top:2px}
   .nested-checks{margin-top:12px;border-top:1px solid #dfe5ef;padding-top:12px;display:grid;gap:10px}
   .compact{background:#fff;border:1px solid #dfe5ef;border-radius:8px;padding:10px}
+  .post-preview{margin-top:18px;border:1px solid #dfe5ef;border-radius:8px;background:#fff;display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;padding:12px;align-items:center}
+  .preview-media{height:120px;border-radius:8px;background:#101828;color:#cbd5e1;display:grid;place-items:center;overflow:hidden}
+  .preview-media video{width:100%;height:100%;object-fit:cover}
+  .preview-title{font-size:13px;font-weight:760;color:#182230;margin-bottom:4px}
+  .preview-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .preview-meta span{font-size:11px;color:#344054;background:#f2f4f7;border:1px solid #dfe5ef;border-radius:999px;padding:4px 7px}
   .music-confirmation{display:flex;gap:10px;align-items:flex-start;background:#fff}
   .music-confirmation svg{color:#175cd3;margin-top:1px;flex-shrink:0}
   .music-confirmation a{color:#047857;text-decoration:underline;text-underline-offset:3px;font-weight:650}
