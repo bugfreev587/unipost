@@ -251,6 +251,7 @@ function AppReviewAutopilotContent() {
   const selectedScopeSet = useMemo(() => new Set(selectedScopes), [selectedScopes]);
   const visibleScopeTemplates = scopeTemplates.length > 0 ? scopeTemplates : FALLBACK_SCOPE_TEMPLATES;
   const planReady = Boolean(demoPlan && demoPlan.requested_scopes.length > 0);
+  const aiGuidedRecording = Boolean(reviewJob?.agent_command?.includes("--ai-guided"));
 
   const steps = useMemo(() => [
     { label: "TikTok credentials", detail: "Client Key and Client Secret saved in White-label.", state: hasTikTokCredential ? "done" : "blocked" as StepState },
@@ -648,7 +649,10 @@ function AppReviewAutopilotContent() {
             <section className="settings-section" style={{ marginBottom: 0 }}>
               <div className="settings-section-header">
                 <span>Recording status</span>
-                <span className="dbadge dbadge-gray" style={{ fontSize: 10 }}>{formatJobStatus(reviewJob.status)}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {aiGuidedRecording && <span className="dbadge dbadge-gray" style={{ fontSize: 10 }}>AI-guided recording</span>}
+                  <span className="dbadge dbadge-gray" style={{ fontSize: 10 }}>{formatJobStatus(reviewJob.status)}</span>
+                </span>
               </div>
               <div className="settings-section-body" style={{ display: "grid", gap: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
@@ -715,6 +719,11 @@ function AppReviewAutopilotContent() {
                   </div>
                   {reviewJob.agent_command && (
                     <>
+                      {aiGuidedRecording && (
+                        <div style={{ padding: "10px 12px", borderRadius: 8, background: "var(--success-soft)", border: "1px solid color-mix(in srgb, var(--success) 22%, transparent)", color: "var(--success)", fontSize: 12, lineHeight: 1.55 }}>
+                          UniPost AI will guide the local browser through the review plan. Passwords, QR scans, and verification codes remain manual and are not sent to AI.
+                        </div>
+                      )}
                       <div style={{ padding: "10px 12px", borderRadius: 8, background: "var(--warning-soft)", border: "1px solid color-mix(in srgb, var(--warning) 24%, transparent)", color: "var(--warning)", fontSize: 12, lineHeight: 1.55 }}>
                         macOS may require granting Screen Recording permission to Terminal or iTerm once. If the agent stops at preflight, approve the permission in System Settings, restart the terminal, and run this same command again.
                       </div>

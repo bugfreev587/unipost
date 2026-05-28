@@ -681,13 +681,14 @@ func (h *ReviewHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	aiGuided := featureflags.Enabled(r.Context(), featureflags.AppReviewAIAgentV1, featureflags.Target{WorkspaceID: workspaceID, Env: runtimeenv.Current()})
 	writeCreated(w, reviewJobResponse{
 		ID:             job.ID,
 		ReviewKitID:    kit.ID,
 		Platform:       kit.Platform,
 		Status:         job.Status,
 		AgentVersion:   reviewAgentVersion,
-		AgentCommand:   reviewAgentCommand(agentRaw, sessionRaw, h.apiBaseURL),
+		AgentCommand:   reviewAgentCommand(agentRaw, sessionRaw, h.apiBaseURL, reviewAgentCommandOptions{AIGuided: aiGuided}),
 		TokenExpiresAt: expiresAt.Format(time.RFC3339),
 	})
 }
@@ -1860,8 +1861,15 @@ func reviewKitDemoPlan(kit db.ReviewKit) *reviewtemplate.TikTokDemoPlan {
 	return &plan
 }
 
-func reviewAgentCommand(agentToken, sessionToken, apiBaseURL string) string {
+type reviewAgentCommandOptions struct {
+	AIGuided bool
+}
+
+func reviewAgentCommand(agentToken, sessionToken, apiBaseURL string, opts reviewAgentCommandOptions) string {
 	args := " run --token " + agentToken + " --session-token " + sessionToken + " --api-url " + strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + " --manual-oauth-handoff"
+	if opts.AIGuided {
+		args += " --ai-guided"
+	}
 	if runtimeenv.IsProduction() {
 		return "npx --yes " + reviewAgentPackage + "@" + reviewAgentVersion + args
 	}

@@ -431,6 +431,54 @@ func TestReviewJobScriptUsesClosedActions(t *testing.T) {
 	}
 }
 
+func TestReviewCreateJobAIGuidedCommandFollowsFlag(t *testing.T) {
+	enableReviewAITestFlags(t)
+	store := &reviewStoreFake{
+		kit:    db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1"},
+		domain: db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready"},
+		now:    time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+	}
+	h := NewReviewHandler(store).
+		WithTokenGenerator(fixedReviewTokenGenerator).
+		WithNow(func() time.Time { return store.now }).
+		WithAPIBaseURL("https://dev-api.example.com")
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/jobs", strings.NewReader(`{"review_kit_id":"rvkit_1"}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.CreateJob(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewJobResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(env.Data.AgentCommand, "--ai-guided") {
+		t.Fatalf("ai guided command missing flag: %q", env.Data.AgentCommand)
+	}
+
+	t.Setenv("FEATURE_APP_REVIEW_AI_AGENT_V1", "false")
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/review/jobs", strings.NewReader(`{"review_kit_id":"rvkit_1"}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+
+	h.CreateJob(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("disabled status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode disabled: %v", err)
+	}
+	if strings.Contains(env.Data.AgentCommand, "--ai-guided") {
+		t.Fatalf("disabled flag should omit ai guided command: %q", env.Data.AgentCommand)
+	}
+}
+
 func TestReviewAgentScriptUsesBearerToken(t *testing.T) {
 	store := &reviewStoreFake{
 		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
