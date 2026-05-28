@@ -376,8 +376,11 @@ func TestReviewCreateJobUsesSourceTarballCommandInDevelopment(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !strings.Contains(env.Data.AgentCommand, "npx --yes --package https://codeload.github.com/bugfreev587/unipost/tar.gz/dev unipost-review-agent run --token revtok_fixed --session-token revsess_fixed") {
+	if !strings.Contains(env.Data.AgentCommand, "npx --yes --cache /tmp/unipost-review-agent-dev-revtok_fixed --package https://codeload.github.com/bugfreev587/unipost/tar.gz/dev unipost-review-agent run --token revtok_fixed --session-token revsess_fixed") {
 		t.Fatalf("development command should use source tarball package: %q", env.Data.AgentCommand)
+	}
+	if !strings.Contains(env.Data.AgentCommand, "--cache /tmp/unipost-review-agent-dev-revtok_fixed") {
+		t.Fatalf("development command should isolate the npx cache per job token: %q", env.Data.AgentCommand)
 	}
 	if !strings.Contains(env.Data.AgentCommand, "--api-url https://dev-api.example.com") {
 		t.Fatalf("command missing API base URL: %q", env.Data.AgentCommand)

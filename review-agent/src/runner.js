@@ -505,6 +505,7 @@ async function runManualTikTokOAuthHandoff(page, step, out, { reporter = null, s
   await showOverlay(page, "Open the TikTok authorization URL from the terminal in a real Chrome Incognito window. Log in and approve access there; UniPost will continue automatically after the review page detects the connected account.");
   await waitForManualTikTokConnection(page, { pollMs, timeoutMs });
   runtime.manualOAuthCompleted = true;
+  await bringPageToFront(page);
   await hideOverlay(page);
   await reportEvent(reporter, "manual_oauth_handoff_completed", "Manual TikTok OAuth handoff completed", {
     step_id: step.id,

@@ -584,6 +584,7 @@ test("manual OAuth handoff prints an Incognito URL and waits for the review page
   const output = [];
   const events = [];
   let reloads = 0;
+  let frontCount = 0;
   let connectClickAttempted = false;
   let creatorAsserted = false;
   const script = {
@@ -602,7 +603,7 @@ test("manual OAuth handoff prints an Incognito URL and waits for the review page
   const page = {
     currentURL: script.start_url,
     video: () => ({ path: async () => "/tmp/unipost-review-videos/manual-oauth-handoff.webm" }),
-    bringToFront: async () => {},
+    bringToFront: async () => { frontCount += 1; },
     goto: async (url) => { page.currentURL = url; },
     url: () => page.currentURL,
     reload: async () => { reloads += 1; },
@@ -666,6 +667,7 @@ test("manual OAuth handoff prints an Incognito URL and waits for the review page
 
   assert.equal(connectClickAttempted, false);
   assert.equal(creatorAsserted, true);
+  assert.equal(frontCount >= 2, true);
   assert.equal(reloads >= 2, true);
   assert.equal(output.join("").includes("Open this URL in a real Chrome Incognito window"), true);
   assert.equal(output.join("").includes("https://dev-api.unipost.dev/v1/public/connect/sessions/cs_1/authorize?state=state_1"), true);

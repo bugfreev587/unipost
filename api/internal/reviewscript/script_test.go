@@ -138,6 +138,13 @@ func TestBuildTikTokScriptFromPlanIncludesPostingSegments(t *testing.T) {
 	if script.Segments[0].Key != "posting_part_1" || !containsString(script.Segments[0].Scopes, "video.upload") {
 		t.Fatalf("missing segment metadata: %+v", script.Segments)
 	}
+	firstSegment := stepIndex(script, "segment_posting_part_1")
+	connect := stepIndex(script, "connect_tiktok")
+	waitForOAuth := stepIndex(script, "wait_for_oauth")
+	creatorInfo := stepIndex(script, "assert_creator_info")
+	if !(firstSegment < connect && connect < waitForOAuth && waitForOAuth < creatorInfo) {
+		t.Fatalf("posting part 1 must include OAuth before creator/upload steps: segment=%d connect=%d wait=%d creator=%d", firstSegment, connect, waitForOAuth, creatorInfo)
+	}
 }
 
 func TestBuildTikTokScriptFromPlanIncludesAnalyticsWithoutVideoList(t *testing.T) {
@@ -202,6 +209,15 @@ func assertNoStep(t *testing.T, script Script, id string) {
 			t.Fatalf("step %q should not be present: %+v", id, script.Steps)
 		}
 	}
+}
+
+func stepIndex(script Script, id string) int {
+	for i, step := range script.Steps {
+		if step.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func assertStepDetails(t *testing.T, script Script, id string, action Action, selector string, value string) {

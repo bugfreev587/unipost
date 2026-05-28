@@ -1790,7 +1790,27 @@ func reviewAgentCommand(agentToken, sessionToken, apiBaseURL string) string {
 	if runtimeenv.IsProduction() {
 		return "npx --yes " + reviewAgentPackage + "@" + reviewAgentVersion + args
 	}
-	return "npx --yes --package " + reviewAgentSourcePackage + " " + reviewAgentPackage + args
+	return "npx --yes --cache /tmp/unipost-review-agent-dev-" + reviewAgentCacheKey(agentToken) + " --package " + reviewAgentSourcePackage + " " + reviewAgentPackage + args
+}
+
+func reviewAgentCacheKey(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "default"
+	}
+	var builder strings.Builder
+	for _, r := range token {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			builder.WriteRune(r)
+		}
+		if builder.Len() >= 24 {
+			break
+		}
+	}
+	if builder.Len() == 0 {
+		return "default"
+	}
+	return builder.String()
 }
 
 func marshalReviewJSON(value map[string]any) ([]byte, error) {

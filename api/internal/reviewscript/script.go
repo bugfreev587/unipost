@@ -241,12 +241,21 @@ func buildTikTokSteps(startURL string, useCase string, plan *reviewtemplate.TikT
 			}
 		}
 	}
+	var firstSegmentSteps []Step
+	if len(segments) > 0 {
+		firstSegmentSteps = stepsForSegment(segments[0], startURL, videoListSegments[segments[0]])
+	}
 	steps := []Step{
 		{
 			ID:     "marker_start",
 			Action: ActionEmitMarker,
 			Marker: "Open customer review domain",
 		},
+	}
+	if len(firstSegmentSteps) > 0 {
+		steps = append(steps, firstSegmentSteps[0])
+	}
+	steps = append(steps, []Step{
 		{
 			ID:     "open_review_app",
 			Action: ActionGoto,
@@ -266,9 +275,13 @@ func buildTikTokSteps(startURL string, useCase string, plan *reviewtemplate.TikT
 			Overlay:               "Log in to TikTok and approve access. UniPost cannot see or store your password or verification code.",
 			Marker:                "Customer completes TikTok login and consent",
 		},
-	}
-	for _, segment := range segments {
-		steps = append(steps, stepsForSegment(segment, startURL, videoListSegments[segment])...)
+	}...)
+	for index, segment := range segments {
+		segmentSteps := stepsForSegment(segment, startURL, videoListSegments[segment])
+		if index == 0 && len(segmentSteps) > 0 {
+			segmentSteps = segmentSteps[1:]
+		}
+		steps = append(steps, segmentSteps...)
 	}
 	return steps
 }
