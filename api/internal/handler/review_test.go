@@ -564,7 +564,7 @@ func TestReviewPublicSessionReturnsConnectedAccountAndCreatorInfo(t *testing.T) 
 		reviewSessionByHash: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", ReviewKitID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", TokenHash: hashReviewToken("revsess_live"), ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
 		kit:                 db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1", BrandSnapshot: []byte(`{"profile_id":"prof_1"}`)},
 		domain:              db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "review.example.com", Status: "ready", TlsStatus: "issued"},
-		profile:             db.Profile{ID: "prof_1", WorkspaceID: "ws_1", Name: "Acme"},
+		profile:             db.Profile{ID: "prof_1", WorkspaceID: "ws_1", Name: "Acme", BrandingDisplayName: pgtype.Text{String: "TailTales", Valid: true}},
 		socialAccounts: []db.SocialAccount{{
 			ID:                "sa_review_1",
 			ProfileID:         "prof_1",
@@ -602,8 +602,11 @@ func TestReviewPublicSessionReturnsConnectedAccountAndCreatorInfo(t *testing.T) 
 	if env.Data.CreatorInfo == nil || env.Data.CreatorInfo.CreatorNickname != "Review Creator" {
 		t.Fatalf("missing creator_info: %+v", env.Data.CreatorInfo)
 	}
-	if env.Data.TestVideoURL == "" || env.Data.DefaultCaption == "" {
+	if env.Data.TestVideoURL == "" {
 		t.Fatalf("missing review publish defaults: %+v", env.Data)
+	}
+	if env.Data.DefaultCaption != "TailTales app review test video" {
+		t.Fatalf("default caption = %q", env.Data.DefaultCaption)
 	}
 	if adapter.creatorAccessToken != "access_live" {
 		t.Fatalf("creator_info used access token %q", adapter.creatorAccessToken)
@@ -622,7 +625,7 @@ func TestReviewPublishTikTokPostUsesAdapterAndRecordsEvent(t *testing.T) {
 	store := &reviewStoreFake{
 		reviewSessionByHash: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", ReviewKitID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "review.example.com", TokenHash: hashReviewToken("revsess_live"), ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
 		kit:                 db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1", BrandSnapshot: []byte(`{"profile_id":"prof_1"}`)},
-		profile:             db.Profile{ID: "prof_1", WorkspaceID: "ws_1", Name: "Acme"},
+		profile:             db.Profile{ID: "prof_1", WorkspaceID: "ws_1", Name: "Acme", BrandingDisplayName: pgtype.Text{String: "TailTales", Valid: true}},
 		socialAccounts: []db.SocialAccount{{
 			ID:                "sa_review_1",
 			ProfileID:         "prof_1",
@@ -644,7 +647,7 @@ func TestReviewPublishTikTokPostUsesAdapterAndRecordsEvent(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if adapter.postAccessToken != "access_live" || adapter.postText != reviewDefaultCaption {
+	if adapter.postAccessToken != "access_live" || adapter.postText != "TailTales app review test video" {
 		t.Fatalf("unexpected adapter call token=%q text=%q", adapter.postAccessToken, adapter.postText)
 	}
 	if len(adapter.postMedia) != 1 || adapter.postMedia[0].URL != "https://review.example.com/test-video.mp4" || adapter.postMedia[0].Kind != platform.MediaKindVideo {

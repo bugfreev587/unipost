@@ -747,6 +747,7 @@ func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusConflict, "CONFLICT", "Review kit profile is unavailable")
 			return
 		}
+		resp.DefaultCaption = reviewDefaultCaptionForProfile(profile)
 		account, connected, err := h.connectedReviewTikTokAccount(r.Context(), profile.ID, session)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load TikTok review account")
@@ -1288,7 +1289,7 @@ func (h *ReviewHandler) PublishReviewTikTokPost(w http.ResponseWriter, r *http.R
 	}
 	caption := strings.TrimSpace(req.Caption)
 	if caption == "" {
-		caption = reviewDefaultCaption
+		caption = reviewDefaultCaptionForProfile(profile)
 	}
 	privacyLevel := strings.TrimSpace(req.PrivacyLevel)
 	if privacyLevel == "" {
@@ -1672,6 +1673,19 @@ func reviewKitProfileID(kit db.ReviewKit) string {
 	}
 	profileID, _ := snapshot["profile_id"].(string)
 	return strings.TrimSpace(profileID)
+}
+
+func reviewDefaultCaptionForProfile(profile db.Profile) string {
+	name := strings.TrimSpace(profile.Name)
+	if profile.BrandingDisplayName.Valid {
+		if brandingName := strings.TrimSpace(profile.BrandingDisplayName.String); brandingName != "" {
+			name = brandingName
+		}
+	}
+	if name == "" {
+		return reviewDefaultCaption
+	}
+	return name + " app review test video"
 }
 
 func reviewKitDemoPlan(kit db.ReviewKit) *reviewtemplate.TikTokDemoPlan {
