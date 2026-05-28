@@ -24,6 +24,11 @@ export async function createReviewArtifactUpload({ token, apiUrl = DEFAULT_API_U
   return body.data;
 }
 
+export async function requestNextReviewAction({ token, apiUrl = DEFAULT_API_URL, fetchImpl = globalThis.fetch, request } = {}) {
+  const body = await agentRequest("/v1/review/agent/next-action", { token, apiUrl, fetchImpl, method: "POST", body: request });
+  return body.data;
+}
+
 export async function putReviewArtifact({ upload, bytes, fetchImpl = globalThis.fetch } = {}) {
   if (!upload?.upload_url) {
     throw new Error("review artifact upload URL is required");
