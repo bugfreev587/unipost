@@ -616,6 +616,34 @@ func TestReviewPublicSessionReturnsConnectedAccountAndCreatorInfo(t *testing.T) 
 	}
 }
 
+func TestReviewPublicSessionInfersBrandCaptionFromReviewDomain(t *testing.T) {
+	store := &reviewStoreFake{
+		reviewSessionByHash: db.ReviewSession{ID: "rvsess_1", ReviewJobID: "rvjob_1", ReviewKitID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", ReviewDomain: "tiktok-review.tailtales.ai", TokenHash: hashReviewToken("revsess_live"), ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 21, 0, 0, 0, time.UTC), Valid: true}},
+		kit:                 db.ReviewKit{ID: "rvkit_1", WorkspaceID: "ws_1", Platform: "tiktok", Status: "ready", ReviewDomainID: "rvdom_1", BrandSnapshot: []byte(`{"profile_id":"prof_1","review_domain":"tiktok-review.tailtales.ai"}`)},
+		domain:              db.ReviewDomain{ID: "rvdom_1", WorkspaceID: "ws_1", Domain: "tiktok-review.tailtales.ai", Status: "ready", TlsStatus: "issued"},
+		profile:             db.Profile{ID: "prof_1", WorkspaceID: "ws_1", Name: "Default"},
+	}
+	h := NewReviewHandler(store).WithTokenGenerator(fixedReviewTokenGenerator).WithAPIBaseURL("https://api.example.com")
+	req := httptest.NewRequest(http.MethodGet, "/v1/review/session", nil)
+	req.AddCookie(&http.Cookie{Name: reviewSessionCookieName, Value: "revsess_live"})
+	rec := httptest.NewRecorder()
+
+	h.GetPublicReviewSession(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewPublicSessionResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.DefaultCaption != "Tailtales app review test video" {
+		t.Fatalf("default caption = %q", env.Data.DefaultCaption)
+	}
+}
+
 func TestReviewPublishTikTokPostUsesAdapterAndRecordsEvent(t *testing.T) {
 	encryptor := testReviewEncryptor(t)
 	accessToken, err := encryptor.Encrypt("access_live")

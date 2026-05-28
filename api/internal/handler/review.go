@@ -542,6 +542,9 @@ func (h *ReviewHandler) CreateKit(w http.ResponseWriter, r *http.Request) {
 	brandSnapshot["scope_template_version"] = plan.TemplateVersion
 	brandSnapshot["oauth_reset_required"] = true
 	brandSnapshot["review_plan"] = plan
+	if strings.TrimSpace(reviewSnapshotString(brandSnapshot, "review_domain")) == "" {
+		brandSnapshot["review_domain"] = domain.Domain
+	}
 	if profileID := strings.TrimSpace(req.ProfileID); profileID != "" {
 		profile, err := h.store.GetProfile(r.Context(), profileID)
 		if err != nil || profile.WorkspaceID != workspaceID {
@@ -747,13 +750,14 @@ func (h *ReviewHandler) GetPublicReviewSession(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusConflict, "CONFLICT", "Review kit profile is unavailable")
 			return
 		}
-		resp.DefaultCaption = reviewDefaultCaptionForProfile(profile)
+		resp.DefaultCaption = reviewDefaultCaptionForProfile(profile, kit, nil)
 		account, connected, err := h.connectedReviewTikTokAccount(r.Context(), profile.ID, session)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load TikTok review account")
 			return
 		}
 		if connected {
+			resp.DefaultCaption = reviewDefaultCaptionForProfile(profile, kit, &account)
 			resp.Connected = true
 			resp.Account = reviewSessionAccountFromDB(account)
 			adapter, err := h.getReviewTikTokAdapter()
@@ -1289,7 +1293,7 @@ func (h *ReviewHandler) PublishReviewTikTokPost(w http.ResponseWriter, r *http.R
 	}
 	caption := strings.TrimSpace(req.Caption)
 	if caption == "" {
-		caption = reviewDefaultCaptionForProfile(profile)
+		caption = reviewDefaultCaptionForProfile(profile, kit, &account)
 	}
 	privacyLevel := strings.TrimSpace(req.PrivacyLevel)
 	if privacyLevel == "" {
@@ -1675,17 +1679,90 @@ func reviewKitProfileID(kit db.ReviewKit) string {
 	return strings.TrimSpace(profileID)
 }
 
-func reviewDefaultCaptionForProfile(profile db.Profile) string {
-	name := strings.TrimSpace(profile.Name)
+func reviewDefaultCaptionForProfile(profile db.Profile, kit db.ReviewKit, account *db.SocialAccount) string {
+	name := ""
 	if profile.BrandingDisplayName.Valid {
 		if brandingName := strings.TrimSpace(profile.BrandingDisplayName.String); brandingName != "" {
 			name = brandingName
 		}
 	}
 	if name == "" {
+		name = reviewBrandNameFromKitSnapshot(kit, "display_name", "brand_display_name", "brand_name")
+	}
+	if name == "" && account != nil && account.AccountName.Valid {
+		name = strings.TrimSpace(account.AccountName.String)
+	}
+	if name == "" && !isPlaceholderReviewBrandName(profile.Name) {
+		name = strings.TrimSpace(profile.Name)
+	}
+	if name == "" {
+		name = reviewBrandNameFromReviewDomain(reviewBrandNameFromKitSnapshot(kit, "review_domain"))
+	}
+	if name == "" {
 		return reviewDefaultCaption
 	}
 	return name + " app review test video"
+}
+
+func reviewBrandNameFromKitSnapshot(kit db.ReviewKit, keys ...string) string {
+	if len(kit.BrandSnapshot) == 0 {
+		return ""
+	}
+	var snapshot map[string]any
+	if json.Unmarshal(kit.BrandSnapshot, &snapshot) != nil {
+		return ""
+	}
+	return reviewSnapshotString(snapshot, keys...)
+}
+
+func reviewSnapshotString(snapshot map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := snapshot[key].(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func isPlaceholderReviewBrandName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "default", "default profile", "profile", "untitled":
+		return true
+	default:
+		return false
+	}
+}
+
+func reviewBrandNameFromReviewDomain(domain string) string {
+	host := strings.TrimSpace(strings.ToLower(domain))
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	if slash := strings.Index(host, "/"); slash >= 0 {
+		host = host[:slash]
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return ""
+	}
+	label := labels[len(labels)-2]
+	return reviewDisplayNameFromDomainLabel(label)
+}
+
+func reviewDisplayNameFromDomainLabel(label string) string {
+	parts := strings.FieldsFunc(label, func(r rune) bool {
+		return r == '-' || r == '_' || r == ' '
+	})
+	words := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		words = append(words, strings.ToUpper(part[:1])+strings.ToLower(part[1:]))
+	}
+	return strings.Join(words, " ")
 }
 
 func reviewKitDemoPlan(kit db.ReviewKit) *reviewtemplate.TikTokDemoPlan {
