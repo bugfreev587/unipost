@@ -211,6 +211,7 @@ test("runScript keeps scripted navigation and manual OAuth handoff deterministic
   const output = [];
   let reloads = 0;
   const navigations = [];
+  const oauthNavigations = [];
   const script = {
     job_id: "rvjob_ai_deterministic_edges",
     platform: "tiktok",
@@ -229,6 +230,16 @@ test("runScript keeps scripted navigation and manual OAuth handoff deterministic
     currentURL: script.start_url,
     video: () => ({ path: async () => "/tmp/unipost-review-videos/ai-deterministic-edges.webm" }),
     bringToFront: async () => {},
+    context: () => ({
+      newPage: async () => ({
+        goto: async (url) => oauthNavigations.push(url),
+        bringToFront: async () => {},
+        waitForLoadState: async () => {},
+        locator: () => ({ first: () => ({ waitFor: async () => {} }) }),
+        evaluate: async () => {},
+        close: async () => {},
+      }),
+    }),
     goto: async (url) => {
       navigations.push(url);
       page.currentURL = url;
@@ -291,8 +302,10 @@ test("runScript keeps scripted navigation and manual OAuth handoff deterministic
   });
 
   assert.deepEqual(navigations, ["https://review.example.com/tiktok/posting"]);
+  assert.deepEqual(oauthNavigations, ["https://dev-api.unipost.dev/v1/public/connect/sessions/cs_1/authorize?state=state_1"]);
   assert.deepEqual(aiCalls, ["creator_info"]);
-  assert.equal(output.join("").includes("Open this URL in a real Chrome Incognito window"), true);
+  assert.equal(output.join("").includes("new tab"), true);
+  assert.equal(output.join("").includes("Incognito"), false);
 });
 
 test("runScript shows recorded section title overlays for review markers", async () => {
@@ -741,11 +754,13 @@ test("manual pause overlay waits for the page body before injecting instructions
   );
 });
 
-test("manual OAuth handoff prints an Incognito URL and waits for the review page to become connected", async () => {
+test("manual OAuth handoff opens a same-browser tab and waits for the review page to become connected", async () => {
   const output = [];
   const events = [];
   let reloads = 0;
   let frontCount = 0;
+  let oauthClosed = false;
+  const oauthNavigations = [];
   let connectClickAttempted = false;
   let creatorAsserted = false;
   const script = {
@@ -765,6 +780,20 @@ test("manual OAuth handoff prints an Incognito URL and waits for the review page
     currentURL: script.start_url,
     video: () => ({ path: async () => "/tmp/unipost-review-videos/manual-oauth-handoff.webm" }),
     bringToFront: async () => { frontCount += 1; },
+    context: () => ({
+      newPage: async () => ({
+        goto: async (url) => oauthNavigations.push(url),
+        bringToFront: async () => { frontCount += 1; },
+        waitForLoadState: async () => {},
+        locator: () => ({
+          first: () => ({
+            waitFor: async () => {},
+          }),
+        }),
+        evaluate: async () => {},
+        close: async () => { oauthClosed = true; },
+      }),
+    }),
     goto: async (url) => { page.currentURL = url; },
     url: () => page.currentURL,
     reload: async () => { reloads += 1; },
@@ -830,8 +859,10 @@ test("manual OAuth handoff prints an Incognito URL and waits for the review page
   assert.equal(creatorAsserted, true);
   assert.equal(frontCount >= 2, true);
   assert.equal(reloads >= 2, true);
-  assert.equal(output.join("").includes("Open this URL in a real Chrome Incognito window"), true);
-  assert.equal(output.join("").includes("https://dev-api.unipost.dev/v1/public/connect/sessions/cs_1/authorize?state=state_1"), true);
+  assert.deepEqual(oauthNavigations, ["https://dev-api.unipost.dev/v1/public/connect/sessions/cs_1/authorize?state=state_1"]);
+  assert.equal(oauthClosed, true);
+  assert.equal(output.join("").includes("new tab"), true);
+  assert.equal(output.join("").includes("Incognito"), false);
   assert.equal(events.some((event) => event.eventType === "manual_oauth_handoff_started"), true);
   assert.equal(events.some((event) => event.eventType === "manual_oauth_handoff_completed"), true);
 });

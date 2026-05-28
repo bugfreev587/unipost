@@ -542,23 +542,44 @@ async function runManualTikTokOAuthHandoff(page, step, out, { reporter = null, s
     throw new Error("Manual TikTok OAuth handoff could not find the authorize URL on the review page.");
   }
   const scopes = normalizeRequestedScopes(script.requested_scopes || []);
-  out.write("[oauth] Open this URL in a real Chrome Incognito window and complete TikTok login/authorization:\n");
+  out.write("[oauth] Opening TikTok authorization in a new tab in this recording browser.\n");
   out.write(authorizeURL + "\n");
-  out.write("[oauth] UniPost will keep recording this review window and continue after the account is connected.\n");
+  out.write("[oauth] Complete TikTok login/authorization in the new tab. UniPost will continue after the review page detects the connected account.\n");
   await reportEvent(reporter, "manual_oauth_handoff_started", "Manual TikTok OAuth handoff started", {
     step_id: step.id,
     scopes,
     authorize_host: safeURLHost(authorizeURL),
+    handoff: "same_browser_tab",
   }, out);
-  await showOverlay(page, "Open the TikTok authorization URL from the terminal in a real Chrome Incognito window. Log in and approve access there; UniPost will continue automatically after the review page detects the connected account.");
-  await waitForManualTikTokConnection(page, { pollMs, timeoutMs });
-  runtime.manualOAuthCompleted = true;
-  await bringPageToFront(page);
-  await hideOverlay(page);
+  const oauthPage = await openTikTokOAuthTab(page, authorizeURL);
+  await showOverlay(oauthPage, "Complete TikTok login and approve access in this tab. UniPost will return to the review page after TikTok redirects back.");
+  try {
+    await waitForManualTikTokConnection(page, { pollMs, timeoutMs });
+    runtime.manualOAuthCompleted = true;
+  } finally {
+    await hideOverlay(oauthPage).catch(() => {});
+    if (oauthPage !== page && typeof oauthPage?.close === "function") {
+      await oauthPage.close().catch(() => {});
+    }
+    await bringPageToFront(page);
+  }
   await reportEvent(reporter, "manual_oauth_handoff_completed", "Manual TikTok OAuth handoff completed", {
     step_id: step.id,
     scopes,
   }, out);
+}
+
+async function openTikTokOAuthTab(page, authorizeURL) {
+  const context = typeof page?.context === "function" ? page.context() : null;
+  if (context && typeof context.newPage === "function") {
+    const oauthPage = await context.newPage();
+    await oauthPage.goto(authorizeURL, { waitUntil: "domcontentloaded" });
+    await bringPageToFront(oauthPage);
+    return oauthPage;
+  }
+  await page.goto(authorizeURL, { waitUntil: "domcontentloaded" });
+  await bringPageToFront(page);
+  return page;
 }
 
 async function manualTikTokAuthorizeURL(page, selector) {
@@ -585,7 +606,7 @@ async function waitForManualTikTokConnection(page, { pollMs = null, timeoutMs = 
     }
     await delay(manualOAuthHandoffPollMs(pollMs));
   }
-  throw new Error("Timed out waiting for TikTok OAuth to complete in the manual Incognito handoff. Confirm the TikTok authorization finished and retry the recording.");
+  throw new Error("Timed out waiting for TikTok OAuth to complete in the same-browser tab handoff. Confirm the TikTok authorization finished and retry the recording.");
 }
 
 async function reviewPageShowsConnectedTikTok(page) {

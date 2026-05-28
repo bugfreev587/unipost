@@ -94,7 +94,7 @@ test("startNativeBrowserCapture records a macOS browser-window rectangle", async
   });
 
   assert.equal(spawnCommand, "screencapture");
-  assert.deepEqual(spawnArgs.slice(0, 4), ["-v", "-x", "-R", "80,80,1000,800"]);
+  assert.deepEqual(spawnArgs.slice(0, 4), ["-v", "-x", "-R", "0,0,1000,800"]);
   assert.equal(spawnArgs[4], "/tmp/unipost-review-native-test/rvjob_native-browser-window.mov");
   assert.equal(capture.includesAddressBar, true);
   await capture.stop();

@@ -11,6 +11,7 @@ import {
   Music2,
   Send,
   ShieldCheck,
+  Trash2,
   UploadCloud,
   Video,
 } from "lucide-react";
@@ -110,6 +111,7 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
   const disclosureIncomplete = form.disclosureEnabled && !form.yourBrand && !form.brandedContent;
   const brandedPrivateConflict = form.disclosureEnabled && form.brandedContent && form.privacyLevel === "SELF_ONLY";
   const videoURL = session?.test_video_url || "";
+  const selectedVideoURL = form.videoSelected ? videoURL : "";
   const videoHost = videoURL ? safeHost(videoURL) : "UniPost review asset";
   const publishDisabledReason =
     !connected
@@ -209,10 +211,16 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
           </div>
 
           <div className="video-frame" data-review-step="video-preview">
-            {videoURL ? (
-              <video src={videoURL} controls muted playsInline preload="metadata" />
+            {selectedVideoURL ? (
+              <video src={selectedVideoURL} controls muted playsInline preload="metadata" />
             ) : (
-              <div className="video-placeholder"><FileVideo size={28} /> Review video URL is not configured</div>
+              <div className="video-placeholder">
+                <FileVideo size={28} />
+                <div>
+                  <strong>No video selected</strong>
+                  <span>{videoURL ? "Upload the TailTales review MP4 when you are ready to test Direct Post." : "Review video URL is not configured."}</span>
+                </div>
+              </div>
             )}
           </div>
 
@@ -220,16 +228,28 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
             <FileVideo size={18} />
             <div>
               <strong>tailtales-review-video.mp4</strong>
-              <span>{form.videoSelected ? "Uploaded to UniPost media storage" : videoHost}</span>
+              <span>{form.videoSelected ? "Selected and stored in UniPost media library" : `Available from ${videoHost}`}</span>
             </div>
-            <button
-              data-review-step="select-video"
-              type="button"
-              onClick={() => updateForm({ videoSelected: true })}
-              disabled={!videoURL || form.videoSelected || published}
-            >
-              {form.videoSelected ? <><Check size={15} /> Uploaded</> : <><UploadCloud size={15} /> Upload video</>}
-            </button>
+            <div className="asset-actions">
+              <button
+                data-review-step="select-video"
+                type="button"
+                onClick={() => updateForm({ videoSelected: true })}
+                disabled={!videoURL || form.videoSelected || published}
+              >
+                {form.videoSelected ? <><Check size={15} /> Uploaded</> : <><UploadCloud size={15} /> Upload video</>}
+              </button>
+              {form.videoSelected && !published ? (
+                <button
+                  className="ghost-action"
+                  data-review-step="clear-video"
+                  type="button"
+                  onClick={() => updateForm({ videoSelected: false })}
+                >
+                  <Trash2 size={15} /> Remove
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <div className="upload-evidence" data-review-step={form.videoSelected ? "video-upload-ready" : "video-upload-pending"}>
@@ -269,6 +289,8 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
                   className="primary-action"
                   data-review-step="connect-tiktok"
                   href={session.connect_authorize_url || "#"}
+                  target="_blank"
+                  rel="noreferrer"
                   aria-disabled={!session.connect_authorize_url}
                   onClick={(event) => {
                     if (!session.connect_authorize_url) event.preventDefault();
@@ -413,8 +435,8 @@ export function TikTokReviewPostingClient({ session, error, initiallyConnected }
 
           <div className="post-preview" data-review-step="post-preview">
             <div className="preview-media">
-              {videoURL ? (
-                <video src={videoURL} muted playsInline preload="metadata" />
+              {selectedVideoURL ? (
+                <video src={selectedVideoURL} muted playsInline preload="metadata" />
               ) : (
                 <FileVideo size={20} />
               )}
@@ -586,13 +608,18 @@ const styles = `
   .panel-icon{width:38px;height:38px;border-radius:8px;display:grid;place-items:center;background:#eef4ff;color:#175cd3;border:1px solid #d1e0ff;flex-shrink:0}
   .video-frame{border:1px solid #dfe5ef;border-radius:8px;background:#101828;aspect-ratio:16/9;overflow:hidden;display:grid;place-items:center}
   .video-frame video{width:100%;height:100%;object-fit:contain;background:#101828}
-  .video-placeholder{display:flex;align-items:center;gap:10px;color:#cbd5e1;font-size:13px}
+  .video-placeholder{display:flex;align-items:center;gap:12px;color:#cbd5e1;font-size:13px;text-align:left;padding:20px}
+  .video-placeholder strong{display:block;color:#fff;font-size:14px;margin-bottom:3px}
+  .video-placeholder span{display:block;color:#cbd5e1;font-size:12px;line-height:1.45;max-width:360px}
   .asset-row{margin:12px 0 18px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;border:1px solid #dfe5ef;border-radius:8px;padding:10px;background:#f8fafc}
   .asset-row strong{display:block;font-size:13px;color:#182230}
   .asset-row span{display:block;font-size:12px;color:#667085;margin-top:1px}
-  .asset-row button,.primary-action,.publish-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:8px;background:#101828;color:#fff;text-decoration:none;padding:10px 13px;font-size:13px;font-weight:720;min-height:40px;box-sizing:border-box;cursor:pointer;transition:transform 140ms ease, background 140ms ease}
+  .asset-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+  .asset-row button,.primary-action,.publish-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:8px;background:#101828;color:#fff;text-decoration:none;padding:10px 13px;font-size:13px;font-weight:720;min-height:40px;box-sizing:border-box;cursor:pointer;transition:transform 140ms ease, background 140ms ease,border-color 140ms ease}
   .asset-row button:active,.primary-action:active,.publish-button:active{transform:translateY(1px)}
   .asset-row button:disabled,.primary-action[aria-disabled="true"],.publish-button:disabled{background:#98a2b3;cursor:not-allowed}
+  .asset-row .ghost-action{background:#fff;color:#344054;border:1px solid #d7deea}
+  .asset-row .ghost-action:hover{border-color:#98a2b3}
   .upload-evidence{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:-4px 0 18px}
   .upload-step{border:1px solid #dfe5ef;border-radius:8px;background:#fff;color:#667085;padding:9px;display:flex;align-items:center;gap:7px;min-height:40px;font-size:12px;font-weight:650}
   .upload-step svg{color:#98a2b3;flex-shrink:0}

@@ -86,8 +86,8 @@ export async function resolveChromiumWindowBounds({ browser, page, recording = {
   const result = await session.send("Browser.getWindowForTarget");
   const windowID = result.windowId;
   const targetBounds = {
-    left: recording.window_left ?? 80,
-    top: recording.window_top ?? 80,
+    left: recording.window_left ?? 0,
+    top: recording.window_top ?? 0,
     width: recording.window_width || result.bounds?.width || 1440,
     height: recording.window_height || result.bounds?.height || 1000,
     windowState: "normal",

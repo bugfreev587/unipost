@@ -252,6 +252,11 @@ function AppReviewAutopilotContent() {
   const visibleScopeTemplates = scopeTemplates.length > 0 ? scopeTemplates : FALLBACK_SCOPE_TEMPLATES;
   const planReady = Boolean(demoPlan && demoPlan.requested_scopes.length > 0);
   const aiGuidedRecording = Boolean(reviewJob?.agent_command?.includes("--ai-guided"));
+  const reviewSurface = reviewSurfaceForUseCase(demoPlan?.use_case ?? reviewKit?.use_case, selectedScopes);
+  const reviewSessionToken = reviewSessionTokenFromCommand(reviewJob?.agent_command);
+  const manualReviewURL = reviewDomain && reviewJob && reviewSessionToken
+    ? buildReviewLaunchURL(reviewDomain.domain, reviewSurface, reviewSessionToken)
+    : "";
 
   const steps = useMemo(() => [
     { label: "TikTok credentials", detail: "Client Key and Client Secret saved in White-label.", state: hasTikTokCredential ? "done" : "blocked" as StepState },
@@ -573,6 +578,21 @@ function AppReviewAutopilotContent() {
                             <span key={scope} className="dbadge dbadge-gray" style={{ fontSize: 10 }}>{scope}</span>
                           ))}
                         </div>
+                        {segment.steps.length > 0 && (
+                          <div style={{ display: "grid", gap: 7, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--dborder)" }}>
+                            {segment.steps.map((step, index) => (
+                              <div key={step.key} style={{ display: "grid", gridTemplateColumns: "24px minmax(0, 1fr)", gap: 8, alignItems: "start" }}>
+                                <span className="mono" style={{ width: 24, height: 24, borderRadius: 7, display: "grid", placeItems: "center", background: "var(--surface)", border: "1px solid var(--dborder)", color: "var(--dmuted)", fontSize: 11 }}>
+                                  {index + 1}
+                                </span>
+                                <span style={{ minWidth: 0 }}>
+                                  <span style={{ display: "block", color: "var(--dtext)", fontSize: 12, fontWeight: 650 }}>{step.title}</span>
+                                  <span style={{ display: "block", color: "var(--dmuted)", fontSize: 12, lineHeight: 1.45, marginTop: 2 }}>{step.evidence}</span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -637,6 +657,22 @@ function AppReviewAutopilotContent() {
               <button className="dbtn" onClick={handleCreateJob} disabled={!reviewKit || working === "job"} style={{ width: "100%", justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7 }}>
                 {working === "job" ? <ButtonLoading label="Starting" /> : <><Play size={14} /> {reviewJob ? "Re-record" : "Start recording"}</>}
               </button>
+              {manualReviewURL && (
+                <div style={{ display: "grid", gap: 9, padding: 12, borderRadius: 8, border: "1px solid var(--dborder)", background: "var(--surface2)" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--dtext)" }}>Manual review workspace</div>
+                  <div style={{ fontSize: 12, color: "var(--dmuted)", lineHeight: 1.55 }}>
+                    Open this customer-domain page in a clean Chrome or Incognito window to validate the flow before automatic recording. The page starts with no video selected so you can upload, remove, preview, connect TikTok, open policy links, and publish manually.
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8 }}>
+                    <a className="dbtn dbtn-primary" href={manualReviewURL} target="_blank" rel="noopener noreferrer" style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 7, textDecoration: "none" }}>
+                      <ExternalLink size={14} /> Open review page
+                    </a>
+                    <button className="dbtn" onClick={() => copyText("manual-review", manualReviewURL)} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      {copied === "manual-review" ? <Check size={14} /> : <Clipboard size={14} />} Copy
+                    </button>
+                  </div>
+                </div>
+              )}
               {error && (
                 <div style={{ padding: "10px 12px", borderRadius: 8, background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 24%, transparent)", color: "var(--danger)", fontSize: 13, lineHeight: 1.5 }}>
                   {error}
@@ -736,7 +772,7 @@ function AppReviewAutopilotContent() {
                 </div>
               ) : (
                 <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.65 }}>
-                  When recording starts, UniPost creates a single-use token and pins the CLI version. On macOS, the first run may ask you to grant Screen Recording permission to Terminal, then restart the terminal command once.
+                  When recording starts, UniPost creates a single-use token and pins the CLI version. First validate the manual review page, then run the local command for automatic recording. On macOS, the first run may ask you to grant Screen Recording permission to Terminal, then restart the command once.
                 </div>
               )}
             </div>
@@ -813,4 +849,25 @@ function formatBytes(value: number) {
   if (!Number.isFinite(value) || value <= 0) return "";
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function reviewSurfaceForUseCase(useCase: string | undefined, scopes: string[]): "posting" | "analytics" {
+  if (useCase === "analytics") return "analytics";
+  if (useCase === "content_posting") return "posting";
+  const hasPostingScope = scopes.some((scope) => scope === "video.upload" || scope === "video.publish");
+  return hasPostingScope ? "posting" : "analytics";
+}
+
+function reviewSessionTokenFromCommand(command: string | undefined) {
+  if (!command) return "";
+  const match = command.match(/--session-token(?:=|\s+)(["']?)([^\s"']+)\1/);
+  return match?.[2] ?? "";
+}
+
+function buildReviewLaunchURL(domain: string, surface: "posting" | "analytics", token: string) {
+  const host = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*/, "");
+  if (!host || !token) return "";
+  const url = new URL(surface === "analytics" ? "/tiktok/analytics/session" : "/tiktok/posting/session", `https://${host}`);
+  url.searchParams.set("token", token);
+  return url.toString();
 }
