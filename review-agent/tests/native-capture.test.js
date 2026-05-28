@@ -99,3 +99,48 @@ test("startNativeBrowserCapture records a macOS browser-window rectangle", async
   assert.equal(capture.includesAddressBar, true);
   await capture.stop();
 });
+
+test("startNativeBrowserCapture activates the browser window before region recording", async () => {
+  const calls = [];
+  const proc = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = (signal) => process.nextTick(() => proc.emit("exit", null, signal));
+  proc.off = proc.removeListener.bind(proc);
+  const spawnImpl = (command, args) => {
+    calls.push([command, ...args]);
+    return proc;
+  };
+  const execFileImpl = async (command, args) => {
+    calls.push([command, ...args]);
+    return { stdout: "" };
+  };
+  const session = {
+    send: async (method) => method === "Browser.getWindowForTarget" ? { windowId: 3, bounds: { width: 1000, height: 800 } } : {},
+  };
+  const page = {
+    bringToFront: async () => calls.push(["page.bringToFront"]),
+    context: () => ({ newCDPSession: async () => session }),
+  };
+
+  const capture = await startNativeBrowserCapture({
+    script: {
+      job_id: "rvjob_frontmost",
+      recording: { show_address_bar: true, capture_mode: "native-browser-window", window_width: 1280, window_height: 720 },
+    },
+    page,
+    browser: {},
+    outputDir: "/tmp/unipost-review-native-test",
+    platform: "darwin",
+    spawnImpl,
+    execFileImpl,
+    startDelayMs: 0,
+    activationDelayMs: 0,
+    out: { write() {} },
+  });
+
+  const spawnIndex = calls.findIndex((call) => call[0] === "screencapture");
+  assert.notEqual(spawnIndex, -1);
+  assert.ok(calls.slice(0, spawnIndex).some((call) => call[0] === "page.bringToFront"));
+  assert.ok(calls.slice(0, spawnIndex).some((call) => call[0] === "osascript"));
+  await capture.stop();
+});

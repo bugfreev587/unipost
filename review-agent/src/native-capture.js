@@ -1,8 +1,10 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 
 const DEFAULT_CAPTURE_MODE = "native-browser-window";
+const execFileAsync = promisify(execFile);
 
 export async function startNativeBrowserCapture({
   script,
@@ -11,8 +13,10 @@ export async function startNativeBrowserCapture({
   outputDir = defaultNativeVideoDir(),
   platform = process.platform,
   spawnImpl = spawn,
+  execFileImpl = execFileAsync,
   out = process.stdout,
   startDelayMs = 900,
+  activationDelayMs = 300,
 } = {}) {
   const recording = script?.recording || {};
   const requestedMode = recording.capture_mode || (recording.show_address_bar ? DEFAULT_CAPTURE_MODE : "playwright-page-video");
@@ -25,6 +29,7 @@ export async function startNativeBrowserCapture({
 
   await mkdir(outputDir, { recursive: true });
   const bounds = await resolveChromiumWindowBounds({ browser, page, recording });
+  await activateBrowserWindowForCapture({ page, execFileImpl, activationDelayMs });
   const filePath = path.join(outputDir, `${safeFilePart(script.job_id || "review")}-browser-window.mov`);
   const proc = spawnImpl("screencapture", [
     "-v",
@@ -50,6 +55,27 @@ export async function startNativeBrowserCapture({
       return stopCaptureProcess(proc, () => stderr);
     },
   };
+}
+
+async function activateBrowserWindowForCapture({ page, execFileImpl = execFileAsync, activationDelayMs = 300 } = {}) {
+  await page?.bringToFront?.();
+  if (execFileImpl) {
+    await execFileImpl("osascript", [
+      "-e",
+      `tell application "System Events"
+  if exists process "Google Chrome for Testing" then
+    set frontmost of process "Google Chrome for Testing" to true
+  else if exists process "Google Chrome" then
+    set frontmost of process "Google Chrome" to true
+  else if exists process "Chromium" then
+    set frontmost of process "Chromium" to true
+  end if
+end tell`,
+    ]).catch(() => {});
+  }
+  if (activationDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, activationDelayMs));
+  }
 }
 
 export async function resolveChromiumWindowBounds({ browser, page, recording = {} } = {}) {

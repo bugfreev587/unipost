@@ -80,7 +80,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
       if (step.action === "manual_pause") {
         await reportEvent(reporter, "manual_pause_started", step.marker || "Waiting for user", { step_id: step.id }, out);
       }
-      if (aiGuided) {
+      if (aiGuided && shouldUseAIGuidedStep(step, { manualOAuthHandoff })) {
         await aiRunnerImpl({
           script: { ...valid, steps: [step] },
           page,
@@ -138,6 +138,21 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
     }
     await browser.close();
   }
+}
+
+function shouldUseAIGuidedStep(step = {}, { manualOAuthHandoff = false } = {}) {
+  const deterministicActions = new Set([
+    "emit_marker",
+    "goto",
+    "manual_pause",
+    "open_link",
+    "wait_for_navigation",
+    "wait_for_network_idle",
+    "screenshot",
+  ]);
+  if (deterministicActions.has(step.action)) return false;
+  if (manualOAuthHandoff && step.id === "connect_tiktok") return false;
+  return true;
 }
 
 export async function prepareBrowserForNativeCapture({ script = {}, out = process.stdout, platform = process.platform, execFileImpl = execFileAsync, delayImpl = delay } = {}) {

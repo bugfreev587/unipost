@@ -206,6 +206,95 @@ test("runScript delegates step execution to the AI runner when aiGuided is enabl
   assert.deepEqual(aiCalls, [{ stepId: "creator_info", token: "revtok_ai", apiUrl: "https://api.example.com" }]);
 });
 
+test("runScript keeps scripted navigation and manual OAuth handoff deterministic when aiGuided is enabled", async () => {
+  const aiCalls = [];
+  const output = [];
+  let reloads = 0;
+  const navigations = [];
+  const script = {
+    job_id: "rvjob_ai_deterministic_edges",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    requested_scopes: ["user.info.basic", "video.publish", "video.upload"],
+    steps: [
+      { id: "marker_start", action: "emit_marker", marker: "Open customer review domain" },
+      { id: "open_review_app", action: "goto", url: "https://review.example.com/tiktok/posting" },
+      { id: "connect_tiktok", action: "click", selector: "[data-review-step='connect-tiktok']", marker: "Start TikTok OAuth" },
+      { id: "wait_for_oauth", action: "manual_pause", resume_when_url_contains: "/tiktok/posting" },
+      { id: "creator_info", action: "assert_visible", selector: "[data-review-step='creator-info']", goal: "Show creator info" },
+    ],
+  };
+  const page = {
+    currentURL: script.start_url,
+    video: () => ({ path: async () => "/tmp/unipost-review-videos/ai-deterministic-edges.webm" }),
+    bringToFront: async () => {},
+    goto: async (url) => {
+      navigations.push(url);
+      page.currentURL = url;
+    },
+    url: () => page.currentURL,
+    reload: async () => { reloads += 1; },
+    waitForLoadState: async () => {},
+    waitForTimeout: async () => {},
+    waitForURL: async () => {},
+    evaluate: async () => {},
+    locator: (selector) => {
+      if (selector === "[data-review-step='connect-tiktok']") {
+        return {
+          getAttribute: async () => "https://dev-api.unipost.dev/v1/public/connect/sessions/cs_1/authorize?state=state_1",
+          click: async () => assert.fail("AI-guided manual OAuth should not click TikTok in the recorded browser"),
+        };
+      }
+      if (selector === "[data-review-step='connect-tiktok-panel']") {
+        return {
+          first: () => ({
+            innerText: async () => reloads >= 1 ? "TikTok account connected" : "Authorize TikTok",
+          }),
+        };
+      }
+      if (selector === "body") {
+        return {
+          first: () => ({
+            waitFor: async () => {},
+          }),
+        };
+      }
+      throw new Error(`unexpected selector: ${selector}`);
+    },
+  };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async () => {},
+    uploadArtifact: async (artifact) =>
+      artifact.artifactType === "demo_video"
+        ? "review-artifacts/ws_1/rvjob_ai_deterministic_edges/demo-video.webm"
+        : "review-artifacts/ws_1/rvjob_ai_deterministic_edges/execution-evidence.json",
+    complete: async () => {},
+    fail: async () => assert.fail("runScript should complete"),
+  };
+
+  await runner.runScript(script, {
+    aiGuided: true,
+    aiRunnerImpl: async ({ script: aiScript }) => {
+      aiCalls.push(aiScript.steps[0].id);
+    },
+    manualOAuthHandoff: true,
+    manualOAuthPollMs: 1,
+    manualOAuthTimeoutMs: 100,
+    reporter,
+    sessionToken: "rvsession_test",
+    playwrightImpl,
+    nativeCaptureImpl: async () => null,
+    out: { write: (message) => output.push(message) },
+  });
+
+  assert.deepEqual(navigations, ["https://review.example.com/tiktok/posting"]);
+  assert.deepEqual(aiCalls, ["creator_info"]);
+  assert.equal(output.join("").includes("Open this URL in a real Chrome Incognito window"), true);
+});
+
 test("runScript shows recorded section title overlays for review markers", async () => {
   const evaluations = [];
   const script = {
