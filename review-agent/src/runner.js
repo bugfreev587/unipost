@@ -10,7 +10,7 @@ import { processReviewVideoSegments } from "./video-postprocess.js";
 const PAGE_VIDEO_ARTIFACT_NOTE = "Fallback artifact captures the page viewport only. It does not satisfy address-bar evidence requirements.";
 const execFileAsync = promisify(execFile);
 
-export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture, videoPostProcessImpl = processReviewVideoSegments, prepareBrowserImpl = prepareBrowserForNativeCapture } = {}) {
+export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", manualOAuthHandoff = manualOAuthHandoffEnabled(), manualOAuthPollMs = null, manualOAuthTimeoutMs = null, playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture, videoPostProcessImpl = processReviewVideoSegments, prepareBrowserImpl = prepareBrowserForNativeCapture } = {}) {
   const valid = validateScript(script);
   if (dryRun) {
     out.write(`Review script ${valid.job_id} (${valid.steps.length} steps)\n`);
@@ -43,6 +43,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
   const recordingStartedAt = Date.now();
   let currentStepId = "";
   let activeSegment = null;
+  const runtime = { manualOAuthCompleted: false };
   try {
     try {
       nativeCapture = await nativeCaptureImpl({ script: valid, browser, page, out });
@@ -78,7 +79,7 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
       if (step.action === "manual_pause") {
         await reportEvent(reporter, "manual_pause_started", step.marker || "Waiting for user", { step_id: step.id }, out);
       }
-      await runStep(page, step, out, { reporter, script: valid });
+      await runStep(page, step, out, { reporter, script: valid, manualOAuthHandoff, manualOAuthPollMs, manualOAuthTimeoutMs, runtime });
       if (step.action === "manual_pause") {
         await reportEvent(reporter, "manual_pause_completed", step.marker || "User step completed", { step_id: step.id }, out);
       }
@@ -253,7 +254,7 @@ async function importPlaywright() {
   }
 }
 
-async function runStep(page, step, out, { reporter = null, script = {} } = {}) {
+async function runStep(page, step, out, { reporter = null, script = {}, manualOAuthHandoff = false, manualOAuthPollMs = null, manualOAuthTimeoutMs = null, runtime = {} } = {}) {
   if (step.marker) {
     out.write(`[marker] ${step.marker}\n`);
   }
@@ -264,6 +265,10 @@ async function runStep(page, step, out, { reporter = null, script = {} } = {}) {
       await page.goto(step.url, { waitUntil: "domcontentloaded" });
       return;
     case "click":
+      if (step.id === "connect_tiktok" && manualOAuthHandoff) {
+        await runManualTikTokOAuthHandoff(page, step, out, { reporter, script, pollMs: manualOAuthPollMs, timeoutMs: manualOAuthTimeoutMs, runtime });
+        return;
+      }
       await page.locator(step.selector).click();
       if (step.id === "connect_tiktok") {
         const oauth = await normalizeTikTokReviewOAuthScopes(page, out, script.requested_scopes || []);
@@ -291,6 +296,9 @@ async function runStep(page, step, out, { reporter = null, script = {} } = {}) {
       }
       return;
     case "manual_pause":
+      if (runtime.manualOAuthCompleted && step.id === "wait_for_oauth") {
+        return;
+      }
       await showOverlay(page, step.overlay || "Complete the manual step, then UniPost will continue.");
       if (step.resume_when_url_contains) {
         await page.waitForURL((url) => url.toString().includes(step.resume_when_url_contains), { timeout: manualPauseTimeoutMs() });
@@ -472,12 +480,113 @@ function manualPauseTimeoutMs() {
   return 30 * 60 * 1000;
 }
 
-function browserLaunchOptions() {
-  const channel = (process.env.UNIPOST_REVIEW_BROWSER_CHANNEL || "").trim();
+export function browserLaunchOptions({ browserChannel = process.env.UNIPOST_REVIEW_BROWSER_CHANNEL || "" } = {}) {
+  const channel = String(browserChannel || "").trim();
   return {
     headless: false,
     ...(channel ? { channel } : {}),
   };
+}
+
+async function runManualTikTokOAuthHandoff(page, step, out, { reporter = null, script = {}, pollMs = null, timeoutMs = null, runtime = {} } = {}) {
+  const authorizeURL = await manualTikTokAuthorizeURL(page, step.selector);
+  if (!authorizeURL) {
+    throw new Error("Manual TikTok OAuth handoff could not find the authorize URL on the review page.");
+  }
+  const scopes = normalizeRequestedScopes(script.requested_scopes || []);
+  out.write("[oauth] Open this URL in a real Chrome Incognito window and complete TikTok login/authorization:\n");
+  out.write(authorizeURL + "\n");
+  out.write("[oauth] UniPost will keep recording this review window and continue after the account is connected.\n");
+  await reportEvent(reporter, "manual_oauth_handoff_started", "Manual TikTok OAuth handoff started", {
+    step_id: step.id,
+    scopes,
+    authorize_host: safeURLHost(authorizeURL),
+  }, out);
+  await showOverlay(page, "Open the TikTok authorization URL from the terminal in a real Chrome Incognito window. Log in and approve access there; UniPost will continue automatically after the review page detects the connected account.");
+  await waitForManualTikTokConnection(page, { pollMs, timeoutMs });
+  runtime.manualOAuthCompleted = true;
+  await hideOverlay(page);
+  await reportEvent(reporter, "manual_oauth_handoff_completed", "Manual TikTok OAuth handoff completed", {
+    step_id: step.id,
+    scopes,
+  }, out);
+}
+
+async function manualTikTokAuthorizeURL(page, selector) {
+  let href = "";
+  try {
+    href = await page.locator(selector).getAttribute("href", { timeout: 10000 });
+  } catch {
+    return "";
+  }
+  if (!href || href === "#") return "";
+  try {
+    return new URL(href, typeof page.url === "function" ? page.url() : undefined).toString();
+  } catch {
+    return "";
+  }
+}
+
+async function waitForManualTikTokConnection(page, { pollMs = null, timeoutMs = null } = {}) {
+  const deadline = Date.now() + manualOAuthHandoffTimeoutMs(timeoutMs);
+  while (Date.now() <= deadline) {
+    if (await reviewPageShowsConnectedTikTok(page)) return;
+    if (typeof page.reload === "function") {
+      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+    }
+    await delay(manualOAuthHandoffPollMs(pollMs));
+  }
+  throw new Error("Timed out waiting for TikTok OAuth to complete in the manual Incognito handoff. Confirm the TikTok authorization finished and retry the recording.");
+}
+
+async function reviewPageShowsConnectedTikTok(page) {
+  const panelSelectors = [
+    "[data-review-step='connect-tiktok-panel']",
+    "[data-review-step='analytics-loading']",
+  ];
+  for (const selector of panelSelectors) {
+    try {
+      const text = await page.locator(selector).first().innerText({ timeout: 1000 });
+      if (/TikTok account connected/i.test(text)) return true;
+    } catch {
+      // Try the next reviewer page shape.
+    }
+  }
+  try {
+    const connect = page.locator("[data-review-step='connect-tiktok']");
+    if (typeof connect.count === "function" && await connect.count() === 0) return true;
+  } catch {
+    // Absence alone is not conclusive unless Playwright reports a zero count.
+  }
+  return false;
+}
+
+function manualOAuthHandoffEnabled(value = process.env.UNIPOST_REVIEW_MANUAL_OAUTH_HANDOFF || "") {
+  if (value === true) return true;
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function manualOAuthHandoffPollMs(configured) {
+  const value = configured ?? process.env.UNIPOST_REVIEW_MANUAL_OAUTH_POLL_MS;
+  const parsed = Number(value || "");
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return 2000;
+}
+
+function manualOAuthHandoffTimeoutMs(configured) {
+  const value = configured ?? process.env.UNIPOST_REVIEW_MANUAL_OAUTH_TIMEOUT_MS;
+  const parsed = Number(value || "");
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return 30 * 60 * 1000;
+}
+
+function safeURLHost(rawURL) {
+  try {
+    return new URL(rawURL).host;
+  } catch {
+    return "";
+  }
 }
 
 async function normalizeTikTokReviewOAuthScopes(page, out, requestedScopes = []) {

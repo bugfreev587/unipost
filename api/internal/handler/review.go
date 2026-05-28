@@ -1786,7 +1786,7 @@ func reviewKitDemoPlan(kit db.ReviewKit) *reviewtemplate.TikTokDemoPlan {
 }
 
 func reviewAgentCommand(agentToken, sessionToken, apiBaseURL string) string {
-	args := " run --token " + agentToken + " --session-token " + sessionToken + " --api-url " + strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	args := " run --token " + agentToken + " --session-token " + sessionToken + " --api-url " + strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + " --manual-oauth-handoff"
 	if runtimeenv.IsProduction() {
 		return "npx --yes " + reviewAgentPackage + "@" + reviewAgentVersion + args
 	}

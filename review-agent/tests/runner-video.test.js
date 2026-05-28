@@ -580,6 +580,99 @@ test("manual pause overlay waits for the page body before injecting instructions
   );
 });
 
+test("manual OAuth handoff prints an Incognito URL and waits for the review page to become connected", async () => {
+  const output = [];
+  const events = [];
+  let reloads = 0;
+  let connectClickAttempted = false;
+  let creatorAsserted = false;
+  const script = {
+    job_id: "rvjob_manual_oauth_handoff",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    requested_scopes: ["user.info.basic", "video.publish", "video.upload"],
+    steps: [
+      { id: "open_review_app", action: "goto", url: "https://review.example.com/tiktok/posting" },
+      { id: "connect_tiktok", action: "click", selector: "[data-review-step='connect-tiktok']", marker: "Start TikTok OAuth" },
+      { id: "wait_for_oauth", action: "manual_pause", resume_when_url_contains: "/tiktok/posting" },
+      { id: "assert_creator_info", action: "assert_visible", selector: "[data-review-step='creator-info']" },
+    ],
+  };
+  const page = {
+    currentURL: script.start_url,
+    video: () => ({ path: async () => "/tmp/unipost-review-videos/manual-oauth-handoff.webm" }),
+    bringToFront: async () => {},
+    goto: async (url) => { page.currentURL = url; },
+    url: () => page.currentURL,
+    reload: async () => { reloads += 1; },
+    waitForLoadState: async () => {},
+    waitForURL: async () => {},
+    evaluate: async () => {},
+    locator: (selector) => {
+      if (selector === "[data-review-step='connect-tiktok']") {
+        return {
+          getAttribute: async (name) => {
+            assert.equal(name, "href");
+            return "https://dev-api.unipost.dev/v1/public/connect/sessions/cs_1/authorize?state=state_1";
+          },
+          click: async () => { connectClickAttempted = true; },
+        };
+      }
+      if (selector === "[data-review-step='connect-tiktok-panel']") {
+        return {
+          first: () => ({
+            innerText: async () => reloads >= 2 ? "TikTok account connected" : "Authorize TikTok",
+          }),
+        };
+      }
+      if (selector === "[data-review-step='creator-info']") {
+        return {
+          first: () => ({
+            waitFor: async () => { creatorAsserted = true; },
+          }),
+        };
+      }
+      if (selector === "body") {
+        return {
+          first: () => ({
+            waitFor: async () => {},
+          }),
+        };
+      }
+      throw new Error(`unexpected selector: ${selector}`);
+    },
+  };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async (eventType, message, metadata) => events.push({ eventType, message, metadata }),
+    uploadArtifact: async (artifact) => artifact.artifactType === "demo_video"
+      ? "review-artifacts/ws_1/rvjob_manual_oauth_handoff/demo-video.webm"
+      : "review-artifacts/ws_1/rvjob_manual_oauth_handoff/execution-evidence.json",
+    complete: async () => {},
+    fail: async () => assert.fail("manual OAuth handoff should complete"),
+  };
+
+  await runner.runScript(script, {
+    manualOAuthHandoff: true,
+    manualOAuthPollMs: 1,
+    manualOAuthTimeoutMs: 100,
+    reporter,
+    sessionToken: "rvsession_test",
+    playwrightImpl,
+    out: { write: (message) => output.push(message) },
+  });
+
+  assert.equal(connectClickAttempted, false);
+  assert.equal(creatorAsserted, true);
+  assert.equal(reloads >= 2, true);
+  assert.equal(output.join("").includes("Open this URL in a real Chrome Incognito window"), true);
+  assert.equal(output.join("").includes("https://dev-api.unipost.dev/v1/public/connect/sessions/cs_1/authorize?state=state_1"), true);
+  assert.equal(events.some((event) => event.eventType === "manual_oauth_handoff_started"), true);
+  assert.equal(events.some((event) => event.eventType === "manual_oauth_handoff_completed"), true);
+});
+
 test("normalizes TikTok review OAuth URLs to content-posting scopes", () => {
   const originalAuthorize = "https://www.tiktok.com/v2/auth/authorize/?client_key=ck&redirect_uri=https%3A%2F%2Fdev-api.unipost.dev%2Fv1%2Fconnect%2Fcallback%2Ftiktok&response_type=code&scope=video.publish%2Cvideo.upload%2Cuser.info.basic%2Cvideo.list&state=rvstate_1";
   const normalizedAuthorize = runner.normalizeTikTokReviewOAuthURL(originalAuthorize);

@@ -342,6 +342,9 @@ func TestReviewCreateJobIssuesTokensAndPinnedCommand(t *testing.T) {
 	if !strings.Contains(env.Data.AgentCommand, "--api-url https://dev-api.example.com") {
 		t.Fatalf("command missing API base URL: %q", env.Data.AgentCommand)
 	}
+	if !strings.Contains(env.Data.AgentCommand, "--manual-oauth-handoff") {
+		t.Fatalf("command missing manual OAuth handoff flag: %q", env.Data.AgentCommand)
+	}
 	if store.createdAgentToken.TokenHash != "hash:revtok_fixed" || store.createdSession.TokenHash != "hash:revsess_fixed" {
 		t.Fatalf("tokens not hashed into store: agent=%+v session=%+v", store.createdAgentToken, store.createdSession)
 	}
@@ -378,6 +381,9 @@ func TestReviewCreateJobUsesSourceTarballCommandInDevelopment(t *testing.T) {
 	}
 	if !strings.Contains(env.Data.AgentCommand, "--api-url https://dev-api.example.com") {
 		t.Fatalf("command missing API base URL: %q", env.Data.AgentCommand)
+	}
+	if !strings.Contains(env.Data.AgentCommand, "--manual-oauth-handoff") {
+		t.Fatalf("command missing manual OAuth handoff flag: %q", env.Data.AgentCommand)
 	}
 }
 
