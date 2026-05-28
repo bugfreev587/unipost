@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
+import { runAIGuidedScript } from "./ai-runner.js";
 import { startNativeBrowserCapture } from "./native-capture.js";
 import { validateScript } from "./script-contract.js";
 import { buildReviewSessionCookie } from "./session-cookie.js";
@@ -10,7 +11,7 @@ import { processReviewVideoSegments } from "./video-postprocess.js";
 const PAGE_VIDEO_ARTIFACT_NOTE = "Fallback artifact captures the page viewport only. It does not satisfy address-bar evidence requirements.";
 const execFileAsync = promisify(execFile);
 
-export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", manualOAuthHandoff = manualOAuthHandoffEnabled(), manualOAuthPollMs = null, manualOAuthTimeoutMs = null, playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture, videoPostProcessImpl = processReviewVideoSegments, prepareBrowserImpl = prepareBrowserForNativeCapture } = {}) {
+export async function runScript(script, { dryRun = false, out = process.stdout, reporter = null, sessionToken = "", manualOAuthHandoff = manualOAuthHandoffEnabled(), manualOAuthPollMs = null, manualOAuthTimeoutMs = null, playwrightImpl = null, nativeCaptureImpl = startNativeBrowserCapture, videoPostProcessImpl = processReviewVideoSegments, prepareBrowserImpl = prepareBrowserForNativeCapture, aiGuided = false, aiRunnerImpl = runAIGuidedScript, token = "", apiUrl = "", uploadFilePath = "" } = {}) {
   const valid = validateScript(script);
   if (dryRun) {
     out.write(`Review script ${valid.job_id} (${valid.steps.length} steps)\n`);
@@ -79,7 +80,18 @@ export async function runScript(script, { dryRun = false, out = process.stdout, 
       if (step.action === "manual_pause") {
         await reportEvent(reporter, "manual_pause_started", step.marker || "Waiting for user", { step_id: step.id }, out);
       }
-      await runStep(page, step, out, { reporter, script: valid, manualOAuthHandoff, manualOAuthPollMs, manualOAuthTimeoutMs, runtime });
+      if (aiGuided) {
+        await aiRunnerImpl({
+          script: { ...valid, steps: [step] },
+          page,
+          token,
+          apiUrl,
+          reporter,
+          uploadFilePath,
+        });
+      } else {
+        await runStep(page, step, out, { reporter, script: valid, manualOAuthHandoff, manualOAuthPollMs, manualOAuthTimeoutMs, runtime });
+      }
       if (step.action === "manual_pause") {
         await reportEvent(reporter, "manual_pause_completed", step.marker || "User step completed", { step_id: step.id }, out);
       }

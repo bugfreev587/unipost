@@ -27,7 +27,16 @@ async function main(argv = process.argv.slice(2)) {
     const apiUrl = args.apiUrl || process.env.UNIPOST_API_URL || DEFAULT_API_URL;
     const script = await fetchReviewScript({ token, apiUrl });
     const reporter = args.dryRun ? null : createAgentReporter({ token, apiUrl });
-    await runScript(script, { dryRun: args.dryRun, reporter, sessionToken, manualOAuthHandoff: args.manualOAuthHandoff });
+    await runScript(script, {
+      dryRun: args.dryRun,
+      reporter,
+      sessionToken,
+      manualOAuthHandoff: args.manualOAuthHandoff,
+      aiGuided: args.aiGuided,
+      token,
+      apiUrl,
+      uploadFilePath: args.uploadFile || process.env.UNIPOST_REVIEW_UPLOAD_FILE || "",
+    });
     return 0;
   }
   if (command === "resume") {
@@ -44,6 +53,8 @@ function parseArgs(args) {
     else if (arg === "--session-token") parsed.sessionToken = args[++i];
     else if (arg === "--api-url") parsed.apiUrl = args[++i];
     else if (arg === "--manual-oauth-handoff") parsed.manualOAuthHandoff = true;
+    else if (arg === "--ai-guided") parsed.aiGuided = true;
+    else if (arg === "--upload-file") parsed.uploadFile = args[++i];
     else if (arg === "--dry-run") parsed.dryRun = true;
     else throw new Error(`unknown option: ${arg}`);
   }
@@ -51,7 +62,7 @@ function parseArgs(args) {
 }
 
 function printHelp() {
-  process.stdout.write(`UniPost Review Agent\n\nCommands:\n  run --token <token> --session-token <token> [--api-url <url>] [--manual-oauth-handoff] [--dry-run]\n  doctor\n  resume --job <job_id>\n`);
+  process.stdout.write(`UniPost Review Agent\n\nCommands:\n  run --token <token> --session-token <token> [--api-url <url>] [--manual-oauth-handoff] [--ai-guided] [--upload-file <path>] [--dry-run]\n  doctor\n  resume --job <job_id>\n`);
 }
 
 main().then((code) => {

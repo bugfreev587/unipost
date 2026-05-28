@@ -134,6 +134,45 @@ test("runScript reports segment lifecycle events from script metadata", async ()
   assert.equal(events.some((event) => event.eventType === "segment_completed" && event.metadata.key === "posting_part_1"), true);
 });
 
+test("runScript delegates step execution to the AI runner when aiGuided is enabled", async () => {
+  const aiCalls = [];
+  const script = {
+    job_id: "rvjob_ai_runner",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    steps: [{ id: "creator_info", action: "assert_visible", selector: "[data-review-step='creator-info']", goal: "Show creator info" }],
+  };
+  const page = { video: () => ({ path: async () => "/tmp/unipost-review-videos/ai-runner.webm" }) };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+  const reporter = {
+    event: async () => {},
+    uploadArtifact: async (artifact) =>
+      artifact.artifactType === "demo_video"
+        ? "review-artifacts/ws_1/rvjob_ai_runner/demo-video.webm"
+        : "review-artifacts/ws_1/rvjob_ai_runner/execution-evidence.json",
+    complete: async () => {},
+    fail: async () => assert.fail("runScript should complete"),
+  };
+
+  await runner.runScript(script, {
+    aiGuided: true,
+    aiRunnerImpl: async ({ script: aiScript, token, apiUrl }) => {
+      aiCalls.push({ stepId: aiScript.steps[0].id, token, apiUrl });
+    },
+    token: "revtok_ai",
+    apiUrl: "https://api.example.com",
+    reporter,
+    sessionToken: "rvsession_test",
+    playwrightImpl,
+    nativeCaptureImpl: async () => null,
+    out: { write() {} },
+  });
+
+  assert.deepEqual(aiCalls, [{ stepId: "creator_info", token: "revtok_ai", apiUrl: "https://api.example.com" }]);
+});
+
 test("runScript shows recorded section title overlays for review markers", async () => {
   const evaluations = [];
   const script = {
