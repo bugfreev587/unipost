@@ -125,6 +125,22 @@ fallback: off in production
 
 Owner area: White-label / App Review Autopilot. This flag controls the App Review Autopilot beta, including white-label review readiness, review kit/job APIs, signed review sessions, customer-domain review app surfaces, and review-agent recording orchestration. Production should stay off until the TikTok Content Posting API review workflow, customer-domain DNS/TLS readiness flow, and local review-agent recording flow have been validated end to end. The emergency rollback is to disable `app_review.autopilot_v1` in the production environment, which hides dashboard entry points and blocks backend review-autopilot APIs while preserving stored review data for support/debugging.
 
+Create this flag in Unleash:
+
+```text
+app_review.ai_agent_v1
+```
+
+Recommended defaults:
+
+```text
+development: on only after ANTHROPIC_API_KEY is configured and backend fallback is safe
+production: off
+fallback: off in production
+```
+
+Owner area: White-label / App Review / Review Agent. Env fallback: `FEATURE_APP_REVIEW_AI_AGENT_V1`. This flag controls the AI-guided App Review Autopilot executor, server-side Anthropic orchestration, constrained browser actions, and evidence-gated recording flow. Production should stay off until TailTales and at least one additional TikTok app review recording can be generated, inspected, and uploaded under TikTok's 50 MB video limit. The emergency rollback is to disable `app_review.ai_agent_v1`; existing scripted review kit/job generation remains available, and completed artifacts remain readable. Third-party dependency: Anthropic Messages API and TikTok OAuth/review portal availability.
+
 Hosted Connect Sessions are enabled directly in development and production. They are not gated by Unleash; platform readiness is handled by configured OAuth credentials, provider approval, and normal upstream failure handling.
 
 Create this flag in Unleash:
