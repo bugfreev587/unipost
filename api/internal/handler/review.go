@@ -25,6 +25,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/reviewai"
 	"github.com/xiaoboyu/unipost-api/internal/reviewscript"
 	"github.com/xiaoboyu/unipost-api/internal/reviewtemplate"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
@@ -67,6 +68,10 @@ type reviewTikTokAdapter interface {
 	FetchCreatorInfo(context.Context, string) (*platform.TikTokCreatorInfo, error)
 }
 
+type reviewAIPlanner interface {
+	NextAction(context.Context, reviewai.Observation, string) (reviewai.Action, error)
+}
+
 type reviewDomainCheckResult struct {
 	DNSReady  bool
 	TLSIssued bool
@@ -83,6 +88,7 @@ type ReviewHandler struct {
 	artifactStorage reviewArtifactStorage
 	encryptor       *appcrypto.AESEncryptor
 	tiktokAdapter   reviewTikTokAdapter
+	aiPlanner       reviewAIPlanner
 	testVideoURL    string
 }
 
@@ -206,6 +212,12 @@ type reviewAgentArtifactUploadResponse struct {
 	ContentType string            `json:"content_type"`
 }
 
+type reviewAgentNextActionRequest struct {
+	StepKey     string               `json:"step_key"`
+	Goal        string               `json:"goal"`
+	Observation reviewai.Observation `json:"observation"`
+}
+
 type reviewJobDetailResponse struct {
 	ID               string                     `json:"id"`
 	ReviewKitID      string                     `json:"review_kit_id"`
@@ -305,6 +317,11 @@ func (h *ReviewHandler) WithTikTokTestVideoURL(value string) *ReviewHandler {
 	if strings.TrimSpace(value) != "" {
 		h.testVideoURL = strings.TrimSpace(value)
 	}
+	return h
+}
+
+func (h *ReviewHandler) WithAIPlanner(planner reviewAIPlanner) *ReviewHandler {
+	h.aiPlanner = planner
 	return h
 }
 
@@ -878,6 +895,64 @@ func (h *ReviewHandler) RecordAgentEvent(w http.ResponseWriter, r *http.Request)
 		status = "running"
 	}
 	writeCreated(w, reviewAgentEventResponse{ReviewJobID: agentToken.ReviewJobID, EventType: eventType, Status: status})
+}
+
+func (h *ReviewHandler) NextAgentAction(w http.ResponseWriter, r *http.Request) {
+	agentToken, ok := h.authenticateReviewAgent(w, r)
+	if !ok {
+		return
+	}
+	if !featureflags.Enabled(r.Context(), featureflags.AppReviewAIAgentV1, featureflags.Target{WorkspaceID: agentToken.WorkspaceID, Env: runtimeenv.Current()}) {
+		writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "AI-guided review agent is disabled.")
+		return
+	}
+	if h.aiPlanner == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI_NOT_CONFIGURED", "AI-guided review agent is not configured.")
+		return
+	}
+
+	var req reviewAgentNextActionRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid next action request")
+		return
+	}
+
+	obs := reviewai.RedactObservation(req.Observation)
+	obs.JobID = agentToken.ReviewJobID
+	if strings.TrimSpace(req.StepKey) != "" {
+		obs.StepKey = strings.TrimSpace(req.StepKey)
+	}
+
+	action, err := h.aiPlanner.NextAction(r.Context(), obs, req.Goal)
+	if err == nil {
+		err = reviewai.ValidateAction(action)
+	}
+	if err != nil {
+		metadata, _ := marshalReviewJSON(map[string]any{
+			"step_key": obs.StepKey,
+			"reason":   err.Error(),
+		})
+		_, _ = h.store.CreateReviewJobEvent(r.Context(), db.CreateReviewJobEventParams{
+			ReviewJobID: agentToken.ReviewJobID,
+			EventType:   "ai_action_rejected",
+			Message:     err.Error(),
+			Metadata:    metadata,
+		})
+		writeError(w, http.StatusBadGateway, "AI_ACTION_REJECTED", err.Error())
+		return
+	}
+
+	metadata, _ := marshalReviewJSON(map[string]any{
+		"step_key": obs.StepKey,
+		"reason":   action.Reason,
+	})
+	_, _ = h.store.CreateReviewJobEvent(r.Context(), db.CreateReviewJobEventParams{
+		ReviewJobID: agentToken.ReviewJobID,
+		EventType:   "ai_action_selected",
+		Message:     action.Action,
+		Metadata:    metadata,
+	})
+	writeSuccess(w, action)
 }
 
 func (h *ReviewHandler) CompleteAgentJob(w http.ResponseWriter, r *http.Request) {

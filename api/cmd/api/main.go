@@ -37,6 +37,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
+	"github.com/xiaoboyu/unipost-api/internal/reviewai"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
@@ -462,7 +463,8 @@ func main() {
 		WithReviewCnameTarget(os.Getenv("APP_REVIEW_CNAME_TARGET")).
 		WithArtifactStorage(storageClient).
 		WithEncryptor(encryptor).
-		WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL"))
+		WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL")).
+		WithAIPlanner(reviewai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("ANTHROPIC_MODEL"), "", nil))
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
 
 	// Public routes
@@ -499,6 +501,7 @@ func main() {
 	// bearer. Returns a minimal projection of the session.
 	r.Get("/v1/public/connect/sessions/{id}", connectSessionHandler.PublicGet)
 	r.Get("/v1/review/agent/script", reviewHandler.GetAgentJobScript)
+	r.Post("/v1/review/agent/next-action", reviewHandler.NextAgentAction)
 	r.Post("/v1/review/agent/events", reviewHandler.RecordAgentEvent)
 	r.Post("/v1/review/agent/complete", reviewHandler.CompleteAgentJob)
 	r.Post("/v1/review/agent/fail", reviewHandler.FailAgentJob)

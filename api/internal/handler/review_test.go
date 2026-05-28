@@ -16,7 +16,9 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/reviewai"
 	"github.com/xiaoboyu/unipost-api/internal/reviewscript"
 	"github.com/xiaoboyu/unipost-api/internal/reviewtemplate"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
@@ -449,6 +451,87 @@ func TestReviewAgentScriptUsesBearerToken(t *testing.T) {
 	}
 	if store.agentTokenHashLookup != hashReviewToken("revtok_live") {
 		t.Fatalf("token hash lookup = %q", store.agentTokenHashLookup)
+	}
+}
+
+func TestReviewAgentNextActionReturnsPlannerAction(t *testing.T) {
+	enableReviewAITestFlags(t)
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	planner := &reviewAIPlannerFake{action: reviewai.Action{Action: "wait", Reason: "page is loading", HoldMSAfterAction: 2000}}
+	h := NewReviewHandler(store).WithAIPlanner(planner)
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/agent/next-action", strings.NewReader(`{
+		"step_key":"loading",
+		"goal":"Wait for the review page to finish loading",
+		"observation":{"job_id":"client_job","step_key":"loading","visible_text":"Loading"}
+	}`))
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.NextAgentAction(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data reviewai.Action `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.Action != "wait" || env.Data.HoldMSAfterAction != 2000 {
+		t.Fatalf("unexpected action: %+v", env.Data)
+	}
+	if planner.observation.JobID != "rvjob_1" {
+		t.Fatalf("planner saw client supplied job id: %+v", planner.observation)
+	}
+	if store.createdEvent.EventType != "ai_action_selected" {
+		t.Fatalf("missing selected event: %+v", store.createdEvent)
+	}
+}
+
+func TestReviewAgentNextActionRequiresAIAgentFlag(t *testing.T) {
+	enableReviewAITestFlags(t)
+	t.Setenv("FEATURE_APP_REVIEW_AI_AGENT_V1", "false")
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	h := NewReviewHandler(store).WithAIPlanner(&reviewAIPlannerFake{action: reviewai.Action{Action: "wait"}})
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/agent/next-action", strings.NewReader(`{"goal":"Wait","observation":{"visible_text":"Loading"}}`))
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.NextAgentAction(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.createdEvent.EventType != "" {
+		t.Fatalf("feature disabled should not create event: %+v", store.createdEvent)
+	}
+}
+
+func TestReviewAgentNextActionRejectsInvalidPlannerAction(t *testing.T) {
+	enableReviewAITestFlags(t)
+	store := &reviewStoreFake{
+		agentToken: db.ReviewAgentToken{ID: "rvatok_1", ReviewJobID: "rvjob_1", WorkspaceID: "ws_1", Platform: "tiktok", TokenHash: hashReviewToken("revtok_live")},
+	}
+	h := NewReviewHandler(store).WithAIPlanner(&reviewAIPlannerFake{action: reviewai.Action{Action: "eval", Value: "alert(1)"}})
+	req := httptest.NewRequest(http.MethodPost, "/v1/review/agent/next-action", strings.NewReader(`{"goal":"Do the next safe step","observation":{"visible_text":"Ready"}}`))
+	req.Header.Set("Authorization", "Bearer revtok_live")
+	rec := httptest.NewRecorder()
+
+	h.NextAgentAction(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.createdEvent.EventType != "ai_action_rejected" {
+		t.Fatalf("missing rejected event: %+v", store.createdEvent)
+	}
+	if store.completedJob.ID != "" || store.failedJob.ID != "" {
+		t.Fatalf("invalid ai action should not complete or fail job: complete=%+v fail=%+v", store.completedJob, store.failedJob)
 	}
 }
 
@@ -1300,4 +1383,26 @@ func (f *reviewTikTokAdapterFake) FetchCreatorInfo(_ context.Context, accessToke
 		return f.creatorInfo, nil
 	}
 	return &platform.TikTokCreatorInfo{CreatorNickname: "Review Creator", PrivacyLevelOptions: []string{"SELF_ONLY"}}, nil
+}
+
+type reviewAIPlannerFake struct {
+	action      reviewai.Action
+	err         error
+	observation reviewai.Observation
+	goal        string
+}
+
+func (f *reviewAIPlannerFake) NextAction(_ context.Context, obs reviewai.Observation, goal string) (reviewai.Action, error) {
+	f.observation = obs
+	f.goal = goal
+	return f.action, f.err
+}
+
+func enableReviewAITestFlags(t *testing.T) {
+	t.Helper()
+	t.Setenv(runtimeenv.EnvVar, "development")
+	t.Setenv("FEATURE_APP_REVIEW_AUTOPILOT_V1", "true")
+	t.Setenv("FEATURE_APP_REVIEW_AI_AGENT_V1", "true")
+	featureflags.SetProvider(featureflags.EnvProvider{})
+	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
 }
