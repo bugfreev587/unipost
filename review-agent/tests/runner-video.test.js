@@ -78,6 +78,39 @@ test("policy link hold duration keeps external policy tabs visible for recording
   assert.equal(runner.policyLinkHoldDurationMs({ policy_link_hold_ms: 2500 }), 2500);
 });
 
+test("runScript holds after visible actions so review recordings are readable", async () => {
+  const waits = [];
+  const script = {
+    job_id: "rvjob_holds",
+    platform: "tiktok",
+    agent_version: "0.1.0",
+    start_url: "https://review.example.com/tiktok/posting",
+    recording: { step_hold_ms: 1750 },
+    steps: [{ id: "select_video", action: "click", selector: "[data-review-step='select-video']" }],
+  };
+  const page = {
+    video: () => ({ path: async () => "/tmp/unipost-review-videos/holds.webm" }),
+    locator: () => ({ click: async () => {}, first: () => ({ waitFor: async () => {} }) }),
+    waitForTimeout: async (ms) => waits.push(ms),
+  };
+  const context = { addCookies: async () => {}, newPage: async () => page, close: async () => {} };
+  const playwrightImpl = { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } };
+
+  await runner.runScript(script, {
+    reporter: {
+      event: async () => {},
+      uploadArtifact: async () => "",
+      complete: async () => {},
+      fail: async () => assert.fail("should not fail"),
+    },
+    playwrightImpl,
+    nativeCaptureImpl: async () => null,
+    out: { write() {} },
+  });
+
+  assert.equal(waits.includes(1750), true);
+});
+
 test("execution evidence preserves reviewer-facing segment metadata", () => {
   const evidence = runner.buildExecutionEvidence({
     jobId: "rvjob_evidence",

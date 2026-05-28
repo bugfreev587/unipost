@@ -72,11 +72,20 @@ export async function resolveChromiumWindowBounds({ browser, page, recording = {
       bounds: targetBounds,
     });
   }
+  let actualBounds = null;
+  if (windowID !== undefined) {
+    const afterSet = await session.send("Browser.getWindowForTarget").catch(() => null);
+    actualBounds = afterSet?.bounds || null;
+  }
+  return normalizeCaptureBounds(actualBounds || targetBounds, targetBounds);
+}
+
+function normalizeCaptureBounds(bounds = {}, fallback = {}) {
   return {
-    left: Math.max(0, Number(targetBounds.left) || 0),
-    top: Math.max(0, Number(targetBounds.top) || 0),
-    width: Math.max(320, Number(targetBounds.width) || 1440),
-    height: Math.max(240, Number(targetBounds.height) || 1000),
+    left: Math.max(0, Number(bounds.left ?? fallback.left) || 0),
+    top: Math.max(0, Number(bounds.top ?? fallback.top) || 0),
+    width: Math.max(320, Number(bounds.width ?? fallback.width) || 1440),
+    height: Math.max(240, Number(bounds.height ?? fallback.height) || 1000),
   };
 }
 

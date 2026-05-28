@@ -5,10 +5,15 @@ import { resolveChromiumWindowBounds, startNativeBrowserCapture } from "../src/n
 
 test("resolveChromiumWindowBounds uses CDP to size the visible browser window", async () => {
   const sends = [];
+  let getCount = 0;
   const session = {
     send: async (method, payload) => {
       sends.push({ method, payload });
       if (method === "Browser.getWindowForTarget") {
+        getCount += 1;
+        if (getCount > 1) {
+          return { windowId: 7, bounds: { left: 120, top: 90, width: 1280, height: 720 } };
+        }
         return { windowId: 7, bounds: { left: 12, top: 24, width: 900, height: 700 } };
       }
       return {};
@@ -24,6 +29,37 @@ test("resolveChromiumWindowBounds uses CDP to size the visible browser window", 
     method: "Browser.setWindowBounds",
     payload: { windowId: 7, bounds: { left: 120, top: 90, width: 1280, height: 720, windowState: "normal" } },
   });
+});
+
+test("resolveChromiumWindowBounds returns actual visible bounds after the OS clamps the requested window", async () => {
+  const sends = [];
+  let getCount = 0;
+  const session = {
+    send: async (method, payload) => {
+      sends.push({ method, payload });
+      if (method === "Browser.getWindowForTarget") {
+        getCount += 1;
+        if (getCount === 1) {
+          return { windowId: 7, bounds: { left: 12, top: 24, width: 900, height: 700 } };
+        }
+        return { windowId: 7, bounds: { left: 0, top: 38, width: 1728, height: 1030 } };
+      }
+      return {};
+    },
+  };
+  const page = { context: () => ({ newCDPSession: async () => session }) };
+
+  const bounds = await resolveChromiumWindowBounds({
+    page,
+    recording: { window_left: 0, window_top: 0, window_width: 1920, window_height: 1080 },
+  });
+
+  assert.deepEqual(bounds, { left: 0, top: 38, width: 1728, height: 1030 });
+  assert.deepEqual(sends.map((call) => call.method), [
+    "Browser.getWindowForTarget",
+    "Browser.setWindowBounds",
+    "Browser.getWindowForTarget",
+  ]);
 });
 
 test("startNativeBrowserCapture records a macOS browser-window rectangle", async () => {
@@ -58,7 +94,7 @@ test("startNativeBrowserCapture records a macOS browser-window rectangle", async
   });
 
   assert.equal(spawnCommand, "screencapture");
-  assert.deepEqual(spawnArgs.slice(0, 4), ["-v", "-x", "-R", "80,80,1280,720"]);
+  assert.deepEqual(spawnArgs.slice(0, 4), ["-v", "-x", "-R", "80,80,1000,800"]);
   assert.equal(spawnArgs[4], "/tmp/unipost-review-native-test/rvjob_native-browser-window.mov");
   assert.equal(capture.includesAddressBar, true);
   await capture.stop();

@@ -292,15 +292,19 @@ async function runStep(page, step, out, { reporter = null, script = {}, manualOA
           throw new Error("TikTok skipped the authorization page because this account is already authorized. Remove app access in TikTok mobile settings, then record again.");
         }
       }
+      await holdForReview(page, script.recording || {});
       return;
     case "fill":
       await page.locator(step.selector).fill(step.value || "");
+      await holdForReview(page, script.recording || {});
       return;
     case "assert_visible":
       await page.locator(step.selector).first().waitFor({ state: "visible", timeout: 30000 });
+      await holdForReview(page, script.recording || {});
       return;
     case "open_link":
       await openLinkForReview(page, step, out, reporter, script.recording || {});
+      await holdForReview(page, script.recording || {});
       return;
     case "assert_url_contains":
       if (!page.url().includes(step.value || step.text || "")) {
@@ -319,6 +323,7 @@ async function runStep(page, step, out, { reporter = null, script = {}, manualOA
       return;
     case "wait_for_navigation":
       await page.waitForLoadState("domcontentloaded");
+      await holdForReview(page, script.recording || {});
       return;
     case "wait_for_network_idle":
       await page.waitForLoadState("networkidle");
@@ -479,6 +484,22 @@ function markerOverlayDurationMs(recording = {}) {
   const configured = Number(recording.marker_overlay_ms || "");
   if (Number.isFinite(configured) && configured >= 0) return configured;
   return 1300;
+}
+
+async function holdForReview(page, recording = {}) {
+  const ms = stepHoldDurationMs(recording);
+  if (ms <= 0) return;
+  if (typeof page?.waitForTimeout === "function") {
+    await page.waitForTimeout(ms);
+    return;
+  }
+  await delay(ms);
+}
+
+function stepHoldDurationMs(recording = {}) {
+  const configured = Number(recording.step_hold_ms || "");
+  if (Number.isFinite(configured) && configured >= 0) return configured;
+  return 1800;
 }
 
 function delay(ms) {
