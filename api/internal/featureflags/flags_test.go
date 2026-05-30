@@ -107,6 +107,24 @@ func TestAppReviewAIAgentFlagDefinition(t *testing.T) {
 	}
 }
 
+func TestPostsCalendarViewFlagDefinition(t *testing.T) {
+	unsetenv(t, "FEATURE_POSTS_CALENDAR_VIEW_V1")
+
+	def, ok := DefinitionFor(PostsCalendarViewV1)
+	if !ok {
+		t.Fatal("PostsCalendarViewV1 definition missing")
+	}
+	if def.EnvVar != "FEATURE_POSTS_CALENDAR_VIEW_V1" {
+		t.Fatalf("unexpected env var: %s", def.EnvVar)
+	}
+	if def.DefaultEnabled(Target{Env: "production"}) {
+		t.Fatal("Posts calendar view must default off in production")
+	}
+	if !def.DefaultEnabled(Target{Env: "development"}) {
+		t.Fatal("Posts calendar view may default on outside production")
+	}
+}
+
 func unsetenv(t *testing.T, name string) {
 	t.Helper()
 	old, ok := os.LookupEnv(name)

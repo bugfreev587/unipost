@@ -141,6 +141,22 @@ fallback: off in production
 
 Owner area: White-label / App Review / Review Agent. Env fallback: `FEATURE_APP_REVIEW_AI_AGENT_V1`. This flag controls the AI-guided App Review Autopilot executor, server-side Anthropic orchestration, constrained browser actions, and evidence-gated recording flow. Production should stay off until TailTales and at least one additional TikTok app review recording can be generated, inspected, and uploaded under TikTok's 50 MB video limit. The emergency rollback is to disable `app_review.ai_agent_v1`; existing scripted review kit/job generation remains available, and completed artifacts remain readable. Third-party dependency: Anthropic Messages API and TikTok OAuth/review portal availability.
 
+Create this flag in Unleash:
+
+```text
+posts.calendar_view_v1
+```
+
+Recommended defaults:
+
+```text
+development: on
+production: off
+fallback: off in production
+```
+
+Owner area: Dashboard / Posts. Env fallback: `FEATURE_POSTS_CALENDAR_VIEW_V1`. This flag controls the Apple Calendar style Posts month view, the `/projects/:id/posts/list` legacy list route, and the Calendar View/List View switches between them. Production should stay off until the month grid, profile/platform/status filters, Create drawer integration, and legacy list regressions have been verified on development data. The emergency rollback is to disable `posts.calendar_view_v1` in production, which keeps `/projects/:id/posts` on the legacy list view and redirects the legacy `/posts/list` entry point back to `/posts`. There is no third-party approval dependency.
+
 Hosted Connect Sessions are enabled directly in development and production. They are not gated by Unleash; platform readiness is handled by configured OAuth credentials, provider approval, and normal upstream failure handling.
 
 Create this flag in Unleash:

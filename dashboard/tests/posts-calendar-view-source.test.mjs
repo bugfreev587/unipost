@@ -1,0 +1,29 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const calendarViewPath = path.join(root, "src/components/posts/calendar/posts-calendar-view.tsx");
+
+test("Posts calendar view keeps the requested calendar controls and drawer integration", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+
+  assert.match(source, /export function PostsCalendarView/);
+  assert.match(source, /CreatePostDrawer/);
+  assert.match(source, /List View/);
+  assert.match(source, /Create \+/);
+  assert.match(source, /Day/);
+  assert.match(source, /Week/);
+  assert.match(source, /Month/);
+  assert.match(source, /All Status/);
+  assert.match(source, /In Progress/);
+  assert.match(source, /Cancelled/);
+  assert.match(source, /Archived/);
+  assert.match(source, /bucketPostByLocalDay/);
+  assert.match(source, /getProfileCalendarColor/);
+  assert.match(source, /shouldShowPostForStatusFilter/);
+  assert.match(source, /posts-calendar-fullheight/);
+  assert.match(source, /resolvedOptions\(\)\.timeZone/);
+});
