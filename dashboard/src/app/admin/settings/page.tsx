@@ -3,8 +3,6 @@
 import Link from "next/link";
 
 import { useTheme } from "@/components/theme-provider";
-import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
-import { useFeatureFlags } from "@/lib/use-feature-flags";
 
 import { AdminShell, PanelRow } from "../_components/admin-ui";
 
@@ -45,8 +43,6 @@ function SettingPill({
 
 export default function AdminSettingsPage() {
   const { theme, setTheme } = useTheme();
-  const { flags } = useFeatureFlags();
-  const inboxEnabled = flags[FEATURE_FLAG_KEYS.inbox] === true;
 
   return (
     <AdminShell title="Settings">
@@ -74,20 +70,7 @@ export default function AdminSettingsPage() {
           </div>
 
           <div className="ad-panel-section">
-            <div className="ad-panel-section-title">Feature Flags</div>
-            <PanelRow
-              k="Inbox"
-              v={
-                <span
-                  className="ad-badge"
-                  style={inboxEnabled
-                    ? { background: "var(--success-soft)", color: "var(--success)", border: "1px solid color-mix(in srgb, var(--success) 20%, transparent)" }
-                    : { background: "var(--surface2)", color: "var(--dmuted)", border: "1px solid var(--dborder2)" }}
-                >
-                  {inboxEnabled ? "enabled" : "disabled"}
-                </span>
-              }
-            />
+            <div className="ad-panel-section-title">Runtime</div>
             <PanelRow k="Theme storage key" v={<span className="ad-mono">unipost-theme</span>} />
             <PanelRow k="Admin gate" v={<span className="ad-mono">ADMIN_USERS allowlist</span>} />
           </div>

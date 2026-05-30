@@ -14,7 +14,7 @@ const AVAILABILITY_FIELDS: ApiFieldItem[] = [
   {
     name: "Status",
     type: "supported",
-    description: "Inbox APIs are available for supported plans and are feature-flagged through UniPost feature flags.",
+    description: "Inbox APIs are available for supported plans and are gated by the workspace plan.",
   },
   {
     name: "Current support",
