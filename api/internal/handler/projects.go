@@ -1,10 +1,15 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -18,6 +23,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 type ProfileHandler struct {
@@ -25,10 +31,21 @@ type ProfileHandler struct {
 	// quota is used by Create to enforce the per-plan max_profiles cap
 	// (migration 059). Optional — nil disables the cap (test path).
 	quota *quota.Checker
+	store brandingLogoStore
 }
 
 func NewProfileHandler(queries *db.Queries, quotaChecker *quota.Checker) *ProfileHandler {
 	return &ProfileHandler{queries: queries, quota: quotaChecker}
+}
+
+type brandingLogoStore interface {
+	PutObject(ctx context.Context, key string, body io.Reader, contentType string, cacheControl string) error
+	PublicURL(key string) string
+}
+
+func (h *ProfileHandler) SetBrandingLogoStore(store brandingLogoStore) *ProfileHandler {
+	h.store = store
+	return h
 }
 
 // resolveWorkspaceID reads the workspace ID stamped into the request
@@ -36,6 +53,19 @@ func NewProfileHandler(queries *db.Queries, quotaChecker *quota.Checker) *Profil
 // path → user's default workspace).
 func (h *ProfileHandler) resolveWorkspaceID(r *http.Request) string {
 	return auth.GetWorkspaceID(r.Context())
+}
+
+const brandingLogoMaxBytes = 2 * 1024 * 1024
+const brandingLogoCacheControl = "public, max-age=31536000, immutable"
+const brandingLogoMaxDimension = 4096
+
+var errBrandingLogoTooLarge = errors.New("Logo must be 2 MB or smaller")
+
+type brandingLogoUploadInfo struct {
+	contentType string
+	ext         string
+	width       int
+	height      int
 }
 
 type profileResponse struct {
@@ -47,10 +77,10 @@ type profileResponse struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	// White-label Connect branding. All three are optional; the hosted
 	// Connect page falls back to UniPost defaults when null.
-	BrandingLogoURL      *string `json:"branding_logo_url,omitempty"`
-	BrandingDisplayName  *string `json:"branding_display_name,omitempty"`
-	BrandingPrimaryColor *string `json:"branding_primary_color,omitempty"`
-	BrandingHidePoweredBy bool   `json:"branding_hide_powered_by"`
+	BrandingLogoURL       *string `json:"branding_logo_url,omitempty"`
+	BrandingDisplayName   *string `json:"branding_display_name,omitempty"`
+	BrandingPrimaryColor  *string `json:"branding_primary_color,omitempty"`
+	BrandingHidePoweredBy bool    `json:"branding_hide_powered_by"`
 }
 
 func toProfileResponse(p db.Profile) profileResponse {
@@ -166,11 +196,11 @@ func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name                 string  `json:"name"`
-		BrandingLogoURL      *string `json:"branding_logo_url"`
-		BrandingDisplayName  *string `json:"branding_display_name"`
-		BrandingPrimaryColor *string `json:"branding_primary_color"`
-		BrandingHidePoweredBy *bool  `json:"branding_hide_powered_by"`
+		Name                  string  `json:"name"`
+		BrandingLogoURL       *string `json:"branding_logo_url"`
+		BrandingDisplayName   *string `json:"branding_display_name"`
+		BrandingPrimaryColor  *string `json:"branding_primary_color"`
+		BrandingHidePoweredBy *bool   `json:"branding_hide_powered_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -241,10 +271,10 @@ func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
 		profile, err = h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
-			ID:           profile.ID,
-			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
-			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
-			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
+			ID:            profile.ID,
+			LogoUrl:       pgTextFromPtr(body.BrandingLogoURL),
+			DisplayName:   pgTextFromPtr(body.BrandingDisplayName),
+			PrimaryColor:  pgTextFromPtr(body.BrandingPrimaryColor),
 			HidePoweredBy: pgBoolFromPtr(body.BrandingHidePoweredBy),
 		})
 		if err != nil {
@@ -301,11 +331,11 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name                 *string `json:"name"`
-		BrandingLogoURL      *string `json:"branding_logo_url"`
-		BrandingDisplayName  *string `json:"branding_display_name"`
-		BrandingPrimaryColor *string `json:"branding_primary_color"`
-		BrandingHidePoweredBy *bool  `json:"branding_hide_powered_by"`
+		Name                  *string `json:"name"`
+		BrandingLogoURL       *string `json:"branding_logo_url"`
+		BrandingDisplayName   *string `json:"branding_display_name"`
+		BrandingPrimaryColor  *string `json:"branding_primary_color"`
+		BrandingHidePoweredBy *bool   `json:"branding_hide_powered_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -373,10 +403,10 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
 		if _, err := h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
-			ID:           profileID,
-			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
-			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
-			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
+			ID:            profileID,
+			LogoUrl:       pgTextFromPtr(body.BrandingLogoURL),
+			DisplayName:   pgTextFromPtr(body.BrandingDisplayName),
+			PrimaryColor:  pgTextFromPtr(body.BrandingPrimaryColor),
 			HidePoweredBy: pgBoolFromPtr(body.BrandingHidePoweredBy),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update branding")
@@ -390,6 +420,131 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSuccess(w, h.enrichProfileResponse(r.Context(), final))
+}
+
+func (h *ProfileHandler) UploadBrandingLogo(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if h.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "STORAGE_NOT_CONFIGURED", "Logo upload storage is not configured. Try again later or contact support.")
+		return
+	}
+	profileID := chi.URLParam(r, "id")
+	profile, err := h.queries.GetProfile(r.Context(), profileID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get profile")
+		return
+	}
+	if profile.WorkspaceID != workspaceID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+		return
+	}
+	if h.quota != nil && !h.quota.PlanAllowsHostedConnectBranding(r.Context(), workspaceID) {
+		writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+			"Hosted Connect branding requires the Basic plan or higher — upgrade at unipost.dev/pricing")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, brandingLogoMaxBytes+(1<<20))
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", errBrandingLogoTooLarge.Error())
+			return
+		}
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "file is required")
+		return
+	}
+	defer file.Close()
+
+	body, err := io.ReadAll(io.LimitReader(file, brandingLogoMaxBytes+1))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Failed to read logo file")
+		return
+	}
+	info, err := validateBrandingLogoUpload(body)
+	if err != nil {
+		if errors.Is(err, errBrandingLogoTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", err.Error())
+			return
+		}
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+		return
+	}
+
+	key := storage.BrandingLogoKey(profile.WorkspaceID, profile.ID, info.ext)
+	if err := h.store.PutObject(r.Context(), key, bytes.NewReader(body), info.contentType, brandingLogoCacheControl); err != nil {
+		if errors.Is(err, storage.ErrNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "STORAGE_NOT_CONFIGURED", "Logo upload storage is not configured. Try again later or contact support.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to store logo")
+		return
+	}
+	logoURL := h.store.PublicURL(key)
+	if logoURL == "" {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve logo URL")
+		return
+	}
+
+	updated, err := h.queries.UpdateProfileBrandingLogo(r.Context(), db.UpdateProfileBrandingLogoParams{
+		ID:                     profile.ID,
+		BrandingLogoUrl:        pgtype.Text{String: logoURL, Valid: true},
+		BrandingLogoStorageKey: pgtype.Text{String: key, Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update profile logo")
+		return
+	}
+	if profile.BrandingLogoStorageKey.Valid {
+		slog.Info("retaining replaced branding logo object", "profile_id", profile.ID, "storage_key", profile.BrandingLogoStorageKey.String)
+	}
+	writeSuccess(w, h.enrichProfileResponse(r.Context(), updated))
+}
+
+func (h *ProfileHandler) DeleteBrandingLogo(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	profileID := chi.URLParam(r, "id")
+	profile, err := h.queries.GetProfile(r.Context(), profileID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to get profile")
+		return
+	}
+	if profile.WorkspaceID != workspaceID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+		return
+	}
+	if h.quota != nil && !h.quota.PlanAllowsHostedConnectBranding(r.Context(), workspaceID) {
+		writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+			"Hosted Connect branding requires the Basic plan or higher — upgrade at unipost.dev/pricing")
+		return
+	}
+
+	updated, err := h.queries.ClearProfileBrandingLogo(r.Context(), profile.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to remove profile logo")
+		return
+	}
+	if profile.BrandingLogoStorageKey.Valid {
+		slog.Info("retaining removed branding logo object", "profile_id", profile.ID, "storage_key", profile.BrandingLogoStorageKey.String)
+	}
+	writeSuccess(w, h.enrichProfileResponse(r.Context(), updated))
 }
 
 func pgTextFromPtr(p *string) pgtype.Text {
@@ -438,6 +593,48 @@ func isHexColor(s string) bool {
 		}
 	}
 	return true
+}
+
+func validateBrandingLogoUpload(body []byte) (brandingLogoUploadInfo, error) {
+	if len(body) == 0 {
+		return brandingLogoUploadInfo{}, errors.New("Logo file is empty")
+	}
+	if len(body) > brandingLogoMaxBytes {
+		return brandingLogoUploadInfo{}, errBrandingLogoTooLarge
+	}
+
+	contentType := http.DetectContentType(body)
+	info := brandingLogoUploadInfo{contentType: contentType}
+	switch contentType {
+	case "image/png":
+		info.ext = ".png"
+	case "image/jpeg":
+		info.ext = ".jpg"
+	default:
+		return brandingLogoUploadInfo{}, errors.New("Logo must be a PNG or JPEG image")
+	}
+
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(body))
+	if err != nil {
+		return brandingLogoUploadInfo{}, errors.New("Logo image could not be decoded")
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return brandingLogoUploadInfo{}, errors.New("Logo image dimensions are invalid")
+	}
+	if cfg.Width > brandingLogoMaxDimension || cfg.Height > brandingLogoMaxDimension {
+		return brandingLogoUploadInfo{}, fmt.Errorf("Logo dimensions must be %dx%d or smaller", brandingLogoMaxDimension, brandingLogoMaxDimension)
+	}
+	info.width = cfg.Width
+	info.height = cfg.Height
+	return info, nil
+}
+
+// canDeleteBrandingLogoStorageKey is deliberately always false:
+// profile branding assets live under R2's branding/ prefix and are
+// retained indefinitely. Removing/replacing a logo only detaches the
+// profile's DB pointer.
+func canDeleteBrandingLogoStorageKey(key, workspaceID, profileID string) bool {
+	return false
 }
 
 func (h *ProfileHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -560,11 +757,11 @@ func (h *ProfileHandler) APIUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name                 *string `json:"name"`
-		BrandingLogoURL      *string `json:"branding_logo_url"`
-		BrandingDisplayName  *string `json:"branding_display_name"`
-		BrandingPrimaryColor *string `json:"branding_primary_color"`
-		BrandingHidePoweredBy *bool  `json:"branding_hide_powered_by"`
+		Name                  *string `json:"name"`
+		BrandingLogoURL       *string `json:"branding_logo_url"`
+		BrandingDisplayName   *string `json:"branding_display_name"`
+		BrandingPrimaryColor  *string `json:"branding_primary_color"`
+		BrandingHidePoweredBy *bool   `json:"branding_hide_powered_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -627,10 +824,10 @@ func (h *ProfileHandler) APIUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if body.BrandingLogoURL != nil || body.BrandingDisplayName != nil || body.BrandingPrimaryColor != nil || body.BrandingHidePoweredBy != nil {
 		if _, err := h.queries.UpdateProfileBranding(r.Context(), db.UpdateProfileBrandingParams{
-			ID:           profileID,
-			LogoUrl:      pgTextFromPtr(body.BrandingLogoURL),
-			DisplayName:  pgTextFromPtr(body.BrandingDisplayName),
-			PrimaryColor: pgTextFromPtr(body.BrandingPrimaryColor),
+			ID:            profileID,
+			LogoUrl:       pgTextFromPtr(body.BrandingLogoURL),
+			DisplayName:   pgTextFromPtr(body.BrandingDisplayName),
+			PrimaryColor:  pgTextFromPtr(body.BrandingPrimaryColor),
 			HidePoweredBy: pgBoolFromPtr(body.BrandingHidePoweredBy),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update branding")

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -52,5 +53,34 @@ func TestNilClient(t *testing.T) {
 	}
 	if _, err := c.UploadFromURL(ctx, "https://x.com/y.jpg"); err != ErrNotConfigured {
 		t.Errorf("UploadFromURL on nil: want ErrNotConfigured, got %v", err)
+	}
+}
+
+func TestBrandingLogoKey(t *testing.T) {
+	cases := []struct {
+		workspaceID string
+		profileID   string
+		ext         string
+		wantPrefix  string
+		wantSuffix  string
+	}{
+		{"ws_123", "pr_456", ".png", "branding/ws_123/pr_456/logo_", ".png"},
+		{"ws_123", "pr_456", "jpg", "branding/ws_123/pr_456/logo_", ".jpg"},
+	}
+	for _, c := range cases {
+		got := BrandingLogoKey(c.workspaceID, c.profileID, c.ext)
+		if !strings.HasPrefix(got, c.wantPrefix) || !strings.HasSuffix(got, c.wantSuffix) {
+			t.Fatalf("BrandingLogoKey(%q,%q,%q) = %q, want prefix %q suffix %q", c.workspaceID, c.profileID, c.ext, got, c.wantPrefix, c.wantSuffix)
+		}
+	}
+}
+
+func TestNilClientBrandingHelpers(t *testing.T) {
+	var c *Client
+	if err := c.PutObject(context.TODO(), "branding/ws/pr/logo.png", strings.NewReader("x"), "image/png", "public, max-age=1"); err != ErrNotConfigured {
+		t.Errorf("PutObject on nil: want ErrNotConfigured, got %v", err)
+	}
+	if got := c.PublicURL("branding/ws/pr/logo.png"); got != "" {
+		t.Errorf("PublicURL on nil = %q, want empty string", got)
 	}
 }

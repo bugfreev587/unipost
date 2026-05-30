@@ -254,9 +254,9 @@ Why API-mediated upload instead of presigned PUT:
 
 - Logo files are small.
 - The API can atomically validate, store, and update the profile.
-- The API can delete the old R2 logo after replacement.
+- R2-managed branding objects are retained indefinitely; replacing a logo updates the profile pointer to a new immutable object and leaves the old object in R2.
 - The dashboard avoids a two-step "upload then commit URL" state.
-- We avoid orphaned logo objects when a browser PUT succeeds but the profile PATCH fails.
+- Orphaned branding objects are acceptable because they are small, customer profile assets and must not be lifecycle-deleted.
 
 ### Remove logo endpoint
 
@@ -269,7 +269,8 @@ DELETE /v1/profiles/{id}/branding/logo
 Behavior:
 
 - Sets `branding_logo_url = NULL`.
-- If the previous logo was R2-managed, deletes the old object best-effort.
+- Clears `branding_logo_storage_key`.
+- Does not delete the R2 object. Profile branding objects are retained indefinitely.
 - Does not change display name, primary color, or attribution.
 
 ### Auth and plan gates
@@ -309,7 +310,7 @@ Semantics:
 - `branding_logo_url` is the public URL used by hosted Connect and returned by APIs.
 - `branding_logo_storage_key` is set only when UniPost uploaded the asset to R2.
 - If a profile uses an externally supplied HTTPS logo URL through the API, `branding_logo_storage_key` is `NULL`.
-- When replacing an R2-managed logo, delete the old `branding_logo_storage_key` best-effort after the new object is written and the profile is updated.
+- When replacing an R2-managed logo, update the profile to point at the new storage key and retain the previous object in R2.
 
 ## R2 Storage Requirements
 
@@ -341,6 +342,12 @@ public, max-age=31536000, immutable
 ```
 
 Because replacement uses a new UUID key, old cached assets do not need cache busting.
+
+Lifecycle invariant:
+
+- Objects under `branding/` are profile configuration assets and must be retained indefinitely.
+- Application cleanup workers must not delete `branding/` objects.
+- R2 bucket lifecycle rules, if configured outside this repo, must not expire or delete the `branding/` prefix. Any automatic R2 cleanup must be prefix-scoped to temporary media paths such as `media/` or pull-through staging paths, never `branding/`.
 
 Accepted MIME types in MVP:
 
@@ -431,7 +438,7 @@ Public hosted Connect fallback:
 5. Do not accept user-controlled R2 object keys.
 6. Use UUID-based object names to avoid cache poisoning and overwrites.
 7. Do not expose R2 credentials to the browser.
-8. Deleting/replacing a logo must not delete arbitrary keys. Only delete keys under the expected `branding/{workspace_id}/{profile_id}/` prefix.
+8. Deleting/replacing a logo must not delete R2 objects. It only clears or replaces the profile's DB pointer.
 9. The unauthenticated Connect page must treat logo URL as data only, rendered in an `img` element.
 
 ## Migration and Backward Compatibility
@@ -468,7 +475,7 @@ Feature flag:
 1. A Basic-or-higher customer can upload a PNG/JPEG logo from `Accounts -> White-label`.
 2. The uploaded logo is stored in R2 under the `branding/` prefix.
 3. The profile's `branding_logo_url` updates to the public R2 URL.
-4. The old R2-managed logo is deleted best-effort after replacement.
+4. Old R2-managed profile logo objects are retained indefinitely after replacement or removal.
 5. The customer can remove the logo and hosted Connect falls back cleanly.
 6. The customer can edit display name and primary color from the White-label page.
 7. Growth/Team customers can hide attribution from the same section.
@@ -486,7 +493,7 @@ Backend:
 - Unit test rejected SVG/GIF/WebP in MVP.
 - Unit test profile ownership enforcement.
 - Unit test plan gate behavior for Free/API/Basic/Growth.
-- Unit test old R2 key deletion is scoped and best-effort.
+- Unit test profile branding storage keys are never considered deletable by cleanup logic.
 - Handler test upload success updates profile fields.
 - Handler test delete logo clears URL and storage key.
 
