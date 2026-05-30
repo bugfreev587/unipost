@@ -17,9 +17,10 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { listProfiles, getWorkspace, getBilling, getMe, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
+import { listProfiles, getWorkspace, getBilling, getMe, getApiLimits, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
 import { useGlobalInboxUnreadCount } from "@/lib/use-inbox-unread";
 import { buildContactPageHref } from "@/lib/support";
+import { shouldLoadGlobalInboxUnreadCount } from "@/components/dashboard/inbox-unread-gate";
 import {
   Key,
   Webhook,
@@ -148,6 +149,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return null;
   });
   const [isAdmin, setIsAdmin] = useState(false);
+  const [planAllowsInbox, setPlanAllowsInbox] = useState<boolean | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
@@ -157,12 +159,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   // Global inbox unread badge — only enable the hook when (1) the
   // Inbox feature flag is on (matches the nav item's visibility check
-  // below) and (2) we have a profile context, since the workspace JWT
-  // is required for the WebSocket / count fetch.
+  // below), (2) we have a profile context, and (3) the current plan
+  // allows the Inbox route group. The backend correctly returns 402
+  // for plans without Inbox; the shell should avoid polling that
+  // endpoint on every dashboard page for those workspaces.
   // Disabled = 0 returned, no network calls, no WS connection.
   const inboxFeatureEnabled = backendFeatureFlags[FEATURE_FLAG_KEYS.inbox] === true;
   const inboxUnreadCount = useGlobalInboxUnreadCount(
-    Boolean(profileId) && inboxFeatureEnabled,
+    shouldLoadGlobalInboxUnreadCount({ profileId, inboxFeatureEnabled, planAllowsInbox }),
   );
 
   const navItems = filterNavItems(backendFeatureFlags, isAdmin);
@@ -221,6 +225,26 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       } catch { /* silent */ }
     }
     loadBilling();
+  }, [currentProfile?.workspace_id, getToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPlanFeatureGates() {
+      if (!currentProfile?.workspace_id) {
+        setPlanAllowsInbox(null);
+        return;
+      }
+      try {
+        const token = await getToken();
+        if (!token || cancelled) return;
+        const res = await getApiLimits(token);
+        if (!cancelled) setPlanAllowsInbox(Boolean(res.data.plan_allows_inbox));
+      } catch {
+        if (!cancelled) setPlanAllowsInbox(false);
+      }
+    }
+    loadPlanFeatureGates();
+    return () => { cancelled = true; };
   }, [currentProfile?.workspace_id, getToken]);
 
   useEffect(() => {
