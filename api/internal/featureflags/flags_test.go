@@ -47,12 +47,14 @@ func TestEnvProviderSupportsLegacyTikTokFlag(t *testing.T) {
 	}
 }
 
-func TestInboxDefaultsEnabled(t *testing.T) {
-	SetProvider(EnvProvider{})
-	t.Cleanup(func() { SetProvider(EnvProvider{}) })
-
-	if !Enabled(context.Background(), Inbox, Target{Env: "production"}) {
-		t.Fatal("Inbox should default on because it is already generally supported")
+func TestInboxIsNotRegisteredAsFeatureFlag(t *testing.T) {
+	if _, ok := DefinitionFor(Flag("inbox")); ok {
+		t.Fatal("Inbox is plan-gated and should not be registered as a feature flag")
+	}
+	for _, def := range Definitions() {
+		if def.Flag == Flag("inbox") {
+			t.Fatal("Inbox definition should be removed from feature flag listings")
+		}
 	}
 }
 

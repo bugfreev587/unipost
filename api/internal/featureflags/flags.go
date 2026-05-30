@@ -17,7 +17,6 @@ const (
 	TikTokAnalyticsScopes         Flag = "tiktok.analytics_scopes"
 	AttributionUTMSignupBindingV1 Flag = "attribution.utm_signup_binding_v1"
 	LoopsIntegrationV1            Flag = "email.loops_integration_v1"
-	Inbox                         Flag = "inbox"
 	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
 	AppReviewAutopilotV1          Flag = "app_review.autopilot_v1"
 	AppReviewAIAgentV1            Flag = "app_review.ai_agent_v1"
@@ -78,14 +77,6 @@ var definitions = map[Flag]Definition{
 		Description: "Controls Loops contact sync, welcome lifecycle events, and transactional lifecycle notifications for UniPost dashboard users.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
-		},
-	},
-	Inbox: {
-		Flag:        Inbox,
-		Description: "Controls the UniPost Inbox surface for comments, DMs, replies, unread counts, manual sync, and realtime updates.",
-		// Kill-switch for already-shipped functionality; defaults on everywhere.
-		DefaultEnabled: func(Target) bool {
-			return true
 		},
 	},
 	FreePlanHardPostQuota: {

@@ -17,6 +17,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
@@ -24,11 +25,17 @@ type MeHandler struct {
 	queries           *db.Queries
 	adminChecker      *auth.AdminChecker
 	superAdminChecker *auth.SuperAdminChecker
+	quotaChecker      *quota.Checker
 	loopsSyncer       loopsLifecycleSyncer
 }
 
 func NewMeHandler(queries *db.Queries, adminChecker *auth.AdminChecker, superAdminChecker *auth.SuperAdminChecker) *MeHandler {
 	return &MeHandler{queries: queries, adminChecker: adminChecker, superAdminChecker: superAdminChecker}
+}
+
+func (h *MeHandler) SetQuotaChecker(quotaChecker *quota.Checker) *MeHandler {
+	h.quotaChecker = quotaChecker
+	return h
 }
 
 type meResponse struct {
@@ -117,6 +124,7 @@ type featureFlagsResponse struct {
 	Environment string          `json:"environment"`
 	Provider    string          `json:"provider"`
 	Flags       map[string]bool `json:"flags"`
+	PlanGates   map[string]bool `json:"plan_gates,omitempty"`
 }
 
 // Features returns the current authenticated user's effective feature
@@ -143,11 +151,18 @@ func (h *MeHandler) Features(w http.ResponseWriter, r *http.Request) {
 	for _, def := range featureflags.Definitions() {
 		flags[string(def.Flag)] = featureflags.Enabled(r.Context(), def.Flag, target)
 	}
+	planGates := map[string]bool{
+		"inbox": false,
+	}
+	if target.WorkspaceID != "" {
+		planGates["inbox"] = h.quotaChecker == nil || h.quotaChecker.PlanAllowsInbox(r.Context(), target.WorkspaceID)
+	}
 
 	writeSuccess(w, featureFlagsResponse{
 		Environment: target.Env,
 		Provider:    featureflags.ProviderName(),
 		Flags:       flags,
+		PlanGates:   planGates,
 	})
 }
 

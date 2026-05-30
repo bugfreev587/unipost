@@ -17,7 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { listProfiles, getWorkspace, getBilling, getMe, getApiLimits, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
+import { listProfiles, getWorkspace, getBilling, getMe, type Profile, type Workspace, type BillingInfo } from "@/lib/api";
 import { useGlobalInboxUnreadCount } from "@/lib/use-inbox-unread";
 import { buildContactPageHref } from "@/lib/support";
 import { shouldLoadGlobalInboxUnreadCount } from "@/components/dashboard/inbox-unread-gate";
@@ -75,7 +75,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   ]},
   { href: "/posts", label: "Posts", icon: Send, exactMatch: true },
   { href: "/posts/queue", label: "Queue", icon: ListTodo, exactMatch: true },
-  { href: "/inbox", label: "Inbox", icon: MessageSquare, backendFlag: FEATURE_FLAG_KEYS.inbox },
+  { href: "/inbox", label: "Inbox", icon: MessageSquare },
   { href: "/api-keys", label: "API Keys", icon: Key },
   { href: "/webhooks", label: "Webhooks", icon: Webhook },
   { href: "/logs", label: "Logs", icon: FileText },
@@ -134,7 +134,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useUser();
   const { signOut } = useClerk();
   const { resolvedTheme, setTheme } = useTheme();
-  const { flags: backendFeatureFlags } = useFeatureFlags();
+  const { flags: backendFeatureFlags, planGates } = useFeatureFlags();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -150,7 +150,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return null;
   });
   const [isAdmin, setIsAdmin] = useState(false);
-  const [planAllowsInbox, setPlanAllowsInbox] = useState<boolean | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
@@ -159,16 +158,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const profileId = urlProfileId ?? profiles[0]?.id;
   const currentProfile = profiles.find((p) => p.id === profileId);
 
-  // Global inbox unread badge — only enable the hook when (1) the
-  // Inbox feature flag is on (matches the nav item's visibility check
-  // below), (2) we have a profile context, and (3) the current plan
-  // allows the Inbox route group. The backend correctly returns 402
-  // for plans without Inbox; the shell should avoid polling that
-  // endpoint on every dashboard page for those workspaces.
+  // Global inbox unread badge: the Inbox surface is public, but the
+  // unread network work should only start once the current plan allows
+  // Inbox. /v1/me/features already carries this plan gate, so the shell
+  // avoids adding a /v1/limits waterfall to every dashboard page.
   // Disabled = 0 returned, no network calls, no WS connection.
-  const inboxFeatureEnabled = backendFeatureFlags[FEATURE_FLAG_KEYS.inbox] === true;
+  const planAllowsInbox = planGates.inbox ?? false;
   const inboxUnreadCount = useGlobalInboxUnreadCount(
-    shouldLoadGlobalInboxUnreadCount({ profileId, inboxFeatureEnabled, planAllowsInbox }),
+    shouldLoadGlobalInboxUnreadCount({ profileId, planAllowsInbox }),
   );
 
   const navItems = filterNavItems(backendFeatureFlags, isAdmin);
@@ -227,26 +224,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       } catch { /* silent */ }
     }
     loadBilling();
-  }, [currentProfile?.workspace_id, getToken]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadPlanFeatureGates() {
-      if (!currentProfile?.workspace_id) {
-        setPlanAllowsInbox(null);
-        return;
-      }
-      try {
-        const token = await getToken();
-        if (!token || cancelled) return;
-        const res = await getApiLimits(token);
-        if (!cancelled) setPlanAllowsInbox(Boolean(res.data.plan_allows_inbox));
-      } catch {
-        if (!cancelled) setPlanAllowsInbox(false);
-      }
-    }
-    loadPlanFeatureGates();
-    return () => { cancelled = true; };
   }, [currentProfile?.workspace_id, getToken]);
 
   useEffect(() => {
