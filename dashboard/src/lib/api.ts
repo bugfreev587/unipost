@@ -255,10 +255,11 @@ async function request<T>(
   token: string,
   options?: RequestInit
 ): Promise<T> {
+  const isFormDataBody = options?.body instanceof FormData;
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormDataBody ? {} : { "Content-Type": "application/json" }),
       Authorization: `Bearer ${token}`,
       ...options?.headers,
     },
@@ -381,6 +382,26 @@ export async function updateProfile(
     method: "PATCH",
     body: JSON.stringify(data),
   });
+}
+
+export async function uploadProfileLogo(
+  token: string,
+  id: string,
+  file: File
+): Promise<ApiResponse<Profile>> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request(`/v1/profiles/${id}/branding/logo`, token, {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function deleteProfileLogo(
+  token: string,
+  id: string
+): Promise<ApiResponse<Profile>> {
+  return request(`/v1/profiles/${id}/branding/logo`, token, { method: "DELETE" });
 }
 
 export async function deleteProfile(
