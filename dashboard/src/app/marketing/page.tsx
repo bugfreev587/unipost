@@ -152,6 +152,7 @@ body{
 }
 .lp-shell{
   min-height:100vh;
+  overflow-x:hidden;
   background:
     radial-gradient(circle at 82% 4%, color-mix(in srgb, var(--lp-link) 7%, transparent), transparent 34rem),
     linear-gradient(180deg, color-mix(in srgb, var(--lp-surface-alt) 52%, var(--lp-bg)) 0%, var(--lp-bg) 50%);
@@ -238,6 +239,7 @@ body{
   font-weight:700;
   text-decoration:none;
   white-space:nowrap;
+  max-width:100%;
   transition:background .22s var(--lp-ease), border-color .22s var(--lp-ease), color .22s var(--lp-ease), transform .22s var(--lp-ease), box-shadow .22s var(--lp-ease);
 }
 .lp-btn:hover{
@@ -348,6 +350,9 @@ body{
   display:flex;
   align-items:center;
   gap:12px;
+  min-width:0;
+}
+.lp-model-label > span:last-child{
   min-width:0;
 }
 .lp-model-icon{
@@ -670,6 +675,7 @@ body{
   line-height:1.65;
 }
 .lp-code-window{
+  min-width:0;
   overflow:hidden;
   border:1px solid #1e293b;
   border-radius:18px;
@@ -767,8 +773,10 @@ body{
   :root{--lp-pad:20px}
   .lp-section{padding-top:64px;padding-bottom:64px}
   .lp-hero{padding-top:44px;padding-bottom:42px}
+  .lp-hero h1{font-size:clamp(38px, 11vw, 48px)}
   .lp-hero-sub{font-size:17px}
   .lp-hero-stats{grid-template-columns:1fr 1fr}
+  .lp-hero-actions .lp-btn{flex:1 1 160px}
   .lp-model{padding:18px;border-radius:18px}
   .lp-model-platforms{grid-template-columns:repeat(2, minmax(0, 1fr))}
   .lp-section-head h2,
@@ -794,6 +802,15 @@ body{
   .lp-step:nth-child(2),
   .lp-step:nth-child(3){margin-top:0}
   .lp-cta-inner{padding:32px 24px}
+}
+@media (max-width:480px){
+  .lp-hero-actions{align-items:stretch}
+  .lp-hero-actions .lp-btn{width:100%}
+  .lp-hero-stats{grid-template-columns:1fr}
+  .lp-model-node{align-items:flex-start;flex-direction:column;gap:12px}
+  .lp-model-platform{justify-content:flex-start}
+  .lp-platform-strip{grid-template-columns:1fr}
+  .lp-code-copy{padding:24px}
 }
 @media (prefers-reduced-motion:reduce){
   .lp-btn,

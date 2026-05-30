@@ -40,6 +40,7 @@ import {
   BookOpen,
   Sun,
   Moon,
+  Menu,
   type LucideIcon,
 } from "lucide-react";
 
@@ -148,6 +149,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   });
   const [isAdmin, setIsAdmin] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
   const urlProfileId = profileMatch?.[1];
@@ -252,9 +254,23 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+    <div className="dashboard-shell-root" style={{ display: "flex", height: "100dvh", overflow: "hidden" }}>
+      {mobileSidebarOpen && (
+        <button
+          type="button"
+          className="dashboard-mobile-overlay"
+          aria-label="Close navigation"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
       {/* ── SIDEBAR ── */}
       <aside
+        className="dashboard-sidebar"
+        data-mobile-open={mobileSidebarOpen}
+        onClick={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.closest("a")) setMobileSidebarOpen(false);
+        }}
         style={{
           width: sidebarCollapsed ? 0 : 220,
           minWidth: sidebarCollapsed ? 0 : 220,
@@ -319,7 +335,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </DropdownMenuContent>
           </DropdownMenu>
           <button
-            onClick={() => setSidebarCollapsed(true)}
+            onClick={() => {
+              setMobileSidebarOpen(false);
+              setSidebarCollapsed(true);
+            }}
             title="Collapse sidebar"
             style={{
               flexShrink: 0,
@@ -640,6 +659,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
       {/* ── MAIN ── */}
       <main
+        className="dashboard-shell-main"
         style={{
           flex: 1,
           display: "flex",
@@ -650,8 +670,23 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             "radial-gradient(circle at top right, color-mix(in srgb, var(--accent-glow) 100%, transparent), transparent 28%), var(--app-bg)",
         }}
       >
+        <div className="dashboard-mobile-topbar">
+          <button
+            type="button"
+            className="dashboard-mobile-menu-btn"
+            aria-label="Open navigation"
+            onClick={() => setMobileSidebarOpen(true)}
+          >
+            <Menu style={{ width: 18, height: 18 }} strokeWidth={1.75} />
+          </button>
+          <div className="dashboard-mobile-brand">
+            <UniPostMark size={22} />
+            <span>Dashboard</span>
+          </div>
+        </div>
         {sidebarCollapsed && (
           <button
+            className="dashboard-desktop-sidebar-toggle"
             onClick={() => setSidebarCollapsed(false)}
             title="Expand sidebar"
             style={{
@@ -669,7 +704,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <PanelLeftOpen style={{ width: 16, height: 16 }} />
           </button>
         )}
-        <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px 40px" }}>
+        <div className="dashboard-shell-content" style={{ flex: 1, overflowY: "auto", padding: "28px 32px 40px" }}>
           {children}
         </div>
       </main>
