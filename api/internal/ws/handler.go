@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -13,9 +14,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
-	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 type errorBody struct {
@@ -29,6 +28,10 @@ type errorResponse struct {
 	RequestID string    `json:"request_id,omitempty"`
 }
 
+type inboxPlanChecker interface {
+	PlanAllowsInbox(context.Context, string) bool
+}
+
 // Handler upgrades an HTTP request to a WebSocket connection.
 // Auth: Clerk JWT is passed as ?token=<jwt> query param since the
 // browser WebSocket API doesn't support custom headers. The workspace
@@ -37,15 +40,15 @@ type errorResponse struct {
 type Handler struct {
 	Hub         *Hub
 	queries     *db.Queries
-	featureFlag featureflags.Flag
+	planChecker inboxPlanChecker
 }
 
 func NewHandler(hub *Hub, queries *db.Queries) *Handler {
 	return &Handler{Hub: hub, queries: queries}
 }
 
-func (h *Handler) WithFeatureFlag(flag featureflags.Flag) *Handler {
-	h.featureFlag = flag
+func (h *Handler) WithInboxPlanGate(checker inboxPlanChecker) *Handler {
+	h.planChecker = checker
 	return h
 }
 
@@ -60,6 +63,15 @@ func writeWSError(w http.ResponseWriter, r *http.Request, status int, code, mess
 		},
 		RequestID: appmw.GetRequestID(r.Context()),
 	})
+}
+
+func (h *Handler) ensureInboxPlanAllowed(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
+	if h.planChecker != nil && !h.planChecker.PlanAllowsInbox(r.Context(), workspaceID) {
+		writeWSError(w, r, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+			"Inbox requires the Basic plan or higher - upgrade at unipost.dev/pricing")
+		return false
+	}
+	return true
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -92,15 +104,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.featureFlag != "" {
-		if !featureflags.Enabled(r.Context(), h.featureFlag, featureflags.Target{
-			UserID:      claims.Subject,
-			WorkspaceID: workspace.ID,
-			Env:         runtimeenv.Current(),
-		}) {
-			writeWSError(w, r, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
-			return
-		}
+	if !h.ensureInboxPlanAllowed(w, r, workspace.ID) {
+		return
 	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
