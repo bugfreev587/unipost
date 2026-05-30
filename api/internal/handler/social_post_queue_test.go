@@ -1,9 +1,13 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 )
 
 func TestRetryDeliveryJobNowMarksDeprecated(t *testing.T) {
@@ -24,5 +28,43 @@ func TestRetryDeliveryJobNowMarksDeprecated(t *testing.T) {
 	}
 	if got := rr.Header().Get("Link"); got == "" {
 		t.Fatal("expected Link header pointing to canonical retry route")
+	}
+}
+
+func TestWorkerPublishingEventSourceIsWorker(t *testing.T) {
+	event := workerPublishingEvent(integrationlogs.Event{
+		Action: integrationlogs.ActionPostPublishPlatformFailed,
+	})
+
+	if event.Source != integrationlogs.SourceWorker {
+		t.Fatalf("source = %q, want %q", event.Source, integrationlogs.SourceWorker)
+	}
+}
+
+func TestResolvePublishingEventSourcePreservesExplicitSource(t *testing.T) {
+	got := resolvePublishingEventSource(context.Background(), integrationlogs.Event{
+		Source: integrationlogs.SourceWorker,
+	})
+
+	if got != integrationlogs.SourceWorker {
+		t.Fatalf("source = %q, want %q", got, integrationlogs.SourceWorker)
+	}
+}
+
+func TestResolvePublishingEventSourceUsesAPIWhenAPIKeyPresent(t *testing.T) {
+	ctx := context.WithValue(context.Background(), auth.APIKeyIDKey, "api_key_123")
+
+	got := resolvePublishingEventSource(ctx, integrationlogs.Event{})
+
+	if got != integrationlogs.SourceAPI {
+		t.Fatalf("source = %q, want %q", got, integrationlogs.SourceAPI)
+	}
+}
+
+func TestResolvePublishingEventSourceDefaultsToDashboard(t *testing.T) {
+	got := resolvePublishingEventSource(context.Background(), integrationlogs.Event{})
+
+	if got != integrationlogs.SourceDashboard {
+		t.Fatalf("source = %q, want %q", got, integrationlogs.SourceDashboard)
 	}
 }

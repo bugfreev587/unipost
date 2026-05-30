@@ -448,8 +448,13 @@ func retryBackoff(attempt int32) time.Duration {
 	}
 }
 
+func workerPublishingEvent(e integrationlogs.Event) integrationlogs.Event {
+	e.Source = integrationlogs.SourceWorker
+	return e
+}
+
 func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.PostDeliveryJob) error {
-	h.logPublishingEvent(ctx, integrationlogs.Event{
+	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     job.WorkspaceID,
 		Level:           integrationlogs.LevelInfo,
 		Status:          integrationlogs.StatusSuccess,
@@ -463,7 +468,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 			"attempt":          job.Attempts,
 			"post_input_index": job.PostInputIndex,
 		},
-	})
+	}))
 
 	post, err := h.queries.GetSocialPostByID(ctx, job.PostID)
 	if err != nil {
@@ -538,7 +543,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if updated.Status == "published" {
 		h.quota.Increment(ctx, post.WorkspaceID, 1)
 	}
-	h.logPublishingEvent(ctx, integrationlogs.Event{
+	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
 		Level:           integrationlogs.LevelInfo,
 		Status:          integrationlogs.StatusSuccess,
@@ -553,7 +558,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 			"result_id": res.ID,
 			"status":    updated.Status,
 		},
-	})
+	}))
 	return nil
 }
 
@@ -581,7 +586,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 		post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, job.Platform, "dispatch_prepare", msg, msg,
 	)
 	h.recordPostFailure(ctx, failure)
-	h.logPublishingEvent(ctx, integrationlogs.Event{
+	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
 		Level:           integrationlogs.LevelError,
 		Status:          integrationlogs.StatusError,
@@ -599,7 +604,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 		ResponsePayload: map[string]any{
 			"error": msg,
 		},
-	})
+	}))
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
 	h.syncLoopsPostFailed(ctx, post, res, job, failure, false)
@@ -720,7 +725,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	if !failure.IsRetriable || (job.Kind == "retry" && job.Attempts >= job.MaxAttempts) {
 		logLevel = integrationlogs.LevelError
 	}
-	h.logPublishingEvent(ctx, integrationlogs.Event{
+	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
 		Level:           logLevel,
 		Status:          integrationlogs.StatusError,
@@ -744,7 +749,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 			"error":      errMsg,
 			"debug_curl": oc.debugCurl,
 		},
-	})
+	}))
 	h.syncLoopsPostFailed(ctx, post, res, job, failure, anotherAttempt)
 	return nil
 }

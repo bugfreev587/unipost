@@ -19,6 +19,11 @@ type InstagramAdapter struct {
 	client *http.Client
 }
 
+var (
+	instagramContainerPollAttempts = 30
+	instagramContainerPollInterval = 2 * time.Second
+)
+
 func NewInstagramAdapter() *InstagramAdapter {
 	return &InstagramAdapter{client: debugrt.NewClient(60 * time.Second)}
 }
@@ -1016,13 +1021,53 @@ func (a *InstagramAdapter) GetAnalytics(ctx context.Context, accessToken string,
 	return m, nil
 }
 
+type instagramContainerPollDiagnostics struct {
+	containerID    string
+	pollCount      int
+	elapsed        time.Duration
+	lastHTTPStatus int
+	statusCode     string
+	responseBody   string
+}
+
+func (d instagramContainerPollDiagnostics) format() string {
+	parts := []string{
+		"container_id=" + d.containerID,
+		fmt.Sprintf("poll_count=%d", d.pollCount),
+		fmt.Sprintf("elapsed_ms=%d", d.elapsed.Milliseconds()),
+	}
+	if d.lastHTTPStatus != 0 {
+		parts = append(parts, fmt.Sprintf("last_http_status=%d", d.lastHTTPStatus))
+	}
+	if d.statusCode != "" {
+		parts = append(parts, "status_code="+d.statusCode)
+	}
+	if d.responseBody != "" {
+		parts = append(parts, "response_body="+truncateForLog(d.responseBody, 1000))
+	}
+	return strings.Join(parts, " ")
+}
+
 func (a *InstagramAdapter) waitForContainer(ctx context.Context, accessToken string, containerID string) error {
-	for i := 0; i < 30; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
+	start := time.Now()
+	diag := instagramContainerPollDiagnostics{containerID: containerID}
+
+	for i := 0; i < instagramContainerPollAttempts; i++ {
+		if instagramContainerPollInterval > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(instagramContainerPollInterval):
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
 		}
+		diag.pollCount = i + 1
+		diag.elapsed = time.Since(start)
 
 		req, _ := http.NewRequestWithContext(ctx, "GET",
 			fmt.Sprintf("https://graph.instagram.com/v21.0/%s?fields=status_code&access_token=%s", containerID, accessToken), nil)
@@ -1030,19 +1075,30 @@ func (a *InstagramAdapter) waitForContainer(ctx context.Context, accessToken str
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		diag.lastHTTPStatus = resp.StatusCode
+		diag.responseBody = strings.TrimSpace(string(body))
+
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
 
 		var status struct {
 			StatusCode string `json:"status_code"`
 		}
-		json.NewDecoder(resp.Body).Decode(&status)
+		if err := json.Unmarshal(body, &status); err != nil {
+			return fmt.Errorf("instagram container poll decode failed: %s decode_error=%v", diag.format(), err)
+		}
+		diag.statusCode = strings.TrimSpace(status.StatusCode)
 
 		if status.StatusCode == "FINISHED" {
 			return nil
 		}
 		if status.StatusCode == "ERROR" {
-			return fmt.Errorf("container processing failed")
+			return fmt.Errorf("instagram container processing failed: %s", diag.format())
 		}
 	}
-	return fmt.Errorf("container processing timed out")
+	diag.elapsed = time.Since(start)
+	return fmt.Errorf("instagram container processing timed out: %s", diag.format())
 }

@@ -818,12 +818,20 @@ func (a *ThreadsAdapter) getUserID(ctx context.Context, accessToken string) (str
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	bodyText := strings.TrimSpace(string(body))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("threads get user id failed (%d): %s", resp.StatusCode, bodyText)
+	}
+
 	var result struct {
 		ID string `json:"id"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("threads get user id decode: %w; body: %s", err, bodyText)
+	}
 	if result.ID == "" {
-		return "", fmt.Errorf("failed to get Threads user ID")
+		return "", fmt.Errorf("threads get user id: empty id in response body: %s", bodyText)
 	}
 	return result.ID, nil
 }
