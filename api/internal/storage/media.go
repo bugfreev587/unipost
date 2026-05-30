@@ -20,12 +20,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/url"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
 )
 
 // MediaPrefix is the R2 key prefix for user-uploaded media. Kept
@@ -33,6 +36,12 @@ import (
 // sweeper can target only one or the other without affecting the
 // other path.
 const MediaPrefix = "media/"
+
+// BrandingPrefix is the R2 key prefix for long-lived hosted Connect
+// branding assets. It is intentionally separate from MediaPrefix
+// because post media can be swept after publish, while logos are
+// workspace configuration and must be retained indefinitely.
+const BrandingPrefix = "branding/"
 
 // MediaKey returns a stable R2 key for a media row. We use the row's
 // UUID directly so the key never collides and so a HEAD lookup at
@@ -42,6 +51,49 @@ func MediaKey(mediaID, ext string) string {
 		ext = "." + ext
 	}
 	return MediaPrefix + mediaID + ext
+}
+
+// BrandingLogoKey returns a unique R2 key for one profile logo upload.
+// UUID file names let us serve logos with immutable cache headers while
+// replacements use a fresh URL.
+func BrandingLogoKey(workspaceID, profileID, ext string) string {
+	if ext != "" && ext[0] != '.' {
+		ext = "." + ext
+	}
+	return path.Join("branding", workspaceID, profileID, "logo_"+uuid.NewString()+ext)
+}
+
+// PublicURL returns the public R2 URL for a stored key. Nil clients return
+// an empty string, matching the package's "nil client is not configured"
+// convention without forcing callers to special-case URL assembly.
+func (c *Client) PublicURL(key string) string {
+	if c == nil {
+		return ""
+	}
+	return c.publicBase + "/" + strings.TrimLeft(key, "/")
+}
+
+// PutObject stores caller-provided bytes at a specific key. It is used for
+// small API-mediated uploads such as branding logos where a direct browser
+// presigned PUT would create extra orphan handling.
+func (c *Client) PutObject(ctx context.Context, key string, body io.Reader, contentType string, cacheControl string) error {
+	if c == nil {
+		return ErrNotConfigured
+	}
+	if cacheControl == "" {
+		cacheControl = "public, max-age=31536000, immutable"
+	}
+	_, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:       aws.String(c.bucket),
+		Key:          aws.String(key),
+		Body:         body,
+		ContentType:  aws.String(contentType),
+		CacheControl: aws.String(cacheControl),
+	})
+	if err != nil {
+		return fmt.Errorf("storage: put object: %w", err)
+	}
+	return nil
 }
 
 // PresignPut returns a presigned URL the client can PUT bytes to.

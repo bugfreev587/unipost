@@ -390,7 +390,7 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 	case strings.Contains(query, "-- name: GetProfile"):
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		return scanRow{values: []any{
-			"pr_1", "TailTales", now, now, pgtype.Text{}, pgtype.Text{}, pgtype.Text{}, "ws_1", false,
+			"pr_1", "TailTales", now, now, pgtype.Text{}, pgtype.Text{}, pgtype.Text{}, "ws_1", false, pgtype.Text{},
 		}}
 	case strings.Contains(query, "-- name: GetPlatformCredential"):
 		f.platformCredentialLookups++

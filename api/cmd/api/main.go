@@ -396,6 +396,9 @@ func main() {
 	healthHandler := handler.NewHealthHandler()
 	webhookHandler := handler.NewWebhookHandler(queries, mailer, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
 	profileHandler := handler.NewProfileHandler(queries, quotaChecker)
+	if storageClient != nil {
+		profileHandler.SetBrandingLogoStore(storageClient)
+	}
 	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
@@ -641,6 +644,8 @@ func main() {
 		r.Post("/v1/profiles", profileHandler.APICreate)
 		r.Get("/v1/profiles/{id}", profileHandler.APIGet)
 		r.Patch("/v1/profiles/{id}", profileHandler.APIUpdate)
+		r.Post("/v1/profiles/{id}/branding/logo", profileHandler.UploadBrandingLogo)
+		r.Delete("/v1/profiles/{id}/branding/logo", profileHandler.DeleteBrandingLogo)
 		r.Delete("/v1/profiles/{id}", profileHandler.APIDelete)
 
 		// Accounts (workspace-wide).
