@@ -328,16 +328,22 @@ func (h *SocialPostHandler) logPublishingEvent(ctx context.Context, e integratio
 		e.ActorAPIKeyID = auth.GetAPIKeyID(ctx)
 	}
 	if e.Source == "" {
-		if auth.GetAPIKeyID(ctx) != "" {
-			e.Source = integrationlogs.SourceAPI
-		} else {
-			e.Source = integrationlogs.SourceDashboard
-		}
+		e.Source = resolvePublishingEventSource(ctx, e)
 	}
 	if e.Category == "" {
 		e.Category = integrationlogs.CategoryPublishing
 	}
 	h.ilog.Write(ctx, e)
+}
+
+func resolvePublishingEventSource(ctx context.Context, e integrationlogs.Event) integrationlogs.Source {
+	if e.Source != "" {
+		return e.Source
+	}
+	if auth.GetAPIKeyID(ctx) != "" {
+		return integrationlogs.SourceAPI
+	}
+	return integrationlogs.SourceDashboard
 }
 
 func groupPostResultsByPostID(rows []db.SocialPostResult) map[string][]db.SocialPostResult {

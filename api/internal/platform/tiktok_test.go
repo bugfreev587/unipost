@@ -1,9 +1,15 @@
 package platform
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildTikTokPostInfoIncludesRequiredToggles(t *testing.T) {
@@ -137,6 +143,111 @@ func TestShouldRetryTikTokWithSelfOnly(t *testing.T) {
 	}
 	if shouldRetryTikTokWithSelfOnly(500, body, "PUBLIC_TO_EVERYONE") {
 		t.Fatal("did not expect retry for non-400 responses")
+	}
+}
+
+func TestWrapTikTokInitErrorIncludesSandboxGuidance(t *testing.T) {
+	body := []byte(`{"error":{"code":"invalid_params","message":"Invalid authorization header. Please check the format."}}`)
+
+	err := wrapTikTokInitError("tiktok photo init failed", http.StatusBadRequest, body, "PUBLIC_TO_EVERYONE")
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+	got := err.Error()
+	for _, want := range []string{
+		"tiktok photo init failed (400)",
+		"malformed request bodies",
+		"sandbox/unaudited mode",
+		"SELF_ONLY",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error = %q, want to contain %q", got, want)
+		}
+	}
+}
+
+func TestTikTokPhotoInitRetriesInvalidParamsWithSelfOnly(t *testing.T) {
+	withTikTokPublishPollConfig(t, 1, 0)
+	transport := &tiktokPhotoInitRetryTransport{}
+	adapter := NewTikTokAdapter()
+	adapter.client = &http.Client{Transport: transport}
+	adapter.mediaProxy = fakeTikTokMediaProxy{}
+
+	result, err := adapter.postPhoto(
+		context.Background(),
+		"tiktok-token",
+		"caption",
+		[]MediaItem{{URL: "https://source.example/photo.jpg", Kind: MediaKindImage}},
+		map[string]any{"privacy_level": "PUBLIC_TO_EVERYONE"},
+	)
+	if err != nil {
+		t.Fatalf("postPhoto: %v", err)
+	}
+	if result == nil || result.ExternalID != "publish_123" {
+		t.Fatalf("result = %#v, want publish_123", result)
+	}
+	want := []string{"PUBLIC_TO_EVERYONE", "SELF_ONLY"}
+	if len(transport.privacyLevels) != len(want) {
+		t.Fatalf("privacy retries = %v, want %v", transport.privacyLevels, want)
+	}
+	for i := range want {
+		if transport.privacyLevels[i] != want[i] {
+			t.Fatalf("privacy retry %d = %q, want %q", i, transport.privacyLevels[i], want[i])
+		}
+	}
+}
+
+func withTikTokPublishPollConfig(t *testing.T, attempts int, intervalDuration time.Duration) {
+	t.Helper()
+	oldAttempts := tiktokPublishPollAttempts
+	oldInterval := tiktokPublishPollInterval
+	tiktokPublishPollAttempts = attempts
+	tiktokPublishPollInterval = intervalDuration
+	t.Cleanup(func() {
+		tiktokPublishPollAttempts = oldAttempts
+		tiktokPublishPollInterval = oldInterval
+	})
+}
+
+type fakeTikTokMediaProxy struct{}
+
+func (fakeTikTokMediaProxy) UploadFromURL(_ context.Context, rawURL string) (string, error) {
+	return "https://media.unipost.test/proxy/" + strings.TrimPrefix(rawURL, "https://source.example/"), nil
+}
+
+type tiktokPhotoInitRetryTransport struct {
+	privacyLevels []string
+}
+
+func (t *tiktokPhotoInitRetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch {
+	case strings.Contains(req.URL.Path, "/content/init/"):
+		body, _ := io.ReadAll(req.Body)
+		var payload struct {
+			PostInfo struct {
+				PrivacyLevel string `json:"privacy_level"`
+			} `json:"post_info"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		t.privacyLevels = append(t.privacyLevels, payload.PostInfo.PrivacyLevel)
+
+		if len(t.privacyLevels) == 1 {
+			return tiktokHTTPResponse(http.StatusBadRequest, `{"error":{"code":"invalid_params","message":"Invalid authorization header. Please check the format."}}`, req), nil
+		}
+		return tiktokHTTPResponse(http.StatusOK, `{"data":{"publish_id":"publish_123"},"error":{"code":"ok"}}`, req), nil
+	case strings.Contains(req.URL.Path, "/status/fetch/"):
+		return tiktokHTTPResponse(http.StatusOK, `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":["7350123456789012345"]},"error":{"code":"ok"}}`, req), nil
+	default:
+		return tiktokHTTPResponse(http.StatusNotFound, `{}`, req), nil
+	}
+}
+
+func tiktokHTTPResponse(status int, body string, req *http.Request) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+		Request:    req,
 	}
 }
 

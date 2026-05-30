@@ -20,10 +20,19 @@ import (
 
 type TikTokAdapter struct {
 	client     *http.Client
-	mediaProxy *storage.Client // optional; required only for photo posts
+	mediaProxy tiktokMediaProxy // optional; required only for photo posts
 }
 
 const tiktokHomepageURL = "https://www.tiktok.com"
+
+var (
+	tiktokPublishPollAttempts = 12
+	tiktokPublishPollInterval = 5 * time.Second
+)
+
+type tiktokMediaProxy interface {
+	UploadFromURL(context.Context, string) (string, error)
+}
 
 var tiktokLegacyScopes = []string{
 	"video.publish",
@@ -413,6 +422,10 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 		cover = 0
 	}
 
+	return a.initPhotoContentWithPrivacy(ctx, accessToken, text, urls, cover, privacyLevel, opts, true)
+}
+
+func (a *TikTokAdapter) initPhotoContentWithPrivacy(ctx context.Context, accessToken, text string, urls []string, cover int, privacyLevel string, opts map[string]any, allowRetry bool) (*PostResult, error) {
 	// TikTok's photo Direct Post requires every "toggle" field to be present
 	// in the request body — omitting any of disable_comment, auto_add_music,
 	// brand_content_toggle, or brand_organic_toggle returns a misleading
@@ -446,7 +459,11 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tiktok photo init (%d): %s", resp.StatusCode, string(respBody))
+		if allowRetry && !optBool(opts, "brand_content_toggle") && shouldRetryTikTokWithSelfOnly(resp.StatusCode, respBody, privacyLevel) {
+			slog.Warn("tiktok photo init rejected requested privacy; retrying with SELF_ONLY", "requested_privacy", privacyLevel)
+			return a.initPhotoContentWithPrivacy(ctx, accessToken, text, urls, cover, "SELF_ONLY", opts, false)
+		}
+		return nil, wrapTikTokInitError("tiktok photo init failed", resp.StatusCode, respBody, privacyLevel)
 	}
 
 	var result struct {
@@ -462,17 +479,28 @@ func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string,
 	if result.Error.Code != "" && result.Error.Code != "ok" {
 		return nil, fmt.Errorf("tiktok photo error: %s", result.Error.Message)
 	}
+	if result.Data.PublishID == "" {
+		return nil, fmt.Errorf("tiktok photo init: empty publish_id")
+	}
 
 	slog.Info("tiktok photo post: submitted, polling status", "publish_id", result.Data.PublishID)
 	return a.waitForPublish(ctx, accessToken, result.Data.PublishID)
 }
 
 func (a *TikTokAdapter) waitForPublish(ctx context.Context, accessToken string, publishID string) (*PostResult, error) {
-	for i := 0; i < 12; i++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(5 * time.Second):
+	for i := 0; i < tiktokPublishPollAttempts; i++ {
+		if tiktokPublishPollInterval > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(tiktokPublishPollInterval):
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
 		}
 
 		status, err := a.CheckPublishStatus(ctx, accessToken, publishID)
