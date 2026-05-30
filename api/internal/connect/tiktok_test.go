@@ -43,6 +43,26 @@ func TestTikTokAuthorizeURL(t *testing.T) {
 	}
 }
 
+func TestTikTokAuthorizeURL_AppReviewSessionIgnoresAnalyticsScopes(t *testing.T) {
+	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "true")
+
+	c := NewTikTokConnector("client-key", "secretXYZ", "https://api.example.com")
+	if c == nil {
+		t.Fatal("constructor returned nil")
+	}
+	got, err := c.AuthorizeURL(SessionView{OAuthState: "state-abc", ExternalUserID: "app-review:rvjob_1"})
+	if err != nil {
+		t.Fatalf("AuthorizeURL: %v", err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if scope := u.Query().Get("scope"); scope != "video.publish,video.upload,user.info.basic" {
+		t.Fatalf("scope = %q", scope)
+	}
+}
+
 func TestTikTokExchangeCode_HappyPath(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {

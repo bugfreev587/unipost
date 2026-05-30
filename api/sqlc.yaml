@@ -15,3 +15,4 @@ sql:
         # bizarrely throughout the codebase. Override to `Media`.
         rename:
           medium: "Media"
+          http_status_code: "HTTPStatusCode"

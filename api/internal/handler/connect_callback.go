@@ -191,9 +191,10 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 	}
 
 	authURL, err := connector.AuthorizeURL(connect.SessionView{
-		ID:           session.ID,
-		OAuthState:   session.OauthState,
-		PKCEVerifier: session.PkceVerifier.String,
+		ID:             session.ID,
+		OAuthState:     session.OauthState,
+		PKCEVerifier:   session.PkceVerifier.String,
+		ExternalUserID: session.ExternalUserID,
 	})
 	if err != nil {
 		slog.Error("connect.authorize: build url", "platform", session.Platform, "err", err)
@@ -318,9 +319,10 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	}
 
 	view := connect.SessionView{
-		ID:           session.ID,
-		OAuthState:   session.OauthState,
-		PKCEVerifier: session.PkceVerifier.String,
+		ID:             session.ID,
+		OAuthState:     session.OauthState,
+		PKCEVerifier:   session.PkceVerifier.String,
+		ExternalUserID: session.ExternalUserID,
 	}
 
 	tokens, err := connector.ExchangeCode(r.Context(), view, code)

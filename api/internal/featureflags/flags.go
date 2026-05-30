@@ -19,6 +19,8 @@ const (
 	LoopsIntegrationV1            Flag = "email.loops_integration_v1"
 	Inbox                         Flag = "inbox"
 	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
+	AppReviewAutopilotV1          Flag = "app_review.autopilot_v1"
+	AppReviewAIAgentV1            Flag = "app_review.ai_agent_v1"
 )
 
 type Target struct {
@@ -90,6 +92,22 @@ var definitions = map[Flag]Definition{
 		Flag:        FreePlanHardPostQuota,
 		EnvVar:      "FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA",
 		Description: "Hard-blocks Free plan publish acceptance once the workspace would exceed its monthly post quota. Paid plans keep soft overage behavior.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	AppReviewAutopilotV1: {
+		Flag:        AppReviewAutopilotV1,
+		EnvVar:      "FEATURE_APP_REVIEW_AUTOPILOT_V1",
+		Description: "Controls the App Review Autopilot beta: review readiness, review kit/job APIs, signed review sessions, customer-domain review app surfaces, and review-agent orchestration.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	AppReviewAIAgentV1: {
+		Flag:        AppReviewAIAgentV1,
+		EnvVar:      "FEATURE_APP_REVIEW_AI_AGENT_V1",
+		Description: "Controls the AI-guided App Review Autopilot executor, server-side Anthropic orchestration, and evidence-gated browser actions.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},

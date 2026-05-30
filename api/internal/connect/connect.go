@@ -95,10 +95,11 @@ type Connector interface {
 // (which would be a circular import waiting to happen, since
 // internal/handler imports internal/connect).
 type SessionView struct {
-	ID           string
-	OAuthState   string
-	PKCEVerifier string // empty for non-PKCE platforms
-	RedirectURI  string // the callback URL we registered with the platform
+	ID             string
+	OAuthState     string
+	PKCEVerifier   string // empty for non-PKCE platforms
+	RedirectURI    string // the callback URL we registered with the platform
+	ExternalUserID string // customer-provided user id; app review sessions use the app-review: prefix
 }
 
 // Registry holds all available connectors keyed by Platform().

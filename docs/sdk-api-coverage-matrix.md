@@ -62,6 +62,11 @@ Legend:
 | `GET /v1/analytics/trend` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/analytics/by-platform` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/analytics/rollup` | Yes | Yes | Yes | Yes | Yes |
+| `GET /v1/analytics/posts` | Yes | Yes | Yes | Yes | Yes |
+| `GET /v1/analytics/posts/export` | Yes | Yes | Yes | Yes | Yes |
+| `GET /v1/analytics/platforms` | Yes | Yes | Yes | Yes | Yes |
+| `GET /v1/analytics/platforms/{platform}` | Yes | Yes | Yes | Yes | Yes |
+| `POST /v1/analytics/refresh` | Yes | Yes | Yes | Yes | Yes, negative path |
 | `POST /v1/webhooks` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/webhooks` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/webhooks/{id}` | Yes | Yes | Yes | Yes | Yes |
