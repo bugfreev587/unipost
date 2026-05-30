@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
@@ -22,12 +23,82 @@ import (
 // instead of a generic "code exchange failed" error.
 var ErrYouTubeNoChannel = errors.New("youtube account has no channel")
 
+type youTubeUploadQuotaBreaker struct {
+	mu        sync.Mutex
+	now       func() time.Time
+	openUntil time.Time
+	reason    string
+}
+
+func newYouTubeUploadQuotaBreaker(now func() time.Time) *youTubeUploadQuotaBreaker {
+	if now == nil {
+		now = time.Now
+	}
+	return &youTubeUploadQuotaBreaker{now: now}
+}
+
+func (b *youTubeUploadQuotaBreaker) Open(until time.Time, reason string) {
+	if b == nil || until.IsZero() {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.openUntil = until
+	b.reason = strings.TrimSpace(reason)
+}
+
+func (b *youTubeUploadQuotaBreaker) OpenUntil() (time.Time, bool) {
+	if b == nil {
+		return time.Time{}, false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.openUntil.IsZero() || !b.now().Before(b.openUntil) {
+		b.openUntil = time.Time{}
+		b.reason = ""
+		return time.Time{}, false
+	}
+	return b.openUntil, true
+}
+
+func (a *YouTubeAdapter) uploadQuotaBreaker() *youTubeUploadQuotaBreaker {
+	if a.quotaBreaker == nil {
+		a.quotaBreaker = newYouTubeUploadQuotaBreaker(time.Now)
+	}
+	return a.quotaBreaker
+}
+
+func nextYouTubeUploadQuotaReset(now time.Time) time.Time {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		loc = time.FixedZone("America/Los_Angeles", -8*60*60)
+	}
+	local := now.In(loc)
+	return time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, loc)
+}
+
+func isYouTubeProjectUploadQuota(status int, body []byte) bool {
+	if status != http.StatusTooManyRequests {
+		return false
+	}
+	s := strings.ToLower(string(body))
+	if !strings.Contains(s, "resource_exhausted") && !strings.Contains(s, "ratelimitexceeded") {
+		return false
+	}
+	return strings.Contains(s, "video uploads per day") ||
+		strings.Contains(s, "defaultvideoinsertperdayperproject")
+}
+
 type YouTubeAdapter struct {
-	client *http.Client
+	client       *http.Client
+	quotaBreaker *youTubeUploadQuotaBreaker
 }
 
 func NewYouTubeAdapter() *YouTubeAdapter {
-	return &YouTubeAdapter{client: debugrt.NewClient(120 * time.Second)}
+	return &YouTubeAdapter{
+		client:       debugrt.NewClient(120 * time.Second),
+		quotaBreaker: newYouTubeUploadQuotaBreaker(time.Now),
+	}
 }
 
 func (a *YouTubeAdapter) Platform() string { return "youtube" }
@@ -281,6 +352,10 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	madeForKids := youtubeOptBool(opts, "made_for_kids", false)
 	containsSyntheticMedia := youtubeOptBool(opts, "contains_synthetic_media", false)
 
+	if until, ok := a.uploadQuotaBreaker().OpenUntil(); ok {
+		return nil, fmt.Errorf("youtube upload quota temporarily exhausted until %s: quota_scope=platform_project provider=youtube quota_limit=defaultVideoInsertPerDayPerProject", until.Format(time.RFC3339))
+	}
+
 	// Download video
 	videoResp, err := a.client.Get(videoURL)
 	if err != nil {
@@ -351,6 +426,11 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 
 	if initResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(initResp.Body)
+		if isYouTubeProjectUploadQuota(initResp.StatusCode, body) {
+			resetAt := nextYouTubeUploadQuotaReset(a.uploadQuotaBreaker().now())
+			a.uploadQuotaBreaker().Open(resetAt, "rateLimitExceeded")
+			return nil, fmt.Errorf("youtube upload init failed (%d): %s quota_scope=platform_project provider=youtube provider_reason=rateLimitExceeded quota_limit=defaultVideoInsertPerDayPerProject reset_at=%s", initResp.StatusCode, string(body), resetAt.Format(time.RFC3339))
+		}
 		return nil, fmt.Errorf("youtube upload init failed (%d): %s", initResp.StatusCode, string(body))
 	}
 
