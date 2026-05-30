@@ -9,11 +9,13 @@ import {
   CreditCard,
   FileText,
   LayoutDashboard,
+  Menu,
   MousePointerClick,
   Send,
   Settings,
   TrendingUp,
   Users,
+  X,
 } from "lucide-react";
 
 import { UniPostLogo } from "@/components/brand/unipost-logo";
@@ -97,7 +99,13 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Settings", href: "/admin/settings", section: "System", enabled: true, icon: Settings },
 ];
 
-function AdminSidebar() {
+function AdminSidebar({
+  mobileOpen,
+  onMobileClose,
+}: {
+  mobileOpen: boolean;
+  onMobileClose: () => void;
+}) {
   const pathname = usePathname();
   const { user } = useUser();
   const userEmail = user?.primaryEmailAddress?.emailAddress?.toLowerCase() || "";
@@ -106,11 +114,23 @@ function AdminSidebar() {
   const sections = Array.from(new Set(NAV_ITEMS.map((item) => item.section)));
 
   return (
-    <aside className="ad-sidebar">
-      <Link href="/" className="ad-sb-logo">
-        <UniPostLogo markSize={22} wordmarkColor="currentColor" />
-        <span className="ad-sb-badge">ADMIN</span>
-      </Link>
+    <aside
+      className="ad-sidebar"
+      data-mobile-open={mobileOpen}
+      onClick={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest("a")) onMobileClose();
+      }}
+    >
+      <div className="ad-sb-head">
+        <Link href="/" className="ad-sb-logo">
+          <UniPostLogo markSize={22} wordmarkColor="currentColor" />
+          <span className="ad-sb-badge">ADMIN</span>
+        </Link>
+        <button type="button" className="ad-mobile-close" aria-label="Close admin navigation" onClick={onMobileClose}>
+          <X strokeWidth={1.75} />
+        </button>
+      </div>
 
       <nav className="ad-nav">
         {sections.map((section) => (
@@ -170,6 +190,7 @@ export function AdminShell({
   const { isLoaded: userLoaded } = useUser();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState<boolean>(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,8 +244,25 @@ export function AdminShell({
   return (
     <div style={shellStyle}>
       <style>{adminCss}</style>
-      <AdminSidebar />
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="ad-mobile-overlay"
+          aria-label="Close admin navigation"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+      <AdminSidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
       <main className="ad-main">
+        <div className="ad-mobile-topbar">
+          <button type="button" className="ad-mobile-menu" aria-label="Open admin navigation" onClick={() => setMobileNavOpen(true)}>
+            <Menu strokeWidth={1.75} />
+          </button>
+          <div className="ad-mobile-title">
+            <span>Admin</span>
+            <strong>{title}</strong>
+          </div>
+        </div>
         <div className="ad-topbar">
           <div className="ad-bc">
             <span>Admin</span>
@@ -289,8 +327,8 @@ export function PanelRow({ k, v }: { k: string; v: React.ReactNode }) {
 
 const shellStyle: React.CSSProperties = {
   display: "flex",
-  height: "100vh",
-  minHeight: 700,
+  height: "100dvh",
+  minHeight: "100dvh",
   background: "var(--bg)",
   color: "var(--dtext)",
   fontFamily: "var(--font-dm-sans), var(--font-geist-sans), system-ui, sans-serif",
@@ -307,12 +345,18 @@ export const adminCss = `
   display: flex;
   flex-direction: column;
 }
+.ad-sb-head {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--dborder);
+}
 .ad-sb-logo {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
+  min-width: 0;
   padding: 18px 16px 16px;
-  border-bottom: 1px solid var(--dborder);
   color: inherit;
   text-decoration: none;
   transition: background-color 120ms ease, color 120ms ease;
@@ -389,6 +433,9 @@ export const adminCss = `
 }
 .ad-sb-email { font-size: 12px; color: var(--dmuted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ad-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.ad-mobile-overlay,
+.ad-mobile-topbar,
+.ad-mobile-close { display: none; }
 .ad-topbar { height: 44px; border-bottom: 1px solid var(--dborder); display: flex; align-items: center; padding: 0 20px; gap: 8px; flex-shrink: 0; justify-content: space-between; }
 .ad-bc { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dmuted); }
 .ad-bc-sep { color: var(--dmuted2); }
@@ -457,4 +504,129 @@ export const adminCss = `
 .ad-failure-debug { font-size: 11px; line-height: 1.55; color: var(--dtext); background: var(--surface2); border: 1px solid var(--dborder); border-radius: 6px; padding: 10px 12px; margin-top: 8px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-family: var(--font-geist-mono), monospace; }
 .ad-link { color: var(--daccent); text-decoration: none; }
 .ad-link:hover { text-decoration: underline; }
+@media (max-width: 860px) {
+  .ad-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 80;
+    width: min(84vw, 286px);
+    min-width: 0;
+    transform: translateX(-104%);
+    transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 18px 0 48px color-mix(in srgb, var(--shadow-color) 28%, transparent);
+  }
+  .ad-sidebar[data-mobile-open="true"] { transform: translateX(0); }
+  .ad-mobile-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 79;
+    display: block;
+    border: 0;
+    background: color-mix(in srgb, var(--bg) 42%, transparent);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+  .ad-mobile-close {
+    width: 34px;
+    height: 34px;
+    margin-right: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--dborder);
+    border-radius: 10px;
+    background: var(--surface2);
+    color: var(--dtext);
+  }
+  .ad-mobile-close svg { width: 17px; height: 17px; }
+  .ad-mobile-topbar {
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--dborder);
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .ad-mobile-menu {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--dborder);
+    border-radius: 10px;
+    background: var(--surface2);
+    color: var(--dtext);
+  }
+  .ad-mobile-menu svg { width: 18px; height: 18px; }
+  .ad-mobile-title {
+    display: grid;
+    gap: 0;
+    min-width: 0;
+    color: var(--dmuted);
+    font-size: 11px;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+  .ad-mobile-title strong {
+    color: var(--dtext);
+    font-size: 14px;
+    line-height: 1.3;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .ad-topbar {
+    height: auto;
+    min-height: 44px;
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 10px 14px;
+  }
+  .ad-topbar-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .ad-content {
+    padding: 14px 12px 24px;
+  }
+  .ad-section-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .ad-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ad-filter-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .ad-search,
+  .ad-filter-bar select {
+    width: 100% !important;
+  }
+  .ad-tbl-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ad-tbl-wrap table {
+    min-width: 720px;
+  }
+  .ad-detail-panel {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    z-index: 90;
+    border-left: none;
+  }
+}
+@media (max-width: 520px) {
+  .ad-stat-grid { grid-template-columns: 1fr; }
+  .ad-topbar-right { align-items: flex-start; flex-direction: column; }
+}
 `;
