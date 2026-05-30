@@ -2398,6 +2398,7 @@ export interface FeatureFlagsResponse {
   environment: string;
   provider: string;
   flags: Record<string, boolean>;
+  plan_gates?: Record<string, boolean>;
 }
 
 export async function getFeatureFlags(token: string): Promise<ApiResponse<FeatureFlagsResponse>> {

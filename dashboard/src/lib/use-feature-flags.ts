@@ -7,6 +7,7 @@ import { getFeatureFlags } from "@/lib/api";
 export function useFeatureFlags() {
   const { getToken } = useAuth();
   const [flags, setFlags] = useState<Record<string, boolean>>({});
+  const [planGates, setPlanGates] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -17,13 +18,22 @@ export function useFeatureFlags() {
         setLoading(true);
         const token = await getToken();
         if (!token) {
-          if (!cancelled) setFlags({});
+          if (!cancelled) {
+            setFlags({});
+            setPlanGates({});
+          }
           return;
         }
         const res = await getFeatureFlags(token);
-        if (!cancelled) setFlags(res.data.flags || {});
+        if (!cancelled) {
+          setFlags(res.data.flags || {});
+          setPlanGates(res.data.plan_gates || {});
+        }
       } catch {
-        if (!cancelled) setFlags({});
+        if (!cancelled) {
+          setFlags({});
+          setPlanGates({});
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -34,5 +44,5 @@ export function useFeatureFlags() {
     };
   }, [getToken]);
 
-  return { flags, loading };
+  return { flags, planGates, loading };
 }

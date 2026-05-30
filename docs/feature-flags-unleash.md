@@ -74,14 +74,16 @@ The response is intentionally simple:
     "environment": "production",
     "provider": "unleash",
     "flags": {
-      "tiktok.analytics_scopes": false,
+      "tiktok.analytics_scopes": false
+    },
+    "plan_gates": {
       "inbox": true
     }
   }
 }
 ```
 
-The browser can use this to show or hide UI affordances. The backend must still enforce any sensitive behavior in the API handler or platform adapter that performs the action.
+The browser can use `flags` to show or hide rollout UI and `plan_gates` to avoid starting network work for plan-locked surfaces. The backend must still enforce any sensitive behavior in the API handler or platform adapter that performs the action.
 
 ## Initial Flags
 
@@ -158,22 +160,6 @@ fallback: off in production
 ```
 
 Owner area: growth analytics / Admin. This flag controls lightweight UTM capture on landing visits and authenticated binding from a landing `session_id` to the signed-in user. When disabled, UniPost keeps the existing `r` / referrer landing-source tracking behavior and skips new session-user binding writes. Production can roll back by disabling `attribution.utm_signup_binding_v1`; existing attribution rows remain readable, but no new UTM JSONB values or bindings are recorded while the flag is off.
-
-Create this flag in Unleash:
-
-```text
-inbox
-```
-
-Recommended defaults:
-
-```text
-development: on
-production: on
-fallback: on
-```
-
-Owner area: Inbox / Dashboard. This flag controls the UniPost Inbox surface, including dashboard navigation, unread-count polling, the Inbox WebSocket, and `/v1/inbox/*` API routes. Inbox is already a supported product surface for Instagram comments and DMs, Threads comments, and YouTube comments; the flag exists for rollout control and emergency shutdown rather than for a new hidden feature. Production rollback is to disable `inbox` in the production environment, which hides the dashboard entry point and blocks the backend Inbox API while preserving stored inbox data.
 
 Create this flag in Unleash:
 

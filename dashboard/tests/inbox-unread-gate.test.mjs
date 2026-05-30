@@ -18,11 +18,10 @@ async function loadGateModule() {
 
 const { shouldLoadGlobalInboxUnreadCount } = await loadGateModule();
 
-test("sidebar unread count loads only when profile, flag, and plan all allow inbox", () => {
+test("sidebar unread count loads only when profile and plan allow inbox", () => {
   assert.equal(
     shouldLoadGlobalInboxUnreadCount({
       profileId: "profile_123",
-      inboxFeatureEnabled: true,
       planAllowsInbox: true,
     }),
     true,
@@ -33,7 +32,6 @@ test("sidebar unread count does not load for plans without inbox", () => {
   assert.equal(
     shouldLoadGlobalInboxUnreadCount({
       profileId: "profile_123",
-      inboxFeatureEnabled: true,
       planAllowsInbox: false,
     }),
     false,
@@ -44,9 +42,14 @@ test("sidebar unread count waits until plan allowance has loaded", () => {
   assert.equal(
     shouldLoadGlobalInboxUnreadCount({
       profileId: "profile_123",
-      inboxFeatureEnabled: true,
       planAllowsInbox: null,
     }),
     false,
   );
+});
+
+test("dashboard shell does not fetch global limits just to gate inbox unread state", () => {
+  const source = readFileSync(resolve("src/components/dashboard/shell.tsx"), "utf8");
+  assert.equal(source.includes("getApiLimits"), false);
+  assert.equal(source.includes("FEATURE_FLAG_KEYS.inbox"), false);
 });
