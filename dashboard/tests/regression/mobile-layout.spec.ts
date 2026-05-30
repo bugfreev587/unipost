@@ -1,7 +1,16 @@
 import { expect, test } from "@playwright/test";
 
+// The marketing landing page ("/") is only served on the landing host
+// (e.g. unipost.dev), where the proxy rewrites "/" -> /marketing. On the
+// app host (app.unipost.dev, the default baseURL) "/" is auth-gated and
+// "/marketing" redirects back to it, so the landing page must be reached
+// via an absolute URL on the landing host. Pricing is public on both
+// hosts, so it can use a baseURL-relative path.
+const appBaseURL = process.env.DASHBOARD_BASE_URL || "https://app.unipost.dev";
+const landingBaseURL = appBaseURL.replace("://app.", "://");
+
 const mobilePublicRoutes = [
-  { path: "/", marker: /Post to every social platform/i },
+  { path: `${landingBaseURL}/`, marker: /Post to every social platform/i },
   { path: "/pricing", marker: /Start free/i },
 ];
 
