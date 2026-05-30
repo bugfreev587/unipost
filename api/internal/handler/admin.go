@@ -1006,6 +1006,45 @@ LIMIT $6
 	return out, nil
 }
 
+func adminPostPlatformsSQL(postAlias string) string {
+	return strings.ReplaceAll(`
+COALESCE((
+  SELECT array_agg(DISTINCT post_platforms.platform ORDER BY post_platforms.platform)
+  FROM (
+    SELECT sa_result.platform
+    FROM social_post_results spr_platforms
+    JOIN social_accounts sa_result ON sa_result.id = spr_platforms.social_account_id
+    WHERE spr_platforms.post_id = __POST_ALIAS__.id
+
+    UNION
+
+    SELECT sa_target.platform
+    FROM jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(__POST_ALIAS__.metadata->'platform_posts') = 'array' THEN __POST_ALIAS__.metadata->'platform_posts'
+        ELSE '[]'::jsonb
+      END
+    ) AS target_post(value)
+    JOIN social_accounts sa_target ON sa_target.id = target_post.value->>'account_id'
+
+    UNION
+
+    SELECT sa_legacy.platform
+    FROM jsonb_array_elements_text(
+      CASE
+        WHEN jsonb_typeof(__POST_ALIAS__.metadata->'account_ids') = 'array' THEN __POST_ALIAS__.metadata->'account_ids'
+        ELSE '[]'::jsonb
+      END
+    ) AS target_account(account_id)
+    JOIN social_accounts sa_legacy ON sa_legacy.id = target_account.account_id
+  ) post_platforms
+), '{}')`, "__POST_ALIAS__", postAlias)
+}
+
+func adminPostPlatformFilterSQL(postAlias, param string) string {
+	return param + "::TEXT = '' OR " + param + " = ANY(" + adminPostPlatformsSQL(postAlias) + ")"
+}
+
 func (h *AdminHandler) queryPosts(ctx context.Context, opts adminPostsQuery) ([]adminPostRow, error) {
 	days := opts.Days
 	if days <= 0 || days > 365 {
@@ -1015,6 +1054,7 @@ func (h *AdminHandler) queryPosts(ctx context.Context, opts adminPostsQuery) ([]
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	platformsSQL := adminPostPlatformsSQL("sp")
 
 	rows, err := h.pool.Query(ctx, `
 WITH post_rollup AS (
@@ -1030,7 +1070,7 @@ WITH post_rollup AS (
     sp.created_at,
     sp.scheduled_at,
     sp.published_at,
-    COALESCE(array_remove(array_agg(DISTINCT sa.platform), NULL), '{}') AS platforms,
+    `+platformsSQL+` AS platforms,
     COUNT(spr.id)::BIGINT AS result_count,
     COUNT(*) FILTER (WHERE spr.status = 'published')::BIGINT AS published_result_count,
     COUNT(*) FILTER (WHERE spr.status = 'failed')::BIGINT AS failed_result_count
@@ -1038,7 +1078,6 @@ WITH post_rollup AS (
   JOIN workspaces w ON w.id = sp.workspace_id
   JOIN users u ON u.id = w.user_id
   LEFT JOIN social_post_results spr ON spr.post_id = sp.id
-  LEFT JOIN social_accounts sa ON sa.id = spr.social_account_id
   WHERE u.id != ALL($1)
     AND sp.deleted_at IS NULL
     AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
@@ -1048,7 +1087,7 @@ WITH post_rollup AS (
     AND ($9::TEXT = '' OR sp.workspace_id = $9)
   GROUP BY
     sp.id, u.id, u.email, sp.workspace_id, w.name, sp.status, sp.source,
-    sp.caption, sp.created_at, sp.scheduled_at, sp.published_at
+    sp.caption, sp.metadata, sp.created_at, sp.scheduled_at, sp.published_at
 )
 SELECT
   post_id,
@@ -1136,6 +1175,7 @@ func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPosts
 
 	// Common WHERE used by all three queries. Parameter ordering must
 	// match every Query() call below.
+	platformFilterSQL := adminPostPlatformFilterSQL("sp", "$7")
 	commonWhere := `
   WHERE u.id != ALL($1)
     AND sp.deleted_at IS NULL
@@ -1144,11 +1184,7 @@ func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPosts
     AND ($4::TEXT = '' OR sp.source = $4)
     AND ($5::TEXT = '' OR u.id = $5)
     AND ($6::TEXT = '' OR sp.workspace_id = $6)
-    AND ($7::TEXT = '' OR EXISTS (
-      SELECT 1 FROM social_post_results spr2
-      JOIN social_accounts sa2 ON sa2.id = spr2.social_account_id
-      WHERE spr2.post_id = sp.id AND sa2.platform = $7
-    ))
+    AND (` + platformFilterSQL + `)
     AND (
       $8::TEXT = ''
       OR u.email ILIKE '%' || $8 || '%'
