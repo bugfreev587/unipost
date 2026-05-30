@@ -1,6 +1,9 @@
 # Claude Code workspace metadata.
 .claude/
 
+# OS metadata.
+.DS_Store
+
 # Go build outputs.
 /api/api
 /scripts/sdk-validation/go/unipost-sdk-test
@@ -13,6 +16,9 @@ node_modules/
 # Playwright artifacts.
 playwright-report/
 test-results/
+
+# Local app review recording artifacts.
+.unipost-review-videos/
 
 # Python bytecode caches.
 __pycache__/

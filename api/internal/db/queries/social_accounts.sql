@@ -90,22 +90,22 @@ RETURNING *;
 
 -- name: RefreshConnectedSocialAccount :one
 UPDATE social_accounts
-SET access_token        = $2,
-    refresh_token       = $3,
-    token_expires_at    = $4,
-    external_account_id = $5,
-    account_name        = $6,
-    account_avatar_url  = $7,
-    metadata            = COALESCE($8, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
-    scope               = $9,
-    connection_type     = $10,
-    connect_session_id  = $11,
-    external_user_id    = $12,
-    external_user_email = $13,
+SET access_token        = @access_token,
+    refresh_token       = @refresh_token,
+    token_expires_at    = @token_expires_at,
+    external_account_id = @external_account_id,
+    account_name        = @account_name,
+    account_avatar_url  = @account_avatar_url,
+    metadata            = COALESCE(@metadata::jsonb, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
+    scope               = @scope,
+    connection_type     = @connection_type,
+    connect_session_id  = @connect_session_id,
+    external_user_id    = @external_user_id,
+    external_user_email = @external_user_email,
     status              = 'active',
     disconnected_at     = NULL,
     last_refreshed_at   = NOW()
-WHERE id = $1
+WHERE id = @id
 RETURNING *;
 
 -- name: UpsertManagedSocialAccount :one

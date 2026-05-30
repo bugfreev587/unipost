@@ -1,0 +1,15 @@
+{
+  "name": "unipost-review-agent-source",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "unipost-review-agent": "review-agent/src/index.js"
+  },
+  "files": [
+    "review-agent/src"
+  ],
+  "optionalDependencies": {
+    "playwright": "^1.60.0"
+  }
+}

@@ -1059,6 +1059,61 @@ func main() {
 		return nil
 	})
 
+	test("Analytics.Posts()", func() error {
+		page, err := client.Analytics.Posts(ctx, &unipost.AnalyticsPostsParams{From: from, To: to, Limit: 5})
+		if err != nil {
+			return err
+		}
+		if page == nil || page.Data == nil {
+			return fmt.Errorf("expected analytics posts page")
+		}
+		return nil
+	})
+
+	test("Analytics.ExportPostsCSV()", func() error {
+		csv, err := client.Analytics.ExportPostsCSV(ctx, &unipost.AnalyticsPostsParams{From: from, To: to, Limit: 5})
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(csv, "post_id") {
+			return fmt.Errorf("expected analytics CSV text")
+		}
+		return nil
+	})
+
+	test("Analytics.Platforms()", func() error {
+		rows, err := client.Analytics.Platforms(ctx, &unipost.AnalyticsPlatformParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		if rows == nil {
+			return fmt.Errorf("expected analytics platform rows")
+		}
+		return nil
+	})
+
+	test("Analytics.Platform()", func() error {
+		detail, err := client.Analytics.Platform(ctx, "tiktok", &unipost.AnalyticsPlatformParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		if detail == nil || detail.Platform != "tiktok" {
+			return fmt.Errorf("expected TikTok analytics platform detail")
+		}
+		return nil
+	})
+
+	test("Analytics.Refresh() validation path", func() error {
+		_, err := client.Analytics.Refresh(ctx, &unipost.AnalyticsRefreshParams{Platform: "mastodon", Limit: 1})
+		if err == nil {
+			return fmt.Errorf("expected validation_error for unsupported analytics platform")
+		}
+		if apiErr, ok := err.(*unipost.APIError); ok && apiErr.Code == "validation_error" {
+			return nil
+		}
+		return err
+	})
+
 	test("Usage.Get()", func() error {
 		usage, err := client.Usage.Get(ctx)
 		if err != nil {

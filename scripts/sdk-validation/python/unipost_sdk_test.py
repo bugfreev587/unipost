@@ -351,6 +351,11 @@ def main():
     test("analytics.trend()", lambda: _test_analytics_trend(client))
     test("analytics.by_platform()", lambda: _test_analytics_by_platform(client))
     test("analytics.rollup()", lambda: _test_analytics_rollup(client))
+    test("analytics.posts()", lambda: _test_analytics_posts(client))
+    test("analytics.export_posts_csv()", lambda: _test_analytics_export_posts_csv(client))
+    test("analytics.platforms()", lambda: _test_analytics_platforms(client))
+    test("analytics.platform()", lambda: _test_analytics_platform(client))
+    test("analytics.refresh() validation path", lambda: _test_analytics_refresh_validation(client))
     test("usage.get()", lambda: _test_usage(client))
     if first_profile:
         test("oauth/connect URL lookup()", lambda: _test_oauth_connect_url(client, first_profile.id))
@@ -800,6 +805,59 @@ def _test_analytics_rollup(client):
     )
     assert_true(isinstance(payload.series, list), "Expected rollup series")
     return payload
+
+
+def _test_analytics_posts(client):
+    now = datetime.now(timezone.utc)
+    payload = client.analytics.posts(
+        from_date=(now - timedelta(days=30)).strftime("%Y-%m-%d"),
+        to_date=now.strftime("%Y-%m-%d"),
+        limit=5,
+    )
+    assert_true(isinstance(payload.get("data"), list), "Expected analytics posts page")
+    return payload
+
+
+def _test_analytics_export_posts_csv(client):
+    now = datetime.now(timezone.utc)
+    payload = client.analytics.export_posts_csv(
+        from_date=(now - timedelta(days=30)).strftime("%Y-%m-%d"),
+        to_date=now.strftime("%Y-%m-%d"),
+        limit=5,
+    )
+    assert_true(isinstance(payload, str) and "post_id" in payload, "Expected analytics CSV text")
+    return payload
+
+
+def _test_analytics_platforms(client):
+    now = datetime.now(timezone.utc)
+    payload = client.analytics.platforms(
+        from_date=(now - timedelta(days=30)).strftime("%Y-%m-%d"),
+        to_date=now.strftime("%Y-%m-%d"),
+    )
+    assert_true(isinstance(payload, list), "Expected analytics platforms list")
+    return payload
+
+
+def _test_analytics_platform(client):
+    now = datetime.now(timezone.utc)
+    payload = client.analytics.platform(
+        "tiktok",
+        from_date=(now - timedelta(days=30)).strftime("%Y-%m-%d"),
+        to_date=now.strftime("%Y-%m-%d"),
+    )
+    assert_true(payload.get("platform") == "tiktok", "Expected TikTok analytics platform detail")
+    return payload
+
+
+def _test_analytics_refresh_validation(client):
+    try:
+        client.analytics.refresh(platform="mastodon", limit=1)
+    except UniPostError as exc:
+        if exc.code == "validation_error":
+            return True
+        raise
+    raise ValueError("Expected validation_error for unsupported analytics platform")
 
 
 def _test_usage(client):

@@ -38,30 +38,30 @@ SELECT id, workspace_id, ts, level, status, category, action, source, message,
        endpoint, method, http_status_code, remote_status_code, duration_ms,
        error_code, metadata, request_payload, response_payload, created_at
 FROM integration_logs
-WHERE workspace_id = $1
-  AND ($2::TEXT = '' OR category = $2)
-  AND ($3::TEXT = '' OR action = $3)
-  AND ($4::TEXT = '' OR source = $4)
-  AND ($5::TEXT = '' OR level = $5)
-  AND ($6::TEXT = '' OR status = $6)
-  AND ($7::TEXT = '' OR platform = $7)
-  AND ($8::TEXT = '' OR profile_id = $8)
-  AND ($9::TEXT = '' OR social_account_id = $9)
-  AND ($10::TEXT = '' OR post_id = $10)
-  AND ($11::TEXT = '' OR request_id = $11)
-  AND ($12::TEXT = '' OR error_code = $12)
+WHERE workspace_id = sqlc.arg('workspace_id')::text
+  AND (sqlc.arg('category')::TEXT = '' OR category = sqlc.arg('category'))
+  AND (sqlc.arg('action')::TEXT = '' OR action = sqlc.arg('action'))
+  AND (sqlc.arg('source')::TEXT = '' OR source = sqlc.arg('source'))
+  AND (sqlc.arg('level')::TEXT = '' OR level = sqlc.arg('level'))
+  AND (sqlc.arg('status')::TEXT = '' OR status = sqlc.arg('status'))
+  AND (sqlc.arg('platform')::TEXT = '' OR platform = sqlc.arg('platform'))
+  AND (sqlc.arg('profile_id')::TEXT = '' OR profile_id = sqlc.arg('profile_id'))
+  AND (sqlc.arg('social_account_id')::TEXT = '' OR social_account_id = sqlc.arg('social_account_id'))
+  AND (sqlc.arg('post_id')::TEXT = '' OR post_id = sqlc.arg('post_id'))
+  AND (sqlc.arg('request_id')::TEXT = '' OR request_id = sqlc.arg('request_id'))
+  AND (sqlc.arg('error_code')::TEXT = '' OR error_code = sqlc.arg('error_code'))
   AND (
-    $13::TEXT = ''
-    OR message ILIKE '%' || $13 || '%'
-    OR action ILIKE '%' || $13 || '%'
-    OR request_id ILIKE '%' || $13 || '%'
-    OR post_id ILIKE '%' || $13 || '%'
-    OR error_code ILIKE '%' || $13 || '%'
+    sqlc.arg('query')::TEXT = ''
+    OR message ILIKE '%' || sqlc.arg('query') || '%'
+    OR action ILIKE '%' || sqlc.arg('query') || '%'
+    OR request_id ILIKE '%' || sqlc.arg('query') || '%'
+    OR post_id ILIKE '%' || sqlc.arg('query') || '%'
+    OR error_code ILIKE '%' || sqlc.arg('query') || '%'
   )
-  AND ts >= $14
-  AND ts <= $15
+  AND ts >= sqlc.arg('from_ts')::timestamptz
+  AND ts <= sqlc.arg('to_ts')::timestamptz
 ORDER BY ts DESC, id DESC
-LIMIT $16;
+LIMIT sqlc.arg('limit')::int;
 
 -- name: DeleteExpiredIntegrationLogsForWorkspace :exec
 DELETE FROM integration_logs

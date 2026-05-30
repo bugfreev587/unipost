@@ -498,6 +498,33 @@ public final class UnipostSdkTest {
             ));
             assertTrue(res.isObject(), "Expected rollup object");
         });
+        test("analytics.posts()", () -> {
+            Page<JsonNode> res = client.analytics().posts(map("from", from, "to", to, "limit", 5));
+            assertNotNull(res.getData(), "Expected analytics posts page");
+        });
+        test("analytics.exportPostsCsv()", () -> {
+            String csv = client.analytics().exportPostsCsv(map("from", from, "to", to, "limit", 5));
+            assertTrue(csv.contains("post_id"), "Expected analytics CSV text");
+        });
+        test("analytics.platforms()", () -> {
+            List<JsonNode> res = client.analytics().platforms(analyticsRange);
+            assertNotNull(res, "Expected analytics platforms list");
+        });
+        test("analytics.platform()", () -> {
+            JsonNode res = client.analytics().platform("tiktok", analyticsRange);
+            assertEquals("tiktok", res.path("platform").asText(), "Expected TikTok analytics platform detail");
+        });
+        test("analytics.refresh() validation path", () -> {
+            try {
+                client.analytics().refresh(map("platform", "mastodon", "limit", 1));
+            } catch (APIError error) {
+                if (matchesCode(error, "validation_error")) {
+                    return;
+                }
+                throw error;
+            }
+            throw new AssertionError("Expected validation_error for unsupported analytics platform");
+        });
         test("usage.get()", () -> {
             JsonNode res = client.usage().get();
             assertTrue(res.isObject(), "Expected usage object");

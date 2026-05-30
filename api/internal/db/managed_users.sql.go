@@ -27,6 +27,29 @@ func (q *Queries) CountManagedUsersByProfile(ctx context.Context, profileID stri
 	return total, err
 }
 
+const dismissDisconnectedManagedAccountsByExternalUser = `-- name: DismissDisconnectedManagedAccountsByExternalUser :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dismissed_at', NOW()::TEXT)
+WHERE profile_id = $1
+  AND external_user_id = $2
+  AND connection_type = 'managed'
+  AND (disconnected_at IS NOT NULL OR status = 'disconnected')
+  AND COALESCE(metadata->>'dismissed_at', '') = ''
+`
+
+type DismissDisconnectedManagedAccountsByExternalUserParams struct {
+	ProfileID      string      `json:"profile_id"`
+	ExternalUserID pgtype.Text `json:"external_user_id"`
+}
+
+func (q *Queries) DismissDisconnectedManagedAccountsByExternalUser(ctx context.Context, arg DismissDisconnectedManagedAccountsByExternalUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, dismissDisconnectedManagedAccountsByExternalUser, arg.ProfileID, arg.ExternalUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listManagedAccountsByExternalUser = `-- name: ListManagedAccountsByExternalUser :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 FROM social_accounts
@@ -157,27 +180,4 @@ func (q *Queries) ListManagedUsersByProfile(ctx context.Context, arg ListManaged
 		return nil, err
 	}
 	return items, nil
-}
-
-const dismissDisconnectedManagedAccountsByExternalUser = `-- name: DismissDisconnectedManagedAccountsByExternalUser :execrows
-UPDATE social_accounts
-SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dismissed_at', NOW()::TEXT)
-WHERE profile_id = $1
-  AND external_user_id = $2
-  AND connection_type = 'managed'
-  AND (disconnected_at IS NOT NULL OR status = 'disconnected')
-  AND COALESCE(metadata->>'dismissed_at', '') = ''
-`
-
-type DismissDisconnectedManagedAccountsByExternalUserParams struct {
-	ProfileID      string      `json:"profile_id"`
-	ExternalUserID pgtype.Text `json:"external_user_id"`
-}
-
-func (q *Queries) DismissDisconnectedManagedAccountsByExternalUser(ctx context.Context, arg DismissDisconnectedManagedAccountsByExternalUserParams) (int64, error) {
-	result, err := q.db.Exec(ctx, dismissDisconnectedManagedAccountsByExternalUser, arg.ProfileID, arg.ExternalUserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

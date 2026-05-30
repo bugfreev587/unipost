@@ -32,6 +32,7 @@ UniPost can turn this into a product advantage by doing more of the review prepa
 7. Record a browser-window video that shows the customer's domain, OAuth flow, TikTok creator information, test post creation, publishing, and publish result.
 8. Generate review artifacts: MP4 video, scope evidence, submission notes, and checklist.
 9. Keep sensitive platform login actions under the customer's control. UniPost must not receive platform passwords, 2FA codes, or long-lived local browser sessions.
+10. Make first-run local permission requirements explicit, especially macOS Screen Recording permission.
 
 ## Non-goals
 
@@ -45,6 +46,59 @@ UniPost can turn this into a product advantage by doing more of the review prepa
 - Supporting arbitrary path proxy hosting such as `customer.com/review/tiktok` in v1
 - Supporting TikTok analytics scopes in the MVP recording flow
 - Hiding real review requirements or creating fake demos
+
+## Technical Feasibility Risks
+
+The MVP is feasible, but several pieces are deeper than a normal dashboard feature. These risks must be made explicit before implementation estimates.
+
+### 1. Browser-window recording is the largest engineering risk
+
+The app review video should show the customer domain in the browser address bar. Playwright's built-in video recording is not enough because it captures only the page viewport.
+
+Cross-platform browser-window capture is not solved by bundling `ffmpeg-static` alone:
+
+- macOS: basic ffmpeg display capture can capture a display or device, not a specific browser window. Reliable per-window capture likely requires ScreenCaptureKit or a native helper. A display-crop fallback must track the browser window rectangle and can be invalidated by window movement or overlap.
+- Windows: reliable per-window capture likely requires Windows Graphics Capture or a native helper.
+- Linux: X11 and Wayland behave differently, and Wayland may restrict capture heavily.
+
+Implementation must prototype macOS capture first before committing to the final cross-platform architecture. The first private beta may support macOS only if that is the fastest path to validate customer demand.
+
+### 2. macOS Screen Recording permission breaks a pure "one command" promise
+
+On macOS, Screen Recording permission attaches to the launching app, usually Terminal, iTerm, or the Node runtime. It cannot be granted silently from an `npx` package. A first run may require:
+
+1. run the CLI
+2. see a permission failure or preflight warning
+3. open System Settings
+4. grant Screen Recording permission to the terminal app
+5. restart the terminal
+6. run the command again
+
+The product promise should be "one local command, with a one-time recording permission setup when required", not "one frictionless command." The agent's `doctor` checks must be folded into `run` as a mandatory preflight, and the dashboard should warn macOS users before they leave the browser.
+
+### 3. Redirect URI configuration cannot be fully pre-verified
+
+UniPost cannot read the customer's TikTok developer app configuration. The readiness page cannot truthfully show "redirect URI verified" before the OAuth flow runs.
+
+The readiness gate should collect an attestation:
+
+```text
+I added this redirect URI in TikTok Developer Portal.
+```
+
+The first real verification happens during the recording-time OAuth round trip. Redirect mismatch must be a first-class failure with copy-paste remediation.
+
+### 4. Existing dashboard components may need decoupling
+
+The review app should reuse TikTok posting logic, but dashboard components may depend on Clerk, dashboard layout, workspace context, CSS variables, or dashboard-only assumptions. Implementation should verify component dependencies before estimating reuse.
+
+The likely path is to extract shared review-safe logic and smaller controls from the dashboard compose UI rather than importing the full drawer into the public review shell.
+
+### 5. TikTok review publishes may land as `SELF_ONLY`
+
+During app review, the customer's TikTok app may be unaudited. TikTok posting can still be demonstrated, but the actual publish result may land as `SELF_ONLY` or use the adapter's self-only retry path. This is expected for review/sandbox-style flows and should not be treated as a broken publish.
+
+The review UI should still show the privacy selector, creator information, interaction controls, disclosure controls, and publish result. The submission notes should explain that the app demonstrates Content Posting API use with review-safe visibility.
 
 ## MVP Decision
 
@@ -168,6 +222,8 @@ Automated checks:
 - TLS certificate is issued
 - `https://review.customer.com` loads the UniPost-hosted review app
 
+DNS and TLS readiness should be asynchronous. Verification and certificate issuance can take minutes or longer, especially when DNS propagation, CAA records, or managed certificate issuance slow the path. The customer should be able to close the page and return later. UniPost should persist the readiness state and send an in-app or email notification when the review domain becomes ready.
+
 #### 3. DNS automatic setup
 
 The primary experience should be automatic.
@@ -189,7 +245,8 @@ DNS provider detected: Cloudflare
 7. The provider asks the customer to confirm adding the CNAME and TXT records.
 8. Customer confirms.
 9. Customer returns to UniPost.
-10. UniPost polls DNS and TLS readiness.
+10. UniPost starts background DNS and TLS readiness checks.
+11. UniPost notifies the customer when the domain is ready, instead of requiring the customer to stare at a spinner.
 
 Recommended implementation strategy:
 
@@ -228,17 +285,33 @@ Checks:
 - client key is present
 - client secret is present and stored encrypted
 - TikTok platform credential row exists for the workspace
-- OAuth redirect URI has been copied into the TikTok developer app
+- customer has attested that the OAuth redirect URI was copied into the TikTok developer app
 - selected MVP scopes include `user.info.basic`, `video.publish`, and `video.upload`
 - review flow does not use UniPost quickstart credentials
 
-The page should show the exact redirect URI to copy:
+The MVP should use the existing API-domain OAuth callback path because UniPost already serves token exchange there. The review app should pass a customer-domain return URL so the browser returns to the customer review domain after the callback completes.
+
+The page should show the exact MVP redirect URI to copy:
+
+```text
+https://api.unipost.dev/v1/connect/callback/tiktok
+```
+
+The review flow should redirect back to:
+
+```text
+https://review.customer.com/tiktok/posting
+```
+
+Future versions may support a custom-domain callback such as:
 
 ```text
 https://review.customer.com/oauth/callback/tiktok
 ```
 
-If v1 callback support still routes through the API domain, show the exact callback URI UniPost requires. For the white-label review experience, custom-domain callback is preferred because it keeps the review recording fully customer-domain branded.
+That future path requires either custom-domain reverse proxying to the existing callback handler or first-class callback handling under the review domain. It is not required for the MVP.
+
+The readiness page cannot verify the TikTok developer app settings directly. If the redirect URI is missing or wrong, the OAuth flow should fail during recording with an error that shows the exact URI to add and a "Copy redirect URI" action.
 
 #### 5. Demo flow readiness
 
@@ -271,6 +344,12 @@ Checks:
 - CLI command can be generated
 - upload URL can be generated
 
+For macOS customers, the page should show a preflight warning before displaying the CLI command:
+
+```text
+First run on macOS may ask you to enable Screen Recording for your terminal app. If permission is denied, enable it in System Settings, restart your terminal, then run the command again.
+```
+
 When all prior sections pass, enable:
 
 ```text
@@ -283,15 +362,18 @@ When the customer clicks "Start recording":
 
 1. UniPost creates a `review_job`.
 2. UniPost creates a short-lived one-time agent token.
-3. UniPost displays a command:
+3. UniPost mints a signed review-session token for the review app.
+4. UniPost displays a version-pinned command:
 
 ```bash
-npx --yes @unipost/review-agent@latest run --token revtok_xxx
+npx --yes @unipost/review-agent@0.1.0 run --token revtok_xxx
 ```
 
-4. Customer runs the command locally.
-5. Agent connects to UniPost and claims the job.
-6. Dashboard updates in real time:
+The dashboard may also offer "use latest agent" for support/debugging, but the default command must pin the agent version tested with the generated script. A bad `@latest` publish should not immediately affect every customer.
+
+5. Customer runs the command locally.
+6. Agent connects to UniPost and claims the job.
+7. Dashboard updates in real time:
 
 ```text
 Agent connected
@@ -304,7 +386,59 @@ Uploading demo video
 Complete
 ```
 
+The dashboard is the source of truth for the customer. Terminal output can mirror progress, but important instructions must appear in the dashboard and in the controlled browser window.
+
 The CLI is the primary MVP execution path. A desktop app is explicitly out of scope.
+
+## UX Flow Requirements
+
+The journey crosses multiple surfaces: dashboard, DNS provider, TikTok Developer Portal, terminal, the automated browser, and on macOS, System Settings. The product must actively reduce attention switching.
+
+### Dashboard as command center
+
+The dashboard should always tell the customer where to look next:
+
+- "Return to your DNS provider and confirm the records."
+- "Open your terminal and run this command."
+- "Switch to the browser window the agent opened."
+- "Complete TikTok login in the browser."
+- "Return here to preview your video."
+
+The customer should not need to infer status from terminal logs.
+
+### Manual-login pause overlay
+
+When the agent reaches TikTok login, 2FA, captcha, or OAuth consent, it must inject or display a prominent pause overlay in the controlled browser window:
+
+```text
+Action needed: log in to TikTok
+
+Complete TikTok login and approve access in this browser window.
+UniPost cannot see or store your password or verification code.
+The recording will continue automatically after TikTok sends you back.
+```
+
+The dashboard should show the same state:
+
+```text
+Waiting for TikTok login
+```
+
+MVP decision: keep the overlay in the recorded MP4. It helps reviewers understand why the flow pauses and makes the customer's control over login explicit. Future video post-processing can trim or chapter this pause if needed.
+
+### Re-record loop
+
+Customers will often need to re-record because of login mistakes, unexpected provider screens, or a distracting pause. Re-recording should not redo setup.
+
+Flow:
+
+1. Customer previews the video.
+2. Customer clicks "Record again".
+3. UniPost creates a new `review_job` under the same `review_kit`.
+4. Existing domain, brand, TikTok credentials, and scope mapping remain unchanged.
+5. UniPost mints a fresh one-time agent token and displays the new command.
+
+Failed jobs should show a "Try again" action that generates the correct run or resume command. The customer should not need to remember a job ID or choose between `run` and `resume`.
 
 ## Local Review Agent
 
@@ -324,6 +458,8 @@ unipost-review-agent resume --job rev_xxx
 
 The `npx` command should be the default path shown in the dashboard. The installed binary commands are for repeat runs and support debugging.
 
+The `run` command must always execute `doctor` preflight checks before starting a recording. `doctor` as a standalone command is only for support and troubleshooting.
+
 ### Agent responsibilities
 
 The agent must:
@@ -334,9 +470,11 @@ The agent must:
 - use a clean temporary browser profile
 - set a stable browser window size
 - open the customer review domain
+- add the signed review-session token to the browser context without exposing it in the recorded address bar
 - record the browser window so the address bar is visible
 - automate review app interactions using stable selectors
 - pause when TikTok login, 2FA, captcha, or consent requires user input
+- show a visible pause overlay during user-controlled login steps
 - resume after the user completes the external authorization step
 - publish the test TikTok post through the review app
 - capture screenshots at milestone steps
@@ -358,7 +496,8 @@ MVP technology:
 
 - Node.js + TypeScript
 - Playwright for browser automation
-- `ffmpeg-static` or platform-specific capture helpers for recording
+- native capture helper prototype for browser-window recording, starting on macOS
+- ffmpeg only as a display-crop fallback where reliable enough for private beta
 - WebSocket or SSE for progress updates to the dashboard
 - signed upload URLs for MP4 and evidence artifacts
 - bundled CLI build with `ncc`, `tsup`, or an equivalent packager
@@ -368,6 +507,7 @@ Important recording requirement:
 - Playwright page video alone is not sufficient because it records only the page viewport, not the browser address bar.
 - App review videos should show the customer domain in the browser chrome.
 - The agent should record the browser window or a tightly scoped screen region containing the browser window.
+- The phase 0 prototype must prove the recording path on macOS before broader rollout.
 
 ## Review App
 
@@ -390,6 +530,21 @@ It must:
 - show only the steps needed for app review
 - expose stable `data-review-step` selectors for the local agent
 - show a visible evidence panel or step labels that explain which scope is demonstrated
+
+### Review app session auth
+
+The review app is public on the internet, but the recording flow must not be publicly usable by anyone who guesses the URL. The app needs a signed, short-lived review-session token.
+
+Recommended behavior:
+
+- `review_jobs` mint a derived review-session JWT or opaque session token.
+- The local agent receives that token as part of the review script.
+- The agent injects it into the browser context as an HttpOnly cookie or equivalent first-party session bootstrap before opening the review page.
+- The token is scoped to one `review_job`, one `review_kit`, one workspace, one platform, and one review domain.
+- The token cannot access normal dashboard APIs or arbitrary workspace data.
+- The token expires quickly and is invalidated when the job completes or fails.
+
+If someone opens `https://review.customer.com/tiktok/posting` without an active signed session, the app should show a safe "No active review session" state with no credentials, no account data, and no publish controls.
 
 Example selectors:
 
@@ -422,6 +577,12 @@ Do not reuse as-is:
 
 The review flow must render a narrower review-specific UI around the same posting logic.
 
+The implementation should expect a small refactor:
+
+- move TikTok creator-info loading, privacy option mapping, disclosure validation, and duration checks into review-safe shared modules where possible
+- keep dashboard-specific layout, Clerk assumptions, and drawer state outside the review app
+- render review-specific controls that are optimized for the script and the recorded video
+
 ### TikTok analytics
 
 Out of scope for MVP.
@@ -449,25 +610,31 @@ Example scope evidence:
 ```json
 {
   "platform": "tiktok",
+  "recording_started_at": "2026-05-26T20:30:00Z",
   "scopes": [
     {
       "scope": "user.info.basic",
       "demonstrated_by": "creator_info account identity panel",
-      "video_marker": "00:42"
+      "video_marker": "00:42",
+      "event_elapsed_ms": 42000
     },
     {
       "scope": "video.publish",
       "demonstrated_by": "Publish test video action",
-      "video_marker": "01:35"
+      "video_marker": "01:35",
+      "event_elapsed_ms": 95000
     },
     {
       "scope": "video.upload",
       "demonstrated_by": "Test video upload and publish flow",
-      "video_marker": "01:14"
+      "video_marker": "01:14",
+      "event_elapsed_ms": 74000
     }
   ]
 }
 ```
+
+Video markers require the recorder and step runner to share a clock. The agent should emit `recording_started_at` and per-step elapsed milliseconds so UniPost can correlate script events to MP4 timestamps.
 
 ## Data Model
 
@@ -525,6 +692,7 @@ Fields:
 - `failed_at`
 - `failure_reason`
 - `agent_version`
+- `review_session_token_id`
 - `video_file_id`
 - `artifacts_json`
 - `created_at`
@@ -541,6 +709,25 @@ Fields:
 - `event_type`
 - `message`
 - `metadata`
+- `elapsed_ms`
+- `created_at`
+
+### `review_sessions`
+
+Tracks a short-lived session that allows the review app to load during a specific recording job.
+
+Fields:
+
+- `id`
+- `review_job_id`
+- `review_kit_id`
+- `workspace_id`
+- `platform`
+- `review_domain`
+- `token_hash`
+- `expires_at`
+- `claimed_at`
+- `revoked_at`
 - `created_at`
 
 ## API Surface
@@ -577,9 +764,28 @@ Agent tokens must be scoped to:
 
 They must not permit arbitrary workspace API actions.
 
+Review-session tokens are separate from agent tokens. The agent token lets the CLI fetch scripts, append events, and upload artifacts. The review-session token lets the browser load the public review app for the active job.
+
 ## Review Script Contract
 
 The agent should not infer the whole flow from natural language. UniPost should generate a structured review script.
+
+The script action set must be a closed enum. The agent must reject any unknown action.
+
+Allowed MVP actions:
+
+- `goto`
+- `click`
+- `fill`
+- `assert_visible`
+- `assert_url_contains`
+- `manual_pause`
+- `wait_for_navigation`
+- `wait_for_network_idle`
+- `screenshot`
+- `emit_marker`
+
+No arbitrary JavaScript execution is allowed in MVP review scripts.
 
 Example:
 
@@ -587,7 +793,13 @@ Example:
 {
   "job_id": "revjob_123",
   "platform": "tiktok",
+  "agent_version": "0.1.0",
   "start_url": "https://review.customer.com/tiktok/posting",
+  "review_session": {
+    "delivery": "cookie",
+    "cookie_name": "__unipost_review_session",
+    "expires_at": "2026-05-26T21:00:00Z"
+  },
   "recording": {
     "window_width": 1440,
     "window_height": 1000,
@@ -610,6 +822,7 @@ Example:
       "id": "wait_for_oauth",
       "action": "manual_pause",
       "resume_when_url_contains": "/tiktok/posting",
+      "overlay": "Log in to TikTok and approve access. UniPost cannot see or store your password or verification code.",
       "marker": "Customer completes TikTok login and consent"
     },
     {
@@ -641,6 +854,7 @@ Security requirements:
 - Review agent tokens expire quickly, recommended TTL 30 minutes.
 - Tokens are single-use after a job is claimed.
 - Tokens are scoped only to the current review job.
+- Review-session tokens are separate from agent tokens and expire/revoke with the job.
 - Platform credentials remain server-side and encrypted at rest.
 - Platform passwords, 2FA codes, cookies, and browser storage are not uploaded.
 - The agent records only the controlled browser window or explicit capture region.
@@ -662,7 +876,7 @@ The readiness page should block recording when:
 - TLS is not issued
 - review domain is unreachable
 - TikTok credentials are missing
-- redirect URI is not configured or callback fails
+- redirect URI attestation is missing
 - required scopes are missing from the planned review kit
 - test media is unavailable
 - review app health check fails
@@ -674,12 +888,20 @@ The agent should fail with actionable errors when:
 - browser cannot launch
 - recording permission is unavailable
 - review domain cannot load
+- review-session token is missing, expired, or rejected
 - OAuth never returns to the review app
+- TikTok rejects the OAuth flow because the redirect URI was not added correctly
 - TikTok creator_info fails
 - publish action fails
 - upload of MP4 fails
 
-Every failure should be visible in the dashboard with a suggested next action.
+Every failure should be visible in the dashboard with a suggested next action. Redirect URI failures should show the exact URI to add in TikTok Developer Portal and a "Copy redirect URI" action.
+
+Failed jobs should expose recovery actions in the dashboard:
+
+- "Retry from beginning" for clean re-records
+- "Resume recording" only when the agent can safely continue from a known checkpoint
+- "Copy run command" or "Copy resume command" without requiring the customer to remember a job ID
 
 ## Success Metrics
 
@@ -697,6 +919,8 @@ Technical success:
 - DNS verification latency
 - TLS issuance latency
 - agent install/start success rate
+- agent preflight success rate
+- macOS recording permission completion rate
 - recording upload success rate
 - publish demo success rate
 - percentage of failures with actionable error classification
@@ -707,7 +931,9 @@ Technical success:
 
 - Hardcode one UniPost-controlled test domain.
 - Generate a TikTok review script.
-- Run local CLI agent manually.
+- Run local CLI agent manually on macOS first.
+- Prove browser-window recording with the address bar visible.
+- Document the first-run Screen Recording permission flow.
 - Produce a demo MP4 for UniPost's own TikTok app review flow.
 
 ### Phase 1 - Private beta
@@ -715,7 +941,8 @@ Technical success:
 - Support one customer review subdomain per workspace.
 - Support manual DNS setup and verification.
 - Support TikTok Content Posting API review flow.
-- Support local CLI recording.
+- Support local CLI recording on the proven OS target from phase 0.
+- Use the existing API-domain OAuth callback and redirect back to the customer review domain.
 - Generate MP4 and submission notes.
 
 ### Phase 2 - DNS automation
@@ -740,20 +967,25 @@ MVP is complete when:
 3. A customer can upload TikTok app credentials.
 4. UniPost can create a TikTok review kit that uses customer credentials.
 5. "Start recording" stays disabled until all required readiness checks pass.
-6. The dashboard shows an `npx` command for the local review agent.
-7. The local review agent opens a headed browser at the customer review domain.
-8. The recorded video includes the browser address bar with the customer domain.
-9. The agent pauses for user-controlled TikTok login and OAuth consent.
-10. The review flow fetches and displays TikTok creator information.
-11. The review flow publishes a prepared TikTok test video through UniPost.
-12. The agent uploads a completed MP4 and execution evidence.
-13. The dashboard shows the final video and downloadable review artifacts.
-14. No platform password, 2FA code, or cookie is uploaded to UniPost.
+6. The dashboard treats redirect URI setup as customer attestation and handles mismatch as a recording-time failure.
+7. The dashboard shows a version-pinned `npx` command for the local review agent.
+8. The agent preflight explains macOS Screen Recording permission when required.
+9. The local review agent opens a headed browser at the customer review domain.
+10. The review app requires a signed active review-session token and shows a safe inactive state without one.
+11. The recorded video includes the browser address bar with the customer domain.
+12. The agent pauses for user-controlled TikTok login and OAuth consent.
+13. The pause state is visible in the browser and dashboard.
+14. The review flow fetches and displays TikTok creator information.
+15. The review flow publishes a prepared TikTok test video through UniPost, with review-safe `SELF_ONLY` behavior treated as expected.
+16. The agent uploads a completed MP4 and execution evidence with elapsed-time markers.
+17. The dashboard shows the final video and downloadable review artifacts.
+18. Re-recording creates a fresh job/token without redoing domain, brand, or credential setup.
+19. No platform password, 2FA code, or cookie is uploaded to UniPost.
 
 ## Open Questions
 
-1. Should the MVP require custom-domain OAuth callback, or can the first private beta use an API-domain callback while still hosting the review app under the customer domain?
-2. Which DNS automation provider should UniPost choose first: Entri Connect, Domain Connect, or direct integrations with top DNS providers?
-3. What artifact retention period should apply by default: 30 days, 90 days, or until customer deletion?
-4. Should UniPost support user-uploaded test videos in MVP, or use only a UniPost-provided neutral test video?
-5. Should the generated video include automated captions in MVP, or should captions be a v1.1 enhancement?
+1. Which DNS automation provider should UniPost choose first: Entri Connect, Domain Connect, or direct integrations with top DNS providers?
+2. What artifact retention period should apply by default: 30 days, 90 days, or until customer deletion?
+3. Should UniPost support user-uploaded test videos in MVP, or use only a UniPost-provided neutral test video?
+4. Should the generated video include automated captions in MVP, or should captions be a v1.1 enhancement?
+5. Which OS should private beta officially support first after the macOS recording prototype is complete?

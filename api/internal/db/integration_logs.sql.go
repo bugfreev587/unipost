@@ -202,7 +202,7 @@ SELECT id, workspace_id, ts, level, status, category, action, source, message,
        endpoint, method, http_status_code, remote_status_code, duration_ms,
        error_code, metadata, request_payload, response_payload, created_at
 FROM integration_logs
-WHERE workspace_id = $1
+WHERE workspace_id = $1::text
   AND ($2::TEXT = '' OR category = $2)
   AND ($3::TEXT = '' OR action = $3)
   AND ($4::TEXT = '' OR source = $4)
@@ -222,10 +222,10 @@ WHERE workspace_id = $1
     OR post_id ILIKE '%' || $13 || '%'
     OR error_code ILIKE '%' || $13 || '%'
   )
-  AND ts >= $14
-  AND ts <= $15
+  AND ts >= $14::timestamptz
+  AND ts <= $15::timestamptz
 ORDER BY ts DESC, id DESC
-LIMIT $16
+LIMIT $16::int
 `
 
 type ListIntegrationLogsParams struct {

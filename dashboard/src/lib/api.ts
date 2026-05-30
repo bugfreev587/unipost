@@ -425,6 +425,203 @@ export async function deletePlatformCredential(
   );
 }
 
+// App Review Autopilot (workspace-scoped)
+
+export interface ReviewDNSRecord {
+  type: "CNAME" | "TXT" | string;
+  name: string;
+  value: string;
+}
+
+export interface ReviewDomain {
+  id: string;
+  domain: string;
+  status: string;
+  cname_target: string;
+  tls_status: string;
+  dns_records: ReviewDNSRecord[];
+}
+
+export interface ReviewKit {
+  id: string;
+  platform: string;
+  use_case: "content_posting" | "analytics" | "mixed" | string;
+  review_domain_id: string;
+  required_scopes: string[];
+  status: string;
+}
+
+export interface TikTokScopeTemplate {
+  scope: string;
+  label: string;
+  use_case: "content_posting" | "analytics" | string;
+  primary_surface: string;
+  required_evidence: string;
+}
+
+export interface TikTokDemoPlanStep {
+  key: string;
+  title: string;
+  surface: string;
+  evidence: string;
+  scopes: string[];
+  user_action: boolean;
+}
+
+export interface TikTokDemoPlanSegment {
+  key: string;
+  title: string;
+  filename: string;
+  description: string;
+  primary_surface: string;
+  scopes: string[];
+  estimated_duration_sec: number;
+  steps: TikTokDemoPlanStep[];
+}
+
+export interface TikTokDemoPlan {
+  template_version: string;
+  platform: "tiktok";
+  use_case: "content_posting" | "analytics" | "mixed";
+  requested_scopes: string[];
+  oauth_prelude: {
+    required: boolean;
+    title: string;
+    instructions: string[];
+  };
+  recording: {
+    resolution: string;
+    fps: number;
+    max_file_size_mb: number;
+    show_address_bar: boolean;
+    split_automatically: boolean;
+  };
+  segments: TikTokDemoPlanSegment[];
+  scope_coverage: Array<{
+    scope: string;
+    segments: string[];
+    evidence: string[];
+  }>;
+  warnings: string[];
+}
+
+export interface ReviewJobEvent {
+  event_type: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  elapsed_ms: number;
+  created_at?: string;
+}
+
+export interface ReviewVideoArtifact {
+  segment_key?: string;
+  filename?: string;
+  file_id: string;
+  download_url?: string;
+  format?: string;
+  duration_sec?: number;
+  size_bytes?: number;
+  scopes?: string[];
+}
+
+export interface ReviewJob {
+  id: string;
+  review_kit_id: string;
+  platform: string;
+  status: string;
+  agent_version: string;
+  agent_command?: string;
+  token_expires_at?: string;
+  video_file_id?: string;
+  video_download_url?: string;
+  video_artifacts?: ReviewVideoArtifact[];
+  failure_reason?: string;
+  artifacts?: Record<string, unknown>;
+  events?: ReviewJobEvent[];
+}
+
+export interface ReviewState {
+  domain?: ReviewDomain;
+  kit?: ReviewKit;
+  job?: ReviewJob;
+}
+
+export async function getReviewState(
+  token: string
+): Promise<ApiResponse<ReviewState>> {
+  return request(`/v1/review/state`, token);
+}
+
+export async function getTikTokReviewScopeTemplates(
+  token: string
+): Promise<ApiResponse<TikTokScopeTemplate[]>> {
+  return request(`/v1/review/tiktok/scope-templates`, token);
+}
+
+export async function createTikTokReviewDemoPlan(
+  token: string,
+  data: { scopes: string[] }
+): Promise<ApiResponse<TikTokDemoPlan>> {
+  return request(`/v1/review/tiktok/demo-plan`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createReviewDomain(
+  token: string,
+  data: { domain: string; provider?: string }
+): Promise<ApiResponse<ReviewDomain>> {
+  return request(`/v1/review/domains`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function verifyReviewDomain(
+  token: string,
+  domainId: string
+): Promise<ApiResponse<ReviewDomain>> {
+  return request("/v1/review/domains/" + domainId + "/verify", token, {
+    method: "POST",
+  });
+}
+
+export async function createReviewKit(
+  token: string,
+  data: {
+    platform: "tiktok";
+    use_case: "content_posting" | "analytics" | "mixed";
+    review_domain_id: string;
+    redirect_uri_attested: boolean;
+    brand_snapshot?: Record<string, unknown>;
+    profile_id?: string;
+    required_scopes: string[];
+  }
+): Promise<ApiResponse<ReviewKit>> {
+  return request(`/v1/review/kits`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createReviewJob(
+  token: string,
+  data: { review_kit_id: string }
+): Promise<ApiResponse<ReviewJob>> {
+  return request(`/v1/review/jobs`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getReviewJob(
+  token: string,
+  jobId: string
+): Promise<ApiResponse<ReviewJob>> {
+  return request(`/v1/review/jobs/${jobId}`, token);
+}
+
 // API Keys (workspace-scoped)
 
 export async function listApiKeys(

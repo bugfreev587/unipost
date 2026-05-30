@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 
 import { AdminShell, StatCard, bucketByLocalDay, fmtNumber, fmtRelative } from "../_components/admin-ui";
+import { fmtAdminPostTimelineDate, getAdminPostPublishTimeline } from "./timeline";
 
 const STATUS_OPTIONS = ["all", "draft", "scheduled", "publishing", "published", "failed", "canceled", "archived"] as const;
 const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky", "facebook"] as const;
@@ -354,20 +355,22 @@ export default function AdminPostsPage() {
               <th>Workspace</th>
               <th>User</th>
               <th>Created</th>
+              <th>Publish Time</th>
               <th>Delivery</th>
             </tr>
           </thead>
           <tbody>
             {loading && posts.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
+              <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
             ) : posts.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No posts matched the current filters.</td></tr>
+              <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No posts matched the current filters.</td></tr>
             ) : (
               posts.map((post) => {
                 const statusClass =
                   post.status === "failed" ? "ad-badge ad-b-blue" :
                   post.status === "published" ? "ad-badge ad-b-gray" :
                   "ad-badge ad-b-gray";
+                const publishTimeline = getAdminPostPublishTimeline(post);
                 return (
                   <tr key={post.post_id}>
                     <td style={{ minWidth: 280 }}>
@@ -403,7 +406,18 @@ export default function AdminPostsPage() {
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       <div>{fmtRelative(post.created_at)}</div>
-                      {post.scheduled_at ? <div className="ad-mono" style={{ marginTop: 3 }}>sched {fmtRelative(post.scheduled_at)}</div> : null}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap", minWidth: 132 }}>
+                      {publishTimeline ? (
+                        <>
+                          <div>{fmtRelative(publishTimeline.at)}</div>
+                          <div className="ad-mono" style={{ marginTop: 3 }}>
+                            {publishTimeline.label} · {fmtAdminPostTimelineDate(publishTimeline.at)}
+                          </div>
+                        </>
+                      ) : (
+                        <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>
+                      )}
                     </td>
                     <td>
                       <div style={{ fontSize: 11.5 }}>
