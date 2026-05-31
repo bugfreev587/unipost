@@ -85,6 +85,7 @@ export type TimedCalendarEventLayout = {
 const IN_PROGRESS_STATUSES = new Set(["queued", "dispatching", "retrying", "processing"]);
 const FAILED_STATUSES = new Set(["failed", "partial"]);
 const WHEEL_NAVIGATION_THRESHOLD = 80;
+const SIDE_POPOVER_ARROW_EDGE_INSET = 2;
 
 const PROFILE_COLOR_PALETTE = [
   "#ff453a",
@@ -463,7 +464,10 @@ export function getBoundedCalendarPopoverPlacement({
 
   if (placement.side === "right" || placement.side === "left") {
     const arrowHeight = Math.min(desiredHeight, availableHeight);
-    const arrowY = Math.round(clamp(anchorCenterY - top, arrowInset, Math.max(arrowInset, arrowHeight - arrowInset)));
+    const sideArrowInset = Math.min(arrowInset, SIDE_POPOVER_ARROW_EDGE_INSET);
+    const arrowY = Math.round(
+      clamp(anchorCenterY - top, sideArrowInset, Math.max(sideArrowInset, arrowHeight - sideArrowInset)),
+    );
     return {
       ...placement,
       top: Math.round(top),

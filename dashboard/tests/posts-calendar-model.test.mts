@@ -357,8 +357,31 @@ test("getBoundedCalendarPopoverPlacement keeps side arrows inside anchor-aligned
   assert.equal(placement.side, "right");
   assert.equal(placement.top, 268);
   assert.equal(placement.availableHeight, 620);
-  assert.equal(placement.arrowY, 602);
-  assert.equal(placement.transformOrigin, "left 602px");
+  assert.equal(placement.arrowY, 603);
+  assert.equal(placement.transformOrigin, "left 603px");
+});
+
+test("getBoundedCalendarPopoverPlacement keeps side arrows attached to lower timed posts", () => {
+  const placement = getBoundedCalendarPopoverPlacement({
+    anchor: {
+      left: 652.732666015625,
+      top: 866.1171875,
+      right: 721.357666015625,
+      bottom: 906.5625,
+      width: 68.625,
+      height: 40.4453125,
+    },
+    viewport: { width: 1728, height: 907 },
+    popover: { width: 560, height: 420 },
+    bounds: { left: 489, top: 144, right: 1707, bottom: 888, width: 1218, height: 744 },
+    verticalStrategy: "anchor",
+  });
+
+  assert.equal(placement.side, "right");
+  assert.equal(placement.top, 468);
+  assert.equal(placement.availableHeight, 420);
+  assert.equal(placement.arrowY, 418);
+  assert.equal(placement.transformOrigin, "left 418px");
 });
 
 function formatDate(date: Date): string {
