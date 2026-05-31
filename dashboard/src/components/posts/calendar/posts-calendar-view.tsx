@@ -820,7 +820,7 @@ export function PostsCalendarView() {
       </aside>
 
       <div className="posts-calendar-main">
-        <div className="posts-calendar-topbar">
+        <div className={`posts-calendar-topbar ${calendarMode === "day" ? "with-divider" : ""}`}>
           <div className="posts-calendar-title-block">
             <h1>{calendarTitle}</h1>
             <span>{calendarSubtitle}</span>
@@ -1832,7 +1832,8 @@ const CALENDAR_CSS = `
 .posts-calendar-status-option:hover{background:color-mix(in srgb,var(--surface3) 66%,transparent);color:var(--dtext)}
 .posts-calendar-status-option.active{background:color-mix(in srgb,var(--daccent) 13%,transparent);color:var(--dtext);font-weight:650}
 .posts-calendar-main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
-.posts-calendar-topbar{min-height:76px;padding:15px 18px;border-bottom:1px solid var(--dborder);display:flex;align-items:center;justify-content:space-between;gap:18px}
+.posts-calendar-topbar{min-height:76px;padding:15px 18px;display:flex;align-items:center;justify-content:space-between;gap:18px}
+.posts-calendar-topbar.with-divider{border-bottom:1px solid var(--dborder)}
 .posts-calendar-title-block{min-width:0}
 .posts-calendar-title-block h1{font-size:32px;line-height:1.05;font-weight:760;color:var(--dtext);margin:0;letter-spacing:0}
 .posts-calendar-title-block span{display:block;margin-top:5px;font-size:13px;color:var(--dmuted2)}

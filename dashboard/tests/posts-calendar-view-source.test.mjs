@@ -136,6 +136,17 @@ test("Posts calendar week view removes all-day row from the week grid", async ()
   assert.match(source, /\.posts-calendar-week-time-gutter\{[^}]*display:block/);
 });
 
+test("Posts calendar month and week headers avoid duplicate top dividers", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const topbarCss = source.match(/\.posts-calendar-topbar\{[^}]*\}/)?.[0] ?? "";
+
+  assert.match(source, /className=\{`posts-calendar-topbar \$\{calendarMode === "day" \? "with-divider" : ""\}`\}/);
+  assert.doesNotMatch(topbarCss, /border-bottom/);
+  assert.match(source, /\.posts-calendar-topbar\.with-divider\{border-bottom:1px solid var\(--dborder\)\}/);
+  assert.match(source, /\.posts-calendar-month-weekdays\{[^}]*border-bottom:1px solid var\(--dborder\)/);
+  assert.match(source, /\.posts-calendar-week-header\{[^}]*border-bottom:1px solid var\(--dborder\)/);
+});
+
 test("Posts calendar swipe handlers avoid passive listener preventDefault warnings", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const wheelHandler = source.slice(
