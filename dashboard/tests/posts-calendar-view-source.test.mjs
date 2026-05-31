@@ -248,7 +248,8 @@ test("Posts calendar details popover mirrors list view post details", async () =
   assert.match(detailsHelpers, /Published successfully\./);
   assert.match(detailsHelpers, /Submitted settings/);
   assert.match(detailsHelpers, /buildSubmittedRows/);
-  assert.match(source, /\.posts-calendar-detail-grid/);
+  assert.match(source, /\.posts-calendar-detail-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(detailsHelpers, /label="Caption"[^\n]+wide/);
   assert.match(source, /\.posts-calendar-result-card/);
   assert.match(source, /\.posts-calendar-submitted-panel/);
 });

@@ -1210,7 +1210,7 @@ function CalendarPostDetailGrid({
   const mode = post.scheduled_at ? "Scheduled" : post.status === "draft" ? "Draft" : "Immediate";
   return (
     <div className="posts-calendar-detail-grid">
-      <CalendarPostMetaCard label="Caption" value={post.caption || "(no caption)"} wide />
+      <CalendarPostMetaCard label="Caption" value={post.caption || "(no caption)"} />
       <CalendarPostMetaCard label="Mode" value={mode} />
       <CalendarPostMetaCard label="Status" value={meta.label} />
       <CalendarPostMetaCard label="Created" value={formatCalendarDetailDate(post.created_at)} />
@@ -1223,14 +1223,12 @@ function CalendarPostDetailGrid({
 function CalendarPostMetaCard({
   label,
   value,
-  wide = false,
 }: {
   label: string;
   value: ReactNode;
-  wide?: boolean;
 }) {
   return (
-    <div className={`posts-calendar-detail-card${wide ? " wide" : ""}`}>
+    <div className="posts-calendar-detail-card">
       <div>{label}</div>
       <span>{value}</span>
     </div>
@@ -2217,11 +2215,10 @@ const CALENDAR_CSS = `
 .posts-calendar-popover-status{display:inline-flex;align-items:center;height:19px;border-radius:5px;padding:0 5px;margin-right:7px;background:color-mix(in srgb,var(--event-color) 20%,transparent);color:color-mix(in srgb,var(--event-color) 80%,var(--dtext));font-size:10px;font-weight:800;letter-spacing:.04em}
 .posts-calendar-popover-platforms{display:flex;flex-wrap:wrap;gap:6px}
 .posts-calendar-popover-platforms span{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--dborder);background:var(--surface2);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:650}
-.posts-calendar-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}
-.posts-calendar-detail-card{min-width:0;border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);padding:10px 11px}
-.posts-calendar-detail-card.wide{grid-column:1/-1}
-.posts-calendar-detail-card div{margin-bottom:6px;color:var(--dmuted2);font-size:10px;font-weight:780;letter-spacing:.08em;text-transform:uppercase}
-.posts-calendar-detail-card span{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--dtext);font-size:13px;line-height:1.35}
+.posts-calendar-detail-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:12px}
+.posts-calendar-detail-card{min-width:0;min-height:68px;border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);padding:8px 9px}
+.posts-calendar-detail-card div{margin-bottom:5px;color:var(--dmuted2);font-size:10px;font-weight:780;letter-spacing:.08em;text-transform:uppercase}
+.posts-calendar-detail-card span{display:-webkit-box;min-width:0;overflow:hidden;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:var(--dtext);font-size:12px;line-height:1.3}
 .posts-calendar-results{margin-top:16px}
 .posts-calendar-results-label{margin-bottom:9px;color:var(--dmuted2);font-size:11px;font-weight:780;letter-spacing:.08em;text-transform:uppercase}
 .posts-calendar-results-grid{display:flex;flex-direction:column;gap:9px}
