@@ -2,12 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildMonthGrid,
+  buildRollingMonthGrid,
+  buildRollingWeekDays,
   buildWeekDays,
   bucketPostByLocalDay,
   getCalendarPostMinuteOfDay,
   getAnchoredPopoverPlacement,
   getBoundedCalendarPopoverPlacement,
   getAccumulatedWheelNavigationIntent,
+  getCalendarSnapOffset,
+  getCalendarSnapSteps,
   getTimedEventLayouts,
   getSwipeNavigationIntent,
   getTimedEventTop,
@@ -16,6 +20,7 @@ import {
   getPostStatusGroup,
   getProfileCalendarColor,
   shiftCalendarDateBySwipe,
+  shiftCalendarDateBySnapSteps,
   parseCalendarViewMode,
   shouldShowPostForStatusFilter,
 } from "../src/components/posts/calendar/calendar-model.ts";
@@ -42,6 +47,16 @@ test("buildMonthGrid can roll one visible week without jumping a full month", ()
   assert.equal(grid[41].dateKey, "2026-06-13");
   assert.equal(grid[0].isCurrentMonth, true);
   assert.equal(grid[41].isCurrentMonth, false);
+});
+
+test("rolling month grid buffers one week above and below the visible window", () => {
+  const grid = buildRollingMonthGrid(new Date(2026, 4, 1), 1, 6, 1, new Date(2026, 4, 31));
+
+  assert.equal(grid.length, 56);
+  assert.equal(grid[0].dateKey, "2026-04-19");
+  assert.equal(grid[7].dateKey, "2026-04-26");
+  assert.equal(grid[49].dateKey, "2026-06-07");
+  assert.equal(grid[55].dateKey, "2026-06-13");
 });
 
 test("bucketPostByLocalDay uses scheduled, then published, then created timestamps", () => {
@@ -106,6 +121,17 @@ test("buildWeekDays returns a rolling seven-day window anchored to the selected 
   assert.equal(week[2].dateKey, "2026-04-10");
   assert.equal(week[6].dateKey, "2026-04-14");
   assert.equal(week[2].isToday, true);
+});
+
+test("rolling week days buffer the previous and next day for snap scrolling", () => {
+  const week = buildRollingWeekDays(new Date(2026, 4, 31), 1, 7, 1, new Date(2026, 4, 31));
+
+  assert.equal(week.length, 9);
+  assert.equal(week[0].dateKey, "2026-05-30");
+  assert.equal(week[1].dateKey, "2026-05-31");
+  assert.equal(week[7].dateKey, "2026-06-06");
+  assert.equal(week[8].dateKey, "2026-06-07");
+  assert.equal(week[1].isToday, true);
 });
 
 test("getCalendarPostMinuteOfDay maps post timestamps onto a day timeline", () => {
@@ -219,6 +245,19 @@ test("swipe date shifts use week granularity in month view and day granularity i
   assert.equal(formatDate(shiftCalendarDateBySwipe("week", new Date(2026, 4, 1), 1)), "2026-05-02");
   assert.equal(formatDate(shiftCalendarDateBySwipe("week", new Date(2026, 4, 1), -1)), "2026-04-30");
   assert.equal(formatDate(shiftCalendarDateBySwipe("day", new Date(2026, 4, 1), 1)), "2026-05-01");
+});
+
+test("calendar snap steps choose the nearest date line and clamp to buffered cells", () => {
+  assert.equal(getCalendarSnapSteps(-61, 100), 1);
+  assert.equal(getCalendarSnapSteps(-50, 100), 1);
+  assert.equal(getCalendarSnapSteps(-49, 100), 0);
+  assert.equal(getCalendarSnapSteps(61, 100), -1);
+  assert.equal(getCalendarSnapSteps(50, 100), -1);
+  assert.equal(getCalendarSnapSteps(-260, 100), 1);
+  assert.equal(getCalendarSnapOffset(1, 100), -100);
+  assert.equal(getCalendarSnapOffset(-1, 100), 100);
+  assert.equal(formatDate(shiftCalendarDateBySnapSteps("month", new Date(2026, 4, 1), 1)), "2026-05-08");
+  assert.equal(formatDate(shiftCalendarDateBySnapSteps("week", new Date(2026, 4, 1), -1)), "2026-04-30");
 });
 
 test("parseCalendarViewMode accepts URL view modes and falls back to month", () => {
