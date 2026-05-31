@@ -147,6 +147,7 @@ test("Posts calendar month and week headers place dividers per view", async () =
   assert.doesNotMatch(source.match(/\.posts-calendar-month-weekdays\{[^}]*\}/)?.[0] ?? "", /border-top/);
   assert.match(source, /\.posts-calendar-week-header\{[^}]*border-top:1px solid var\(--dborder\)/);
   assert.match(source, /\.posts-calendar-week-header\{[^}]*border-bottom:1px solid var\(--dborder\)/);
+  assert.match(source, /\.posts-calendar-week-columns\{[^}]*border-top:1px solid var\(--dborder\)/);
 });
 
 test("Posts calendar day view removes all-day row and its top divider", async () => {
