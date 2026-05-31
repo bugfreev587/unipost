@@ -26,7 +26,17 @@ export default function BrandingPage() {
 
       <h2 id="update">Update branding</h2>
       <p>PATCH is partial — send only the fields you want to change. Each field accepts an empty string to unset (falls back to UniPost defaults).</p>
-      <p>SDK support for profile branding management is coming soon. For now, configure this endpoint from the dashboard or call the REST route directly.</p>
+      <p>The dashboard White-label page uses this endpoint for display name, color, and attribution. Logo files can be uploaded directly from the same dashboard page or through the multipart logo endpoint below.</p>
+
+      <h2 id="logo-upload">Upload or remove a logo</h2>
+      <p>Use the logo upload endpoint when you have a local PNG or JPG file and do not want to host it yourself. UniPost stores the asset in R2, writes the returned public URL to <code>branding_logo_url</code>, and keeps the internal storage key private. R2-managed profile branding objects are retained indefinitely; replacing or removing a logo only changes the profile pointer.</p>
+      <DocsTable
+        columns={["Endpoint", "Body", "Result"]}
+        rows={[
+          ["POST /v1/profiles/{id}/branding/logo", "multipart/form-data with file", "Stores PNG/JPG logo and returns the updated profile"],
+          ["DELETE /v1/profiles/{id}/branding/logo", "No body", "Clears the profile logo fields; the R2 object is retained"],
+        ]}
+      />
 
       <h2 id="fields">Field validation</h2>
       <DocsTable
@@ -34,8 +44,13 @@ export default function BrandingPage() {
         rows={[
           [
             "branding_logo_url",
-            "HTTPS only; common image MIME types; ≤ 2 KB URL length",
-            "The Connect page runs on HTTPS; mixed content would be blocked by the browser",
+            "Set by logo upload, or HTTPS URL when patched directly; direct URL max 512 chars",
+            "The Connect page runs on HTTPS; uploaded assets are served from UniPost-managed R2",
+          ],
+          [
+            "logo upload file",
+            "PNG or JPG; ≤ 2 MB; image width and height each ≤ 4096 px",
+            "Keeps hosted Connect lightweight and avoids oversized customer assets",
           ],
           [
             "branding_display_name",
@@ -63,8 +78,11 @@ export default function BrandingPage() {
         columns={["Status", "Code", "When"]}
         rows={[
           ["401", "UNAUTHORIZED / unauthorized", "Missing or invalid API key"],
+          ["402", "PLAN_FEATURE_NOT_AVAILABLE / plan_feature_not_available", "The workspace plan cannot brand hosted Connect"],
           ["404", "NOT_FOUND / not_found", "Profile does not belong to the caller&rsquo;s workspace"],
+          ["413", "PAYLOAD_TOO_LARGE / payload_too_large", "Logo file is larger than 2 MB"],
           ["422", "VALIDATION_ERROR / validation_error", "A field failed validation (URL scheme, length, or hex format)"],
+          ["503", "STORAGE_NOT_CONFIGURED / storage_not_configured", "Logo upload storage is temporarily unavailable"],
         ]}
       />
       <p>Public API errors also include a lowercase <code>error.normalized_code</code> alias and a top-level <code>request_id</code> for tracing.</p>

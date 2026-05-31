@@ -11,6 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearProfileBrandingLogo = `-- name: ClearProfileBrandingLogo :one
+UPDATE profiles
+SET branding_logo_url = NULL,
+    branding_logo_storage_key = NULL,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by, branding_logo_storage_key
+`
+
+func (q *Queries) ClearProfileBrandingLogo(ctx context.Context, id string) (Profile, error) {
+	row := q.db.QueryRow(ctx, clearProfileBrandingLogo, id)
+	var i Profile
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BrandingLogoUrl,
+		&i.BrandingDisplayName,
+		&i.BrandingPrimaryColor,
+		&i.WorkspaceID,
+		&i.BrandingHidePoweredBy,
+		&i.BrandingLogoStorageKey,
+	)
+	return i, err
+}
+
 const countProfilesByWorkspace = `-- name: CountProfilesByWorkspace :one
 SELECT COUNT(*)::INTEGER AS count FROM profiles WHERE workspace_id = $1
 `
@@ -28,7 +55,7 @@ func (q *Queries) CountProfilesByWorkspace(ctx context.Context, workspaceID stri
 const createProfile = `-- name: CreateProfile :one
 INSERT INTO profiles (workspace_id, name)
 VALUES ($1, $2)
-RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by
+RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by, branding_logo_storage_key
 `
 
 type CreateProfileParams struct {
@@ -49,6 +76,7 @@ func (q *Queries) CreateProfile(ctx context.Context, arg CreateProfileParams) (P
 		&i.BrandingPrimaryColor,
 		&i.WorkspaceID,
 		&i.BrandingHidePoweredBy,
+		&i.BrandingLogoStorageKey,
 	)
 	return i, err
 }
@@ -63,7 +91,7 @@ func (q *Queries) DeleteProfile(ctx context.Context, id string) error {
 }
 
 const getProfile = `-- name: GetProfile :one
-SELECT id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by FROM profiles WHERE id = $1
+SELECT id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by, branding_logo_storage_key FROM profiles WHERE id = $1
 `
 
 func (q *Queries) GetProfile(ctx context.Context, id string) (Profile, error) {
@@ -79,12 +107,13 @@ func (q *Queries) GetProfile(ctx context.Context, id string) (Profile, error) {
 		&i.BrandingPrimaryColor,
 		&i.WorkspaceID,
 		&i.BrandingHidePoweredBy,
+		&i.BrandingLogoStorageKey,
 	)
 	return i, err
 }
 
 const getProfileByIDAndWorkspaceOwner = `-- name: GetProfileByIDAndWorkspaceOwner :one
-SELECT p.id, p.name, p.created_at, p.updated_at, p.branding_logo_url, p.branding_display_name, p.branding_primary_color, p.workspace_id, p.branding_hide_powered_by FROM profiles p
+SELECT p.id, p.name, p.created_at, p.updated_at, p.branding_logo_url, p.branding_display_name, p.branding_primary_color, p.workspace_id, p.branding_hide_powered_by, p.branding_logo_storage_key FROM profiles p
 JOIN workspaces w ON w.id = p.workspace_id
 WHERE p.id = $1 AND w.user_id = $2
 `
@@ -109,12 +138,13 @@ func (q *Queries) GetProfileByIDAndWorkspaceOwner(ctx context.Context, arg GetPr
 		&i.BrandingPrimaryColor,
 		&i.WorkspaceID,
 		&i.BrandingHidePoweredBy,
+		&i.BrandingLogoStorageKey,
 	)
 	return i, err
 }
 
 const listProfilesByWorkspace = `-- name: ListProfilesByWorkspace :many
-SELECT id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC
+SELECT id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by, branding_logo_storage_key FROM profiles WHERE workspace_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListProfilesByWorkspace(ctx context.Context, workspaceID string) ([]Profile, error) {
@@ -136,6 +166,7 @@ func (q *Queries) ListProfilesByWorkspace(ctx context.Context, workspaceID strin
 			&i.BrandingPrimaryColor,
 			&i.WorkspaceID,
 			&i.BrandingHidePoweredBy,
+			&i.BrandingLogoStorageKey,
 		); err != nil {
 			return nil, err
 		}
@@ -150,7 +181,7 @@ func (q *Queries) ListProfilesByWorkspace(ctx context.Context, workspaceID strin
 const updateProfile = `-- name: UpdateProfile :one
 UPDATE profiles SET name = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by
+RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by, branding_logo_storage_key
 `
 
 type UpdateProfileParams struct {
@@ -171,6 +202,7 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (P
 		&i.BrandingPrimaryColor,
 		&i.WorkspaceID,
 		&i.BrandingHidePoweredBy,
+		&i.BrandingLogoStorageKey,
 	)
 	return i, err
 }
@@ -181,9 +213,13 @@ SET branding_logo_url      = COALESCE($2::TEXT,      branding_logo_url),
     branding_display_name  = COALESCE($3::TEXT,  branding_display_name),
     branding_primary_color = COALESCE($4::TEXT, branding_primary_color),
     branding_hide_powered_by = COALESCE($5::BOOLEAN, branding_hide_powered_by),
+    branding_logo_storage_key = CASE
+        WHEN $2::TEXT IS NULL THEN branding_logo_storage_key
+        ELSE NULL
+    END,
     updated_at             = NOW()
 WHERE id = $1
-RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by
+RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by, branding_logo_storage_key
 `
 
 type UpdateProfileBrandingParams struct {
@@ -213,6 +249,40 @@ func (q *Queries) UpdateProfileBranding(ctx context.Context, arg UpdateProfileBr
 		&i.BrandingPrimaryColor,
 		&i.WorkspaceID,
 		&i.BrandingHidePoweredBy,
+		&i.BrandingLogoStorageKey,
+	)
+	return i, err
+}
+
+const updateProfileBrandingLogo = `-- name: UpdateProfileBrandingLogo :one
+UPDATE profiles
+SET branding_logo_url = $2,
+    branding_logo_storage_key = $3,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, name, created_at, updated_at, branding_logo_url, branding_display_name, branding_primary_color, workspace_id, branding_hide_powered_by, branding_logo_storage_key
+`
+
+type UpdateProfileBrandingLogoParams struct {
+	ID                     string      `json:"id"`
+	BrandingLogoUrl        pgtype.Text `json:"branding_logo_url"`
+	BrandingLogoStorageKey pgtype.Text `json:"branding_logo_storage_key"`
+}
+
+func (q *Queries) UpdateProfileBrandingLogo(ctx context.Context, arg UpdateProfileBrandingLogoParams) (Profile, error) {
+	row := q.db.QueryRow(ctx, updateProfileBrandingLogo, arg.ID, arg.BrandingLogoUrl, arg.BrandingLogoStorageKey)
+	var i Profile
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BrandingLogoUrl,
+		&i.BrandingDisplayName,
+		&i.BrandingPrimaryColor,
+		&i.WorkspaceID,
+		&i.BrandingHidePoweredBy,
+		&i.BrandingLogoStorageKey,
 	)
 	return i, err
 }
