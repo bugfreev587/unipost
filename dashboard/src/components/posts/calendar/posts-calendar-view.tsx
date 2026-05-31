@@ -42,6 +42,7 @@ import {
   getTimedEventTop,
   getTimedTimelineContentHeight,
   parseCalendarViewMode,
+  type CalendarDayCell,
   type CalendarPopoverRect,
   type CalendarPopoverSize,
   type CalendarWheelNavigationAccumulator,
@@ -63,10 +64,21 @@ const TIMELINE_CONTENT_HEIGHT = getTimedTimelineContentHeight(
   TIMELINE_END_PADDING,
 );
 const POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 420, height: 320 };
+const SWIPE_TRANSITION_MS = 260;
 
 type SelectedPostTarget = {
   postId: string;
   anchorRect: CalendarPopoverRect;
+};
+
+type SwipeTransitionState = {
+  id: number;
+  mode: Extract<CalendarViewMode, "month" | "week">;
+  direction: -1 | 1;
+  fromDate: Date;
+  fromMonth: Date;
+  toDate: Date;
+  toMonth: Date;
 };
 
 const STATUS_FILTERS: Array<{ value: CalendarStatusFilter; label: string }> = [
@@ -111,15 +123,25 @@ export function PostsCalendarView() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [swipeTransition, setSwipeTransition] = useState<SwipeTransitionState | null>(null);
   const wheelDeltaRef = useRef<CalendarWheelNavigationAccumulator>({ deltaX: 0, deltaY: 0 });
   const wheelLockRef = useRef(0);
   const wheelResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const swipeTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const weekTimeScrollRef = useRef<HTMLDivElement | null>(null);
   const [weekScrollbarWidth, setWeekScrollbarWidth] = useState(0);
 
   const calendarMode = useMemo(() => parseCalendarViewMode(searchParams.get("view")), [searchParams]);
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time", []);
+
+  const clearSwipeTransition = useCallback(() => {
+    if (swipeTransitionTimerRef.current) {
+      clearTimeout(swipeTransitionTimerRef.current);
+      swipeTransitionTimerRef.current = null;
+    }
+    setSwipeTransition(null);
+  }, []);
 
   const replaceCalendarMode = useCallback((mode: CalendarViewMode) => {
     const nextParams = new URLSearchParams(searchParams.toString());
@@ -168,15 +190,20 @@ export function PostsCalendarView() {
 
   useEffect(() => {
     wheelDeltaRef.current = { deltaX: 0, deltaY: 0 };
+    wheelLockRef.current = 0;
     if (wheelResetTimerRef.current) {
       clearTimeout(wheelResetTimerRef.current);
       wheelResetTimerRef.current = null;
     }
-  }, [calendarMode]);
+    clearSwipeTransition();
+  }, [calendarMode, clearSwipeTransition]);
 
   useEffect(() => () => {
     if (wheelResetTimerRef.current) {
       clearTimeout(wheelResetTimerRef.current);
+    }
+    if (swipeTransitionTimerRef.current) {
+      clearTimeout(swipeTransitionTimerRef.current);
     }
   }, []);
 
@@ -303,6 +330,8 @@ export function PostsCalendarView() {
   }, [loadData]);
 
   const shiftCalendar = useCallback((direction: -1 | 1) => {
+    clearSwipeTransition();
+
     if (calendarMode === "month") {
       setVisibleMonth((date) => addMonths(date, direction));
       setVisibleDate((date) => addMonths(date, direction));
@@ -315,29 +344,51 @@ export function PostsCalendarView() {
       setVisibleMonth(startOfMonth(next));
       return next;
     });
-  }, [calendarMode]);
+  }, [calendarMode, clearSwipeTransition]);
 
-  const shiftCalendarBySwipe = useCallback((direction: -1 | 1) => {
+  const startCalendarSwipeTransition = useCallback((direction: -1 | 1) => {
     if (calendarMode === "day") return;
 
-    if (calendarMode === "month") {
-      setVisibleMonth((date) => shiftCalendarDateBySwipe(calendarMode, date, direction));
-      setVisibleDate((date) => shiftCalendarDateBySwipe(calendarMode, date, direction));
-      return;
+    const fromDate = visibleDate;
+    const fromMonth = visibleMonth;
+    const toDate = shiftCalendarDateBySwipe(calendarMode, fromDate, direction);
+    const toMonth = calendarMode === "month"
+      ? shiftCalendarDateBySwipe(calendarMode, fromMonth, direction)
+      : startOfMonth(toDate);
+
+    if (swipeTransitionTimerRef.current) {
+      clearTimeout(swipeTransitionTimerRef.current);
+      swipeTransitionTimerRef.current = null;
     }
 
-    setVisibleDate((date) => {
-      const next = shiftCalendarDateBySwipe(calendarMode, date, direction);
-      setVisibleMonth(startOfMonth(next));
-      return next;
+    setSwipeTransition({
+      id: Date.now(),
+      mode: calendarMode,
+      direction,
+      fromDate,
+      fromMonth,
+      toDate,
+      toMonth,
     });
-  }, [calendarMode]);
+    setVisibleDate(toDate);
+    setVisibleMonth(toMonth);
+
+    swipeTransitionTimerRef.current = setTimeout(() => {
+      setSwipeTransition(null);
+      swipeTransitionTimerRef.current = null;
+    }, SWIPE_TRANSITION_MS);
+  }, [calendarMode, visibleDate, visibleMonth]);
+
+  const shiftCalendarBySwipe = useCallback((direction: -1 | 1) => {
+    startCalendarSwipeTransition(direction);
+  }, [startCalendarSwipeTransition]);
 
   const goToToday = useCallback(() => {
+    clearSwipeTransition();
     const today = new Date();
     setVisibleDate(today);
     setVisibleMonth(startOfMonth(today));
-  }, []);
+  }, [clearSwipeTransition]);
 
   const handleCalendarWheel = useCallback((event: WheelEvent<HTMLElement>) => {
     if (calendarMode === "day") return;
@@ -373,7 +424,7 @@ export function PostsCalendarView() {
       wheelResetTimerRef.current = null;
     }
     wheelDeltaRef.current = { deltaX: 0, deltaY: 0 };
-    wheelLockRef.current = now + 420;
+    wheelLockRef.current = now + SWIPE_TRANSITION_MS;
     shiftCalendarBySwipe(result.direction);
   }, [calendarMode, shiftCalendarBySwipe]);
 
@@ -404,18 +455,24 @@ export function PostsCalendarView() {
     setSelectedPostTarget(null);
   }, []);
 
-  const renderMonthView = () => (
+  const renderMonthView = (
+    cells: CalendarDayCell[] = monthCells,
+    {
+      interactive = true,
+      ariaLabel = `${calendarTitle} posts`,
+    }: { interactive?: boolean; ariaLabel?: string } = {},
+  ) => (
     <div
       className="posts-calendar-grid"
-      aria-label={`${calendarTitle} posts`}
-      onWheel={handleCalendarWheel}
-      onTouchStart={handleCalendarTouchStart}
-      onTouchEnd={handleCalendarTouchEnd}
+      aria-label={ariaLabel}
+      onWheel={interactive ? handleCalendarWheel : undefined}
+      onTouchStart={interactive ? handleCalendarTouchStart : undefined}
+      onTouchEnd={interactive ? handleCalendarTouchEnd : undefined}
     >
       {WEEKDAYS.map((weekday) => (
         <div key={weekday} className="posts-calendar-weekday">{weekday}</div>
       ))}
-      {monthCells.map((cell) => {
+      {cells.map((cell) => {
         const dayPosts = postsByDate.get(cell.dateKey) || [];
         const visibleDayPosts = dayPosts.slice(0, 4);
         return (
@@ -452,19 +509,26 @@ export function PostsCalendarView() {
     </div>
   );
 
-  const renderWeekView = () => (
+  const renderWeekView = (
+    days: CalendarDayCell[] = weekDays,
+    {
+      interactive = true,
+      attachScrollbarRef = true,
+      ariaLabel = `${calendarTitle} week posts`,
+    }: { interactive?: boolean; attachScrollbarRef?: boolean; ariaLabel?: string } = {},
+  ) => (
     <div
       className="posts-calendar-week-grid"
-      aria-label={`${calendarTitle} week posts`}
-      onWheel={handleCalendarWheel}
-      onTouchStart={handleCalendarTouchStart}
-      onTouchEnd={handleCalendarTouchEnd}
+      aria-label={ariaLabel}
+      onWheel={interactive ? handleCalendarWheel : undefined}
+      onTouchStart={interactive ? handleCalendarTouchStart : undefined}
+      onTouchEnd={interactive ? handleCalendarTouchEnd : undefined}
       style={{ "--calendar-scrollbar-gutter": `${weekScrollbarWidth}px` } as CSSProperties}
     >
       <div className="posts-calendar-week-header">
         <div className="posts-calendar-week-header-inner">
           <div className="posts-calendar-all-day-label">all-day</div>
-          {weekDays.map((day) => (
+          {days.map((day) => (
             <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""}`}>
               <span>{formatWeekdayShort(day.date)}</span>
               <strong>{day.dayOfMonth}</strong>
@@ -473,10 +537,14 @@ export function PostsCalendarView() {
         </div>
         <div className="posts-calendar-week-scrollbar-spacer" aria-hidden="true" />
       </div>
-      <div ref={weekTimeScrollRef} className="posts-calendar-time-scroll" style={timelineStyle}>
+      <div
+        ref={attachScrollbarRef ? weekTimeScrollRef : null}
+        className="posts-calendar-time-scroll"
+        style={timelineStyle}
+      >
         <TimeLabels />
         <div className="posts-calendar-week-columns">
-          {weekDays.map((day) => (
+          {days.map((day) => (
             <TimedPostColumn
               key={day.dateKey}
               posts={postsByDate.get(day.dateKey) || []}
@@ -508,6 +576,46 @@ export function PostsCalendarView() {
       </div>
     </div>
   );
+
+  const renderSwipeTransitionView = () => {
+    if (!swipeTransition) return null;
+
+    const axis = swipeTransition.mode === "month" ? "y" : "x";
+    const fromLabel = swipeTransition.mode === "month" ? "Previous visible month" : "Previous visible week";
+    const toLabel = swipeTransition.mode === "month" ? `${calendarTitle} posts` : `${calendarTitle} week posts`;
+
+    return (
+      <div
+        key={swipeTransition.id}
+        className="posts-calendar-swipe-viewport"
+        data-mode={swipeTransition.mode}
+        data-axis={axis}
+        data-direction={swipeTransition.direction}
+        onWheel={handleCalendarWheel}
+        onTouchStart={handleCalendarTouchStart}
+        onTouchEnd={handleCalendarTouchEnd}
+      >
+        <div className="posts-calendar-swipe-layer posts-calendar-swipe-layer-from" aria-hidden="true">
+          {swipeTransition.mode === "month"
+            ? renderMonthView(buildMonthGrid(swipeTransition.fromMonth), { interactive: false, ariaLabel: fromLabel })
+            : renderWeekView(buildWeekDays(swipeTransition.fromDate), {
+              interactive: false,
+              attachScrollbarRef: false,
+              ariaLabel: fromLabel,
+            })}
+        </div>
+        <div className="posts-calendar-swipe-layer posts-calendar-swipe-layer-to">
+          {swipeTransition.mode === "month"
+            ? renderMonthView(buildMonthGrid(swipeTransition.toMonth), { interactive: false, ariaLabel: toLabel })
+            : renderWeekView(buildWeekDays(swipeTransition.toDate), {
+              interactive: false,
+              attachScrollbarRef: false,
+              ariaLabel: toLabel,
+            })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <section className="posts-calendar-fullheight" aria-label="Posts calendar">
@@ -639,8 +747,12 @@ export function PostsCalendarView() {
         {error ? <div className="posts-calendar-error">{error}</div> : null}
 
         <div className="posts-calendar-view-stage">
-          {calendarMode === "month" ? renderMonthView() : null}
-          {calendarMode === "week" ? renderWeekView() : null}
+          {calendarMode === "month"
+            ? (swipeTransition?.mode === "month" ? renderSwipeTransitionView() : renderMonthView())
+            : null}
+          {calendarMode === "week"
+            ? (swipeTransition?.mode === "week" ? renderSwipeTransitionView() : renderWeekView())
+            : null}
           {calendarMode === "day" ? renderDayView() : null}
         </div>
       </div>
@@ -1096,6 +1208,20 @@ const CALENDAR_CSS = `
 .posts-calendar-create{background:var(--daccent);border-color:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-error{margin:12px 18px 0;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);background:var(--danger-soft);color:var(--danger);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}
 .posts-calendar-view-stage{flex:1;min-height:0;display:flex;overflow:hidden;background:var(--surface)}
+.posts-calendar-swipe-viewport{--calendar-swipe-duration:260ms;--calendar-swipe-distance:100%;--calendar-swipe-from-x:0px;--calendar-swipe-from-y:0px;--calendar-swipe-to-x:0px;--calendar-swipe-to-y:0px;position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--surface);contain:layout paint}
+.posts-calendar-swipe-viewport[data-mode="month"]{--calendar-swipe-distance:calc((100% - 34px) / 6)}
+.posts-calendar-swipe-viewport[data-mode="week"]{--calendar-swipe-distance:calc((100% - var(--calendar-time-gutter,76px)) / 7)}
+.posts-calendar-swipe-viewport[data-axis="x"][data-direction="1"]{--calendar-swipe-from-x:calc(0px - var(--calendar-swipe-distance));--calendar-swipe-to-x:var(--calendar-swipe-distance)}
+.posts-calendar-swipe-viewport[data-axis="x"][data-direction="-1"]{--calendar-swipe-from-x:var(--calendar-swipe-distance);--calendar-swipe-to-x:calc(0px - var(--calendar-swipe-distance))}
+.posts-calendar-swipe-viewport[data-axis="y"][data-direction="1"]{--calendar-swipe-from-y:calc(0px - var(--calendar-swipe-distance));--calendar-swipe-to-y:var(--calendar-swipe-distance)}
+.posts-calendar-swipe-viewport[data-axis="y"][data-direction="-1"]{--calendar-swipe-from-y:var(--calendar-swipe-distance);--calendar-swipe-to-y:calc(0px - var(--calendar-swipe-distance))}
+.posts-calendar-swipe-layer{position:absolute;inset:0;display:flex;min-width:0;min-height:0;will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(0,0,0);pointer-events:none}
+.posts-calendar-swipe-layer>.posts-calendar-grid,.posts-calendar-swipe-layer>.posts-calendar-week-grid{flex:1;height:100%;min-height:0}
+.posts-calendar-swipe-layer>.posts-calendar-week-grid{overflow:hidden}
+.posts-calendar-swipe-layer-from{z-index:1;animation:posts-calendar-swipe-from var(--calendar-swipe-duration) cubic-bezier(.22,1,.36,1) both}
+.posts-calendar-swipe-layer-to{z-index:2;animation:posts-calendar-swipe-to var(--calendar-swipe-duration) cubic-bezier(.22,1,.36,1) both}
+@keyframes posts-calendar-swipe-from{from{transform:translate3d(0,0,0)}to{transform:translate3d(var(--calendar-swipe-from-x),var(--calendar-swipe-from-y),0)}}
+@keyframes posts-calendar-swipe-to{from{transform:translate3d(var(--calendar-swipe-to-x),var(--calendar-swipe-to-y),0)}to{transform:translate3d(0,0,0)}}
 .posts-calendar-grid{flex:1;min-height:640px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:34px repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px;overscroll-behavior:contain;touch-action:none}
 .posts-calendar-weekday{background:var(--surface);display:flex;align-items:center;justify-content:flex-end;padding:0 12px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px}
@@ -1157,5 +1283,5 @@ const CALENDAR_CSS = `
 .posts-calendar-open-list:hover{background:var(--surface3)}
 @media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-grid{min-height:720px;grid-template-rows:34px repeat(6,minmax(114px,1fr))}}
 @media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-grid{overflow-x:auto;grid-template-columns:repeat(7,minmax(132px,1fr))}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}}
-@media (prefers-reduced-motion:reduce){.posts-calendar-popover{animation:none}}
+@media (prefers-reduced-motion:reduce){.posts-calendar-popover,.posts-calendar-swipe-layer-from,.posts-calendar-swipe-layer-to{animation:none}.posts-calendar-swipe-layer-from{display:none}}
 `;
