@@ -2170,11 +2170,12 @@ const CALENDAR_CSS = `
 .posts-calendar-week-shell,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-scrollbar-gutter:0px;--calendar-week-template:repeat(7,minmax(var(--calendar-week-day-min),1fr));--calendar-week-min-width:calc(var(--calendar-week-day-min) * 7 + var(--calendar-scrollbar-gutter));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
 .posts-calendar-week-shell{overscroll-behavior:contain;overflow:hidden;touch-action:pan-y}
 .posts-calendar-week-grid{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface);overflow:hidden}
-.posts-calendar-week-header{flex:0 0 44px;height:44px;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);background:var(--surface);border-top:1px solid var(--dborder);border-bottom:1px solid var(--dborder);min-width:0}
+.posts-calendar-week-header{flex:0 0 44px;height:44px;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);background:var(--surface);min-width:0}
 .posts-calendar-week-header-gutter{background:var(--surface)}
 .posts-calendar-week-header-row{display:grid;grid-template-columns:minmax(0,1fr) var(--calendar-scrollbar-gutter);min-width:0;background:var(--surface)}
 .posts-calendar-week-header-inner{display:grid;grid-template-columns:var(--calendar-week-template);min-width:calc(var(--calendar-week-day-min) * 7)}
-.posts-calendar-week-body{flex:1;min-width:0;min-height:0;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);grid-template-rows:minmax(0,1fr);background:var(--dborder);gap:1px;overflow:hidden}
+.posts-calendar-week-body{position:relative;flex:1;min-width:0;min-height:0;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);grid-template-rows:minmax(0,1fr);background:var(--dborder);gap:1px;overflow:hidden}
+.posts-calendar-week-body::before{content:"";position:absolute;left:0;right:0;top:0;border-top:1px solid var(--dborder);z-index:3;pointer-events:none}
 .posts-calendar-week-body>.posts-calendar-swipe-viewport{grid-column:2;grid-row:1;flex:0 1 auto;width:100%;height:100%}
 .posts-calendar-week-time-gutter{grid-column:1;grid-row:1;min-width:0;min-height:0;display:block;background:var(--surface);overflow:hidden}
 .posts-calendar-week-time-label-scroll{height:100%;min-height:0;overflow:hidden;background:var(--surface)}
@@ -2188,7 +2189,8 @@ const CALENDAR_CSS = `
 .posts-calendar-week-content>.posts-calendar-time-scroll{height:100%;grid-template-columns:minmax(0,1fr);gap:1px;min-width:0;background:var(--dborder)}
 .posts-calendar-time-labels{height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background:var(--surface);border-right:1px solid var(--dborder)}
 .posts-calendar-time-label{height:var(--hour-height,64px);display:flex;align-items:flex-start;justify-content:flex-end;padding:5px 8px 0 4px;color:var(--dmuted);font-size:12px;font-weight:650;border-top:1px solid var(--dborder);white-space:nowrap}
-.posts-calendar-week-columns{min-width:calc(var(--calendar-week-day-min) * 7);display:grid;grid-template-columns:repeat(7,minmax(var(--calendar-week-day-min),1fr));background:var(--dborder);gap:1px;border-top:1px solid var(--dborder)}
+.posts-calendar-week-columns{min-width:calc(var(--calendar-week-day-min) * 7);display:grid;grid-template-columns:repeat(7,minmax(var(--calendar-week-day-min),1fr));background:var(--dborder);gap:1px}
+.posts-calendar-week-grid .posts-calendar-time-label:first-child,.posts-calendar-day-grid .posts-calendar-time-label:first-child{border-top:0}
 .posts-calendar-day-column-wrap{min-width:0;background:var(--dborder);padding-left:1px}
 .posts-calendar-time-column{position:relative;height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
 .posts-calendar-timed-event{--event-color:#8b8b93;position:absolute;min-height:var(--calendar-timed-event-min-height,38px);border:1px solid color-mix(in srgb,var(--event-color) 30%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-color) 21%,var(--surface));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}

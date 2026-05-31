@@ -147,9 +147,11 @@ test("Posts calendar month and week headers place dividers per view", async () =
   assert.doesNotMatch(source, /posts-calendar-topbar\.with-divider/);
   assert.match(source, /\.posts-calendar-month-weekdays\{[^}]*border-bottom:1px solid var\(--dborder\)/);
   assert.doesNotMatch(source.match(/\.posts-calendar-month-weekdays\{[^}]*\}/)?.[0] ?? "", /border-top/);
-  assert.match(source, /\.posts-calendar-week-header\{[^}]*border-top:1px solid var\(--dborder\)/);
-  assert.match(source, /\.posts-calendar-week-header\{[^}]*border-bottom:1px solid var\(--dborder\)/);
-  assert.match(source, /\.posts-calendar-week-columns\{[^}]*border-top:1px solid var\(--dborder\)/);
+  assert.doesNotMatch(source.match(/\.posts-calendar-week-header\{[^}]*\}/)?.[0] ?? "", /border-top/);
+  assert.match(source, /\.posts-calendar-week-body\{[^}]*position:relative/);
+  assert.match(source, /\.posts-calendar-week-body::before\{[^}]*top:0/);
+  assert.match(source, /\.posts-calendar-week-body::before\{[^}]*border-top:1px solid var\(--dborder\)/);
+  assert.doesNotMatch(source.match(/\.posts-calendar-week-columns\{[^}]*\}/)?.[0] ?? "", /border-top/);
 });
 
 test("Posts calendar day view removes all-day row and its top divider", async () => {
@@ -160,6 +162,7 @@ test("Posts calendar day view removes all-day row and its top divider", async ()
   assert.doesNotMatch(dayView, /all-day/);
   assert.doesNotMatch(dayView, /posts-calendar-day-all-day/);
   assert.doesNotMatch(dayCss, /posts-calendar-day-all-day/);
+  assert.match(source, /\.posts-calendar-day-grid \.posts-calendar-time-label:first-child\{[^}]*border-top:0/);
   assert.doesNotMatch(source, /with-divider/);
 });
 
