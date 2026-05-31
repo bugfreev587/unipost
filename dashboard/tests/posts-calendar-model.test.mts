@@ -6,7 +6,9 @@ import {
   bucketPostByLocalDay,
   getCalendarPostMinuteOfDay,
   getAnchoredPopoverPlacement,
+  getBoundedCalendarPopoverPlacement,
   getAccumulatedWheelNavigationIntent,
+  getTimedEventLayouts,
   getSwipeNavigationIntent,
   getTimedEventTop,
   getTimedTimelineContentHeight,
@@ -132,6 +134,43 @@ test("timed timeline height preserves late-night event visibility", () => {
   );
 });
 
+test("timed event layouts place same and nearby posts in horizontal lanes", () => {
+  const layouts = getTimedEventLayouts(
+    [
+      { id: "published", minuteOfDay: 11 * 60 + 10 },
+      { id: "scheduled", minuteOfDay: 11 * 60 + 11 },
+      { id: "later", minuteOfDay: 12 * 60 + 15 },
+    ],
+    64,
+    38,
+  );
+
+  assert.deepEqual(layouts.get("published"), {
+    id: "published",
+    top: 714.6666666666666,
+    lane: 0,
+    laneCount: 2,
+    leftPercent: 0,
+    widthPercent: 50,
+  });
+  assert.deepEqual(layouts.get("scheduled"), {
+    id: "scheduled",
+    top: 715.7333333333333,
+    lane: 1,
+    laneCount: 2,
+    leftPercent: 50,
+    widthPercent: 50,
+  });
+  assert.deepEqual(layouts.get("later"), {
+    id: "later",
+    top: 784,
+    lane: 0,
+    laneCount: 1,
+    leftPercent: 0,
+    widthPercent: 100,
+  });
+});
+
 test("wheel navigation follows Apple Calendar style directions per view", () => {
   assert.equal(getWheelNavigationIntent("month", 0, 160), 1);
   assert.equal(getWheelNavigationIntent("month", 0, -160), -1);
@@ -241,6 +280,21 @@ test("getAnchoredPopoverPlacement flips and clamps around viewport edges", () =>
   assert.equal(topPlacement.left, 85);
   assert.equal(topPlacement.arrowX, 210);
   assert.equal(topPlacement.transformOrigin, "210px bottom");
+});
+
+test("getBoundedCalendarPopoverPlacement can grow edit panels to the calendar grid body", () => {
+  const placement = getBoundedCalendarPopoverPlacement({
+    anchor: { left: 42, top: 712, right: 224, bottom: 736, width: 182, height: 24 },
+    viewport: { width: 1440, height: 980 },
+    popover: { width: 760, height: 680 },
+    bounds: { left: 0, top: 190, right: 1440, bottom: 930, width: 1440, height: 740 },
+  });
+
+  assert.equal(placement.side, "right");
+  assert.equal(placement.top, 190);
+  assert.equal(placement.availableHeight, 740);
+  assert.equal(placement.arrowY, 534);
+  assert.equal(placement.transformOrigin, "left 534px");
 });
 
 function formatDate(date: Date): string {

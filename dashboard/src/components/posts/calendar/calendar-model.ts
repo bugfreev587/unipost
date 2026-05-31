@@ -64,6 +64,24 @@ export type CalendarPopoverPlacement = {
   transformOrigin: string;
 };
 
+export type BoundedCalendarPopoverPlacement = CalendarPopoverPlacement & {
+  availableHeight: number;
+};
+
+export type TimedCalendarEventInput = {
+  id: string;
+  minuteOfDay: number;
+};
+
+export type TimedCalendarEventLayout = {
+  id: string;
+  top: number;
+  lane: number;
+  laneCount: number;
+  leftPercent: number;
+  widthPercent: number;
+};
+
 const IN_PROGRESS_STATUSES = new Set(["queued", "dispatching", "retrying", "processing"]);
 const FAILED_STATUSES = new Set(["failed", "partial"]);
 const WHEEL_NAVIGATION_THRESHOLD = 80;
@@ -154,6 +172,68 @@ export function getTimedTimelineContentHeight(
   bottomPadding: number,
 ): number {
   return 24 * hourHeight + eventMinHeight + bottomPadding;
+}
+
+export function getTimedEventLayouts(
+  events: TimedCalendarEventInput[],
+  hourHeight: number,
+  eventMinHeight: number,
+  laneGap = 4,
+): Map<string, TimedCalendarEventLayout> {
+  const intervals = events
+    .filter((event) => Number.isFinite(event.minuteOfDay))
+    .map((event) => {
+      const top = getTimedEventTop(event.minuteOfDay, hourHeight);
+      return {
+        ...event,
+        top,
+        bottom: top + eventMinHeight + laneGap,
+      };
+    })
+    .sort((a, b) => a.top - b.top || a.id.localeCompare(b.id));
+
+  const layouts = new Map<string, TimedCalendarEventLayout>();
+  let cluster: typeof intervals = [];
+  let clusterBottom = Number.NEGATIVE_INFINITY;
+
+  const flushCluster = () => {
+    if (cluster.length === 0) return;
+
+    const laneBottoms: number[] = [];
+    const assigned = cluster.map((event) => {
+      const openLane = laneBottoms.findIndex((bottom) => bottom <= event.top);
+      const lane = openLane === -1 ? laneBottoms.length : openLane;
+      laneBottoms[lane] = event.bottom;
+      return { event, lane };
+    });
+    const laneCount = Math.max(1, laneBottoms.length);
+    const widthPercent = 100 / laneCount;
+
+    for (const { event, lane } of assigned) {
+      layouts.set(event.id, {
+        id: event.id,
+        top: event.top,
+        lane,
+        laneCount,
+        leftPercent: lane * widthPercent,
+        widthPercent,
+      });
+    }
+  };
+
+  for (const interval of intervals) {
+    if (cluster.length > 0 && interval.top >= clusterBottom) {
+      flushCluster();
+      cluster = [];
+      clusterBottom = Number.NEGATIVE_INFINITY;
+    }
+
+    cluster.push(interval);
+    clusterBottom = Math.max(clusterBottom, interval.bottom);
+  }
+
+  flushCluster();
+  return layouts;
 }
 
 export function getWheelNavigationIntent(
@@ -280,6 +360,53 @@ export function getAnchoredPopoverPlacement({
     arrowX,
     arrowY: side === "bottom" ? 0 : popover.height,
     transformOrigin: `${arrowX}px ${side === "bottom" ? "top" : "bottom"}`,
+  };
+}
+
+export function getBoundedCalendarPopoverPlacement({
+  anchor,
+  viewport,
+  popover,
+  bounds,
+  gap = 12,
+  margin = 12,
+  arrowInset = 18,
+}: {
+  anchor: CalendarPopoverRect;
+  viewport: CalendarPopoverSize;
+  popover: CalendarPopoverSize;
+  bounds: CalendarPopoverRect;
+  gap?: number;
+  margin?: number;
+  arrowInset?: number;
+}): BoundedCalendarPopoverPlacement {
+  const placement = getAnchoredPopoverPlacement({ anchor, viewport, popover, gap, margin, arrowInset });
+  const boundedTop = clamp(bounds.top, margin, viewport.height - margin);
+  const boundedBottom = clamp(bounds.bottom, boundedTop, viewport.height - margin);
+  const boundedHeight = Math.max(0, boundedBottom - boundedTop);
+  const desiredHeight = Math.min(popover.height, boundedHeight || popover.height);
+  const top = placement.side === "right" || placement.side === "left"
+    ? boundedTop
+    : clamp(placement.top, boundedTop, boundedBottom - desiredHeight);
+  const availableHeight = Math.max(0, boundedBottom - top);
+
+  if (placement.side === "right" || placement.side === "left") {
+    const anchorCenterY = anchor.top + anchor.height / 2;
+    const arrowY = Math.round(clamp(anchorCenterY - top, arrowInset, Math.max(arrowInset, availableHeight - arrowInset)));
+    return {
+      ...placement,
+      top: Math.round(top),
+      arrowY,
+      transformOrigin: `${placement.side === "right" ? "left" : "right"} ${arrowY}px`,
+      availableHeight: Math.round(availableHeight),
+    };
+  }
+
+  return {
+    ...placement,
+    top: Math.round(top),
+    arrowY: placement.side === "bottom" ? 0 : Math.round(availableHeight),
+    availableHeight: Math.round(availableHeight),
   };
 }
 

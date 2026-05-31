@@ -53,12 +53,13 @@ import {
   formatLocalDateKey,
   getAccumulatedWheelNavigationIntent,
   getAnchoredPopoverPlacement,
+  getBoundedCalendarPopoverPlacement,
   getCalendarPostDate,
   getCalendarPostMinuteOfDay,
   getPostStatusGroup,
   getProfileCalendarColor,
   getSwipeNavigationIntent,
-  getTimedEventTop,
+  getTimedEventLayouts,
   getTimedTimelineContentHeight,
   parseCalendarViewMode,
   type CalendarDayCell,
@@ -70,6 +71,7 @@ import {
   type CalendarStatusFilter,
   type CalendarStatusGroup,
   type CalendarViewMode,
+  type TimedCalendarEventLayout,
 } from "./calendar-model";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -88,6 +90,7 @@ const SWIPE_TRANSITION_MS = 420;
 type SelectedPostTarget = {
   postId: string;
   anchorRect: CalendarPopoverRect;
+  boundsRect: CalendarPopoverRect;
 };
 
 type SwipeTransitionState = {
@@ -487,7 +490,11 @@ export function PostsCalendarView() {
   }, []);
 
   const handleSelectPost = useCallback((postId: string, target: HTMLElement) => {
-    setSelectedPostTarget({ postId, anchorRect: getElementRect(target) });
+    setSelectedPostTarget({
+      postId,
+      anchorRect: getElementRect(target),
+      boundsRect: getCalendarEditorBoundsRect(target),
+    });
   }, []);
 
   const closeSelectedPost = useCallback(() => {
@@ -904,6 +911,7 @@ export function PostsCalendarView() {
         <CalendarEditInspector
           post={editingPost}
           anchorRect={editingPostTarget.anchorRect}
+          boundsRect={editingPostTarget.boundsRect}
           accounts={accounts}
           profile={getPrimaryProfile(editingPost, profilesById)}
           color={getPostColor(editingPost, profilesById, profileColors)}
@@ -990,23 +998,29 @@ function TimedPostColumn({
   profileColors: Map<string, string>;
   onSelectPost: (postId: string, target: HTMLElement) => void;
 }) {
-  const laneCounts = new Map<number, number>();
+  const eventLayouts = getTimedEventLayouts(
+    posts.flatMap((post) => {
+      const minute = getCalendarPostMinuteOfDay(post);
+      return minute === null ? [] : [{ id: post.id, minuteOfDay: minute }];
+    }),
+    HOUR_HEIGHT,
+    TIMED_EVENT_MIN_HEIGHT,
+  );
+
   return (
     <div className="posts-calendar-time-column">
       {posts.map((post) => {
         const minute = getCalendarPostMinuteOfDay(post);
         if (minute === null) return null;
-        const bucket = Math.floor(minute / 30);
-        const lane = laneCounts.get(bucket) || 0;
-        laneCounts.set(bucket, lane + 1);
+        const layout = eventLayouts.get(post.id);
+        if (!layout) return null;
         return (
           <TimedPostButton
             key={post.id}
             post={post}
             profilesById={profilesById}
             profileColors={profileColors}
-            top={getTimedEventTop(minute, HOUR_HEIGHT)}
-            lane={lane}
+            layout={layout}
             onClick={(event) => onSelectPost(post.id, event.currentTarget)}
           />
         );
@@ -1019,15 +1033,13 @@ function TimedPostButton({
   post,
   profilesById,
   profileColors,
-  top,
-  lane,
+  layout,
   onClick,
 }: {
   post: SocialPost;
   profilesById: Map<string, Profile>;
   profileColors: Map<string, string>;
-  top: number;
-  lane: number;
+  layout: TimedCalendarEventLayout;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const status = getPostStatusGroup(post);
@@ -1041,9 +1053,10 @@ function TimedPostButton({
       className="posts-calendar-timed-event"
       style={{
         "--event-color": color,
-        top: `${Math.max(4, top + lane * 6)}px`,
-        left: `${7 + lane * 5}px`,
-        right: `${7 + lane * 5}px`,
+        top: `${Math.max(4, layout.top)}px`,
+        left: `calc(${layout.leftPercent}% + 6px)`,
+        width: `calc(${layout.widthPercent}% - 12px)`,
+        zIndex: layout.lane + 1,
       } as CSSProperties}
       onClick={onClick}
       title={`${post.caption || "No title"} - ${meta.label}${profile ? ` - ${profile.name}` : ""}`}
@@ -1315,6 +1328,7 @@ function CalendarPostResultCard({
 function CalendarEditInspector({
   post,
   anchorRect,
+  boundsRect,
   accounts,
   profile,
   color,
@@ -1324,6 +1338,7 @@ function CalendarEditInspector({
 }: {
   post: SocialPost;
   anchorRect: CalendarPopoverRect;
+  boundsRect: CalendarPopoverRect;
   accounts: SocialAccount[];
   profile: Profile | null;
   color: string;
@@ -1393,8 +1408,13 @@ function CalendarEditInspector({
   }, [form.mainContent, form.selectedAccountIds, form.overrides, form.mediaItems, form.existingMediaItems, form.scheduledAt]);
 
   const placement = useMemo(
-    () => getAnchoredPopoverPlacement({ anchor: anchorRect, viewport: viewportSize, popover: inspectorSize }),
-    [anchorRect, inspectorSize, viewportSize],
+    () => getBoundedCalendarPopoverPlacement({
+      anchor: anchorRect,
+      viewport: viewportSize,
+      popover: inspectorSize,
+      bounds: boundsRect,
+    }),
+    [anchorRect, boundsRect, inspectorSize, viewportSize],
   );
 
   const strictestTiktokMaxSec = useMemo(() => {
@@ -1563,7 +1583,7 @@ function CalendarEditInspector({
     "--event-color": color,
     "--popover-left": `${placement.left}px`,
     "--popover-top": `${placement.top}px`,
-    "--popover-available-height": `${Math.max(260, viewportSize.height - placement.top - 12)}px`,
+    "--popover-available-height": `${placement.availableHeight}px`,
     "--popover-arrow-x": `${placement.arrowX}px`,
     "--popover-arrow-y": `${placement.arrowY}px`,
     "--popover-transform-origin": placement.transformOrigin,
@@ -1806,6 +1826,11 @@ function getElementRect(element: HTMLElement): CalendarPopoverRect {
     width: rect.width,
     height: rect.height,
   };
+}
+
+function getCalendarEditorBoundsRect(element: HTMLElement): CalendarPopoverRect {
+  const boundsElement = element.closest(".posts-calendar-month-view, .posts-calendar-week-grid, .posts-calendar-day-grid");
+  return getElementRect(boundsElement instanceof HTMLElement ? boundsElement : element);
 }
 
 function getViewportSize(): CalendarPopoverSize {

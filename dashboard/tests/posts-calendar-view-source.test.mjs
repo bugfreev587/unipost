@@ -67,7 +67,9 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /posts-calendar-day-grid/);
   assert.match(source, /posts-calendar-time-scroll/);
   assert.match(source, /timelineStyle/);
-  assert.match(source, /getTimedEventTop\(minute,\s*HOUR_HEIGHT\)/);
+  assert.match(source, /getTimedEventLayouts/);
+  assert.match(source, /left: `calc\(\$\{layout\.leftPercent\}% \+ 6px\)`/);
+  assert.match(source, /width: `calc\(\$\{layout\.widthPercent\}% - 12px\)`/);
   assert.match(source, /--calendar-timeline-height/);
   assert.match(source, /--calendar-timed-event-min-height/);
   assert.match(source, /ref=\{attachScrollbarRef \? weekTimeScrollRef : null\}/);
@@ -193,7 +195,11 @@ test("Posts calendar edit inspector keeps fixed actions visible and profile besi
   assert.ok(bodyStart >= 0, "edit body should be present");
   assert.ok(footerIndex > bodyStart, "footer should remain after the scrollable body");
   assert.ok(footerCloseIndex > footerIndex, "footer should close before the article closes");
-  assert.match(inspector, /"--popover-available-height": `\$\{Math\.max\(260, viewportSize\.height - placement\.top - 12\)\}px`/);
+  assert.match(inspector, /boundsRect/);
+  assert.match(inspector, /getBoundedCalendarPopoverPlacement/);
+  assert.match(inspector, /"--popover-available-height": `\$\{placement\.availableHeight\}px`/);
+  assert.match(source, /function getCalendarEditorBoundsRect/);
+  assert.match(source, /closest\("\.posts-calendar-month-view, \.posts-calendar-week-grid, \.posts-calendar-day-grid"\)/);
   assert.match(css, /max-height:min\(calc\(100dvh - 24px\),var\(--popover-available-height,calc\(100dvh - 24px\)\)\)/);
   assert.match(css, /\.posts-calendar-edit-header,\s*\.posts-calendar-edit-footer\{[^}]*flex:0 0 auto/);
   assert.match(css, /\.posts-calendar-edit-body\{[^}]*flex:1 1 auto/);
