@@ -28,6 +28,7 @@ import {
   useCreatePostForm,
   PRIMARY_BUTTON_LABELS,
   measureVideoMetadata,
+  type ExistingMediaItem,
   type MediaItem,
 } from "./use-create-post-form";
 import { ChevronDown } from "lucide-react";
@@ -239,15 +240,47 @@ const MediaThumb = memo(function MediaThumb({ item, onRemove, onRetry, onPreview
   );
 });
 
+function ExistingMediaThumb({ item, onRemove }: { item: ExistingMediaItem; onRemove: () => void }) {
+  return (
+    <div
+      className="relative flex h-[88px] w-[88px] flex-shrink-0 items-center justify-center overflow-hidden rounded-lg border group/thumb"
+      style={{ background: "var(--surface1)", borderColor: "var(--dborder2)" }}
+      title={item.label}
+    >
+      {item.url ? (
+        <img src={item.url} alt={item.label} className="h-full w-full object-cover" />
+      ) : (
+        <div className="px-2 text-center font-mono text-[10px] leading-tight" style={{ color: "var(--dmuted)" }}>
+          Existing media
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        className="absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-xs text-white opacity-0 transition-opacity group-hover/thumb:opacity-100"
+      >
+        &times;
+      </button>
+      <div className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1.5 py-0.5 font-mono text-[9px]" style={{ color: "rgb(229 231 235)" }}>
+        {item.label}
+      </div>
+    </div>
+  );
+}
+
 function MediaThumbnails({
+  existingItems,
   items,
+  onRemoveExisting,
   onRemove,
   onAdd,
   onRetry,
   onPreview,
   strictestTiktokMaxSec,
 }: {
+  existingItems: ExistingMediaItem[];
   items: MediaItem[];
+  onRemoveExisting: (index: number) => void;
   onRemove: (index: number) => void;
   onAdd: (files: File[]) => void;
   onRetry: (index: number) => void;
@@ -288,6 +321,13 @@ function MediaThumbnails({
         Media
       </label>
       <div className="flex gap-2.5 flex-wrap">
+        {existingItems.map((item, i) => (
+          <ExistingMediaThumb
+            key={item.id ? `id:${item.id}` : `url:${item.url}`}
+            item={item}
+            onRemove={() => onRemoveExisting(i)}
+          />
+        ))}
         {items.map((item, i) => (
           <MediaThumb
             key={item.fingerprint}
@@ -2362,7 +2402,7 @@ export function CreatePostDrawer({
       Object.values(form.overrides).some(
         (o) => o.caption?.trim() || o.youtube?.title?.trim() || o.facebook?.link?.trim()
       ) ||
-      form.mediaItems.length > 0;
+      form.totalMediaCount > 0;
     if (!hasContent) return "Add caption text or media to publish.";
     if (form.publishMode === "schedule" && !form.scheduledAt) return "Pick a time to schedule this post.";
     if (form.publishMode === "schedule" && form.scheduledAt && new Date(form.scheduledAt) <= new Date())
@@ -2392,6 +2432,7 @@ export function CreatePostDrawer({
     form.scheduledAt,
     form.queueId,
     form.tiktokBlocker,
+    form.totalMediaCount,
     tiktokBlockers,
     oversizeVideos.length,
   ]);
@@ -2402,7 +2443,7 @@ export function CreatePostDrawer({
       mode: aiMode,
       mainContent: form.mainContent,
       brief: aiBrief,
-      mediaCount: form.mediaItems.length,
+      mediaCount: form.totalMediaCount,
     })) return;
     if (!aiMode) return;
     setAILoading(true);
@@ -2432,7 +2473,7 @@ export function CreatePostDrawer({
     } finally {
       setAILoading(false);
     }
-  }, [aiAssistEnabled, aiMode, aiBrief, aiObjective, aiTone, aiIncludeCTA, form.mainContent, form.mediaItems, form.selectedAccountIds, form.uniqueSelectedAccounts, form.overrides, getToken, selectedProfileId, validationResult]);
+  }, [aiAssistEnabled, aiMode, aiBrief, aiObjective, aiTone, aiIncludeCTA, form.mainContent, form.mediaItems, form.totalMediaCount, form.selectedAccountIds, form.uniqueSelectedAccounts, form.overrides, getToken, selectedProfileId, validationResult]);
 
   const handleApplyAISuggestion = useCallback(() => {
     if (!aiSuggestion?.main_caption) return;
@@ -2597,7 +2638,9 @@ export function CreatePostDrawer({
             {/* Media upload */}
             <div ref={mediaSectionRef}>
               <MediaThumbnails
+                existingItems={form.existingMediaItems}
                 items={form.mediaItems}
+                onRemoveExisting={(i) => form.removeExistingMediaItem(i)}
                 onRemove={(i) => form.removeMediaItem(i)}
                 onAdd={(newFiles) => newFiles.forEach((f) => handleFileUpload(f))}
                 onPreview={(file) => setPreviewFile(file)}
@@ -2889,7 +2932,7 @@ export function CreatePostDrawer({
                   onApplyFirstCommentSuggestion={handleApplyAIFirstCommentSuggestion}
                   onApplyAllFirstCommentSuggestions={handleApplyAllAIFirstCommentSuggestions}
                   selectedPlatformsCount={form.selectedAccountIds.size}
-                  mediaCount={form.mediaItems.length}
+                  mediaCount={form.totalMediaCount}
                   hasMainContent={!!form.mainContent.trim()}
                   loading={aiLoading}
                   error={aiError}
