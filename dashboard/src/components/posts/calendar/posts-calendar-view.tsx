@@ -38,6 +38,8 @@ import {
   getPostStatusGroup,
   getProfileCalendarColor,
   getSwipeNavigationIntent,
+  getTimedEventTop,
+  getTimedTimelineContentHeight,
   getWheelNavigationIntent,
   parseCalendarViewMode,
   type CalendarPopoverRect,
@@ -52,6 +54,13 @@ import {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const HOUR_HEIGHT = 64;
+const TIMED_EVENT_MIN_HEIGHT = 38;
+const TIMELINE_END_PADDING = 8;
+const TIMELINE_CONTENT_HEIGHT = getTimedTimelineContentHeight(
+  HOUR_HEIGHT,
+  TIMED_EVENT_MIN_HEIGHT,
+  TIMELINE_END_PADDING,
+);
 const POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 420, height: 320 };
 
 type SelectedPostTarget = {
@@ -235,6 +244,14 @@ export function PostsCalendarView() {
   const monthCells = useMemo(() => buildMonthGrid(visibleMonth), [visibleMonth]);
   const weekDays = useMemo(() => buildWeekDays(visibleDate), [visibleDate]);
   const dayDateKey = useMemo(() => formatLocalDateKey(visibleDate), [visibleDate]);
+  const timelineStyle = useMemo(
+    () => ({
+      "--hour-height": `${HOUR_HEIGHT}px`,
+      "--calendar-timed-event-min-height": `${TIMED_EVENT_MIN_HEIGHT}px`,
+      "--calendar-timeline-height": `${TIMELINE_CONTENT_HEIGHT}px`,
+    }) as CSSProperties,
+    [],
+  );
 
   const selectedPostId = selectedPostTarget?.postId || null;
   const selectedPost = useMemo(
@@ -416,7 +433,7 @@ export function PostsCalendarView() {
         </div>
         <div className="posts-calendar-week-scrollbar-spacer" aria-hidden="true" />
       </div>
-      <div ref={weekTimeScrollRef} className="posts-calendar-time-scroll">
+      <div ref={weekTimeScrollRef} className="posts-calendar-time-scroll" style={timelineStyle}>
         <TimeLabels />
         <div className="posts-calendar-week-columns">
           {weekDays.map((day) => (
@@ -438,7 +455,7 @@ export function PostsCalendarView() {
       <div className="posts-calendar-day-all-day">
         <span>all-day</span>
       </div>
-      <div className="posts-calendar-time-scroll">
+      <div className="posts-calendar-time-scroll" style={timelineStyle}>
         <TimeLabels />
         <div className="posts-calendar-day-column-wrap">
           <TimedPostColumn
@@ -679,7 +696,7 @@ function TimedPostColumn({
 }) {
   const laneCounts = new Map<number, number>();
   return (
-    <div className="posts-calendar-time-column" style={{ "--hour-height": `${HOUR_HEIGHT}px` } as CSSProperties}>
+    <div className="posts-calendar-time-column">
       {posts.map((post) => {
         const minute = getCalendarPostMinuteOfDay(post);
         if (minute === null) return null;
@@ -692,7 +709,7 @@ function TimedPostColumn({
             post={post}
             profilesById={profilesById}
             profileColors={profileColors}
-            top={(minute / 60) * HOUR_HEIGHT}
+            top={getTimedEventTop(minute, HOUR_HEIGHT)}
             lane={lane}
             onClick={(event) => onSelectPost(post.id, event.currentTarget)}
           />
@@ -1066,12 +1083,12 @@ const CALENDAR_CSS = `
 .posts-calendar-day-all-day{height:34px;border-bottom:1px solid var(--dborder)}
 .posts-calendar-time-scroll{flex:1;min-height:0;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:var(--surface)}
 .posts-calendar-week-grid .posts-calendar-time-scroll{grid-template-columns:var(--calendar-week-template);gap:1px;min-width:var(--calendar-week-min-width);background:var(--dborder)}
-.posts-calendar-time-labels{height:calc(24 * var(--hour-height,64px));background:var(--surface);border-right:1px solid var(--dborder)}
+.posts-calendar-time-labels{height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background:var(--surface);border-right:1px solid var(--dborder)}
 .posts-calendar-time-label{height:var(--hour-height,64px);display:flex;align-items:flex-start;justify-content:flex-end;padding:5px 8px 0 4px;color:var(--dmuted);font-size:12px;font-weight:650;border-top:1px solid var(--dborder);white-space:nowrap}
 .posts-calendar-week-columns{grid-column:2/-1;min-width:0;display:grid;grid-template-columns:repeat(7,minmax(var(--calendar-week-day-min),1fr));background:var(--dborder);gap:1px}
 .posts-calendar-day-column-wrap{min-width:0;background:var(--dborder);padding-left:1px}
-.posts-calendar-time-column{position:relative;height:calc(24 * var(--hour-height,64px));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
-.posts-calendar-timed-event{--event-color:#8b8b93;position:absolute;min-height:38px;border:1px solid color-mix(in srgb,var(--event-color) 30%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-color) 21%,var(--surface));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
+.posts-calendar-time-column{position:relative;height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
+.posts-calendar-timed-event{--event-color:#8b8b93;position:absolute;min-height:var(--calendar-timed-event-min-height,38px);border:1px solid color-mix(in srgb,var(--event-color) 30%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-color) 21%,var(--surface));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
 .posts-calendar-timed-event:hover{border-color:color-mix(in srgb,var(--event-color) 54%,var(--dborder));background:color-mix(in srgb,var(--event-color) 28%,var(--surface))}
 .posts-calendar-timed-content{min-width:0;display:flex;flex-direction:column;gap:2px}
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}

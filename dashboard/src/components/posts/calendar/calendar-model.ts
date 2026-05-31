@@ -138,6 +138,18 @@ export function getCalendarPostMinuteOfDay(post: CalendarModelPost): number | nu
   return date.getHours() * 60 + date.getMinutes();
 }
 
+export function getTimedEventTop(minuteOfDay: number, hourHeight: number): number {
+  return (minuteOfDay / 60) * hourHeight;
+}
+
+export function getTimedTimelineContentHeight(
+  hourHeight: number,
+  eventMinHeight: number,
+  bottomPadding: number,
+): number {
+  return 24 * hourHeight + eventMinHeight + bottomPadding;
+}
+
 export function getWheelNavigationIntent(
   mode: CalendarViewMode,
   deltaX: number,

@@ -38,6 +38,12 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /posts-calendar-week-grid/);
   assert.match(source, /posts-calendar-day-grid/);
   assert.match(source, /posts-calendar-time-scroll/);
+  assert.match(source, /timelineStyle/);
+  assert.match(source, /getTimedEventTop\(minute,\s*HOUR_HEIGHT\)/);
+  assert.match(source, /--calendar-timeline-height/);
+  assert.match(source, /--calendar-timed-event-min-height/);
+  assert.match(source, /<div ref=\{weekTimeScrollRef\} className="posts-calendar-time-scroll" style=\{timelineStyle\}>/);
+  assert.match(source, /<div className="posts-calendar-time-scroll" style=\{timelineStyle\}>/);
   assert.match(source, /--calendar-time-gutter:76px/);
   assert.match(source, /--calendar-week-day-min:132px/);
   assert.match(source, /--calendar-week-template:var\(--calendar-time-gutter\) repeat\(7,minmax\(var\(--calendar-week-day-min\),1fr\)\)/);

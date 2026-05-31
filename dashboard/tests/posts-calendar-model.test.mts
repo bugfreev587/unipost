@@ -7,6 +7,8 @@ import {
   getCalendarPostMinuteOfDay,
   getAnchoredPopoverPlacement,
   getSwipeNavigationIntent,
+  getTimedEventTop,
+  getTimedTimelineContentHeight,
   getWheelNavigationIntent,
   getPostStatusGroup,
   getProfileCalendarColor,
@@ -113,6 +115,20 @@ test("getCalendarPostMinuteOfDay maps post timestamps onto a day timeline", () =
     870,
   );
   assert.equal(getCalendarPostMinuteOfDay({ status: "draft" }), null);
+});
+
+test("timed timeline height preserves late-night event visibility", () => {
+  const hourHeight = 64;
+  const eventMinHeight = 38;
+  const minuteOfDay = 23 * 60 + 46;
+  const top = getTimedEventTop(minuteOfDay, hourHeight);
+  const contentHeight = getTimedTimelineContentHeight(hourHeight, eventMinHeight, 8);
+
+  assert.equal(Math.round(top), 1521);
+  assert.ok(
+    top + eventMinHeight <= contentHeight,
+    "11:46 PM events should fit inside the scrollable day timeline",
+  );
 });
 
 test("wheel navigation follows Apple Calendar style directions per view", () => {
