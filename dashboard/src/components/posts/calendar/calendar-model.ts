@@ -10,6 +10,7 @@ export type CalendarStatusFilter =
 
 export type CalendarStatusGroup = Exclude<CalendarStatusFilter, "all">;
 export type CalendarViewMode = "day" | "week" | "month";
+export type CalendarPopoverSide = "right" | "left" | "bottom" | "top";
 
 export type CalendarModelPost = {
   status: string;
@@ -33,6 +34,29 @@ export type CalendarDayCell = {
   dayOfMonth: number;
   isCurrentMonth: boolean;
   isToday: boolean;
+};
+
+export type CalendarPopoverRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+export type CalendarPopoverSize = {
+  width: number;
+  height: number;
+};
+
+export type CalendarPopoverPlacement = {
+  side: CalendarPopoverSide;
+  left: number;
+  top: number;
+  arrowX: number;
+  arrowY: number;
+  transformOrigin: string;
 };
 
 const IN_PROGRESS_STATUSES = new Set(["queued", "dispatching", "retrying", "processing"]);
@@ -153,6 +177,69 @@ export function parseCalendarViewMode(value: string | null | undefined): Calenda
   return value && CALENDAR_VIEW_MODES.has(value as CalendarViewMode) ? (value as CalendarViewMode) : "month";
 }
 
+export function getAnchoredPopoverPlacement({
+  anchor,
+  viewport,
+  popover,
+  gap = 12,
+  margin = 12,
+  arrowInset = 18,
+}: {
+  anchor: CalendarPopoverRect;
+  viewport: CalendarPopoverSize;
+  popover: CalendarPopoverSize;
+  gap?: number;
+  margin?: number;
+  arrowInset?: number;
+}): CalendarPopoverPlacement {
+  const availableRight = viewport.width - anchor.right - margin - gap;
+  const availableLeft = anchor.left - margin - gap;
+  const availableBottom = viewport.height - anchor.bottom - margin - gap;
+  const availableTop = anchor.top - margin - gap;
+  const side = choosePopoverSide({
+    availableRight,
+    availableLeft,
+    availableBottom,
+    availableTop,
+    popover,
+  });
+  const anchorCenterX = anchor.left + anchor.width / 2;
+  const anchorCenterY = anchor.top + anchor.height / 2;
+  const maxLeft = viewport.width - popover.width - margin;
+  const maxTop = viewport.height - popover.height - margin;
+
+  if (side === "right" || side === "left") {
+    const left = side === "right"
+      ? clamp(anchor.right + gap, margin, maxLeft)
+      : clamp(anchor.left - popover.width - gap, margin, maxLeft);
+    const top = clamp(anchorCenterY - popover.height / 2, margin, maxTop);
+    const arrowY = Math.round(clamp(anchorCenterY - top, arrowInset, popover.height - arrowInset));
+    return {
+      side,
+      left: Math.round(left),
+      top: Math.round(top),
+      arrowX: side === "right" ? 0 : popover.width,
+      arrowY,
+      transformOrigin: `${side === "right" ? "left" : "right"} ${arrowY}px`,
+    };
+  }
+
+  const left = clamp(anchorCenterX - popover.width / 2, margin, maxLeft);
+  const top = side === "bottom"
+    ? clamp(anchor.bottom + gap, margin, maxTop)
+    : clamp(anchor.top - popover.height - gap, margin, maxTop);
+  const arrowX = Math.round(clamp(anchorCenterX - left, arrowInset, popover.width - arrowInset));
+
+  return {
+    side,
+    left: Math.round(left),
+    top: Math.round(top),
+    arrowX,
+    arrowY: side === "bottom" ? 0 : popover.height,
+    transformOrigin: `${arrowX}px ${side === "bottom" ? "top" : "bottom"}`,
+  };
+}
+
 export function getPostStatusGroup(post: CalendarModelPost): CalendarStatusGroup {
   if (post.archived_at) return "archived";
   if (post.status === "published") return "published";
@@ -191,6 +278,39 @@ function addDays(date: Date, days: number): Date {
 
 function startOfSundayWeek(date: Date): Date {
   return addDays(date, -date.getDay());
+}
+
+function choosePopoverSide({
+  availableRight,
+  availableLeft,
+  availableBottom,
+  availableTop,
+  popover,
+}: {
+  availableRight: number;
+  availableLeft: number;
+  availableBottom: number;
+  availableTop: number;
+  popover: CalendarPopoverSize;
+}): CalendarPopoverSide {
+  if (availableRight >= popover.width) return "right";
+  if (availableLeft >= popover.width) return "left";
+  if (availableBottom >= popover.height) return "bottom";
+  if (availableTop >= popover.height) return "top";
+
+  const spaces: Array<[CalendarPopoverSide, number]> = [
+    ["right", availableRight],
+    ["left", availableLeft],
+    ["bottom", availableBottom],
+    ["top", availableTop],
+  ];
+  spaces.sort((a, b) => b[1] - a[1]);
+  return spaces[0]?.[0] || "right";
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return min;
+  return Math.min(Math.max(value, min), max);
 }
 
 function isValidHexColor(value: string): boolean {

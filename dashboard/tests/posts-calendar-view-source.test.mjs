@@ -63,3 +63,20 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /posts-calendar-fullheight/);
   assert.match(source, /resolvedOptions\(\)\.timeZone/);
 });
+
+test("Posts calendar details popover anchors to the selected event button", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+
+  assert.match(source, /getAnchoredPopoverPlacement/);
+  assert.match(source, /selectedPostTarget/);
+  assert.match(source, /handleSelectPost/);
+  assert.match(source, /getElementRect/);
+  assert.match(source, /getBoundingClientRect\(\)/);
+  assert.match(source, /anchorRect=\{selectedPostTarget\.anchorRect\}/);
+  assert.match(source, /data-side=\{placement\.side\}/);
+  assert.match(source, /--popover-left/);
+  assert.match(source, /--popover-arrow-y/);
+  assert.match(source, /posts-calendar-popover-open/);
+  assert.match(source, /\.posts-calendar-popover\[data-side="right"\]::before/);
+  assert.doesNotMatch(source, /background:color-mix\(in srgb,var\(--overlay\) 48%,transparent\)/);
+});

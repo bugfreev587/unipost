@@ -4,7 +4,18 @@ import { useAuth } from "@clerk/nextjs";
 import { ChevronLeft, ChevronRight, List, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type TouchEvent, type WheelEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type TouchEvent,
+  type WheelEvent,
+} from "react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 import {
@@ -21,6 +32,7 @@ import {
   buildWeekDays,
   bucketPostByLocalDay,
   formatLocalDateKey,
+  getAnchoredPopoverPlacement,
   getCalendarPostDate,
   getCalendarPostMinuteOfDay,
   getPostStatusGroup,
@@ -28,6 +40,8 @@ import {
   getSwipeNavigationIntent,
   getWheelNavigationIntent,
   parseCalendarViewMode,
+  type CalendarPopoverRect,
+  type CalendarPopoverSize,
   shouldShowPostForStatusFilter,
   shiftCalendarDateBySwipe,
   type CalendarStatusFilter,
@@ -38,6 +52,12 @@ import {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const HOUR_HEIGHT = 64;
+const POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 420, height: 320 };
+
+type SelectedPostTarget = {
+  postId: string;
+  anchorRect: CalendarPopoverRect;
+};
 
 const STATUS_FILTERS: Array<{ value: CalendarStatusFilter; label: string }> = [
   { value: "all", label: "All Status" },
@@ -77,7 +97,7 @@ export function PostsCalendarView() {
   const [visibleDate, setVisibleDate] = useState(() => new Date());
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [filtersInitialized, setFiltersInitialized] = useState(false);
-  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const [selectedPostTarget, setSelectedPostTarget] = useState<SelectedPostTarget | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -216,6 +236,7 @@ export function PostsCalendarView() {
   const weekDays = useMemo(() => buildWeekDays(visibleDate), [visibleDate]);
   const dayDateKey = useMemo(() => formatLocalDateKey(visibleDate), [visibleDate]);
 
+  const selectedPostId = selectedPostTarget?.postId || null;
   const selectedPost = useMemo(
     () => posts.find((post) => post.id === selectedPostId) || null,
     [posts, selectedPostId],
@@ -318,6 +339,14 @@ export function PostsCalendarView() {
     shiftCalendarBySwipe(direction);
   }, [calendarMode, shiftCalendarBySwipe]);
 
+  const handleSelectPost = useCallback((postId: string, target: HTMLElement) => {
+    setSelectedPostTarget({ postId, anchorRect: getElementRect(target) });
+  }, []);
+
+  const closeSelectedPost = useCallback(() => {
+    setSelectedPostTarget(null);
+  }, []);
+
   const renderMonthView = () => (
     <div
       className="posts-calendar-grid"
@@ -347,11 +376,15 @@ export function PostsCalendarView() {
                   post={post}
                   profilesById={profilesById}
                   profileColors={profileColors}
-                  onClick={() => setSelectedPostId(post.id)}
+                  onClick={(event) => handleSelectPost(post.id, event.currentTarget)}
                 />
               ))}
               {dayPosts.length > visibleDayPosts.length ? (
-                <button type="button" className="posts-calendar-more" onClick={() => setSelectedPostId(dayPosts[4].id)}>
+                <button
+                  type="button"
+                  className="posts-calendar-more"
+                  onClick={(event) => handleSelectPost(dayPosts[4].id, event.currentTarget)}
+                >
                   + {dayPosts.length - visibleDayPosts.length} more
                 </button>
               ) : null}
@@ -392,7 +425,7 @@ export function PostsCalendarView() {
               posts={postsByDate.get(day.dateKey) || []}
               profilesById={profilesById}
               profileColors={profileColors}
-              onSelectPost={setSelectedPostId}
+              onSelectPost={handleSelectPost}
             />
           ))}
         </div>
@@ -412,7 +445,7 @@ export function PostsCalendarView() {
             posts={postsByDate.get(dayDateKey) || []}
             profilesById={profilesById}
             profileColors={profileColors}
-            onSelectPost={setSelectedPostId}
+            onSelectPost={handleSelectPost}
           />
         </div>
       </div>
@@ -555,14 +588,15 @@ export function PostsCalendarView() {
         </div>
       </div>
 
-      {selectedPost ? (
+      {selectedPost && selectedPostTarget ? (
         <EventPopover
           post={selectedPost}
+          anchorRect={selectedPostTarget.anchorRect}
           profile={getPrimaryProfile(selectedPost, profilesById)}
           color={getPostColor(selectedPost, profilesById, profileColors)}
           timezone={timezone}
           profileId={profileId}
-          onClose={() => setSelectedPostId(null)}
+          onClose={closeSelectedPost}
         />
       ) : null}
 
@@ -597,7 +631,7 @@ function CalendarEventButton({
   post: SocialPost;
   profilesById: Map<string, Profile>;
   profileColors: Map<string, string>;
-  onClick: () => void;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const status = getPostStatusGroup(post);
   const meta = STATUS_META[status];
@@ -641,7 +675,7 @@ function TimedPostColumn({
   posts: SocialPost[];
   profilesById: Map<string, Profile>;
   profileColors: Map<string, string>;
-  onSelectPost: (postId: string) => void;
+  onSelectPost: (postId: string, target: HTMLElement) => void;
 }) {
   const laneCounts = new Map<number, number>();
   return (
@@ -660,7 +694,7 @@ function TimedPostColumn({
             profileColors={profileColors}
             top={(minute / 60) * HOUR_HEIGHT}
             lane={lane}
-            onClick={() => onSelectPost(post.id)}
+            onClick={(event) => onSelectPost(post.id, event.currentTarget)}
           />
         );
       })}
@@ -681,7 +715,7 @@ function TimedPostButton({
   profileColors: Map<string, string>;
   top: number;
   lane: number;
-  onClick: () => void;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const status = getPostStatusGroup(post);
   const meta = STATUS_META[status];
@@ -712,6 +746,7 @@ function TimedPostButton({
 
 function EventPopover({
   post,
+  anchorRect,
   profile,
   color,
   timezone,
@@ -719,6 +754,7 @@ function EventPopover({
   onClose,
 }: {
   post: SocialPost;
+  anchorRect: CalendarPopoverRect;
   profile: Profile | null;
   color: string;
   timezone: string;
@@ -728,15 +764,55 @@ function EventPopover({
   const status = getPostStatusGroup(post);
   const meta = STATUS_META[status];
   const platforms = getPostPlatforms(post);
+  const popoverRef = useRef<HTMLElement | null>(null);
+  const [viewportSize, setViewportSize] = useState<CalendarPopoverSize>(() => getViewportSize());
+  const [popoverSize, setPopoverSize] = useState<CalendarPopoverSize>(POPOVER_FALLBACK_SIZE);
+
+  useLayoutEffect(() => {
+    const updateGeometry = () => {
+      setViewportSize(getViewportSize());
+      const rect = popoverRef.current?.getBoundingClientRect();
+      if (rect && rect.width > 0 && rect.height > 0) {
+        setPopoverSize({ width: rect.width, height: rect.height });
+      }
+    };
+
+    updateGeometry();
+    const resizeObserver = typeof ResizeObserver === "undefined" || !popoverRef.current
+      ? null
+      : new ResizeObserver(updateGeometry);
+    if (popoverRef.current) resizeObserver?.observe(popoverRef.current);
+    window.addEventListener("resize", updateGeometry);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateGeometry);
+    };
+  }, [post.id]);
+
+  const placement = useMemo(
+    () => getAnchoredPopoverPlacement({ anchor: anchorRect, viewport: viewportSize, popover: popoverSize }),
+    [anchorRect, popoverSize, viewportSize],
+  );
+  const popoverStyle = {
+    "--event-color": color,
+    "--popover-left": `${placement.left}px`,
+    "--popover-top": `${placement.top}px`,
+    "--popover-arrow-x": `${placement.arrowX}px`,
+    "--popover-arrow-y": `${placement.arrowY}px`,
+    "--popover-transform-origin": placement.transformOrigin,
+  } as CSSProperties;
+
   return (
     <div className="posts-calendar-popover-layer" role="presentation" onMouseDown={onClose}>
       <article
+        ref={popoverRef}
         className="posts-calendar-popover"
+        data-side={placement.side}
         role="dialog"
-        aria-modal="true"
         aria-label="Post details"
         onMouseDown={(event) => event.stopPropagation()}
-        style={{ "--event-color": color } as CSSProperties}
+        style={popoverStyle}
       >
         <div className="posts-calendar-popover-head">
           <div>
@@ -785,6 +861,23 @@ function EventPopover({
       </article>
     </div>
   );
+}
+
+function getElementRect(element: HTMLElement): CalendarPopoverRect {
+  const rect = element.getBoundingClientRect();
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function getViewportSize(): CalendarPopoverSize {
+  if (typeof window === "undefined") return { width: 1280, height: 720 };
+  return { width: window.innerWidth, height: window.innerHeight };
 }
 
 function getPrimaryProfile(post: SocialPost, profilesById: Map<string, Profile>): Profile | null {
@@ -983,8 +1076,14 @@ const CALENDAR_CSS = `
 .posts-calendar-timed-content{min-width:0;display:flex;flex-direction:column;gap:2px}
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
 .posts-calendar-timed-meta{font-size:11px;color:color-mix(in srgb,var(--event-color) 78%,var(--dmuted));font-weight:700;line-height:1.15;white-space:nowrap}
-.posts-calendar-popover-layer{position:fixed;inset:0;background:color-mix(in srgb,var(--overlay) 48%,transparent);display:flex;align-items:flex-start;justify-content:flex-end;padding:96px 30px 30px;z-index:90}
-.posts-calendar-popover{width:min(420px,calc(100vw - 36px));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);padding:16px}
+.posts-calendar-popover-layer{position:fixed;inset:0;background:transparent;z-index:90}
+.posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);width:min(420px,calc(100vw - 24px));max-height:calc(100dvh - 24px);background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);padding:16px;transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1)}
+.posts-calendar-popover::before{content:"";position:absolute;width:16px;height:16px;background:var(--surface-raised);border:1px solid var(--dborder);transform:rotate(45deg);pointer-events:none}
+.posts-calendar-popover[data-side="right"]::before{left:-9px;top:calc(var(--popover-arrow-y) - 8px);border-top:0;border-right:0}
+.posts-calendar-popover[data-side="left"]::before{right:-9px;top:calc(var(--popover-arrow-y) - 8px);border-bottom:0;border-left:0}
+.posts-calendar-popover[data-side="bottom"]::before{left:calc(var(--popover-arrow-x) - 8px);top:-9px;border-right:0;border-bottom:0}
+.posts-calendar-popover[data-side="top"]::before{left:calc(var(--popover-arrow-x) - 8px);bottom:-9px;border-top:0;border-left:0}
+@keyframes posts-calendar-popover-open{from{opacity:0;transform:scale(.94) translateY(3px)}to{opacity:1;transform:scale(1) translateY(0)}}
 .posts-calendar-popover-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:16px}
 .posts-calendar-popover-head h2{margin:5px 0 0;color:var(--dtext);font-size:18px;line-height:1.35;font-weight:720;letter-spacing:0}
 .posts-calendar-popover-head button{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--dborder);border-radius:999px;background:var(--surface2);color:var(--dmuted);cursor:pointer}
@@ -1000,5 +1099,6 @@ const CALENDAR_CSS = `
 .posts-calendar-open-list{display:inline-flex;align-items:center;justify-content:center;margin-top:17px;width:100%;height:36px;border-radius:10px;background:var(--surface2);border:1px solid var(--dborder);color:var(--dtext);text-decoration:none;font-size:14px;font-weight:700}
 .posts-calendar-open-list:hover{background:var(--surface3)}
 @media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-grid{min-height:720px;grid-template-rows:34px repeat(6,minmax(114px,1fr))}}
-@media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-grid{overflow-x:auto;grid-template-columns:repeat(7,minmax(132px,1fr))}.posts-calendar-popover-layer{padding:78px 12px 16px}.posts-calendar-popover{width:100%}}
+@media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-grid{overflow-x:auto;grid-template-columns:repeat(7,minmax(132px,1fr))}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}}
+@media (prefers-reduced-motion:reduce){.posts-calendar-popover{animation:none}}
 `;

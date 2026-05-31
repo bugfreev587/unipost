@@ -5,6 +5,7 @@ import {
   buildWeekDays,
   bucketPostByLocalDay,
   getCalendarPostMinuteOfDay,
+  getAnchoredPopoverPlacement,
   getSwipeNavigationIntent,
   getWheelNavigationIntent,
   getPostStatusGroup,
@@ -144,6 +145,59 @@ test("parseCalendarViewMode accepts URL view modes and falls back to month", () 
   assert.equal(parseCalendarViewMode("month"), "month");
   assert.equal(parseCalendarViewMode("agenda"), "month");
   assert.equal(parseCalendarViewMode(null), "month");
+});
+
+test("getAnchoredPopoverPlacement keeps details beside the selected post when space allows", () => {
+  const placement = getAnchoredPopoverPlacement({
+    anchor: { left: 120, top: 520, right: 260, bottom: 544, width: 140, height: 24 },
+    viewport: { width: 1200, height: 780 },
+    popover: { width: 420, height: 320 },
+  });
+
+  assert.equal(placement.side, "right");
+  assert.equal(placement.left, 272);
+  assert.equal(placement.top, 372);
+  assert.equal(placement.arrowY, 160);
+  assert.equal(placement.transformOrigin, "left 160px");
+});
+
+test("getAnchoredPopoverPlacement flips and clamps around viewport edges", () => {
+  assert.deepEqual(
+    getAnchoredPopoverPlacement({
+      anchor: { left: 1080, top: 220, right: 1160, bottom: 244, width: 80, height: 24 },
+      viewport: { width: 1200, height: 780 },
+      popover: { width: 420, height: 320 },
+    }),
+    {
+      side: "left",
+      left: 648,
+      top: 72,
+      arrowX: 420,
+      arrowY: 160,
+      transformOrigin: "right 160px",
+    },
+  );
+
+  assert.equal(
+    getAnchoredPopoverPlacement({
+      anchor: { left: 250, top: 80, right: 340, bottom: 104, width: 90, height: 24 },
+      viewport: { width: 620, height: 780 },
+      popover: { width: 420, height: 320 },
+    }).side,
+    "bottom",
+  );
+
+  const topPlacement = getAnchoredPopoverPlacement({
+    anchor: { left: 250, top: 720, right: 340, bottom: 744, width: 90, height: 24 },
+    viewport: { width: 620, height: 780 },
+    popover: { width: 420, height: 320 },
+  });
+
+  assert.equal(topPlacement.side, "top");
+  assert.equal(topPlacement.top, 388);
+  assert.equal(topPlacement.left, 85);
+  assert.equal(topPlacement.arrowX, 210);
+  assert.equal(topPlacement.transformOrigin, "210px bottom");
 });
 
 function formatDate(date: Date): string {
