@@ -805,7 +805,6 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     ];
     const mediaIds = currentMediaIds.length > 0 ? currentMediaIds : undefined;
     const mediaUrls = existingMediaUrls.length > 0 ? existingMediaUrls : undefined;
-    console.log("[buildPayload] latestMediaItems:", latestMediaItems.length, "currentMediaIds:", currentMediaIds);
 
     if (hasOverrides || mediaIds || mediaUrls) {
       payload.platform_posts = accountIds.flatMap((id) => {
