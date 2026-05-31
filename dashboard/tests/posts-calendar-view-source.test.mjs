@@ -166,6 +166,33 @@ test("Posts calendar day view removes all-day row and its top divider", async ()
   assert.doesNotMatch(source, /with-divider/);
 });
 
+test("Posts calendar shades weekend panels across day week and month views", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const monthDayGrid = source.slice(source.indexOf("const renderMonthDayGrid"), source.indexOf("const renderMonthView"));
+  const monthWeekdayHeader = source.slice(source.indexOf("const renderMonthWeekdayHeader"), source.indexOf("const renderMonthDayGrid"));
+  const weekHeader = source.slice(source.indexOf("const renderWeekHeader"), source.indexOf("const renderWeekColumns"));
+  const weekColumns = source.slice(source.indexOf("const renderWeekColumns"), source.indexOf("const renderWeekView"));
+  const dayView = source.slice(source.indexOf("const renderDayView"), source.indexOf("const renderMonthSwipeTransitionView"));
+  const timedColumn = source.slice(source.indexOf("function TimedPostColumn"), source.indexOf("function TimedPostButton"));
+
+  assert.match(source, /function isWeekendDate\(date: Date\)/);
+  assert.match(monthWeekdayHeader, /index === 0 \|\| index === 6/);
+  assert.match(monthWeekdayHeader, /posts-calendar-weekday[^\n]+weekend/);
+  assert.match(monthDayGrid, /isWeekendDate\(cell\.date\) \? "weekend" : ""/);
+  assert.match(weekHeader, /isWeekendDate\(day\.date\) \? "weekend" : ""/);
+  assert.match(weekColumns, /isWeekend=\{isWeekendDate\(day\.date\)\}/);
+  assert.match(dayView, /posts-calendar-day-grid \$\{isWeekendDate\(visibleDate\) \? "weekend" : ""\}/);
+  assert.match(dayView, /isWeekend=\{isWeekendDate\(visibleDate\)\}/);
+  assert.match(timedColumn, /isWeekend: boolean/);
+  assert.match(timedColumn, /posts-calendar-time-column \$\{isWeekend \? "weekend" : ""\}/);
+  assert.match(source, /--calendar-weekend-surface:/);
+  assert.match(source, /\.dark \.posts-calendar-fullheight\{--calendar-weekend-surface:/);
+  assert.match(source, /\.posts-calendar-day\.weekend\{[^}]*background:var\(--calendar-weekend-surface\)/);
+  assert.match(source, /\.posts-calendar-week-heading\.weekend\{[^}]*background:var\(--calendar-weekend-surface\)/);
+  assert.match(source, /\.posts-calendar-time-column\.weekend\{[^}]*background-color:var\(--calendar-weekend-surface\)/);
+  assert.match(source, /\.posts-calendar-day-grid\.weekend \.posts-calendar-day-column-wrap\{[^}]*background:var\(--calendar-weekend-surface\)/);
+});
+
 test("Posts calendar swipe handlers avoid passive listener preventDefault warnings", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const wheelHandler = source.slice(

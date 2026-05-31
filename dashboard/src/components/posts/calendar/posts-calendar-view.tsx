@@ -513,8 +513,10 @@ export function PostsCalendarView() {
 
   const renderMonthWeekdayHeader = () => (
     <div className="posts-calendar-month-weekdays" aria-hidden="true">
-      {WEEKDAYS.map((weekday) => (
-        <div key={weekday} className="posts-calendar-weekday">{weekday}</div>
+      {WEEKDAYS.map((weekday, index) => (
+        <div key={weekday} className={`posts-calendar-weekday ${index === 0 || index === 6 ? "weekend" : ""}`}>
+          {weekday}
+        </div>
       ))}
     </div>
   );
@@ -527,7 +529,7 @@ export function PostsCalendarView() {
         return (
           <div
             key={cell.dateKey}
-            className={`posts-calendar-day ${cell.isCurrentMonth ? "" : "outside"} ${cell.isToday ? "today" : ""}`}
+            className={`posts-calendar-day ${cell.isCurrentMonth ? "" : "outside"} ${cell.isToday ? "today" : ""} ${isWeekendDate(cell.date) ? "weekend" : ""}`}
           >
             <div className="posts-calendar-day-number">
               <span>{cell.dayOfMonth}</span>
@@ -596,7 +598,7 @@ export function PostsCalendarView() {
       <div className="posts-calendar-week-header-row">
         <div className="posts-calendar-week-header-inner">
           {days.map((day) => (
-            <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""}`}>
+            <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""} ${isWeekendDate(day.date) ? "weekend" : ""}`}>
               <span>{formatWeekdayShort(day.date)}</span>
               <strong>{day.dayOfMonth}</strong>
             </div>
@@ -628,6 +630,7 @@ export function PostsCalendarView() {
               posts={postsByDate.get(day.dateKey) || []}
               profilesById={profilesById}
               profileColors={profileColors}
+              isWeekend={isWeekendDate(day.date)}
               onSelectPost={handleSelectPost}
             />
           ))}
@@ -663,7 +666,7 @@ export function PostsCalendarView() {
   );
 
   const renderDayView = () => (
-    <div className="posts-calendar-day-grid" aria-label={`${calendarTitle} day posts`}>
+    <div className={`posts-calendar-day-grid ${isWeekendDate(visibleDate) ? "weekend" : ""}`} aria-label={`${calendarTitle} day posts`}>
       <div className="posts-calendar-time-scroll" style={timelineStyle}>
         <TimeLabels />
         <div className="posts-calendar-day-column-wrap">
@@ -671,6 +674,7 @@ export function PostsCalendarView() {
             posts={postsByDate.get(dayDateKey) || []}
             profilesById={profilesById}
             profileColors={profileColors}
+            isWeekend={isWeekendDate(visibleDate)}
             onSelectPost={handleSelectPost}
           />
         </div>
@@ -992,11 +996,13 @@ function TimedPostColumn({
   posts,
   profilesById,
   profileColors,
+  isWeekend,
   onSelectPost,
 }: {
   posts: SocialPost[];
   profilesById: Map<string, Profile>;
   profileColors: Map<string, string>;
+  isWeekend: boolean;
   onSelectPost: (postId: string, target: HTMLElement) => void;
 }) {
   const eventLayouts = getTimedEventLayouts(
@@ -1009,7 +1015,7 @@ function TimedPostColumn({
   );
 
   return (
-    <div className="posts-calendar-time-column">
+    <div className={`posts-calendar-time-column ${isWeekend ? "weekend" : ""}`}>
       {posts.map((post) => {
         const minute = getCalendarPostMinuteOfDay(post);
         if (minute === null) return null;
@@ -2086,6 +2092,11 @@ function addDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
+function isWeekendDate(date: Date): boolean {
+  const day = date.getDay();
+  return day === 0 || day === 6;
+}
+
 function toggleSetValue(current: Set<string>, value: string): Set<string> {
   const next = new Set(current);
   if (next.has(value)) {
@@ -2097,7 +2108,8 @@ function toggleSetValue(current: Set<string>, value: string): Set<string> {
 }
 
 const CALENDAR_CSS = `
-.posts-calendar-fullheight{min-height:calc(100dvh - 86px);display:grid;grid-template-columns:248px minmax(0,1fr);background:var(--surface);border:1px solid var(--dborder);border-radius:18px;overflow:hidden;box-shadow:0 18px 46px color-mix(in srgb,var(--shadow-color) 90%,transparent)}
+.posts-calendar-fullheight{--calendar-weekend-surface:color-mix(in srgb,var(--surface2) 58%,var(--surface));min-height:calc(100dvh - 86px);display:grid;grid-template-columns:248px minmax(0,1fr);background:var(--surface);border:1px solid var(--dborder);border-radius:18px;overflow:hidden;box-shadow:0 18px 46px color-mix(in srgb,var(--shadow-color) 90%,transparent)}
+.dark .posts-calendar-fullheight{--calendar-weekend-surface:color-mix(in srgb,var(--surface3) 72%,var(--surface))}
 .posts-calendar-sidebar{background:color-mix(in srgb,var(--surface2) 74%,var(--surface));border-right:1px solid var(--dborder);padding:18px 14px 16px;display:flex;flex-direction:column;gap:18px;min-width:0}
 .posts-calendar-sidebar-top{padding:2px 2px 6px}
 .posts-calendar-sidebar-kicker{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--dmuted2);margin-bottom:4px}
@@ -2154,13 +2166,16 @@ const CALENDAR_CSS = `
 .posts-calendar-month-weekdays{flex:0 0 38px;height:38px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:var(--surface);border-bottom:1px solid var(--dborder)}
 .posts-calendar-month-days{flex:1;min-width:0;min-height:0;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px}
 .posts-calendar-weekday{background:transparent;display:flex;align-items:center;justify-content:flex-end;padding:0 12px;color:var(--dmuted);font-size:13px;font-weight:650}
+.posts-calendar-weekday.weekend{background:var(--calendar-weekend-surface)}
 .posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px}
 .posts-calendar-day.outside{background:color-mix(in srgb,var(--surface2) 42%,var(--surface));color:var(--dmuted2)}
+.posts-calendar-day.weekend{--calendar-event-surface:var(--calendar-weekend-surface);background:var(--calendar-weekend-surface)}
+.posts-calendar-day.outside.weekend{background:color-mix(in srgb,var(--calendar-weekend-surface) 72%,var(--surface2))}
 .posts-calendar-day-number{display:flex;justify-content:flex-end;height:22px;font-size:16px;color:var(--dmuted);font-weight:600}
 .posts-calendar-day.today .posts-calendar-day-number span{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;background:var(--danger);color:white;margin-top:-2px}
 .posts-calendar-events{display:flex;flex-direction:column;gap:4px;min-width:0}
-.posts-calendar-event{--event-color:#8b8b93;position:relative;display:grid;grid-template-columns:3px auto minmax(0,1fr) auto;align-items:center;gap:5px;width:100%;min-height:22px;border:1px solid color-mix(in srgb,var(--event-color) 22%,transparent);border-radius:6px;background:color-mix(in srgb,var(--event-color) 17%,var(--surface));color:var(--dtext);font:inherit;text-align:left;padding:2px 6px 2px 4px;cursor:pointer;overflow:hidden}
-.posts-calendar-event:hover{border-color:color-mix(in srgb,var(--event-color) 48%,var(--dborder));background:color-mix(in srgb,var(--event-color) 25%,var(--surface))}
+.posts-calendar-event{--event-color:#8b8b93;position:relative;display:grid;grid-template-columns:3px auto minmax(0,1fr) auto;align-items:center;gap:5px;width:100%;min-height:22px;border:1px solid color-mix(in srgb,var(--event-color) 22%,transparent);border-radius:6px;background:color-mix(in srgb,var(--event-color) 17%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:2px 6px 2px 4px;cursor:pointer;overflow:hidden}
+.posts-calendar-event:hover{border-color:color-mix(in srgb,var(--event-color) 48%,var(--dborder));background:color-mix(in srgb,var(--event-color) 25%,var(--calendar-event-surface,var(--surface)))}
 .posts-calendar-event-rail{width:3px;align-self:stretch;border-radius:99px;background:var(--event-color)}
 .posts-calendar-event-status{font-size:9px;font-weight:800;letter-spacing:.04em;color:color-mix(in srgb,var(--event-color) 84%,var(--dtext));line-height:1}
 .posts-calendar-event-caption{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:650}
@@ -2183,6 +2198,7 @@ const CALENDAR_CSS = `
 .posts-calendar-week-content{grid-column:2;grid-row:1;min-width:0;min-height:0;display:block;background:var(--surface);overflow:hidden}
 .posts-calendar-week-scrollbar-spacer{background:var(--surface)}
 .posts-calendar-week-heading{height:44px;background:transparent;display:flex;align-items:center;justify-content:center;gap:7px;color:var(--dmuted);font-size:13px;font-weight:650}
+.posts-calendar-week-heading.weekend{background:var(--calendar-weekend-surface)}
 .posts-calendar-week-heading strong{font-size:17px;color:var(--dtext);font-weight:720}
 .posts-calendar-week-heading.today strong{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:var(--danger);color:white}
 .posts-calendar-time-scroll{flex:1;min-height:0;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:var(--surface)}
@@ -2192,9 +2208,11 @@ const CALENDAR_CSS = `
 .posts-calendar-week-columns{min-width:calc(var(--calendar-week-day-min) * 7);display:grid;grid-template-columns:repeat(7,minmax(var(--calendar-week-day-min),1fr));background:var(--dborder);gap:1px}
 .posts-calendar-week-grid .posts-calendar-time-label:first-child,.posts-calendar-day-grid .posts-calendar-time-label:first-child{border-top:0}
 .posts-calendar-day-column-wrap{min-width:0;background:var(--dborder);padding-left:1px}
-.posts-calendar-time-column{position:relative;height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
-.posts-calendar-timed-event{--event-color:#8b8b93;position:absolute;min-height:var(--calendar-timed-event-min-height,38px);border:1px solid color-mix(in srgb,var(--event-color) 30%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-color) 21%,var(--surface));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
-.posts-calendar-timed-event:hover{border-color:color-mix(in srgb,var(--event-color) 54%,var(--dborder));background:color-mix(in srgb,var(--event-color) 28%,var(--surface))}
+.posts-calendar-day-grid.weekend .posts-calendar-day-column-wrap{background:var(--calendar-weekend-surface)}
+.posts-calendar-time-column{--calendar-event-surface:var(--surface);position:relative;height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
+.posts-calendar-time-column.weekend{--calendar-event-surface:var(--calendar-weekend-surface);background-color:var(--calendar-weekend-surface)}
+.posts-calendar-timed-event{--event-color:#8b8b93;position:absolute;min-height:var(--calendar-timed-event-min-height,38px);border:1px solid color-mix(in srgb,var(--event-color) 30%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-color) 21%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
+.posts-calendar-timed-event:hover{border-color:color-mix(in srgb,var(--event-color) 54%,var(--dborder));background:color-mix(in srgb,var(--event-color) 28%,var(--calendar-event-surface,var(--surface)))}
 .posts-calendar-timed-content{min-width:0;display:flex;flex-direction:column;gap:2px}
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
 .posts-calendar-timed-meta{font-size:11px;color:color-mix(in srgb,var(--event-color) 78%,var(--dmuted));font-weight:700;line-height:1.15;white-space:nowrap}
