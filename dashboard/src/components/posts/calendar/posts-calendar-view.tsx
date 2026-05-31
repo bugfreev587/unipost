@@ -1157,58 +1157,60 @@ function EventPopover({
         onMouseDown={(event) => event.stopPropagation()}
         style={popoverStyle}
       >
-        <div className="posts-calendar-popover-head">
-          <div>
-            <div className="posts-calendar-popover-profile">
-              <span />
-              {profile?.name || "Unassigned profile"}
+        <div className="posts-calendar-popover-content">
+          <div className="posts-calendar-popover-head">
+            <div>
+              <div className="posts-calendar-popover-profile">
+                <span />
+                {profile?.name || "Unassigned profile"}
+              </div>
+              <h2>{post.caption || "No title"}</h2>
             </div>
-            <h2>{post.caption || "No title"}</h2>
+            <button type="button" aria-label="Close post details" onClick={onClose}>
+              <X size={16} />
+            </button>
           </div>
-          <button type="button" aria-label="Close post details" onClick={onClose}>
-            <X size={16} />
+
+          <dl className="posts-calendar-popover-meta">
+            <div>
+              <dt>Status</dt>
+              <dd><span className="posts-calendar-popover-status">{meta.short}</span>{meta.label}</dd>
+            </div>
+            <div>
+              <dt>Time</dt>
+              <dd>{formatPostDateTime(post)} {timezone}</dd>
+            </div>
+            <div>
+              <dt>Platforms</dt>
+              <dd>
+                {platforms.length > 0 ? (
+                  <span className="posts-calendar-popover-platforms">
+                    {platforms.map((platform) => (
+                      <span key={platform}>
+                        <PlatformIcon platform={platform} size={14} />
+                        {formatPlatformName(platform)}
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  "No platforms"
+                )}
+              </dd>
+            </div>
+          </dl>
+
+          <CalendarPostDetailGrid post={post} meta={meta} />
+          <CalendarPostResults post={post} />
+
+          <button
+            type="button"
+            className="posts-calendar-open-list"
+            onClick={onEdit}
+            disabled={!editable}
+          >
+            {editable ? "Edit" : "View only"}
           </button>
         </div>
-
-        <dl className="posts-calendar-popover-meta">
-          <div>
-            <dt>Status</dt>
-            <dd><span className="posts-calendar-popover-status">{meta.short}</span>{meta.label}</dd>
-          </div>
-          <div>
-            <dt>Time</dt>
-            <dd>{formatPostDateTime(post)} {timezone}</dd>
-          </div>
-          <div>
-            <dt>Platforms</dt>
-            <dd>
-              {platforms.length > 0 ? (
-                <span className="posts-calendar-popover-platforms">
-                  {platforms.map((platform) => (
-                    <span key={platform}>
-                      <PlatformIcon platform={platform} size={14} />
-                      {formatPlatformName(platform)}
-                    </span>
-                  ))}
-                </span>
-              ) : (
-                "No platforms"
-              )}
-            </dd>
-          </div>
-        </dl>
-
-        <CalendarPostDetailGrid post={post} meta={meta} />
-        <CalendarPostResults post={post} />
-
-        <button
-          type="button"
-          className="posts-calendar-open-list"
-          onClick={onEdit}
-          disabled={!editable}
-        >
-          {editable ? "Edit" : "View only"}
-        </button>
       </article>
     </div>
   );
@@ -2223,7 +2225,8 @@ const CALENDAR_CSS = `
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
 .posts-calendar-timed-meta{font-size:11px;color:color-mix(in srgb,var(--event-color) 78%,var(--dmuted));font-weight:700;line-height:1.15;white-space:nowrap}
 .posts-calendar-popover-layer{position:fixed;inset:0;background:transparent;z-index:90}
-.posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);box-sizing:border-box;width:min(560px,calc(100vw - 24px));max-height:min(calc(100dvh - 24px),var(--popover-available-height,calc(100dvh - 24px)));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);padding:16px;transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:auto}
+.posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);box-sizing:border-box;width:min(560px,calc(100vw - 24px));max-height:min(calc(100dvh - 24px),var(--popover-available-height,calc(100dvh - 24px)));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:visible}
+.posts-calendar-popover-content{box-sizing:border-box;max-height:min(calc(100dvh - 26px),calc(var(--popover-available-height,calc(100dvh - 24px)) - 2px));overflow:auto;padding:16px;border-radius:inherit}
 .posts-calendar-popover::before{content:"";position:absolute;width:16px;height:16px;background:var(--surface-raised);border:1px solid var(--dborder);transform:rotate(45deg);pointer-events:none}
 .posts-calendar-popover[data-side="right"]::before{left:-9px;top:calc(var(--popover-arrow-y) - 8px);border-top:0;border-right:0}
 .posts-calendar-popover[data-side="left"]::before{right:-9px;top:calc(var(--popover-arrow-y) - 8px);border-bottom:0;border-left:0}

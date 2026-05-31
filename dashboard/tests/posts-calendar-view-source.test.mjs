@@ -256,11 +256,15 @@ test("Posts calendar details popover anchors to the selected event button", asyn
   assert.match(popover, /getBoundedCalendarPopoverPlacement/);
   assert.match(popover, /"--popover-available-height": `\$\{placement\.availableHeight\}px`/);
   assert.doesNotMatch(popover, /height: `\$\{placement\.availableHeight\}px`/);
+  assert.match(popover, /className="posts-calendar-popover-content"/);
   assert.match(popover, /data-side=\{placement\.side\}/);
   assert.match(popover, /--popover-left/);
   assert.match(popover, /--popover-arrow-y/);
   assert.match(source, /posts-calendar-popover-open/);
   assert.match(source, /\.posts-calendar-popover\{[^}]*box-sizing:border-box/);
+  assert.match(source, /\.posts-calendar-popover\{[^}]*overflow:visible/);
+  assert.match(source, /\.posts-calendar-popover-content\{[^}]*max-height:min\(calc\(100dvh - 26px\),calc\(var\(--popover-available-height,calc\(100dvh - 24px\)\) - 2px\)\)/);
+  assert.match(source, /\.posts-calendar-popover-content\{[^}]*overflow:auto/);
   assert.match(source, /\.posts-calendar-popover\[data-side="right"\]::before/);
   assert.doesNotMatch(source, /background:color-mix\(in srgb,var\(--overlay\) 48%,transparent\)/);
 });
