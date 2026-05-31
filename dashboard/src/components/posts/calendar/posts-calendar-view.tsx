@@ -655,9 +655,6 @@ export function PostsCalendarView() {
 
   const renderDayView = () => (
     <div className="posts-calendar-day-grid" aria-label={`${calendarTitle} day posts`}>
-      <div className="posts-calendar-day-all-day">
-        <span>all-day</span>
-      </div>
       <div className="posts-calendar-time-scroll" style={timelineStyle}>
         <TimeLabels />
         <div className="posts-calendar-day-column-wrap">
@@ -820,7 +817,7 @@ export function PostsCalendarView() {
       </aside>
 
       <div className="posts-calendar-main">
-        <div className={`posts-calendar-topbar ${calendarMode === "day" ? "with-divider" : ""}`}>
+        <div className="posts-calendar-topbar">
           <div className="posts-calendar-title-block">
             <h1>{calendarTitle}</h1>
             <span>{calendarSubtitle}</span>
@@ -1833,7 +1830,6 @@ const CALENDAR_CSS = `
 .posts-calendar-status-option.active{background:color-mix(in srgb,var(--daccent) 13%,transparent);color:var(--dtext);font-weight:650}
 .posts-calendar-main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
 .posts-calendar-topbar{min-height:76px;padding:15px 18px;display:flex;align-items:center;justify-content:space-between;gap:18px}
-.posts-calendar-topbar.with-divider{border-bottom:1px solid var(--dborder)}
 .posts-calendar-title-block{min-width:0}
 .posts-calendar-title-block h1{font-size:32px;line-height:1.05;font-weight:760;color:var(--dtext);margin:0;letter-spacing:0}
 .posts-calendar-title-block span{display:block;margin-top:5px;font-size:13px;color:var(--dmuted2)}
@@ -1884,7 +1880,7 @@ const CALENDAR_CSS = `
 .posts-calendar-week-shell,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-scrollbar-gutter:0px;--calendar-week-template:repeat(7,minmax(var(--calendar-week-day-min),1fr));--calendar-week-min-width:calc(var(--calendar-week-day-min) * 7 + var(--calendar-scrollbar-gutter));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
 .posts-calendar-week-shell{overscroll-behavior:contain;overflow:hidden;touch-action:pan-y}
 .posts-calendar-week-grid{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface);overflow:hidden}
-.posts-calendar-week-header{flex:0 0 44px;height:44px;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);background:var(--surface);border-bottom:1px solid var(--dborder);min-width:0}
+.posts-calendar-week-header{flex:0 0 44px;height:44px;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);background:var(--surface);border-top:1px solid var(--dborder);border-bottom:1px solid var(--dborder);min-width:0}
 .posts-calendar-week-header-gutter{background:var(--surface)}
 .posts-calendar-week-header-row{display:grid;grid-template-columns:minmax(0,1fr) var(--calendar-scrollbar-gutter);min-width:0;background:var(--surface)}
 .posts-calendar-week-header-inner{display:grid;grid-template-columns:var(--calendar-week-template);min-width:calc(var(--calendar-week-day-min) * 7)}
@@ -1895,11 +1891,9 @@ const CALENDAR_CSS = `
 .posts-calendar-week-time-label-scroll .posts-calendar-time-labels{border-right:0}
 .posts-calendar-week-content{grid-column:2;grid-row:1;min-width:0;min-height:0;display:block;background:var(--surface);overflow:hidden}
 .posts-calendar-week-scrollbar-spacer{background:var(--surface)}
-.posts-calendar-day-all-day{height:44px;display:flex;align-items:center;color:var(--dmuted);font-size:13px;font-weight:650;background:var(--surface);padding:0 12px;white-space:nowrap;word-break:keep-all;hyphens:none}
 .posts-calendar-week-heading{height:44px;background:transparent;display:flex;align-items:center;justify-content:center;gap:7px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-week-heading strong{font-size:17px;color:var(--dtext);font-weight:720}
 .posts-calendar-week-heading.today strong{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:var(--danger);color:white}
-.posts-calendar-day-all-day{height:34px;border-bottom:1px solid var(--dborder)}
 .posts-calendar-time-scroll{flex:1;min-height:0;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:var(--surface)}
 .posts-calendar-week-content>.posts-calendar-time-scroll{height:100%;grid-template-columns:minmax(0,1fr);gap:1px;min-width:0;background:var(--dborder)}
 .posts-calendar-time-labels{height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background:var(--surface);border-right:1px solid var(--dborder)}

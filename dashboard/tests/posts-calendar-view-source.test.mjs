@@ -136,15 +136,28 @@ test("Posts calendar week view removes all-day row from the week grid", async ()
   assert.match(source, /\.posts-calendar-week-time-gutter\{[^}]*display:block/);
 });
 
-test("Posts calendar month and week headers avoid duplicate top dividers", async () => {
+test("Posts calendar month and week headers place dividers per view", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const topbarCss = source.match(/\.posts-calendar-topbar\{[^}]*\}/)?.[0] ?? "";
 
-  assert.match(source, /className=\{`posts-calendar-topbar \$\{calendarMode === "day" \? "with-divider" : ""\}`\}/);
+  assert.match(source, /className="posts-calendar-topbar"/);
   assert.doesNotMatch(topbarCss, /border-bottom/);
-  assert.match(source, /\.posts-calendar-topbar\.with-divider\{border-bottom:1px solid var\(--dborder\)\}/);
+  assert.doesNotMatch(source, /posts-calendar-topbar\.with-divider/);
   assert.match(source, /\.posts-calendar-month-weekdays\{[^}]*border-bottom:1px solid var\(--dborder\)/);
+  assert.doesNotMatch(source.match(/\.posts-calendar-month-weekdays\{[^}]*\}/)?.[0] ?? "", /border-top/);
+  assert.match(source, /\.posts-calendar-week-header\{[^}]*border-top:1px solid var\(--dborder\)/);
   assert.match(source, /\.posts-calendar-week-header\{[^}]*border-bottom:1px solid var\(--dborder\)/);
+});
+
+test("Posts calendar day view removes all-day row and its top divider", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const dayView = source.slice(source.indexOf("const renderDayView"), source.indexOf("const renderMonthSwipeTransitionView"));
+  const dayCss = source.slice(source.indexOf(".posts-calendar-week-shell"));
+
+  assert.doesNotMatch(dayView, /all-day/);
+  assert.doesNotMatch(dayView, /posts-calendar-day-all-day/);
+  assert.doesNotMatch(dayCss, /posts-calendar-day-all-day/);
+  assert.doesNotMatch(source, /with-divider/);
 });
 
 test("Posts calendar swipe handlers avoid passive listener preventDefault warnings", async () => {
