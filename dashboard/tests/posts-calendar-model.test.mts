@@ -336,6 +336,22 @@ test("getBoundedCalendarPopoverPlacement can grow edit panels to the calendar gr
   assert.equal(placement.transformOrigin, "left 534px");
 });
 
+test("getBoundedCalendarPopoverPlacement keeps side arrows inside anchor-aligned detail popovers", () => {
+  const placement = getBoundedCalendarPopoverPlacement({
+    anchor: { left: 495, top: 858, right: 656, bottom: 883, width: 161, height: 25 },
+    viewport: { width: 1728, height: 1280 },
+    popover: { width: 560, height: 620 },
+    bounds: { left: 489, top: 144, right: 1707, bottom: 888, width: 1218, height: 744 },
+    verticalStrategy: "anchor",
+  });
+
+  assert.equal(placement.side, "right");
+  assert.equal(placement.top, 268);
+  assert.equal(placement.availableHeight, 620);
+  assert.equal(placement.arrowY, 602);
+  assert.equal(placement.transformOrigin, "left 602px");
+});
+
 function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }

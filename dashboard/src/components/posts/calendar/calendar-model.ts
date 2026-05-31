@@ -414,6 +414,7 @@ export function getBoundedCalendarPopoverPlacement({
   gap = 12,
   margin = 12,
   arrowInset = 18,
+  verticalStrategy = "bounds",
 }: {
   anchor: CalendarPopoverRect;
   viewport: CalendarPopoverSize;
@@ -422,20 +423,26 @@ export function getBoundedCalendarPopoverPlacement({
   gap?: number;
   margin?: number;
   arrowInset?: number;
+  verticalStrategy?: "bounds" | "anchor";
 }): BoundedCalendarPopoverPlacement {
   const placement = getAnchoredPopoverPlacement({ anchor, viewport, popover, gap, margin, arrowInset });
   const boundedTop = clamp(bounds.top, margin, viewport.height - margin);
   const boundedBottom = clamp(bounds.bottom, boundedTop, viewport.height - margin);
   const boundedHeight = Math.max(0, boundedBottom - boundedTop);
   const desiredHeight = Math.min(popover.height, boundedHeight || popover.height);
+  const anchorCenterY = anchor.top + anchor.height / 2;
   const top = placement.side === "right" || placement.side === "left"
-    ? boundedTop
+    ? clamp(
+      verticalStrategy === "anchor" ? anchorCenterY - desiredHeight / 2 : boundedTop,
+      boundedTop,
+      boundedBottom - desiredHeight,
+    )
     : clamp(placement.top, boundedTop, boundedBottom - desiredHeight);
   const availableHeight = Math.max(0, boundedBottom - top);
 
   if (placement.side === "right" || placement.side === "left") {
-    const anchorCenterY = anchor.top + anchor.height / 2;
-    const arrowY = Math.round(clamp(anchorCenterY - top, arrowInset, Math.max(arrowInset, availableHeight - arrowInset)));
+    const arrowHeight = Math.min(desiredHeight, availableHeight);
+    const arrowY = Math.round(clamp(anchorCenterY - top, arrowInset, Math.max(arrowInset, arrowHeight - arrowInset)));
     return {
       ...placement,
       top: Math.round(top),

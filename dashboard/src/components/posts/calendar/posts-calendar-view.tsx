@@ -1149,6 +1149,7 @@ function EventPopover({
       viewport: viewportSize,
       popover: popoverSize,
       bounds: boundsRect,
+      verticalStrategy: "anchor",
     }),
     [anchorRect, boundsRect, popoverSize, viewportSize],
   );
