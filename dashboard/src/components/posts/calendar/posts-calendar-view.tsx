@@ -2182,7 +2182,7 @@ const CALENDAR_CSS = `
 .posts-calendar-month-view{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden;background:var(--surface)}
 .posts-calendar-month-weekdays{flex:0 0 38px;height:38px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:var(--surface);border-bottom:1px solid var(--dborder)}
 .posts-calendar-month-days{flex:1;min-width:0;min-height:0;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px}
-.posts-calendar-month-track{height:calc(100% * 8 / 6);flex:0 0 auto;grid-template-rows:repeat(8,minmax(104px,1fr));will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(0,calc(-12.5% + var(--calendar-snap-offset)),0);transition:transform var(--calendar-snap-duration) cubic-bezier(.16,1,.3,1)}
+.posts-calendar-month-track{width:100%;height:calc(100% * 8 / 6);flex:0 0 auto;grid-template-rows:repeat(8,minmax(104px,1fr));will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(0,calc(-12.5% + var(--calendar-snap-offset)),0);transition:transform var(--calendar-snap-duration) cubic-bezier(.16,1,.3,1)}
 .posts-calendar-weekday{background:transparent;display:flex;align-items:center;justify-content:flex-end;padding:0 12px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-weekday.weekend{background:var(--calendar-weekend-surface)}
 .posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px}

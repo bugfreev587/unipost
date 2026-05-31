@@ -129,6 +129,8 @@ test("Posts calendar snap tracks keep fixed gutters outside moving date tracks",
   assert.ok(weekHeaderIndex < weekBodyIndex, "week date header should stay outside the time grid");
   assert.match(weekHeader, /posts-calendar-week-header-inner posts-calendar-week-track/);
   assert.match(weekColumns, /posts-calendar-week-columns posts-calendar-week-track/);
+  assert.match(source, /\.posts-calendar-month-track\{[^}]*width:100%/);
+  assert.match(source, /\.posts-calendar-month-track\{[^}]*height:calc\(100% \* 8 \/ 6\)/);
   assert.match(source, /renderMonthDayGrid\(interactive \? rollingMonthCells : cells/);
   assert.match(source, /renderWeekColumns\(interactive \? rollingWeekDays : days/);
   assert.doesNotMatch(source, /posts-calendar-swipe-viewport/);
