@@ -225,6 +225,18 @@ test("Posts calendar details popover anchors to the selected event button", asyn
   assert.doesNotMatch(source, /background:color-mix\(in srgb,var\(--overlay\) 48%,transparent\)/);
 });
 
+test("Posts calendar switches from details popover to edit inspector without keeping the details popover open", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const openEditPost = source.slice(
+    source.indexOf("const openEditPost = useCallback"),
+    source.indexOf("const renderMonthWeekdayHeader"),
+  );
+
+  assert.match(openEditPost, /if \(!selectedPostTarget\) return/);
+  assert.match(openEditPost, /setEditingPostTarget\(selectedPostTarget\)/);
+  assert.match(openEditPost, /setSelectedPostTarget\(null\)/);
+});
+
 test("Posts calendar details popover mirrors list view post details", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const popover = source.slice(

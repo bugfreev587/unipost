@@ -508,6 +508,7 @@ export function PostsCalendarView() {
   const openEditPost = useCallback(() => {
     if (!selectedPostTarget) return;
     setEditingPostTarget(selectedPostTarget);
+    setSelectedPostTarget(null);
   }, [selectedPostTarget]);
 
   const renderMonthWeekdayHeader = () => (
