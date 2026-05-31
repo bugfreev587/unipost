@@ -319,3 +319,16 @@ test("Posts calendar details popover mirrors list view post details", async () =
   assert.match(source, /\.posts-calendar-result-card/);
   assert.match(source, /\.posts-calendar-submitted-panel/);
 });
+
+test("Posts calendar details popover preserves platform icon rendering inside chips", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const popover = source.slice(
+    source.indexOf("function EventPopover"),
+    source.indexOf("function CalendarPostDetailGrid"),
+  );
+
+  assert.match(popover, /className="posts-calendar-popover-platform-chip"/);
+  assert.match(popover, /<PlatformIcon platform=\{platform\} size=\{14\} \/>/);
+  assert.match(source, /\.posts-calendar-popover-platform-chip\{[^}]*display:inline-flex/);
+  assert.doesNotMatch(source, /\.posts-calendar-popover-platforms span\{/);
+});

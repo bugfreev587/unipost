@@ -1202,7 +1202,7 @@ function EventPopover({
                 {platforms.length > 0 ? (
                   <span className="posts-calendar-popover-platforms">
                     {platforms.map((platform) => (
-                      <span key={platform}>
+                      <span key={platform} className="posts-calendar-popover-platform-chip">
                         <PlatformIcon platform={platform} size={14} />
                         {formatPlatformName(platform)}
                       </span>
@@ -2253,7 +2253,7 @@ const CALENDAR_CSS = `
 .posts-calendar-popover-meta dd{margin:0;color:var(--dtext);font-size:14px;line-height:1.45}
 .posts-calendar-popover-status{display:inline-flex;align-items:center;height:19px;border-radius:5px;padding:0 5px;margin-right:7px;background:color-mix(in srgb,var(--event-color) 20%,transparent);color:color-mix(in srgb,var(--event-color) 80%,var(--dtext));font-size:10px;font-weight:800;letter-spacing:.04em}
 .posts-calendar-popover-platforms{display:flex;flex-wrap:wrap;gap:6px}
-.posts-calendar-popover-platforms span{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--dborder);background:var(--surface2);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:650}
+.posts-calendar-popover-platform-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--dborder);background:var(--surface2);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:650}
 .posts-calendar-detail-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:12px}
 .posts-calendar-detail-card{min-width:0;min-height:68px;border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);padding:8px 9px}
 .posts-calendar-detail-card div{margin-bottom:5px;color:var(--dmuted2);font-size:10px;font-weight:780;letter-spacing:.08em;text-transform:uppercase}
