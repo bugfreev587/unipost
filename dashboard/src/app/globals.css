@@ -894,9 +894,37 @@ main:has(.logs-page-fullheight) > div > .dashboard-page-frame::before {
   min-height: 0;
   gap: 8px;
 }
+
+/* ── Full-height posts calendar ───────────────────────────────────── */
+main:has(.posts-calendar-fullheight) > div {
+  overflow: hidden !important;
+  padding: 0 !important;
+}
+main:has(.posts-calendar-fullheight) > div > .dashboard-page-frame {
+  height: 100%;
+  max-width: none;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  padding: 16px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: transparent;
+}
+main:has(.posts-calendar-fullheight) > div > .dashboard-page-frame::before {
+  display: none;
+}
+.posts-calendar-fullheight {
+  flex: 1;
+  min-height: 0;
+}
 @media (max-width: 960px) {
   main:has(.logs-page-fullheight) > div > .dashboard-page-frame {
     padding: 16px 18px 18px;
+  }
+  main:has(.posts-calendar-fullheight) > div > .dashboard-page-frame {
+    padding: 14px;
   }
 }
 @media (max-width: 720px) {
