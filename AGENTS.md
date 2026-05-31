@@ -67,6 +67,7 @@
 
 - After any direct push, pull request merge, merge request merge, or branch promotion, Codex must monitor the triggered remote checks until they finish. This includes GitHub Actions, Vercel deployments, Railway deployments, and any other required or visibly triggered test/deploy checks.
 - A push, merge, or promotion is not complete while any required or triggered check is queued, pending, running, or waiting for deployment.
+- After local code changes are pushed to `origin/dev`, Codex must wait for the development deployment to complete, then personally open the relevant development domain in a browser and verify that the change works before stopping the task or reporting final results.
 - Codex may report interim status, but must not claim the task is finished until all required or triggered checks have completed successfully and the push or merge itself is confirmed successful.
 - If any required or triggered check fails, Codex must inspect the failure logs, identify the cause, make the needed fix when it is within scope, rerun local validation, push the fix, and monitor the checks again.
 - If a failure requires credentials, external approval, paid-service access, or a product decision that Codex cannot safely resolve, Codex must stop, report the exact blocker, and ask the user for the missing permission or decision.
