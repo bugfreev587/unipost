@@ -6,6 +6,7 @@ import {
   bucketPostByLocalDay,
   getCalendarPostMinuteOfDay,
   getAnchoredPopoverPlacement,
+  getAccumulatedWheelNavigationIntent,
   getSwipeNavigationIntent,
   getTimedEventTop,
   getTimedTimelineContentHeight,
@@ -137,6 +138,32 @@ test("wheel navigation follows Apple Calendar style directions per view", () => 
   assert.equal(getWheelNavigationIntent("week", 140, 0), 1);
   assert.equal(getWheelNavigationIntent("week", -140, 0), -1);
   assert.equal(getWheelNavigationIntent("day", 0, 160), 0);
+});
+
+test("wheel navigation accumulates small trackpad deltas into one swipe", () => {
+  let monthAccumulator = { deltaX: 0, deltaY: 0 };
+  let monthDirection: -1 | 0 | 1 = 0;
+
+  for (const deltaY of [22, 20, 21, 18]) {
+    const result = getAccumulatedWheelNavigationIntent("month", monthAccumulator, 0, deltaY);
+    monthAccumulator = result.accumulator;
+    monthDirection = result.direction;
+  }
+
+  assert.equal(monthDirection, 1);
+  assert.deepEqual(monthAccumulator, { deltaX: 0, deltaY: 0 });
+
+  let weekAccumulator = { deltaX: 0, deltaY: 0 };
+  let weekDirection: -1 | 0 | 1 = 0;
+
+  for (const deltaX of [-18, -20, -22, -23]) {
+    const result = getAccumulatedWheelNavigationIntent("week", weekAccumulator, deltaX, 0);
+    weekAccumulator = result.accumulator;
+    weekDirection = result.direction;
+  }
+
+  assert.equal(weekDirection, -1);
+  assert.deepEqual(weekAccumulator, { deltaX: 0, deltaY: 0 });
 });
 
 test("touch swipe navigation follows the same calendar directions", () => {

@@ -50,6 +50,11 @@ export type CalendarPopoverSize = {
   height: number;
 };
 
+export type CalendarWheelNavigationAccumulator = {
+  deltaX: number;
+  deltaY: number;
+};
+
 export type CalendarPopoverPlacement = {
   side: CalendarPopoverSide;
   left: number;
@@ -61,6 +66,7 @@ export type CalendarPopoverPlacement = {
 
 const IN_PROGRESS_STATUSES = new Set(["queued", "dispatching", "retrying", "processing"]);
 const FAILED_STATUSES = new Set(["failed", "partial"]);
+const WHEEL_NAVIGATION_THRESHOLD = 80;
 
 const PROFILE_COLOR_PALETTE = [
   "#ff453a",
@@ -156,17 +162,42 @@ export function getWheelNavigationIntent(
   deltaY: number,
   shiftKey = false,
 ): -1 | 0 | 1 {
-  const threshold = 80;
   if (mode === "day") return 0;
 
   if (mode === "month") {
-    if (Math.abs(deltaY) < threshold || Math.abs(deltaY) < Math.abs(deltaX)) return 0;
+    if (Math.abs(deltaY) < WHEEL_NAVIGATION_THRESHOLD || Math.abs(deltaY) < Math.abs(deltaX)) return 0;
     return deltaY > 0 ? 1 : -1;
   }
 
   const horizontalDelta = Math.abs(deltaX) >= Math.abs(deltaY) ? deltaX : shiftKey ? deltaY : 0;
-  if (Math.abs(horizontalDelta) < threshold) return 0;
+  if (Math.abs(horizontalDelta) < WHEEL_NAVIGATION_THRESHOLD) return 0;
   return horizontalDelta > 0 ? 1 : -1;
+}
+
+export function getAccumulatedWheelNavigationIntent(
+  mode: CalendarViewMode,
+  accumulator: CalendarWheelNavigationAccumulator,
+  deltaX: number,
+  deltaY: number,
+  shiftKey = false,
+): { direction: -1 | 0 | 1; accumulator: CalendarWheelNavigationAccumulator } {
+  if (mode === "day") return { direction: 0, accumulator: { deltaX: 0, deltaY: 0 } };
+
+  const nextAccumulator = {
+    deltaX: accumulator.deltaX + deltaX,
+    deltaY: accumulator.deltaY + deltaY,
+  };
+  const direction = getWheelNavigationIntent(
+    mode,
+    nextAccumulator.deltaX,
+    nextAccumulator.deltaY,
+    shiftKey,
+  );
+
+  return {
+    direction,
+    accumulator: direction === 0 ? nextAccumulator : { deltaX: 0, deltaY: 0 },
+  };
 }
 
 export function getSwipeNavigationIntent(

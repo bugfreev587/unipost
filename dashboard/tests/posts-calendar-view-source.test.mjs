@@ -30,6 +30,11 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /handleCalendarTouchStart/);
   assert.match(source, /handleCalendarTouchEnd/);
   assert.match(source, /shiftCalendarBySwipe/);
+  assert.match(source, /getAccumulatedWheelNavigationIntent/);
+  assert.match(source, /wheelDeltaRef/);
+  assert.match(source, /wheelResetTimerRef/);
+  assert.match(source, /clearTimeout\(wheelResetTimerRef\.current\)/);
+  assert.match(source, /setTimeout\(\(\) => \{/);
   assert.match(source, /shiftCalendarDateBySwipe/);
   assert.match(source, /getSwipeNavigationIntent/);
   assert.match(source, /onTouchStart=\{handleCalendarTouchStart\}/);
@@ -63,7 +68,6 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /bucketPostByLocalDay/);
   assert.match(source, /buildWeekDays/);
   assert.match(source, /getCalendarPostMinuteOfDay/);
-  assert.match(source, /getWheelNavigationIntent/);
   assert.match(source, /getProfileCalendarColor/);
   assert.match(source, /shouldShowPostForStatusFilter/);
   assert.match(source, /posts-calendar-fullheight/);

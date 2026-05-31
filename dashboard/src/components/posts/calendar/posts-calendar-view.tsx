@@ -32,6 +32,7 @@ import {
   buildWeekDays,
   bucketPostByLocalDay,
   formatLocalDateKey,
+  getAccumulatedWheelNavigationIntent,
   getAnchoredPopoverPlacement,
   getCalendarPostDate,
   getCalendarPostMinuteOfDay,
@@ -40,10 +41,10 @@ import {
   getSwipeNavigationIntent,
   getTimedEventTop,
   getTimedTimelineContentHeight,
-  getWheelNavigationIntent,
   parseCalendarViewMode,
   type CalendarPopoverRect,
   type CalendarPopoverSize,
+  type CalendarWheelNavigationAccumulator,
   shouldShowPostForStatusFilter,
   shiftCalendarDateBySwipe,
   type CalendarStatusFilter,
@@ -110,7 +111,9 @@ export function PostsCalendarView() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const wheelDeltaRef = useRef<CalendarWheelNavigationAccumulator>({ deltaX: 0, deltaY: 0 });
   const wheelLockRef = useRef(0);
+  const wheelResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const weekTimeScrollRef = useRef<HTMLDivElement | null>(null);
   const [weekScrollbarWidth, setWeekScrollbarWidth] = useState(0);
@@ -162,6 +165,20 @@ export function PostsCalendarView() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    wheelDeltaRef.current = { deltaX: 0, deltaY: 0 };
+    if (wheelResetTimerRef.current) {
+      clearTimeout(wheelResetTimerRef.current);
+      wheelResetTimerRef.current = null;
+    }
+  }, [calendarMode]);
+
+  useEffect(() => () => {
+    if (wheelResetTimerRef.current) {
+      clearTimeout(wheelResetTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (calendarMode !== "week") return;
@@ -323,18 +340,41 @@ export function PostsCalendarView() {
   }, []);
 
   const handleCalendarWheel = useCallback((event: WheelEvent<HTMLElement>) => {
-    const direction = getWheelNavigationIntent(calendarMode, event.deltaX, event.deltaY, event.shiftKey);
-    if (direction === 0) return;
+    if (calendarMode === "day") return;
+
+    event.preventDefault();
 
     const now = Date.now();
     if (now < wheelLockRef.current) {
-      event.preventDefault();
       return;
     }
 
+    const result = getAccumulatedWheelNavigationIntent(
+      calendarMode,
+      wheelDeltaRef.current,
+      event.deltaX,
+      event.deltaY,
+      event.shiftKey,
+    );
+    wheelDeltaRef.current = result.accumulator;
+
+    if (wheelResetTimerRef.current) {
+      clearTimeout(wheelResetTimerRef.current);
+    }
+    wheelResetTimerRef.current = setTimeout(() => {
+      wheelDeltaRef.current = { deltaX: 0, deltaY: 0 };
+      wheelResetTimerRef.current = null;
+    }, 180);
+
+    if (result.direction === 0) return;
+
+    if (wheelResetTimerRef.current) {
+      clearTimeout(wheelResetTimerRef.current);
+      wheelResetTimerRef.current = null;
+    }
+    wheelDeltaRef.current = { deltaX: 0, deltaY: 0 };
     wheelLockRef.current = now + 420;
-    event.preventDefault();
-    shiftCalendarBySwipe(direction);
+    shiftCalendarBySwipe(result.direction);
   }, [calendarMode, shiftCalendarBySwipe]);
 
   const handleCalendarTouchStart = useCallback((event: TouchEvent<HTMLElement>) => {
