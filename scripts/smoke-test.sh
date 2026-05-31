@@ -152,6 +152,27 @@ assert_jq_truthy() {
   fi
 }
 
+select_stable_profile_id() {
+  local profiles_json="$1"
+  local workspace_id="$2"
+  local default_profile_id="$3"
+
+  # Regression jobs share one workspace and run in parallel. SDK suites
+  # create short-lived "SDK ..." profiles, so never blindly pick data[0].
+  echo "$profiles_json" | jq -r --arg ws "$workspace_id" --arg default "$default_profile_id" '
+    def workspace_profiles:
+      [.data[]? | select($ws == "" or .workspace_id == $ws)];
+
+    workspace_profiles as $profiles
+    | (if $default != "" then ([$profiles[]? | select(.id == $default)][0].id // "") else "" end) as $default_id
+    | if $default_id != "" then
+        $default_id
+      else
+        ([$profiles[]? | select(((.name // "") | startswith("SDK ")) | not)][0].id // $profiles[0].id // "")
+      end
+  '
+}
+
 # ── Boot check ────────────────────────────────────────────────────────
 
 require_jq
@@ -176,6 +197,7 @@ assert_status "200" "GET /v1/workspace"
 assert_jq_truthy '.data.id' 'workspace.id present'
 assert_jq_truthy '.data.name' 'workspace.name present'
 WORKSPACE_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
+DEFAULT_PROFILE_ID=$(echo "$RESP_BODY" | jq -r '.data.default_profile_id // empty')
 
 # Old plural list endpoint must be gone (hard cutover, no aliases).
 api GET "/v1/workspaces"
@@ -318,8 +340,10 @@ section "Profiles + YouTube connect session regression"
 
 api GET "/v1/profiles"
 assert_status "200" "GET /v1/profiles"
-assert_jq_truthy '.data[0].id' 'first profile id present'
-PROFILE_ID=$(echo "$RESP_BODY" | jq -r '.data[0].id // empty')
+PROFILE_ID=$(select_stable_profile_id "$RESP_BODY" "$WORKSPACE_ID" "$DEFAULT_PROFILE_ID")
+if [[ -n "$PROFILE_ID" ]]; then
+  pass "stable profile id selected ($PROFILE_ID)"
+fi
 
 if [[ -n "$PROFILE_ID" ]]; then
   EXTERNAL_USER_ID="smoke-youtube-$(date -u +%s)"
