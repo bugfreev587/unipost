@@ -33,6 +33,9 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
+const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
+
 const themeInitScript = `
 (() => {
   try {
@@ -109,8 +112,8 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider
-      signInForceRedirectUrl="/"
-      signUpForceRedirectUrl="/"
+      signInForceRedirectUrl={APP_URL}
+      signUpForceRedirectUrl={SIGN_UP_REDIRECT_URL}
       afterSignOutUrl={process.env.NEXT_PUBLIC_LANDING_URL || "https://unipost.dev"}
       appearance={{
         variables: {
