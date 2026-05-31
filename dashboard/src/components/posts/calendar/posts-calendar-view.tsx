@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { ChevronLeft, ChevronRight, List, Loader2, Plus, Save, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, List, Loader2, Plus, Save, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useParams, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -13,6 +13,7 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent,
+  type ReactNode,
   type TouchEvent,
   type UIEvent,
   type WheelEvent,
@@ -81,7 +82,7 @@ const TIMELINE_CONTENT_HEIGHT = getTimedTimelineContentHeight(
   TIMED_EVENT_MIN_HEIGHT,
   TIMELINE_END_PADDING,
 );
-const POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 420, height: 320 };
+const POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 560, height: 560 };
 const SWIPE_TRANSITION_MS = 420;
 
 type SelectedPostTarget = {
@@ -1112,6 +1113,7 @@ function EventPopover({
     "--event-color": color,
     "--popover-left": `${placement.left}px`,
     "--popover-top": `${placement.top}px`,
+    "--popover-available-height": `${Math.max(260, viewportSize.height - placement.top - 12)}px`,
     "--popover-arrow-x": `${placement.arrowX}px`,
     "--popover-arrow-y": `${placement.arrowY}px`,
     "--popover-transform-origin": placement.transformOrigin,
@@ -1169,6 +1171,9 @@ function EventPopover({
           </div>
         </dl>
 
+        <CalendarPostDetailGrid post={post} meta={meta} />
+        <CalendarPostResults post={post} />
+
         <button
           type="button"
           className="posts-calendar-open-list"
@@ -1179,6 +1184,131 @@ function EventPopover({
         </button>
       </article>
     </div>
+  );
+}
+
+function CalendarPostDetailGrid({
+  post,
+  meta,
+}: {
+  post: SocialPost;
+  meta: { label: string; short: string };
+}) {
+  const mode = post.scheduled_at ? "Scheduled" : post.status === "draft" ? "Draft" : "Immediate";
+  return (
+    <div className="posts-calendar-detail-grid">
+      <CalendarPostMetaCard label="Caption" value={post.caption || "(no caption)"} wide />
+      <CalendarPostMetaCard label="Mode" value={mode} />
+      <CalendarPostMetaCard label="Status" value={meta.label} />
+      <CalendarPostMetaCard label="Created" value={formatCalendarDetailDate(post.created_at)} />
+      <CalendarPostMetaCard label="Scheduled" value={post.scheduled_at ? formatCalendarDetailDate(post.scheduled_at) : "-"} />
+      <CalendarPostMetaCard label="Published" value={post.published_at ? formatCalendarDetailDate(post.published_at) : "-"} />
+    </div>
+  );
+}
+
+function CalendarPostMetaCard({
+  label,
+  value,
+  wide = false,
+}: {
+  label: string;
+  value: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <div className={`posts-calendar-detail-card${wide ? " wide" : ""}`}>
+      <div>{label}</div>
+      <span>{value}</span>
+    </div>
+  );
+}
+
+function CalendarPostResults({ post }: { post: SocialPost }) {
+  const results = post.results || [];
+  return (
+    <section className="posts-calendar-results">
+      <div className="posts-calendar-results-label">Platform results</div>
+      {results.length === 0 ? (
+        <div className="posts-calendar-result-empty">No platform results yet.</div>
+      ) : (
+        <div className="posts-calendar-results-grid">
+          {results.map((result, index) => (
+            <CalendarPostResultCard
+              key={result.social_account_id || `${result.platform || "platform"}-${index}`}
+              post={post}
+              result={result}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CalendarPostResultCard({
+  post,
+  result,
+}: {
+  post: SocialPost;
+  result: NonNullable<SocialPost["results"]>[number];
+}) {
+  const url = result.url
+    ? result.url
+    : result.external_id && result.platform
+      ? postUrlFor(result.platform, result.external_id)
+      : null;
+  const submittedRows = result.submitted ? buildSubmittedRows(result.platform || "", result.submitted) : [];
+  return (
+    <article className="posts-calendar-result-card">
+      <div className="posts-calendar-result-head">
+        <div className="posts-calendar-result-title">
+          <PlatformIcon platform={result.platform || ""} size={15} />
+          <span>{result.account_name || result.platform || "Unknown"}</span>
+          <span className={`posts-calendar-result-status ${statusClassName(result.status)}`}>{result.status}</span>
+        </div>
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => event.stopPropagation()}
+            className="posts-calendar-result-link"
+            title="Open original post"
+          >
+            <ExternalLink size={12} />
+            <span>Open post</span>
+          </a>
+        ) : null}
+      </div>
+      <div className="posts-calendar-result-meta">
+        {result.account_name ? <span>{result.platform || "Unknown"}</span> : null}
+        <span>{result.published_at ? formatCalendarDetailDate(result.published_at) : post.published_at ? formatCalendarDetailDate(post.published_at) : "Not published yet"}</span>
+      </div>
+      <p className="posts-calendar-result-message">
+        {result.status === "published"
+          ? "Published successfully."
+          : result.status === "failed"
+            ? result.error_message || "Publish failed (no error message reported)."
+            : result.status === "partial"
+              ? "Partially completed. Review other platform results."
+              : `Status: ${result.status}`}
+      </p>
+      {result.external_id ? <div className="posts-calendar-result-id">ID: {result.external_id}</div> : null}
+      {submittedRows.length > 0 ? (
+        <details className="posts-calendar-submitted-panel">
+          <summary>Submitted settings ({submittedRows.length})</summary>
+          <dl>
+            {submittedRows.map((row) => (
+              <div key={row.label}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      ) : null}
+    </article>
   );
 }
 
@@ -1736,6 +1866,18 @@ function formatPostDateTime(post: SocialPost): string {
   });
 }
 
+function formatCalendarDetailDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function getCalendarTitle(mode: CalendarViewMode, visibleMonth: Date, visibleDate: Date, weekDays: Array<{ date: Date }>): string {
   if (mode === "month") {
     return visibleMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" });
@@ -1782,6 +1924,130 @@ function formatPlatformName(platform: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function statusClassName(status: string): string {
+  if (status === "published") return "published";
+  if (status === "failed") return "failed";
+  if (status === "partial") return "partial";
+  if (status === "processing" || status === "queued" || status === "retrying") return "processing";
+  return "neutral";
+}
+
+function postUrlFor(platform: string, externalId: string): string | null {
+  switch (platform) {
+    case "youtube":
+      return `https://www.youtube.com/watch?v=${externalId}`;
+    case "twitter":
+      return `https://x.com/i/status/${externalId}`;
+    case "instagram":
+      return `https://www.instagram.com/p/${externalId}/`;
+    case "threads":
+      return `https://www.threads.net/post/${externalId}`;
+    case "linkedin":
+      if (externalId.startsWith("urn:li:")) return `https://www.linkedin.com/feed/update/${externalId}/`;
+      return null;
+    case "bluesky": {
+      const match = externalId.match(/^at:\/\/(did:[^/]+)\/app\.bsky\.feed\.post\/(.+)$/);
+      return match ? `https://bsky.app/profile/${match[1]}/post/${match[2]}` : null;
+    }
+    default:
+      return null;
+  }
+}
+
+function buildSubmittedRows(
+  platform: string,
+  submitted: NonNullable<NonNullable<SocialPost["results"]>[number]["submitted"]>,
+): Array<{ label: string; value: ReactNode }> {
+  const rows: Array<{ label: string; value: ReactNode }> = [];
+  if (submitted.caption) rows.push({ label: "Caption override", value: submitted.caption });
+
+  const mediaCount = (submitted.media_urls?.length || 0) + (submitted.media_ids?.length || 0);
+  if (mediaCount > 0) rows.push({ label: "Media attached", value: `${mediaCount} file${mediaCount === 1 ? "" : "s"}` });
+  if (submitted.first_comment) rows.push({ label: "First comment", value: submitted.first_comment });
+  if (typeof submitted.thread_position === "number" && submitted.thread_position > 0) {
+    rows.push({ label: "Thread position", value: String(submitted.thread_position) });
+  }
+
+  const opts = submitted.platform_options;
+  if (!opts) return rows;
+  switch (platform) {
+    case "tiktok":
+      pushTikTokRows(rows, opts);
+      break;
+    case "youtube":
+      pushYouTubeRows(rows, opts);
+      break;
+    case "instagram":
+      pushInstagramRows(rows, opts);
+      break;
+    case "linkedin":
+      pushLinkedInRows(rows, opts);
+      break;
+    default:
+      pushGenericRows(rows, opts);
+  }
+  return rows;
+}
+
+const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
+  PUBLIC_TO_EVERYONE: "Everyone",
+  MUTUAL_FOLLOW_FRIENDS: "Friends",
+  FOLLOWER_OF_CREATOR: "Followers",
+  SELF_ONLY: "Only me",
+};
+
+function pushTikTokRows(rows: Array<{ label: string; value: ReactNode }>, opts: Record<string, unknown>) {
+  if (typeof opts.privacy_level === "string") {
+    rows.push({ label: "Who can view", value: TIKTOK_PRIVACY_LABELS[opts.privacy_level] || opts.privacy_level });
+  }
+  const interactions: string[] = [];
+  if (opts.disable_comment === false) interactions.push("Comment");
+  if (opts.disable_duet === false) interactions.push("Duet");
+  if (opts.disable_stitch === false) interactions.push("Stitch");
+  if (interactions.length > 0) {
+    rows.push({ label: "Allow interactions", value: interactions.join(", ") });
+  } else if (opts.disable_comment === true || opts.disable_duet === true || opts.disable_stitch === true) {
+    rows.push({ label: "Allow interactions", value: "All disabled" });
+  }
+  if (opts.brand_organic_toggle === true || opts.brand_content_toggle === true) {
+    const labels: string[] = [];
+    if (opts.brand_organic_toggle === true) labels.push("Your Brand (Promotional content)");
+    if (opts.brand_content_toggle === true) labels.push("Branded Content (Paid partnership)");
+    rows.push({ label: "Commercial disclosure", value: labels.join(" + ") });
+  }
+}
+
+function pushYouTubeRows(rows: Array<{ label: string; value: ReactNode }>, opts: Record<string, unknown>) {
+  if (typeof opts.title === "string" && opts.title) rows.push({ label: "Video title", value: opts.title });
+  if (typeof opts.privacy_status === "string") rows.push({ label: "Visibility", value: opts.privacy_status });
+  if (typeof opts.category_id === "string") rows.push({ label: "Category", value: opts.category_id });
+  if (opts.shorts === true) rows.push({ label: "Posted as", value: "Shorts" });
+  if (typeof opts.made_for_kids === "boolean") rows.push({ label: "Made for kids", value: opts.made_for_kids ? "Yes" : "No" });
+  if (Array.isArray(opts.tags) && opts.tags.length > 0) rows.push({ label: "Tags", value: opts.tags.join(", ") });
+  if (typeof opts.publish_at === "string" && opts.publish_at) rows.push({ label: "Scheduled for", value: opts.publish_at });
+  if (typeof opts.playlist_id === "string" && opts.playlist_id) rows.push({ label: "Playlist", value: opts.playlist_id });
+  if (opts.contains_synthetic_media === true) rows.push({ label: "AI-generated content", value: "Yes" });
+}
+
+function pushInstagramRows(rows: Array<{ label: string; value: ReactNode }>, opts: Record<string, unknown>) {
+  if (typeof opts.mediaType === "string") {
+    rows.push({ label: "Media type", value: opts.mediaType });
+  } else if (typeof opts.media_type === "string") {
+    rows.push({ label: "Media type", value: opts.media_type });
+  }
+}
+
+function pushLinkedInRows(rows: Array<{ label: string; value: ReactNode }>, opts: Record<string, unknown>) {
+  if (typeof opts.visibility === "string") rows.push({ label: "Visibility", value: opts.visibility });
+}
+
+function pushGenericRows(rows: Array<{ label: string; value: ReactNode }>, opts: Record<string, unknown>) {
+  for (const [key, value] of Object.entries(opts)) {
+    if (value === null || value === undefined || value === "" || value === false) continue;
+    rows.push({ label: key, value: typeof value === "object" ? JSON.stringify(value) : String(value) });
+  }
 }
 
 function startOfMonth(date: Date): Date {
@@ -1907,7 +2173,7 @@ const CALENDAR_CSS = `
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
 .posts-calendar-timed-meta{font-size:11px;color:color-mix(in srgb,var(--event-color) 78%,var(--dmuted));font-weight:700;line-height:1.15;white-space:nowrap}
 .posts-calendar-popover-layer{position:fixed;inset:0;background:transparent;z-index:90}
-.posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);width:min(420px,calc(100vw - 24px));max-height:calc(100dvh - 24px);background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);padding:16px;transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1)}
+.posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);width:min(560px,calc(100vw - 24px));max-height:min(calc(100dvh - 24px),var(--popover-available-height,calc(100dvh - 24px)));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);padding:16px;transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:auto}
 .posts-calendar-popover::before{content:"";position:absolute;width:16px;height:16px;background:var(--surface-raised);border:1px solid var(--dborder);transform:rotate(45deg);pointer-events:none}
 .posts-calendar-popover[data-side="right"]::before{left:-9px;top:calc(var(--popover-arrow-y) - 8px);border-top:0;border-right:0}
 .posts-calendar-popover[data-side="left"]::before{right:-9px;top:calc(var(--popover-arrow-y) - 8px);border-bottom:0;border-left:0}
@@ -1926,6 +2192,36 @@ const CALENDAR_CSS = `
 .posts-calendar-popover-status{display:inline-flex;align-items:center;height:19px;border-radius:5px;padding:0 5px;margin-right:7px;background:color-mix(in srgb,var(--event-color) 20%,transparent);color:color-mix(in srgb,var(--event-color) 80%,var(--dtext));font-size:10px;font-weight:800;letter-spacing:.04em}
 .posts-calendar-popover-platforms{display:flex;flex-wrap:wrap;gap:6px}
 .posts-calendar-popover-platforms span{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--dborder);background:var(--surface2);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:650}
+.posts-calendar-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}
+.posts-calendar-detail-card{min-width:0;border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);padding:10px 11px}
+.posts-calendar-detail-card.wide{grid-column:1/-1}
+.posts-calendar-detail-card div{margin-bottom:6px;color:var(--dmuted2);font-size:10px;font-weight:780;letter-spacing:.08em;text-transform:uppercase}
+.posts-calendar-detail-card span{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--dtext);font-size:13px;line-height:1.35}
+.posts-calendar-results{margin-top:16px}
+.posts-calendar-results-label{margin-bottom:9px;color:var(--dmuted2);font-size:11px;font-weight:780;letter-spacing:.08em;text-transform:uppercase}
+.posts-calendar-results-grid{display:flex;flex-direction:column;gap:9px}
+.posts-calendar-result-empty{border:1px dashed var(--dborder);border-radius:10px;background:var(--surface1);padding:10px 11px;color:var(--dmuted);font-size:13px}
+.posts-calendar-result-card{border:1px solid var(--dborder);border-radius:12px;background:var(--surface1);padding:11px}
+.posts-calendar-result-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.posts-calendar-result-title{min-width:0;display:flex;align-items:center;gap:7px;color:var(--dtext);font-size:14px;font-weight:720}
+.posts-calendar-result-title>span:first-of-type{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.posts-calendar-result-status{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;background:var(--surface2);color:var(--dmuted);font-size:11px;font-weight:750}
+.posts-calendar-result-status.published{background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success)}
+.posts-calendar-result-status.failed{background:var(--danger-soft);color:var(--danger)}
+.posts-calendar-result-status.partial,.posts-calendar-result-status.processing{background:color-mix(in srgb,var(--warning) 20%,transparent);color:var(--warning)}
+.posts-calendar-result-link{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--dborder);border-radius:999px;background:var(--surface-raised);color:var(--daccent);font-size:11px;font-weight:740;text-decoration:none;padding:5px 8px;white-space:nowrap}
+.posts-calendar-result-link:hover{background:var(--surface2)}
+.posts-calendar-result-meta{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:8px;color:var(--dmuted);font-size:12px;line-height:1.35}
+.posts-calendar-result-message{margin:9px 0 0;color:var(--dtext);font-size:13px;line-height:1.4}
+.posts-calendar-result-id{margin-top:7px;color:var(--dmuted);font-size:12px;line-height:1.35;word-break:break-word}
+.posts-calendar-submitted-panel{margin-top:10px;border:1px solid var(--dborder);border-radius:10px;background:var(--surface-raised);overflow:hidden}
+.posts-calendar-submitted-panel summary{display:flex;align-items:center;gap:6px;list-style:none;cursor:pointer;padding:8px 10px;color:var(--dmuted);font-size:11px;font-weight:780;letter-spacing:.07em;text-transform:uppercase}
+.posts-calendar-submitted-panel summary::-webkit-details-marker{display:none}
+.posts-calendar-submitted-panel dl{display:grid;gap:0;margin:0;border-top:1px solid var(--dborder)}
+.posts-calendar-submitted-panel dl div{display:grid;grid-template-columns:128px minmax(0,1fr);gap:10px;padding:8px 10px;border-top:1px solid var(--dborder)}
+.posts-calendar-submitted-panel dl div:first-child{border-top:0}
+.posts-calendar-submitted-panel dt{color:var(--dmuted2);font-size:11px;font-weight:700}
+.posts-calendar-submitted-panel dd{margin:0;color:var(--dtext);font-size:12px;line-height:1.35;word-break:break-word}
 .posts-calendar-open-list{display:inline-flex;align-items:center;justify-content:center;margin-top:17px;width:100%;height:36px;border-radius:10px;background:var(--surface2);border:1px solid var(--dborder);color:var(--dtext);text-decoration:none;font-size:14px;font-weight:700}
 .posts-calendar-open-list:hover{background:var(--surface3)}
 .posts-calendar-open-list:disabled{opacity:.55;cursor:not-allowed}
@@ -1975,6 +2271,6 @@ const CALENDAR_CSS = `
 .posts-calendar-edit-footer button.primary{border-color:var(--daccent);background:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-edit-footer button:disabled{opacity:.55;cursor:not-allowed}
 @media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-month-shell{min-height:720px}.posts-calendar-month-days{grid-template-rows:repeat(6,minmax(114px,1fr))}}
-@media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-month-shell{overflow-x:auto}.posts-calendar-month-weekdays,.posts-calendar-month-days{min-width:924px}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}.posts-calendar-edit-inspector{width:min(420px,calc(100vw - 24px))}.posts-calendar-edit-account-grid{grid-template-columns:1fr}}
+@media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-month-shell{overflow-x:auto}.posts-calendar-month-weekdays,.posts-calendar-month-days{min-width:924px}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}.posts-calendar-detail-grid{grid-template-columns:1fr}.posts-calendar-submitted-panel dl div{grid-template-columns:1fr}.posts-calendar-edit-inspector{width:min(420px,calc(100vw - 24px))}.posts-calendar-edit-account-grid{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.posts-calendar-popover,.posts-calendar-edit-inspector,.posts-calendar-swipe-layer-from,.posts-calendar-swipe-layer-to{animation:none}.posts-calendar-swipe-layer-from{display:none}}
 `;

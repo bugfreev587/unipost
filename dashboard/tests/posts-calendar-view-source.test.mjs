@@ -217,3 +217,31 @@ test("Posts calendar details popover anchors to the selected event button", asyn
   assert.match(source, /\.posts-calendar-popover\[data-side="right"\]::before/);
   assert.doesNotMatch(source, /background:color-mix\(in srgb,var\(--overlay\) 48%,transparent\)/);
 });
+
+test("Posts calendar details popover mirrors list view post details", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const popover = source.slice(
+    source.indexOf("function EventPopover"),
+    source.indexOf("function CalendarEditInspector"),
+  );
+  const detailsHelpers = source.slice(source.indexOf("function CalendarPostDetailGrid"));
+
+  assert.match(popover, /<CalendarPostDetailGrid post=\{post\} meta=\{meta\} \/>/);
+  assert.match(popover, /<CalendarPostResults post=\{post\} \/>/);
+  assert.match(detailsHelpers, /function CalendarPostDetailGrid/);
+  assert.match(detailsHelpers, /Caption/);
+  assert.match(detailsHelpers, /Mode/);
+  assert.match(detailsHelpers, /Created/);
+  assert.match(detailsHelpers, /Scheduled/);
+  assert.match(detailsHelpers, /Published/);
+  assert.match(detailsHelpers, /function CalendarPostResults/);
+  assert.match(detailsHelpers, /function CalendarPostResultCard/);
+  assert.match(detailsHelpers, /title="Open original post"/);
+  assert.match(detailsHelpers, /postUrlFor\(result\.platform/);
+  assert.match(detailsHelpers, /Published successfully\./);
+  assert.match(detailsHelpers, /Submitted settings/);
+  assert.match(detailsHelpers, /buildSubmittedRows/);
+  assert.match(source, /\.posts-calendar-detail-grid/);
+  assert.match(source, /\.posts-calendar-result-card/);
+  assert.match(source, /\.posts-calendar-submitted-panel/);
+});
