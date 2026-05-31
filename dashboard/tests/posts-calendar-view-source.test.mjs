@@ -241,16 +241,23 @@ test("Posts calendar edit inspector keeps fixed actions visible and profile besi
 
 test("Posts calendar details popover anchors to the selected event button", async () => {
   const source = await readFile(calendarViewPath, "utf8");
+  const popover = source.slice(
+    source.indexOf("function EventPopover"),
+    source.indexOf("function CalendarPostDetailGrid"),
+  );
 
-  assert.match(source, /getAnchoredPopoverPlacement/);
   assert.match(source, /selectedPostTarget/);
   assert.match(source, /handleSelectPost/);
   assert.match(source, /getElementRect/);
   assert.match(source, /getBoundingClientRect\(\)/);
   assert.match(source, /anchorRect=\{selectedPostTarget\.anchorRect\}/);
-  assert.match(source, /data-side=\{placement\.side\}/);
-  assert.match(source, /--popover-left/);
-  assert.match(source, /--popover-arrow-y/);
+  assert.match(source, /boundsRect=\{selectedPostTarget\.boundsRect\}/);
+  assert.match(popover, /boundsRect/);
+  assert.match(popover, /getBoundedCalendarPopoverPlacement/);
+  assert.match(popover, /"--popover-available-height": `\$\{placement\.availableHeight\}px`/);
+  assert.match(popover, /data-side=\{placement\.side\}/);
+  assert.match(popover, /--popover-left/);
+  assert.match(popover, /--popover-arrow-y/);
   assert.match(source, /posts-calendar-popover-open/);
   assert.match(source, /\.posts-calendar-popover\[data-side="right"\]::before/);
   assert.doesNotMatch(source, /background:color-mix\(in srgb,var\(--overlay\) 48%,transparent\)/);

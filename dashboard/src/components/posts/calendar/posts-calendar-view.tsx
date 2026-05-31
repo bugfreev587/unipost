@@ -52,7 +52,6 @@ import {
   bucketPostByLocalDay,
   formatLocalDateKey,
   getAccumulatedWheelNavigationIntent,
-  getAnchoredPopoverPlacement,
   getBoundedCalendarPopoverPlacement,
   getCalendarPostDate,
   getCalendarPostMinuteOfDay,
@@ -903,6 +902,7 @@ export function PostsCalendarView() {
         <EventPopover
           post={selectedPost}
           anchorRect={selectedPostTarget.anchorRect}
+          boundsRect={selectedPostTarget.boundsRect}
           profile={getPrimaryProfile(selectedPost, profilesById)}
           color={getPostColor(selectedPost, profilesById, profileColors)}
           timezone={timezone}
@@ -1080,6 +1080,7 @@ function TimedPostButton({
 function EventPopover({
   post,
   anchorRect,
+  boundsRect,
   profile,
   color,
   timezone,
@@ -1089,6 +1090,7 @@ function EventPopover({
 }: {
   post: SocialPost;
   anchorRect: CalendarPopoverRect;
+  boundsRect: CalendarPopoverRect;
   profile: Profile | null;
   color: string;
   timezone: string;
@@ -1126,14 +1128,19 @@ function EventPopover({
   }, [post.id]);
 
   const placement = useMemo(
-    () => getAnchoredPopoverPlacement({ anchor: anchorRect, viewport: viewportSize, popover: popoverSize }),
-    [anchorRect, popoverSize, viewportSize],
+    () => getBoundedCalendarPopoverPlacement({
+      anchor: anchorRect,
+      viewport: viewportSize,
+      popover: popoverSize,
+      bounds: boundsRect,
+    }),
+    [anchorRect, boundsRect, popoverSize, viewportSize],
   );
   const popoverStyle = {
     "--event-color": color,
     "--popover-left": `${placement.left}px`,
     "--popover-top": `${placement.top}px`,
-    "--popover-available-height": `${Math.max(260, viewportSize.height - placement.top - 12)}px`,
+    "--popover-available-height": `${placement.availableHeight}px`,
     "--popover-arrow-x": `${placement.arrowX}px`,
     "--popover-arrow-y": `${placement.arrowY}px`,
     "--popover-transform-origin": placement.transformOrigin,
