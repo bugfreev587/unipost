@@ -598,11 +598,13 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 // this with the live results anyway.
 func socialPostResponseFromRow(post db.SocialPost) socialPostResponse {
 	resp := socialPostResponse{
-		ID:         post.ID,
-		Status:     post.Status,
-		CreatedAt:  post.CreatedAt.Time,
-		Source:     post.Source,
-		ProfileIDs: post.ProfileIds,
+		ID:            post.ID,
+		MediaURLs:     post.MediaUrls,
+		Status:        post.Status,
+		CreatedAt:     post.CreatedAt.Time,
+		Source:        post.Source,
+		ProfileIDs:    post.ProfileIds,
+		PlatformPosts: buildEditablePlatformPosts(post.Metadata, derefText(post.Caption)),
 	}
 	if post.Caption.Valid {
 		c := post.Caption.String

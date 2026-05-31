@@ -126,3 +126,38 @@ func TestBuildContentUpdateParamsIncludesProfilesForScheduledPost(t *testing.T) 
 		t.Fatalf("profile_ids = %#v, want prof_1", params.ProfileIds)
 	}
 }
+
+func TestBuildEditablePlatformPostsFromMetadata(t *testing.T) {
+	posts := []platform.PlatformPostInput{{
+		AccountID:       "acct_linkedin",
+		Caption:         "LinkedIn caption",
+		MediaIDs:        []string{"media_1"},
+		PlatformOptions: map[string]any{"visibility": "connections"},
+		FirstComment:    "first comment",
+		InReplyTo:       "https://example.com/thread",
+		ThreadPosition:  2,
+	}}
+	metadata, err := platform.EncodePostMetadata(posts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := buildEditablePlatformPosts(metadata, "fallback")
+
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	post := got[0]
+	if post.AccountID != "acct_linkedin" || post.Caption != "LinkedIn caption" {
+		t.Fatalf("post = %#v", post)
+	}
+	if len(post.MediaIDs) != 1 || post.MediaIDs[0] != "media_1" {
+		t.Fatalf("media ids = %#v", post.MediaIDs)
+	}
+	if post.PlatformOptions["visibility"] != "connections" {
+		t.Fatalf("platform options = %#v", post.PlatformOptions)
+	}
+	if post.FirstComment != "first comment" || post.InReplyTo != "https://example.com/thread" || post.ThreadPosition != 2 {
+		t.Fatalf("thread/comment fields = %#v", post)
+	}
+}
