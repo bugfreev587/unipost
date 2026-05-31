@@ -10,7 +10,9 @@
   3. Rename the conversation/thread to exactly match the new branch name.
 - Do not base new development work on the current local `dev` branch unless the user explicitly asks for it.
 - Do all implementation and local testing on the `dev-<task-slug>` branch.
-- After implementation is complete and tests pass, merge the task branch back into local `dev` or create a pull request from `dev-<task-slug>` to `dev`, depending on the size/risk of the change and the user's instruction.
+- For every code change, start from the latest `origin/dev`, create a clean `dev-<task-slug>` branch, and work only on that new branch until the change is ready.
+- After code changes are complete, pull the latest `origin/dev` into local `dev`, merge the task branch into local `dev`, and rerun all required tests before considering the task complete.
+- After implementation is complete and tests pass on both the task branch and the updated local `dev`, push local `dev` directly to `origin/dev` unless the user explicitly asks for a pull request instead.
 - Run the relevant validation again on local `dev` before pushing `dev`.
 - If validation passes, push local `dev` to `origin/dev`.
 - Pushing or merging to `dev` deploys the development environment only. Do not promote from `dev` to `staging` or `main` unless the user explicitly asks for a release, staging promotion, production release, or PR.
