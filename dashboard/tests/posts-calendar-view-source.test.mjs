@@ -255,7 +255,7 @@ test("Posts calendar details popover anchors to the selected event button", asyn
   assert.match(popover, /boundsRect/);
   assert.match(popover, /getBoundedCalendarPopoverPlacement/);
   assert.match(popover, /"--popover-available-height": `\$\{placement\.availableHeight\}px`/);
-  assert.match(popover, /height: `\$\{placement\.availableHeight\}px`/);
+  assert.doesNotMatch(popover, /height: `\$\{placement\.availableHeight\}px`/);
   assert.match(popover, /data-side=\{placement\.side\}/);
   assert.match(popover, /--popover-left/);
   assert.match(popover, /--popover-arrow-y/);

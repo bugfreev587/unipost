@@ -1144,7 +1144,6 @@ function EventPopover({
     "--popover-arrow-x": `${placement.arrowX}px`,
     "--popover-arrow-y": `${placement.arrowY}px`,
     "--popover-transform-origin": placement.transformOrigin,
-    height: `${placement.availableHeight}px`,
   } as CSSProperties;
 
   return (
