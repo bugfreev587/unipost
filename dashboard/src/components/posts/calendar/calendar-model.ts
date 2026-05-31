@@ -9,6 +9,7 @@ export type CalendarStatusFilter =
   | "archived";
 
 export type CalendarStatusGroup = Exclude<CalendarStatusFilter, "all">;
+export type CalendarViewMode = "day" | "week" | "month";
 
 export type CalendarModelPost = {
   status: string;
@@ -69,7 +70,32 @@ export function buildMonthGrid(monthDate: Date, today = new Date()): CalendarDay
   return cells;
 }
 
+export function buildWeekDays(anchorDate: Date, today = new Date()): CalendarDayCell[] {
+  const weekStart = startOfMondayWeek(anchorDate);
+  const todayKey = formatLocalDateKey(today);
+  const cells: CalendarDayCell[] = [];
+
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = addDays(weekStart, offset);
+    cells.push({
+      date,
+      dateKey: formatLocalDateKey(date),
+      dayOfMonth: date.getDate(),
+      isCurrentMonth: date.getMonth() === anchorDate.getMonth(),
+      isToday: formatLocalDateKey(date) === todayKey,
+    });
+  }
+
+  return cells;
+}
+
 export function bucketPostByLocalDay(post: CalendarModelPost): string | null {
+  const date = getCalendarPostDate(post);
+  if (!date) return null;
+  return formatLocalDateKey(date);
+}
+
+export function getCalendarPostDate(post: CalendarModelPost): Date | null {
   const source =
     post.status === "scheduled" && post.scheduled_at
       ? post.scheduled_at
@@ -77,8 +103,32 @@ export function bucketPostByLocalDay(post: CalendarModelPost): string | null {
 
   if (!source) return null;
   const date = new Date(source);
-  if (Number.isNaN(date.getTime())) return null;
-  return formatLocalDateKey(date);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function getCalendarPostMinuteOfDay(post: CalendarModelPost): number | null {
+  const date = getCalendarPostDate(post);
+  if (!date) return null;
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+export function getWheelNavigationIntent(
+  mode: CalendarViewMode,
+  deltaX: number,
+  deltaY: number,
+  shiftKey = false,
+): -1 | 0 | 1 {
+  const threshold = 80;
+  if (mode === "day") return 0;
+
+  if (mode === "month") {
+    if (Math.abs(deltaY) < threshold || Math.abs(deltaY) < Math.abs(deltaX)) return 0;
+    return deltaY > 0 ? 1 : -1;
+  }
+
+  const horizontalDelta = Math.abs(deltaX) >= Math.abs(deltaY) ? deltaX : shiftKey ? deltaY : 0;
+  if (Math.abs(horizontalDelta) < threshold) return 0;
+  return horizontalDelta > 0 ? 1 : -1;
 }
 
 export function getPostStatusGroup(post: CalendarModelPost): CalendarStatusGroup {
@@ -115,6 +165,12 @@ export function formatLocalDateKey(date: Date): string {
 
 function addDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
+function startOfMondayWeek(date: Date): Date {
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  return addDays(date, offset);
 }
 
 function isValidHexColor(value: string): boolean {

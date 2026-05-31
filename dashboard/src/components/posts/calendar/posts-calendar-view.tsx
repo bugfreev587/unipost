@@ -4,7 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { ChevronLeft, ChevronRight, List, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type WheelEvent } from "react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 import {
@@ -18,15 +18,24 @@ import {
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   buildMonthGrid,
+  buildWeekDays,
   bucketPostByLocalDay,
+  formatLocalDateKey,
+  getCalendarPostDate,
+  getCalendarPostMinuteOfDay,
   getPostStatusGroup,
   getProfileCalendarColor,
+  getWheelNavigationIntent,
   shouldShowPostForStatusFilter,
   type CalendarStatusFilter,
   type CalendarStatusGroup,
+  type CalendarViewMode,
 } from "./calendar-model";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEK_VIEW_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+const HOUR_HEIGHT = 64;
 
 const STATUS_FILTERS: Array<{ value: CalendarStatusFilter; label: string }> = [
   { value: "all", label: "All Status" },
@@ -60,12 +69,15 @@ export function PostsCalendarView() {
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(new Set());
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<CalendarStatusFilter>("all");
+  const [calendarMode, setCalendarMode] = useState<CalendarViewMode>("month");
+  const [visibleDate, setVisibleDate] = useState(() => new Date());
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [filtersInitialized, setFiltersInitialized] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const wheelLockRef = useRef(0);
 
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time", []);
 
@@ -151,39 +163,175 @@ export function PostsCalendarView() {
     });
   }, [platformOptions.length, posts, profiles.length, selectedPlatforms, selectedProfileIds, statusFilter]);
 
-  const monthCells = useMemo(() => buildMonthGrid(visibleMonth), [visibleMonth]);
-  const postsByDay = useMemo(() => {
+  const postsByDate = useMemo(() => {
     const byDay = new Map<string, SocialPost[]>();
-    for (const cell of monthCells) byDay.set(cell.dateKey, []);
     for (const post of filteredPosts) {
       const dateKey = bucketPostByLocalDay(post);
-      if (!dateKey || !byDay.has(dateKey)) continue;
+      if (!dateKey) continue;
+      if (!byDay.has(dateKey)) byDay.set(dateKey, []);
       byDay.get(dateKey)?.push(post);
     }
     for (const dayPosts of byDay.values()) {
       dayPosts.sort((a, b) => getPostTimeValue(a) - getPostTimeValue(b));
     }
     return byDay;
-  }, [filteredPosts, monthCells]);
+  }, [filteredPosts]);
+
+  const monthCells = useMemo(() => buildMonthGrid(visibleMonth), [visibleMonth]);
+  const weekDays = useMemo(() => buildWeekDays(visibleDate), [visibleDate]);
+  const dayDateKey = useMemo(() => formatLocalDateKey(visibleDate), [visibleDate]);
 
   const selectedPost = useMemo(
     () => posts.find((post) => post.id === selectedPostId) || null,
     [posts, selectedPostId],
   );
 
-  const monthTitle = useMemo(
-    () => visibleMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
-    [visibleMonth],
+  const visibleDateKeys = useMemo(() => {
+    if (calendarMode === "month") return new Set(monthCells.map((cell) => cell.dateKey));
+    if (calendarMode === "week") return new Set(weekDays.map((cell) => cell.dateKey));
+    return new Set([dayDateKey]);
+  }, [calendarMode, dayDateKey, monthCells, weekDays]);
+
+  const calendarTitle = useMemo(
+    () => getCalendarTitle(calendarMode, visibleMonth, visibleDate, weekDays),
+    [calendarMode, visibleDate, visibleMonth, weekDays],
   );
 
   const visiblePostCount = filteredPosts.filter((post) => {
     const key = bucketPostByLocalDay(post);
-    return Boolean(key && postsByDay.has(key));
+    return Boolean(key && visibleDateKeys.has(key));
   }).length;
+
+  const calendarSubtitle = loading
+    ? "Loading posts"
+    : calendarMode === "day"
+      ? `${getWeekdayName(visibleDate)} - ${visiblePostCount} posts in view`
+      : `${visiblePostCount} posts in view`;
 
   const handleCreated = useCallback(async () => {
     await loadData();
   }, [loadData]);
+
+  const shiftCalendar = useCallback((direction: -1 | 1) => {
+    if (calendarMode === "month") {
+      setVisibleMonth((date) => addMonths(date, direction));
+      setVisibleDate((date) => addMonths(date, direction));
+      return;
+    }
+
+    const days = calendarMode === "week" ? direction * 7 : direction;
+    setVisibleDate((date) => {
+      const next = addDays(date, days);
+      setVisibleMonth(startOfMonth(next));
+      return next;
+    });
+  }, [calendarMode]);
+
+  const goToToday = useCallback(() => {
+    const today = new Date();
+    setVisibleDate(today);
+    setVisibleMonth(startOfMonth(today));
+  }, []);
+
+  const handleCalendarWheel = useCallback((event: WheelEvent<HTMLElement>) => {
+    const direction = getWheelNavigationIntent(calendarMode, event.deltaX, event.deltaY, event.shiftKey);
+    if (direction === 0) return;
+
+    const now = Date.now();
+    if (now < wheelLockRef.current) {
+      event.preventDefault();
+      return;
+    }
+
+    wheelLockRef.current = now + 420;
+    event.preventDefault();
+    shiftCalendar(direction);
+  }, [calendarMode, shiftCalendar]);
+
+  const renderMonthView = () => (
+    <div className="posts-calendar-grid" aria-label={`${calendarTitle} posts`} onWheel={handleCalendarWheel}>
+      {WEEKDAYS.map((weekday) => (
+        <div key={weekday} className="posts-calendar-weekday">{weekday}</div>
+      ))}
+      {monthCells.map((cell) => {
+        const dayPosts = postsByDate.get(cell.dateKey) || [];
+        const visibleDayPosts = dayPosts.slice(0, 4);
+        return (
+          <div
+            key={cell.dateKey}
+            className={`posts-calendar-day ${cell.isCurrentMonth ? "" : "outside"} ${cell.isToday ? "today" : ""}`}
+          >
+            <div className="posts-calendar-day-number">
+              <span>{cell.dayOfMonth}</span>
+            </div>
+            <div className="posts-calendar-events">
+              {visibleDayPosts.map((post) => (
+                <CalendarEventButton
+                  key={post.id}
+                  post={post}
+                  profilesById={profilesById}
+                  profileColors={profileColors}
+                  onClick={() => setSelectedPostId(post.id)}
+                />
+              ))}
+              {dayPosts.length > visibleDayPosts.length ? (
+                <button type="button" className="posts-calendar-more" onClick={() => setSelectedPostId(dayPosts[4].id)}>
+                  + {dayPosts.length - visibleDayPosts.length} more
+                </button>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderWeekView = () => (
+    <div className="posts-calendar-week-grid" aria-label={`${calendarTitle} week posts`} onWheel={handleCalendarWheel}>
+      <div className="posts-calendar-week-header">
+        <div className="posts-calendar-all-day-label">all-day</div>
+        {weekDays.map((day, index) => (
+          <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""}`}>
+            <span>{WEEK_VIEW_DAYS[index]}</span>
+            <strong>{day.dayOfMonth}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="posts-calendar-time-scroll">
+        <TimeLabels />
+        <div className="posts-calendar-week-columns">
+          {weekDays.map((day) => (
+            <TimedPostColumn
+              key={day.dateKey}
+              posts={postsByDate.get(day.dateKey) || []}
+              profilesById={profilesById}
+              profileColors={profileColors}
+              onSelectPost={setSelectedPostId}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderDayView = () => (
+    <div className="posts-calendar-day-grid" aria-label={`${calendarTitle} day posts`}>
+      <div className="posts-calendar-day-all-day">
+        <span>all-day</span>
+      </div>
+      <div className="posts-calendar-time-scroll">
+        <TimeLabels />
+        <div className="posts-calendar-day-column-wrap">
+          <TimedPostColumn
+            posts={postsByDate.get(dayDateKey) || []}
+            profilesById={profilesById}
+            profileColors={profileColors}
+            onSelectPost={setSelectedPostId}
+          />
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <section className="posts-calendar-fullheight" aria-label="Posts calendar">
@@ -258,23 +406,44 @@ export function PostsCalendarView() {
       <div className="posts-calendar-main">
         <div className="posts-calendar-topbar">
           <div className="posts-calendar-title-block">
-            <h1>{monthTitle}</h1>
-            <span>{loading ? "Loading posts" : `${visiblePostCount} posts in view`}</span>
+            <h1>{calendarTitle}</h1>
+            <span>{calendarSubtitle}</span>
           </div>
 
           <div className="posts-calendar-toolbar" aria-label="Calendar controls">
             <div className="posts-calendar-segment" aria-label="Calendar view mode">
-              <button type="button" disabled>Day</button>
-              <button type="button" disabled>Week</button>
-              <button type="button" className="active">Month</button>
+              <button
+                type="button"
+                className={calendarMode === "day" ? "active" : ""}
+                onClick={() => setCalendarMode("day")}
+              >
+                Day
+              </button>
+              <button
+                type="button"
+                className={calendarMode === "week" ? "active" : ""}
+                onClick={() => setCalendarMode("week")}
+              >
+                Week
+              </button>
+              <button
+                type="button"
+                className={calendarMode === "month" ? "active" : ""}
+                onClick={() => {
+                  setCalendarMode("month");
+                  setVisibleMonth(startOfMonth(visibleDate));
+                }}
+              >
+                Month
+              </button>
             </div>
 
             <div className="posts-calendar-month-nav">
-              <button type="button" aria-label="Previous month" onClick={() => setVisibleMonth((date) => addMonths(date, -1))}>
+              <button type="button" aria-label={`Previous ${calendarMode}`} onClick={() => shiftCalendar(-1)}>
                 <ChevronLeft size={16} />
               </button>
-              <button type="button" onClick={() => setVisibleMonth(startOfMonth(new Date()))}>Today</button>
-              <button type="button" aria-label="Next month" onClick={() => setVisibleMonth((date) => addMonths(date, 1))}>
+              <button type="button" onClick={goToToday}>Today</button>
+              <button type="button" aria-label={`Next ${calendarMode}`} onClick={() => shiftCalendar(1)}>
                 <ChevronRight size={16} />
               </button>
             </div>
@@ -293,40 +462,10 @@ export function PostsCalendarView() {
 
         {error ? <div className="posts-calendar-error">{error}</div> : null}
 
-        <div className="posts-calendar-grid" aria-label={`${monthTitle} posts`}>
-          {WEEKDAYS.map((weekday) => (
-            <div key={weekday} className="posts-calendar-weekday">{weekday}</div>
-          ))}
-          {monthCells.map((cell) => {
-            const dayPosts = postsByDay.get(cell.dateKey) || [];
-            const visibleDayPosts = dayPosts.slice(0, 4);
-            return (
-              <div
-                key={cell.dateKey}
-                className={`posts-calendar-day ${cell.isCurrentMonth ? "" : "outside"} ${cell.isToday ? "today" : ""}`}
-              >
-                <div className="posts-calendar-day-number">
-                  <span>{cell.dayOfMonth}</span>
-                </div>
-                <div className="posts-calendar-events">
-                  {visibleDayPosts.map((post) => (
-                    <CalendarEventButton
-                      key={post.id}
-                      post={post}
-                      profilesById={profilesById}
-                      profileColors={profileColors}
-                      onClick={() => setSelectedPostId(post.id)}
-                    />
-                  ))}
-                  {dayPosts.length > visibleDayPosts.length ? (
-                    <button type="button" className="posts-calendar-more" onClick={() => setSelectedPostId(dayPosts[4].id)}>
-                      + {dayPosts.length - visibleDayPosts.length} more
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
+        <div className="posts-calendar-view-stage">
+          {calendarMode === "month" ? renderMonthView() : null}
+          {calendarMode === "week" ? renderWeekView() : null}
+          {calendarMode === "day" ? renderDayView() : null}
         </div>
       </div>
 
@@ -391,6 +530,96 @@ function CalendarEventButton({
       <span className="posts-calendar-event-status">{meta.short}</span>
       <span className="posts-calendar-event-caption">{post.caption || "No title"}</span>
       {time ? <span className="posts-calendar-event-time">{time}</span> : null}
+    </button>
+  );
+}
+
+function TimeLabels() {
+  return (
+    <div className="posts-calendar-time-labels" aria-hidden="true">
+      {HOURS.map((hour) => (
+        <div key={hour} className="posts-calendar-time-label">
+          {formatHourLabel(hour)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TimedPostColumn({
+  posts,
+  profilesById,
+  profileColors,
+  onSelectPost,
+}: {
+  posts: SocialPost[];
+  profilesById: Map<string, Profile>;
+  profileColors: Map<string, string>;
+  onSelectPost: (postId: string) => void;
+}) {
+  const laneCounts = new Map<number, number>();
+  return (
+    <div className="posts-calendar-time-column" style={{ "--hour-height": `${HOUR_HEIGHT}px` } as CSSProperties}>
+      {posts.map((post) => {
+        const minute = getCalendarPostMinuteOfDay(post);
+        if (minute === null) return null;
+        const bucket = Math.floor(minute / 30);
+        const lane = laneCounts.get(bucket) || 0;
+        laneCounts.set(bucket, lane + 1);
+        return (
+          <TimedPostButton
+            key={post.id}
+            post={post}
+            profilesById={profilesById}
+            profileColors={profileColors}
+            top={(minute / 60) * HOUR_HEIGHT}
+            lane={lane}
+            onClick={() => onSelectPost(post.id)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function TimedPostButton({
+  post,
+  profilesById,
+  profileColors,
+  top,
+  lane,
+  onClick,
+}: {
+  post: SocialPost;
+  profilesById: Map<string, Profile>;
+  profileColors: Map<string, string>;
+  top: number;
+  lane: number;
+  onClick: () => void;
+}) {
+  const status = getPostStatusGroup(post);
+  const meta = STATUS_META[status];
+  const profile = getPrimaryProfile(post, profilesById);
+  const color = getPostColor(post, profilesById, profileColors);
+  const time = formatPostTime(post);
+  return (
+    <button
+      type="button"
+      className="posts-calendar-timed-event"
+      style={{
+        "--event-color": color,
+        top: `${Math.max(4, top + lane * 6)}px`,
+        left: `${7 + lane * 5}px`,
+        right: `${7 + lane * 5}px`,
+      } as CSSProperties}
+      onClick={onClick}
+      title={`${post.caption || "No title"} - ${meta.label}${profile ? ` - ${profile.name}` : ""}`}
+    >
+      <span className="posts-calendar-event-rail" />
+      <span className="posts-calendar-timed-content">
+        <span className="posts-calendar-timed-title">{post.caption || "No title"}</span>
+        <span className="posts-calendar-timed-meta">{meta.short}{time ? ` - ${time}` : ""}</span>
+      </span>
     </button>
   );
 }
@@ -496,13 +725,7 @@ function getPostPlatforms(post: SocialPost): string[] {
 }
 
 function getPostDate(post: SocialPost): Date | null {
-  const source =
-    post.status === "scheduled" && post.scheduled_at
-      ? post.scheduled_at
-      : post.published_at || post.created_at;
-  if (!source) return null;
-  const date = new Date(source);
-  return Number.isNaN(date.getTime()) ? null : date;
+  return getCalendarPostDate(post);
 }
 
 function getPostTimeValue(post: SocialPost): number {
@@ -527,6 +750,42 @@ function formatPostDateTime(post: SocialPost): string {
   });
 }
 
+function getCalendarTitle(mode: CalendarViewMode, visibleMonth: Date, visibleDate: Date, weekDays: Array<{ date: Date }>): string {
+  if (mode === "month") {
+    return visibleMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  }
+  if (mode === "week") {
+    return formatWeekTitle(weekDays[0]?.date || visibleDate, weekDays[6]?.date || visibleDate);
+  }
+  return visibleDate.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+}
+
+function formatWeekTitle(start: Date, end: Date): string {
+  if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
+    return start.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  }
+  if (start.getFullYear() === end.getFullYear()) {
+    return `${start.toLocaleDateString("en-US", { month: "short" })} - ${end.toLocaleDateString("en-US", {
+      month: "short",
+      year: "numeric",
+    })}`;
+  }
+  return `${start.toLocaleDateString("en-US", {
+    month: "short",
+    year: "numeric",
+  })} - ${end.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
+}
+
+function getWeekdayName(date: Date): string {
+  return date.toLocaleDateString("en-US", { weekday: "long" });
+}
+
+function formatHourLabel(hour: number): string {
+  if (hour === 0) return "12 AM";
+  if (hour === 12) return "Noon";
+  return hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
+}
+
 function formatPlatformName(platform: string): string {
   return platform
     .split(/[_-]/)
@@ -541,6 +800,10 @@ function startOfMonth(date: Date): Date {
 
 function addMonths(date: Date, amount: number): Date {
   return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
 function toggleSetValue(current: Set<string>, value: string): Set<string> {
@@ -575,7 +838,7 @@ const CALENDAR_CSS = `
 .posts-calendar-status-option{height:30px;border:0;border-radius:8px;background:transparent;color:var(--dmuted);font:inherit;font-size:14px;text-align:left;padding:0 8px;cursor:pointer}
 .posts-calendar-status-option:hover{background:color-mix(in srgb,var(--surface3) 66%,transparent);color:var(--dtext)}
 .posts-calendar-status-option.active{background:color-mix(in srgb,var(--daccent) 13%,transparent);color:var(--dtext);font-weight:650}
-.posts-calendar-main{min-width:0;display:flex;flex-direction:column;background:var(--surface)}
+.posts-calendar-main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
 .posts-calendar-topbar{min-height:76px;padding:15px 18px;border-bottom:1px solid var(--dborder);display:flex;align-items:center;justify-content:space-between;gap:18px}
 .posts-calendar-title-block{min-width:0}
 .posts-calendar-title-block h1{font-size:32px;line-height:1.05;font-weight:760;color:var(--dtext);margin:0;letter-spacing:0}
@@ -592,7 +855,8 @@ const CALENDAR_CSS = `
 .posts-calendar-month-nav button:active,.posts-calendar-list-link:active,.posts-calendar-create:active{transform:translateY(1px)}
 .posts-calendar-create{background:var(--daccent);border-color:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-error{margin:12px 18px 0;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);background:var(--danger-soft);color:var(--danger);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}
-.posts-calendar-grid{flex:1;min-height:640px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:34px repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px}
+.posts-calendar-view-stage{flex:1;min-height:0;display:flex;overflow:hidden;background:var(--surface)}
+.posts-calendar-grid{flex:1;min-height:640px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:34px repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px;overscroll-behavior:contain}
 .posts-calendar-weekday{background:var(--surface);display:flex;align-items:center;justify-content:flex-end;padding:0 12px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px}
 .posts-calendar-day.outside{background:color-mix(in srgb,var(--surface2) 42%,var(--surface));color:var(--dmuted2)}
@@ -607,6 +871,26 @@ const CALENDAR_CSS = `
 .posts-calendar-event-time{font-size:11px;color:var(--dmuted2);white-space:nowrap}
 .posts-calendar-more{height:22px;border:0;border-radius:6px;background:transparent;color:var(--dmuted);font:inherit;font-size:12px;font-weight:650;text-align:left;padding:0 7px;cursor:pointer}
 .posts-calendar-more:hover{background:var(--surface2);color:var(--dtext)}
+.posts-calendar-week-grid,.posts-calendar-day-grid{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
+.posts-calendar-week-grid{overscroll-behavior-x:contain}
+.posts-calendar-week-header{display:grid;grid-template-columns:64px repeat(7,minmax(120px,1fr));border-bottom:1px solid var(--dborder);background:var(--dborder);gap:1px;min-width:920px}
+.posts-calendar-all-day-label,.posts-calendar-day-all-day{height:44px;display:flex;align-items:center;color:var(--dmuted);font-size:13px;font-weight:650;background:var(--surface);padding:0 12px}
+.posts-calendar-week-heading{height:44px;background:var(--surface);display:flex;align-items:center;justify-content:center;gap:7px;color:var(--dmuted);font-size:13px;font-weight:650}
+.posts-calendar-week-heading strong{font-size:17px;color:var(--dtext);font-weight:720}
+.posts-calendar-week-heading.today strong{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:var(--danger);color:white}
+.posts-calendar-day-all-day{height:34px;border-bottom:1px solid var(--dborder)}
+.posts-calendar-time-scroll{flex:1;min-height:0;display:grid;grid-template-columns:64px minmax(0,1fr);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:var(--surface)}
+.posts-calendar-week-grid .posts-calendar-time-scroll{overflow-x:auto}
+.posts-calendar-time-labels{height:calc(24 * var(--hour-height,64px));background:var(--surface);border-right:1px solid var(--dborder)}
+.posts-calendar-time-label{height:var(--hour-height,64px);display:flex;align-items:flex-start;justify-content:flex-end;padding:5px 8px 0 4px;color:var(--dmuted);font-size:12px;font-weight:650;border-top:1px solid var(--dborder)}
+.posts-calendar-week-columns{min-width:856px;display:grid;grid-template-columns:repeat(7,minmax(120px,1fr));background:var(--dborder);gap:1px}
+.posts-calendar-day-column-wrap{min-width:0;background:var(--dborder);padding-left:1px}
+.posts-calendar-time-column{position:relative;height:calc(24 * var(--hour-height,64px));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
+.posts-calendar-timed-event{--event-color:#8b8b93;position:absolute;min-height:38px;border:1px solid color-mix(in srgb,var(--event-color) 30%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-color) 21%,var(--surface));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
+.posts-calendar-timed-event:hover{border-color:color-mix(in srgb,var(--event-color) 54%,var(--dborder));background:color-mix(in srgb,var(--event-color) 28%,var(--surface))}
+.posts-calendar-timed-content{min-width:0;display:flex;flex-direction:column;gap:2px}
+.posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
+.posts-calendar-timed-meta{font-size:11px;color:color-mix(in srgb,var(--event-color) 78%,var(--dmuted));font-weight:700;line-height:1.15;white-space:nowrap}
 .posts-calendar-popover-layer{position:fixed;inset:0;background:color-mix(in srgb,var(--overlay) 48%,transparent);display:flex;align-items:flex-start;justify-content:flex-end;padding:96px 30px 30px;z-index:90}
 .posts-calendar-popover{width:min(420px,calc(100vw - 36px));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);padding:16px}
 .posts-calendar-popover-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:16px}

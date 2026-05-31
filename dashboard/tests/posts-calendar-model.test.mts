@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildMonthGrid,
+  buildWeekDays,
   bucketPostByLocalDay,
+  getCalendarPostMinuteOfDay,
+  getWheelNavigationIntent,
   getPostStatusGroup,
   getProfileCalendarColor,
   shouldShowPostForStatusFilter,
@@ -73,4 +76,34 @@ test("profile colors prefer valid branding colors and otherwise use a stable pal
   assert.equal(getProfileCalendarColor({ id: "profile-a", name: "A", branding_primary_color: "#1d4ed8" }), "#1d4ed8");
   assert.equal(getProfileCalendarColor({ id: "profile-a", name: "A" }), getProfileCalendarColor({ id: "profile-a", name: "A" }));
   assert.notEqual(getProfileCalendarColor({ id: "profile-a", name: "A" }), getProfileCalendarColor({ id: "profile-b", name: "B" }));
+});
+
+test("buildWeekDays returns a Monday-first week around the selected day", () => {
+  const week = buildWeekDays(new Date(2026, 3, 8), new Date(2026, 3, 10));
+
+  assert.equal(week.length, 7);
+  assert.equal(week[0].dateKey, "2026-04-06");
+  assert.equal(week[4].dateKey, "2026-04-10");
+  assert.equal(week[6].dateKey, "2026-04-12");
+  assert.equal(week[4].isToday, true);
+});
+
+test("getCalendarPostMinuteOfDay maps post timestamps onto a day timeline", () => {
+  assert.equal(
+    getCalendarPostMinuteOfDay({
+      status: "scheduled",
+      scheduled_at: "2026-04-08T14:30:00",
+      created_at: "2026-04-01T00:00:00",
+    }),
+    870,
+  );
+  assert.equal(getCalendarPostMinuteOfDay({ status: "draft" }), null);
+});
+
+test("wheel navigation follows Apple Calendar style directions per view", () => {
+  assert.equal(getWheelNavigationIntent("month", 0, 160), 1);
+  assert.equal(getWheelNavigationIntent("month", 0, -160), -1);
+  assert.equal(getWheelNavigationIntent("week", 140, 0), 1);
+  assert.equal(getWheelNavigationIntent("week", -140, 0), -1);
+  assert.equal(getWheelNavigationIntent("day", 0, 160), 0);
 });
