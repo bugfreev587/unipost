@@ -30,6 +30,15 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /handleCalendarTouchStart/);
   assert.match(source, /handleCalendarTouchEnd/);
   assert.match(source, /shiftCalendarBySwipe/);
+  assert.match(source, /SwipeTransitionState/);
+  assert.match(source, /startCalendarSwipeTransition/);
+  assert.match(source, /SWIPE_TRANSITION_MS/);
+  assert.match(source, /posts-calendar-swipe-viewport/);
+  assert.match(source, /posts-calendar-swipe-layer/);
+  assert.match(source, /posts-calendar-swipe-from/);
+  assert.match(source, /posts-calendar-swipe-to/);
+  assert.match(source, /will-change:transform/);
+  assert.match(source, /contain:layout paint/);
   assert.match(source, /getAccumulatedWheelNavigationIntent/);
   assert.match(source, /wheelDeltaRef/);
   assert.match(source, /wheelResetTimerRef/);
@@ -47,7 +56,7 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /getTimedEventTop\(minute,\s*HOUR_HEIGHT\)/);
   assert.match(source, /--calendar-timeline-height/);
   assert.match(source, /--calendar-timed-event-min-height/);
-  assert.match(source, /<div ref=\{weekTimeScrollRef\} className="posts-calendar-time-scroll" style=\{timelineStyle\}>/);
+  assert.match(source, /ref=\{attachScrollbarRef \? weekTimeScrollRef : null\}/);
   assert.match(source, /<div className="posts-calendar-time-scroll" style=\{timelineStyle\}>/);
   assert.match(source, /--calendar-time-gutter:76px/);
   assert.match(source, /--calendar-week-day-min:132px/);
