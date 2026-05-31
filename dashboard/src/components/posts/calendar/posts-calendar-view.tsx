@@ -78,6 +78,8 @@ export function PostsCalendarView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const wheelLockRef = useRef(0);
+  const weekTimeScrollRef = useRef<HTMLDivElement | null>(null);
+  const [weekScrollbarWidth, setWeekScrollbarWidth] = useState(0);
 
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time", []);
 
@@ -118,6 +120,26 @@ export function PostsCalendarView() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (calendarMode !== "week") return;
+    const node = weekTimeScrollRef.current;
+    if (!node) return;
+
+    const updateScrollbarWidth = () => {
+      setWeekScrollbarWidth(Math.max(0, node.offsetWidth - node.clientWidth));
+    };
+
+    updateScrollbarWidth();
+    const resizeObserver = new ResizeObserver(updateScrollbarWidth);
+    resizeObserver.observe(node);
+    window.addEventListener("resize", updateScrollbarWidth);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateScrollbarWidth);
+    };
+  }, [calendarMode]);
 
   const profilesById = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
   const profileColors = useMemo(
@@ -287,17 +309,25 @@ export function PostsCalendarView() {
   );
 
   const renderWeekView = () => (
-    <div className="posts-calendar-week-grid" aria-label={`${calendarTitle} week posts`} onWheel={handleCalendarWheel}>
+    <div
+      className="posts-calendar-week-grid"
+      aria-label={`${calendarTitle} week posts`}
+      onWheel={handleCalendarWheel}
+      style={{ "--calendar-scrollbar-gutter": `${weekScrollbarWidth}px` } as CSSProperties}
+    >
       <div className="posts-calendar-week-header">
-        <div className="posts-calendar-all-day-label">all-day</div>
-        {weekDays.map((day, index) => (
-          <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""}`}>
-            <span>{WEEK_VIEW_DAYS[index]}</span>
-            <strong>{day.dayOfMonth}</strong>
-          </div>
-        ))}
+        <div className="posts-calendar-week-header-inner">
+          <div className="posts-calendar-all-day-label">all-day</div>
+          {weekDays.map((day, index) => (
+            <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""}`}>
+              <span>{WEEK_VIEW_DAYS[index]}</span>
+              <strong>{day.dayOfMonth}</strong>
+            </div>
+          ))}
+        </div>
+        <div className="posts-calendar-week-scrollbar-spacer" aria-hidden="true" />
       </div>
-      <div className="posts-calendar-time-scroll">
+      <div ref={weekTimeScrollRef} className="posts-calendar-time-scroll">
         <TimeLabels />
         <div className="posts-calendar-week-columns">
           {weekDays.map((day) => (
@@ -871,9 +901,11 @@ const CALENDAR_CSS = `
 .posts-calendar-event-time{font-size:11px;color:var(--dmuted2);white-space:nowrap}
 .posts-calendar-more{height:22px;border:0;border-radius:6px;background:transparent;color:var(--dmuted);font:inherit;font-size:12px;font-weight:650;text-align:left;padding:0 7px;cursor:pointer}
 .posts-calendar-more:hover{background:var(--surface2);color:var(--dtext)}
-.posts-calendar-week-grid,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-week-min-width:1007px;--calendar-week-template:var(--calendar-time-gutter) repeat(7,minmax(var(--calendar-week-day-min),1fr));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
+.posts-calendar-week-grid,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-scrollbar-gutter:0px;--calendar-week-min-width:calc(1007px + var(--calendar-scrollbar-gutter));--calendar-week-template:var(--calendar-time-gutter) repeat(7,minmax(var(--calendar-week-day-min),1fr));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
 .posts-calendar-week-grid{overscroll-behavior-x:contain;overflow-x:auto}
-.posts-calendar-week-header{display:grid;grid-template-columns:var(--calendar-week-template);border-bottom:1px solid var(--dborder);background:var(--dborder);gap:1px;min-width:var(--calendar-week-min-width)}
+.posts-calendar-week-header{display:grid;grid-template-columns:minmax(0,1fr) var(--calendar-scrollbar-gutter);border-bottom:1px solid var(--dborder);background:var(--dborder);min-width:var(--calendar-week-min-width)}
+.posts-calendar-week-header-inner{display:grid;grid-template-columns:var(--calendar-week-template);background:var(--dborder);gap:1px;min-width:0}
+.posts-calendar-week-scrollbar-spacer{background:var(--surface)}
 .posts-calendar-all-day-label,.posts-calendar-day-all-day{height:44px;display:flex;align-items:center;color:var(--dmuted);font-size:13px;font-weight:650;background:var(--surface);padding:0 12px;white-space:nowrap;word-break:keep-all;hyphens:none}
 .posts-calendar-week-heading{height:44px;background:var(--surface);display:flex;align-items:center;justify-content:center;gap:7px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-week-heading strong{font-size:17px;color:var(--dtext);font-weight:720}
