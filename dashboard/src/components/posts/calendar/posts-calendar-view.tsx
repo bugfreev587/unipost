@@ -48,25 +48,26 @@ import {
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   buildMonthGrid,
+  buildRollingMonthGrid,
+  buildRollingWeekDays,
   buildWeekDays,
   bucketPostByLocalDay,
   formatLocalDateKey,
-  getAccumulatedWheelNavigationIntent,
   getBoundedCalendarPopoverPlacement,
+  getCalendarSnapOffset,
+  getCalendarSnapSteps,
   getCalendarPostDate,
   getCalendarPostMinuteOfDay,
   getPostStatusGroup,
   getProfileCalendarColor,
-  getSwipeNavigationIntent,
   getTimedEventLayouts,
   getTimedTimelineContentHeight,
   parseCalendarViewMode,
   type CalendarDayCell,
   type CalendarPopoverRect,
   type CalendarPopoverSize,
-  type CalendarWheelNavigationAccumulator,
   shouldShowPostForStatusFilter,
-  shiftCalendarDateBySwipe,
+  shiftCalendarDateBySnapSteps,
   type CalendarStatusFilter,
   type CalendarStatusGroup,
   type CalendarViewMode,
@@ -84,7 +85,12 @@ const TIMELINE_CONTENT_HEIGHT = getTimedTimelineContentHeight(
   TIMELINE_END_PADDING,
 );
 const POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 560, height: 560 };
-const SWIPE_TRANSITION_MS = 420;
+const SNAP_TRANSITION_MS = 260;
+const WHEEL_SNAP_IDLE_MS = 110;
+const MONTH_VISIBLE_WEEKS = 6;
+const MONTH_BUFFER_WEEKS = 1;
+const WEEK_VISIBLE_DAYS = 7;
+const WEEK_BUFFER_DAYS = 1;
 
 type SelectedPostTarget = {
   postId: string;
@@ -92,14 +98,16 @@ type SelectedPostTarget = {
   boundsRect: CalendarPopoverRect;
 };
 
-type SwipeTransitionState = {
-  id: number;
+type CalendarSnapState = {
   mode: Extract<CalendarViewMode, "month" | "week">;
-  direction: -1 | 1;
-  fromDate: Date;
-  fromMonth: Date;
-  toDate: Date;
-  toMonth: Date;
+  offsetPx: number;
+  isSettling: boolean;
+};
+
+type CalendarTouchState = {
+  mode: Extract<CalendarViewMode, "month" | "week">;
+  startX: number;
+  startY: number;
 };
 
 const STATUS_FILTERS: Array<{ value: CalendarStatusFilter; label: string }> = [
@@ -145,12 +153,11 @@ export function PostsCalendarView() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [swipeTransition, setSwipeTransition] = useState<SwipeTransitionState | null>(null);
-  const wheelDeltaRef = useRef<CalendarWheelNavigationAccumulator>({ deltaX: 0, deltaY: 0 });
-  const wheelLockRef = useRef(0);
-  const wheelResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const swipeTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [calendarSnap, setCalendarSnap] = useState<CalendarSnapState | null>(null);
+  const snapOffsetRef = useRef(0);
+  const wheelSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const snapTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartRef = useRef<CalendarTouchState | null>(null);
   const weekTimeScrollRef = useRef<HTMLDivElement | null>(null);
   const weekTimeGutterScrollRef = useRef<HTMLDivElement | null>(null);
   const [weekScrollbarWidth, setWeekScrollbarWidth] = useState(0);
@@ -158,12 +165,18 @@ export function PostsCalendarView() {
   const calendarMode = useMemo(() => parseCalendarViewMode(searchParams.get("view")), [searchParams]);
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time", []);
 
-  const clearSwipeTransition = useCallback(() => {
-    if (swipeTransitionTimerRef.current) {
-      clearTimeout(swipeTransitionTimerRef.current);
-      swipeTransitionTimerRef.current = null;
+  const clearCalendarSnap = useCallback(() => {
+    if (wheelSnapTimerRef.current) {
+      clearTimeout(wheelSnapTimerRef.current);
+      wheelSnapTimerRef.current = null;
     }
-    setSwipeTransition(null);
+    if (snapTransitionTimerRef.current) {
+      clearTimeout(snapTransitionTimerRef.current);
+      snapTransitionTimerRef.current = null;
+    }
+    snapOffsetRef.current = 0;
+    touchStartRef.current = null;
+    setCalendarSnap(null);
   }, []);
 
   const replaceCalendarMode = useCallback((mode: CalendarViewMode) => {
@@ -212,21 +225,15 @@ export function PostsCalendarView() {
   }, [loadData]);
 
   useEffect(() => {
-    wheelDeltaRef.current = { deltaX: 0, deltaY: 0 };
-    wheelLockRef.current = 0;
-    if (wheelResetTimerRef.current) {
-      clearTimeout(wheelResetTimerRef.current);
-      wheelResetTimerRef.current = null;
-    }
-    clearSwipeTransition();
-  }, [calendarMode, clearSwipeTransition]);
+    clearCalendarSnap();
+  }, [calendarMode, clearCalendarSnap]);
 
   useEffect(() => () => {
-    if (wheelResetTimerRef.current) {
-      clearTimeout(wheelResetTimerRef.current);
+    if (wheelSnapTimerRef.current) {
+      clearTimeout(wheelSnapTimerRef.current);
     }
-    if (swipeTransitionTimerRef.current) {
-      clearTimeout(swipeTransitionTimerRef.current);
+    if (snapTransitionTimerRef.current) {
+      clearTimeout(snapTransitionTimerRef.current);
     }
   }, []);
 
@@ -309,7 +316,15 @@ export function PostsCalendarView() {
   }, [filteredPosts]);
 
   const monthCells = useMemo(() => buildMonthGrid(visibleMonth), [visibleMonth]);
+  const rollingMonthCells = useMemo(
+    () => buildRollingMonthGrid(visibleMonth, MONTH_BUFFER_WEEKS, MONTH_VISIBLE_WEEKS, MONTH_BUFFER_WEEKS),
+    [visibleMonth],
+  );
   const weekDays = useMemo(() => buildWeekDays(visibleDate), [visibleDate]);
+  const rollingWeekDays = useMemo(
+    () => buildRollingWeekDays(visibleDate, WEEK_BUFFER_DAYS, WEEK_VISIBLE_DAYS, WEEK_BUFFER_DAYS),
+    [visibleDate],
+  );
   const dayDateKey = useMemo(() => formatLocalDateKey(visibleDate), [visibleDate]);
   const timelineStyle = useMemo(
     () => ({
@@ -364,7 +379,7 @@ export function PostsCalendarView() {
   }, [loadData]);
 
   const shiftCalendar = useCallback((direction: -1 | 1) => {
-    clearSwipeTransition();
+    clearCalendarSnap();
 
     if (calendarMode === "month") {
       setVisibleMonth((date) => addMonths(date, direction));
@@ -378,105 +393,170 @@ export function PostsCalendarView() {
       setVisibleMonth(startOfMonth(next));
       return next;
     });
-  }, [calendarMode, clearSwipeTransition]);
-
-  const startCalendarSwipeTransition = useCallback((direction: -1 | 1) => {
-    if (calendarMode === "day") return;
-
-    const fromDate = visibleDate;
-    const fromMonth = visibleMonth;
-    const toDate = shiftCalendarDateBySwipe(calendarMode, fromDate, direction);
-    const toMonth = calendarMode === "month"
-      ? shiftCalendarDateBySwipe(calendarMode, fromMonth, direction)
-      : startOfMonth(toDate);
-
-    if (swipeTransitionTimerRef.current) {
-      clearTimeout(swipeTransitionTimerRef.current);
-      swipeTransitionTimerRef.current = null;
-    }
-
-    setSwipeTransition({
-      id: Date.now(),
-      mode: calendarMode,
-      direction,
-      fromDate,
-      fromMonth,
-      toDate,
-      toMonth,
-    });
-    setVisibleDate(toDate);
-    setVisibleMonth(toMonth);
-
-    swipeTransitionTimerRef.current = setTimeout(() => {
-      setSwipeTransition(null);
-      swipeTransitionTimerRef.current = null;
-    }, SWIPE_TRANSITION_MS);
-  }, [calendarMode, visibleDate, visibleMonth]);
-
-  const shiftCalendarBySwipe = useCallback((direction: -1 | 1) => {
-    startCalendarSwipeTransition(direction);
-  }, [startCalendarSwipeTransition]);
+  }, [calendarMode, clearCalendarSnap]);
 
   const goToToday = useCallback(() => {
-    clearSwipeTransition();
+    clearCalendarSnap();
     const today = new Date();
     setVisibleDate(today);
     setVisibleMonth(startOfMonth(today));
-  }, [clearSwipeTransition]);
+  }, [clearCalendarSnap]);
+
+  const getCalendarSnapUnitPx = useCallback((
+    mode: Extract<CalendarViewMode, "month" | "week">,
+    element: HTMLElement,
+  ) => {
+    if (mode === "month") {
+      const viewport = element.querySelector<HTMLElement>(".posts-calendar-month-view");
+      return Math.max(1, (viewport?.clientHeight || element.clientHeight) / MONTH_VISIBLE_WEEKS);
+    }
+
+    const viewport = element.querySelector<HTMLElement>(".posts-calendar-week-content");
+    return Math.max(1, (viewport?.clientWidth || element.clientWidth) / WEEK_VISIBLE_DAYS);
+  }, []);
+
+  const setCalendarSnapOffset = useCallback((
+    mode: Extract<CalendarViewMode, "month" | "week">,
+    offsetPx: number,
+    isSettling = false,
+  ) => {
+    snapOffsetRef.current = offsetPx;
+    setCalendarSnap({ mode, offsetPx, isSettling });
+  }, []);
+
+  const settleCalendarSnap = useCallback((
+    mode: Extract<CalendarViewMode, "month" | "week">,
+    unitPx: number,
+  ) => {
+    if (wheelSnapTimerRef.current) {
+      clearTimeout(wheelSnapTimerRef.current);
+      wheelSnapTimerRef.current = null;
+    }
+    if (snapTransitionTimerRef.current) {
+      clearTimeout(snapTransitionTimerRef.current);
+      snapTransitionTimerRef.current = null;
+    }
+
+    const steps = getCalendarSnapSteps(snapOffsetRef.current, unitPx, 1);
+    const targetOffset = getCalendarSnapOffset(steps, unitPx);
+    if (steps === 0 && Math.abs(snapOffsetRef.current) < 0.5) {
+      snapOffsetRef.current = 0;
+      setCalendarSnap(null);
+      return;
+    }
+
+    snapOffsetRef.current = targetOffset;
+    setCalendarSnap({ mode, offsetPx: targetOffset, isSettling: true });
+
+    snapTransitionTimerRef.current = setTimeout(() => {
+      if (steps !== 0) {
+        if (mode === "month") {
+          setVisibleDate((date) => shiftCalendarDateBySnapSteps(mode, date, steps));
+          setVisibleMonth((date) => shiftCalendarDateBySnapSteps(mode, date, steps));
+        } else {
+          setVisibleDate((date) => {
+            const next = shiftCalendarDateBySnapSteps(mode, date, steps);
+            setVisibleMonth(startOfMonth(next));
+            return next;
+          });
+        }
+      }
+      snapOffsetRef.current = 0;
+      setCalendarSnap(null);
+      snapTransitionTimerRef.current = null;
+    }, SNAP_TRANSITION_MS);
+  }, []);
+
+  const scheduleWheelSnap = useCallback((
+    mode: Extract<CalendarViewMode, "month" | "week">,
+    unitPx: number,
+  ) => {
+    if (wheelSnapTimerRef.current) {
+      clearTimeout(wheelSnapTimerRef.current);
+    }
+    wheelSnapTimerRef.current = setTimeout(() => {
+      settleCalendarSnap(mode, unitPx);
+    }, WHEEL_SNAP_IDLE_MS);
+  }, [settleCalendarSnap]);
 
   const handleCalendarWheel = useCallback((event: WheelEvent<HTMLElement>) => {
     if (calendarMode === "day") return;
 
-    const now = Date.now();
-    if (now < wheelLockRef.current) {
-      return;
+    const mode = calendarMode;
+    let dragDelta = 0;
+    if (mode === "month") {
+      if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+      dragDelta = -event.deltaY;
+    } else {
+      const horizontalDelta = Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+        ? event.deltaX
+        : event.shiftKey
+          ? event.deltaY
+          : 0;
+      if (horizontalDelta === 0) return;
+      dragDelta = -horizontalDelta;
     }
 
-    const result = getAccumulatedWheelNavigationIntent(
-      calendarMode,
-      wheelDeltaRef.current,
-      event.deltaX,
-      event.deltaY,
-      event.shiftKey,
-    );
-    wheelDeltaRef.current = result.accumulator;
-
-    if (wheelResetTimerRef.current) {
-      clearTimeout(wheelResetTimerRef.current);
+    if (snapTransitionTimerRef.current) {
+      clearTimeout(snapTransitionTimerRef.current);
+      snapTransitionTimerRef.current = null;
     }
-    wheelResetTimerRef.current = setTimeout(() => {
-      wheelDeltaRef.current = { deltaX: 0, deltaY: 0 };
-      wheelResetTimerRef.current = null;
-    }, 180);
 
-    if (result.direction === 0) return;
-
-    if (wheelResetTimerRef.current) {
-      clearTimeout(wheelResetTimerRef.current);
-      wheelResetTimerRef.current = null;
-    }
-    wheelDeltaRef.current = { deltaX: 0, deltaY: 0 };
-    wheelLockRef.current = now + SWIPE_TRANSITION_MS;
-    shiftCalendarBySwipe(result.direction);
-  }, [calendarMode, shiftCalendarBySwipe]);
+    const unitPx = getCalendarSnapUnitPx(mode, event.currentTarget);
+    const nextOffset = clampCalendarSnapOffset(snapOffsetRef.current + dragDelta, unitPx);
+    setCalendarSnapOffset(mode, nextOffset);
+    scheduleWheelSnap(mode, unitPx);
+  }, [calendarMode, getCalendarSnapUnitPx, scheduleWheelSnap, setCalendarSnapOffset]);
 
   const handleCalendarTouchStart = useCallback((event: TouchEvent<HTMLElement>) => {
+    if (calendarMode === "day") return;
     const touch = event.touches[0];
     if (!touch) return;
-    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
-  }, []);
+    if (wheelSnapTimerRef.current) {
+      clearTimeout(wheelSnapTimerRef.current);
+      wheelSnapTimerRef.current = null;
+    }
+    if (snapTransitionTimerRef.current) {
+      clearTimeout(snapTransitionTimerRef.current);
+      snapTransitionTimerRef.current = null;
+    }
+    snapOffsetRef.current = 0;
+    touchStartRef.current = { mode: calendarMode, startX: touch.clientX, startY: touch.clientY };
+    setCalendarSnap({ mode: calendarMode, offsetPx: 0, isSettling: false });
+  }, [calendarMode]);
+
+  const handleCalendarTouchMove = useCallback((event: TouchEvent<HTMLElement>) => {
+    const start = touchStartRef.current;
+    const touch = event.touches[0];
+    if (!start || !touch || start.mode !== calendarMode) return;
+
+    const unitPx = getCalendarSnapUnitPx(start.mode, event.currentTarget);
+    const rawOffset = start.mode === "month" ? touch.clientY - start.startY : touch.clientX - start.startX;
+    setCalendarSnapOffset(start.mode, clampCalendarSnapOffset(rawOffset, unitPx));
+  }, [calendarMode, getCalendarSnapUnitPx, setCalendarSnapOffset]);
 
   const handleCalendarTouchEnd = useCallback((event: TouchEvent<HTMLElement>) => {
     const start = touchStartRef.current;
-    const touch = event.changedTouches[0];
     touchStartRef.current = null;
-    if (!start || !touch) return;
+    if (!start || start.mode !== calendarMode) return;
 
-    const direction = getSwipeNavigationIntent(calendarMode, start.x, start.y, touch.clientX, touch.clientY);
-    if (direction === 0) return;
+    const unitPx = getCalendarSnapUnitPx(start.mode, event.currentTarget);
+    settleCalendarSnap(start.mode, unitPx);
+  }, [calendarMode, getCalendarSnapUnitPx, settleCalendarSnap]);
 
-    shiftCalendarBySwipe(direction);
-  }, [calendarMode, shiftCalendarBySwipe]);
+  const handleCalendarTouchCancel = useCallback((event: TouchEvent<HTMLElement>) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start || start.mode !== calendarMode) return;
+
+    const unitPx = getCalendarSnapUnitPx(start.mode, event.currentTarget);
+    snapOffsetRef.current = 0;
+    setCalendarSnap({ mode: start.mode, offsetPx: 0, isSettling: true });
+    snapTransitionTimerRef.current = setTimeout(() => {
+      setCalendarSnap(null);
+      snapTransitionTimerRef.current = null;
+    }, SNAP_TRANSITION_MS);
+  }, [calendarMode, getCalendarSnapUnitPx]);
 
   const handleWeekTimelineScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const timeGutter = weekTimeGutterScrollRef.current;
@@ -510,6 +590,15 @@ export function PostsCalendarView() {
     setSelectedPostTarget(null);
   }, [selectedPostTarget]);
 
+  const getCalendarSnapStyle = (
+    mode: Extract<CalendarViewMode, "month" | "week">,
+    extra: CSSProperties = {},
+  ) => ({
+    ...extra,
+    "--calendar-snap-offset": `${calendarSnap?.mode === mode ? calendarSnap.offsetPx : 0}px`,
+    "--calendar-snap-duration": calendarSnap?.mode === mode && calendarSnap.isSettling ? `${SNAP_TRANSITION_MS}ms` : "0ms",
+  }) as CSSProperties;
+
   const renderMonthWeekdayHeader = () => (
     <div className="posts-calendar-month-weekdays" aria-hidden="true">
       {WEEKDAYS.map((weekday, index) => (
@@ -520,8 +609,11 @@ export function PostsCalendarView() {
     </div>
   );
 
-  const renderMonthDayGrid = (cells: CalendarDayCell[] = monthCells) => (
-    <div className="posts-calendar-month-days">
+  const renderMonthDayGrid = (
+    cells: CalendarDayCell[] = monthCells,
+    className = "posts-calendar-month-days",
+  ) => (
+    <div className={className}>
       {cells.map((cell) => {
         const dayPosts = postsByDate.get(cell.dateKey) || [];
         const visibleDayPosts = dayPosts.slice(0, 4);
@@ -571,11 +663,14 @@ export function PostsCalendarView() {
       aria-label={ariaLabel}
       onWheel={interactive ? handleCalendarWheel : undefined}
       onTouchStart={interactive ? handleCalendarTouchStart : undefined}
+      onTouchMove={interactive ? handleCalendarTouchMove : undefined}
       onTouchEnd={interactive ? handleCalendarTouchEnd : undefined}
+      onTouchCancel={interactive ? handleCalendarTouchCancel : undefined}
+      style={getCalendarSnapStyle("month")}
     >
       {renderMonthWeekdayHeader()}
       <div className="posts-calendar-month-view">
-        {renderMonthDayGrid(cells)}
+        {renderMonthDayGrid(interactive ? rollingMonthCells : cells, "posts-calendar-month-days posts-calendar-month-track")}
       </div>
     </div>
   );
@@ -591,11 +686,11 @@ export function PostsCalendarView() {
     </div>
   );
 
-  const renderWeekHeader = (days: CalendarDayCell[] = weekDays) => (
+  const renderWeekHeader = (days: CalendarDayCell[] = rollingWeekDays) => (
     <div className="posts-calendar-week-header" aria-hidden="true">
       <div className="posts-calendar-week-header-gutter" />
       <div className="posts-calendar-week-header-row">
-        <div className="posts-calendar-week-header-inner">
+        <div className="posts-calendar-week-header-inner posts-calendar-week-track">
           {days.map((day) => (
             <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""}`}>
               <span>{formatWeekdayShort(day.date)}</span>
@@ -609,7 +704,7 @@ export function PostsCalendarView() {
   );
 
   const renderWeekColumns = (
-    days: CalendarDayCell[] = weekDays,
+    days: CalendarDayCell[] = rollingWeekDays,
     {
       attachScrollbarRef = true,
       syncTimeGutter = true,
@@ -622,7 +717,7 @@ export function PostsCalendarView() {
         style={timelineStyle}
         onScroll={syncTimeGutter ? handleWeekTimelineScroll : undefined}
       >
-        <div className="posts-calendar-week-columns">
+        <div className="posts-calendar-week-columns posts-calendar-week-track">
           {days.map((day) => (
             <TimedPostColumn
               key={day.dateKey}
@@ -651,14 +746,16 @@ export function PostsCalendarView() {
       aria-label={ariaLabel}
       onWheel={interactive ? handleCalendarWheel : undefined}
       onTouchStart={interactive ? handleCalendarTouchStart : undefined}
+      onTouchMove={interactive ? handleCalendarTouchMove : undefined}
       onTouchEnd={interactive ? handleCalendarTouchEnd : undefined}
-      style={{ "--calendar-scrollbar-gutter": `${weekScrollbarWidth}px` } as CSSProperties}
+      onTouchCancel={interactive ? handleCalendarTouchCancel : undefined}
+      style={getCalendarSnapStyle("week", { "--calendar-scrollbar-gutter": `${weekScrollbarWidth}px` } as CSSProperties)}
     >
-      {renderWeekHeader(days)}
+      {renderWeekHeader(interactive ? rollingWeekDays : days)}
       <div className="posts-calendar-week-grid">
         <div className="posts-calendar-week-body">
           {renderWeekTimeGutter(attachScrollbarRef)}
-          {renderWeekColumns(days, { attachScrollbarRef, syncTimeGutter: attachScrollbarRef })}
+          {renderWeekColumns(interactive ? rollingWeekDays : days, { attachScrollbarRef, syncTimeGutter: attachScrollbarRef })}
         </div>
       </div>
     </div>
@@ -680,83 +777,6 @@ export function PostsCalendarView() {
       </div>
     </div>
   );
-
-  const renderMonthSwipeTransitionView = () => {
-    if (!swipeTransition) return null;
-
-    return (
-      <div
-        className="posts-calendar-month-shell"
-        aria-label={`${calendarTitle} posts`}
-        onWheel={handleCalendarWheel}
-        onTouchStart={handleCalendarTouchStart}
-        onTouchEnd={handleCalendarTouchEnd}
-      >
-        {renderMonthWeekdayHeader()}
-        <div
-          key={swipeTransition.id}
-          className="posts-calendar-swipe-viewport"
-          data-mode="month"
-          data-axis="y"
-          data-direction={swipeTransition.direction}
-        >
-          <div className="posts-calendar-swipe-layer posts-calendar-swipe-layer-from" aria-hidden="true">
-            {renderMonthDayGrid(buildMonthGrid(swipeTransition.fromMonth))}
-          </div>
-          <div className="posts-calendar-swipe-layer posts-calendar-swipe-layer-to">
-            {renderMonthDayGrid(buildMonthGrid(swipeTransition.toMonth))}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderWeekSwipeTransitionView = () => {
-    if (!swipeTransition) return null;
-
-    return (
-      <div
-        className="posts-calendar-week-shell"
-        aria-label={`${calendarTitle} week posts`}
-        onWheel={handleCalendarWheel}
-        onTouchStart={handleCalendarTouchStart}
-        onTouchEnd={handleCalendarTouchEnd}
-        style={{ "--calendar-scrollbar-gutter": `${weekScrollbarWidth}px` } as CSSProperties}
-      >
-        {renderWeekHeader(buildWeekDays(swipeTransition.toDate))}
-        <div className="posts-calendar-week-grid">
-          <div className="posts-calendar-week-body">
-            {renderWeekTimeGutter(false)}
-            <div
-              key={swipeTransition.id}
-              className="posts-calendar-swipe-viewport"
-              data-mode="week"
-              data-axis="x"
-              data-direction={swipeTransition.direction}
-            >
-              <div className="posts-calendar-swipe-layer posts-calendar-swipe-layer-from" aria-hidden="true">
-                {renderWeekColumns(buildWeekDays(swipeTransition.fromDate), {
-                  attachScrollbarRef: false,
-                  syncTimeGutter: false,
-                })}
-              </div>
-              <div className="posts-calendar-swipe-layer posts-calendar-swipe-layer-to">
-                {renderWeekColumns(buildWeekDays(swipeTransition.toDate), {
-                  attachScrollbarRef: false,
-                  syncTimeGutter: false,
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderSwipeTransitionView = () => {
-    if (!swipeTransition) return null;
-    return swipeTransition.mode === "month" ? renderMonthSwipeTransitionView() : renderWeekSwipeTransitionView();
-  };
 
   return (
     <section className="posts-calendar-fullheight" aria-label="Posts calendar">
@@ -888,12 +908,8 @@ export function PostsCalendarView() {
         {error ? <div className="posts-calendar-error">{error}</div> : null}
 
         <div className="posts-calendar-view-stage">
-          {calendarMode === "month"
-            ? (swipeTransition?.mode === "month" ? renderSwipeTransitionView() : renderMonthView())
-            : null}
-          {calendarMode === "week"
-            ? (swipeTransition?.mode === "week" ? renderSwipeTransitionView() : renderWeekView())
-            : null}
+          {calendarMode === "month" ? renderMonthView() : null}
+          {calendarMode === "week" ? renderWeekView() : null}
           {calendarMode === "day" ? renderDayView() : null}
         </div>
       </div>
@@ -2101,6 +2117,11 @@ function addDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
+function clampCalendarSnapOffset(offsetPx: number, unitPx: number): number {
+  if (!Number.isFinite(offsetPx) || !Number.isFinite(unitPx) || unitPx <= 0) return 0;
+  return Math.max(-unitPx, Math.min(unitPx, offsetPx));
+}
+
 function isWeekendDate(date: Date): boolean {
   const day = date.getDay();
   return day === 0 || day === 6;
@@ -2157,23 +2178,11 @@ const CALENDAR_CSS = `
 .posts-calendar-create{background:var(--daccent);border-color:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-error{margin:12px 18px 0;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);background:var(--danger-soft);color:var(--danger);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}
 .posts-calendar-view-stage{flex:1;min-height:0;display:flex;overflow:hidden;background:var(--surface)}
-.posts-calendar-swipe-viewport{--calendar-swipe-duration:420ms;--calendar-swipe-distance:100%;--calendar-swipe-from-x:0px;--calendar-swipe-from-y:0px;--calendar-swipe-to-x:0px;--calendar-swipe-to-y:0px;position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--surface);contain:layout paint}
-.posts-calendar-swipe-viewport[data-mode="month"]{--calendar-swipe-distance:calc(100% / 6)}
-.posts-calendar-swipe-viewport[data-mode="week"]{--calendar-swipe-distance:calc(100% / 7)}
-.posts-calendar-swipe-viewport[data-axis="x"][data-direction="1"]{--calendar-swipe-from-x:calc(0px - var(--calendar-swipe-distance));--calendar-swipe-to-x:var(--calendar-swipe-distance)}
-.posts-calendar-swipe-viewport[data-axis="x"][data-direction="-1"]{--calendar-swipe-from-x:var(--calendar-swipe-distance);--calendar-swipe-to-x:calc(0px - var(--calendar-swipe-distance))}
-.posts-calendar-swipe-viewport[data-axis="y"][data-direction="1"]{--calendar-swipe-from-y:calc(0px - var(--calendar-swipe-distance));--calendar-swipe-to-y:var(--calendar-swipe-distance)}
-.posts-calendar-swipe-viewport[data-axis="y"][data-direction="-1"]{--calendar-swipe-from-y:var(--calendar-swipe-distance);--calendar-swipe-to-y:calc(0px - var(--calendar-swipe-distance))}
-.posts-calendar-swipe-layer{position:absolute;inset:0;display:flex;min-width:0;min-height:0;will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(0,0,0);pointer-events:none}
-.posts-calendar-swipe-layer>.posts-calendar-month-days,.posts-calendar-swipe-layer>.posts-calendar-week-content{flex:1;height:100%;min-height:0}
-.posts-calendar-swipe-layer-from{z-index:1;animation:posts-calendar-swipe-from var(--calendar-swipe-duration) cubic-bezier(.16,1,.3,1) both}
-.posts-calendar-swipe-layer-to{z-index:2;animation:posts-calendar-swipe-to var(--calendar-swipe-duration) cubic-bezier(.16,1,.3,1) both}
-@keyframes posts-calendar-swipe-from{from{transform:translate3d(0,0,0)}to{transform:translate3d(var(--calendar-swipe-from-x),var(--calendar-swipe-from-y),0)}}
-@keyframes posts-calendar-swipe-to{from{transform:translate3d(var(--calendar-swipe-to-x),var(--calendar-swipe-to-y),0)}to{transform:translate3d(0,0,0)}}
-.posts-calendar-month-shell{flex:1;min-width:0;min-height:640px;display:flex;flex-direction:column;overflow:hidden;background:var(--surface);overscroll-behavior:contain;touch-action:none}
+.posts-calendar-month-shell{--calendar-snap-offset:0px;--calendar-snap-duration:0ms;flex:1;min-width:0;min-height:640px;display:flex;flex-direction:column;overflow:hidden;background:var(--surface);overscroll-behavior:contain;touch-action:none}
 .posts-calendar-month-view{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden;background:var(--surface)}
 .posts-calendar-month-weekdays{flex:0 0 38px;height:38px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:var(--surface);border-bottom:1px solid var(--dborder)}
 .posts-calendar-month-days{flex:1;min-width:0;min-height:0;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px}
+.posts-calendar-month-track{height:calc(100% * 8 / 6);flex:0 0 auto;grid-template-rows:repeat(8,minmax(104px,1fr));will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(0,calc(-12.5% + var(--calendar-snap-offset)),0);transition:transform var(--calendar-snap-duration) cubic-bezier(.16,1,.3,1)}
 .posts-calendar-weekday{background:transparent;display:flex;align-items:center;justify-content:flex-end;padding:0 12px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-weekday.weekend{background:var(--calendar-weekend-surface)}
 .posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px}
@@ -2191,16 +2200,16 @@ const CALENDAR_CSS = `
 .posts-calendar-event-time{font-size:11px;color:var(--dmuted2);white-space:nowrap}
 .posts-calendar-more{height:22px;border:0;border-radius:6px;background:transparent;color:var(--dmuted);font:inherit;font-size:12px;font-weight:650;text-align:left;padding:0 7px;cursor:pointer}
 .posts-calendar-more:hover{background:var(--surface2);color:var(--dtext)}
-.posts-calendar-week-shell,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-scrollbar-gutter:0px;--calendar-week-template:repeat(7,minmax(var(--calendar-week-day-min),1fr));--calendar-week-min-width:calc(var(--calendar-week-day-min) * 7 + var(--calendar-scrollbar-gutter));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
+.posts-calendar-week-shell,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-scrollbar-gutter:0px;--calendar-snap-offset:0px;--calendar-snap-duration:0ms;--calendar-week-template:repeat(9,minmax(var(--calendar-week-day-min),1fr));--calendar-week-min-width:calc(var(--calendar-week-day-min) * 7 + var(--calendar-scrollbar-gutter));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
 .posts-calendar-week-shell{overscroll-behavior:contain;overflow:hidden;touch-action:pan-y}
 .posts-calendar-week-grid{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface);overflow:hidden}
 .posts-calendar-week-header{flex:0 0 44px;height:44px;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);background:var(--surface);min-width:0}
 .posts-calendar-week-header-gutter{background:var(--surface)}
 .posts-calendar-week-header-row{display:grid;grid-template-columns:minmax(0,1fr) var(--calendar-scrollbar-gutter);min-width:0;background:var(--surface)}
-.posts-calendar-week-header-inner{display:grid;grid-template-columns:var(--calendar-week-template);min-width:calc(var(--calendar-week-day-min) * 7)}
+.posts-calendar-week-header-inner{display:grid;grid-template-columns:var(--calendar-week-template);width:calc(100% * 9 / 7);min-width:calc(var(--calendar-week-day-min) * 9)}
+.posts-calendar-week-track{will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(calc(-11.111111% + var(--calendar-snap-offset)),0,0);transition:transform var(--calendar-snap-duration) cubic-bezier(.16,1,.3,1)}
 .posts-calendar-week-body{position:relative;flex:1;min-width:0;min-height:0;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);grid-template-rows:minmax(0,1fr);background:var(--dborder);gap:1px;overflow:hidden}
 .posts-calendar-week-body::before{content:"";position:absolute;left:0;right:0;top:0;border-top:1px solid var(--dborder);z-index:3;pointer-events:none}
-.posts-calendar-week-body>.posts-calendar-swipe-viewport{grid-column:2;grid-row:1;flex:0 1 auto;width:100%;height:100%}
 .posts-calendar-week-time-gutter{grid-column:1;grid-row:1;min-width:0;min-height:0;display:block;background:var(--surface);overflow:hidden}
 .posts-calendar-week-time-label-scroll{height:100%;min-height:0;overflow:hidden;background:var(--surface)}
 .posts-calendar-week-time-label-scroll .posts-calendar-time-labels{border-right:0}
@@ -2213,7 +2222,7 @@ const CALENDAR_CSS = `
 .posts-calendar-week-content>.posts-calendar-time-scroll{height:100%;grid-template-columns:minmax(0,1fr);gap:1px;min-width:0;background:var(--dborder)}
 .posts-calendar-time-labels{height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background:var(--surface);border-right:1px solid var(--dborder)}
 .posts-calendar-time-label{height:var(--hour-height,64px);display:flex;align-items:flex-start;justify-content:flex-end;padding:5px 8px 0 4px;color:var(--dmuted);font-size:12px;font-weight:650;border-top:1px solid var(--dborder);white-space:nowrap}
-.posts-calendar-week-columns{min-width:calc(var(--calendar-week-day-min) * 7);display:grid;grid-template-columns:repeat(7,minmax(var(--calendar-week-day-min),1fr));background:var(--dborder);gap:1px}
+.posts-calendar-week-columns{width:calc(100% * 9 / 7);min-width:calc(var(--calendar-week-day-min) * 9);display:grid;grid-template-columns:var(--calendar-week-template);background:var(--dborder);gap:1px}
 .posts-calendar-week-grid .posts-calendar-time-label:first-child,.posts-calendar-day-grid .posts-calendar-time-label:first-child{border-top:0}
 .posts-calendar-day-column-wrap{min-width:0;background:var(--dborder);padding-left:1px}
 .posts-calendar-day-grid.weekend .posts-calendar-day-column-wrap{background:var(--calendar-weekend-surface)}
@@ -2322,7 +2331,7 @@ const CALENDAR_CSS = `
 .posts-calendar-edit-footer button{height:36px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--dborder);border-radius:10px;background:var(--surface2);color:var(--dtext);font:inherit;font-size:13px;font-weight:760;padding:0 13px;white-space:nowrap}
 .posts-calendar-edit-footer button.primary{border-color:var(--daccent);background:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-edit-footer button:disabled{opacity:.55;cursor:not-allowed}
-@media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-month-shell{min-height:720px}.posts-calendar-month-days{grid-template-rows:repeat(6,minmax(114px,1fr))}}
+@media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-month-shell{min-height:720px}.posts-calendar-month-days{grid-template-rows:repeat(6,minmax(114px,1fr))}.posts-calendar-month-track{grid-template-rows:repeat(8,minmax(114px,1fr))}}
 @media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-month-shell{overflow-x:auto}.posts-calendar-month-weekdays,.posts-calendar-month-days{min-width:924px}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}.posts-calendar-detail-grid{grid-template-columns:1fr}.posts-calendar-submitted-panel dl div{grid-template-columns:1fr}.posts-calendar-edit-inspector{width:min(420px,calc(100vw - 24px))}.posts-calendar-edit-account-grid{grid-template-columns:1fr}}
-@media (prefers-reduced-motion:reduce){.posts-calendar-popover,.posts-calendar-edit-inspector,.posts-calendar-swipe-layer-from,.posts-calendar-swipe-layer-to{animation:none}.posts-calendar-swipe-layer-from{display:none}}
+@media (prefers-reduced-motion:reduce){.posts-calendar-popover,.posts-calendar-edit-inspector{animation:none}.posts-calendar-month-track,.posts-calendar-week-track{transition-duration:0ms}}
 `;

@@ -100,13 +100,25 @@ const PROFILE_COLOR_PALETTE = [
 ];
 
 export function buildMonthGrid(monthDate: Date, today = new Date()): CalendarDayCell[] {
+  return buildRollingMonthGrid(monthDate, 0, 6, 0, today);
+}
+
+export function buildRollingMonthGrid(
+  anchorDate: Date,
+  beforeWeeks = 1,
+  visibleWeeks = 6,
+  afterWeeks = 1,
+  today = new Date(),
+): CalendarDayCell[] {
+  const monthDate = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate());
   const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
   const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
-  const gridStart = startOfSundayWeek(monthDate);
+  const totalWeeks = Math.max(1, beforeWeeks + visibleWeeks + afterWeeks);
+  const gridStart = addDays(startOfSundayWeek(monthDate), beforeWeeks * -7);
   const todayKey = formatLocalDateKey(today);
   const cells: CalendarDayCell[] = [];
 
-  for (let offset = 0; offset < 42; offset += 1) {
+  for (let offset = 0; offset < totalWeeks * 7; offset += 1) {
     const date = addDays(gridStart, offset);
     cells.push({
       date,
@@ -121,12 +133,24 @@ export function buildMonthGrid(monthDate: Date, today = new Date()): CalendarDay
 }
 
 export function buildWeekDays(anchorDate: Date, today = new Date()): CalendarDayCell[] {
+  return buildRollingWeekDays(anchorDate, 0, 7, 0, today);
+}
+
+export function buildRollingWeekDays(
+  anchorDate: Date,
+  beforeDays = 1,
+  visibleDays = 7,
+  afterDays = 1,
+  today = new Date(),
+): CalendarDayCell[] {
   const weekStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate());
   const todayKey = formatLocalDateKey(today);
   const cells: CalendarDayCell[] = [];
+  const totalDays = Math.max(1, beforeDays + visibleDays + afterDays);
+  const windowStart = addDays(weekStart, beforeDays * -1);
 
-  for (let offset = 0; offset < 7; offset += 1) {
-    const date = addDays(weekStart, offset);
+  for (let offset = 0; offset < totalDays; offset += 1) {
+    const date = addDays(windowStart, offset);
     cells.push({
       date,
       dateKey: formatLocalDateKey(date),
@@ -293,6 +317,25 @@ export function getSwipeNavigationIntent(
 export function shiftCalendarDateBySwipe(mode: CalendarViewMode, date: Date, direction: -1 | 1): Date {
   if (mode === "month") return addDays(date, direction * 7);
   if (mode === "week") return addDays(date, direction);
+  return date;
+}
+
+export function getCalendarSnapSteps(offsetPx: number, unitPx: number, maxSteps = 1): number {
+  if (!Number.isFinite(offsetPx) || !Number.isFinite(unitPx) || unitPx <= 0) return 0;
+  const clampedMax = Math.max(1, Math.floor(maxSteps));
+  const rawSteps = -offsetPx / unitPx;
+  const roundedSteps = rawSteps >= 0 ? Math.floor(rawSteps + 0.5) : Math.ceil(rawSteps - 0.5);
+  return clamp(roundedSteps, -clampedMax, clampedMax);
+}
+
+export function getCalendarSnapOffset(steps: number, unitPx: number): number {
+  if (!Number.isFinite(unitPx) || unitPx <= 0) return 0;
+  return -steps * unitPx;
+}
+
+export function shiftCalendarDateBySnapSteps(mode: CalendarViewMode, date: Date, steps: number): Date {
+  if (mode === "month") return addDays(date, steps * 7);
+  if (mode === "week") return addDays(date, steps);
   return date;
 }
 
