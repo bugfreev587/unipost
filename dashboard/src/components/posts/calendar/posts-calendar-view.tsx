@@ -2205,7 +2205,7 @@ const CALENDAR_CSS = `
 .posts-calendar-week-grid{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface);overflow:hidden}
 .posts-calendar-week-header{flex:0 0 44px;height:44px;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);background:var(--surface);min-width:0}
 .posts-calendar-week-header-gutter{background:var(--surface)}
-.posts-calendar-week-header-row{display:grid;grid-template-columns:minmax(0,1fr) var(--calendar-scrollbar-gutter);min-width:0;background:var(--surface)}
+.posts-calendar-week-header-row{display:grid;grid-template-columns:minmax(0,1fr) var(--calendar-scrollbar-gutter);min-width:0;background:var(--surface);overflow:hidden}
 .posts-calendar-week-header-inner{display:grid;grid-template-columns:var(--calendar-week-template);width:calc(100% * 9 / 7);min-width:calc(var(--calendar-week-day-min) * 9)}
 .posts-calendar-week-track{will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(calc(-11.111111% + var(--calendar-snap-offset)),0,0);transition:transform var(--calendar-snap-duration) cubic-bezier(.16,1,.3,1)}
 .posts-calendar-week-body{position:relative;flex:1;min-width:0;min-height:0;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);grid-template-rows:minmax(0,1fr);background:var(--dborder);gap:1px;overflow:hidden}

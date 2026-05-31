@@ -91,6 +91,7 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /posts-calendar-week-scrollbar-spacer/);
   assert.match(source, /\.posts-calendar-week-header\{[^}]*grid-template-columns:var\(--calendar-time-gutter\) minmax\(0,1fr\)/);
   assert.match(source, /\.posts-calendar-week-header-inner\{[^}]*grid-template-columns:var\(--calendar-week-template\)/);
+  assert.match(source, /\.posts-calendar-week-header-row\{[^}]*overflow:hidden/);
   assert.match(source, /\.posts-calendar-week-body\{[^}]*grid-template-columns:var\(--calendar-time-gutter\) minmax\(0,1fr\)/);
   assert.match(source, /\.posts-calendar-week-columns\{[^}]*grid-template-columns:var\(--calendar-week-template\)/);
   assert.match(source, /All Status/);
