@@ -598,7 +598,7 @@ export function PostsCalendarView() {
       <div className="posts-calendar-week-header-row">
         <div className="posts-calendar-week-header-inner">
           {days.map((day) => (
-            <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""} ${isWeekendDate(day.date) ? "weekend" : ""}`}>
+            <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""}`}>
               <span>{formatWeekdayShort(day.date)}</span>
               <strong>{day.dayOfMonth}</strong>
             </div>
@@ -2198,7 +2198,6 @@ const CALENDAR_CSS = `
 .posts-calendar-week-content{grid-column:2;grid-row:1;min-width:0;min-height:0;display:block;background:var(--surface);overflow:hidden}
 .posts-calendar-week-scrollbar-spacer{background:var(--surface)}
 .posts-calendar-week-heading{height:44px;background:transparent;display:flex;align-items:center;justify-content:center;gap:7px;color:var(--dmuted);font-size:13px;font-weight:650}
-.posts-calendar-week-heading.weekend{background:var(--calendar-weekend-surface)}
 .posts-calendar-week-heading strong{font-size:17px;color:var(--dtext);font-weight:720}
 .posts-calendar-week-heading.today strong{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:var(--danger);color:white}
 .posts-calendar-time-scroll{flex:1;min-height:0;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:var(--surface)}

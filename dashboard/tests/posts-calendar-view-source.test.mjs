@@ -166,7 +166,7 @@ test("Posts calendar day view removes all-day row and its top divider", async ()
   assert.doesNotMatch(source, /with-divider/);
 });
 
-test("Posts calendar shades weekend panels across day week and month views", async () => {
+test("Posts calendar shades weekend panels while keeping the week header neutral", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const monthDayGrid = source.slice(source.indexOf("const renderMonthDayGrid"), source.indexOf("const renderMonthView"));
   const monthWeekdayHeader = source.slice(source.indexOf("const renderMonthWeekdayHeader"), source.indexOf("const renderMonthDayGrid"));
@@ -179,7 +179,8 @@ test("Posts calendar shades weekend panels across day week and month views", asy
   assert.match(monthWeekdayHeader, /index === 0 \|\| index === 6/);
   assert.match(monthWeekdayHeader, /posts-calendar-weekday[^\n]+weekend/);
   assert.match(monthDayGrid, /isWeekendDate\(cell\.date\) \? "weekend" : ""/);
-  assert.match(weekHeader, /isWeekendDate\(day\.date\) \? "weekend" : ""/);
+  assert.doesNotMatch(weekHeader, /posts-calendar-week-heading[^\n]+weekend/);
+  assert.doesNotMatch(weekHeader, /isWeekendDate\(day\.date\) \? "weekend" : ""/);
   assert.match(weekColumns, /isWeekend=\{isWeekendDate\(day\.date\)\}/);
   assert.match(dayView, /posts-calendar-day-grid \$\{isWeekendDate\(visibleDate\) \? "weekend" : ""\}/);
   assert.match(dayView, /isWeekend=\{isWeekendDate\(visibleDate\)\}/);
@@ -188,7 +189,7 @@ test("Posts calendar shades weekend panels across day week and month views", asy
   assert.match(source, /--calendar-weekend-surface:/);
   assert.match(source, /\.dark \.posts-calendar-fullheight\{--calendar-weekend-surface:/);
   assert.match(source, /\.posts-calendar-day\.weekend\{[^}]*background:var\(--calendar-weekend-surface\)/);
-  assert.match(source, /\.posts-calendar-week-heading\.weekend\{[^}]*background:var\(--calendar-weekend-surface\)/);
+  assert.doesNotMatch(source, /\.posts-calendar-week-heading\.weekend/);
   assert.match(source, /\.posts-calendar-time-column\.weekend\{[^}]*background-color:var\(--calendar-weekend-surface\)/);
   assert.match(source, /\.posts-calendar-day-grid\.weekend \.posts-calendar-day-column-wrap\{[^}]*background:var\(--calendar-weekend-surface\)/);
 });
