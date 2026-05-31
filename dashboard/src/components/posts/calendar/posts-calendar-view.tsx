@@ -58,6 +58,7 @@ import {
   getCalendarSnapSteps,
   getCalendarPostDate,
   getCalendarPostMinuteOfDay,
+  getContinuousCalendarSnapOffset,
   getPostStatusGroup,
   getProfileCalendarColor,
   getTimedEventLayouts,
@@ -395,6 +396,25 @@ export function PostsCalendarView() {
     });
   }, [calendarMode, clearCalendarSnap]);
 
+  const shiftVisibleCalendarBySnapSteps = useCallback((
+    mode: Extract<CalendarViewMode, "month" | "week">,
+    steps: number,
+  ) => {
+    if (steps === 0) return;
+
+    if (mode === "month") {
+      setVisibleDate((date) => shiftCalendarDateBySnapSteps(mode, date, steps));
+      setVisibleMonth((date) => shiftCalendarDateBySnapSteps(mode, date, steps));
+      return;
+    }
+
+    setVisibleDate((date) => {
+      const next = shiftCalendarDateBySnapSteps(mode, date, steps);
+      setVisibleMonth(startOfMonth(next));
+      return next;
+    });
+  }, []);
+
   const goToToday = useCallback(() => {
     clearCalendarSnap();
     const today = new Date();
@@ -449,23 +469,12 @@ export function PostsCalendarView() {
     setCalendarSnap({ mode, offsetPx: targetOffset, isSettling: true });
 
     snapTransitionTimerRef.current = setTimeout(() => {
-      if (steps !== 0) {
-        if (mode === "month") {
-          setVisibleDate((date) => shiftCalendarDateBySnapSteps(mode, date, steps));
-          setVisibleMonth((date) => shiftCalendarDateBySnapSteps(mode, date, steps));
-        } else {
-          setVisibleDate((date) => {
-            const next = shiftCalendarDateBySnapSteps(mode, date, steps);
-            setVisibleMonth(startOfMonth(next));
-            return next;
-          });
-        }
-      }
+      shiftVisibleCalendarBySnapSteps(mode, steps);
       snapOffsetRef.current = 0;
       setCalendarSnap(null);
       snapTransitionTimerRef.current = null;
     }, SNAP_TRANSITION_MS);
-  }, []);
+  }, [shiftVisibleCalendarBySnapSteps]);
 
   const scheduleWheelSnap = useCallback((
     mode: Extract<CalendarViewMode, "month" | "week">,
@@ -503,10 +512,18 @@ export function PostsCalendarView() {
     }
 
     const unitPx = getCalendarSnapUnitPx(mode, event.currentTarget);
-    const nextOffset = clampCalendarSnapOffset(snapOffsetRef.current + dragDelta, unitPx);
+    const continuousSnap = getContinuousCalendarSnapOffset(snapOffsetRef.current + dragDelta, unitPx);
+    shiftVisibleCalendarBySnapSteps(mode, continuousSnap.steps);
+    const nextOffset = clampCalendarSnapOffset(continuousSnap.offsetPx, unitPx);
     setCalendarSnapOffset(mode, nextOffset);
     scheduleWheelSnap(mode, unitPx);
-  }, [calendarMode, getCalendarSnapUnitPx, scheduleWheelSnap, setCalendarSnapOffset]);
+  }, [
+    calendarMode,
+    getCalendarSnapUnitPx,
+    scheduleWheelSnap,
+    setCalendarSnapOffset,
+    shiftVisibleCalendarBySnapSteps,
+  ]);
 
   const handleCalendarTouchStart = useCallback((event: TouchEvent<HTMLElement>) => {
     if (calendarMode === "day") return;

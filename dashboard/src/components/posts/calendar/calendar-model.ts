@@ -333,6 +333,27 @@ export function getCalendarSnapOffset(steps: number, unitPx: number): number {
   return -steps * unitPx;
 }
 
+export function getContinuousCalendarSnapOffset(
+  offsetPx: number,
+  unitPx: number,
+): { steps: number; offsetPx: number } {
+  if (!Number.isFinite(offsetPx) || !Number.isFinite(unitPx) || unitPx <= 0) {
+    return { steps: 0, offsetPx: 0 };
+  }
+
+  if (offsetPx <= -unitPx) {
+    const steps = Math.floor(-offsetPx / unitPx);
+    return { steps, offsetPx: offsetPx + steps * unitPx };
+  }
+
+  if (offsetPx >= unitPx) {
+    const steps = -Math.floor(offsetPx / unitPx);
+    return { steps, offsetPx: offsetPx + steps * unitPx };
+  }
+
+  return { steps: 0, offsetPx };
+}
+
 export function shiftCalendarDateBySnapSteps(mode: CalendarViewMode, date: Date, steps: number): Date {
   if (mode === "month") return addDays(date, steps * 7);
   if (mode === "week") return addDays(date, steps);

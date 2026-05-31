@@ -12,6 +12,7 @@ import {
   getAccumulatedWheelNavigationIntent,
   getCalendarSnapOffset,
   getCalendarSnapSteps,
+  getContinuousCalendarSnapOffset,
   getTimedEventLayouts,
   getSwipeNavigationIntent,
   getTimedEventTop,
@@ -258,6 +259,14 @@ test("calendar snap steps choose the nearest date line and clamp to buffered cel
   assert.equal(getCalendarSnapOffset(-1, 100), 100);
   assert.equal(formatDate(shiftCalendarDateBySnapSteps("month", new Date(2026, 4, 1), 1)), "2026-05-08");
   assert.equal(formatDate(shiftCalendarDateBySnapSteps("week", new Date(2026, 4, 1), -1)), "2026-04-30");
+});
+
+test("continuous calendar snap offsets recycle whole date lines without waiting for idle snap", () => {
+  assert.deepEqual(getContinuousCalendarSnapOffset(-260, 100), { steps: 2, offsetPx: -60 });
+  assert.deepEqual(getContinuousCalendarSnapOffset(260, 100), { steps: -2, offsetPx: 60 });
+  assert.deepEqual(getContinuousCalendarSnapOffset(-99, 100), { steps: 0, offsetPx: -99 });
+  assert.deepEqual(getContinuousCalendarSnapOffset(100, 100), { steps: -1, offsetPx: 0 });
+  assert.deepEqual(getContinuousCalendarSnapOffset(0, 100), { steps: 0, offsetPx: 0 });
 });
 
 test("parseCalendarViewMode accepts URL view modes and falls back to month", () => {
