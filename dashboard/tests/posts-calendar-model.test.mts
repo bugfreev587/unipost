@@ -8,6 +8,7 @@ import {
   getWheelNavigationIntent,
   getPostStatusGroup,
   getProfileCalendarColor,
+  parseCalendarViewMode,
   shouldShowPostForStatusFilter,
 } from "../src/components/posts/calendar/calendar-model.ts";
 
@@ -106,4 +107,12 @@ test("wheel navigation follows Apple Calendar style directions per view", () => 
   assert.equal(getWheelNavigationIntent("week", 140, 0), 1);
   assert.equal(getWheelNavigationIntent("week", -140, 0), -1);
   assert.equal(getWheelNavigationIntent("day", 0, 160), 0);
+});
+
+test("parseCalendarViewMode accepts URL view modes and falls back to month", () => {
+  assert.equal(parseCalendarViewMode("day"), "day");
+  assert.equal(parseCalendarViewMode("week"), "week");
+  assert.equal(parseCalendarViewMode("month"), "month");
+  assert.equal(parseCalendarViewMode("agenda"), "month");
+  assert.equal(parseCalendarViewMode(null), "month");
 });

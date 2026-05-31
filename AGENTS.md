@@ -4,14 +4,11 @@
 
 - Treat `dev` as the default integration branch for all normal development work.
 - Do not develop directly on `dev` unless the user explicitly asks for it.
-- At the start of a new conversation, before creating any development branch, update the local `dev` branch first:
-  1. Fetch `origin`.
-  2. Switch to local `dev`.
-  3. Pull the latest `dev` from remote with `git pull --ff-only origin dev`.
-- If local `dev` cannot be fast-forwarded because it has local-only commits or has diverged from `origin/dev`, do not reset, rebase, drop, or stash anything without explicit user approval. Prefer asking to create the task branch from `origin/dev` so the local commits remain untouched.
-- For code or documentation changes, start from that freshly updated local `dev` branch:
-  1. Create a short-lived branch from `dev` named `dev-<task-slug>`.
-  2. Rename the conversation/thread to exactly match the new branch name.
+- At the start of every new conversation, before writing code or documentation changes, fetch `origin` and create a new short-lived branch directly from the latest `origin/dev`.
+  1. Run `git fetch origin`.
+  2. Create a branch from `origin/dev` named `dev-<task-slug>`.
+  3. Rename the conversation/thread to exactly match the new branch name.
+- Do not base new development work on the current local `dev` branch unless the user explicitly asks for it.
 - Do all implementation and local testing on the `dev-<task-slug>` branch.
 - After implementation is complete and tests pass, merge the task branch back into local `dev` or create a pull request from `dev-<task-slug>` to `dev`, depending on the size/risk of the change and the user's instruction.
 - Run the relevant validation again on local `dev` before pushing `dev`.

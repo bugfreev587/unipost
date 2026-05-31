@@ -3,7 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import { ChevronLeft, ChevronRight, List, Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { usePathname, useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type WheelEvent } from "react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
@@ -26,6 +26,7 @@ import {
   getPostStatusGroup,
   getProfileCalendarColor,
   getWheelNavigationIntent,
+  parseCalendarViewMode,
   shouldShowPostForStatusFilter,
   type CalendarStatusFilter,
   type CalendarStatusGroup,
@@ -60,6 +61,9 @@ const STATUS_META: Record<CalendarStatusGroup, { label: string; short: string }>
 
 export function PostsCalendarView() {
   const params = useParams<{ id: string }>();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const profileId = params.id;
   const { getToken } = useAuth();
   const workspaceId = useWorkspaceId();
@@ -69,7 +73,6 @@ export function PostsCalendarView() {
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(new Set());
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<CalendarStatusFilter>("all");
-  const [calendarMode, setCalendarMode] = useState<CalendarViewMode>("month");
   const [visibleDate, setVisibleDate] = useState(() => new Date());
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [filtersInitialized, setFiltersInitialized] = useState(false);
@@ -81,7 +84,15 @@ export function PostsCalendarView() {
   const weekTimeScrollRef = useRef<HTMLDivElement | null>(null);
   const [weekScrollbarWidth, setWeekScrollbarWidth] = useState(0);
 
+  const calendarMode = useMemo(() => parseCalendarViewMode(searchParams.get("view")), [searchParams]);
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time", []);
+
+  const replaceCalendarMode = useCallback((mode: CalendarViewMode) => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.set("view", mode);
+    const query = nextParams.toString();
+    router.replace(`${pathname}${query ? `?${query}` : ""}`, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -445,14 +456,14 @@ export function PostsCalendarView() {
               <button
                 type="button"
                 className={calendarMode === "day" ? "active" : ""}
-                onClick={() => setCalendarMode("day")}
+                onClick={() => replaceCalendarMode("day")}
               >
                 Day
               </button>
               <button
                 type="button"
                 className={calendarMode === "week" ? "active" : ""}
-                onClick={() => setCalendarMode("week")}
+                onClick={() => replaceCalendarMode("week")}
               >
                 Week
               </button>
@@ -460,7 +471,7 @@ export function PostsCalendarView() {
                 type="button"
                 className={calendarMode === "month" ? "active" : ""}
                 onClick={() => {
-                  setCalendarMode("month");
+                  replaceCalendarMode("month");
                   setVisibleMonth(startOfMonth(visibleDate));
                 }}
               >

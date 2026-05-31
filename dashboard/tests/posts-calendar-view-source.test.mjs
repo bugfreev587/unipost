@@ -17,8 +17,13 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /Day/);
   assert.match(source, /Week/);
   assert.match(source, /Month/);
-  assert.match(source, /setCalendarMode\("day"\)/);
-  assert.match(source, /setCalendarMode\("week"\)/);
+  assert.match(source, /usePathname,\s*useParams,\s*useRouter,\s*useSearchParams/);
+  assert.match(source, /parseCalendarViewMode\(searchParams\.get\("view"\)\)/);
+  assert.match(source, /replaceCalendarMode\("day"\)/);
+  assert.match(source, /replaceCalendarMode\("week"\)/);
+  assert.match(source, /replaceCalendarMode\("month"\)/);
+  assert.match(source, /nextParams\.set\("view",\s*mode\)/);
+  assert.match(source, /router\.replace\(`\$\{pathname\}\$\{query \? `\?\$\{query\}` : ""\}`,\s*\{\s*scroll:\s*false\s*\}\)/);
   assert.match(source, /renderWeekView/);
   assert.match(source, /renderDayView/);
   assert.match(source, /handleCalendarWheel/);

@@ -19,6 +19,8 @@ export type CalendarModelPost = {
   archived_at?: string | null;
 };
 
+const CALENDAR_VIEW_MODES = new Set<CalendarViewMode>(["day", "week", "month"]);
+
 export type CalendarModelProfile = {
   id: string;
   name: string;
@@ -129,6 +131,10 @@ export function getWheelNavigationIntent(
   const horizontalDelta = Math.abs(deltaX) >= Math.abs(deltaY) ? deltaX : shiftKey ? deltaY : 0;
   if (Math.abs(horizontalDelta) < threshold) return 0;
   return horizontalDelta > 0 ? 1 : -1;
+}
+
+export function parseCalendarViewMode(value: string | null | undefined): CalendarViewMode {
+  return value && CALENDAR_VIEW_MODES.has(value as CalendarViewMode) ? (value as CalendarViewMode) : "month";
 }
 
 export function getPostStatusGroup(post: CalendarModelPost): CalendarStatusGroup {
