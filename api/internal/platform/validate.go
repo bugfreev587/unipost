@@ -1480,17 +1480,4 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 		})
 	}
 
-	// Step 5: warnings — soft suggestions, never block publish.
-	// Hardcode one to prove the channel works (per PRD §5.4).
-	if plat == "linkedin" && len(mediaItems) == 0 {
-		res.Warnings = append(res.Warnings, Issue{
-			PlatformPostIndex: i,
-			AccountID:         post.AccountID,
-			Platform:          plat,
-			Field:             "media_urls",
-			Code:              "low_engagement_likely",
-			Message:           "LinkedIn posts without media typically see lower reach — consider attaching an image or video",
-			Severity:          SeverityWarning,
-		})
-	}
 }
