@@ -41,13 +41,16 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /renderMonthDayGrid/);
   assert.match(source, /renderWeekTimeGutter/);
   assert.match(source, /renderWeekColumns/);
+  assert.match(source, /posts-calendar-month-shell/);
   assert.match(source, /posts-calendar-month-view/);
   assert.match(source, /posts-calendar-month-weekdays/);
   assert.match(source, /posts-calendar-month-days/);
+  assert.match(source, /renderWeekHeader/);
+  assert.match(source, /posts-calendar-week-shell/);
   assert.match(source, /posts-calendar-week-body/);
   assert.match(source, /posts-calendar-week-time-gutter/);
   assert.match(source, /posts-calendar-week-content/);
-  assert.match(source, /posts-calendar-week-heading-row/);
+  assert.match(source, /posts-calendar-week-header-row/);
   assert.match(source, /will-change:transform/);
   assert.match(source, /contain:layout paint/);
   assert.match(source, /getAccumulatedWheelNavigationIntent/);
@@ -76,11 +79,10 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /offsetWidth - node\.clientWidth/);
   assert.match(source, /posts-calendar-week-header-inner/);
   assert.match(source, /posts-calendar-week-scrollbar-spacer/);
-  assert.match(source, /\.posts-calendar-week-heading-row\{[^}]*grid-template-columns:minmax\(0,1fr\) var\(--calendar-scrollbar-gutter\)/);
+  assert.match(source, /\.posts-calendar-week-header\{[^}]*grid-template-columns:var\(--calendar-time-gutter\) minmax\(0,1fr\)/);
   assert.match(source, /\.posts-calendar-week-header-inner\{[^}]*grid-template-columns:var\(--calendar-week-template\)/);
   assert.match(source, /\.posts-calendar-week-body\{[^}]*grid-template-columns:var\(--calendar-time-gutter\) minmax\(0,1fr\)/);
   assert.match(source, /\.posts-calendar-week-columns\{[^}]*grid-template-columns:repeat\(7,minmax\(var\(--calendar-week-day-min\),1fr\)\)/);
-  assert.match(source, /\.posts-calendar-all-day-label,[^}]*white-space:nowrap/);
   assert.match(source, /All Status/);
   assert.match(source, /In Progress/);
   assert.match(source, /Cancelled/);
@@ -96,21 +98,42 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
 
 test("Posts calendar swipe transitions keep static headers outside moving layers", async () => {
   const source = await readFile(calendarViewPath, "utf8");
+  const monthView = source.slice(source.indexOf("const renderMonthView"), source.indexOf("const renderWeekTimeGutter"));
+  const weekColumns = source.slice(source.indexOf("const renderWeekColumns"), source.indexOf("const renderWeekView"));
+  const weekView = source.slice(source.indexOf("const renderWeekView"));
   const monthTransition = source.slice(source.indexOf("const renderMonthSwipeTransitionView"));
   const weekTransition = source.slice(source.indexOf("const renderWeekSwipeTransitionView"));
   const monthWeekdayIndex = monthTransition.indexOf("{renderMonthWeekdayHeader()}");
   const monthSwipeIndex = monthTransition.indexOf('className="posts-calendar-swipe-viewport"');
-  const weekTimeGutterIndex = weekTransition.indexOf("{renderWeekTimeGutter(false)}");
+  const weekHeaderIndex = weekTransition.indexOf("{renderWeekHeader(");
   const weekSwipeIndex = weekTransition.indexOf('className="posts-calendar-swipe-viewport"');
 
+  assert.match(monthView, /className="posts-calendar-month-shell"/);
+  assert.doesNotMatch(monthView, /className="posts-calendar-month-view"[\s\S]*\{renderMonthWeekdayHeader\(\)\}/);
+  assert.doesNotMatch(weekColumns, /posts-calendar-week-heading-row/);
+  assert.match(weekView, /className="posts-calendar-week-shell"/);
   assert.ok(monthWeekdayIndex >= 0, "month weekday header should render as its own static row");
   assert.ok(monthSwipeIndex >= 0, "month should still render a swipe viewport for date cells");
   assert.ok(monthWeekdayIndex < monthSwipeIndex, "month weekday header should be outside the swipe viewport");
-  assert.ok(weekTimeGutterIndex >= 0, "week time gutter should render as a static column");
+  assert.ok(weekHeaderIndex >= 0, "week date header should render as its own static row");
   assert.ok(weekSwipeIndex >= 0, "week should render moving day columns separately");
-  assert.ok(weekTimeGutterIndex < weekSwipeIndex, "week time gutter should be outside moving day columns");
+  assert.ok(weekHeaderIndex < weekSwipeIndex, "week date header should be outside moving day columns");
   assert.match(source, /renderMonthDayGrid\(buildMonthGrid\(swipeTransition\.fromMonth\)/);
   assert.match(source, /renderWeekColumns\(buildWeekDays\(swipeTransition\.fromDate\)/);
+});
+
+test("Posts calendar week view removes all-day row from the week grid", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const weekTimeGutter = source.slice(
+    source.indexOf("const renderWeekTimeGutter"),
+    source.indexOf("const renderWeekHeader"),
+  );
+  const weekCss = source.slice(source.indexOf(".posts-calendar-week-grid"));
+
+  assert.doesNotMatch(weekTimeGutter, /all-day/);
+  assert.doesNotMatch(weekTimeGutter, /posts-calendar-all-day-label/);
+  assert.doesNotMatch(weekCss, /posts-calendar-all-day-label/);
+  assert.match(source, /\.posts-calendar-week-time-gutter\{[^}]*display:block/);
 });
 
 test("Posts calendar swipe handlers avoid passive listener preventDefault warnings", async () => {
