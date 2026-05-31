@@ -151,6 +151,32 @@ test("Posts calendar swipe handlers avoid passive listener preventDefault warnin
   assert.doesNotMatch(touchEndHandler, /preventDefault\(/);
 });
 
+test("Posts calendar edit inspector keeps fixed actions visible and profile beside the title", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const inspector = source.slice(
+    source.indexOf("function CalendarEditInspector"),
+    source.indexOf("function CalendarEditMediaStrip"),
+  );
+  const css = source.slice(source.indexOf(".posts-calendar-edit-inspector"));
+  const bodyStart = inspector.indexOf('<div className="posts-calendar-edit-body">');
+  const footerCloseIndex = inspector.indexOf("\n        </footer>", bodyStart);
+  const footerIndex = inspector.indexOf('<footer className="posts-calendar-edit-footer">');
+  const titleRowStart = inspector.indexOf('className="posts-calendar-edit-title-row"');
+  const titleRowEnd = inspector.indexOf('<button type="button" aria-label="Close editor"', titleRowStart);
+  const titleRow = inspector.slice(titleRowStart, titleRowEnd);
+
+  assert.ok(bodyStart >= 0, "edit body should be present");
+  assert.ok(footerIndex > bodyStart, "footer should remain after the scrollable body");
+  assert.ok(footerCloseIndex > footerIndex, "footer should close before the article closes");
+  assert.match(inspector, /"--popover-available-height": `\$\{Math\.max\(260, viewportSize\.height - placement\.top - 12\)\}px`/);
+  assert.match(css, /max-height:min\(calc\(100dvh - 24px\),var\(--popover-available-height,calc\(100dvh - 24px\)\)\)/);
+  assert.match(css, /\.posts-calendar-edit-header,\s*\.posts-calendar-edit-footer\{[^}]*flex:0 0 auto/);
+  assert.match(css, /\.posts-calendar-edit-body\{[^}]*flex:1 1 auto/);
+  assert.match(inspector, />Cancel</);
+  assert.ok(titleRowStart >= 0, "title row should group title and profile");
+  assert.ok(titleRow.indexOf("<h2>Edit post</h2>") < titleRow.indexOf("posts-calendar-popover-profile"));
+});
+
 test("Posts calendar details popover anchors to the selected event button", async () => {
   const source = await readFile(calendarViewPath, "utf8");
 

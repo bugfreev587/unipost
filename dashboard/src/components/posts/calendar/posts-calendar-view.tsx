@@ -1436,6 +1436,7 @@ function CalendarEditInspector({
     "--event-color": color,
     "--popover-left": `${placement.left}px`,
     "--popover-top": `${placement.top}px`,
+    "--popover-available-height": `${Math.max(260, viewportSize.height - placement.top - 12)}px`,
     "--popover-arrow-x": `${placement.arrowX}px`,
     "--popover-arrow-y": `${placement.arrowY}px`,
     "--popover-transform-origin": placement.transformOrigin,
@@ -1453,12 +1454,12 @@ function CalendarEditInspector({
         style={inspectorStyle}
       >
         <header className="posts-calendar-edit-header">
-          <div>
+          <div className="posts-calendar-edit-title-row">
+            <h2>Edit post</h2>
             <div className="posts-calendar-popover-profile">
               <span />
               {profile?.name || "Unassigned profile"}
             </div>
-            <h2>Edit post</h2>
           </div>
           <button type="button" aria-label="Close editor" onClick={onClose}>
             <X size={16} />
@@ -1585,11 +1586,14 @@ function CalendarEditInspector({
         </div>
 
         <footer className="posts-calendar-edit-footer">
-          <div>{error || disabledReason || "Ready to save changes."}</div>
-          <button type="button" onClick={handleSave} disabled={!form.canSubmit || saving || !!runtimeBlocker || oversizeVideos.length > 0}>
-            {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-            {saving ? "Saving" : "Save changes"}
-          </button>
+          <div className="posts-calendar-edit-status">{error || disabledReason || "Ready to save changes."}</div>
+          <div className="posts-calendar-edit-actions">
+            <button type="button" className="secondary" onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="button" className="primary" onClick={handleSave} disabled={!form.canSubmit || saving || !!runtimeBlocker || oversizeVideos.length > 0}>
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+              {saving ? "Saving" : "Save changes"}
+            </button>
+          </div>
         </footer>
       </article>
     </div>
@@ -1931,16 +1935,19 @@ const CALENDAR_CSS = `
 .posts-calendar-open-list:hover{background:var(--surface3)}
 .posts-calendar-open-list:disabled{opacity:.55;cursor:not-allowed}
 .posts-calendar-popover-layer.edit-layer{z-index:92;background:color-mix(in srgb,var(--surface) 8%,transparent)}
-.posts-calendar-edit-inspector{position:fixed;left:var(--popover-left);top:var(--popover-top);width:min(760px,calc(100vw - 24px));max-height:calc(100dvh - 24px);display:flex;flex-direction:column;background:color-mix(in srgb,var(--surface-raised) 96%,black);border:1px solid var(--dborder);border-radius:18px;box-shadow:0 26px 78px color-mix(in srgb,var(--shadow-color) 170%,transparent);transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:hidden}
+.posts-calendar-edit-inspector{position:fixed;left:var(--popover-left);top:var(--popover-top);width:min(760px,calc(100vw - 24px));max-height:min(calc(100dvh - 24px),var(--popover-available-height,calc(100dvh - 24px)));display:flex;flex-direction:column;background:color-mix(in srgb,var(--surface-raised) 96%,black);border:1px solid var(--dborder);border-radius:18px;box-shadow:0 26px 78px color-mix(in srgb,var(--shadow-color) 170%,transparent);transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:hidden}
 .posts-calendar-edit-inspector::before{content:"";position:absolute;width:16px;height:16px;background:color-mix(in srgb,var(--surface-raised) 96%,black);border:1px solid var(--dborder);transform:rotate(45deg);pointer-events:none}
 .posts-calendar-edit-inspector[data-side="right"]::before{left:-9px;top:calc(var(--popover-arrow-y) - 8px);border-top:0;border-right:0}
 .posts-calendar-edit-inspector[data-side="left"]::before{right:-9px;top:calc(var(--popover-arrow-y) - 8px);border-bottom:0;border-left:0}
 .posts-calendar-edit-inspector[data-side="bottom"]::before{left:calc(var(--popover-arrow-x) - 8px);top:-9px;border-right:0;border-bottom:0}
 .posts-calendar-edit-inspector[data-side="top"]::before{left:calc(var(--popover-arrow-x) - 8px);bottom:-9px;border-top:0;border-left:0}
-.posts-calendar-edit-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:17px 18px 14px;border-bottom:1px solid var(--dborder)}
-.posts-calendar-edit-header h2{margin:5px 0 0;color:var(--dtext);font-size:22px;line-height:1.15;font-weight:760;letter-spacing:0}
+.posts-calendar-edit-header,.posts-calendar-edit-footer{flex:0 0 auto}
+.posts-calendar-edit-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 18px;border-bottom:1px solid var(--dborder)}
+.posts-calendar-edit-title-row{min-width:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.posts-calendar-edit-header h2{margin:0;color:var(--dtext);font-size:22px;line-height:1.15;font-weight:760;letter-spacing:0}
+.posts-calendar-edit-header .posts-calendar-popover-profile{min-width:0;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .posts-calendar-edit-header button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--dborder);border-radius:999px;background:var(--surface2);color:var(--dmuted);cursor:pointer}
-.posts-calendar-edit-body{min-height:0;overflow:auto;padding:16px 18px 18px;display:flex;flex-direction:column;gap:16px}
+.posts-calendar-edit-body{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 18px 18px;display:flex;flex-direction:column;gap:16px}
 .posts-calendar-edit-section{display:flex;flex-direction:column;gap:8px}
 .posts-calendar-edit-section label,.posts-calendar-edit-section-head label{font-size:11px;font-weight:780;text-transform:uppercase;letter-spacing:.08em;color:var(--dmuted2)}
 .posts-calendar-edit-section textarea,.posts-calendar-edit-section input[type="datetime-local"]{width:100%;border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);color:var(--dtext);font:inherit;font-size:14px;line-height:1.5;outline:0;padding:10px 11px}
@@ -1967,8 +1974,10 @@ const CALENDAR_CSS = `
 .posts-calendar-edit-validation div.error{border-color:color-mix(in srgb,var(--danger) 45%,transparent);background:var(--danger-soft);color:var(--danger)}
 .posts-calendar-edit-validation strong{text-transform:uppercase;font-size:10px;letter-spacing:.06em}
 .posts-calendar-edit-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;border-top:1px solid var(--dborder);padding:12px 14px;background:var(--surface-raised)}
-.posts-calendar-edit-footer div{min-width:0;color:var(--dmuted);font-size:12px;line-height:1.35}
-.posts-calendar-edit-footer button{height:36px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--daccent);border-radius:10px;background:var(--daccent);color:var(--primary-foreground);font:inherit;font-size:13px;font-weight:760;padding:0 13px;white-space:nowrap}
+.posts-calendar-edit-status{min-width:0;color:var(--dmuted);font-size:12px;line-height:1.35}
+.posts-calendar-edit-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto}
+.posts-calendar-edit-footer button{height:36px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--dborder);border-radius:10px;background:var(--surface2);color:var(--dtext);font:inherit;font-size:13px;font-weight:760;padding:0 13px;white-space:nowrap}
+.posts-calendar-edit-footer button.primary{border-color:var(--daccent);background:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-edit-footer button:disabled{opacity:.55;cursor:not-allowed}
 @media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-month-shell{min-height:720px}.posts-calendar-month-days{grid-template-rows:repeat(6,minmax(114px,1fr))}}
 @media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-month-shell{overflow-x:auto}.posts-calendar-month-weekdays,.posts-calendar-month-days{min-width:924px}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}.posts-calendar-edit-inspector{width:min(420px,calc(100vw - 24px))}.posts-calendar-edit-account-grid{grid-template-columns:1fr}}
