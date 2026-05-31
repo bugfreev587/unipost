@@ -54,7 +54,7 @@ const PROFILE_COLOR_PALETTE = [
 export function buildMonthGrid(monthDate: Date, today = new Date()): CalendarDayCell[] {
   const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
   const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
-  const gridStart = addDays(monthStart, -monthStart.getDay());
+  const gridStart = startOfSundayWeek(monthDate);
   const todayKey = formatLocalDateKey(today);
   const cells: CalendarDayCell[] = [];
 
@@ -73,7 +73,7 @@ export function buildMonthGrid(monthDate: Date, today = new Date()): CalendarDay
 }
 
 export function buildWeekDays(anchorDate: Date, today = new Date()): CalendarDayCell[] {
-  const weekStart = startOfMondayWeek(anchorDate);
+  const weekStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate());
   const todayKey = formatLocalDateKey(today);
   const cells: CalendarDayCell[] = [];
 
@@ -133,6 +133,22 @@ export function getWheelNavigationIntent(
   return horizontalDelta > 0 ? 1 : -1;
 }
 
+export function getSwipeNavigationIntent(
+  mode: CalendarViewMode,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+): -1 | 0 | 1 {
+  return getWheelNavigationIntent(mode, startX - endX, startY - endY);
+}
+
+export function shiftCalendarDateBySwipe(mode: CalendarViewMode, date: Date, direction: -1 | 1): Date {
+  if (mode === "month") return addDays(date, direction * 7);
+  if (mode === "week") return addDays(date, direction);
+  return date;
+}
+
 export function parseCalendarViewMode(value: string | null | undefined): CalendarViewMode {
   return value && CALENDAR_VIEW_MODES.has(value as CalendarViewMode) ? (value as CalendarViewMode) : "month";
 }
@@ -173,10 +189,8 @@ function addDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
-function startOfMondayWeek(date: Date): Date {
-  const day = date.getDay();
-  const offset = day === 0 ? -6 : 1 - day;
-  return addDays(date, offset);
+function startOfSundayWeek(date: Date): Date {
+  return addDays(date, -date.getDay());
 }
 
 function isValidHexColor(value: string): boolean {

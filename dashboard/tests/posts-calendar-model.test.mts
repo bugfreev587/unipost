@@ -5,9 +5,11 @@ import {
   buildWeekDays,
   bucketPostByLocalDay,
   getCalendarPostMinuteOfDay,
+  getSwipeNavigationIntent,
   getWheelNavigationIntent,
   getPostStatusGroup,
   getProfileCalendarColor,
+  shiftCalendarDateBySwipe,
   parseCalendarViewMode,
   shouldShowPostForStatusFilter,
 } from "../src/components/posts/calendar/calendar-model.ts";
@@ -23,6 +25,17 @@ test("buildMonthGrid returns a six week Sunday-first grid with adjacent month da
   assert.equal(grid[34].isToday, true);
   assert.equal(grid[0].isCurrentMonth, false);
   assert.equal(grid[5].isCurrentMonth, true);
+});
+
+test("buildMonthGrid can roll one visible week without jumping a full month", () => {
+  const grid = buildMonthGrid(new Date(2026, 4, 8), new Date(2026, 4, 30));
+
+  assert.equal(grid.length, 42);
+  assert.equal(grid[0].dateKey, "2026-05-03");
+  assert.equal(grid[6].dateKey, "2026-05-09");
+  assert.equal(grid[41].dateKey, "2026-06-13");
+  assert.equal(grid[0].isCurrentMonth, true);
+  assert.equal(grid[41].isCurrentMonth, false);
 });
 
 test("bucketPostByLocalDay uses scheduled, then published, then created timestamps", () => {
@@ -79,14 +92,14 @@ test("profile colors prefer valid branding colors and otherwise use a stable pal
   assert.notEqual(getProfileCalendarColor({ id: "profile-a", name: "A" }), getProfileCalendarColor({ id: "profile-b", name: "B" }));
 });
 
-test("buildWeekDays returns a Monday-first week around the selected day", () => {
+test("buildWeekDays returns a rolling seven-day window anchored to the selected day", () => {
   const week = buildWeekDays(new Date(2026, 3, 8), new Date(2026, 3, 10));
 
   assert.equal(week.length, 7);
-  assert.equal(week[0].dateKey, "2026-04-06");
-  assert.equal(week[4].dateKey, "2026-04-10");
-  assert.equal(week[6].dateKey, "2026-04-12");
-  assert.equal(week[4].isToday, true);
+  assert.equal(week[0].dateKey, "2026-04-08");
+  assert.equal(week[2].dateKey, "2026-04-10");
+  assert.equal(week[6].dateKey, "2026-04-14");
+  assert.equal(week[2].isToday, true);
 });
 
 test("getCalendarPostMinuteOfDay maps post timestamps onto a day timeline", () => {
@@ -109,6 +122,22 @@ test("wheel navigation follows Apple Calendar style directions per view", () => 
   assert.equal(getWheelNavigationIntent("day", 0, 160), 0);
 });
 
+test("touch swipe navigation follows the same calendar directions", () => {
+  assert.equal(getSwipeNavigationIntent("month", 120, 240, 120, 80), 1);
+  assert.equal(getSwipeNavigationIntent("month", 120, 80, 120, 240), -1);
+  assert.equal(getSwipeNavigationIntent("week", 240, 120, 80, 120), 1);
+  assert.equal(getSwipeNavigationIntent("week", 80, 120, 240, 120), -1);
+  assert.equal(getSwipeNavigationIntent("day", 120, 240, 120, 80), 0);
+});
+
+test("swipe date shifts use week granularity in month view and day granularity in week view", () => {
+  assert.equal(formatDate(shiftCalendarDateBySwipe("month", new Date(2026, 4, 1), 1)), "2026-05-08");
+  assert.equal(formatDate(shiftCalendarDateBySwipe("month", new Date(2026, 4, 1), -1)), "2026-04-24");
+  assert.equal(formatDate(shiftCalendarDateBySwipe("week", new Date(2026, 4, 1), 1)), "2026-05-02");
+  assert.equal(formatDate(shiftCalendarDateBySwipe("week", new Date(2026, 4, 1), -1)), "2026-04-30");
+  assert.equal(formatDate(shiftCalendarDateBySwipe("day", new Date(2026, 4, 1), 1)), "2026-05-01");
+});
+
 test("parseCalendarViewMode accepts URL view modes and falls back to month", () => {
   assert.equal(parseCalendarViewMode("day"), "day");
   assert.equal(parseCalendarViewMode("week"), "week");
@@ -116,3 +145,7 @@ test("parseCalendarViewMode accepts URL view modes and falls back to month", () 
   assert.equal(parseCalendarViewMode("agenda"), "month");
   assert.equal(parseCalendarViewMode(null), "month");
 });
+
+function formatDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}

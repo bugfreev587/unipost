@@ -27,6 +27,14 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /renderWeekView/);
   assert.match(source, /renderDayView/);
   assert.match(source, /handleCalendarWheel/);
+  assert.match(source, /handleCalendarTouchStart/);
+  assert.match(source, /handleCalendarTouchEnd/);
+  assert.match(source, /shiftCalendarBySwipe/);
+  assert.match(source, /shiftCalendarDateBySwipe/);
+  assert.match(source, /getSwipeNavigationIntent/);
+  assert.match(source, /onTouchStart=\{handleCalendarTouchStart\}/);
+  assert.match(source, /onTouchEnd=\{handleCalendarTouchEnd\}/);
+  assert.match(source, /formatWeekdayShort\(day\.date\)/);
   assert.match(source, /posts-calendar-week-grid/);
   assert.match(source, /posts-calendar-day-grid/);
   assert.match(source, /posts-calendar-time-scroll/);

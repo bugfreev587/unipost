@@ -4,7 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { ChevronLeft, ChevronRight, List, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type WheelEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type TouchEvent, type WheelEvent } from "react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 import {
@@ -25,16 +25,17 @@ import {
   getCalendarPostMinuteOfDay,
   getPostStatusGroup,
   getProfileCalendarColor,
+  getSwipeNavigationIntent,
   getWheelNavigationIntent,
   parseCalendarViewMode,
   shouldShowPostForStatusFilter,
+  shiftCalendarDateBySwipe,
   type CalendarStatusFilter,
   type CalendarStatusGroup,
   type CalendarViewMode,
 } from "./calendar-model";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const WEEK_VIEW_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const HOUR_HEIGHT = 64;
 
@@ -81,6 +82,7 @@ export function PostsCalendarView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const wheelLockRef = useRef(0);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const weekTimeScrollRef = useRef<HTMLDivElement | null>(null);
   const [weekScrollbarWidth, setWeekScrollbarWidth] = useState(0);
 
@@ -260,6 +262,22 @@ export function PostsCalendarView() {
     });
   }, [calendarMode]);
 
+  const shiftCalendarBySwipe = useCallback((direction: -1 | 1) => {
+    if (calendarMode === "day") return;
+
+    if (calendarMode === "month") {
+      setVisibleMonth((date) => shiftCalendarDateBySwipe(calendarMode, date, direction));
+      setVisibleDate((date) => shiftCalendarDateBySwipe(calendarMode, date, direction));
+      return;
+    }
+
+    setVisibleDate((date) => {
+      const next = shiftCalendarDateBySwipe(calendarMode, date, direction);
+      setVisibleMonth(startOfMonth(next));
+      return next;
+    });
+  }, [calendarMode]);
+
   const goToToday = useCallback(() => {
     const today = new Date();
     setVisibleDate(today);
@@ -278,11 +296,36 @@ export function PostsCalendarView() {
 
     wheelLockRef.current = now + 420;
     event.preventDefault();
-    shiftCalendar(direction);
-  }, [calendarMode, shiftCalendar]);
+    shiftCalendarBySwipe(direction);
+  }, [calendarMode, shiftCalendarBySwipe]);
+
+  const handleCalendarTouchStart = useCallback((event: TouchEvent<HTMLElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }, []);
+
+  const handleCalendarTouchEnd = useCallback((event: TouchEvent<HTMLElement>) => {
+    const start = touchStartRef.current;
+    const touch = event.changedTouches[0];
+    touchStartRef.current = null;
+    if (!start || !touch) return;
+
+    const direction = getSwipeNavigationIntent(calendarMode, start.x, start.y, touch.clientX, touch.clientY);
+    if (direction === 0) return;
+
+    event.preventDefault();
+    shiftCalendarBySwipe(direction);
+  }, [calendarMode, shiftCalendarBySwipe]);
 
   const renderMonthView = () => (
-    <div className="posts-calendar-grid" aria-label={`${calendarTitle} posts`} onWheel={handleCalendarWheel}>
+    <div
+      className="posts-calendar-grid"
+      aria-label={`${calendarTitle} posts`}
+      onWheel={handleCalendarWheel}
+      onTouchStart={handleCalendarTouchStart}
+      onTouchEnd={handleCalendarTouchEnd}
+    >
       {WEEKDAYS.map((weekday) => (
         <div key={weekday} className="posts-calendar-weekday">{weekday}</div>
       ))}
@@ -324,14 +367,16 @@ export function PostsCalendarView() {
       className="posts-calendar-week-grid"
       aria-label={`${calendarTitle} week posts`}
       onWheel={handleCalendarWheel}
+      onTouchStart={handleCalendarTouchStart}
+      onTouchEnd={handleCalendarTouchEnd}
       style={{ "--calendar-scrollbar-gutter": `${weekScrollbarWidth}px` } as CSSProperties}
     >
       <div className="posts-calendar-week-header">
         <div className="posts-calendar-week-header-inner">
           <div className="posts-calendar-all-day-label">all-day</div>
-          {weekDays.map((day, index) => (
+          {weekDays.map((day) => (
             <div key={day.dateKey} className={`posts-calendar-week-heading ${day.isToday ? "today" : ""}`}>
-              <span>{WEEK_VIEW_DAYS[index]}</span>
+              <span>{formatWeekdayShort(day.date)}</span>
               <strong>{day.dayOfMonth}</strong>
             </div>
           ))}
@@ -821,6 +866,10 @@ function getWeekdayName(date: Date): string {
   return date.toLocaleDateString("en-US", { weekday: "long" });
 }
 
+function formatWeekdayShort(date: Date): string {
+  return date.toLocaleDateString("en-US", { weekday: "short" });
+}
+
 function formatHourLabel(hour: number): string {
   if (hour === 0) return "12 AM";
   if (hour === 12) return "Noon";
@@ -897,7 +946,7 @@ const CALENDAR_CSS = `
 .posts-calendar-create{background:var(--daccent);border-color:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-error{margin:12px 18px 0;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);background:var(--danger-soft);color:var(--danger);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}
 .posts-calendar-view-stage{flex:1;min-height:0;display:flex;overflow:hidden;background:var(--surface)}
-.posts-calendar-grid{flex:1;min-height:640px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:34px repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px;overscroll-behavior:contain}
+.posts-calendar-grid{flex:1;min-height:640px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:34px repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px;overscroll-behavior:contain;touch-action:none}
 .posts-calendar-weekday{background:var(--surface);display:flex;align-items:center;justify-content:flex-end;padding:0 12px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px}
 .posts-calendar-day.outside{background:color-mix(in srgb,var(--surface2) 42%,var(--surface));color:var(--dmuted2)}
@@ -913,7 +962,7 @@ const CALENDAR_CSS = `
 .posts-calendar-more{height:22px;border:0;border-radius:6px;background:transparent;color:var(--dmuted);font:inherit;font-size:12px;font-weight:650;text-align:left;padding:0 7px;cursor:pointer}
 .posts-calendar-more:hover{background:var(--surface2);color:var(--dtext)}
 .posts-calendar-week-grid,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-scrollbar-gutter:0px;--calendar-week-min-width:calc(1007px + var(--calendar-scrollbar-gutter));--calendar-week-template:var(--calendar-time-gutter) repeat(7,minmax(var(--calendar-week-day-min),1fr));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
-.posts-calendar-week-grid{overscroll-behavior-x:contain;overflow-x:auto}
+.posts-calendar-week-grid{overscroll-behavior-x:contain;overflow-x:auto;touch-action:pan-y}
 .posts-calendar-week-header{display:grid;grid-template-columns:minmax(0,1fr) var(--calendar-scrollbar-gutter);border-bottom:1px solid var(--dborder);background:var(--dborder);min-width:var(--calendar-week-min-width)}
 .posts-calendar-week-header-inner{display:grid;grid-template-columns:var(--calendar-week-template);background:var(--dborder);gap:1px;min-width:0}
 .posts-calendar-week-scrollbar-spacer{background:var(--surface)}
