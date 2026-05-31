@@ -1144,6 +1144,7 @@ function EventPopover({
     "--popover-arrow-x": `${placement.arrowX}px`,
     "--popover-arrow-y": `${placement.arrowY}px`,
     "--popover-transform-origin": placement.transformOrigin,
+    height: `${placement.availableHeight}px`,
   } as CSSProperties;
 
   return (
@@ -2223,7 +2224,7 @@ const CALENDAR_CSS = `
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
 .posts-calendar-timed-meta{font-size:11px;color:color-mix(in srgb,var(--event-color) 78%,var(--dmuted));font-weight:700;line-height:1.15;white-space:nowrap}
 .posts-calendar-popover-layer{position:fixed;inset:0;background:transparent;z-index:90}
-.posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);width:min(560px,calc(100vw - 24px));max-height:min(calc(100dvh - 24px),var(--popover-available-height,calc(100dvh - 24px)));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);padding:16px;transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:auto}
+.posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);box-sizing:border-box;width:min(560px,calc(100vw - 24px));max-height:min(calc(100dvh - 24px),var(--popover-available-height,calc(100dvh - 24px)));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);padding:16px;transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:auto}
 .posts-calendar-popover::before{content:"";position:absolute;width:16px;height:16px;background:var(--surface-raised);border:1px solid var(--dborder);transform:rotate(45deg);pointer-events:none}
 .posts-calendar-popover[data-side="right"]::before{left:-9px;top:calc(var(--popover-arrow-y) - 8px);border-top:0;border-right:0}
 .posts-calendar-popover[data-side="left"]::before{right:-9px;top:calc(var(--popover-arrow-y) - 8px);border-bottom:0;border-left:0}
