@@ -553,18 +553,15 @@ func TestValidate_ScheduledTooFar(t *testing.T) {
 
 // ─── warnings ─────────────────────────────────────────────────────────
 
-func TestValidate_LinkedInTextOnlyWarning(t *testing.T) {
+func TestValidate_LinkedInTextOnlyDoesNotWarn(t *testing.T) {
 	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
 		{AccountID: "acc_linkedin", Caption: "no media here"},
 	}))
 	if !res.Valid {
 		t.Fatalf("expected valid, got %#v", res.Errors)
 	}
-	if len(res.Warnings) == 0 {
-		t.Fatal("expected at least one warning")
-	}
-	if res.Warnings[0].Code != "low_engagement_likely" {
-		t.Errorf("unexpected warning code: %s", res.Warnings[0].Code)
+	if len(res.Warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", res.Warnings)
 	}
 }
 
