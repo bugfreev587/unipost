@@ -113,6 +113,21 @@ test("Posts calendar swipe transitions keep static headers outside moving layers
   assert.match(source, /renderWeekColumns\(buildWeekDays\(swipeTransition\.fromDate\)/);
 });
 
+test("Posts calendar swipe handlers avoid passive listener preventDefault warnings", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const wheelHandler = source.slice(
+    source.indexOf("const handleCalendarWheel"),
+    source.indexOf("const handleCalendarTouchStart"),
+  );
+  const touchEndHandler = source.slice(
+    source.indexOf("const handleCalendarTouchEnd"),
+    source.indexOf("const handleWeekTimelineScroll"),
+  );
+
+  assert.doesNotMatch(wheelHandler, /preventDefault\(/);
+  assert.doesNotMatch(touchEndHandler, /preventDefault\(/);
+});
+
 test("Posts calendar details popover anchors to the selected event button", async () => {
   const source = await readFile(calendarViewPath, "utf8");
 

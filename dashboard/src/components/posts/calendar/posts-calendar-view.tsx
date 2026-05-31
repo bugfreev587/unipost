@@ -424,8 +424,6 @@ export function PostsCalendarView() {
   const handleCalendarWheel = useCallback((event: WheelEvent<HTMLElement>) => {
     if (calendarMode === "day") return;
 
-    event.preventDefault();
-
     const now = Date.now();
     if (now < wheelLockRef.current) {
       return;
@@ -474,7 +472,6 @@ export function PostsCalendarView() {
     const direction = getSwipeNavigationIntent(calendarMode, start.x, start.y, touch.clientX, touch.clientY);
     if (direction === 0) return;
 
-    event.preventDefault();
     shiftCalendarBySwipe(direction);
   }, [calendarMode, shiftCalendarBySwipe]);
 
