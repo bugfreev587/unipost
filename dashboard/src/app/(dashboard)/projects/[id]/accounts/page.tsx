@@ -48,6 +48,13 @@ const FACEBOOK_PLATFORM = { id: "facebook", name: "Facebook Page", type: "oauth"
 // modal (?first=1). A "Show all platforms" link escape-hatches.
 const FIRST_TIME_PLATFORM_IDS = new Set(["bluesky", "linkedin", "instagram", "threads", "twitter", "pinterest"]);
 
+function accountSourceLabel(platform: string) {
+  if (platform === "youtube") return "YouTube channel";
+  if (platform === "facebook") return "Facebook Page";
+  if (platform === "twitter") return "X / Twitter account";
+  return `${platform.charAt(0).toUpperCase()}${platform.slice(1)} account`;
+}
+
 export default function AccountsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -315,6 +322,22 @@ export default function AccountsPage() {
             Connect your own publishing accounts from the dashboard. UniPost can use shared OAuth apps by default,
             or your workspace platform credentials when you configure them.
           </div>
+          <div
+            style={{
+              maxWidth: 720,
+              marginTop: 14,
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: "color-mix(in srgb, var(--success-soft) 58%, var(--surface1))",
+              border: "1px solid color-mix(in srgb, var(--success) 18%, var(--dborder))",
+              color: "color-mix(in srgb, var(--success) 78%, var(--dtext))",
+              fontSize: 12,
+              lineHeight: 1.55,
+            }}
+          >
+            Quickstart connection and health fields are managed by UniPost. The Source platform column identifies the external social account,
+            for example a YouTube channel connected through UniPost-managed OAuth.
+          </div>
           {profiles.length > 1 && (
             <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
               <button
@@ -491,20 +514,25 @@ export default function AccountsPage() {
       ) : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Account</th><th>Profile</th><th>Platform</th><th>Connected</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Account</th><th>UniPost Profile</th><th>Source platform</th><th>Connected</th><th>UniPost status</th><th></th></tr></thead>
             <tbody>
               {visibleAccounts.map((a) => (
                 <tr key={a.id}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <div className="platform-icon-wrap"><PlatformIcon platform={a.platform} /></div>
-                      <span style={{ fontWeight: 500 }}>{a.account_name || a.id}</span>
+                      <div>
+                        <div style={{ fontWeight: 500 }}>{a.account_name || a.id}</div>
+                        <div className="dt-micro" style={{ color: "var(--dmuted2)", marginTop: 2, textTransform: "none", letterSpacing: 0 }}>
+                          {accountSourceLabel(a.platform)}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   <td style={{ color: "var(--dmuted)", fontSize: 13, fontWeight: 500 }}>
                     {profiles.find((p) => p.id === a.profile_id)?.name || "—"}
                   </td>
-                  <td style={{ color: "var(--dmuted)", textTransform: "capitalize", fontWeight: 500 }}>{a.platform}</td>
+                  <td style={{ color: "var(--dmuted)", fontWeight: 500 }}>{accountSourceLabel(a.platform)}</td>
                   <td style={{ color: "var(--dmuted)", fontWeight: 500 }}>
                     {new Date(a.connected_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                   </td>
