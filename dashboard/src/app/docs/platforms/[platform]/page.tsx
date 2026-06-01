@@ -174,8 +174,8 @@ function PlatformNextSteps({
         <div className="docs-next-kicker">Customer accounts</div>
         <div className="docs-next-title">Plan account connection</div>
         <div className="docs-next-body">
-          Use Connect Sessions for customer-owned accounts, with Quickstart or
-          white-label credentials.
+          Use Connect Sessions for customer-owned accounts, with shared OAuth
+          fallback or workspace Platform Credentials.
         </div>
       </Link>
     </div>
@@ -303,9 +303,9 @@ export default async function PlatformDetailPage({
       <p className="docs-note">
         Pick the setup that matches how the account is owned. Quickstart is fastest
         when you publish to your own accounts; Connect Sessions are for
-        customer-owned account onboarding; White-label controls whether the
-        platform consent screen uses your app credentials and brand. Full setup
-        details in <Link href="/docs/quickstart">Quickstart</Link>,{" "}
+        customer-owned account onboarding; Hosted Connect branding controls the
+        UniPost-hosted pre-OAuth page, while Platform Credentials control the
+        upstream app identity and quota. Full setup details in <Link href="/docs/quickstart">Quickstart</Link>,{" "}
         <Link href="/docs/connect-sessions">Connect Sessions</Link>, and{" "}
         <Link href="/docs/white-label">White-label</Link>.
       </p>

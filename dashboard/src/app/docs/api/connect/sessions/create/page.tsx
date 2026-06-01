@@ -172,7 +172,7 @@ const RESPONSE_SNIPPETS = [
   "error": {
     "code": "VALIDATION_ERROR",
     "normalized_code": "validation_error",
-    "message": "workspace is missing tiktok platform credentials; upload white-label credentials first or pass allow_quickstart_creds=true"
+    "message": "workspace is missing tiktok platform credentials; upload workspace Platform Credentials first or pass allow_quickstart_creds=true"
   },
   "request_id": "req_123"
 }`,

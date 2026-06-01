@@ -9,10 +9,10 @@ export default function PlatformCredentialsPage() {
         { label: "Platform Credentials" },
       ]}
       title="Platform Credentials"
-      lead="Upload your own OAuth App client_id + client_secret for a platform. Once stored, every Connect session on the workspace for that platform runs against your App — the end user&rsquo;s consent screen shows your brand, not UniPost&rsquo;s."
+      lead="Upload your own OAuth App client_id + client_secret for a platform. Platform Credentials control the platform OAuth app and quota source; Hosted Connect branding controls UniPost's pre-OAuth page."
     >
       <h2 id="when-to-use">When to use this endpoint</h2>
-      <p>Call this once per platform during white-label onboarding. Connect sessions now default to requiring workspace-owned credentials for OAuth platforms, so this is the normal setup path for customer-facing onboarding. If you intentionally want to use UniPost&rsquo;s shared Quickstart OAuth app for a specific session, create that session with <code>allow_quickstart_creds=true</code>. See the <Link href="/docs/white-label">white-label guide</Link> for the full integration walkthrough.</p>
+      <p>Use this endpoint when a workspace should connect accounts through its own platform developer app instead of UniPost&rsquo;s shared app. Platform Credentials are separate from Hosted Connect branding: branding changes the page UniPost hosts, while credentials change the app identity and quota the upstream platform sees. If you intentionally want to allow UniPost&rsquo;s shared Quickstart OAuth app for a specific session, create that session with <code>allow_quickstart_creds=true</code>. See the <Link href="/docs/white-label">white-label guide</Link> for the full integration walkthrough.</p>
 
       <h2 id="paid-plan">Paid plan required</h2>
       <p>Basic and up can upload platform credentials. Basic supports 1 platform slot; Growth and Team support all supported platforms. Free and API workspaces can still use UniPost&apos;s shared Quickstart OAuth apps only when a session is created with <code>allow_quickstart_creds=true</code>.</p>
@@ -22,7 +22,7 @@ export default function PlatformCredentialsPage() {
       <DocsTable
         columns={["Field", "Required", "Notes"]}
         rows={[
-          ["platform", "Yes", <>One of <code>facebook</code>, <code>instagram</code>, <code>linkedin</code>, <code>pinterest</code>, <code>tiktok</code>, <code>youtube</code>, or <code>twitter</code>. The dashboard groups Instagram and Threads under the Meta credential card; Facebook Page has its own row so Connect sessions can require Facebook-specific white-label credentials. See <Link href="/docs/platforms#platform-names">available platform names</Link>.</>],
+          ["platform", "Yes", <>One of <code>facebook</code>, <code>instagram</code>, <code>linkedin</code>, <code>pinterest</code>, <code>tiktok</code>, <code>youtube</code>, or <code>twitter</code>. The dashboard groups Instagram and Threads under the Meta credential card; Facebook Page has its own row so Connect sessions can require Facebook-specific workspace credentials. See <Link href="/docs/platforms#platform-names">available platform names</Link>.</>],
           ["client_id", "Yes", "Client / App ID from the platform developer portal"],
           ["client_secret", "Yes", "Stored encrypted at rest (AES-256-GCM). Never returned in any read endpoint."],
         ]}
@@ -63,7 +63,7 @@ export default function PlatformCredentialsPage() {
         columns={["Mode", "Auth", "Use case"]}
         rows={[
           ["Workspace API key", "Bearer up_live_xxxx", "Programmatic onboarding (CI, admin scripts, customer integrations)"],
-          ["Clerk session (Dashboard)", "Browser cookie", "Human uploading creds through Accounts → White-label Credentials"],
+          ["Clerk session (Dashboard)", "Browser cookie", "Human uploading credentials through Developer → Platform Credentials"],
         ]}
       />
     </DocsPage>

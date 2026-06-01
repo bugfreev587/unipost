@@ -10,6 +10,11 @@ import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
 import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
 import { useFeatureFlags } from "@/lib/use-feature-flags";
 import { getCanonicalProjectPath } from "@/lib/profile-route";
+import {
+  buildProjectNavHref,
+  projectNavItemIsActive,
+  projectNavSubItemIsActive,
+} from "@/lib/dashboard-nav";
 // useClerk kept for signOut
 import {
   DropdownMenu,
@@ -46,6 +51,7 @@ import {
 type NavSubItem = {
   href: string;
   label: string;
+  exactMatch?: boolean;
   backendFlag?: string;
   backendFlagsAny?: string[];
   showWhenAdmin?: boolean;
@@ -79,7 +85,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
     { href: "/accounts/app-review", label: "App Review", backendFlag: FEATURE_FLAG_KEYS.appReviewAutopilotV1 },
   ]},
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
-    { href: "/analytics", label: "Posts" },
+    { href: "/analytics", label: "Posts", exactMatch: true },
     { href: "/analytics/platforms", label: "Platforms" },
     { href: "/analytics/api", label: "API" },
   ]},
@@ -120,20 +126,8 @@ function filterNavItems(backendFlags?: Record<string, boolean>, isAdmin = false)
   }).filter((item) => item.submenu === undefined || item.submenu.length > 0);
 }
 
-function navItemIsActive(pathname: string, profileId: string | undefined, itemHref: string, exactMatch?: boolean) {
-  if (!profileId) return false;
-  const fullHref = `/projects/${profileId}${itemHref}`;
-  return exactMatch ? pathname === fullHref : pathname.startsWith(fullHref);
-}
-
-function navSubItemIsActive(pathname: string, profileId: string | undefined, itemHref: string) {
-  if (!profileId) return false;
-  const fullHref = `/projects/${profileId}${itemHref}`;
-  return pathname === fullHref || pathname.startsWith(`${fullHref}/`);
-}
-
 function navParentHasActiveSubItem(pathname: string, profileId: string | undefined, item: NavItem) {
-  return item.submenu?.some((sub) => navSubItemIsActive(pathname, profileId, sub.href)) ?? false;
+  return item.submenu?.some((sub) => projectNavSubItemIsActive(pathname, profileId, sub.href, { exactMatch: sub.exactMatch })) ?? false;
 }
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -389,7 +383,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 Navigate
               </div>
               {navItems.map((item) => {
-                const active = navItemIsActive(pathname, profileId, item.href, "exactMatch" in item ? item.exactMatch : undefined) || navParentHasActiveSubItem(pathname, profileId, item);
+                const active = projectNavItemIsActive(pathname, profileId, item.href, { exactMatch: item.exactMatch }) || navParentHasActiveSubItem(pathname, profileId, item);
                 const Icon = item.icon;
                 const hasSubmenu = !!item.submenu;
                 const submenuOpen = hasSubmenu && expandedMenu === item.href;
@@ -414,7 +408,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                       </button>
                     ) : (
                       <Link
-                        href={`/projects/${profileId}${item.href}`}
+                        href={buildProjectNavHref(profileId, item.href)}
                         data-active={active}
                         className="sidebar-nav-item"
                         style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-start" }}
@@ -457,11 +451,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                     {hasSubmenu && submenuOpen && item.submenu && (
                       <div style={{ paddingLeft: 28, marginBottom: 4 }}>
                         {item.submenu.map((sub) => {
-                          const subActive = navSubItemIsActive(pathname, profileId, sub.href);
+                          const subActive = projectNavSubItemIsActive(pathname, profileId, sub.href, { exactMatch: sub.exactMatch });
                           return (
                             <Link
                               key={sub.href}
-                              href={`/projects/${profileId}${sub.href}`}
+                              href={buildProjectNavHref(profileId, sub.href)}
                               className="dt-body-sm"
                               style={{
                                 display: "block",

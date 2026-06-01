@@ -12,7 +12,7 @@ export default function BrandingPage() {
       lead="Set the logo, display name, and primary color that render on the UniPost-hosted Connect page. This is how you make the OAuth onboarding flow look like your product instead of UniPost."
     >
       <h2 id="overview">Where the fields appear</h2>
-      <p>The hosted Connect page at <code>app.unipost.dev/connect/{"{platform}"}</code> reads these three values at render time — there&rsquo;s no cache layer, so a PATCH is live on the very next page load. See the <Link href="/docs/white-label">white-label guide</Link> for the full setup flow that combines branding with platform credentials and Connect sessions.</p>
+      <p>The hosted Connect page at <code>app.unipost.dev/connect/{"{platform}"}</code> reads these three values at render time — there&rsquo;s no cache layer, so a PATCH is live on the very next page load. See the <Link href="/docs/white-label">white-label guide</Link> for the setup model that separates Hosted Connect branding, Platform Credentials, and Connect Sessions.</p>
       <p>Plan packaging matters here: Basic and up can brand the hosted Connect page; only Growth and Team can hide the <code>Powered by UniPost</code> footer.</p>
       <DocsTable
         columns={["Field", "Where it appears on the Connect page"]}
@@ -26,7 +26,7 @@ export default function BrandingPage() {
 
       <h2 id="update">Update branding</h2>
       <p>PATCH is partial — send only the fields you want to change. Each field accepts an empty string to unset (falls back to UniPost defaults).</p>
-      <p>The dashboard White-label page uses this endpoint for display name, color, and attribution. Logo files can be uploaded directly from the same dashboard page or through the multipart logo endpoint below.</p>
+      <p>The dashboard Hosted Connect page uses this endpoint for display name, color, and attribution. Logo files can be uploaded directly from the same dashboard page or through the multipart logo endpoint below.</p>
 
       <h2 id="logo-upload">Upload or remove a logo</h2>
       <p>Use the logo upload endpoint when you have a local PNG or JPG file and do not want to host it yourself. UniPost stores the asset in R2, writes the returned public URL to <code>branding_logo_url</code>, and keeps the internal storage key private. R2-managed profile branding objects are retained indefinitely; replacing or removing a logo only changes the profile pointer.</p>
