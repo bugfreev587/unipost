@@ -9,6 +9,7 @@ import { useTheme } from "@/components/theme-provider";
 import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
 import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
 import { useFeatureFlags } from "@/lib/use-feature-flags";
+import { getCanonicalProjectPath } from "@/lib/profile-route";
 // useClerk kept for signOut
 import {
   DropdownMenu,
@@ -144,6 +145,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { resolvedTheme, setTheme } = useTheme();
   const { flags: backendFeatureFlags } = useFeatureFlags();
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const themeMounted = useSyncExternalStore(subscribeToClientSnapshot, getClientSnapshot, getServerSnapshot);
@@ -163,7 +165,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   const profileMatch = pathname.match(/^\/projects\/([^/]+)/);
   const urlProfileId = profileMatch?.[1];
-  const profileId = urlProfileId ?? profiles[0]?.id;
+  const urlProfileIsKnown = Boolean(urlProfileId && profiles.some((profile) => profile.id === urlProfileId));
+  const profileId = urlProfileIsKnown ? urlProfileId : profiles[0]?.id;
   const currentProfile = profiles.find((p) => p.id === profileId);
 
   // Global inbox unread badge — only enable the hook when (1) the
@@ -200,10 +203,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         const res = await listProfiles(token);
         if (!cancelled) setProfiles(res.data);
       } catch { /* silent */ }
+      finally {
+        if (!cancelled) setProfilesLoaded(true);
+      }
     })();
 
     return () => { cancelled = true; };
   }, [getToken]);
+
+  useEffect(() => {
+    if (!profilesLoaded) return;
+    const canonicalPath = getCanonicalProjectPath({ pathname, profiles });
+    if (canonicalPath) router.replace(canonicalPath);
+  }, [pathname, profiles, profilesLoaded, router]);
 
   // Resolve admin status from the backend ADMIN_USERS allowlist. We
   // intentionally don't read a NEXT_PUBLIC_* env var here — keeping the
