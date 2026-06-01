@@ -39,9 +39,9 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
       marginBottom: 24,
       boxShadow: "0 1px 2px color-mix(in srgb, var(--shadow-color) 58%, transparent)",
     }}>
-      <StatCard label="Total Accounts" value={accounts.length} />
+      <StatCard label="Total UniPost-managed accounts" value={accounts.length} />
       <StatCard
-        label="Health"
+        label="UniPost-managed account health"
         custom={
           <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 14 }}>
@@ -67,13 +67,14 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
         }
       />
       <StatCard
-        label="By Platform"
+        label="Source platform"
         custom={
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, auto)", gap: "8px 20px", marginTop: 6 }}>
             {[...byPlatform.entries()].sort((a, b) => b[1] - a[1]).map(([platform, count]) => (
               <span key={platform} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
                 <PlatformIcon platform={platform} size={14} />
                 <span style={{ color: "var(--dtext)", fontWeight: 700 }}>{count}</span>
+                <span style={{ color: "var(--dmuted)", fontWeight: 600 }}>{quickstartSourceLabel(platform)}</span>
               </span>
             ))}
           </div>
@@ -96,6 +97,13 @@ export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
       )}
     </div>
   );
+}
+
+function quickstartSourceLabel(platform: string) {
+  if (platform === "youtube") return "YouTube channel";
+  if (platform === "facebook") return "Facebook Page";
+  if (platform === "twitter") return "X / Twitter account";
+  return `${platform.charAt(0).toUpperCase()}${platform.slice(1)} account`;
 }
 
 // ── Managed Users Stats ──────────────────────────────────────────────
