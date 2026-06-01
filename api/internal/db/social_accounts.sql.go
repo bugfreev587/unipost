@@ -157,7 +157,18 @@ func (q *Queries) CreateSocialAccount(ctx context.Context, arg CreateSocialAccou
 }
 
 const disconnectSocialAccount = `-- name: DisconnectSocialAccount :one
-UPDATE social_accounts SET disconnected_at = NOW(), status = 'disconnected'
+UPDATE social_accounts
+SET disconnected_at = NOW(),
+    status = 'disconnected',
+    access_token = CASE WHEN platform = 'youtube' THEN '' ELSE access_token END,
+    refresh_token = CASE WHEN platform = 'youtube' THEN NULL ELSE refresh_token END,
+    token_expires_at = CASE WHEN platform = 'youtube' THEN NULL ELSE token_expires_at END,
+    external_account_id = CASE WHEN platform = 'youtube' THEN 'disconnected:' || id ELSE external_account_id END,
+    account_name = CASE WHEN platform = 'youtube' THEN NULL ELSE account_name END,
+    account_avatar_url = CASE WHEN platform = 'youtube' THEN NULL ELSE account_avatar_url END,
+    metadata = CASE WHEN platform = 'youtube' THEN '{}'::jsonb ELSE metadata END,
+    scope = CASE WHEN platform = 'youtube' THEN ARRAY[]::TEXT[] ELSE scope END,
+    last_refreshed_at = CASE WHEN platform = 'youtube' THEN NOW() ELSE last_refreshed_at END
 WHERE id = $1 AND profile_id = $2
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
 `

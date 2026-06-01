@@ -19,6 +19,11 @@ interface ConnectedAccountsGridProps {
 // Alias for backward compatibility with the drawer
 export { ConnectedAccountsGrid as AccountCardGrid };
 
+function accountSourceLabel(account: SocialAccount): string {
+  if (account.platform === "youtube") return "YouTube channel";
+  return `${PLATFORM_LABELS[account.platform] || account.platform} account`;
+}
+
 export function ConnectedAccountsGrid({
   accounts,
   selectedIds,
@@ -69,7 +74,7 @@ export function ConnectedAccountsGrid({
       </div>
       {profileName && (
         <div className="mt-3 text-[11px] font-mono" style={{ color: "var(--dmuted2)" }}>
-          connected to <span style={{ color: "var(--dmuted)" }}>{profileName}</span> profile
+          UniPost profile: <span style={{ color: "var(--dmuted)" }}>{profileName}</span>
         </div>
       )}
     </div>
@@ -87,13 +92,14 @@ function AccountCardSmall({
   onToggle: (id: string) => void;
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
-  const label = PLATFORM_LABELS[account.platform] || account.platform;
+  const label = accountSourceLabel(account);
   const accountLabel = getAccountDisplayName(account);
 
   return (
     <button
       type="button"
       onClick={() => onToggle(account.id)}
+      aria-label={`${selected ? "Unselect" : "Select"} ${label} ${accountLabel}`}
       className="relative rounded-lg border p-2.5 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]"
       style={
         selected
@@ -202,6 +208,8 @@ function PostToChip({
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
   const accountLabel = getAccountDisplayName(account);
+  const sourceLabel = accountSourceLabel(account);
+  const chipLabel = account.platform === "youtube" ? `${sourceLabel}: ${accountLabel}` : accountLabel;
 
   return (
     <div
@@ -221,11 +229,11 @@ function PostToChip({
         <PlatformIcon platform={account.platform} size={8} />
       </div>
       <span
-        className={`truncate max-w-[80px] ${isDuplicate ? "line-through" : ""}`}
+        className={`truncate max-w-[148px] ${isDuplicate ? "line-through" : ""}`}
         style={{ color: isDuplicate ? "var(--dmuted)" : "var(--dtext)" }}
-        title={accountLabel}
+        title={chipLabel}
       >
-        {accountLabel}
+        {chipLabel}
       </span>
       {isDuplicate && (
         <span className="text-[9px] flex-shrink-0" style={{ color: "var(--warning)" }}>DUP</span>
@@ -233,6 +241,7 @@ function PostToChip({
       <button
         type="button"
         onClick={() => onRemove(account.id)}
+        aria-label={`Remove ${sourceLabel} ${accountLabel}`}
         className="transition-colors flex-shrink-0 ml-0.5"
         style={{ color: "var(--dmuted2)" }}
       >
