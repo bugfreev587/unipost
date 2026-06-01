@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 const testEmail = process.env.DASHBOARD_TEST_EMAIL;
 const testPassword = process.env.DASHBOARD_TEST_PASSWORD;
@@ -47,6 +49,23 @@ test.describe("public dashboard surfaces", () => {
     await expect(page.getByText(/Coming Soon/i)).toHaveCount(0);
     await expect(page.getByText(/Thread Splitter|Caption Generator/i)).toHaveCount(0);
   });
+});
+
+test.describe("workspace-scoped developer routes", () => {
+  const workspaceScopedPages = [
+    "src/app/(dashboard)/projects/[id]/api-keys/page.tsx",
+    "src/app/(dashboard)/projects/[id]/credentials/page.tsx",
+    "src/app/(dashboard)/projects/[id]/webhooks/page.tsx",
+  ];
+
+  for (const filePath of workspaceScopedPages) {
+    test(`${filePath} does not block on profile lookup`, async () => {
+      const source = await readFile(path.join(process.cwd(), filePath), "utf8");
+
+      expect(source).not.toContain("useWorkspaceId");
+      expect(source).not.toContain("getProfile(");
+    });
+  }
 });
 
 test.describe("authenticated dashboard smoke", () => {
