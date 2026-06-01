@@ -1535,12 +1535,15 @@ function CapabilitySummary({
   return (
     <section className="mb-5 rounded-xl border px-4 py-3.5" style={{ borderColor: "var(--dborder)", background: "color-mix(in srgb, var(--surface2) 45%, transparent)" }}>
       <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--dmuted2)" }}>
-        Capability summary
+        UniPost capability summary
       </div>
       <div className="space-y-1.5 text-[12.5px] leading-relaxed" style={{ color: "var(--dmuted)" }}>
         <div>{firstCommentCount} of {selectedAccounts.length} selected accounts support first comments.</div>
         <div>{threadCount} of {selectedAccounts.length} selected accounts support native threads.</div>
         <div>{schedulingCount} of {selectedAccounts.length} selected accounts support scheduled publishing.</div>
+        <div className="pt-1 text-[11.5px]" style={{ color: "var(--dmuted2)" }}>
+          These availability checks are calculated by UniPost, not YouTube.
+        </div>
       </div>
     </section>
   );
@@ -2734,6 +2737,7 @@ export function CreatePostDrawer({
                 accounts={profileAccounts.filter((account) => account.status === "active")}
                 selectedIds={form.selectedAccountIds}
                 onToggle={form.toggleAccount}
+                profileName={profiles.find((profile) => profile.id === selectedProfileId)?.name}
               />
             </div>
 

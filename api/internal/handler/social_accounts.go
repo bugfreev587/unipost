@@ -24,13 +24,20 @@ type SocialAccountHandler struct {
 	encryptor         *crypto.AESEncryptor
 	bus               events.EventBus
 	superAdminChecker *auth.SuperAdminChecker
+	httpClient        *http.Client
 }
 
 func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, superAdminChecker *auth.SuperAdminChecker) *SocialAccountHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
-	return &SocialAccountHandler{queries: queries, encryptor: encryptor, bus: bus, superAdminChecker: superAdminChecker}
+	return &SocialAccountHandler{
+		queries:           queries,
+		encryptor:         encryptor,
+		bus:               bus,
+		superAdminChecker: superAdminChecker,
+		httpClient:        &http.Client{Timeout: 10 * time.Second},
+	}
 }
 
 type socialAccountResponse struct {
@@ -302,6 +309,8 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	// Resolve the profile_id for the account — API key path verifies via
 	// workspace, dashboard path verifies via profile URL param.
 	var profileID string
+	var accountForDisconnect db.SocialAccount
+	accountLoaded := false
 	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
 		// API key path: verify the account belongs to this workspace
 		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
@@ -313,8 +322,24 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 			return
 		}
 		profileID = acc.ProfileID
+		accountForDisconnect = acc
+		accountLoaded = true
 	} else {
 		profileID = h.getProfileID(r)
+		acc, err := h.queries.GetSocialAccountByIDAndProfile(r.Context(), db.GetSocialAccountByIDAndProfileParams{
+			ID:        accountID,
+			ProfileID: profileID,
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")
+			return
+		}
+		accountForDisconnect = acc
+		accountLoaded = true
+	}
+
+	if accountLoaded {
+		h.revokeYouTubeConsent(r.Context(), accountForDisconnect)
 	}
 
 	disconnected, err := h.queries.DisconnectSocialAccount(r.Context(), db.DisconnectSocialAccountParams{
@@ -357,6 +382,31 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	}
 
 	writeSuccess(w, map[string]bool{"disconnected": true})
+}
+
+func (h *SocialAccountHandler) revokeYouTubeConsent(ctx context.Context, account db.SocialAccount) {
+	if account.Platform != "youtube" || h == nil || h.encryptor == nil {
+		return
+	}
+
+	encryptedToken := strings.TrimSpace(account.AccessToken)
+	tokenKind := "access"
+	if account.RefreshToken.Valid && strings.TrimSpace(account.RefreshToken.String) != "" {
+		encryptedToken = strings.TrimSpace(account.RefreshToken.String)
+		tokenKind = "refresh"
+	}
+	if encryptedToken == "" {
+		return
+	}
+
+	token, err := h.encryptor.Decrypt(encryptedToken)
+	if err != nil {
+		slog.Warn("youtube disconnect: failed to decrypt token for revoke", "account_id", account.ID, "token_kind", tokenKind, "error", err)
+		return
+	}
+	if err := revokeYouTubeOAuthToken(ctx, h.httpClient, token); err != nil {
+		slog.Warn("youtube disconnect: token revoke failed", "account_id", account.ID, "token_kind", tokenKind, "error", err)
+	}
 }
 
 // Dismiss hides an already-disconnected account from dashboard-facing
