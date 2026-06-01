@@ -22,8 +22,7 @@ import { useGlobalInboxUnreadCount } from "@/lib/use-inbox-unread";
 import { buildContactPageHref } from "@/lib/support";
 import { shouldLoadGlobalInboxUnreadCount } from "@/components/dashboard/inbox-unread-gate";
 import {
-  Key,
-  Webhook,
+  Code2,
   Send,
   ListTodo,
   BarChart3,
@@ -35,7 +34,6 @@ import {
   Cable,
   Layers,
   MessageSquare,
-  FileText,
   PanelLeftClose,
   PanelLeftOpen,
   BookOpen,
@@ -66,18 +64,19 @@ type NavItem = {
 // Items with `backendFlag` are gated by /v1/me/features.
 const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/profile", label: "Profiles", icon: Layers },
-  { href: "/accounts", label: "Connections", icon: Cable, submenu: [
-    { href: "/accounts", label: "Quickstart" },
-    { href: "/accounts/native", label: "White-label" },
-    { href: "/accounts/app-review", label: "App Review", backendFlag: FEATURE_FLAG_KEYS.appReviewAutopilotV1 },
-    { href: "/users", label: "Developer App Users" },
-  ]},
+  { href: "/accounts", label: "Connections", icon: Cable, exactMatch: true },
   { href: "/posts", label: "Posts", icon: Send, exactMatch: true },
   { href: "/posts/queue", label: "Queue", icon: ListTodo, exactMatch: true },
   { href: "/inbox", label: "Inbox", icon: MessageSquare, backendFlag: FEATURE_FLAG_KEYS.inbox },
-  { href: "/api-keys", label: "API Keys", icon: Key },
-  { href: "/webhooks", label: "Webhooks", icon: Webhook },
-  { href: "/logs", label: "Logs", icon: FileText },
+  { href: "/developer", label: "Developer", icon: Code2, submenu: [
+    { href: "/api-keys", label: "API Keys" },
+    { href: "/credentials", label: "Platform Credentials" },
+    { href: "/accounts/native", label: "Hosted Connect" },
+    { href: "/users", label: "App Users" },
+    { href: "/webhooks", label: "Webhooks" },
+    { href: "/logs", label: "Logs" },
+    { href: "/accounts/app-review", label: "App Review", backendFlag: FEATURE_FLAG_KEYS.appReviewAutopilotV1 },
+  ]},
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts" },
     { href: "/analytics/platforms", label: "Platforms" },
@@ -126,6 +125,16 @@ function navItemIsActive(pathname: string, profileId: string | undefined, itemHr
   return exactMatch ? pathname === fullHref : pathname.startsWith(fullHref);
 }
 
+function navSubItemIsActive(pathname: string, profileId: string | undefined, itemHref: string) {
+  if (!profileId) return false;
+  const fullHref = `/projects/${profileId}${itemHref}`;
+  return pathname === fullHref || pathname.startsWith(`${fullHref}/`);
+}
+
+function navParentHasActiveSubItem(pathname: string, profileId: string | undefined, item: NavItem) {
+  return item.submenu?.some((sub) => navSubItemIsActive(pathname, profileId, sub.href)) ?? false;
+}
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -142,7 +151,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [expandedMenu, setExpandedMenu] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     for (const item of ALL_NAV_ITEMS) {
-      if (item.submenu && window.location.pathname.includes(item.href)) {
+      if (item.submenu && item.submenu.some((sub) => window.location.pathname.includes(sub.href))) {
         return item.href;
       }
     }
@@ -175,7 +184,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   // but only when the pathname actually changes — not on every render.
   // This prevents the effect from overriding manual submenu toggling.
   useEffect(() => {
-    const activeSubmenuParent = navItems.find((item) => item.submenu && pathname.includes(item.href));
+    const activeSubmenuParent = navItems.find((item) => item.submenu && navParentHasActiveSubItem(pathname, profileId, item));
     if (activeSubmenuParent) {
       setExpandedMenu(activeSubmenuParent.href);
     }
@@ -368,7 +377,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 Navigate
               </div>
               {navItems.map((item) => {
-                const active = navItemIsActive(pathname, profileId, item.href, "exactMatch" in item ? item.exactMatch : undefined);
+                const active = navItemIsActive(pathname, profileId, item.href, "exactMatch" in item ? item.exactMatch : undefined) || navParentHasActiveSubItem(pathname, profileId, item);
                 const Icon = item.icon;
                 const hasSubmenu = !!item.submenu;
                 const submenuOpen = hasSubmenu && expandedMenu === item.href;
@@ -436,7 +445,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                     {hasSubmenu && submenuOpen && item.submenu && (
                       <div style={{ paddingLeft: 28, marginBottom: 4 }}>
                         {item.submenu.map((sub) => {
-                          const subActive = pathname === `/projects/${profileId}${sub.href}`;
+                          const subActive = navSubItemIsActive(pathname, profileId, sub.href);
                           return (
                             <Link
                               key={sub.href}

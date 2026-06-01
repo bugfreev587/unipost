@@ -259,7 +259,7 @@ function AppReviewAutopilotContent() {
     : "";
 
   const steps = useMemo(() => [
-    { label: "TikTok credentials", detail: "Client Key and Client Secret saved in White-label.", state: hasTikTokCredential ? "done" : "blocked" as StepState },
+    { label: "TikTok credentials", detail: "Client Key and Client Secret saved in Platform Credentials.", state: hasTikTokCredential ? "done" : "blocked" as StepState },
     { label: "API scopes", detail: demoPlan ? `${demoPlan.requested_scopes.length} scopes mapped to ${demoPlan.segments.length} video segments.` : loadingPlan ? "Generating scope-based recording plan." : "Select the scopes requested in TikTok Developer Portal.", state: demoPlan ? "done" : selectedScopes.length ? "ready" : "blocked" as StepState },
     { label: "Review domain", detail: reviewDomain ? `${reviewDomain.domain} (${reviewDomain.status})` : loadingState ? "Loading existing review host." : "Create the customer-domain review host.", state: domainReady ? "done" : reviewDomain ? "ready" : "blocked" as StepState },
     { label: "Redirect URI", detail: "Added in the TikTok developer portal.", state: redirectAttested ? "done" : "blocked" as StepState },
@@ -396,7 +396,7 @@ function AppReviewAutopilotContent() {
             <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, color: "var(--dtext)" }}>App Review Autopilot</div>
           </div>
           <div style={{ fontSize: 14, color: "var(--dmuted)", lineHeight: 1.65 }}>
-            Prepare a TikTok app-review recording kit with your white-label credentials, customer-domain review page, required scopes, and a pinned local agent command.
+            Prepare a TikTok app-review recording kit with your platform credentials, customer-domain review page, required scopes, and a pinned local agent command.
           </div>
         </div>
         <a className="dbtn" href={TIKTOK_DEVELOPER_PORTAL} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 7, whiteSpace: "nowrap" }}>
@@ -644,8 +644,8 @@ function AppReviewAutopilotContent() {
                     {hasTikTokCredential ? "The review flow will use your own TikTok app credentials." : "Save your TikTok Client Key and Client Secret before creating a recording kit."}
                   </div>
                   {!hasTikTokCredential && (
-                    <Link href={`/projects/${profileId}/accounts/native`} style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, fontSize: 12, color: "var(--daccent)", textDecoration: "none" }}>
-                      Open White-label <ExternalLink size={11} />
+                    <Link href={`/projects/${profileId}/credentials`} style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, fontSize: 12, color: "var(--daccent)", textDecoration: "none" }}>
+                      Open Platform Credentials <ExternalLink size={11} />
                     </Link>
                   )}
                 </div>

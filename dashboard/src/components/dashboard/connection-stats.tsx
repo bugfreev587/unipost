@@ -3,14 +3,14 @@
 import { PlatformIcon } from "@/components/platform-icons";
 import type { SocialAccount, Profile } from "@/lib/api";
 
-// ── Quickstart Stats ─────────────────────────────────────────────────
+// ── Connection Stats ─────────────────────────────────────────────────
 
-interface QuickstartStatsProps {
+interface ConnectionStatsProps {
   accounts: SocialAccount[];
   profiles: Profile[];
 }
 
-export function QuickstartStats({ accounts, profiles }: QuickstartStatsProps) {
+export function ConnectionStats({ accounts, profiles }: ConnectionStatsProps) {
   const active = accounts.filter((a) => a.status === "active");
   const needsReconnect = accounts.filter((a) => a.status === "reconnect_required");
   const disconnected = accounts.filter((a) => a.status === "disconnected");
@@ -126,14 +126,14 @@ export function ManagedUsersStats({ users, totalAccounts }: ManagedUsersStatsPro
   );
 }
 
-// ── White-label Stats ────────────────────────────────────────────────
+// ── Platform Credentials Stats ───────────────────────────────────────
 
-interface WhiteLabelStatsProps {
+interface PlatformCredentialsStatsProps {
   configuredCount: number;
   totalPlatforms: number;
 }
 
-export function WhiteLabelStats({ configuredCount, totalPlatforms }: WhiteLabelStatsProps) {
+export function PlatformCredentialsStats({ configuredCount, totalPlatforms }: PlatformCredentialsStatsProps) {
   return (
     <div style={{
       display: "grid",

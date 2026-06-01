@@ -18,7 +18,7 @@ import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 import { ConfirmModal } from "@/components/confirm-modal";
-import { QuickstartStats } from "@/components/dashboard/connection-stats";
+import { ConnectionStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { humanizeConnectError } from "@/lib/connect-errors";
 import { clearStoredReplay, readStoredReplay, writeStoredReplay } from "@/components/tutorials/replay-storage";
@@ -310,10 +310,10 @@ export default function AccountsPage() {
 
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
         <div>
-          <div className="dt-page-title">Quickstart Mode</div>
+          <div className="dt-page-title">Connections</div>
           <div className="dt-subtitle" style={{ maxWidth: 620, lineHeight: 1.6 }}>
-            Connect accounts with UniPost-managed OAuth and start posting in minutes, no approvals or platform credentials required.
-            White-label credentials stay separate from Quickstart.
+            Connect your own publishing accounts from the dashboard. UniPost can use shared OAuth apps by default,
+            or your workspace platform credentials when you configure them.
           </div>
           {profiles.length > 1 && (
             <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
@@ -374,8 +374,8 @@ export default function AccountsPage() {
                   color: "var(--dmuted)",
                 }}
               >
-                Quickstart always uses UniPost&apos;s shared OAuth apps. If you need your own app name on the platform consent screen,
-                configure Accounts → White-label and onboard users through Connect Sessions instead of this dialog.
+                Dashboard connections use UniPost-managed OAuth unless your workspace has platform credentials for that platform.
+                For customer-owned account onboarding, use Developer → Hosted Connect.
               </div>
             )}
 
@@ -480,7 +480,7 @@ export default function AccountsPage() {
       </div>
 
       {!loading && visibleAccounts.length > 0 && (
-        <QuickstartStats
+        <ConnectionStats
           accounts={visibleAccounts}
           profiles={profileFilter === "all" ? profiles : profiles.filter((p) => p.id === profileFilter)}
         />

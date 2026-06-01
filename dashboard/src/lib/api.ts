@@ -9,7 +9,7 @@ export interface Profile {
   account_count?: number;
   created_at: string;
   updated_at: string;
-  // Sprint 4 PR4: white-label Connect branding
+  // Hosted Connect profile branding
   branding_logo_url?: string;
   branding_display_name?: string;
   branding_primary_color?: string;
@@ -411,7 +411,7 @@ export async function deleteProfile(
   return request(`/v1/profiles/${id}`, token, { method: "DELETE" });
 }
 
-// Platform credentials (White Label, workspace-scoped)
+// Platform credentials (workspace-scoped OAuth app credentials)
 
 export interface PlatformCredential {
   platform: string;
