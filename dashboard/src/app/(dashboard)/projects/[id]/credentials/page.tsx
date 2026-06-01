@@ -289,7 +289,7 @@ export default function CredentialsPage() {
                     Client ID: <span className="mono">{cred?.client_id}</span>
                   </div>
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                  <div className="platform-credential-form">
                     <input
                       className="dform-input"
                       placeholder={p.idLabel}
@@ -306,7 +306,7 @@ export default function CredentialsPage() {
                       disabled={writesLocked}
                     />
                     <button
-                      className="dbtn dbtn-primary"
+                      className="dbtn dbtn-primary platform-credential-save"
                       onClick={() => handleSave(p.id)}
                       disabled={writesLocked || saving === p.id || !form.clientId || !form.clientSecret}
                       style={{ padding: "8px 16px" }}

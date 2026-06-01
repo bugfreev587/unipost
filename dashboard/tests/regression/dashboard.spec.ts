@@ -68,6 +68,18 @@ test.describe("workspace-scoped developer routes", () => {
   }
 });
 
+test.describe("platform credentials layout", () => {
+  test("save action uses a compact button column", async () => {
+    const pageSource = await readFile(path.join(process.cwd(), "src/app/(dashboard)/projects/[id]/credentials/page.tsx"), "utf8");
+    const globalCss = await readFile(path.join(process.cwd(), "src/app/globals.css"), "utf8");
+
+    expect(pageSource).toContain('className="platform-credential-form"');
+    expect(pageSource).toContain('className="dbtn dbtn-primary platform-credential-save"');
+    expect(globalCss).toMatch(/\.platform-credential-form\s*{[^}]*grid-template-columns:\s*minmax\(220px,\s*1fr\)\s+minmax\(220px,\s*1fr\)\s+max-content;/s);
+    expect(globalCss).toMatch(/\.platform-credential-save\s*{[^}]*justify-self:\s*start;[^}]*min-width:\s*96px;/s);
+  });
+});
+
 test.describe("authenticated dashboard smoke", () => {
   test.skip(!testEmail || !testPassword, "Set DASHBOARD_TEST_EMAIL and DASHBOARD_TEST_PASSWORD to enable authenticated dashboard regression.");
 
