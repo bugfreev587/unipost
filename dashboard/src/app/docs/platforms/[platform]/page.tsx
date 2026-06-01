@@ -306,8 +306,9 @@ export default async function PlatformDetailPage({
         customer-owned account onboarding; Hosted Connect branding controls the
         UniPost-hosted pre-OAuth page, while Platform Credentials control the
         upstream app identity and quota. Full setup details in <Link href="/docs/quickstart">Quickstart</Link>,{" "}
-        <Link href="/docs/connect-sessions">Connect Sessions</Link>, and{" "}
-        <Link href="/docs/white-label">White-label</Link>.
+        <Link href="/docs/connect-sessions">Connect Sessions</Link>,{" "}
+        <Link href="/docs/white-label">Hosted Connect</Link>, and{" "}
+        <Link href="/docs/platform-credentials">Platform Credentials</Link>.
       </p>
       <DocsTable
         columns={["Mode", "Best for", "App / credentials", "Availability"]}

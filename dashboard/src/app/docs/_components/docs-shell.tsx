@@ -294,15 +294,16 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       items: [
         { label: "Quickstart Mode", href: "/docs/quickstart" },
         { label: "Connect Sessions", href: "/docs/connect-sessions" },
+        { label: "Hosted Connect (White-label branding)", href: "/docs/white-label" },
         {
-          label: "White-label Mode",
+          label: "Platform Credentials",
           children: [
-            { label: "Overview", href: "/docs/white-label" },
-            { label: "Meta", href: "/docs/white-label/meta" },
-            { label: "LinkedIn", href: "/docs/white-label/linkedin" },
-            { label: "TikTok", href: "/docs/white-label/tiktok" },
-            { label: "YouTube", href: "/docs/white-label/youtube" },
-            { label: "X / Twitter", href: "/docs/white-label/twitter" },
+            { label: "Overview", href: "/docs/platform-credentials" },
+            { label: "Meta", href: "/docs/platform-credentials/meta" },
+            { label: "LinkedIn", href: "/docs/platform-credentials/linkedin" },
+            { label: "TikTok", href: "/docs/platform-credentials/tiktok" },
+            { label: "YouTube", href: "/docs/platform-credentials/youtube" },
+            { label: "X / Twitter", href: "/docs/platform-credentials/twitter" },
           ],
         },
         { label: "SDKs", href: "/docs/sdk" },
@@ -397,6 +398,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Revoke API key", href: "/docs/api/api-keys/delete", method: "DELETE" },
           ],
         },
+        { label: "Platform Credentials", href: "/docs/api/platform-credentials" },
       ],
     },
     {
@@ -2353,6 +2355,8 @@ function isOverviewGuidePath(current: string) {
     || current === "/docs/mcp"
     || current === "/docs/white-label"
     || current.startsWith("/docs/white-label/")
+    || current === "/docs/platform-credentials"
+    || current.startsWith("/docs/platform-credentials/")
     || current === "/docs/platforms"
     || current.startsWith("/docs/platforms/")
     || current === "/docs/resources"

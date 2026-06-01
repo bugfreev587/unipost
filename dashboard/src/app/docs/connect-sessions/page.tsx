@@ -234,7 +234,7 @@ export default function ConnectSessionsGuidePage() {
       />
       <p className="cs-note">
         For workspace Platform Credentials, copy callback URLs from the platform guides under{" "}
-        <Link href="/docs/white-label">White-label Mode</Link>. Do not replace
+        <Link href="/docs/platform-credentials">Platform Credentials</Link>. Do not replace
         them with your <code>return_url</code>.
       </p>
 
@@ -274,10 +274,15 @@ export default function ConnectSessionsGuidePage() {
           <div className="cs-next-title">Get session</div>
           <div className="cs-next-body">Fallback polling for status and the completed managed account id.</div>
         </Link>
+        <Link href="/docs/platform-credentials" className="cs-next-card">
+          <div className="cs-next-kicker">Developer apps</div>
+          <div className="cs-next-title">Platform Credentials</div>
+          <div className="cs-next-body">Upload platform credentials and copy exact OAuth callback URLs.</div>
+        </Link>
         <Link href="/docs/white-label" className="cs-next-card">
-          <div className="cs-next-kicker">Branded OAuth</div>
-          <div className="cs-next-title">White-label setup</div>
-          <div className="cs-next-body">Upload platform credentials, configure branding, and copy platform callback URLs.</div>
+          <div className="cs-next-kicker">Branding</div>
+          <div className="cs-next-title">Hosted Connect</div>
+          <div className="cs-next-body">Configure the white-label page shown before platform OAuth.</div>
         </Link>
         <Link href="/docs/publishing" className="cs-next-card">
           <div className="cs-next-kicker">After connection</div>

@@ -47,6 +47,7 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^GET \/v1\/analytics\/platforms$/i, href: "/docs/api/analytics/platforms" },
   { match: /^GET \/v1\/analytics\/platforms\/[^/]+$/i, href: "/docs/api/analytics/platforms/detail" },
   { match: /^POST \/v1\/analytics\/refresh$/i, href: "/docs/api/analytics/refresh" },
+  { match: /^(?:POST|GET|DELETE) \/v1\/platform-credentials(?:\/[^/]+)?$/i, href: "/docs/api/platform-credentials" },
   { match: /^GET \/v1\/(?:posts|social-posts)\/[^/]+$/i, href: "/docs/api/posts/get" },
   { match: /^GET \/v1\/(?:posts|social-posts)$/i, href: "/docs/api/posts/list" },
   { match: /^GET \/v1\/workspace$/i, href: "/docs/api/workspace/get" },
@@ -80,10 +81,10 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^POST \/v1\/webhooks\/[^/]+\/rotate$/i, href: "/docs/api/webhooks/rotate" },
   { match: /^POST \/v1\/media$/i, href: "/docs/api/media" },
   { match: /^GET \/v1\/users/i, href: "/docs/api/users" },
-  // White-label group.
+  // Legacy workspace-scoped Platform Credentials paths.
   {
     match: /^(?:POST|GET|DELETE) \/v1\/workspaces\/[^/]+\/platform-credentials(?:\/[^/]+)?$/i,
-    href: "/docs/api/white-label/credentials",
+    href: "/docs/api/platform-credentials",
   },
 ];
 
@@ -1364,6 +1365,7 @@ function getApiSectionBreadcrumb(pathname: string) {
     { prefix: "/docs/api/analytics/", label: "Analytics", href: "/docs/api/analytics" },
     { prefix: "/docs/api/webhooks/", label: "Webhooks", href: "/docs/api/webhooks" },
     { prefix: "/docs/api/workspace/", label: "Workspace", href: "/docs/api/workspace/get" },
+    { prefix: "/docs/api/platform-credentials", label: "Platform Credentials", href: "/docs/api/platform-credentials" },
     { prefix: "/docs/api/white-label/", label: "White-label", href: "/docs/api/white-label/branding" },
     { prefix: "/docs/api/inbox", label: "Inbox" },
   ];

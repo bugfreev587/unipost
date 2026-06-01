@@ -46,8 +46,8 @@ export default function DocsHomePage() {
 
       <p>
         <strong>Customer-owned accounts:</strong> if you are embedding UniPost into your own product, start with{" "}
-        <Link href="/docs/connect-sessions">Connect Sessions</Link>. Use <Link href="/docs/white-label">White-label Mode</Link>{" "}
-        when you need Hosted Connect branding, and use Platform Credentials when you need your own OAuth app and platform quota.
+        <Link href="/docs/connect-sessions">Connect Sessions</Link>. Use <Link href="/docs/white-label">Hosted Connect</Link>{" "}
+        when you need white-label branding, and use <Link href="/docs/platform-credentials">Platform Credentials</Link> when you need your own OAuth app and platform quota.
       </p>
     </DocsPage>
   );
