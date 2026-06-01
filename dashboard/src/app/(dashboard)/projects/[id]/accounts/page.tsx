@@ -338,6 +338,22 @@ export default function AccountsPage() {
             Quickstart connection and health fields are managed by UniPost. The Source platform column identifies the external social account,
             for example a YouTube channel connected through UniPost-managed OAuth.
           </div>
+          <div
+            style={{
+              maxWidth: 720,
+              marginTop: 14,
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: "color-mix(in srgb, var(--success-soft) 58%, var(--surface1))",
+              border: "1px solid color-mix(in srgb, var(--success) 18%, var(--dborder))",
+              color: "color-mix(in srgb, var(--success) 78%, var(--dtext))",
+              fontSize: 12,
+              lineHeight: 1.55,
+            }}
+          >
+            Quickstart connection and health fields are managed by UniPost. The Source platform column identifies the external social account,
+            for example a YouTube channel connected through UniPost-managed OAuth.
+          </div>
           {profiles.length > 1 && (
             <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
               <button
