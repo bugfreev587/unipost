@@ -713,7 +713,7 @@ Requirements:
 - Human output clearly says to open the URL in a browser.
 - Optional `--open` may launch browser when user explicitly asks.
 - `--json` output includes URL, session ID, platform, profile ID and expiration if available.
-- `connect wait` polls `GET /v1/connect/sessions/{id}` until `completed`, `expired`, `cancelled`, or timeout.
+- `connect wait` polls `GET /v1/connect/sessions/{id}` until `completed`, `expired`, `canceled`, or timeout.
 - `connect wait --json` returns `completed_social_account_id` / `managed_account_id` when the session completes, so agents do not need to diff `accounts list`.
 - `connect wait` should use bounded exponential backoff, respect `Retry-After` and rate-limit headers, and exit with code 10 on timeout.
 
@@ -748,7 +748,7 @@ unipost posts create --from-file post.json --dry-run
 unipost posts publish-draft post_... --yes --idempotency-key demo-004
 unipost posts wait post_... --timeout 120 --json
 unipost posts cancel post_... --yes
-unipost posts retry post_... --result spr_... --yes
+unipost posts retry post_... --result <result_id> --yes
 unipost posts list
 unipost posts list --status failed
 unipost posts list --status scheduled
@@ -769,8 +769,9 @@ Requirements:
 - Scheduled publish is treated as `live_write` because it will eventually publish to external social networks.
 - Live publish and scheduled publish in non-interactive mode must include `--yes` and `--idempotency-key`; missing `--yes` exits with code 9 (`unsafe action blocked`), and missing `--idempotency-key` exits with code 3 (`missing required input`), as defined in §11.1.
 - `posts wait` polls the post and per-platform delivery results until a terminal status such as `published`, `failed`, `partial`, `canceled`, or timeout; it exits with code 10 on timeout.
-- `posts cancel` cancels a draft or scheduled/pending post by calling `POST /v1/posts/{id}/cancel` or the canonical lifecycle update path when that becomes preferred.
+- `posts cancel` cancels a draft or scheduled post by calling `POST /v1/posts/{id}/cancel` or the canonical lifecycle update path when that becomes preferred.
 - `posts retry --result <result_id>` retries a failed per-platform delivery by calling `POST /v1/posts/{id}/results/{resultID}/retry`.
+- The implementation must confirm the canonical `social_post_results` ID prefix before publishing examples; the PRD uses `<result_id>` to avoid implying one prefix.
 - Delivery-job level retry/cancel can be exposed later as `posts jobs retry|cancel` if support workflows need direct job IDs.
 - `--from-file` accepts full API-shaped JSON for advanced platform options.
 - v1 supports multi-account/cross-post payloads through `account_ids[]` in `post.json`. Bulk scheduling/draft semantics beyond the current API-supported top-level `scheduled_at` should remain behind `--from-file` and are not a separate v1 resource.
@@ -1185,7 +1186,27 @@ Contract requirements:
 - Removing an intent, changing required inputs, changing a safety level to a less restrictive value, or changing action semantics requires a major version or explicit compatibility mode.
 - MCP tools, Codex skill/plugin instructions and Claude Code instructions should reference the same intent names and safety levels.
 
-### 10.6 Pagination Contract
+### 10.6 Status Enum Contract
+
+CLI-facing status fields are part of the agent contract. Agents and CI will branch on exact string equality, so the CLI must expose one canonical spelling per state.
+
+Canonical status values:
+
+| Resource | CLI-facing status values |
+| --- | --- |
+| Post | `draft`, `scheduled`, `publishing`, `published`, `partial`, `failed`, `canceled` |
+| Connect session | `pending`, `completed`, `expired`, `canceled` |
+| Media | `pending`, `processing`, `ready`, `failed` |
+
+Requirements:
+
+- CLI JSON output must normalize backend aliases before returning status fields that agents branch on.
+- Backend `cancelled` must be normalized to CLI `canceled`.
+- Human output may use localized labels, but JSON `status` fields must use the canonical values above.
+- If CLI exposes raw backend payloads for debugging, the raw status should be nested under a field such as `raw.status` or `status_original`; agents should not branch on raw values.
+- Adding a new status value requires a documented minor-version change and capability catalog update. Renaming or removing a status value is a breaking change.
+
+### 10.7 Pagination Contract
 
 List commands must use one predictable pagination model.
 
@@ -1232,7 +1253,7 @@ Example:
 }
 ```
 
-### 10.7 Output, Field Selection, And Localization Contract
+### 10.8 Output, Field Selection, And Localization Contract
 
 Output requirements:
 
@@ -1284,7 +1305,7 @@ draft creation: allowed without --yes
 
 Destructive commands such as account disconnect, webhook delete, profile delete, or API key revoke should not be part of the initial agent beta. Post lifecycle operations have narrower rules:
 
-- `posts cancel` is allowed for draft/scheduled/pending posts when the user provides an explicit post ID and `--yes`.
+- `posts cancel` is allowed for draft/scheduled posts when the user provides an explicit post ID and `--yes`.
 - `posts retry` is allowed for failed delivery results when the user provides an explicit post ID/result ID and `--yes`.
 - Agent usage of cancel/retry should come from real CLI context (`posts get`, `posts list --status failed`, or `posts wait`), not invented IDs.
 
@@ -1841,7 +1862,7 @@ Deliverables:
 - `posts create --from-file --dry-run`.
 - `posts create --schedule-at` and `posts schedule`.
 - `posts wait`.
-- `posts cancel` for draft/scheduled/pending posts.
+- `posts cancel` for draft/scheduled posts.
 - `posts retry --result` for failed per-platform deliveries.
 - Agent publish guardrails with `--yes` and `--idempotency-key`.
 - Audit metadata for write commands.
@@ -1949,7 +1970,7 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 - A user can create a draft post.
 - A user can schedule a post after explicit confirmation and idempotency key.
 - A user can wait for a post to reach terminal delivery state.
-- A user can cancel an eligible draft/scheduled/pending post after explicit confirmation.
+- A user can cancel an eligible draft/scheduled post after explicit confirmation.
 - A user can retry a failed per-platform delivery after explicit confirmation.
 - A user can publish an existing draft through `posts publish-draft` after explicit confirmation.
 - A user can generate at least cURL and native Node.js `fetch` examples using their real account ID.
@@ -2002,6 +2023,7 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 - CLI surfaces UniPost `request_id` when available.
 - Exit codes match the documented contract.
 - Pagination, output formatting, color disabling and field selection behave consistently across list/read commands.
+- CLI-facing status fields match the documented canonical enums.
 - CLI retries only safe/idempotent requests automatically and respects `Retry-After`.
 - Telemetry can be disabled with config, environment variable, or per-command flag.
 - Base URL override works for local/dev/staging validation.
@@ -2188,6 +2210,7 @@ The CLI docs page should move from "Coming soon" to a concrete guide with:
 - agent mode
 - agent capabilities, guide, planning and execution flow
 - JSON output contract
+- status enum contract
 - pagination and output formatting contract
 - networking, retry and proxy behavior
 - telemetry and privacy controls
@@ -2214,6 +2237,7 @@ Docs should explicitly explain:
 - Scheduled publish is a live-write action and requires the same non-interactive guardrails as immediate publish.
 - Wait commands (`connect wait`, `posts wait`, `media wait`) are the supported agent/CI way to observe asynchronous workflows.
 - Machine-readable fields stay stable English even when human messages are localized.
+- CLI JSON normalizes backend status aliases to canonical values, especially `canceled`.
 
 ---
 
@@ -2316,6 +2340,7 @@ Recommended decisions for first implementation:
 - Support `--json` on all read commands from the beginning.
 - Support standard pagination and field selection early, so agents do not scrape tables or guess pages.
 - Keep machine fields stable English; localize only human-facing strings.
+- Normalize CLI-facing status fields to the documented enum values, including `canceled` instead of backend aliases.
 - Respect `Retry-After` and do not retry unsafe writes without an idempotency key.
 - Add `agent bootstrap` and `agent context` early because they are the highest-value AI-agent onboarding primitives.
 - Add `agent capabilities` and `agent guide` early so agents can discover supported intents without reading docs.
