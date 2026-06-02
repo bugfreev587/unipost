@@ -924,46 +924,110 @@ The backend remains the authority for authorization and sensitive decisions.
 
 ## 12. UX Flows
 
-### 12.1 First `unipost init`
+### 12.1 Unified `unipost init` Decision Flow
 
 ```bash
 unipost init
 ```
 
-Expected flow:
+`unipost init` should use one standard decision flow for first setup, repeat setup, Codex/Claude Code reinstall, CLI reinstall and new-machine setup.
 
-1. CLI checks whether a valid local credential already exists in keychain/config or `UNIPOST_API_KEY`.
-2. If a valid credential exists, CLI skips key creation and continues to workspace/profile setup.
-3. If no valid credential exists and setup-token/device auth backend is available, CLI asks the user to authorize CLI access.
-4. After user authorization, backend creates one named, revocable CLI API key and returns the plaintext key once.
-5. CLI stores the key in OS keychain when available and writes only non-sensitive metadata to config.
-6. If setup-token/device auth is not available, CLI falls back to `UNIPOST_API_KEY` or `auth login --api-key`.
-7. CLI calls workspace endpoint.
-8. CLI lists profiles and lets user choose or create one.
-9. CLI prints next command:
+Principle:
 
-```bash
-unipost connect create --platform linkedin --profile pr_...
+```text
+Find first.
+Validate second.
+Repair if possible.
+Create only when missing, invalid, or explicitly replacing.
 ```
 
-### 12.2 Re-running `unipost init`
+Decision flow:
 
-```bash
-unipost init
+```text
+Start: unipost init
+  |
+  v
+1. Discover local credential
+   - UNIPOST_API_KEY
+   - config metadata -> OS keychain / credential store
+   - keychain / credential-store scan: service=unipost
+   - supported password manager / secret manager, if configured
+   - explicit file storage, only if user opted in
+  |
+  v
+2. Is any credential found?
+   |
+   |-- yes --> 3. Validate credential with auth status / workspace
+   |             |
+   |             |-- valid --> 4. Repair local config if needed
+   |             |              - restore workspace_id
+   |             |              - restore key_id/name/prefix
+   |             |              - restore default profile if possible
+   |             |              - continue doctor/profile/account checks
+   |             |              -> configured
+   |             |
+   |             |-- invalid --> 5. Can recover from another local credential?
+   |                            - try next discovered credential
+   |                            - otherwise ask for reauth or fallback
+   |                            -> if no usable credential, go to 6
+   |
+   |-- no --> 6. Start authorization
+                 - setup token from Dashboard, or
+                 - device/browser auth, or
+                 - fallback manual UNIPOST_API_KEY
+  |
+  v
+7. User authorizes CLI access
+  |
+  v
+8. Backend creates named, revocable CLI API key
+   - name: Codex CLI - MacBook Pro
+   - client: codex / claude-code / generic
+   - source: cli_bootstrap
+  |
+  v
+9. CLI stores credential locally
+   - macOS Keychain
+   - Windows Credential Manager
+   - Linux Secret Service / libsecret
+   - supported password manager / secret manager, if configured
+   - CI/headless: env only
+   - config stores metadata only
+  |
+  v
+10. Run setup checks
+    - workspace
+    - profiles
+    - accounts
+    - base_url
+    - rate limits
+  |
+  v
+Done: configured
 ```
 
-Default repeat-init flow:
-
-1. CLI checks local keychain/config/env credentials.
-2. If the existing credential is valid, CLI reuses it.
-3. CLI does not consume a new setup token.
-4. CLI does not create a new API key.
-5. CLI reruns `doctor`, workspace/profile checks, and config repair.
-6. CLI reports the existing credential by metadata only:
+If a valid credential is found, CLI skips setup-token exchange and key creation. It may print metadata:
 
 ```text
 Using existing CLI key: Codex CLI (up_live_abcd...), verified now.
 ```
+
+If no valid credential is found, CLI starts auth/key creation only after user authorization. If setup-token/device auth is not available, CLI falls back to `UNIPOST_API_KEY` or `auth login --api-key`.
+
+### 12.2 Init Scenario Decision Table
+
+| Scenario | `unipost init` behavior |
+| --- | --- |
+| First init on this machine, no credential | Start setup-token/device auth or fallback to `UNIPOST_API_KEY`; create one named CLI API key after user authorization. |
+| Codex or Claude Code reinstalled, secure local credential still exists | Discover keychain/credential-store/password-manager credential, validate it, repair config if needed, reuse existing key. |
+| UniPost CLI reinstalled, config missing but keychain credential exists | Scan credential store for `service=unipost`, validate credential, rebuild config metadata, reuse existing key. |
+| Config exists but keychain secret is missing | Treat metadata as stale, try other discovered credentials, then reauth if none are valid. |
+| API key was revoked in Dashboard | Validation fails; prompt reauth/setup-token/device auth or `UNIPOST_API_KEY` fallback. |
+| New computer | No local credential exists; run setup-token/device auth and create a new named CLI key for that device. |
+| User provides `UNIPOST_API_KEY` | Use env key for this run; do not create a new key by default. |
+| User passes setup token but a valid local credential exists | Return `already_configured`; do not exchange token or create a new key unless `--replace-key` is present. |
+| User passes `--force` | Rerun discovery/validation/config repair; do not replace a valid credential. |
+| User passes `--reauth` or `--replace-key` | Start authorization and create a replacement key after explicit confirmation. |
 
 Replacement flow:
 
