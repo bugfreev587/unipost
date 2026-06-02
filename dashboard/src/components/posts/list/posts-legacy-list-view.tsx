@@ -11,7 +11,7 @@ import {
   type SocialAccount, type SocialPost, type Profile, type PostDeliveryJob,
 } from "@/lib/api";
 import { Plus, Search, MoreHorizontal, Copy, Pencil, Send, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, Archive, Trash2, RotateCcw } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 import { clearStoredReplay, readStoredReplay } from "@/components/tutorials/replay-storage";
 import {
@@ -486,7 +486,7 @@ export function PostsLegacyListView({ showCalendarLink = false }: PostsLegacyLis
     const more = platforms.length - show.length;
     return (
       <div className="posts-plats">
-        {show.map((p) => <PlatformIcon key={p} platform={p!} size={14} />)}
+        {show.map((p) => <AccountDestinationIcon key={p} platform={p!} size={14} />)}
         {more > 0 && <span className="posts-plats-more">+{more}</span>}
       </div>
     );
@@ -1020,7 +1020,7 @@ function PostResultCard({
     <div className="posts-result-card">
       <div className="posts-result-head">
         <div className="posts-result-title">
-          <PlatformIcon platform={result.platform || ""} size={15} />
+          <AccountDestinationIcon platform={result.platform || ""} size={15} />
           <span className="posts-result-name">{result.account_name || result.platform || "Unknown"}</span>
           <InlineStatusPill status={result.status} />
         </div>

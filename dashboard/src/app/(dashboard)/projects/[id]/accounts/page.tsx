@@ -16,7 +16,7 @@ import { isFacebookEnabledForMe } from "@/components/dashboard/shell";
 import { FacebookPagePicker } from "@/components/accounts/facebook-page-picker";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { ConnectionStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
@@ -338,38 +338,6 @@ export default function AccountsPage() {
             Quickstart connection and health fields are managed by UniPost. The Source platform column identifies the external social account,
             for example a YouTube channel connected through UniPost-managed OAuth.
           </div>
-          <div
-            style={{
-              maxWidth: 720,
-              marginTop: 14,
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: "color-mix(in srgb, var(--success-soft) 58%, var(--surface1))",
-              border: "1px solid color-mix(in srgb, var(--success) 18%, var(--dborder))",
-              color: "color-mix(in srgb, var(--success) 78%, var(--dtext))",
-              fontSize: 12,
-              lineHeight: 1.55,
-            }}
-          >
-            Quickstart connection and health fields are managed by UniPost. The Source platform column identifies the external social account,
-            for example a YouTube channel connected through UniPost-managed OAuth.
-          </div>
-          <div
-            style={{
-              maxWidth: 720,
-              marginTop: 14,
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: "color-mix(in srgb, var(--success-soft) 58%, var(--surface1))",
-              border: "1px solid color-mix(in srgb, var(--success) 18%, var(--dborder))",
-              color: "color-mix(in srgb, var(--success) 78%, var(--dtext))",
-              fontSize: 12,
-              lineHeight: 1.55,
-            }}
-          >
-            Quickstart connection and health fields are managed by UniPost. The Source platform column identifies the external social account,
-            for example a YouTube channel connected through UniPost-managed OAuth.
-          </div>
           {profiles.length > 1 && (
             <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
               <button
@@ -474,7 +442,9 @@ export default function AccountsPage() {
                       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div className="platform-icon-wrap"><PlatformIcon platform={p.id} /></div>
+                        <div className="platform-icon-wrap" style={{ color: p.id === "youtube" ? "var(--dmuted)" : undefined }}>
+                          <AccountDestinationIcon platform={p.id} />
+                        </div>
                         <span className="dt-body-sm" style={{ fontWeight: 500, color: "var(--dtext)" }}>{p.name}</span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -552,7 +522,9 @@ export default function AccountsPage() {
                 <tr key={a.id}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div className="platform-icon-wrap"><PlatformIcon platform={a.platform} /></div>
+                      <div className="platform-icon-wrap" style={{ color: a.platform === "youtube" ? "var(--dmuted)" : undefined }}>
+                        <AccountDestinationIcon platform={a.platform} />
+                      </div>
                       <div>
                         <div style={{ fontWeight: 500 }}>{a.account_name || a.id}</div>
                         <div className="dt-micro" style={{ color: "var(--dmuted2)", marginTop: 2, textTransform: "none", letterSpacing: 0 }}>

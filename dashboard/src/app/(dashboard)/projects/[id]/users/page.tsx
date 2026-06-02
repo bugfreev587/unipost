@@ -13,7 +13,7 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { dismissManagedUserDisconnected, listManagedUsers, type ManagedUserListEntry } from "@/lib/api";
 import { Users, AlertTriangle, ArrowRight } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { ManagedUsersStats } from "@/components/dashboard/connection-stats";
 import { ConfirmModal } from "@/components/confirm-modal";
 
@@ -182,7 +182,7 @@ export default function ManagedUsersPage() {
 function PlatformBadge({ platform, count }: { platform: string; count: number }) {
   return (
     <div className="inline-flex items-center gap-1 rounded border border-[var(--dborder)] bg-[var(--surface2)] px-2 py-1 text-xs text-[var(--dmuted)]">
-      <PlatformIcon platform={platform} size={12} />
+      <AccountDestinationIcon platform={platform} size={12} />
       {count}
     </div>
   );

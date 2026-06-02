@@ -16,7 +16,7 @@ import {
   type ManagedUserDetail,
 } from "@/lib/api";
 import { ArrowLeft, Unplug, Mail, Calendar } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ManagedUserDetailPage() {
@@ -124,7 +124,7 @@ export default function ManagedUserDetailPage() {
             key={acc.id}
             className="flex items-center gap-4 rounded-lg border border-[var(--dborder)] bg-[var(--surface)] p-4"
           >
-            <PlatformIcon platform={acc.platform} size={24} />
+            <AccountDestinationIcon platform={acc.platform} size={24} />
             <div className="flex-1 min-w-0">
               <div className="truncate font-medium text-[var(--dtext)]">
                 {acc.account_name || acc.id}

@@ -1,7 +1,7 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { PLATFORM_LABELS, PLATFORM_BRAND_COLORS } from "./use-create-post-form";
 import type { SocialAccount } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,8 @@ interface AccountCardProps {
 
 export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "#888";
+  const iconColor = account.platform === "youtube" ? "var(--dmuted)" : brandColor;
+  const iconBackground = account.platform === "youtube" ? "color-mix(in srgb, var(--dmuted) 12%, transparent)" : `${brandColor}20`;
   const label = PLATFORM_LABELS[account.platform] || account.platform;
   const accountLabel = getAccountDisplayName(account);
   const selectedBackground = "linear-gradient(180deg, color-mix(in srgb, var(--primary) 14%, var(--surface-raised)) 0%, color-mix(in srgb, var(--primary) 4%, var(--surface-raised)) 100%)";
@@ -52,9 +54,9 @@ export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
       <div className="flex items-center gap-2 mb-1.5">
         <div
           className="w-6 h-6 rounded flex items-center justify-center"
-          style={{ background: `${brandColor}20`, color: brandColor }}
+          style={{ background: iconBackground, color: iconColor }}
         >
-          <PlatformIcon platform={account.platform} size={11} />
+          <AccountDestinationIcon platform={account.platform} size={11} />
         </div>
         <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: "var(--dmuted2)" }}>
           {label}
