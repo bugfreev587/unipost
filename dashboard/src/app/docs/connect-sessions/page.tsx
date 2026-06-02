@@ -124,6 +124,23 @@ console.log(connectedAccountId);`,
   },
 ];
 
+const CLOUDFLARE_WORKERS_SNIPPETS = [
+  {
+    label: "SDK",
+    code: `import { UniPost } from "@unipost/sdk";
+
+const client = new UniPost({
+  apiKey: process.env.UNIPOST_API_KEY,
+  baseUrl: "https://origin-api.unipost.dev",
+});`,
+  },
+  {
+    label: "wrangler.toml",
+    lang: "toml",
+    code: `compatibility_flags = ["nodejs_compat"]`,
+  },
+];
+
 export default function ConnectSessionsGuidePage() {
   return (
     <DocsPage
@@ -261,6 +278,23 @@ export default function ConnectSessionsGuidePage() {
         A pending session expires after 30 minutes.
       </p>
       <DocsCodeTabs snippets={POLLING_SNIPPETS} />
+
+      <h2 id="cloudflare-workers">Cloudflare Workers and Wrangler</h2>
+      <p className="cs-note">
+        If you call Connect Sessions from Cloudflare Workers or local{" "}
+        <code>wrangler dev</code> and see an error like{" "}
+        <code>internal error; reference = ...</code>, the request may be
+        failing inside the workerd runtime before it reaches UniPost. In that
+        environment, configure the SDK with UniPost&apos;s DNS-only origin API
+        endpoint. Keep using <code>https://api.unipost.dev</code> everywhere
+        else.
+      </p>
+      <DocsCodeTabs snippets={CLOUDFLARE_WORKERS_SNIPPETS} />
+      <p className="cs-note">
+        No cache clearing is normally required. If the error persists after
+        switching <code>baseUrl</code>, restart <code>wrangler dev</code> once
+        so workerd picks up the new hostname resolution.
+      </p>
 
       <h2 id="next-steps">Next steps</h2>
       <div className="cs-next">
