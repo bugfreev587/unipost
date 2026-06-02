@@ -3,12 +3,20 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 
 const QUICKSTART_SNIPPETS = [
   {
-    label: "Planned install",
+    label: "Phase 1 source check",
+    lang: "bash",
+    code: `cd cli
+npm test
+node bin/unipost.js --version
+UNIPOST_API_KEY=up_live_... node bin/unipost.js auth status --json
+UNIPOST_API_KEY=up_live_... node bin/unipost.js doctor --json`,
+  },
+  {
+    label: "Planned npm install",
     lang: "bash",
     code: `npm install -g @unipost/cli
 unipost auth status
-unipost doctor
-unipost quickstart --platform linkedin`,
+unipost doctor`,
   },
   {
     label: "Agent bootstrap",
@@ -106,9 +114,9 @@ export default function CliPage() {
   return (
     <DocsPage
       className="docs-page-wide"
-      eyebrow="Planned"
+      eyebrow="Phase 1"
       title="CLI"
-      lead="The UniPost CLI is the planned first-party terminal interface for developer quickstarts, CI checks, support diagnostics, and AI-agent operations."
+      lead="The UniPost CLI is the first-party terminal interface being built for developer quickstarts, CI checks, support diagnostics, and AI-agent operations."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
@@ -116,10 +124,10 @@ export default function CliPage() {
         <div>
           <div className="cli-status-label">Current status</div>
           <p>
-            The command contract is being implemented in phases. The npm package is planned as <code>@unipost/cli</code>; until it is released, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
+            The Phase 1 foundation package now exists in source as <code>@unipost/cli</code>, including <code>auth status</code>, <code>doctor</code>, stable JSON envelopes, field selection, retry behavior, telemetry opt-out, and shell completion. Public npm release, <code>init</code>, browser/device auth, and agent bootstrap remain later phases; until then, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
           </p>
         </div>
-        <div className="cli-phase-pill">Phase 0 contract</div>
+        <div className="cli-phase-pill">Phase 1 foundation</div>
       </div>
 
       <h2 id="what-it-is">What the CLI is for</h2>
@@ -132,9 +140,9 @@ export default function CliPage() {
         ]}
       />
 
-      <h2 id="planned-install">Planned install and first run</h2>
+      <h2 id="planned-install">Install and first run</h2>
       <p>
-        The first public release will support API-key fallback with <code>UNIPOST_API_KEY</code>. Browser/device auth and Dashboard setup tokens are planned for the full agent-assisted onboarding flow.
+        The current foundation supports API-key fallback with <code>UNIPOST_API_KEY</code>. Browser/device auth and Dashboard setup tokens are planned for the full agent-assisted onboarding flow.
       </p>
       <DocsCodeTabs snippets={QUICKSTART_SNIPPETS} />
 
