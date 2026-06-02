@@ -43,7 +43,7 @@ UniPost CLI 是 UniPost 的 first-party command line interface，覆盖两条产
 ## 3. Product Goals
 
 1. 让新用户在 10 分钟内完成 CLI 安装、API key 验证、workspace/profile 识别、账号连接引导和第一次 post validation。
-2. 让新用户在 15 分钟内创建第一条 draft post，或生成一份可以复制到自己项目中的 SDK/cURL publish 示例。
+2. 让新用户在 15 分钟内创建第一条 draft post，或生成一份可以复制到自己项目中的 cURL/native HTTP publish 示例；SDK 示例在对应 SDK package 发布后启用。
 3. 让 AI agent 能通过 CLI 读取 accounts、posts、media、analytics、workspace context，并在安全限制下执行 dry-run 或 publish。
 4. 为所有命令提供稳定的 `--json` 输出、明确 exit code、错误 code、human hint、request id 和 docs link。
 5. 让 CLI 成为 UniPost docs、SDK、MCP 的终端入口：能生成 examples、测试 API auth、生成 MCP config、引导用户打开 Dashboard。
@@ -165,7 +165,8 @@ Jobs:
    - Quickstart 和 agent context 应尽量基于用户真实 workspace/profile/account 返回建议。
 
 6. **Stable contracts for agents**
-   - `--json` schema、exit codes、command names 需要谨慎演进。
+   - `--json` schema、exit codes、command names, agent intent names, capability catalog schema and safety-level enums need careful evolution.
+   - `agent capabilities` should include a `catalog_version` so agents can reason about compatibility.
    - Breaking changes 必须通过 major version 或 compatibility mode 处理。
 
 7. **Redaction and auditability**
@@ -248,7 +249,6 @@ unipost agent capabilities --json
 unipost agent guide --client codex
 unipost agent context --json
 unipost agent plan --intent create_draft_post --json
-unipost agent execute --plan plan.json --json
 unipost accounts list --json --non-interactive
 unipost accounts health --account sa_... --json
 unipost posts list --status failed --json
@@ -305,8 +305,9 @@ Layering model:
    - These remain the source of truth for execution.
 
 2. **Agent wrapper commands**
-   - `agent capabilities`, `agent guide`, `agent context`, `agent plan`, `agent execute`, `agent bootstrap`.
+   - `agent capabilities`, `agent guide`, `agent context`, `agent plan`, `agent bootstrap`, and later `agent execute`.
    - These commands expose task-oriented contracts, accepted intent names, JSON schemas, safety levels, required confirmations and next prompts.
+   - `agent execute` is not required for Phase 3; it should ship only after a security review proves plan validation is safe.
 
 3. **MCP server**
    - Agent-native tool protocol for Codex, Claude Code and other compatible clients.
@@ -329,13 +330,18 @@ validate_post
 create_draft_post
 plan_publish_post
 publish_post
+schedule_post
+wait_for_post
+wait_for_connect_session
+cancel_scheduled_post
+retry_failed_delivery
 upload_media
 inspect_failed_posts
 summarize_analytics
 generate_integration_example
 ```
 
-`agent capabilities --json` should describe each intent, required inputs, optional inputs, safety level and canonical command mapping. `agent guide --client codex` should produce client-tailored instructions that can be installed into a Codex skill/plugin or pasted into a project `AGENTS.md` when appropriate.
+`agent capabilities --json` should describe each intent, required inputs, optional inputs, safety level and canonical action mapping. `agent guide --client codex` should produce client-tailored instructions that can be installed into a Codex skill/plugin or pasted into a project `AGENTS.md` when appropriate.
 
 ---
 
@@ -458,6 +464,8 @@ account: <workspace_id>:<client_id_or_default>
 secret: up_live_...
 ```
 
+Multiple local credentials are allowed. `auth list` should enumerate redacted workspace/client entries, and `auth use` should select the default credential by workspace ID or local alias without printing the API key.
+
 The config file should store only non-sensitive metadata:
 
 ```json
@@ -485,6 +493,33 @@ Credential storage requirements:
 - `auth logout` removes local credentials but does not revoke the remote API key.
 - Remote key revocation remains a separate Dashboard/API action.
 
+### 8.6 Networking, Retry, Proxies, And TLS
+
+The CLI should make network behavior predictable for humans, CI and agents.
+
+Requirements:
+
+- Default API requests should have finite connect and response timeouts.
+- Read requests and idempotent writes may retry on transient network errors, 429 and 5xx responses with bounded exponential backoff.
+- Unsafe writes must not be retried automatically unless an idempotency key is present.
+- CLI must respect `Retry-After` when returned by the API and should also surface UniPost rate-limit headers in JSON metadata.
+- Polling commands such as `media wait`, `connect wait` and `posts wait` should back off, cap polling frequency and respect rate-limit headers.
+- Proxy support should follow standard environment variables: `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`.
+- Enterprise/custom CA support should use standard runtime mechanisms where possible, such as `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE`.
+- `--insecure` is allowed only for local/dev troubleshooting and should warn in human output and JSON `warnings`; production API hosts should reject or strongly discourage it.
+
+### 8.7 Telemetry And Privacy
+
+Telemetry can improve CLI reliability, but it must be explicit, redact sensitive data and be easy to disable.
+
+Requirements:
+
+- First run should disclose whether telemetry is enabled and what categories are collected.
+- Telemetry must never include API keys, setup tokens, OAuth tokens, captions, full media URLs, local file paths, or raw post bodies.
+- Users can opt out with `unipost config set telemetry false`, `--no-telemetry`, or `UNIPOST_TELEMETRY=0`.
+- CI should be able to disable telemetry deterministically through environment variables.
+- Telemetry events should use stable command and outcome names, not localized human text.
+
 ---
 
 ## 9. Command Taxonomy
@@ -493,10 +528,13 @@ Credential storage requirements:
 
 ```bash
 --json
+--output <table|json|yaml>
+--field <field_or_jsonpath>
 --non-interactive
 --yes
 --quiet
 --verbose
+--no-color
 --base-url <url>
 --api-key <key>
 --setup-token <token>
@@ -507,20 +545,35 @@ Credential storage requirements:
 --idempotency-key <key>
 --agent-name <name>
 --dry-run
+--schedule-at <iso8601>
+--limit <n>
+--cursor <cursor>
+--all
+--lang <locale>
+--no-telemetry
 --open
+--insecure
 ```
 
 Behavior:
 
 - `--json`: output stable JSON envelope.
+- `--output`: choose `table`, `json`, or `yaml`; `--json` is an alias for `--output json`.
+- `--field`: print one field or JSONPath-like selector for scripting; never prints unredacted secrets.
 - `--non-interactive`: never prompt; fail with actionable error when required input is missing.
 - `--yes`: confirms a write/destructive action in non-interactive contexts.
+- `--no-color`: disables ANSI color; `NO_COLOR=1` must have the same effect.
 - `--dry-run`: validate and preview request without creating or publishing when the API supports it.
+- `--schedule-at`: schedules a publish-capable post at an RFC3339/ISO-8601 timestamp when used by posts commands.
+- `--limit`, `--cursor`, `--all`: standard pagination controls for list commands.
 - `--setup-token`: passes a short-lived Dashboard-generated setup token for bootstrap only.
 - `--client`: tells bootstrap/config commands which agent or IDE should receive tailored instructions.
 - `--intent`: tells `agent plan` which UniPost task the agent believes the user requested.
 - `--agent-name`: records the calling agent in CLI metadata when included.
+- `--lang`: requests localized human-facing text while keeping machine fields stable.
+- `--no-telemetry`: disables CLI telemetry for the current run.
 - `--open`: open a generated Dashboard, docs, OAuth or connect URL in the user's browser when the command supports it.
+- `--insecure`: disables TLS verification only for explicit local/dev troubleshooting; it must warn loudly and should be rejected for production `api.unipost.dev`.
 
 `--open` behavior:
 
@@ -534,6 +587,8 @@ Behavior:
 unipost auth status
 unipost auth login --api-key up_live_...
 unipost auth login
+unipost auth list
+unipost auth use ws_...
 unipost auth logout
 ```
 
@@ -542,6 +597,8 @@ Requirements:
 - `auth status` verifies that a credential exists and can authenticate.
 - `auth login --api-key ...` stores credentials according to user-selected storage mode.
 - `auth login` without `--api-key` starts browser/device auth once the backend exists; until then it should explain that `UNIPOST_API_KEY` or `--api-key` is required.
+- `auth list` shows locally known credentials/workspaces with key names and prefixes redacted.
+- `auth use <workspace_id_or_alias>` switches the default local credential when multiple workspace credentials exist.
 - `auth logout` removes local credentials but never revokes API keys on the server.
 
 ### 9.3 Doctor Commands
@@ -555,6 +612,7 @@ unipost doctor --check auth,workspace,profiles,accounts,rate-limit
 Checks:
 
 - CLI version
+- minimum supported CLI version / upgrade hint when API requires newer CLI behavior
 - API reachability
 - API key validity
 - workspace access
@@ -613,7 +671,7 @@ unipost quickstart --lang node
 5. list accounts
 6. validate a sample post
 7. optionally create a draft
-8. generate SDK/cURL example using real IDs
+8. generate cURL/native HTTP/fetch example using real IDs; generate SDK example only when the corresponding SDK package is published
 
 Quickstart should prefer draft/validate over live publish.
 
@@ -646,6 +704,7 @@ Requirements:
 unipost connect create --platform linkedin --profile pr_...
 unipost connect create --platform youtube --profile pr_... --return-url https://example.com/return
 unipost connect get cs_...
+unipost connect wait cs_... --timeout 300 --json
 ```
 
 Requirements:
@@ -654,6 +713,9 @@ Requirements:
 - Human output clearly says to open the URL in a browser.
 - Optional `--open` may launch browser when user explicitly asks.
 - `--json` output includes URL, session ID, platform, profile ID and expiration if available.
+- `connect wait` polls `GET /v1/connect/sessions/{id}` until `completed`, `expired`, `canceled`, or timeout.
+- `connect wait --json` returns `completed_social_account_id` / `managed_account_id` when the session completes, so agents do not need to diff `accounts list`.
+- `connect wait` should use bounded exponential backoff, respect `Retry-After` and rate-limit headers, and exit with code 10 on timeout.
 
 ### 9.8 Accounts Commands
 
@@ -680,10 +742,16 @@ Requirements:
 unipost posts validate --account sa_... --caption "Hello"
 unipost posts draft --account sa_... --caption "Hello"
 unipost posts create --account sa_... --caption "Hello" --yes --idempotency-key demo-001
+unipost posts create --account sa_... --caption "Hello" --schedule-at 2026-06-10T09:00:00Z --yes --idempotency-key demo-002
+unipost posts schedule --account sa_... --caption "Hello" --at 2026-06-10T09:00:00Z --yes --idempotency-key demo-003
 unipost posts create --from-file post.json --dry-run
-unipost posts publish-draft post_... --yes --idempotency-key demo-002
+unipost posts publish-draft post_... --yes --idempotency-key demo-004
+unipost posts wait post_... --timeout 120 --json
+unipost posts cancel post_... --yes
+unipost posts retry post_... --result <result_id> --yes
 unipost posts list
 unipost posts list --status failed
+unipost posts list --status scheduled
 unipost posts get post_...
 unipost posts analytics post_...
 ```
@@ -694,11 +762,19 @@ Requirements:
 - `draft` creates a server-side draft by calling `POST /v1/posts` with `status: "draft"`.
 - `publish-draft` publishes an existing draft by calling `POST /v1/posts/{id}/publish`.
 - Updating an existing draft maps to `PATCH /v1/posts/{id}` and can be added as `posts update-draft` when needed.
-- `create` can publish or schedule according to request body.
+- `create` can publish immediately or schedule according to request body / `--schedule-at`.
+- `schedule` is an intent-first alias for `posts create` with top-level `scheduled_at`; it maps to the same create endpoint.
 - `draft` does not require `--yes` in either interactive or non-interactive mode because it does not publish to external social networks.
-- Live publish means `posts create` without `status: "draft"` and without `--dry-run`, or `posts publish-draft`.
-- Live publish in non-interactive mode must include `--yes` and `--idempotency-key`; otherwise CLI exits with code 3 (`missing required input`).
+- Live publish means `posts create` without `status: "draft"` and without `--dry-run`, `posts create --schedule-at`, `posts schedule`, or `posts publish-draft`.
+- Scheduled publish is treated as `live_write` because it will eventually publish to external social networks.
+- Live publish and scheduled publish in non-interactive mode must include `--yes` and `--idempotency-key`; missing `--yes` exits with code 9 (`unsafe action blocked`), and missing `--idempotency-key` exits with code 3 (`missing required input`), as defined in §11.1.
+- `posts wait` polls the post and per-platform delivery results until a terminal status such as `published`, `failed`, `partial`, `canceled`, or timeout; it exits with code 10 on timeout.
+- `posts cancel` cancels a draft or scheduled post by calling `POST /v1/posts/{id}/cancel` or the canonical lifecycle update path when that becomes preferred.
+- `posts retry --result <result_id>` retries a failed per-platform delivery by calling `POST /v1/posts/{id}/results/{resultID}/retry`.
+- The implementation must confirm the canonical `social_post_results` ID prefix before publishing examples; the PRD uses `<result_id>` to avoid implying one prefix.
+- Delivery-job level retry/cancel can be exposed later as `posts jobs retry|cancel` if support workflows need direct job IDs.
 - `--from-file` accepts full API-shaped JSON for advanced platform options.
+- v1 supports multi-account/cross-post payloads through `account_ids[]` in `post.json`. Bulk scheduling/draft semantics beyond the current API-supported top-level `scheduled_at` should remain behind `--from-file` and are not a separate v1 resource.
 
 Example `post.json`:
 
@@ -707,6 +783,7 @@ Example `post.json`:
   "account_ids": ["sa_..."],
   "caption": "Shipping with UniPost CLI.",
   "media_ids": ["med_..."],
+  "scheduled_at": "2026-06-10T09:00:00Z",
   "idempotency_key": "launch-2026-06-02-001"
 }
 ```
@@ -734,7 +811,7 @@ unipost analytics summary --from 2026-06-01 --to 2026-06-30
 unipost analytics posts --from 2026-06-01 --to 2026-06-30
 unipost analytics platforms
 unipost analytics platform tiktok --from 2026-06-01 --to 2026-06-30
-unipost analytics export --from 2026-06-01 --to 2026-06-30 --format csv
+unipost analytics export --from 2026-06-01 --to 2026-06-30 --format csv   # post-full-V1 unless pulled forward
 ```
 
 Requirements:
@@ -745,7 +822,7 @@ Requirements:
 - Legacy/internal `GET /v1/analytics/by-platform` can remain outside the CLI v1 surface unless a later implementation plan needs it.
 - Human output can summarize key metrics.
 - JSON output preserves full API response.
-- `analytics export` is post-full-V1 unless pulled forward explicitly. Export may write a file when user provides `--output`; otherwise it prints to stdout.
+- `analytics export` is post-full-V1 unless pulled forward explicitly. Export may write a file when user provides `--out-file`; otherwise it prints to stdout.
 
 ### 9.12 Examples Commands
 
@@ -777,12 +854,14 @@ unipost agent context --json
 unipost agent plan --intent create_draft_post --from-file request.json --json
 unipost agent plan --intent plan_publish_post --from-file post.json --json
 unipost agent plan-publish --from-file post.json --json
-unipost agent execute --plan plan.json --json
-unipost agent install --client codex
-unipost agent install --client claude-code
+unipost agent execute --plan plan.json --json        # deferred to Phase 5 / security review
+unipost agent install --client codex                 # deferred to Phase 5
+unipost agent install --client claude-code           # deferred to Phase 5
 unipost agent mcp-config codex --json
 unipost agent mcp-config claude-code --json
 ```
+
+`agent execute` and `agent install` are target commands, not Phase 3 launch blockers. `agent execute` should remain optional until the plan trust model has been security-reviewed.
 
 `agent bootstrap` should:
 
@@ -800,7 +879,8 @@ unipost agent mcp-config claude-code --json
 `agent capabilities` should:
 
 - return a machine-readable catalog of supported agent intents
-- include required inputs, optional inputs, output schemas, safety level and canonical CLI command mapping
+- include `catalog_version`
+- include required inputs, optional inputs, output schemas, safety level and canonical action mapping
 - include whether an intent is read-only, draft-only, dry-run-only, or live-write capable
 - include whether the intent can run without user confirmation
 - include client-specific notes when `--client` is provided
@@ -829,7 +909,8 @@ unipost agent mcp-config claude-code --json
 - accept an explicit `--intent` selected by the agent from the capabilities catalog
 - accept structured inputs through flags or `--from-file`
 - validate available local context and identify missing inputs
-- return an ordered plan containing canonical CLI commands or MCP tool names
+- return an ordered plan containing structured actions and arguments, not raw shell command strings
+- include optional display-only command strings only for human readability; those strings are not executable authority
 - classify each step by safety level
 - return `required_user_confirmations` for ambiguous choices, live publish, destructive actions or credential replacement
 - avoid executing writes by default
@@ -850,10 +931,15 @@ It should:
 
 `agent execute` should:
 
+- be deferred until Phase 5 or an explicit post-Phase-3 security review; Phase 3 should rely on `agent plan` plus normal CLI/MCP execution paths
 - accept only a plan created by `agent plan`
-- revalidate the plan before running it
+- treat the plan file as untrusted input
+- revalidate the plan before running it by recomputing allowed actions, arguments and safety levels from the current capabilities catalog
+- never trust `safety_level`, `safe_to_execute_without_user`, `display_command`, or any other plan field as execution authority
+- never shell-exec or eval command strings from the plan file
+- execute only structured actions through internal CLI handlers or a fixed action registry
 - execute read-only, validate and draft steps when confirmation rules allow
-- never bypass publish guardrails; live publish still requires `--yes`, `--idempotency-key` and explicit user approval
+- never execute `live_write` steps; live publish must go through explicit `posts create --yes --idempotency-key` or `posts publish-draft --yes --idempotency-key`
 - fail if the plan references unknown commands, unsupported intent names or stale resource IDs
 
 `agent install` should:
@@ -902,6 +988,7 @@ Example capabilities shape:
 {
   "ok": true,
   "data": {
+    "catalog_version": "2026-06-02.1",
     "intents": [
       {
         "name": "create_draft_post",
@@ -910,8 +997,11 @@ Example capabilities shape:
         "requires_user_confirmation": false,
         "required_inputs": ["account_id", "caption"],
         "optional_inputs": ["media_ids", "profile_id"],
-        "canonical_commands": [
-          "unipost posts draft --account <account_id> --caption <caption> --json"
+        "canonical_actions": [
+          {
+            "action": "posts.draft",
+            "display_command": "unipost posts draft --account <account_id> --caption <caption> --json"
+          }
         ]
       },
       {
@@ -920,8 +1010,16 @@ Example capabilities shape:
         "safety_level": "live_write",
         "requires_user_confirmation": true,
         "required_inputs": ["account_id", "caption", "idempotency_key"],
-        "canonical_commands": [
-          "unipost posts create --from-file post.json --yes --idempotency-key <key> --json --non-interactive"
+        "optional_inputs": ["media_ids", "profile_id", "scheduled_at"],
+        "canonical_actions": [
+          {
+            "action": "posts.create_live",
+            "display_command": "unipost posts create --from-file post.json --yes --idempotency-key <key> --json --non-interactive"
+          },
+          {
+            "action": "posts.schedule",
+            "display_command": "unipost posts schedule --account <account_id> --caption <caption> --at <scheduled_at> --yes --idempotency-key <key> --json --non-interactive"
+          }
         ]
       }
     ]
@@ -950,12 +1048,22 @@ Example plan shape:
       {
         "id": "validate_post",
         "safety_level": "validate_only",
-        "command": "unipost posts validate --account sa_... --caption \"...\" --json --non-interactive"
+        "action": "posts.validate",
+        "args": {
+          "account_id": "sa_...",
+          "caption": "..."
+        },
+        "display_command": "unipost posts validate --account sa_... --caption \"...\" --json --non-interactive"
       },
       {
         "id": "create_draft",
         "safety_level": "draft_write",
-        "command": "unipost posts draft --account sa_... --caption \"...\" --json --non-interactive"
+        "action": "posts.draft",
+        "args": {
+          "account_id": "sa_...",
+          "caption": "..."
+        },
+        "display_command": "unipost posts draft --account sa_... --caption \"...\" --json --non-interactive"
       }
     ]
   },
@@ -967,6 +1075,20 @@ Example plan shape:
   }
 }
 ```
+
+### 9.14 Completion Commands
+
+```bash
+unipost completion bash
+unipost completion zsh
+unipost completion fish
+```
+
+Requirements:
+
+- Completion scripts should include stable command names, flags and known enum values such as `--client` and supported platforms.
+- Completion should not call the UniPost API or require authentication.
+- Human docs should include installation snippets for common shells.
 
 ---
 
@@ -1051,6 +1173,103 @@ The backend returns `error.normalized_code` and `request_id` on many API errors.
 
 If the backend returns an unknown `normalized_code`, CLI should map by HTTP status first, include the raw `normalized_code` in JSON output, and use exit code 7 for 5xx or exit code 6 for 4xx.
 
+### 10.5 Agent Capability Catalog Contract
+
+`agent capabilities --json` is a stable agent contract. It must include a `catalog_version` field and use additive evolution whenever possible.
+
+Contract requirements:
+
+- `catalog_version` identifies the capability catalog schema and intent set version.
+- Intent names are stable identifiers; do not rename or remove them within a major CLI version.
+- `required_inputs`, `optional_inputs`, `safety_level`, `canonical_actions` and output schema fields are part of the public agent contract.
+- New intents, optional inputs and additive fields may be added in minor versions.
+- Removing an intent, changing required inputs, changing a safety level to a less restrictive value, or changing action semantics requires a major version or explicit compatibility mode.
+- MCP tools, Codex skill/plugin instructions and Claude Code instructions should reference the same intent names and safety levels.
+
+### 10.6 Status Enum Contract
+
+CLI-facing status fields are part of the agent contract. Agents and CI will branch on exact string equality, so the CLI must expose one canonical spelling per state.
+
+Canonical status values:
+
+| Resource | CLI-facing status values |
+| --- | --- |
+| Post | `draft`, `scheduled`, `publishing`, `published`, `partial`, `failed`, `canceled` |
+| Connect session | `pending`, `completed`, `expired`, `canceled` |
+| Media | `pending`, `processing`, `ready`, `failed` |
+
+Requirements:
+
+- CLI JSON output must normalize backend aliases before returning status fields that agents branch on.
+- Backend `cancelled` must be normalized to CLI `canceled`.
+- Human output may use localized labels, but JSON `status` fields must use the canonical values above.
+- If CLI exposes raw backend payloads for debugging, the raw status should be nested under a field such as `raw.status` or `status_original`; agents should not branch on raw values.
+- Adding a new status value requires a documented minor-version change and capability catalog update. Renaming or removing a status value is a breaking change.
+
+### 10.7 Pagination Contract
+
+List commands must use one predictable pagination model.
+
+Commands covered:
+
+- `accounts list`
+- `posts list`
+- `analytics posts`
+- `analytics platforms` when the backend paginates
+- future list/export commands
+
+Flags:
+
+```bash
+--limit <n>
+--cursor <cursor>
+--all
+```
+
+Requirements:
+
+- `--limit` controls page size within API-supported bounds.
+- `--cursor` requests a specific page cursor.
+- `--all` follows pagination until no next page remains or a documented safety cap is reached.
+- JSON responses include pagination metadata when available.
+- CLI should derive `next_cursor` from response body metadata or the HTTP `Link` header, depending on endpoint behavior.
+- Human output should clearly show when more pages exist and print the next command.
+- Agent/CI flows should prefer explicit `--limit`/`--cursor` unless the user intentionally asks for all records.
+
+Example:
+
+```json
+{
+  "ok": true,
+  "data": [],
+  "warnings": [],
+  "meta": {
+    "pagination": {
+      "limit": 50,
+      "next_cursor": "cur_...",
+      "has_more": true
+    }
+  }
+}
+```
+
+### 10.8 Output, Field Selection, And Localization Contract
+
+Output requirements:
+
+- Default human output should be concise tables or task-oriented summaries.
+- `--output json` and `--json` produce the standard JSON envelope.
+- `--output yaml` is optional for v1 but useful for config/debug workflows.
+- `--field <field_or_jsonpath>` prints a single redacted value for shell scripting and CI.
+- Color must be disabled by `--no-color` or `NO_COLOR=1`.
+
+Localization requirements:
+
+- Machine fields are always stable English identifiers: `code`, `normalized_code`, `intent`, `safety_level`, `status`, exit codes, command names and enum values.
+- Human-facing strings such as `message`, `hint`, `recommended_prompt` and table labels may be localized.
+- CLI locale can follow system locale, `LANG`, or explicit `--lang <locale>`.
+- Agents should branch only on stable machine fields and may display localized prompts to users.
+
 ---
 
 ## 11. Safety, Permissions, And Audit
@@ -1062,9 +1281,11 @@ Default behavior:
 - `posts validate` is safe and can run without confirmation.
 - `posts draft` is a write action but does not publish to social networks.
 - `posts create` that publishes immediately requires confirmation in human mode.
+- `posts create --schedule-at` and `posts schedule` require confirmation in human mode because the scheduled job will eventually publish externally.
 - `posts draft` does not require `--yes`, including in `--non-interactive` mode.
 - `posts create --dry-run` does not require `--yes`.
 - `posts create --non-interactive` for live publish requires `--yes` and `--idempotency-key`.
+- `posts create --schedule-at --non-interactive` and `posts schedule --non-interactive` require `--yes` and `--idempotency-key`.
 - `posts publish-draft --non-interactive` requires `--yes` and `--idempotency-key`.
 - Missing `--yes` for non-interactive live publish exits with code 9 (`unsafe action blocked`).
 - Missing `--idempotency-key` for non-interactive live publish exits with code 3 (`missing required input`).
@@ -1075,13 +1296,20 @@ Recommended policy:
 human interactive publish: confirmation prompt required
 human --yes publish: allowed
 non-interactive live publish: --yes + --idempotency-key required
+non-interactive scheduled publish: --yes + --idempotency-key required
 dry-run: allowed without --yes
 draft creation: allowed without --yes
 ```
 
 ### 11.2 Destructive Actions
 
-Destructive commands such as account disconnect, webhook delete, profile delete, or API key revoke should not be part of the initial agent beta. If added later:
+Destructive commands such as account disconnect, webhook delete, profile delete, or API key revoke should not be part of the initial agent beta. Post lifecycle operations have narrower rules:
+
+- `posts cancel` is allowed for draft/scheduled posts when the user provides an explicit post ID and `--yes`.
+- `posts retry` is allowed for failed delivery results when the user provides an explicit post ID/result ID and `--yes`.
+- Agent usage of cancel/retry should come from real CLI context (`posts get`, `posts list --status failed`, or `posts wait`), not invented IDs.
+
+For broader destructive commands added later:
 
 - require `--yes`
 - require explicit resource ID
@@ -1102,6 +1330,26 @@ Write commands should include metadata where the API supports it:
 ```
 
 The backend remains the authority for authorization and sensitive decisions.
+
+### 11.4 Agent Plan And Execute Guardrails
+
+`agent plan` and `agent execute` must follow a strict trust model.
+
+Plan requirements:
+
+- Plans are advisory artifacts, not permission grants.
+- Plan steps must use structured `action` and `args` fields.
+- Plan steps may include `display_command` for human readability, but `display_command` is never executable authority.
+- `safety_level` in a plan is informational and must not be trusted by `agent execute`.
+
+Execute requirements:
+
+- `agent execute` treats the plan file as untrusted input.
+- `agent execute` must recompute each step's safety level from the current capability catalog and internal action registry.
+- `agent execute` must never shell-exec or eval a command string from a plan file.
+- `agent execute` may run read-only, validate-only and draft-write actions only when required inputs are present and no user choice is outstanding.
+- `agent execute` must reject `live_write` steps and return a structured error such as `requires_explicit_publish_command`.
+- Live publish must always use explicit publish commands with `--yes` and `--idempotency-key`, not automatic plan execution.
 
 ---
 
@@ -1296,10 +1544,11 @@ Expected flow:
 4. User runs:
 
 ```bash
-unipost accounts list --platform linkedin
+unipost connect wait cs_... --timeout 300 --json
 ```
 
-5. CLI shows account ID and next validate command.
+5. CLI returns `completed_social_account_id` when the session completes.
+6. CLI shows account ID and next validate command.
 
 ### 12.5 First Safe Post
 
@@ -1415,7 +1664,7 @@ After user confirmation, agent runs:
 
 ```bash
 unipost connect create --platform linkedin --open --json
-unipost accounts list --platform linkedin --json
+unipost connect wait cs_... --timeout 300 --json
 ```
 
 After account connection succeeds, agent runs:
@@ -1426,9 +1675,9 @@ unipost agent plan --intent generate_integration_example --json
 unipost examples posts.create --lang node --account sa_... --json
 ```
 
-The agent can then modify the user's project code to add SDK usage, `.env` examples and a first API call. The CLI should provide enough context and command guidance that the agent does not need to browse UniPost docs unless the user asks for deeper explanation.
+The agent can then modify the user's project code to add native HTTP/fetch usage, SDK usage when the package is published, `.env` examples and a first API call. The CLI should provide enough context and command guidance that the agent does not need to browse UniPost docs unless the user asks for deeper explanation.
 
-### 12.8 Agent Intent Planning And Execution
+### 12.8 Agent Intent Planning
 
 Target user experience:
 
@@ -1445,11 +1694,15 @@ unipost agent context --json --non-interactive
 unipost agent plan --intent create_draft_post --from-file request.json --json --non-interactive
 ```
 
-If the plan is safe to execute without more user input, the agent can run:
+If the plan is safe to execute without more user input, the Phase 3 agent should use the structured `action` and `args` fields to call the corresponding explicit CLI command or MCP tool. It must not blindly copy and execute `display_command`.
+
+If the optional `agent execute` beta is enabled after security review, the agent can run:
 
 ```bash
-unipost agent execute --plan plan.json --json --non-interactive --agent-name codex
+unipost agent execute --plan plan.json --json --non-interactive --agent-name codex   # Phase 5 only
 ```
+
+This remains outside the Phase 3 acceptance path; Phase 3 agents should call explicit CLI commands or MCP tools after reading the structured plan.
 
 If the user's request is ambiguous, `agent plan` returns missing inputs:
 
@@ -1482,7 +1735,7 @@ Agent behavior requirements:
 
 - Do not invent account IDs, profile IDs, media IDs or post IDs.
 - Do not parse human-readable command output when `--json` is available.
-- Do not execute live publish from an `agent plan` unless the plan requires and receives explicit user confirmation.
+- Do not execute live publish from an `agent plan`; after explicit user confirmation, use the normal `posts create --yes --idempotency-key`, `posts schedule --yes --idempotency-key`, or `posts publish-draft --yes --idempotency-key` command.
 - Prefer `posts validate` and `posts draft` over live publish.
 - If `agent capabilities` does not include a requested intent, tell the user the action is unsupported and suggest the closest safe action.
 
@@ -1524,8 +1777,9 @@ unipost posts create \
 Expected behavior:
 
 - Dry-run returns validation result and publish plan.
-- Live publish is blocked unless confirmation requirements are satisfied.
+- Live or scheduled publish is blocked unless confirmation requirements are satisfied.
 - Response includes post ID, result IDs, status and request ID.
+- Agent/CI can call `posts wait post_... --timeout 120 --json` after create/publish to observe terminal per-platform delivery state instead of guessing whether the asynchronous publish finished.
 
 ---
 
@@ -1555,7 +1809,11 @@ Deliverables:
 - `unipost --version`.
 - `unipost auth status`.
 - API client with base URL override.
-- `--json`, `--non-interactive`, error envelope and exit codes.
+- `--json`, `--output`, `--field`, `--non-interactive`, error envelope and exit codes.
+- Standard pagination flags for list commands.
+- Standard network retry/backoff behavior, including `Retry-After` handling.
+- Telemetry opt-out and first-run privacy notice.
+- Shell completion generation for bash/zsh/fish.
 - `unipost doctor` with auth/workspace/API reachability checks.
 
 Success criteria:
@@ -1577,7 +1835,8 @@ Deliverables:
 - `agent mcp-config claude-code`.
 - `agent mcp-config codex`.
 - `profiles list/create/use`.
-- `connect create/get`.
+- `auth list/use` for local multi-workspace credentials.
+- `connect create/get/wait`.
 - `accounts list/get`.
 - `posts validate`.
 - `posts draft`.
@@ -1600,8 +1859,11 @@ Deliverables:
 - Stable `--json` output for accounts/posts/media/analytics.
 - `agent plan --intent ...`.
 - `agent plan-publish` as an alias for `agent plan --intent plan_publish_post`.
-- `agent execute --plan plan.json` for safe read/validate/draft execution.
 - `posts create --from-file --dry-run`.
+- `posts create --schedule-at` and `posts schedule`.
+- `posts wait`.
+- `posts cancel` for draft/scheduled posts.
+- `posts retry --result` for failed per-platform deliveries.
 - Agent publish guardrails with `--yes` and `--idempotency-key`.
 - Audit metadata for write commands.
 
@@ -1609,8 +1871,10 @@ Success criteria:
 
 - Codex / Claude Code can inspect real UniPost account context without browsing docs.
 - Agent can safely dry-run publish payloads.
-- Agent can turn a supported intent into a structured plan with missing inputs, required confirmations and canonical commands.
-- Agent can execute safe plan steps without guessing command syntax.
+- Agent can schedule approved content and wait for post terminal state with structured per-platform results.
+- Agent can cancel or retry eligible post deliveries only when using explicit IDs and confirmation flags.
+- Agent can turn a supported intent into a structured plan with missing inputs, required confirmations and canonical actions.
+- Agent can use the plan to call normal CLI commands or MCP tools without guessing command syntax.
 - Live publish is impossible by accident in non-interactive mode.
 - Agent can move from read-only setup into draft/publish workflows only after explicit user confirmation.
 
@@ -1645,6 +1909,7 @@ Deliverables:
 - Codex skill/plugin package with UniPost instructions, capability usage and safe publish rules.
 - Claude Code instruction package with equivalent guidance.
 - `agent install --client codex|claude-code` or equivalent generated setup instructions.
+- Optional `agent execute --plan plan.json` beta after security review, limited to structured read-only, validate-only and draft-write actions.
 - Optional Homebrew distribution.
 
 Success criteria:
@@ -1652,6 +1917,7 @@ Success criteria:
 - CLI can bootstrap MCP setup without replacing MCP.
 - MCP tools and CLI agent wrapper use the same intent names and safety model.
 - Codex / Claude Code can call UniPost through installed instructions or MCP tools without guessing terminal syntax.
+- If `agent execute` is enabled, it rejects `live_write` steps and never executes raw command strings from plan files.
 - Agent users can choose CLI, MCP or client-specific instruction packages based on workflow.
 
 ---
@@ -1671,7 +1937,7 @@ Product metrics:
 - Number of `--json` command runs.
 - Number of `agent capabilities` and `agent guide` runs by client.
 - Number of `agent plan` runs by intent and outcome status.
-- Number of `agent execute` runs by safety level.
+- Number of `agent execute` runs by safety level, if `agent execute` is enabled.
 - Number of agent dry-runs before publish.
 
 Quality metrics:
@@ -1699,8 +1965,13 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 - If key creation is declined or fails, the user can retry init/bootstrap later without destructive state.
 - A user can list profiles and accounts.
 - A user can create a connect URL/session for a supported platform.
+- A user can run `connect wait` and receive the completed social account ID after OAuth.
 - A user can validate a post without publishing.
 - A user can create a draft post.
+- A user can schedule a post after explicit confirmation and idempotency key.
+- A user can wait for a post to reach terminal delivery state.
+- A user can cancel an eligible draft/scheduled post after explicit confirmation.
+- A user can retry a failed per-platform delivery after explicit confirmation.
 - A user can publish an existing draft through `posts publish-draft` after explicit confirmation.
 - A user can generate at least cURL and native Node.js `fetch` examples using their real account ID.
 - SDK-backed examples are available only for SDK packages that are published and installable.
@@ -1710,10 +1981,10 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 
 - `agent bootstrap --client codex --json` returns a clear setup status and next actions.
 - `agent bootstrap --client claude-code --json` returns client-specific setup instructions.
-- `agent capabilities --json` returns supported intent names, schemas, safety levels and canonical command mappings.
+- `agent capabilities --json` returns supported intent names, schemas, safety levels and canonical action mappings.
 - `agent guide --client codex|claude-code` returns client-specific operating guidance without secrets.
 - `agent plan --intent ... --json` returns a structured plan, missing inputs and required confirmations without executing writes.
-- `agent execute --plan ...` can run safe read/validate/draft steps and cannot bypass live-publish guardrails.
+- If `agent execute --plan ...` is enabled, it treats plan files as untrusted input, runs only structured safe actions, and cannot bypass live-publish guardrails.
 - Before setup-token/device auth exists, `agent bootstrap` supports the `UNIPOST_API_KEY` fallback path.
 - After setup-token/device auth exists, Dashboard-generated setup tokens can be exchanged without exposing long-lived API keys to the agent.
 - When auth, profile or connected account is missing, bootstrap returns a recommended plain-language prompt for the agent to ask the user.
@@ -1721,9 +1992,13 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 - JSON output uses the standard envelope.
 - Error output uses the standard error envelope.
 - `agent context --json` returns workspace, profiles, accounts and recent post summary.
+- `connect wait --json` lets agents observe OAuth completion and receive `completed_social_account_id`.
+- `posts wait --json` lets agents observe asynchronous post delivery state and per-platform results.
 - Non-interactive live publish fails without `--yes`.
 - Non-interactive live publish fails without `--idempotency-key`.
+- Non-interactive scheduled publish fails without `--yes` and `--idempotency-key`.
 - Dry-run publish returns a validation result and plan without publishing.
+- Post cancel/retry commands require explicit IDs and `--yes`.
 - Write commands include source metadata only after the backend accepts those fields.
 - Agent can map common user requests to supported UniPost intents by using `agent capabilities` and `agent guide`, without browsing docs or guessing terminal syntax.
 
@@ -1747,6 +2022,10 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 - CLI fails safely in non-interactive mode when keychain storage is unavailable.
 - CLI surfaces UniPost `request_id` when available.
 - Exit codes match the documented contract.
+- Pagination, output formatting, color disabling and field selection behave consistently across list/read commands.
+- CLI-facing status fields match the documented canonical enums.
+- CLI retries only safe/idempotent requests automatically and respects `Retry-After`.
+- Telemetry can be disabled with config, environment variable, or per-command flag.
 - Base URL override works for local/dev/staging validation.
 - CI can use CLI without prompts by passing `--non-interactive`.
 
@@ -1761,9 +2040,15 @@ API dependencies:
 - Profiles endpoints.
 - Accounts list/health/capabilities/metrics endpoints.
 - Connect session or OAuth connect endpoint.
+- Connect session get endpoint that returns status, `completed_social_account_id` and `completed_at`.
 - Posts validate/create/list/get/publish-draft endpoints; draft creation uses `POST /v1/posts` with `status: "draft"`.
+- Posts scheduling through top-level `scheduled_at` on create/validate payloads.
+- Post lifecycle endpoints for canceling eligible posts and retrying failed per-platform results.
+- Post delivery job retry/cancel endpoints when direct job-level support workflows are pulled into CLI.
 - Media reserve/upload/get endpoints.
 - Analytics summary/posts/platforms endpoints, plus export when `analytics export` is included.
+- Pagination signals for list endpoints, including `Link` header or response metadata.
+- Rate-limit headers and `Retry-After` for retry/backoff behavior.
 
 New hard backend dependencies for full agent-assisted onboarding:
 
@@ -1782,6 +2067,7 @@ Backend behavior that improves CLI quality:
 - Optional request metadata field for CLI/agent audit; current backend acceptance must be confirmed before CLI sends these fields.
 - Draft creation path that does not publish.
 - Validation endpoint that catches platform-specific constraints.
+- Minimum supported CLI version signal so `doctor` can warn users when a CLI upgrade is required.
 
 Docs dependencies:
 
@@ -1821,7 +2107,27 @@ Mitigation:
 - Validate/dry-run first.
 - Require explicit `--yes`.
 - Require idempotency key for non-interactive agent publish.
-- Keep destructive commands out of early agent beta.
+- Treat scheduled publish as live publish because it eventually posts externally.
+- Keep broad destructive commands such as account disconnect, API key revoke and profile delete out of early agent beta.
+
+### Risk: Scheduled posts, retries, or cancels create unexpected external effects
+
+Mitigation:
+
+- Require explicit resource IDs and `--yes` for cancel/retry.
+- Require `--yes` and `--idempotency-key` for scheduled publish in non-interactive mode.
+- Make `posts wait` available so agents can observe terminal status instead of issuing repeated retries blindly.
+- Surface per-platform result IDs and statuses in JSON output.
+- Respect rate-limit and queue-depth signals before retrying.
+
+### Risk: Pagination or `--all` causes runaway API usage
+
+Mitigation:
+
+- Use bounded page sizes and a documented maximum for `--all`.
+- Show `next_cursor` and recommended next commands in human output.
+- Prefer explicit cursor pagination in agent/CI flows.
+- Respect `Retry-After` and rate-limit headers during pagination.
 
 ### Risk: JSON contract changes break agents
 
@@ -1830,6 +2136,9 @@ Mitigation:
 - Version the CLI.
 - Keep envelope stable.
 - Add fields without removing existing fields.
+- Version `agent capabilities` with `catalog_version`.
+- Keep intent names, safety-level enums and capability schema stable within a major version.
+- Add intents and optional inputs additively; remove or weaken safety only in a major version or explicit compatibility mode.
 - Reserve breaking changes for major version.
 
 ### Risk: Secrets leak in diagnostics
@@ -1839,6 +2148,15 @@ Mitigation:
 - Redact API keys and tokens.
 - Avoid printing full presigned URLs unless the command explicitly requires it.
 - Add automated redaction tests.
+
+### Risk: Telemetry or localized output breaks trust or agent parsing
+
+Mitigation:
+
+- Provide first-run telemetry notice and deterministic opt-out.
+- Keep machine fields stable English identifiers.
+- Localize only human-facing strings such as messages, hints and prompts.
+- Redact sensitive data before telemetry is emitted.
 
 ### Risk: Setup tokens become a new credential leak path
 
@@ -1892,7 +2210,12 @@ The CLI docs page should move from "Coming soon" to a concrete guide with:
 - agent mode
 - agent capabilities, guide, planning and execution flow
 - JSON output contract
+- status enum contract
+- pagination and output formatting contract
+- networking, retry and proxy behavior
+- telemetry and privacy controls
 - publish safety rules
+- scheduling, wait, cancel and retry workflows
 - examples
 - MCP bridge
 - Codex skill/plugin and Claude Code instruction package setup once available
@@ -1909,8 +2232,12 @@ Docs should explicitly explain:
 - After user authorization, UniPost should create a named, revocable CLI API key automatically and return it once to the local CLI for secure storage.
 - `unipost init` is safe to rerun: valid existing credentials are reused, and new keys are created only on first setup, missing/invalid credentials, or explicit replacement.
 - Created keys are stored in OS keychain by default; config stores only key metadata.
-- AI agents should use `agent capabilities`, `agent guide`, `agent context`, `agent plan` and `agent execute` instead of guessing raw terminal commands.
+- AI agents should use `agent capabilities`, `agent guide`, `agent context`, `agent plan`, and later `agent execute` when enabled, instead of guessing raw terminal commands.
 - MCP, Codex skill/plugin and Claude Code instruction packages should mirror the CLI intent names and safety model.
+- Scheduled publish is a live-write action and requires the same non-interactive guardrails as immediate publish.
+- Wait commands (`connect wait`, `posts wait`, `media wait`) are the supported agent/CI way to observe asynchronous workflows.
+- Machine-readable fields stay stable English even when human messages are localized.
+- CLI JSON normalizes backend status aliases to canonical values, especially `canceled`.
 
 ---
 
@@ -1920,8 +2247,11 @@ Full V1 command set delivered across phases:
 
 ```text
 unipost --version
+unipost completion
 unipost auth status
 unipost auth login
+unipost auth list
+unipost auth use
 unipost auth logout
 unipost config show
 unipost config path
@@ -1933,6 +2263,7 @@ unipost profiles create
 unipost profiles use
 unipost connect create
 unipost connect get
+unipost connect wait
 unipost accounts list
 unipost accounts get
 unipost accounts health
@@ -1941,7 +2272,11 @@ unipost accounts metrics
 unipost posts validate
 unipost posts draft
 unipost posts create
+unipost posts schedule
 unipost posts publish-draft
+unipost posts wait
+unipost posts cancel
+unipost posts retry
 unipost posts list
 unipost posts get
 unipost posts analytics
@@ -1960,7 +2295,6 @@ unipost agent guide
 unipost agent context
 unipost agent plan
 unipost agent plan-publish
-unipost agent execute
 unipost agent mcp-config
 ```
 
@@ -1973,11 +2307,13 @@ unipost webhooks create/update/delete
 unipost api-keys create/revoke
 unipost analytics export
 unipost posts update/delete
+unipost posts jobs retry/cancel
 ```
 
 Ecosystem deliverables that can wait until Phase 5 or after full V1 GA:
 
 ```text
+unipost agent execute
 unipost agent install
 @unipost/mcp or equivalent first-party MCP package
 Codex skill/plugin package
@@ -1998,12 +2334,20 @@ Recommended decisions for first implementation:
 - Add optional local credential storage after the basic flow works, with keychain preferred over file storage.
 - Repeat `init` should reuse an existing valid credential; create a new key only when no valid credential exists or the user explicitly requests replacement.
 - Default first post path to `validate` then `draft`, not live publish.
+- Treat scheduled posts as live-write operations because they eventually publish externally.
+- Add `connect wait`, `posts wait` and `media wait` as first-class async primitives for agents and CI.
+- Support post lifecycle operations for schedule/cancel/retry only with explicit IDs and confirmation guardrails.
 - Support `--json` on all read commands from the beginning.
+- Support standard pagination and field selection early, so agents do not scrape tables or guess pages.
+- Keep machine fields stable English; localize only human-facing strings.
+- Normalize CLI-facing status fields to the documented enum values, including `canceled` instead of backend aliases.
+- Respect `Retry-After` and do not retry unsafe writes without an idempotency key.
 - Add `agent bootstrap` and `agent context` early because they are the highest-value AI-agent onboarding primitives.
 - Add `agent capabilities` and `agent guide` early so agents can discover supported intents without reading docs.
 - Use `agent plan --intent ...` as the primary AI-agent planning wrapper; keep `agent plan-publish` as a publish-specific alias.
 - Let Codex / Claude Code interpret natural language, then pass explicit intent and structured inputs to UniPost CLI.
-- Treat `agent execute` as a safe plan runner, not a permission bypass.
+- Defer `agent execute` to Phase 5 or a post-Phase-3 security review. Phase 3 should provide plan-only guidance and let agents execute normal CLI commands or MCP tools explicitly.
+- If `agent execute` ships, treat it as a safe structured-action runner, not a permission bypass.
 - Require `--yes` and `--idempotency-key` for non-interactive live publish.
 - Keep MCP separate but let CLI generate MCP config snippets and mirror CLI agent intents in MCP tools.
 - Defer first-party Codex skill/plugin and Claude Code instruction package to the ecosystem phase unless pulled forward for launch.
@@ -2018,9 +2362,10 @@ The CLI product is considered successfully launched when:
 2. The same developer can generate a usable cURL/native HTTP example containing their real profile/account IDs, plus SDK examples where published packages exist.
 3. An AI coding agent can run `agent context --json` and get enough data to choose real accounts instead of inventing IDs.
 4. An AI coding agent can run `agent capabilities --json` and `agent guide --client ...` to understand supported UniPost intents without browsing docs.
-5. An AI coding agent can run `agent plan --intent ... --json` and receive missing inputs, required confirmations and canonical safe commands.
+5. An AI coding agent can run `agent plan --intent ... --json` and receive missing inputs, required confirmations and canonical safe actions.
 6. An AI coding agent can dry-run a post and receive a structured publish plan.
-7. Live publish cannot happen accidentally in non-interactive agent usage.
-8. Support can ask users to run `unipost doctor --json` and receive safe diagnostic output.
-9. CLI docs clearly explain when to use CLI, SDK, raw API, MCP and client-specific agent instruction packages.
-10. Full agent-assisted onboarding can create/store a named, revocable CLI API key through setup-token or device auth without manual API-key copy/paste.
+7. A developer or agent can schedule approved content, wait for terminal post state and inspect per-platform results.
+8. Live or scheduled publish cannot happen accidentally in non-interactive agent usage.
+9. Support can ask users to run `unipost doctor --json` and receive safe diagnostic output.
+10. CLI docs clearly explain when to use CLI, SDK, raw API, MCP and client-specific agent instruction packages.
+11. Full agent-assisted onboarding can create/store a named, revocable CLI API key through setup-token or device auth without manual API-key copy/paste.
