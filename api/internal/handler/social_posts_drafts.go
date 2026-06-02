@@ -547,6 +547,12 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		writeError(w, status, "VALIDATION_ERROR", msg)
 		return
 	}
+	accountMap, err := h.loadValidateAccounts(r, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
+		return
+	}
+	parsed.resolveLegacyPlatformOptions(accountMap)
 
 	metaJSON, err := platform.EncodePostMetadata(parsed.Posts)
 	if err != nil {
@@ -582,7 +588,6 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 
 	// Re-run validation against the new content so the editor sees
 	// fresh diagnostics in the response.
-	accountMap, _ := h.loadValidateAccounts(r, workspaceID)
 	vr := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accountMap)
 
 	resp := draftResponse{

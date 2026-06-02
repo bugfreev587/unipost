@@ -58,3 +58,21 @@ func TestFatalErrorCodes_Media(t *testing.T) {
 		}
 	}
 }
+
+func TestFatalErrorCodes_YouTubeMetadata(t *testing.T) {
+	required := []string{
+		platform.CodeYouTubeTitleRequired,
+		platform.CodeYouTubeMadeForKidsRequired,
+		platform.CodeInvalidPrivacyStatus,
+		platform.CodeInvalidLicense,
+		platform.CodeInvalidPublishAt,
+		platform.CodeInvalidRecordingDate,
+		platform.CodeInvalidDefaultLanguage,
+		platform.CodeYouTubePublishAtRequiresPrivate,
+	}
+	for _, code := range required {
+		if !fatalErrorCodes[code] {
+			t.Errorf("YouTube validator code %q must be in fatalErrorCodes", code)
+		}
+	}
+}

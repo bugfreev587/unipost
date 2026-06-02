@@ -459,6 +459,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
 		return
 	}
+	parsed.resolveLegacyPlatformOptions(accountMap)
 
 	// Load media rows referenced by the request so the validator can
 	// check ownership, status, and content type.
@@ -1794,6 +1795,16 @@ var fatalErrorCodes = map[string]bool{
 	// Sprint 4 PR3 first_comment codes.
 	platform.CodeFirstCommentUnsupported: true,
 	platform.CodeFirstCommentTooLong:     true,
+	// YouTube metadata codes. These must fail before dispatch because
+	// the upload API accepts a missing title poorly for customers.
+	platform.CodeYouTubeTitleRequired:            true,
+	platform.CodeYouTubeMadeForKidsRequired:      true,
+	platform.CodeInvalidPrivacyStatus:            true,
+	platform.CodeInvalidLicense:                  true,
+	platform.CodeInvalidPublishAt:                true,
+	platform.CodeInvalidRecordingDate:            true,
+	platform.CodeInvalidDefaultLanguage:          true,
+	platform.CodeYouTubePublishAtRequiresPrivate: true,
 	// Plan gate (migration 057): targeting a plan-disallowed platform
 	// is fatal so the request fails fast with VALIDATION_ERROR rather
 	// than getting partway through the publish loop and recording a

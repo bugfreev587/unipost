@@ -146,6 +146,7 @@ func (h *SocialPostHandler) processBulkOne(
 			Error:  &bulkErrorEnvelope{Code: "VALIDATION_ERROR", Message: msg},
 		}, 0
 	}
+	parsed.resolveLegacyPlatformOptions(accountMap)
 
 	// Bulk doesn't support drafts or scheduled posts.
 	if parsed.Status == "draft" {
