@@ -165,7 +165,8 @@ Jobs:
    - Quickstart 和 agent context 应尽量基于用户真实 workspace/profile/account 返回建议。
 
 6. **Stable contracts for agents**
-   - `--json` schema、exit codes、command names 需要谨慎演进。
+   - `--json` schema、exit codes、command names, agent intent names, capability catalog schema and safety-level enums need careful evolution.
+   - `agent capabilities` should include a `catalog_version` so agents can reason about compatibility.
    - Breaking changes 必须通过 major version 或 compatibility mode 处理。
 
 7. **Redaction and auditability**
@@ -248,7 +249,6 @@ unipost agent capabilities --json
 unipost agent guide --client codex
 unipost agent context --json
 unipost agent plan --intent create_draft_post --json
-unipost agent execute --plan plan.json --json
 unipost accounts list --json --non-interactive
 unipost accounts health --account sa_... --json
 unipost posts list --status failed --json
@@ -305,8 +305,9 @@ Layering model:
    - These remain the source of truth for execution.
 
 2. **Agent wrapper commands**
-   - `agent capabilities`, `agent guide`, `agent context`, `agent plan`, `agent execute`, `agent bootstrap`.
+   - `agent capabilities`, `agent guide`, `agent context`, `agent plan`, `agent bootstrap`, and later `agent execute`.
    - These commands expose task-oriented contracts, accepted intent names, JSON schemas, safety levels, required confirmations and next prompts.
+   - `agent execute` is not required for Phase 3; it should ship only after a security review proves plan validation is safe.
 
 3. **MCP server**
    - Agent-native tool protocol for Codex, Claude Code and other compatible clients.
@@ -335,7 +336,7 @@ summarize_analytics
 generate_integration_example
 ```
 
-`agent capabilities --json` should describe each intent, required inputs, optional inputs, safety level and canonical command mapping. `agent guide --client codex` should produce client-tailored instructions that can be installed into a Codex skill/plugin or pasted into a project `AGENTS.md` when appropriate.
+`agent capabilities --json` should describe each intent, required inputs, optional inputs, safety level and canonical action mapping. `agent guide --client codex` should produce client-tailored instructions that can be installed into a Codex skill/plugin or pasted into a project `AGENTS.md` when appropriate.
 
 ---
 
@@ -697,7 +698,7 @@ Requirements:
 - `create` can publish or schedule according to request body.
 - `draft` does not require `--yes` in either interactive or non-interactive mode because it does not publish to external social networks.
 - Live publish means `posts create` without `status: "draft"` and without `--dry-run`, or `posts publish-draft`.
-- Live publish in non-interactive mode must include `--yes` and `--idempotency-key`; otherwise CLI exits with code 3 (`missing required input`).
+- Live publish in non-interactive mode must include `--yes` and `--idempotency-key`; missing `--yes` exits with code 9 (`unsafe action blocked`), and missing `--idempotency-key` exits with code 3 (`missing required input`), as defined in §11.1.
 - `--from-file` accepts full API-shaped JSON for advanced platform options.
 
 Example `post.json`:
@@ -784,6 +785,8 @@ unipost agent mcp-config codex --json
 unipost agent mcp-config claude-code --json
 ```
 
+`agent execute` and `agent install` are target commands, not Phase 3 launch blockers. `agent execute` should remain optional until the plan trust model has been security-reviewed.
+
 `agent bootstrap` should:
 
 - detect whether the CLI is installed and current
@@ -800,7 +803,8 @@ unipost agent mcp-config claude-code --json
 `agent capabilities` should:
 
 - return a machine-readable catalog of supported agent intents
-- include required inputs, optional inputs, output schemas, safety level and canonical CLI command mapping
+- include `catalog_version`
+- include required inputs, optional inputs, output schemas, safety level and canonical action mapping
 - include whether an intent is read-only, draft-only, dry-run-only, or live-write capable
 - include whether the intent can run without user confirmation
 - include client-specific notes when `--client` is provided
@@ -829,7 +833,8 @@ unipost agent mcp-config claude-code --json
 - accept an explicit `--intent` selected by the agent from the capabilities catalog
 - accept structured inputs through flags or `--from-file`
 - validate available local context and identify missing inputs
-- return an ordered plan containing canonical CLI commands or MCP tool names
+- return an ordered plan containing structured actions and arguments, not raw shell command strings
+- include optional display-only command strings only for human readability; those strings are not executable authority
 - classify each step by safety level
 - return `required_user_confirmations` for ambiguous choices, live publish, destructive actions or credential replacement
 - avoid executing writes by default
@@ -850,10 +855,15 @@ It should:
 
 `agent execute` should:
 
+- be deferred until Phase 5 or an explicit post-Phase-3 security review; Phase 3 should rely on `agent plan` plus normal CLI/MCP execution paths
 - accept only a plan created by `agent plan`
-- revalidate the plan before running it
+- treat the plan file as untrusted input
+- revalidate the plan before running it by recomputing allowed actions, arguments and safety levels from the current capabilities catalog
+- never trust `safety_level`, `safe_to_execute_without_user`, `display_command`, or any other plan field as execution authority
+- never shell-exec or eval command strings from the plan file
+- execute only structured actions through internal CLI handlers or a fixed action registry
 - execute read-only, validate and draft steps when confirmation rules allow
-- never bypass publish guardrails; live publish still requires `--yes`, `--idempotency-key` and explicit user approval
+- never execute `live_write` steps; live publish must go through explicit `posts create --yes --idempotency-key` or `posts publish-draft --yes --idempotency-key`
 - fail if the plan references unknown commands, unsupported intent names or stale resource IDs
 
 `agent install` should:
@@ -902,6 +912,7 @@ Example capabilities shape:
 {
   "ok": true,
   "data": {
+    "catalog_version": "2026-06-02.1",
     "intents": [
       {
         "name": "create_draft_post",
@@ -910,8 +921,11 @@ Example capabilities shape:
         "requires_user_confirmation": false,
         "required_inputs": ["account_id", "caption"],
         "optional_inputs": ["media_ids", "profile_id"],
-        "canonical_commands": [
-          "unipost posts draft --account <account_id> --caption <caption> --json"
+        "canonical_actions": [
+          {
+            "action": "posts.draft",
+            "display_command": "unipost posts draft --account <account_id> --caption <caption> --json"
+          }
         ]
       },
       {
@@ -920,8 +934,11 @@ Example capabilities shape:
         "safety_level": "live_write",
         "requires_user_confirmation": true,
         "required_inputs": ["account_id", "caption", "idempotency_key"],
-        "canonical_commands": [
-          "unipost posts create --from-file post.json --yes --idempotency-key <key> --json --non-interactive"
+        "canonical_actions": [
+          {
+            "action": "posts.create_live",
+            "display_command": "unipost posts create --from-file post.json --yes --idempotency-key <key> --json --non-interactive"
+          }
         ]
       }
     ]
@@ -950,12 +967,22 @@ Example plan shape:
       {
         "id": "validate_post",
         "safety_level": "validate_only",
-        "command": "unipost posts validate --account sa_... --caption \"...\" --json --non-interactive"
+        "action": "posts.validate",
+        "args": {
+          "account_id": "sa_...",
+          "caption": "..."
+        },
+        "display_command": "unipost posts validate --account sa_... --caption \"...\" --json --non-interactive"
       },
       {
         "id": "create_draft",
         "safety_level": "draft_write",
-        "command": "unipost posts draft --account sa_... --caption \"...\" --json --non-interactive"
+        "action": "posts.draft",
+        "args": {
+          "account_id": "sa_...",
+          "caption": "..."
+        },
+        "display_command": "unipost posts draft --account sa_... --caption \"...\" --json --non-interactive"
       }
     ]
   },
@@ -1051,6 +1078,19 @@ The backend returns `error.normalized_code` and `request_id` on many API errors.
 
 If the backend returns an unknown `normalized_code`, CLI should map by HTTP status first, include the raw `normalized_code` in JSON output, and use exit code 7 for 5xx or exit code 6 for 4xx.
 
+### 10.5 Agent Capability Catalog Contract
+
+`agent capabilities --json` is a stable agent contract. It must include a `catalog_version` field and use additive evolution whenever possible.
+
+Contract requirements:
+
+- `catalog_version` identifies the capability catalog schema and intent set version.
+- Intent names are stable identifiers; do not rename or remove them within a major CLI version.
+- `required_inputs`, `optional_inputs`, `safety_level`, `canonical_actions` and output schema fields are part of the public agent contract.
+- New intents, optional inputs and additive fields may be added in minor versions.
+- Removing an intent, changing required inputs, changing a safety level to a less restrictive value, or changing action semantics requires a major version or explicit compatibility mode.
+- MCP tools, Codex skill/plugin instructions and Claude Code instructions should reference the same intent names and safety levels.
+
 ---
 
 ## 11. Safety, Permissions, And Audit
@@ -1102,6 +1142,26 @@ Write commands should include metadata where the API supports it:
 ```
 
 The backend remains the authority for authorization and sensitive decisions.
+
+### 11.4 Agent Plan And Execute Guardrails
+
+`agent plan` and `agent execute` must follow a strict trust model.
+
+Plan requirements:
+
+- Plans are advisory artifacts, not permission grants.
+- Plan steps must use structured `action` and `args` fields.
+- Plan steps may include `display_command` for human readability, but `display_command` is never executable authority.
+- `safety_level` in a plan is informational and must not be trusted by `agent execute`.
+
+Execute requirements:
+
+- `agent execute` treats the plan file as untrusted input.
+- `agent execute` must recompute each step's safety level from the current capability catalog and internal action registry.
+- `agent execute` must never shell-exec or eval a command string from a plan file.
+- `agent execute` may run read-only, validate-only and draft-write actions only when required inputs are present and no user choice is outstanding.
+- `agent execute` must reject `live_write` steps and return a structured error such as `requires_explicit_publish_command`.
+- Live publish must always use explicit publish commands with `--yes` and `--idempotency-key`, not automatic plan execution.
 
 ---
 
@@ -1445,7 +1505,9 @@ unipost agent context --json --non-interactive
 unipost agent plan --intent create_draft_post --from-file request.json --json --non-interactive
 ```
 
-If the plan is safe to execute without more user input, the agent can run:
+If the plan is safe to execute without more user input, the Phase 3 agent should use the structured `action` and `args` fields to call the corresponding explicit CLI command or MCP tool. It must not blindly copy and execute `display_command`.
+
+If the optional `agent execute` beta is enabled after security review, the agent can run:
 
 ```bash
 unipost agent execute --plan plan.json --json --non-interactive --agent-name codex
@@ -1600,7 +1662,6 @@ Deliverables:
 - Stable `--json` output for accounts/posts/media/analytics.
 - `agent plan --intent ...`.
 - `agent plan-publish` as an alias for `agent plan --intent plan_publish_post`.
-- `agent execute --plan plan.json` for safe read/validate/draft execution.
 - `posts create --from-file --dry-run`.
 - Agent publish guardrails with `--yes` and `--idempotency-key`.
 - Audit metadata for write commands.
@@ -1609,8 +1670,8 @@ Success criteria:
 
 - Codex / Claude Code can inspect real UniPost account context without browsing docs.
 - Agent can safely dry-run publish payloads.
-- Agent can turn a supported intent into a structured plan with missing inputs, required confirmations and canonical commands.
-- Agent can execute safe plan steps without guessing command syntax.
+- Agent can turn a supported intent into a structured plan with missing inputs, required confirmations and canonical actions.
+- Agent can use the plan to call normal CLI commands or MCP tools without guessing command syntax.
 - Live publish is impossible by accident in non-interactive mode.
 - Agent can move from read-only setup into draft/publish workflows only after explicit user confirmation.
 
@@ -1645,6 +1706,7 @@ Deliverables:
 - Codex skill/plugin package with UniPost instructions, capability usage and safe publish rules.
 - Claude Code instruction package with equivalent guidance.
 - `agent install --client codex|claude-code` or equivalent generated setup instructions.
+- Optional `agent execute --plan plan.json` beta after security review, limited to structured read-only, validate-only and draft-write actions.
 - Optional Homebrew distribution.
 
 Success criteria:
@@ -1652,6 +1714,7 @@ Success criteria:
 - CLI can bootstrap MCP setup without replacing MCP.
 - MCP tools and CLI agent wrapper use the same intent names and safety model.
 - Codex / Claude Code can call UniPost through installed instructions or MCP tools without guessing terminal syntax.
+- If `agent execute` is enabled, it rejects `live_write` steps and never executes raw command strings from plan files.
 - Agent users can choose CLI, MCP or client-specific instruction packages based on workflow.
 
 ---
@@ -1671,7 +1734,7 @@ Product metrics:
 - Number of `--json` command runs.
 - Number of `agent capabilities` and `agent guide` runs by client.
 - Number of `agent plan` runs by intent and outcome status.
-- Number of `agent execute` runs by safety level.
+- Number of `agent execute` runs by safety level, if `agent execute` is enabled.
 - Number of agent dry-runs before publish.
 
 Quality metrics:
@@ -1710,10 +1773,10 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 
 - `agent bootstrap --client codex --json` returns a clear setup status and next actions.
 - `agent bootstrap --client claude-code --json` returns client-specific setup instructions.
-- `agent capabilities --json` returns supported intent names, schemas, safety levels and canonical command mappings.
+- `agent capabilities --json` returns supported intent names, schemas, safety levels and canonical action mappings.
 - `agent guide --client codex|claude-code` returns client-specific operating guidance without secrets.
 - `agent plan --intent ... --json` returns a structured plan, missing inputs and required confirmations without executing writes.
-- `agent execute --plan ...` can run safe read/validate/draft steps and cannot bypass live-publish guardrails.
+- If `agent execute --plan ...` is enabled, it treats plan files as untrusted input, runs only structured safe actions, and cannot bypass live-publish guardrails.
 - Before setup-token/device auth exists, `agent bootstrap` supports the `UNIPOST_API_KEY` fallback path.
 - After setup-token/device auth exists, Dashboard-generated setup tokens can be exchanged without exposing long-lived API keys to the agent.
 - When auth, profile or connected account is missing, bootstrap returns a recommended plain-language prompt for the agent to ask the user.
@@ -1830,6 +1893,9 @@ Mitigation:
 - Version the CLI.
 - Keep envelope stable.
 - Add fields without removing existing fields.
+- Version `agent capabilities` with `catalog_version`.
+- Keep intent names, safety-level enums and capability schema stable within a major version.
+- Add intents and optional inputs additively; remove or weaken safety only in a major version or explicit compatibility mode.
 - Reserve breaking changes for major version.
 
 ### Risk: Secrets leak in diagnostics
@@ -1909,7 +1975,7 @@ Docs should explicitly explain:
 - After user authorization, UniPost should create a named, revocable CLI API key automatically and return it once to the local CLI for secure storage.
 - `unipost init` is safe to rerun: valid existing credentials are reused, and new keys are created only on first setup, missing/invalid credentials, or explicit replacement.
 - Created keys are stored in OS keychain by default; config stores only key metadata.
-- AI agents should use `agent capabilities`, `agent guide`, `agent context`, `agent plan` and `agent execute` instead of guessing raw terminal commands.
+- AI agents should use `agent capabilities`, `agent guide`, `agent context`, `agent plan`, and later `agent execute` when enabled, instead of guessing raw terminal commands.
 - MCP, Codex skill/plugin and Claude Code instruction packages should mirror the CLI intent names and safety model.
 
 ---
@@ -1960,7 +2026,6 @@ unipost agent guide
 unipost agent context
 unipost agent plan
 unipost agent plan-publish
-unipost agent execute
 unipost agent mcp-config
 ```
 
@@ -1978,6 +2043,7 @@ unipost posts update/delete
 Ecosystem deliverables that can wait until Phase 5 or after full V1 GA:
 
 ```text
+unipost agent execute
 unipost agent install
 @unipost/mcp or equivalent first-party MCP package
 Codex skill/plugin package
@@ -2003,7 +2069,8 @@ Recommended decisions for first implementation:
 - Add `agent capabilities` and `agent guide` early so agents can discover supported intents without reading docs.
 - Use `agent plan --intent ...` as the primary AI-agent planning wrapper; keep `agent plan-publish` as a publish-specific alias.
 - Let Codex / Claude Code interpret natural language, then pass explicit intent and structured inputs to UniPost CLI.
-- Treat `agent execute` as a safe plan runner, not a permission bypass.
+- Defer `agent execute` to Phase 5 or a post-Phase-3 security review. Phase 3 should provide plan-only guidance and let agents execute normal CLI commands or MCP tools explicitly.
+- If `agent execute` ships, treat it as a safe structured-action runner, not a permission bypass.
 - Require `--yes` and `--idempotency-key` for non-interactive live publish.
 - Keep MCP separate but let CLI generate MCP config snippets and mirror CLI agent intents in MCP tools.
 - Defer first-party Codex skill/plugin and Claude Code instruction package to the ecosystem phase unless pulled forward for launch.
@@ -2018,7 +2085,7 @@ The CLI product is considered successfully launched when:
 2. The same developer can generate a usable cURL/native HTTP example containing their real profile/account IDs, plus SDK examples where published packages exist.
 3. An AI coding agent can run `agent context --json` and get enough data to choose real accounts instead of inventing IDs.
 4. An AI coding agent can run `agent capabilities --json` and `agent guide --client ...` to understand supported UniPost intents without browsing docs.
-5. An AI coding agent can run `agent plan --intent ... --json` and receive missing inputs, required confirmations and canonical safe commands.
+5. An AI coding agent can run `agent plan --intent ... --json` and receive missing inputs, required confirmations and canonical safe actions.
 6. An AI coding agent can dry-run a post and receive a structured publish plan.
 7. Live publish cannot happen accidentally in non-interactive agent usage.
 8. Support can ask users to run `unipost doctor --json` and receive safe diagnostic output.
