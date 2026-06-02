@@ -379,9 +379,10 @@ public final class UnipostSdkTest {
                 String scheduledPostId = scheduledPost.path("id").asText();
                 createdPostIds.add(scheduledPostId);
                 test("posts.update() — scheduled post", () -> {
-                    JsonNode res = client.posts().update(scheduledPostId, map(
-                            "caption", "SDK Java scheduled updated",
-                            "scheduled_at", Instant.now().plus(3, ChronoUnit.DAYS).toString()
+                    JsonNode res = client.posts().update(scheduledPostId, scheduledContentUpdateBody(
+                            "SDK Java scheduled updated",
+                            finalTestAccountId,
+                            Instant.now().plus(3, ChronoUnit.DAYS).toString()
                     ));
                     assertEquals(scheduledPostId, res.path("id").asText(), "Expected updated scheduled post");
                 });
@@ -795,6 +796,14 @@ public final class UnipostSdkTest {
             }
         }
         return out;
+    }
+
+    static Map<String, Object> scheduledContentUpdateBody(String caption, String accountId, String scheduledAt) {
+        return map(
+                "caption", caption,
+                "account_ids", List.of(accountId),
+                "scheduled_at", scheduledAt
+        );
     }
 
     private static String env(String key, String fallback) {
