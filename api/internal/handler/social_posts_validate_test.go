@@ -1,6 +1,57 @@
 package handler
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/platform"
+)
+
+func TestParsedRequestResolveLegacyPlatformOptions(t *testing.T) {
+	body := publishRequestBody{
+		Caption:    "Demo upload",
+		MediaURLs:  []string{"https://cdn.example.com/demo.mp4"},
+		AccountIDs: []string{"acc_youtube", "acc_tiktok"},
+		PlatformOptions: map[string]map[string]any{
+			"youtube": {
+				"title":         "Demo upload title",
+				"tags":          []any{"demo", "mandarin"},
+				"made_for_kids": false,
+			},
+			"tiktok": {
+				"privacy_level": "PUBLIC_TO_EVERYONE",
+			},
+		},
+	}
+
+	parsed, status, msg := parsePublishRequest(body)
+	if status != 0 {
+		t.Fatalf("parse status = %d, msg = %q", status, msg)
+	}
+
+	parsed.resolveLegacyPlatformOptions(map[string]platform.ValidateAccount{
+		"acc_youtube": {Platform: "youtube"},
+		"acc_tiktok":  {Platform: "tiktok"},
+	})
+
+	youtubeOpts := parsed.Posts[0].PlatformOptions
+	if youtubeOpts["title"] != "Demo upload title" {
+		t.Fatalf("youtube title option = %v, want Demo upload title", youtubeOpts["title"])
+	}
+	if tags, ok := youtubeOpts["tags"].([]any); !ok || len(tags) != 2 {
+		t.Fatalf("youtube tags option = %#v, want two tags", youtubeOpts["tags"])
+	}
+	if youtubeOpts["privacy_level"] != nil {
+		t.Fatalf("youtube options should not include TikTok privacy_level: %#v", youtubeOpts)
+	}
+
+	tiktokOpts := parsed.Posts[1].PlatformOptions
+	if tiktokOpts["privacy_level"] != "PUBLIC_TO_EVERYONE" {
+		t.Fatalf("tiktok privacy option = %v, want PUBLIC_TO_EVERYONE", tiktokOpts["privacy_level"])
+	}
+	if tiktokOpts["title"] != nil {
+		t.Fatalf("tiktok options should not include YouTube title: %#v", tiktokOpts)
+	}
+}
 
 func TestTikTokImageWithin1080p(t *testing.T) {
 	tests := []struct {

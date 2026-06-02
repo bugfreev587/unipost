@@ -77,11 +77,45 @@ type parsedRequest struct {
 	Posts          []platform.PlatformPostInput
 	ScheduledAt    *time.Time
 	IdempotencyKey string
+	// LegacyPlatformOptions holds top-level platform_options from the
+	// account_ids request shape until account platform names are loaded.
+	LegacyPlatformOptions map[string]map[string]any
 	// Status is set when the request body explicitly asked for
 	// "draft". Empty otherwise — the create handler maps that to
 	// either immediate publish or scheduled publish based on
 	// ScheduledAt.
 	Status string
+}
+
+func (p *parsedRequest) resolveLegacyPlatformOptions(accounts map[string]platform.ValidateAccount) {
+	if p == nil || len(p.LegacyPlatformOptions) == 0 {
+		return
+	}
+	for i := range p.Posts {
+		if len(p.Posts[i].PlatformOptions) > 0 {
+			continue
+		}
+		acc := accounts[p.Posts[i].AccountID]
+		if acc.Platform == "" {
+			continue
+		}
+		opts := p.LegacyPlatformOptions[acc.Platform]
+		if len(opts) == 0 {
+			continue
+		}
+		p.Posts[i].PlatformOptions = clonePlatformOptions(opts)
+	}
+}
+
+func clonePlatformOptions(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func summarizePublishRequest(body publishRequestBody, parsed parsedRequest) map[string]any {
@@ -164,9 +198,9 @@ func parsePublishRequest(body publishRequestBody) (parsedRequest, int, string) {
 
 	// Legacy expansion: one input per account_id, sharing the
 	// top-level caption / media_urls / platform_options. Per-platform
-	// option lookup happens later in the publish loop because we don't
-	// know each account's platform here without a DB lookup — the
-	// validator does the join via its Accounts map.
+	// option lookup happens after account loading because we don't
+	// know each account's platform here without a DB lookup.
+	pr.LegacyPlatformOptions = body.PlatformOptions
 	pr.Posts = make([]platform.PlatformPostInput, 0, len(body.AccountIDs))
 	for _, id := range body.AccountIDs {
 		pr.Posts = append(pr.Posts, platform.PlatformPostInput{
@@ -414,6 +448,7 @@ func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load accounts")
 		return
 	}
+	parsed.resolveLegacyPlatformOptions(accounts)
 
 	result := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accounts)
 	if len(result.Errors) > 0 {
