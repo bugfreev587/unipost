@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef } from "react";
-import type { CreateSocialPostPayload, SocialAccount } from "@/lib/api";
+import type { CreateSocialPostPayload, EditablePlatformPost, SocialAccount, SocialPost } from "@/lib/api";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus } from "@/components/tools/platform-limits";
 import { getAccountIdentityKey } from "./account-labels";
 
@@ -204,6 +204,12 @@ export interface MediaItem {
   videoHeight: number | null | undefined;
 }
 
+export interface ExistingMediaItem {
+  id?: string;
+  url?: string;
+  label: string;
+}
+
 /** Fingerprint a File for dedup — same file re-selected → same key */
 function fileFingerprint(file: File): string {
   return `${file.name}::${file.size}::${file.lastModified}`;
@@ -219,6 +225,164 @@ export interface VideoMetadata {
   durationSec: number | null;
   width: number | null;
   height: number | null;
+}
+
+function toDateTimeLocalValue(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function stringOption(options: Record<string, unknown>, key: string): string {
+  const value = options[key];
+  return typeof value === "string" ? value : "";
+}
+
+function boolOption(options: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  const value = options[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function normalizeMediaType(value: string, fallback: "feed" | "reels" | "story"): "feed" | "reels" | "story" {
+  return value === "reels" || value === "story" || value === "feed" ? value : fallback;
+}
+
+function normalizeFacebookMediaType(value: string): "feed" | "reel" {
+  return value === "reel" ? "reel" : "feed";
+}
+
+function normalizeYouTubeVisibility(value: string): "public" | "unlisted" | "private" {
+  return value === "unlisted" || value === "private" || value === "public" ? value : "public";
+}
+
+function normalizeLinkedInVisibility(value: string): "anyone" | "connections" {
+  return value === "connections" ? "connections" : "anyone";
+}
+
+function tagsToInput(value: unknown): string {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string").join(", ");
+  return typeof value === "string" ? value : "";
+}
+
+function deriveEditablePlatformPosts(post: SocialPost, accounts: SocialAccount[]): EditablePlatformPost[] {
+  if (post.platform_posts && post.platform_posts.length > 0) return post.platform_posts;
+  const platforms = new Set(post.target_platforms || []);
+  if (platforms.size === 0) return [];
+  const caption = post.caption || "";
+  return accounts
+    .filter((account) => platforms.has(account.platform))
+    .map((account) => ({
+      account_id: account.id,
+      caption,
+      media_urls: post.media_urls || [],
+    }));
+}
+
+function deriveExistingMediaItems(post: SocialPost, platformPosts: EditablePlatformPost[]): ExistingMediaItem[] {
+  const byKey = new Map<string, ExistingMediaItem>();
+  const add = (item: ExistingMediaItem) => {
+    const key = item.id ? `id:${item.id}` : item.url ? `url:${item.url}` : "";
+    if (key && !byKey.has(key)) byKey.set(key, item);
+  };
+  for (const entry of platformPosts) {
+    for (const id of entry.media_ids || []) {
+      add({ id, label: id });
+    }
+    for (const url of entry.media_urls || []) {
+      add({ url, label: mediaLabelFromUrl(url) });
+    }
+  }
+  if (byKey.size === 0) {
+    for (const url of post.media_urls || []) {
+      add({ url, label: mediaLabelFromUrl(url) });
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+function mediaLabelFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split("/").filter(Boolean).pop();
+    return name || "Existing media";
+  } catch {
+    return url.split("/").filter(Boolean).pop() || "Existing media";
+  }
+}
+
+function deriveOverridesFromPost(post: SocialPost, accounts: SocialAccount[]): Record<string, PlatformOverride> {
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
+  const mainCaption = post.caption || "";
+  const overrides: Record<string, PlatformOverride> = {};
+  for (const entry of deriveEditablePlatformPosts(post, accounts)) {
+    const account = accountById.get(entry.account_id);
+    const options = entry.platform_options || {};
+    const override: PlatformOverride = {
+      caption: entry.caption || mainCaption,
+      firstComment: entry.first_comment || "",
+      inReplyTo: entry.in_reply_to || "",
+      threadPosition: entry.thread_position ? String(entry.thread_position) : "",
+    };
+    if (account?.platform === "youtube") {
+      override.youtube = {
+        ...DEFAULT_YOUTUBE_FIELDS,
+        title: stringOption(options, "title"),
+        category: stringOption(options, "category_id") || DEFAULT_YOUTUBE_FIELDS.category,
+        visibility: normalizeYouTubeVisibility(stringOption(options, "privacy_status")),
+        madeForKids: typeof options.made_for_kids === "boolean" ? (options.made_for_kids ? "yes" : "no") : "",
+        notifySubscribers: boolOption(options, "notify_subscribers", DEFAULT_YOUTUBE_FIELDS.notifySubscribers),
+        embeddable: boolOption(options, "embeddable", DEFAULT_YOUTUBE_FIELDS.embeddable),
+        license: stringOption(options, "license") === "creativeCommon" ? "creativeCommon" : "youtube",
+        publicStatsViewable: boolOption(options, "public_stats_viewable", DEFAULT_YOUTUBE_FIELDS.publicStatsViewable),
+        containsSyntheticMedia: boolOption(options, "contains_synthetic_media", DEFAULT_YOUTUBE_FIELDS.containsSyntheticMedia),
+        defaultLanguage: stringOption(options, "default_language"),
+        recordingDate: stringOption(options, "recording_date"),
+        publishAt: stringOption(options, "publish_at") ? toDateTimeLocalValue(stringOption(options, "publish_at")) : "",
+        playlistId: stringOption(options, "playlist_id"),
+        tags: tagsToInput(options.tags),
+        shorts: boolOption(options, "shorts", DEFAULT_YOUTUBE_FIELDS.shorts),
+      };
+    }
+    if (account?.platform === "tiktok") {
+      const brandOrganic = boolOption(options, "brand_organic_toggle", false);
+      const brandContent = boolOption(options, "brand_content_toggle", false);
+      override.tiktok = {
+        privacy: stringOption(options, "privacy_level") as NonNullable<PlatformOverride["tiktok"]>["privacy"],
+        disableComment: boolOption(options, "disable_comment", DEFAULT_TIKTOK_FIELDS.disableComment),
+        disableDuet: boolOption(options, "disable_duet", DEFAULT_TIKTOK_FIELDS.disableDuet),
+        disableStitch: boolOption(options, "disable_stitch", DEFAULT_TIKTOK_FIELDS.disableStitch),
+        disclosureEnabled: brandOrganic || brandContent,
+        yourBrand: brandOrganic,
+        brandedContent: brandContent,
+      };
+    }
+    if (account?.platform === "instagram") {
+      override.instagram = {
+        mediaType: normalizeMediaType(stringOption(options, "mediaType") || stringOption(options, "media_type"), "feed"),
+      };
+    }
+    if (account?.platform === "linkedin") {
+      override.linkedin = {
+        visibility: normalizeLinkedInVisibility(stringOption(options, "visibility")),
+      };
+    }
+    if (account?.platform === "facebook") {
+      override.facebook = {
+        link: stringOption(options, "link"),
+        mediaType: normalizeFacebookMediaType(stringOption(options, "mediaType") || stringOption(options, "media_type")),
+      };
+    }
+    if (account?.platform === "pinterest") {
+      override.pinterest = {
+        boardId: stringOption(options, "board_id"),
+        title: stringOption(options, "title"),
+        link: stringOption(options, "link"),
+      };
+    }
+    overrides[entry.account_id] = override;
+  }
+  return overrides;
 }
 
 /**
@@ -278,6 +442,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   const [mainContent, setMainContent] = useState("");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  const [existingMediaItems, setExistingMediaItems] = useState<ExistingMediaItem[]>([]);
   // Ref for latest mediaItems — used by buildPayload to avoid stale closures
   const mediaItemsRef = useRef<MediaItem[]>([]);
   mediaItemsRef.current = mediaItems;
@@ -529,10 +694,19 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     setMediaFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const uploadedMediaIds = useMemo(
-    () => mediaItems.filter((m) => m.mediaId).map((m) => m.mediaId!),
-    [mediaItems]
+  const removeExistingMediaItem = useCallback((index: number) => {
+    setExistingMediaItems((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const existingMediaIds = useMemo(
+    () => existingMediaItems.map((item) => item.id).filter((id): id is string => !!id),
+    [existingMediaItems]
   );
+  const existingMediaUrls = useMemo(
+    () => existingMediaItems.map((item) => item.url).filter((url): url is string => !!url),
+    [existingMediaItems]
+  );
+  const totalMediaCount = existingMediaItems.length + mediaItems.length;
 
   const allMediaUploaded = useMemo(
     () => mediaItems.length === 0 || mediaItems.every((m) => m.mediaId !== null),
@@ -550,9 +724,9 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
 
   const hasUnsavedContent = useMemo(() => {
     if (mainContent.trim()) return true;
-    if (mediaItems.length > 0) return true;
+    if (totalMediaCount > 0) return true;
     return Object.entries(overrides).some(([accountId, o]) => o.caption?.trim() || o.firstComment?.trim() || o.inReplyTo?.trim() || o.threadPosition?.trim() || o.threadReplies?.some((reply) => reply.trim()) || hasPlatformOnlyContent(accountId));
-  }, [mainContent, mediaItems, overrides, hasPlatformOnlyContent]);
+  }, [mainContent, totalMediaCount, overrides, hasPlatformOnlyContent]);
 
   const hasOverLimit = useMemo(() => {
     for (const acc of selectedAccounts) {
@@ -585,13 +759,13 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   const pinterestBlocker = useMemo(() => {
     const pinterestAccounts = selectedAccounts.filter((acc) => acc.platform === "pinterest");
     if (pinterestAccounts.length === 0) return null;
-    if (mediaItems.length === 0) return "pinterest_media";
-    if (mediaItems.length !== 1) return "pinterest_single_media";
+    if (totalMediaCount === 0) return "pinterest_media";
+    if (totalMediaCount !== 1) return "pinterest_single_media";
     for (const acc of pinterestAccounts) {
       if (!overrides[acc.id]?.pinterest?.boardId?.trim()) return "pinterest_board";
     }
     return null;
-  }, [selectedAccounts, mediaItems.length, overrides]);
+  }, [selectedAccounts, totalMediaCount, overrides]);
 
   const canSubmit = useMemo(() => {
     if (submitting) return false;
@@ -599,17 +773,17 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (hasOverLimit) return false;
     if (!allMediaUploaded) return false; // wait for uploads to finish
     const hasContent = mainContent.trim() || Object.entries(overrides).some(([accountId, o]) => o.caption?.trim() || hasPlatformOnlyContent(accountId));
-    if (!hasContent && mediaItems.length === 0) return false;
+    if (!hasContent && totalMediaCount === 0) return false;
     if (publishMode === "schedule" && !scheduledAt) return false;
     if (publishMode === "schedule" && scheduledAt && new Date(scheduledAt) <= new Date()) return false;
     if (publishMode === "queue" && !queueId) return false;
     if (tiktokBlocker) return false;
     if (pinterestBlocker) return false;
     return true;
-  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, mediaItems, publishMode, scheduledAt, queueId, hasPlatformOnlyContent, tiktokBlocker, pinterestBlocker]);
+  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, totalMediaCount, publishMode, scheduledAt, queueId, hasPlatformOnlyContent, tiktokBlocker, pinterestBlocker]);
 
   // Not wrapped in useCallback — always reads latest state to avoid
-  // stale closure issues with mediaItems/uploadedMediaIds.
+  // stale closure issues with mediaItems and preserved edit media.
   function buildPayload(): CreateSocialPostPayload {
     const accountIds = uniqueSelectedAccounts.map((a) => a.id);
     // Any sign of per-account content forces the per-platform
@@ -625,11 +799,14 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
 
     // Read from ref to always get the absolute latest mediaItems
     const latestMediaItems = mediaItemsRef.current;
-    const currentMediaIds = latestMediaItems.filter((m) => m.mediaId).map((m) => m.mediaId!);
+    const currentMediaIds = [
+      ...existingMediaIds,
+      ...latestMediaItems.filter((m) => m.mediaId).map((m) => m.mediaId!),
+    ];
     const mediaIds = currentMediaIds.length > 0 ? currentMediaIds : undefined;
-    console.log("[buildPayload] latestMediaItems:", latestMediaItems.length, "currentMediaIds:", currentMediaIds);
+    const mediaUrls = existingMediaUrls.length > 0 ? existingMediaUrls : undefined;
 
-    if (hasOverrides || mediaIds) {
+    if (hasOverrides || mediaIds || mediaUrls) {
       payload.platform_posts = accountIds.flatMap((id) => {
         const o = overrides[id];
         const account = uniqueSelectedAccounts.find((candidate) => candidate.id === id);
@@ -646,6 +823,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
           }
         }
         if (mediaIds) entry.media_ids = mediaIds;
+        if (mediaUrls) entry.media_urls = mediaUrls;
         if (account?.platform === "youtube") {
           const youtube = { ...DEFAULT_YOUTUBE_FIELDS, ...o?.youtube };
           entry.platform_options = {
@@ -764,11 +942,29 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     setMainContent("");
     setMediaFiles([]);
     setMediaItems([]);
+    setExistingMediaItems([]);
     setUploadCache(new Map());
     setSelectedAccountIds(new Set());
     setOverrides({});
     setPublishMode("now");
     setScheduledAt("");
+    setQueueId("");
+    setSubmitting(false);
+    setCollapsedBlocks(new Set());
+  }, []);
+
+  const hydrateFromPost = useCallback((post: SocialPost, availableAccounts: SocialAccount[]) => {
+    const platformPosts = deriveEditablePlatformPosts(post, availableAccounts);
+    const firstCaption = platformPosts[0]?.caption || post.caption || "";
+    setMainContent(firstCaption);
+    setMediaFiles([]);
+    setMediaItems([]);
+    setExistingMediaItems(deriveExistingMediaItems(post, platformPosts));
+    setUploadCache(new Map());
+    setSelectedAccountIds(new Set(platformPosts.map((entry) => entry.account_id)));
+    setOverrides(deriveOverridesFromPost(post, availableAccounts));
+    setPublishMode(post.status === "scheduled" ? "schedule" : "draft");
+    setScheduledAt(post.scheduled_at ? toDateTimeLocalValue(post.scheduled_at) : "");
     setQueueId("");
     setSubmitting(false);
     setCollapsedBlocks(new Set());
@@ -781,6 +977,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     mediaFiles,
     setMediaFiles,
     mediaItems,
+    existingMediaItems,
     selectedAccountIds,
     selectedAccounts,
     activeAccounts,
@@ -797,6 +994,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     allMediaUploaded,
     duplicateAccountIds,
     uniqueSelectedAccounts,
+    totalMediaCount,
 
     // Actions
     toggleAccount,
@@ -814,8 +1012,10 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     addMediaItem,
     updateMediaItem,
     removeMediaItem,
+    removeExistingMediaItem,
     getCharCount,
     buildPayload,
+    hydrateFromPost,
     reset,
 
     // Derived

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useSearchParams } from "next/navigation";
-import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +17,6 @@ import { Plus, Key, AlertTriangle } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ApiKeysPage() {
-  const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
   const searchParams = useSearchParams();
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -34,7 +32,6 @@ export default function ApiKeysPage() {
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
 
   const loadKeys = useCallback(async () => {
-    if (!workspaceId) return; // wait for workspace resolution
     try {
       const token = await getToken();
       if (!token) return;
@@ -45,7 +42,7 @@ export default function ApiKeysPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, workspaceId]);
+  }, [getToken]);
 
   useEffect(() => { loadKeys(); }, [loadKeys]);
 

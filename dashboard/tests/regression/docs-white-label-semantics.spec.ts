@@ -1,0 +1,46 @@
+import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+test.describe("white-label documentation semantics", () => {
+  test("separates Hosted Connect branding from platform credentials", async () => {
+    const docsShellSource = await readFile(path.join(process.cwd(), "src/app/docs/_components/docs-shell.tsx"), "utf8");
+    const whiteLabelSource = await readFile(path.join(process.cwd(), "src/app/docs/white-label/page.tsx"), "utf8");
+    const platformCredentialsSource = await readFile(path.join(process.cwd(), "src/app/docs/platform-credentials/page.tsx"), "utf8");
+    const platformGuideSource = await readFile(path.join(process.cwd(), "src/app/docs/platform-credentials/[platform]/page.tsx"), "utf8");
+    const legacyPlatformGuideSource = await readFile(path.join(process.cwd(), "src/app/docs/white-label/[platform]/page.tsx"), "utf8");
+    const credentialsSource = await readFile(path.join(process.cwd(), "src/app/docs/api/platform-credentials/page.tsx"), "utf8");
+    const connectSessionsSource = await readFile(path.join(process.cwd(), "src/app/docs/connect-sessions/page.tsx"), "utf8");
+
+    expect(docsShellSource).toContain("Hosted Connect (White-label branding)");
+    expect(docsShellSource).toContain("Platform Credentials");
+    expect(docsShellSource).toContain("/docs/platform-credentials/meta");
+    expect(docsShellSource).not.toContain("/docs/white-label/meta");
+
+    expect(whiteLabelSource).toContain('title="Hosted Connect (White-label branding)"');
+    expect(whiteLabelSource).toContain("Hosted Connect Profile");
+    expect(whiteLabelSource).toContain("Platform Credentials");
+    expect(whiteLabelSource).toContain("You can combine either Hosted Connect profile with either credential source.");
+    expect(whiteLabelSource).toContain("Developer → Hosted Connect");
+    expect(whiteLabelSource).toContain("/docs/platform-credentials");
+    expect(whiteLabelSource).not.toContain("Supported Platform Credentials");
+    expect(whiteLabelSource).not.toContain("Upload platform credentials");
+    expect(whiteLabelSource).not.toContain("White-label uses your uploaded platform credentials instead");
+    expect(whiteLabelSource).not.toContain("Paid plans only");
+
+    expect(platformCredentialsSource).toContain('title="Platform Credentials"');
+    expect(platformCredentialsSource).toContain("Developer → Platform Credentials");
+    expect(platformCredentialsSource).toContain("/docs/platform-credentials/meta");
+    expect(platformGuideSource).toContain("PLATFORM_CREDENTIAL_GUIDES");
+    expect(platformGuideSource).toContain("Platform credential setup");
+    expect(legacyPlatformGuideSource).toContain("redirect(`/docs/platform-credentials/${platform}`)");
+
+    expect(credentialsSource).toContain("Platform Credentials are separate from Hosted Connect branding");
+    expect(credentialsSource).toContain("/docs/platform-credentials");
+    expect(credentialsSource).not.toContain("Call this once per platform during white-label onboarding.");
+
+    expect(connectSessionsSource).toContain("Shared UniPost OAuth app");
+    expect(connectSessionsSource).toContain("Workspace platform credentials");
+    expect(connectSessionsSource).not.toContain("white-label credentials");
+  });
+});

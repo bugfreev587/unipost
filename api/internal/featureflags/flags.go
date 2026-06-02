@@ -20,6 +20,7 @@ const (
 	FreePlanHardPostQuota         Flag = "billing.free_plan_hard_post_quota"
 	AppReviewAutopilotV1          Flag = "app_review.autopilot_v1"
 	AppReviewAIAgentV1            Flag = "app_review.ai_agent_v1"
+	PostsCalendarViewV1           Flag = "posts.calendar_view_v1"
 )
 
 type Target struct {
@@ -99,6 +100,14 @@ var definitions = map[Flag]Definition{
 		Flag:        AppReviewAIAgentV1,
 		EnvVar:      "FEATURE_APP_REVIEW_AI_AGENT_V1",
 		Description: "Controls the AI-guided App Review Autopilot executor, server-side Anthropic orchestration, and evidence-gated browser actions.",
+		DefaultEnabled: func(target Target) bool {
+			return !isProduction(target.Env)
+		},
+	},
+	PostsCalendarViewV1: {
+		Flag:        PostsCalendarViewV1,
+		EnvVar:      "FEATURE_POSTS_CALENDAR_VIEW_V1",
+		Description: "Controls the Apple Calendar style Posts month view and the /posts/list legacy route split.",
 		DefaultEnabled: func(target Target) bool {
 			return !isProduction(target.Env)
 		},
