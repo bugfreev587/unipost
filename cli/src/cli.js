@@ -1,7 +1,12 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 const CLI_VERSION = "0.1.0";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
 const DOCS_CLI_URL = "https://unipost.dev/docs/cli";
+const AGENT_CATALOG_VERSION = "2026-06-02.phase2";
 
 const EXIT = {
   success: 0,
@@ -52,6 +57,14 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
   "--limit",
   "--cursor",
   "--lang",
+  "--name",
+  "--platform",
+  "--external-user-id",
+  "--external-user-email",
+  "--return-url",
+  "--caption",
+  "--timeout",
+  "--from-file",
 ]);
 
 const GLOBAL_BOOLEAN_FLAGS = new Set([
@@ -66,6 +79,11 @@ const GLOBAL_BOOLEAN_FLAGS = new Set([
   "--no-telemetry",
   "--open",
   "--insecure",
+  "--force",
+  "--reauth",
+  "--replace-key",
+  "--allow-quickstart-creds",
+  "--no-quickstart-creds",
 ]);
 
 class CliError extends Error {
@@ -111,6 +129,7 @@ function createContext(argv, io) {
   const output = parsed.options.json ? "json" : parsed.options.output || "table";
   const baseUrl = normalizeBaseUrl(parsed.options.baseUrl || env.UNIPOST_BASE_URL || DEFAULT_BASE_URL);
   const telemetry = resolveTelemetry(parsed.options, env);
+  const credentialSource = parsed.options.apiKey ? "flag" : env.UNIPOST_API_KEY ? "env" : "none";
 
   return {
     argv,
@@ -120,6 +139,7 @@ function createContext(argv, io) {
       output,
       baseUrl,
       apiKey: parsed.options.apiKey || env.UNIPOST_API_KEY || "",
+      credentialSource,
       noColor: Boolean(parsed.options.noColor || env.NO_COLOR),
       telemetry,
     },
@@ -232,6 +252,19 @@ function setValueOption(options, flag, value) {
     options.limit = limit;
     return;
   }
+  if (flag === "--timeout") {
+    const timeout = Number(value);
+    if (!Number.isFinite(timeout) || timeout < 0) {
+      throw new CliError({
+        code: "invalid_argument",
+        normalizedCode: "invalid_argument",
+        message: "--timeout must be a non-negative number of seconds.",
+        exitCode: EXIT.invalidArgs,
+      });
+    }
+    options.timeout = timeout;
+    return;
+  }
   options[key] = value;
 }
 
@@ -240,7 +273,7 @@ function toCamelCase(value) {
 }
 
 async function dispatch(context) {
-  const [command, subcommand] = context.commandParts;
+  const [command, subcommand, third] = context.commandParts;
 
   if (context.options.version) {
     return textResult(`${CLI_VERSION}\n`);
@@ -250,6 +283,36 @@ async function dispatch(context) {
   }
   if (command === "auth" && subcommand === "status") {
     return authStatus(context);
+  }
+  if (command === "auth" && subcommand === "list") {
+    return authList(context);
+  }
+  if (command === "auth" && subcommand === "use") {
+    return authUse(context, third);
+  }
+  if (command === "init") {
+    return init(context);
+  }
+  if (command === "quickstart") {
+    return quickstart(context);
+  }
+  if (command === "profiles") {
+    return profiles(context, subcommand, third);
+  }
+  if (command === "connect") {
+    return connect(context, subcommand, third);
+  }
+  if (command === "accounts") {
+    return accounts(context, subcommand, third);
+  }
+  if (command === "posts") {
+    return posts(context, subcommand, third);
+  }
+  if (command === "examples") {
+    return examples(context, subcommand);
+  }
+  if (command === "agent") {
+    return agent(context, subcommand, third);
   }
   if (command === "doctor") {
     return doctor(context);
@@ -272,12 +335,12 @@ async function authStatus(context) {
   requireApiKey(context, "auth status");
 
   const response = await requestJson(context, "/v1/workspace", { auth: true });
-  const workspace = response.body?.data ?? response.body;
+  const workspace = unwrapData(response.body);
 
   return envelopeResult({
     data: {
       authenticated: true,
-      credential_source: context.options.apiKey ? "flag" : "env",
+      credential_source: context.options.credentialSource,
       workspace,
     },
     meta: {
@@ -398,6 +461,781 @@ async function doctor(context) {
   });
 }
 
+async function authList(context) {
+  if (!context.options.apiKey) {
+    return envelopeResult({
+      data: {
+        credentials: [],
+        active_workspace_id: "",
+      },
+      human: "No local or environment credential is active.\n",
+      exitCode: EXIT.auth,
+    });
+  }
+  const { workspace, response } = await fetchWorkspace(context);
+  const config = await readConfig(context);
+  return envelopeResult({
+    data: {
+      credentials: [{
+        workspace_id: workspace?.id || "",
+        workspace_name: workspace?.name || "",
+        credential_source: context.options.credentialSource,
+        active: true,
+      }],
+      active_workspace_id: config.default_workspace_id || workspace?.id || "",
+    },
+    meta: {
+      request_id: response.requestId,
+      rate_limit: response.rateLimit,
+    },
+    human: `Active workspace: ${workspace?.id || "unknown"} (${context.options.credentialSource}).\n`,
+  });
+}
+
+async function authUse(context, workspaceID) {
+  const id = requireValue(workspaceID, "workspace_id", "auth use requires a workspace ID.");
+  const config = await patchConfig(context, { default_workspace_id: id });
+  return envelopeResult({
+    data: {
+      default_workspace_id: config.default_workspace_id,
+      config_path: configPath(context),
+    },
+    human: `Default workspace set to ${id}.\n`,
+  });
+}
+
+async function init(context) {
+  if (!context.options.apiKey) {
+    return envelopeResult({
+      data: {
+        authenticated: false,
+        credential_source: "none",
+        setup_token_supported: false,
+        next_actions: [
+          "Set UNIPOST_API_KEY and rerun unipost init.",
+          "When setup-token/device auth is implemented, start a fresh Dashboard-generated setup token.",
+        ],
+      },
+      warnings: [{
+        code: "setup_token_backend_unavailable",
+        message: "Device/setup-token auth is not implemented yet; Phase 2 uses UNIPOST_API_KEY fallback.",
+      }],
+      human: "No UniPost API key found. Set UNIPOST_API_KEY and rerun unipost init.\n",
+      exitCode: EXIT.auth,
+    });
+  }
+
+  const [{ workspace, response: workspaceResponse }, { profiles, pagination }] = await Promise.all([
+    fetchWorkspace(context),
+    fetchProfiles(context),
+  ]);
+  let config = await readConfig(context);
+  const updates = {
+    default_workspace_id: workspace?.id || config.default_workspace_id,
+  };
+  if (!config.default_profile_id && profiles.length === 1) {
+    updates.default_profile_id = profiles[0].id;
+  }
+  config = await patchConfig(context, updates);
+
+  const nextActions = [];
+  if (profiles.length === 0) {
+    nextActions.push("Run unipost profiles create --name \"Brand\".");
+  } else if (!config.default_profile_id) {
+    nextActions.push("Run unipost profiles use <profile_id>.");
+  }
+  nextActions.push("Run unipost quickstart to continue with Connect and draft creation.");
+
+  return envelopeResult({
+    data: {
+      authenticated: true,
+      credential_source: context.options.credentialSource,
+      workspace,
+      profiles,
+      default_profile_id: config.default_profile_id || "",
+      config_path: configPath(context),
+      next_actions: nextActions,
+    },
+    meta: {
+      request_id: workspaceResponse.requestId,
+      pagination,
+      rate_limit: workspaceResponse.rateLimit,
+    },
+    human: renderInit(workspace, profiles, config, nextActions),
+  });
+}
+
+async function quickstart(context) {
+  requireApiKey(context, "quickstart");
+  const { workspace, response: workspaceResponse } = await fetchWorkspace(context);
+  let { profiles } = await fetchProfiles(context);
+  let profile = await selectProfile(context, profiles, { allowCreate: Boolean(context.options.name) });
+  if (!profile && context.options.name) {
+    profile = await createProfile(context, context.options.name);
+    profiles = [profile, ...profiles];
+  }
+  if (profile?.id) {
+    await patchConfig(context, {
+      default_workspace_id: workspace?.id || "",
+      default_profile_id: profile.id,
+    });
+  }
+  const { accounts: accountList } = await fetchAccounts(context);
+  const steps = [];
+  if (!profile) {
+    steps.push("Create a profile with unipost profiles create --name \"Brand\".");
+  }
+  if (profile && accountList.length === 0) {
+    steps.push(`Connect an account with unipost connect create --platform linkedin --profile ${profile.id}.`);
+  }
+  if (accountList.length > 0) {
+    const account = context.options.account
+      ? accountList.find((item) => item.id === context.options.account)
+      : accountList[0];
+    if (account) {
+      steps.push(`Validate a post with unipost posts validate --account ${account.id} --caption "Hello from UniPost".`);
+      steps.push(`Create a draft with unipost posts draft --account ${account.id} --caption "Hello from UniPost".`);
+    }
+  }
+
+  return envelopeResult({
+    data: {
+      workspace,
+      profile: profile || null,
+      profiles,
+      accounts: accountList,
+      live_publish_created: false,
+      next_actions: steps,
+    },
+    meta: {
+      request_id: workspaceResponse.requestId,
+    },
+    human: renderQuickstart(workspace, profile, accountList, steps),
+  });
+}
+
+async function profiles(context, subcommand, id) {
+  if (subcommand === "list" || !subcommand) {
+    requireApiKey(context, "profiles list");
+    const { profiles: profileList, pagination, response } = await fetchProfiles(context);
+    return envelopeResult({
+      data: { profiles: profileList },
+      meta: {
+        request_id: response.requestId,
+        pagination,
+        rate_limit: response.rateLimit,
+      },
+      human: renderProfiles(profileList),
+    });
+  }
+  if (subcommand === "create") {
+    requireApiKey(context, "profiles create");
+    const name = requireValue(context.options.name, "--name <name>", "profiles create requires a name.");
+    const profile = await createProfile(context, name);
+    return envelopeResult({
+      data: { profile },
+      human: `Created profile ${profile.id} (${profile.name}).\n`,
+    });
+  }
+  if (subcommand === "use") {
+    const profileID = requireValue(id, "profile_id", "profiles use requires a profile ID.");
+    const config = await patchConfig(context, { default_profile_id: profileID });
+    return envelopeResult({
+      data: {
+        default_profile_id: config.default_profile_id,
+        config_path: configPath(context),
+      },
+      human: `Default profile set to ${profileID}.\n`,
+    });
+  }
+  if (subcommand === "get") {
+    requireApiKey(context, "profiles get");
+    const profileID = requireValue(id, "profile_id", "profiles get requires a profile ID.");
+    const response = await requestJson(context, `/v1/profiles/${encodeURIComponent(profileID)}`, { auth: true });
+    const profile = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { profile },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `${profile.id} ${profile.name || ""}\n`,
+    });
+  }
+  return invalidSubcommand("profiles", subcommand);
+}
+
+async function createProfile(context, name) {
+  const response = await requestJson(context, "/v1/profiles", {
+    auth: true,
+    method: "POST",
+    body: { name: String(name).trim() },
+  });
+  return normalizeStatuses(unwrapData(response.body));
+}
+
+async function connect(context, subcommand, id) {
+  if (subcommand === "create") {
+    requireApiKey(context, "connect create");
+    const platform = requireValue(context.options.platform, "--platform <platform>", "connect create requires a platform.");
+    const profileID = await resolveProfileID(context);
+    const body = {
+      platform: platform.toLowerCase(),
+      profile_id: profileID,
+      external_user_id: context.options.externalUserId || "cli-local-user",
+      ...(context.options.externalUserEmail ? { external_user_email: context.options.externalUserEmail } : {}),
+      ...(context.options.returnUrl ? { return_url: context.options.returnUrl } : {}),
+      allow_quickstart_creds: context.options.noQuickstartCreds ? false : true,
+    };
+    const response = await requestJson(context, "/v1/connect/sessions", {
+      auth: true,
+      method: "POST",
+      body,
+    });
+    const session = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { session },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: renderConnectSession(session),
+    });
+  }
+  if (subcommand === "get") {
+    requireApiKey(context, "connect get");
+    const sessionID = requireValue(id, "session_id", "connect get requires a session ID.");
+    const response = await requestJson(context, `/v1/connect/sessions/${encodeURIComponent(sessionID)}`, { auth: true });
+    const session = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { session },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: renderConnectSession(session),
+    });
+  }
+  if (subcommand === "wait") {
+    requireApiKey(context, "connect wait");
+    const sessionID = requireValue(id, "session_id", "connect wait requires a session ID.");
+    return waitForConnectSession(context, sessionID);
+  }
+  return invalidSubcommand("connect", subcommand);
+}
+
+async function waitForConnectSession(context, sessionID) {
+  const timeoutSeconds = context.options.timeout ?? 300;
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let attempt = 0;
+  let lastResponse = null;
+
+  while (Date.now() <= deadline) {
+    attempt += 1;
+    const response = await requestJson(context, `/v1/connect/sessions/${encodeURIComponent(sessionID)}`, { auth: true });
+    lastResponse = response;
+    const session = normalizeStatuses(unwrapData(response.body));
+    if (["completed", "expired", "canceled"].includes(session.status)) {
+      return envelopeResult({
+        data: { session, attempts: attempt },
+        meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+        human: renderConnectSession(session),
+      });
+    }
+    await sleep(pollDelayMs(context, attempt, response.response.headers));
+  }
+
+  throw new CliError({
+    code: "timeout",
+    normalizedCode: "timeout",
+    message: `Timed out waiting for connect session ${sessionID}.`,
+    hint: "Increase --timeout or retry connect wait later.",
+    exitCode: EXIT.timeout,
+    requestId: lastResponse?.requestId,
+    status: lastResponse?.response?.status,
+  });
+}
+
+async function accounts(context, subcommand, id) {
+  if (subcommand === "list" || !subcommand) {
+    requireApiKey(context, "accounts list");
+    const { accounts: accountList, pagination, response } = await fetchAccounts(context);
+    const filtered = filterAccounts(accountList, context.options);
+    return envelopeResult({
+      data: { accounts: filtered },
+      meta: {
+        request_id: response.requestId,
+        pagination,
+        rate_limit: response.rateLimit,
+      },
+      human: renderAccounts(filtered),
+    });
+  }
+  if (subcommand === "get") {
+    requireApiKey(context, "accounts get");
+    const accountID = requireValue(id, "account_id", "accounts get requires an account ID.");
+    const { accounts: accountList, response } = await fetchAccounts(context);
+    const account = accountList.find((item) => item.id === accountID);
+    if (!account) {
+      throw new CliError({
+        code: "not_found",
+        normalizedCode: "not_found",
+        message: `Account ${accountID} was not found in accounts list.`,
+        exitCode: EXIT.validation,
+      });
+    }
+    return envelopeResult({
+      data: { account },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: renderAccounts([account]),
+    });
+  }
+  return invalidSubcommand("accounts", subcommand);
+}
+
+async function posts(context, subcommand) {
+  if (subcommand === "validate") {
+    requireApiKey(context, "posts validate");
+    const payload = postPayloadFromOptions(context);
+    const response = await requestJson(context, "/v1/posts/validate", {
+      auth: true,
+      method: "POST",
+      body: payload,
+    });
+    const validation = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { validation },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: validation?.valid ? "Post is valid.\n" : "Post validation returned issues.\n",
+    });
+  }
+  if (subcommand === "draft") {
+    requireApiKey(context, "posts draft");
+    const payload = { ...postPayloadFromOptions(context), status: "draft" };
+    const response = await requestJson(context, "/v1/posts", {
+      auth: true,
+      method: "POST",
+      body: payload,
+    });
+    const post = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { post },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Created draft ${post.id || "post"}.\n`,
+    });
+  }
+  return invalidSubcommand("posts", subcommand);
+}
+
+function postPayloadFromOptions(context) {
+  const caption = requireValue(context.options.caption, "--caption <text>", "posts command requires a caption.");
+  const accountIDs = splitIDs(requireValue(context.options.account, "--account <account_id>", "posts command requires at least one account."));
+  return {
+    caption,
+    account_ids: accountIDs,
+  };
+}
+
+async function examples(context, subcommand) {
+  if (subcommand !== "posts.create") {
+    return invalidSubcommand("examples", subcommand);
+  }
+  const language = (context.options.lang || "curl").toLowerCase();
+  if (!["curl", "node"].includes(language)) {
+    throw new CliError({
+      code: "invalid_argument",
+      normalizedCode: "invalid_argument",
+      message: "examples posts.create supports --lang curl or --lang node in Phase 2.",
+      exitCode: EXIT.invalidArgs,
+    });
+  }
+  const caption = context.options.caption || "Hello from UniPost";
+  const accountIDs = splitIDs(context.options.account || "sa_your_account_id");
+  const payload = {
+    caption,
+    account_ids: accountIDs,
+  };
+  const code = language === "node"
+    ? nodeFetchPostExample(context, payload)
+    : curlPostExample(context, payload);
+  return envelopeResult({
+    data: {
+      language,
+      code,
+      sdk_dependency_required: false,
+    },
+    human: `${code}\n`,
+  });
+}
+
+async function agent(context, subcommand, third) {
+  if (subcommand === "capabilities") {
+    return agentCapabilities(context);
+  }
+  if (subcommand === "context") {
+    requireApiKey(context, "agent context");
+    const data = await agentContextData(context);
+    return envelopeResult({
+      data,
+      human: `Workspace ${data.workspace?.id || "unknown"}: ${data.profiles.length} profiles, ${data.accounts.length} accounts.\n`,
+    });
+  }
+  if (subcommand === "bootstrap") {
+    return agentBootstrap(context);
+  }
+  if (subcommand === "guide") {
+    const client = context.options.client || third || "codex";
+    const guide = agentGuide(client);
+    return envelopeResult({
+      data: guide,
+      human: `${guide.recommended_prompt}\n`,
+    });
+  }
+  if (subcommand === "mcp-config") {
+    const client = context.options.client || third || "claude-code";
+    const config = agentMcpConfig(context, client);
+    return envelopeResult({
+      data: config,
+      human: `${config.content}\n`,
+    });
+  }
+  return invalidSubcommand("agent", subcommand);
+}
+
+function agentCapabilities() {
+  return envelopeResult({
+    data: {
+      catalog_version: AGENT_CATALOG_VERSION,
+      status_enums: {
+        post: ["draft", "scheduled", "publishing", "published", "partial", "failed", "canceled"],
+        connect_session: ["pending", "completed", "expired", "canceled"],
+        media: ["pending", "processing", "ready", "failed"],
+      },
+      commands: [
+        "init",
+        "quickstart",
+        "auth status",
+        "auth list",
+        "auth use",
+        "profiles list",
+        "profiles create",
+        "profiles use",
+        "connect create",
+        "connect get",
+        "connect wait",
+        "accounts list",
+        "accounts get",
+        "posts validate",
+        "posts draft",
+        "examples posts.create",
+        "agent bootstrap",
+        "agent capabilities",
+        "agent context",
+        "agent guide",
+        "agent mcp-config",
+      ],
+      intents: [
+        {
+          name: "diagnose_setup",
+          description: "Check auth, workspace, profile and account readiness for an agent.",
+          command: "unipost agent bootstrap --json",
+          canonical_action: "agent.bootstrap",
+          safety_level: "read_only",
+          required_inputs: [],
+          optional_inputs: ["client"],
+          input_schema: {
+            type: "object",
+            properties: {
+              client: { type: "string", enum: ["codex", "claude-code", "cursor", "windsurf"] },
+            },
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "create_draft_post",
+          description: "Validate copy and create a UniPost draft without publishing externally.",
+          command: "unipost posts draft --account <account_id> --caption <text> --json",
+          canonical_action: "posts.draft",
+          safety_level: "draft_write",
+          required_inputs: ["account_ids", "caption"],
+          optional_inputs: [],
+          input_schema: {
+            type: "object",
+            required: ["account_ids", "caption"],
+            properties: {
+              account_ids: { type: "array", items: { type: "string" }, minItems: 1 },
+              caption: { type: "string", minLength: 1 },
+            },
+            additionalProperties: false,
+          },
+          preflight: "Run unipost posts validate with the same account_ids and caption before creating a draft.",
+        },
+        {
+          name: "connect_account",
+          description: "Create a hosted OAuth connect session for a social platform.",
+          command: "unipost connect create --platform <platform> --json",
+          canonical_action: "connect.create",
+          safety_level: "setup_write",
+          required_inputs: ["platform"],
+          optional_inputs: ["profile_id", "return_url", "external_user_id", "external_user_email"],
+          input_schema: {
+            type: "object",
+            required: ["platform"],
+            properties: {
+              platform: { type: "string", minLength: 1 },
+              profile_id: { type: "string" },
+              return_url: { type: "string" },
+              external_user_id: { type: "string" },
+              external_user_email: { type: "string" },
+            },
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "generate_post_example",
+          description: "Generate dependency-free cURL or native Node fetch examples.",
+          command: "unipost examples posts.create --lang <curl|node> --json",
+          canonical_action: "examples.posts.create",
+          safety_level: "read_only",
+          required_inputs: [],
+          optional_inputs: ["language", "account_ids", "caption"],
+          input_schema: {
+            type: "object",
+            properties: {
+              language: { type: "string", enum: ["curl", "node"] },
+              account_ids: { type: "array", items: { type: "string" } },
+              caption: { type: "string" },
+            },
+            additionalProperties: false,
+          },
+        },
+      ],
+    },
+    human: "Agent capabilities are available as JSON.\n",
+  });
+}
+
+async function agentContextData(context) {
+  const config = await readConfig(context);
+  const [{ workspace, response: workspaceResponse }, { profiles }, { accounts: accountList }] = await Promise.all([
+    fetchWorkspace(context),
+    fetchProfiles(context),
+    fetchAccounts(context),
+  ]);
+  return {
+    workspace,
+    profiles,
+    accounts: accountList,
+    defaults: {
+      workspace_id: config.default_workspace_id || workspace?.id || "",
+      profile_id: config.default_profile_id || "",
+    },
+    grounding: {
+      profile_count: profiles.length,
+      account_count: accountList.length,
+      has_default_profile: Boolean(config.default_profile_id),
+    },
+    request_id: workspaceResponse.requestId,
+  };
+}
+
+async function agentBootstrap(context) {
+  const client = context.options.client || "codex";
+  if (!context.options.apiKey) {
+    return envelopeResult({
+      data: {
+        client,
+        authenticated: false,
+        ready_for_draft: false,
+        setup_token_supported: false,
+        next_actions: [
+          "Set UNIPOST_API_KEY in the agent environment and rerun unipost agent bootstrap --json.",
+          "Run unipost init after the API key is available.",
+        ],
+        recommended_prompt: "Use the UniPost CLI only after confirming UNIPOST_API_KEY is configured. Start with `unipost agent bootstrap --json`.",
+      },
+      warnings: [{
+        code: "setup_token_backend_unavailable",
+        message: "Device/setup-token auth is not implemented yet; use UNIPOST_API_KEY fallback.",
+      }],
+      human: "UniPost auth is missing. Set UNIPOST_API_KEY before agent use.\n",
+      exitCode: EXIT.auth,
+    });
+  }
+
+  const data = await agentContextData(context);
+  const readyForDraft = data.profiles.length > 0 && data.accounts.length > 0;
+  const nextActions = [];
+  if (data.profiles.length === 0) {
+    nextActions.push("Run unipost profiles create --name \"Brand\".");
+  }
+  if (data.profiles.length > 0 && data.accounts.length === 0) {
+    nextActions.push("Run unipost connect create --platform linkedin --json and have the user complete OAuth.");
+  }
+  if (readyForDraft) {
+    nextActions.push("Run unipost posts validate before unipost posts draft.");
+  }
+
+  return envelopeResult({
+    data: {
+      client,
+      authenticated: true,
+      ready_for_draft: readyForDraft,
+      ...data,
+      next_actions: nextActions,
+      recommended_prompt: agentGuide(client).recommended_prompt,
+    },
+    human: readyForDraft
+      ? "UniPost agent bootstrap is ready for validate/draft workflows.\n"
+      : "UniPost agent bootstrap found setup gaps.\n",
+  });
+}
+
+function agentGuide(client) {
+  const normalizedClient = String(client || "codex").toLowerCase();
+  return {
+    client: normalizedClient,
+    recommended_prompt: [
+      "Before using UniPost, run `unipost agent bootstrap --json`.",
+      "For writes, call `unipost posts validate --json` first.",
+      "Create drafts with `unipost posts draft`; never live-publish unless the user explicitly asks and the command requires --yes.",
+    ].join(" "),
+    stable_contracts: [
+      "Branch on normalized_code, exit code, and documented status enum values.",
+      "Treat canceled as the only CLI-facing spelling for canceled resources.",
+    ],
+  };
+}
+
+function agentMcpConfig(context, client) {
+  const normalizedClient = String(client || "claude-code").toLowerCase();
+  if (normalizedClient === "codex") {
+    return {
+      client: "codex",
+      content: [
+        "[mcp_servers.unipost]",
+        "command = \"unipost\"",
+        "args = [\"agent\", \"capabilities\", \"--json\"]",
+        "env = { UNIPOST_API_KEY = \"$UNIPOST_API_KEY\" }",
+      ].join("\n"),
+    };
+  }
+  return {
+    client: normalizedClient,
+    content: JSON.stringify({
+      mcpServers: {
+        unipost: {
+          command: "unipost",
+          args: ["agent", "capabilities", "--json"],
+          env: {
+            UNIPOST_API_KEY: "${UNIPOST_API_KEY}",
+            UNIPOST_BASE_URL: context.options.baseUrl,
+          },
+        },
+      },
+    }, null, 2),
+  };
+}
+
+async function selectProfile(context, profiles, options = {}) {
+  if (context.options.profile) {
+    const explicit = profiles.find((profile) => profile.id === context.options.profile);
+    if (explicit) {
+      return explicit;
+    }
+    return { id: context.options.profile };
+  }
+  const config = await readConfig(context);
+  if (config.default_profile_id) {
+    const configured = profiles.find((profile) => profile.id === config.default_profile_id);
+    return configured || { id: config.default_profile_id };
+  }
+  if (profiles.length === 1) {
+    return profiles[0];
+  }
+  if (profiles.length === 0 && options.allowCreate) {
+    return null;
+  }
+  return null;
+}
+
+async function resolveProfileID(context) {
+  if (context.options.profile) {
+    return context.options.profile;
+  }
+  const config = await readConfig(context);
+  if (config.default_profile_id) {
+    return config.default_profile_id;
+  }
+  const { profiles } = await fetchProfiles(context);
+  if (profiles.length === 1) {
+    return profiles[0].id;
+  }
+  if (profiles.length === 0) {
+    throw new CliError({
+      code: "missing_required_input",
+      normalizedCode: "missing_required_input",
+      message: "No profile exists for this workspace.",
+      hint: "Run unipost profiles create --name \"Brand\" or pass --profile after creating one.",
+      exitCode: EXIT.missingInput,
+    });
+  }
+  throw new CliError({
+    code: "missing_required_input",
+    normalizedCode: "missing_required_input",
+    message: "Multiple profiles exist; choose one for this command.",
+    hint: "Pass --profile <profile_id> or run unipost profiles use <profile_id>.",
+    exitCode: EXIT.missingInput,
+  });
+}
+
+function filterAccounts(accountList, options) {
+  return accountList.filter((account) => {
+    if (options.platform && account.platform !== options.platform) {
+      return false;
+    }
+    if (options.profile && account.profile_id !== options.profile) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function pollDelayMs(context, attempt, headers) {
+  const testMs = Number(context.env.UNIPOST_TEST_POLL_MS);
+  if (Number.isFinite(testMs) && testMs >= 0) {
+    return testMs;
+  }
+  return retryDelayMs(headers.get("retry-after"), attempt);
+}
+
+function curlPostExample(context, payload) {
+  const body = JSON.stringify(payload);
+  return [
+    "curl -sS \\",
+    `  -H 'Authorization: Bearer $UNIPOST_API_KEY' \\`,
+    "  -H 'Content-Type: application/json' \\",
+    `  -d '${body}' \\`,
+    `  '${context.options.baseUrl}/v1/posts'`,
+  ].join("\n");
+}
+
+function nodeFetchPostExample(context, payload) {
+  return `const response = await fetch("${context.options.baseUrl}/v1/posts", {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${process.env.UNIPOST_API_KEY}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(${JSON.stringify(payload, null, 2)}),
+});
+
+const body = await response.json();
+console.log(body);`;
+}
+
+function invalidSubcommand(command, subcommand) {
+  throw new CliError({
+    code: "invalid_command",
+    normalizedCode: "invalid_command",
+    message: `Unknown command: ${command}${subcommand ? ` ${subcommand}` : ""}`,
+    hint: "Run unipost --help to see supported commands.",
+    docsUrl: DOCS_CLI_URL,
+    exitCode: EXIT.invalidArgs,
+  });
+}
+
 function requireApiKey(context, command) {
   if (context.options.apiKey) {
     return;
@@ -428,6 +1266,12 @@ async function requestJson(context, path, options = {}) {
   if (auth) {
     headers.Authorization = `Bearer ${context.options.apiKey}`;
   }
+  if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (context.options.idempotencyKey) {
+    headers["Idempotency-Key"] = context.options.idempotencyKey;
+  }
 
   const retryable = method === "GET" || method === "HEAD";
   const maxAttempts = retryable ? 3 : 1;
@@ -436,7 +1280,11 @@ async function requestJson(context, path, options = {}) {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     let response;
     try {
-      response = await context.fetchImpl(url, { method, headers });
+      response = await context.fetchImpl(url, {
+        method,
+        headers,
+        ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+      });
     } catch (error) {
       lastError = new CliError({
         code: "network_error",
@@ -475,6 +1323,151 @@ async function requestJson(context, path, options = {}) {
     message: "Network request failed.",
     exitCode: EXIT.network,
   });
+}
+
+function unwrapData(body) {
+  return body && Object.prototype.hasOwnProperty.call(body, "data") ? body.data : body;
+}
+
+function paginationFromBody(body) {
+  const meta = body?.meta || {};
+  const pagination = {};
+  for (const key of ["total", "limit", "has_more", "next_cursor"]) {
+    if (meta[key] !== undefined && meta[key] !== null && meta[key] !== "") {
+      pagination[key] = meta[key];
+    }
+  }
+  if (body?.next_cursor) {
+    pagination.next_cursor = body.next_cursor;
+  }
+  return pagination;
+}
+
+function configDir(context) {
+  return context.env.UNIPOST_CONFIG_DIR || join(homedir(), ".unipost");
+}
+
+function configPath(context) {
+  return join(configDir(context), "config.json");
+}
+
+async function readConfig(context) {
+  try {
+    return JSON.parse(await readFile(configPath(context), "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return {};
+    }
+    throw new CliError({
+      code: "config_error",
+      normalizedCode: "config_error",
+      message: `Failed to read UniPost config: ${error.message}`,
+      exitCode: EXIT.generic,
+      cause: error,
+    });
+  }
+}
+
+async function writeConfig(context, nextConfig) {
+  const dir = configDir(context);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const safeConfig = stripSecrets(nextConfig);
+  await writeFile(configPath(context), `${JSON.stringify(safeConfig, null, 2)}\n`, { mode: 0o600 });
+  return safeConfig;
+}
+
+async function patchConfig(context, patch) {
+  const current = await readConfig(context);
+  return writeConfig(context, {
+    ...current,
+    ...patch,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+function stripSecrets(value) {
+  if (Array.isArray(value)) {
+    return value.map(stripSecrets);
+  }
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (/(api[_-]?key|token|secret|password)/i.test(key)) {
+        continue;
+      }
+      out[key] = stripSecrets(item);
+    }
+    return out;
+  }
+  return value;
+}
+
+function normalizeStatus(status) {
+  if (status === "cancelled") {
+    return "canceled";
+  }
+  return status;
+}
+
+function normalizeStatuses(value) {
+  if (Array.isArray(value)) {
+    return value.map(normalizeStatuses);
+  }
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (key === "status" && typeof item === "string") {
+        out[key] = normalizeStatus(item);
+      } else {
+        out[key] = normalizeStatuses(item);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+function requireValue(value, flag, message) {
+  if (value !== undefined && value !== null && String(value).trim() !== "") {
+    return String(value).trim();
+  }
+  throw new CliError({
+    code: "missing_required_input",
+    normalizedCode: "missing_required_input",
+    message,
+    hint: `Pass ${flag}.`,
+    exitCode: EXIT.missingInput,
+  });
+}
+
+function splitIDs(value) {
+  return String(value || "").split(",").map((id) => id.trim()).filter(Boolean);
+}
+
+async function fetchWorkspace(context) {
+  const response = await requestJson(context, "/v1/workspace", { auth: true });
+  return {
+    workspace: normalizeStatuses(unwrapData(response.body)),
+    response,
+  };
+}
+
+async function fetchProfiles(context) {
+  const response = await requestJson(context, "/v1/profiles", { auth: true });
+  return {
+    profiles: normalizeStatuses(unwrapData(response.body) || []),
+    pagination: paginationFromBody(response.body),
+    response,
+  };
+}
+
+async function fetchAccounts(context) {
+  const response = await requestJson(context, "/v1/accounts", { auth: true });
+  return {
+    accounts: normalizeStatuses(unwrapData(response.body) || []),
+    pagination: paginationFromBody(response.body),
+    response,
+  };
 }
 
 async function readJsonBody(response) {
@@ -627,6 +1620,17 @@ _unipost() {
   local -a commands
   commands=(
     'auth status:Verify the configured UniPost credential'
+    'auth list:List locally discoverable UniPost credentials'
+    'init:Initialize local UniPost CLI config'
+    'quickstart:Run the safe first-run workflow'
+    'profiles list:List profiles'
+    'profiles create:Create a profile'
+    'connect create:Create an account Connect session'
+    'accounts list:List connected accounts'
+    'posts validate:Validate a post payload'
+    'posts draft:Create a server-side draft'
+    'agent bootstrap:Diagnose agent setup'
+    'agent capabilities:Print agent command catalog'
     'doctor:Run local and API diagnostics'
     'completion:Generate shell completion'
   )
@@ -653,7 +1657,7 @@ _unipost "$@"
 function bashCompletion() {
   return `# bash completion for unipost
 _unipost_completion() {
-  local words="auth status doctor completion --json --output --field --base-url --api-key --client --limit --cursor --all --non-interactive --no-color --no-telemetry"
+  local words="init quickstart auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get posts validate posts draft examples posts.create agent bootstrap agent capabilities agent context agent guide agent mcp-config doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --limit --cursor --all --non-interactive --no-color --no-telemetry"
   COMPREPLY=($(compgen -W "$words" -- "\${COMP_WORDS[COMP_CWORD]}"))
 }
 complete -F _unipost_completion unipost
@@ -663,6 +1667,12 @@ complete -F _unipost_completion unipost
 function fishCompletion() {
   return `complete -c unipost -f
 complete -c unipost -a "auth status" -d "Verify the configured UniPost credential"
+complete -c unipost -a "profiles list" -d "List profiles"
+complete -c unipost -a "connect create" -d "Create a Connect session"
+complete -c unipost -a "accounts list" -d "List connected accounts"
+complete -c unipost -a "posts validate" -d "Validate a post"
+complete -c unipost -a "posts draft" -d "Create a draft"
+complete -c unipost -a "agent bootstrap" -d "Diagnose agent setup"
 complete -c unipost -a doctor -d "Run local and API diagnostics"
 complete -c unipost -a completion -d "Generate shell completion"
 complete -c unipost -l json -d "Output the stable JSON envelope"
@@ -768,6 +1778,7 @@ function baseMeta(context, meta = {}) {
     command,
     source: "cli",
     telemetry: context.options.telemetry,
+    ...(meta.pagination && Object.keys(meta.pagination).length > 0 ? { pagination: meta.pagination } : {}),
     ...(meta.rate_limit && Object.keys(meta.rate_limit).length > 0 ? { rate_limit: meta.rate_limit } : {}),
     ...(meta.status ? { status: meta.status } : {}),
   };
@@ -784,6 +1795,67 @@ function selectField(value, path) {
     }
     return current[part];
   }, value);
+}
+
+function renderInit(workspace, profiles, config, nextActions) {
+  const lines = [
+    "UniPost init",
+    `Workspace: ${workspace?.id || "unknown"}`,
+    `Profiles: ${profiles.length}`,
+  ];
+  if (config.default_profile_id) {
+    lines.push(`Default profile: ${config.default_profile_id}`);
+  }
+  for (const action of nextActions) {
+    lines.push(`Next: ${action}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderQuickstart(workspace, profile, accountList, steps) {
+  const lines = [
+    "UniPost quickstart",
+    `Workspace: ${workspace?.id || "unknown"}`,
+    `Profile: ${profile?.id || "not selected"}`,
+    `Accounts: ${accountList.length}`,
+  ];
+  for (const step of steps) {
+    lines.push(`Next: ${step}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderProfiles(profileList) {
+  if (profileList.length === 0) {
+    return "No profiles found.\n";
+  }
+  return `${profileList.map((profile) => {
+    const count = profile.account_count ?? 0;
+    return `${profile.id}\t${profile.name || ""}\t${count} accounts`;
+  }).join("\n")}\n`;
+}
+
+function renderConnectSession(session) {
+  const lines = [
+    `${session.id || "connect_session"}\t${session.platform || ""}\t${session.status || ""}`,
+  ];
+  if (session.url) {
+    lines.push(session.url);
+  }
+  if (session.completed_social_account_id) {
+    lines.push(`Account: ${session.completed_social_account_id}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderAccounts(accountList) {
+  if (accountList.length === 0) {
+    return "No accounts found.\n";
+  }
+  return `${accountList.map((account) => {
+    const name = account.account_name || account.accountName || "";
+    return `${account.id}\t${account.platform || ""}\t${name}\t${account.status || ""}`;
+  }).join("\n")}\n`;
 }
 
 function renderDoctor(checks, workspace, telemetry) {
@@ -806,14 +1878,23 @@ function helpText() {
 
 Usage:
   unipost --version
+  unipost init [--json]
+  unipost quickstart [--json] [--name <profile-name>]
   unipost auth status [--json] [--api-key <key>] [--base-url <url>]
+  unipost profiles list|create|use [--json]
+  unipost connect create|get|wait [--json]
+  unipost accounts list|get [--json]
+  unipost posts validate|draft --account <id> --caption <text> [--json]
+  unipost examples posts.create --lang <curl|node>
+  unipost agent bootstrap|capabilities|context [--json]
   unipost doctor [--json] [--api-key <key>] [--base-url <url>]
   unipost completion <bash|zsh|fish>
 
 Global flags:
   --json, --output <table|json|yaml>, --field <field>, --non-interactive
   --base-url <url>, --api-key <key>, --limit <n>, --cursor <cursor>, --all
-  --client <codex|claude-code|cursor|windsurf>, --no-color, --no-telemetry
+  --client <codex|claude-code|cursor|windsurf>, --profile <id>, --account <id>
+  --platform <name>, --caption <text>, --no-color, --no-telemetry
 `;
 }
 
