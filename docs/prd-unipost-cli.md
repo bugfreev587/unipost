@@ -53,6 +53,27 @@ UniPost CLI 是 UniPost 的 first-party command line interface，覆盖两条产
 
 ---
 
+## 3.1 Current Backend Reality And Launch Gates
+
+This PRD includes the target onboarding experience, but some backend dependencies are not implemented yet. The implementation plan must distinguish between fallback launch paths and the full agent-assisted onboarding path.
+
+Hard dependencies for the full post-signup agent onboarding flow:
+
+- **Not implemented yet:** device auth or browser auth endpoint for CLI login.
+- **Not implemented yet:** Dashboard-issued setup token (`ust_...`) issuance.
+- **Not implemented yet:** setup-token exchange endpoint that creates a named, revocable CLI API key and returns the plaintext key once to the local CLI.
+- **Needs backend confirmation or addition:** request metadata fields for CLI/agent audit, such as `source`, `cli_version`, `agent_name`, and `client`.
+- **Needs package availability check:** SDK-backed examples require published SDK packages. Until SDK packages are confirmed available, CLI examples must include cURL and dependency-free language examples that use native HTTP/fetch.
+
+Phase implications:
+
+- Phase 1 and the minimal Phase 2 Quickstart can launch with `UNIPOST_API_KEY` as the auth path.
+- The polished "paste this Dashboard prompt into Codex / Claude Code" flow is not complete until setup-token or device auth exists.
+- If setup-token/device auth is not ready for Phase 2, Phase 2 success criteria should use the fallback path: the user provides `UNIPOST_API_KEY`, then `agent bootstrap` runs diagnostics and context discovery.
+- Full agent-assisted onboarding becomes GA only when Dashboard setup token or device auth can create/store a local CLI credential without manual API-key copy/paste.
+
+---
+
 ## 4. Non-goals
 
 - v1 不做完整 Dashboard 替代品。
@@ -292,26 +313,30 @@ The smoothest Codex / Claude Code onboarding should not require users to manuall
    - CLI prints a short code and activation URL.
    - User opens the URL in a browser and approves CLI access.
    - CLI polls until authorization is complete.
-   - CLI stores a scoped credential locally.
+   - Backend creates a named, revocable CLI API key for the user's workspace.
+   - CLI stores the returned plaintext key locally and never prints it.
 
 2. **Dashboard setup token flow**
    - User clicks "Connect with Claude Code / Codex" in Dashboard.
    - Dashboard creates a short-lived, single-use setup token scoped to CLI onboarding.
    - User copies the generated command or prompt into the agent.
-   - CLI exchanges the setup token for a local scoped credential.
+   - CLI exchanges the setup token for a named, revocable CLI API key.
+   - Backend returns the plaintext API key only once to the local CLI.
+   - CLI stores it in keychain when available and continues setup.
 
 Example:
 
 ```bash
-unipost login
+unipost auth login
 unipost agent bootstrap --client codex --setup-token ust_...
 ```
 
 Requirements:
 
 - Setup tokens must expire quickly and be single-use.
-- Setup tokens must not be usable for direct publishing.
+- Setup tokens must not be usable for ordinary UniPost API calls, direct publishing, API key listing, API key revocation, or destructive actions.
 - The exchanged local credential should be scoped according to the user's UniPost permissions.
+- Generated keys should be clearly named, such as `Codex CLI` or `Claude Code CLI`, and visible/revocable in Dashboard -> API Keys.
 - CLI must store credentials in OS keychain when available.
 - CLI must provide a clear fallback to `UNIPOST_API_KEY` for CI and advanced users.
 - Agent bootstrap output must redact setup tokens and local credentials.
@@ -394,18 +419,26 @@ Behavior:
 - `--agent-name`: records the calling agent in CLI metadata when included.
 - `--open`: open a generated Dashboard, docs, OAuth or connect URL in the user's browser when the command supports it.
 
+`--open` behavior:
+
+- In interactive terminals, `--open` may launch the user's browser.
+- In `--non-interactive` mode, `--open` must not block setup. CLI should return the URL in output and include a warning that browser launch was skipped.
+- In headless or unsupported environments, CLI should return the URL and a `browser_open_unavailable` warning instead of failing the command.
+
 ### 9.2 Auth Commands
 
 ```bash
 unipost auth status
 unipost auth login --api-key up_live_...
+unipost auth login
 unipost auth logout
 ```
 
 Requirements:
 
 - `auth status` verifies that a credential exists and can authenticate.
-- `auth login` stores credentials according to user-selected storage mode.
+- `auth login --api-key ...` stores credentials according to user-selected storage mode.
+- `auth login` without `--api-key` starts browser/device auth once the backend exists; until then it should explain that `UNIPOST_API_KEY` or `--api-key` is required.
 - `auth logout` removes local credentials but never revokes API keys on the server.
 
 ### 9.3 Doctor Commands
@@ -430,7 +463,23 @@ Checks:
 
 Human output should group results as pass/warn/fail. JSON output should include check IDs and normalized status.
 
-### 9.4 Quickstart Commands
+### 9.4 Config Commands
+
+```bash
+unipost config show
+unipost config path
+unipost config set base_url https://dev-api.unipost.dev
+unipost config set default_profile_id pr_...
+```
+
+Requirements:
+
+- `config show` prints effective configuration with secrets redacted.
+- `config path` prints the config file location.
+- `config set` supports non-secret preferences such as `base_url` and `default_profile_id`.
+- CLI must not store plaintext API keys in config unless the user explicitly opts into file-based storage.
+
+### 9.5 Quickstart Commands
 
 ```bash
 unipost init
@@ -461,7 +510,7 @@ unipost quickstart --lang node
 
 Quickstart should prefer draft/validate over live publish.
 
-### 9.5 Profiles Commands
+### 9.6 Profiles Commands
 
 ```bash
 unipost profiles list
@@ -476,7 +525,7 @@ Requirements:
 - `profiles list --json` includes enough fields for agent grounding.
 - Profile update/delete can be deferred unless developer demand is high.
 
-### 9.6 Connect Commands
+### 9.7 Connect Commands
 
 ```bash
 unipost connect create --platform linkedin --profile pr_...
@@ -491,7 +540,7 @@ Requirements:
 - Optional `--open` may launch browser when user explicitly asks.
 - `--json` output includes URL, session ID, platform, profile ID and expiration if available.
 
-### 9.7 Accounts Commands
+### 9.8 Accounts Commands
 
 ```bash
 unipost accounts list
@@ -505,17 +554,19 @@ unipost accounts metrics --account sa_...
 Requirements:
 
 - `accounts list` is one of the most important commands for both developers and agents.
+- `accounts get` is a CLI-side helper implemented by calling `GET /v1/accounts` and selecting the matching account ID locally; the public API does not currently expose `GET /v1/accounts/{id}`.
 - Human output should show platform, handle/name, profile, status, account ID.
 - JSON output should preserve raw API fields.
 - `health`, `capabilities`, and `metrics` help diagnose platform-specific issues.
 
-### 9.8 Posts Commands
+### 9.9 Posts Commands
 
 ```bash
 unipost posts validate --account sa_... --caption "Hello"
 unipost posts draft --account sa_... --caption "Hello"
 unipost posts create --account sa_... --caption "Hello" --yes --idempotency-key demo-001
 unipost posts create --from-file post.json --dry-run
+unipost posts publish-draft post_... --yes --idempotency-key demo-002
 unipost posts list
 unipost posts list --status failed
 unipost posts get post_...
@@ -525,10 +576,13 @@ unipost posts analytics post_...
 Requirements:
 
 - `validate` should be the safest first publish-adjacent command.
-- `draft` creates a server-side draft when supported.
+- `draft` creates a server-side draft by calling `POST /v1/posts` with `status: "draft"`.
+- `publish-draft` publishes an existing draft by calling `POST /v1/posts/{id}/publish`.
+- Updating an existing draft maps to `PATCH /v1/posts/{id}` and can be added as `posts update-draft` when needed.
 - `create` can publish or schedule according to request body.
-- In non-interactive mode, `create` requires `--yes` for live publish.
-- In agent mode, live publish should require `--idempotency-key`.
+- `draft` does not require `--yes` in either interactive or non-interactive mode because it does not publish to external social networks.
+- Live publish means `posts create` without `status: "draft"` and without `--dry-run`, or `posts publish-draft`.
+- Live publish in non-interactive mode must include `--yes` and `--idempotency-key`; otherwise CLI exits with code 3 (`missing required input`).
 - `--from-file` accepts full API-shaped JSON for advanced platform options.
 
 Example `post.json`:
@@ -542,7 +596,7 @@ Example `post.json`:
 }
 ```
 
-### 9.9 Media Commands
+### 9.10 Media Commands
 
 ```bash
 unipost media upload ./video.mp4
@@ -556,8 +610,9 @@ Requirements:
 - Upload flow should reserve media through UniPost, upload bytes to storage, then poll media status.
 - Human output should show `media_id` and next publish command.
 - JSON output should include media ID, status, MIME type, size and readiness.
+- `media wait` should poll with bounded exponential backoff, respect rate-limit headers when present, and exit with code 10 on timeout.
 
-### 9.10 Analytics Commands
+### 9.11 Analytics Commands
 
 ```bash
 unipost analytics summary --from 2026-06-01 --to 2026-06-30
@@ -570,11 +625,14 @@ unipost analytics export --from 2026-06-01 --to 2026-06-30 --format csv
 Requirements:
 
 - Analytics commands are important for agents because they let agents reason from real performance data.
+- `analytics platforms` maps to `GET /v1/analytics/platforms`.
+- `analytics platform <platform>` maps to `GET /v1/analytics/platforms/{platform}`.
+- Legacy/internal `GET /v1/analytics/by-platform` can remain outside the CLI v1 surface unless a later implementation plan needs it.
 - Human output can summarize key metrics.
 - JSON output preserves full API response.
-- Export command may write a file when user provides `--output`; otherwise prints to stdout.
+- `analytics export` is Phase 4 / post-GA unless pulled forward explicitly. Export may write a file when user provides `--output`; otherwise it prints to stdout.
 
-### 9.11 Examples Commands
+### 9.12 Examples Commands
 
 ```bash
 unipost examples posts.create --lang curl
@@ -588,9 +646,10 @@ Requirements:
 - Examples should use real profile/account IDs when available.
 - Generated code must redact API keys.
 - Examples should include the docs URL for deeper reference.
-- Supported languages initially: cURL, Node.js, Python, Go, Java.
+- v1 must support cURL and dependency-free Node.js `fetch` examples even if SDK packages are not published.
+- SDK-backed examples for Node.js, Python, Go and Java are enabled only after the corresponding SDK package is published and the install command is confirmed.
 
-### 9.12 Agent Commands
+### 9.13 Agent Commands
 
 ```bash
 unipost agent bootstrap --client codex --json
@@ -728,6 +787,26 @@ All commands that support `--json` must return a stable envelope.
 
 Exit codes must remain stable for CI and agent usage.
 
+### 10.4 Backend Error Mapping
+
+The backend returns `error.normalized_code` and `request_id` on many API errors. CLI should preserve `normalized_code` in JSON output and map it to stable exit codes.
+
+| Backend `normalized_code` | CLI exit code | Default CLI hint |
+| --- | ---: | --- |
+| `unauthorized` | 4 | Check `UNIPOST_API_KEY`, local auth, or run `unipost auth status`. |
+| `forbidden` | 5 | The current credential lacks permission for this action. |
+| `validation_error`, `invalid_request` | 6 | Fix request fields; run validate/dry-run before write commands. |
+| `not_found` | 6 | Check the resource ID and current workspace/profile context. |
+| `account_already_connected` | 6 | Use `accounts list` or choose a different platform/account. |
+| `account_disconnected` | 6 | Reconnect the account before publishing or fetching metrics. |
+| `not_supported` | 6 | This platform or endpoint does not support the requested operation. |
+| `plan_post_quota_exceeded` | 6 | Upgrade plan, reduce publish units, or retry after quota resets. |
+| `request_rate_limited`, `enqueue_rate_limited`, `queue_depth_exceeded` | 7 | Respect rate-limit headers and retry later with backoff. |
+| `upstream_error` | 7 | UniPost reached the platform but the upstream platform failed. |
+| `internal_error` | 7 | Capture `request_id` and retry or contact support. |
+
+If the backend returns an unknown `normalized_code`, CLI should map by HTTP status first, include the raw `normalized_code` in JSON output, and use exit code 7 for 5xx or exit code 6 for 4xx.
+
 ---
 
 ## 11. Safety, Permissions, And Audit
@@ -739,17 +818,21 @@ Default behavior:
 - `posts validate` is safe and can run without confirmation.
 - `posts draft` is a write action but does not publish to social networks.
 - `posts create` that publishes immediately requires confirmation in human mode.
-- `posts create --non-interactive` requires `--yes`.
-- `posts create --json --non-interactive --yes` should require or strongly enforce `--idempotency-key`.
+- `posts draft` does not require `--yes`, including in `--non-interactive` mode.
+- `posts create --dry-run` does not require `--yes`.
+- `posts create --non-interactive` for live publish requires `--yes` and `--idempotency-key`.
+- `posts publish-draft --non-interactive` requires `--yes` and `--idempotency-key`.
+- Missing `--yes` for non-interactive live publish exits with code 9 (`unsafe action blocked`).
+- Missing `--idempotency-key` for non-interactive live publish exits with code 3 (`missing required input`).
 
 Recommended policy:
 
 ```text
 human interactive publish: confirmation prompt required
 human --yes publish: allowed
-agent non-interactive publish: --yes + --idempotency-key required
-agent dry-run: allowed
-draft creation: --yes recommended but not mandatory in interactive mode
+non-interactive live publish: --yes + --idempotency-key required
+dry-run: allowed without --yes
+draft creation: allowed without --yes
 ```
 
 ### 11.2 Destructive Actions
@@ -1025,12 +1108,13 @@ Deliverables:
 - `accounts list/get`.
 - `posts validate`.
 - `posts draft`.
-- `examples posts.create`.
+- `examples posts.create` with cURL and native Node.js `fetch` support that does not depend on published SDK packages.
 
 Success criteria:
 
 - New developer can create or select profile, connect account, find account ID and create first draft from terminal.
-- New user can paste a Dashboard-generated prompt into Codex / Claude Code and let the agent complete CLI/API setup with user confirmation when needed.
+- With `UNIPOST_API_KEY` fallback, Codex / Claude Code can run `agent bootstrap`, diagnose setup state and discover workspace/profile/account context.
+- With setup-token/device auth backend implemented, a new user can paste a Dashboard-generated prompt into Codex / Claude Code and let the agent complete CLI/API setup without manual API-key copy/paste.
 - Quickstart does not require live publish.
 - Docs page provides complete install and first-run flow.
 - Agent bootstrap can diagnose missing auth, missing profile and missing connected account without requiring the agent to browse docs.
@@ -1061,6 +1145,7 @@ Deliverables:
 - `accounts metrics`.
 - `posts list --status failed`.
 - `analytics summary/posts/platforms/export`.
+- `analytics export` can stay post-GA within Phase 4 if analytics read commands are needed earlier.
 - `media upload/get/wait`.
 - webhook diagnostics if demand is confirmed.
 
@@ -1125,23 +1210,26 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 - A user can create a connect URL/session for a supported platform.
 - A user can validate a post without publishing.
 - A user can create a draft post.
-- A user can generate at least cURL and Node.js examples using their real account ID.
+- A user can publish an existing draft through `posts publish-draft` after explicit confirmation.
+- A user can generate at least cURL and native Node.js `fetch` examples using their real account ID.
+- SDK-backed examples are available only for SDK packages that are published and installable.
 - Missing API key produces a clear hint and docs URL.
 
 ### 15.2 AI Agent Operator
 
 - `agent bootstrap --client codex --json` returns a clear setup status and next actions.
 - `agent bootstrap --client claude-code --json` returns client-specific setup instructions.
-- Dashboard-generated setup tokens can be exchanged without exposing long-lived API keys to the agent.
+- Before setup-token/device auth exists, `agent bootstrap` supports the `UNIPOST_API_KEY` fallback path.
+- After setup-token/device auth exists, Dashboard-generated setup tokens can be exchanged without exposing long-lived API keys to the agent.
 - When auth, profile or connected account is missing, bootstrap returns a recommended plain-language prompt for the agent to ask the user.
 - Every agent-relevant read command supports `--json`.
 - JSON output uses the standard envelope.
 - Error output uses the standard error envelope.
 - `agent context --json` returns workspace, profiles, accounts and recent post summary.
 - Non-interactive live publish fails without `--yes`.
-- Non-interactive live publish fails without idempotency key when agent mode is detected or `--agent-name` is provided.
+- Non-interactive live publish fails without `--idempotency-key`.
 - Dry-run publish returns a validation result and plan without publishing.
-- All write commands include source metadata when backend supports it.
+- Write commands include source metadata only after the backend accepts those fields.
 
 ### 15.3 Agent-Assisted Onboarding
 
@@ -1151,7 +1239,7 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 - Agent can use CLI output to ask clear user-confirmation questions when multiple profiles/accounts/platforms are possible.
 - Agent can complete auth check, workspace check, account discovery and first post validation through CLI.
 - The flow avoids asking the user to paste long-lived API keys into agent chat by default.
-- The flow ends with a generated SDK/cURL example or project code change using real UniPost IDs.
+- The flow ends with a generated cURL/native HTTP example, SDK example when available, or project code change using real UniPost IDs.
 
 ### 15.4 Reliability And Security
 
@@ -1170,14 +1258,20 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 API dependencies:
 
 - API key auth through existing UniPost public API.
-- Browser/device auth or Dashboard setup-token exchange for agent-assisted onboarding.
 - Workspace endpoint.
 - Profiles endpoints.
-- Accounts list/get/health/capabilities/metrics endpoints.
+- Accounts list/health/capabilities/metrics endpoints.
 - Connect session or OAuth connect endpoint.
-- Posts validate/draft/create/list/get endpoints.
+- Posts validate/create/list/get/publish-draft endpoints; draft creation uses `POST /v1/posts` with `status: "draft"`.
 - Media reserve/upload/get endpoints.
-- Analytics summary/posts/platforms/export endpoints.
+- Analytics summary/posts/platforms endpoints, plus export when `analytics export` is included.
+
+New hard backend dependencies for full agent-assisted onboarding:
+
+- Browser/device auth endpoint for CLI login.
+- Short-lived, single-use setup token issuance from Dashboard.
+- Setup token exchange endpoint that creates a named, revocable CLI API key and returns the plaintext key once to the local CLI.
+- Backend support for generated key metadata such as key name, client type and source.
 
 Backend behavior that improves CLI quality:
 
@@ -1185,9 +1279,7 @@ Backend behavior that improves CLI quality:
 - Consistent `error.normalized_code`.
 - Rate limit headers.
 - Idempotency key handling for create post.
-- Optional metadata field for CLI/agent audit.
-- Short-lived, single-use setup token issuance from Dashboard.
-- Setup token exchange endpoint that returns a scoped local CLI credential.
+- Optional request metadata field for CLI/agent audit; current backend acceptance must be confirmed before CLI sends these fields.
 - Draft creation path that does not publish.
 - Validation endpoint that catches platform-specific constraints.
 
@@ -1198,6 +1290,7 @@ Docs dependencies:
 - MCP docs.
 - API reference.
 - SDK docs.
+- Published SDK package docs only when SDK-backed examples are enabled.
 
 ---
 
@@ -1243,7 +1336,7 @@ Mitigation:
 
 - Make setup tokens short-lived and single-use.
 - Scope setup tokens to CLI bootstrap only.
-- Do not allow setup tokens to publish, create API keys or delete resources.
+- Allow setup tokens only on the dedicated exchange endpoint that creates the one named CLI key; do not allow setup tokens to publish, list keys, revoke keys, create arbitrary keys, or delete resources.
 - Redact setup tokens in CLI output, telemetry and logs after exchange.
 - Prefer browser/device confirmation before issuing durable local credentials.
 
@@ -1289,6 +1382,7 @@ Docs should explicitly explain:
 - CLI does not replace SDK, API or MCP.
 - CLI defaults to validation/draft before live publish.
 - Agent-assisted onboarding should use setup token or device auth by default, not manual long-lived API key sharing.
+- After user authorization, UniPost should create a named, revocable CLI API key automatically and return it once to the local CLI for secure storage.
 
 ---
 
@@ -1301,6 +1395,8 @@ unipost --version
 unipost auth status
 unipost auth login
 unipost auth logout
+unipost config show
+unipost config path
 unipost doctor
 unipost init
 unipost quickstart
@@ -1314,10 +1410,12 @@ unipost accounts get
 unipost posts validate
 unipost posts draft
 unipost posts create
+unipost posts publish-draft
 unipost posts list
 unipost posts get
 unipost media upload
 unipost media get
+unipost media wait
 unipost analytics summary
 unipost examples posts.create
 unipost agent bootstrap
@@ -1346,13 +1444,13 @@ Recommended decisions for first implementation:
 - Use one binary: `unipost`.
 - Use npm package first: `@unipost/cli`.
 - Keep Homebrew as a later distribution channel.
-- Use `UNIPOST_API_KEY` as the clearest first auth path.
-- Use browser/device auth or Dashboard setup tokens as the default agent-assisted onboarding auth path.
+- Use `UNIPOST_API_KEY` as the clearest first fallback auth path.
+- Use browser/device auth or Dashboard setup tokens as the default agent-assisted onboarding auth path once backend support exists.
 - Add optional local credential storage after the basic flow works, with keychain preferred over file storage.
 - Default first post path to `validate` then `draft`, not live publish.
 - Support `--json` on all read commands from the beginning.
 - Add `agent bootstrap` and `agent context` early because they are the highest-value AI-agent onboarding primitives.
-- Require `--yes` and `--idempotency-key` for non-interactive agent publish.
+- Require `--yes` and `--idempotency-key` for non-interactive live publish.
 - Keep MCP separate but let CLI generate MCP config snippets.
 
 ---
@@ -1362,9 +1460,10 @@ Recommended decisions for first implementation:
 The CLI product is considered successfully launched when:
 
 1. A new developer can install it and complete Quickstart without reading the full API docs.
-2. The same developer can generate a usable SDK/cURL example containing their real profile/account IDs.
+2. The same developer can generate a usable cURL/native HTTP example containing their real profile/account IDs, plus SDK examples where published packages exist.
 3. An AI coding agent can run `agent context --json` and get enough data to choose real accounts instead of inventing IDs.
 4. An AI coding agent can dry-run a post and receive a structured publish plan.
 5. Live publish cannot happen accidentally in non-interactive agent usage.
 6. Support can ask users to run `unipost doctor --json` and receive safe diagnostic output.
 7. CLI docs clearly explain when to use CLI, SDK, raw API and MCP.
+8. Full agent-assisted onboarding can create/store a named, revocable CLI API key through setup-token or device auth without manual API-key copy/paste.
