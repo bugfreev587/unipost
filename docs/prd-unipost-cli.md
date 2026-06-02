@@ -295,8 +295,8 @@ CLI resolves credentials and bootstrap auth signals in this order:
 1. `--api-key` flag
 2. `--setup-token` flag for `agent bootstrap` only
 3. `UNIPOST_API_KEY` environment variable
-4. OS keychain entry, if implemented
-5. local CLI config
+4. local CLI config metadata pointing to OS keychain, if configured
+5. explicit file-based credential storage, only if the user opted in
 
 Recommended v1 default:
 
@@ -383,6 +383,54 @@ Example:
 ```
 
 The config file must not contain unredacted API keys unless the user explicitly chooses file-based storage. Keychain storage is preferred where available.
+
+### 8.5 Credential Storage
+
+CLI-created API keys should be stored locally in the user's OS credential store by default, not in plaintext config.
+
+Recommended default storage:
+
+```text
+macOS      -> Keychain
+Windows    -> Credential Manager
+Linux      -> Secret Service / libsecret
+CI/headless -> UNIPOST_API_KEY environment variable
+```
+
+Recommended keychain shape:
+
+```text
+service: unipost
+account: <workspace_id>:<client_id_or_default>
+secret: up_live_...
+```
+
+The config file should store only non-sensitive metadata:
+
+```json
+{
+  "base_url": "https://api.unipost.dev",
+  "default_profile_id": "pr_...",
+  "credential": {
+    "storage": "keychain",
+    "workspace_id": "ws_...",
+    "key_id": "key_...",
+    "name": "Codex CLI",
+    "prefix": "up_live_abcd",
+    "client": "codex"
+  }
+}
+```
+
+Credential storage requirements:
+
+- The full API key is never printed after creation.
+- `config show` shows only credential metadata and redacted prefixes.
+- If keychain storage is unavailable in interactive mode, CLI may ask whether to use explicit file-based storage.
+- If keychain storage is unavailable in `--non-interactive` mode, CLI should fail with a clear hint to use `UNIPOST_API_KEY`.
+- CI should prefer `UNIPOST_API_KEY` and avoid persistent local credential storage.
+- `auth logout` removes local credentials but does not revoke the remote API key.
+- Remote key revocation remains a separate Dashboard/API action.
 
 ---
 
@@ -483,6 +531,8 @@ Requirements:
 
 ```bash
 unipost init
+unipost init --force
+unipost init --reauth
 unipost quickstart
 unipost quickstart --platform linkedin
 unipost quickstart --lang node
@@ -490,12 +540,14 @@ unipost quickstart --lang node
 
 `init` responsibilities:
 
-- detect API key
+- detect existing local credential or `UNIPOST_API_KEY`
 - call `auth status`
 - fetch workspace
 - fetch profiles
 - save default profile if user chooses one
 - print next command
+- avoid creating a new API key when an existing local credential is valid
+- restart browser/device/setup-token auth only when no valid credential exists or the user explicitly passes `--reauth` / `--replace-key`
 
 `quickstart` responsibilities:
 
@@ -509,6 +561,14 @@ unipost quickstart --lang node
 8. generate SDK/cURL example using real IDs
 
 Quickstart should prefer draft/validate over live publish.
+
+Init recovery requirements:
+
+- `unipost init` is resumable and can be run repeatedly.
+- A declined key-creation prompt is not terminal; users can rerun `init` or `agent bootstrap`.
+- An expired or used setup token requires a new Dashboard setup token or a fresh device-auth flow.
+- `--force` reruns setup checks and refreshes local non-secret config, but does not replace a valid credential by default.
+- `--reauth` or `--replace-key` starts credential replacement and may create a new named API key after user confirmation.
 
 ### 9.6 Profiles Commands
 
@@ -694,6 +754,7 @@ unipost agent mcp-config claude-code --json
 
 Bootstrap responses should distinguish between:
 
+- `already_configured`: a valid local credential already exists; no setup token is exchanged and no new API key is created.
 - `ready`: CLI is authenticated and usable.
 - `needs_user_auth`: user must open an activation URL or approve Dashboard setup.
 - `needs_profile`: user has no profile or must choose one.
@@ -863,7 +924,7 @@ The backend remains the authority for authorization and sensitive decisions.
 
 ## 12. UX Flows
 
-### 12.1 Developer First Run
+### 12.1 First `unipost init`
 
 ```bash
 unipost init
@@ -871,17 +932,110 @@ unipost init
 
 Expected flow:
 
-1. CLI checks whether `UNIPOST_API_KEY` exists.
-2. If missing, CLI asks for API key or links to Dashboard API Keys.
-3. CLI calls workspace endpoint.
-4. CLI lists profiles and lets user choose or create one.
-5. CLI prints next command:
+1. CLI checks whether a valid local credential already exists in keychain/config or `UNIPOST_API_KEY`.
+2. If a valid credential exists, CLI skips key creation and continues to workspace/profile setup.
+3. If no valid credential exists and setup-token/device auth backend is available, CLI asks the user to authorize CLI access.
+4. After user authorization, backend creates one named, revocable CLI API key and returns the plaintext key once.
+5. CLI stores the key in OS keychain when available and writes only non-sensitive metadata to config.
+6. If setup-token/device auth is not available, CLI falls back to `UNIPOST_API_KEY` or `auth login --api-key`.
+7. CLI calls workspace endpoint.
+8. CLI lists profiles and lets user choose or create one.
+9. CLI prints next command:
 
 ```bash
 unipost connect create --platform linkedin --profile pr_...
 ```
 
-### 12.2 First Connected Account
+### 12.2 Re-running `unipost init`
+
+```bash
+unipost init
+```
+
+Default repeat-init flow:
+
+1. CLI checks local keychain/config/env credentials.
+2. If the existing credential is valid, CLI reuses it.
+3. CLI does not consume a new setup token.
+4. CLI does not create a new API key.
+5. CLI reruns `doctor`, workspace/profile checks, and config repair.
+6. CLI reports the existing credential by metadata only:
+
+```text
+Using existing CLI key: Codex CLI (up_live_abcd...), verified now.
+```
+
+Replacement flow:
+
+```bash
+unipost init --reauth
+unipost auth login --replace-key
+```
+
+Expected behavior:
+
+1. CLI detects existing credential metadata.
+2. CLI asks for explicit confirmation before replacing the local credential.
+3. CLI starts device/setup-token auth.
+4. Backend creates a new named API key only after user authorization.
+5. CLI stores the new key locally.
+6. CLI asks whether to revoke the old key when remote revocation is available; otherwise it links to Dashboard -> API Keys.
+
+If a user passes a new setup token while already configured:
+
+```bash
+unipost agent bootstrap --client codex --setup-token ust_...
+```
+
+Expected behavior:
+
+- If the existing credential is valid and `--replace-key` is not present, CLI returns `already_configured`, does not exchange the setup token, and does not create a new API key.
+- If `--replace-key` is present, CLI may exchange the setup token and replace the local credential after explicit confirmation.
+
+### 12.3 Decline, Failure, And Retry
+
+Onboarding must be resumable.
+
+If the user declines API-key creation:
+
+- CLI writes no destructive state.
+- CLI may record only non-sensitive local status such as `last_bootstrap_status: "user_declined_key_creation"`.
+- Dashboard should continue showing the AI tools / CLI connect entry point.
+- User can rerun `unipost init` or `unipost agent bootstrap` later.
+
+If API-key creation fails:
+
+- CLI returns a structured error with `request_id` when available.
+- CLI explains the retry path.
+- CLI does not mark setup as permanently failed.
+
+Common failure statuses:
+
+```text
+setup_token_expired       -> generate a new setup token or restart device auth
+setup_token_used          -> generate a new setup token
+permission_denied         -> ask a workspace owner/admin to authorize setup
+api_key_quota_exceeded    -> revoke an old key or use an existing valid key
+keychain_unavailable      -> use UNIPOST_API_KEY or explicit file storage in interactive mode
+network_error             -> retry when connectivity is restored
+internal_error            -> retry or contact support with request_id
+```
+
+State model:
+
+```text
+not_configured
+needs_user_auth
+auth_approved
+key_creation_declined
+key_creation_failed
+key_created
+configured
+```
+
+The setup token is single-use, but the init/bootstrap process is not. Used or expired setup tokens require a new setup token or a fresh device-auth flow.
+
+### 12.4 First Connected Account
 
 ```bash
 unipost connect create --platform linkedin --profile pr_...
@@ -900,7 +1054,7 @@ unipost accounts list --platform linkedin
 
 5. CLI shows account ID and next validate command.
 
-### 12.3 First Safe Post
+### 12.5 First Safe Post
 
 ```bash
 unipost posts validate --account sa_... --caption "Shipping with UniPost CLI."
@@ -916,7 +1070,7 @@ Expected flow:
 unipost posts draft --account sa_... --caption "Shipping with UniPost CLI."
 ```
 
-### 12.4 Post-Signup Agent-Assisted Onboarding
+### 12.6 Post-Signup Agent-Assisted Onboarding
 
 After signup, Dashboard should offer:
 
@@ -957,7 +1111,7 @@ npx -y @unipost/cli agent bootstrap --client codex
 
 The CLI then returns an activation URL and short code for the user to approve in browser.
 
-### 12.5 Natural-Language Agent Setup
+### 12.7 Natural-Language Agent Setup
 
 Target user experience:
 
@@ -1015,7 +1169,7 @@ unipost examples posts.create --lang node --account sa_... --json
 
 The agent can then modify the user's project code to add SDK usage, `.env` examples and a first API call. The CLI should provide enough context that the agent does not need to browse UniPost docs unless the user asks for deeper explanation.
 
-### 12.6 Agent Context Grounding
+### 12.8 Agent Context Grounding
 
 ```bash
 unipost agent context --json --non-interactive
@@ -1028,7 +1182,7 @@ Expected flow:
 3. CLI returns JSON with recommended next commands.
 4. Agent uses account IDs from actual context instead of invented IDs.
 
-### 12.7 Agent Safe Publish
+### 12.9 Agent Safe Publish
 
 ```bash
 unipost posts create \
@@ -1206,6 +1360,10 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 
 - A user can install CLI and run `unipost auth status`.
 - A user can run `unipost doctor` and see pass/warn/fail results.
+- A first `unipost init` can create/store a named CLI API key after user authorization when setup-token/device auth backend exists.
+- Re-running `unipost init` with a valid local credential reuses the existing credential and does not create a new API key.
+- `unipost init --reauth` or `auth login --replace-key` can intentionally replace the local credential after explicit confirmation.
+- If key creation is declined or fails, the user can retry init/bootstrap later without destructive state.
 - A user can list profiles and accounts.
 - A user can create a connect URL/session for a supported platform.
 - A user can validate a post without publishing.
@@ -1246,6 +1404,8 @@ Telemetry must avoid recording secrets, captions, full media URLs, or full API k
 - CLI redacts API keys in logs and output.
 - CLI never prints OAuth tokens.
 - CLI redacts setup tokens after exchange.
+- CLI stores created API keys in OS keychain by default and stores only metadata in config.
+- CLI fails safely in non-interactive mode when keychain storage is unavailable.
 - CLI surfaces UniPost `request_id` when available.
 - Exit codes match the documented contract.
 - Base URL override works for local/dev/staging validation.
@@ -1272,6 +1432,7 @@ New hard backend dependencies for full agent-assisted onboarding:
 - Short-lived, single-use setup token issuance from Dashboard.
 - Setup token exchange endpoint that creates a named, revocable CLI API key and returns the plaintext key once to the local CLI.
 - Backend support for generated key metadata such as key name, client type and source.
+- Backend error codes for setup token expired/used, user declined, permission denied, API key quota exceeded, and key creation failure.
 
 Backend behavior that improves CLI quality:
 
@@ -1383,6 +1544,8 @@ Docs should explicitly explain:
 - CLI defaults to validation/draft before live publish.
 - Agent-assisted onboarding should use setup token or device auth by default, not manual long-lived API key sharing.
 - After user authorization, UniPost should create a named, revocable CLI API key automatically and return it once to the local CLI for secure storage.
+- `unipost init` is safe to rerun: valid existing credentials are reused, and new keys are created only on first setup, missing/invalid credentials, or explicit replacement.
+- Created keys are stored in OS keychain by default; config stores only key metadata.
 
 ---
 
@@ -1447,6 +1610,7 @@ Recommended decisions for first implementation:
 - Use `UNIPOST_API_KEY` as the clearest first fallback auth path.
 - Use browser/device auth or Dashboard setup tokens as the default agent-assisted onboarding auth path once backend support exists.
 - Add optional local credential storage after the basic flow works, with keychain preferred over file storage.
+- Repeat `init` should reuse an existing valid credential; create a new key only when no valid credential exists or the user explicitly requests replacement.
 - Default first post path to `validate` then `draft`, not live publish.
 - Support `--json` on all read commands from the beginning.
 - Add `agent bootstrap` and `agent context` early because they are the highest-value AI-agent onboarding primitives.
