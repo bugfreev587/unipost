@@ -128,8 +128,9 @@ UPDATE social_posts
 SET caption = $3,
     media_urls = $4,
     metadata = $5,
-    scheduled_at = $6
-WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
+    scheduled_at = $6,
+    profile_ids = $7
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
 RETURNING *;
 
 -- name: DeleteDraft :exec

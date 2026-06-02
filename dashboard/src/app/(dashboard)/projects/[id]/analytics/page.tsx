@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
-import { PlanGate } from "@/components/dashboard/plan-gate";
 import {
   listSocialPosts,
   getPostAnalytics,
@@ -172,14 +171,7 @@ const TREND_METRICS: { key: "posts" | "impressions" | "likes" | "comments" | "sh
 type SortField = "published_at" | "impressions" | "likes" | "engagement";
 
 export default function AnalyticsPage() {
-  // Plan-gate (migration 059): Free workspaces see an upgrade card
-  // instead of the analytics UI. Server-side enforcement is the
-  // source of truth — this gate just shortcuts the UX.
-  return (
-    <PlanGate feature="analytics">
-      <AnalyticsPageInner />
-    </PlanGate>
-  );
+  return <AnalyticsPageInner />;
 }
 
 function AnalyticsPageInner() {
@@ -1598,12 +1590,15 @@ function EmptyState() {
 // ─── RelativeTime ──────────────────────────────────────────────────────────
 
 function RelativeTime({ date }: { date: Date }) {
-  const [, force] = useState(0);
+  const dateTime = date.getTime();
+  const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
-    const t = setInterval(() => force((n) => n + 1), 30_000);
+    const updateNow = () => setNow(Date.now());
+    updateNow();
+    const t = setInterval(updateNow, 30_000);
     return () => clearInterval(t);
-  }, []);
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  }, [dateTime]);
+  const seconds = Math.floor(((now ?? dateTime) - dateTime) / 1000);
   if (seconds < 60) return <>just now</>;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return <>{minutes}m ago</>;

@@ -179,6 +179,17 @@ type submittedSettings struct {
 	ThreadPosition  int            `json:"thread_position,omitempty"`
 }
 
+type editablePlatformPost struct {
+	AccountID       string         `json:"account_id"`
+	Caption         string         `json:"caption"`
+	MediaURLs       []string       `json:"media_urls,omitempty"`
+	MediaIDs        []string       `json:"media_ids,omitempty"`
+	PlatformOptions map[string]any `json:"platform_options,omitempty"`
+	FirstComment    string         `json:"first_comment,omitempty"`
+	InReplyTo       string         `json:"in_reply_to,omitempty"`
+	ThreadPosition  int            `json:"thread_position,omitempty"`
+}
+
 // buildSubmittedMap decodes the stored metadata into an accountID →
 // submittedSettings lookup so per-result rows can attach their own
 // snapshot. Returns nil + nil for legacy posts with empty metadata; the
@@ -200,6 +211,27 @@ func buildSubmittedMap(metadata []byte, fallbackCaption string) map[string]*subm
 			InReplyTo:       pp.InReplyTo,
 			ThreadPosition:  pp.ThreadPosition,
 		}
+	}
+	return out
+}
+
+func buildEditablePlatformPosts(metadata []byte, fallbackCaption string) []editablePlatformPost {
+	parsed, err := platform.DecodePostMetadata(metadata, fallbackCaption)
+	if err != nil || len(parsed) == 0 {
+		return nil
+	}
+	out := make([]editablePlatformPost, 0, len(parsed))
+	for _, pp := range parsed {
+		out = append(out, editablePlatformPost{
+			AccountID:       pp.AccountID,
+			Caption:         pp.Caption,
+			MediaURLs:       pp.MediaURLs,
+			MediaIDs:        pp.MediaIDs,
+			PlatformOptions: pp.PlatformOptions,
+			FirstComment:    pp.FirstComment,
+			InReplyTo:       pp.InReplyTo,
+			ThreadPosition:  pp.ThreadPosition,
+		})
 	}
 	return out
 }
@@ -281,8 +313,9 @@ type socialPostResponse struct {
 	// TargetPlatforms are derived from the post's stored metadata, so the
 	// dashboard can still show intended platforms before or without any
 	// social_post_results rows.
-	TargetPlatforms []string             `json:"target_platforms,omitempty"`
-	Results         []postResultResponse `json:"results,omitempty"`
+	TargetPlatforms []string               `json:"target_platforms,omitempty"`
+	PlatformPosts   []editablePlatformPost `json:"platform_posts,omitempty"`
+	Results         []postResultResponse   `json:"results,omitempty"`
 }
 
 type socialPostSummaryResultResponse struct {
@@ -579,14 +612,15 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 	scheduledAt := post.ScheduledAt.Time
 
 	writeCreated(w, socialPostResponse{
-		ID:          post.ID,
-		Caption:     caption,
-		MediaURLs:   post.MediaUrls,
-		Status:      "scheduled",
-		CreatedAt:   post.CreatedAt.Time,
-		ScheduledAt: &scheduledAt,
-		Source:      post.Source,
-		ProfileIDs:  post.ProfileIds,
+		ID:            post.ID,
+		Caption:       caption,
+		MediaURLs:     post.MediaUrls,
+		Status:        "scheduled",
+		CreatedAt:     post.CreatedAt.Time,
+		ScheduledAt:   &scheduledAt,
+		Source:        post.Source,
+		ProfileIDs:    post.ProfileIds,
+		PlatformPosts: buildEditablePlatformPosts(post.Metadata, derefText(post.Caption)),
 	})
 }
 
@@ -2041,17 +2075,23 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if post.PublishedAt.Valid {
 		publishedAt = &post.PublishedAt.Time
 	}
+	var scheduledAt *time.Time
+	if post.ScheduledAt.Valid {
+		scheduledAt = &post.ScheduledAt.Time
+	}
 
 	resp := socialPostResponse{
-		ID:          post.ID,
-		Caption:     caption,
-		MediaURLs:   post.MediaUrls,
-		Status:      deriveSocialPostStatus(post, results, jobs),
-		CreatedAt:   post.CreatedAt.Time,
-		PublishedAt: publishedAt,
-		Source:      post.Source,
-		ProfileIDs:  post.ProfileIds,
-		Results:     responseResults,
+		ID:            post.ID,
+		Caption:       caption,
+		MediaURLs:     post.MediaUrls,
+		Status:        deriveSocialPostStatus(post, results, jobs),
+		CreatedAt:     post.CreatedAt.Time,
+		ScheduledAt:   scheduledAt,
+		PublishedAt:   publishedAt,
+		Source:        post.Source,
+		ProfileIDs:    post.ProfileIds,
+		PlatformPosts: buildEditablePlatformPosts(post.Metadata, derefText(post.Caption)),
+		Results:       responseResults,
 	}
 	applyQueueSummary(&resp, jobs)
 	writeSuccess(w, resp)
@@ -2206,6 +2246,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			Source:          p.Source,
 			ProfileIDs:      p.ProfileIds,
 			TargetPlatforms: targetPlatforms,
+			PlatformPosts:   buildEditablePlatformPosts(p.Metadata, derefText(p.Caption)),
 			Results:         responseResults,
 		}
 		applyQueueSummary(&resp, jobsByPost[p.ID])

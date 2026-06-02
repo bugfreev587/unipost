@@ -101,7 +101,7 @@ const partial = "Partial" as const;
 
 // Connection-mode cell snippets reused across platforms.
 const modeQuickstart = ["Quickstart", "Fast setup — UniPost handles OAuth", "UniPost-managed app", "Free / paid quota"] as const;
-const modeWhitelabel = ["White-label", "Your customers connect their own accounts", "Your OAuth app", "Paid plans only"] as const;
+const modeWhitelabel = ["Hosted Connect", "Customer account onboarding with optional profile branding", "Shared app or workspace Platform Credentials", "Branding starts on Basic"] as const;
 const modeBlueskyCreds = ["Credentials", "Paste handle + app password (no OAuth)", "Bluesky app password", "Free"] as const;
 const modeTwitterNative = ["Native credentials", "Upload X API keys per account", "Your X dev tier", "Requires X paid tier"] as const;
 

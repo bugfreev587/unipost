@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   createWebhook,
   deleteWebhook,
@@ -110,7 +109,6 @@ function badgeStyle(active: boolean) {
 }
 
 export default function ProjectWebhooksPage() {
-  const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
   const [webhooks, setWebhooks] = useState<WebhookSubscription[]>([]);
   const [loading, setLoading] = useState(true);
@@ -135,7 +133,6 @@ export default function ProjectWebhooksPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const loadWebhooks = useCallback(async () => {
-    if (!workspaceId) return;
     try {
       setError(null);
       const token = await getToken();
@@ -149,7 +146,7 @@ export default function ProjectWebhooksPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, workspaceId]);
+  }, [getToken]);
 
   useEffect(() => {
     loadWebhooks();

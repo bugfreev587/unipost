@@ -662,8 +662,9 @@ UPDATE social_posts
 SET caption = $3,
     media_urls = $4,
     metadata = $5,
-    scheduled_at = $6
-WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
+    scheduled_at = $6,
+    profile_ids = $7
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
 RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
 `
 
@@ -674,6 +675,7 @@ type UpdateDraftContentParams struct {
 	MediaUrls   []string           `json:"media_urls"`
 	Metadata    []byte             `json:"metadata"`
 	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	ProfileIds  []string           `json:"profile_ids"`
 }
 
 func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContentParams) (SocialPost, error) {
@@ -684,6 +686,7 @@ func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContent
 		arg.MediaUrls,
 		arg.Metadata,
 		arg.ScheduledAt,
+		arg.ProfileIds,
 	)
 	var i SocialPost
 	err := row.Scan(

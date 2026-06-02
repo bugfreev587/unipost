@@ -1,4 +1,4 @@
-export type WhiteLabelGuide = {
+export type PlatformCredentialGuide = {
   slug: "meta" | "linkedin" | "tiktok" | "youtube" | "twitter";
   name: string;
   title: string;
@@ -59,7 +59,7 @@ type ApiWorkflowConfig = {
   alternatePlatformValues?: Array<[string, string]>;
 };
 
-function buildConnectThroughAppWorkflow(config: ApiWorkflowConfig): NonNullable<WhiteLabelGuide["apiWorkflow"]> {
+function buildConnectThroughAppWorkflow(config: ApiWorkflowConfig): NonNullable<PlatformCredentialGuide["apiWorkflow"]> {
   const alternatePlatformSnippet = config.alternatePlatformValues?.length
     ? [
         {
@@ -74,7 +74,7 @@ function buildConnectThroughAppWorkflow(config: ApiWorkflowConfig): NonNullable<
 
   return {
     title: config.title,
-    intro: `After your ${config.credentialOwner} credentials are saved, prove the customer-facing flow your own app will use: create an API key, choose the branded profile, create a Connect session, send the returned OAuth URL to your end user, then confirm UniPost recorded the managed ${config.accountNoun}.`,
+    intro: `After your ${config.credentialOwner} credentials are saved, prove the customer-facing flow your own app will use: create an API key, choose the target profile, create a Connect session, send the returned OAuth URL to your end user, then confirm UniPost recorded the managed ${config.accountNoun}.`,
     steps: [
       {
         title: "Step 1: create your first API key in the dashboard",
@@ -244,7 +244,7 @@ System.out.println(profile.get("branding_display_name").asText());`,
       },
       {
         title: `Step 4: create ${config.sessionTitle} for your app user`,
-        body: `From your backend, create a Connect session with \`platform\` set to \`${config.platform}\`, the branded \`profile_id\`, and your stable \`external_user_id\`. UniPost returns a hosted OAuth URL. Redirect your app user to that URL, or open it inside the connection flow in your own product, so they can authorize their ${config.accountNoun} under your white-label app.${config.connectBodyExtra ? ` ${config.connectBodyExtra}` : ""}`,
+        body: `From your backend, create a Connect session with \`platform\` set to \`${config.platform}\`, the target \`profile_id\`, and your stable \`external_user_id\`. UniPost returns a hosted OAuth URL. Redirect your app user to that URL, or open it inside the connection flow in your own product, so they can authorize their ${config.accountNoun} under your platform app.${config.connectBodyExtra ? ` ${config.connectBodyExtra}` : ""}`,
         snippets: [
           {
             lang: "curl",
@@ -431,11 +431,11 @@ System.out.println(accounts);`,
   };
 }
 
-export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
+export const PLATFORM_CREDENTIAL_GUIDES: Record<string, PlatformCredentialGuide> = {
   meta: {
     slug: "meta",
     name: "Meta",
-    title: "Meta White-label Setup",
+    title: "Meta Platform Credential Setup",
     lead: "Use your own Meta app so Instagram, Threads, and Facebook OAuth prompts show your brand instead of UniPost. This is the guide to get one Meta app working inside UniPost quickly.",
     portalName: "Meta for Developers",
     portalUrl: "https://developers.facebook.com",
@@ -466,7 +466,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       },
       {
         title: "Copy the App ID and App Secret into UniPost",
-        body: "Open the White-label Credentials screen in UniPost, find the Meta card, and paste the App ID and App Secret exactly as shown in Meta. Save once; you do not need separate credentials per profile field.",
+        body: "Open the Platform Credentials screen in UniPost, find the Meta card, and paste the App ID and App Secret exactly as shown in Meta. Save once; you do not need separate credentials per profile field.",
       },
       {
         title: "Run one connection test with a real test asset",
@@ -492,7 +492,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       credentialOwner: "Meta app",
       returnPath: "/settings/integrations/instagram/done",
       firstTestNote: "If your rollout starts with Threads or Facebook instead, use the matching platform value when you create the session and when you filter the accounts list.",
-      finalTestNote: "From here, run a small end-to-end publish test against the connected account so you know the white-label Meta app is usable, not just visible.",
+      finalTestNote: "From here, run a small end-to-end publish test against the connected account so you know the Meta app is usable, not just visible.",
       connectBodyExtra: "The same Meta credential pair can support Instagram, Threads, and Facebook, but each Connect session still needs the exact surface the user is connecting.",
       alternatePlatformValues: [
         ["instagram", "Instagram account connection"],
@@ -517,15 +517,15 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
   linkedin: {
     slug: "linkedin",
     name: "LinkedIn",
-    title: "LinkedIn White-label Setup",
-    lead: "LinkedIn is usually the fastest white-label platform to bring live. This guide is optimized for getting your own LinkedIn app connected in UniPost with minimal back-and-forth.",
+    title: "LinkedIn Platform Credential Setup",
+    lead: "LinkedIn is usually the fastest platform credential setup to bring live. This guide is optimized for getting your own LinkedIn app connected in UniPost with minimal back-and-forth.",
     portalName: "LinkedIn Developer Portal",
     portalUrl: "https://developer.linkedin.com",
     dashboardCard: "LinkedIn",
     clientIdLabel: "Client ID",
     clientSecretLabel: "Client Secret",
     callbacks: ["https://api.unipost.dev/v1/oauth/callback/linkedin"],
-    bestFor: "B2B products that need a low-friction first white-label rollout.",
+    bestFor: "B2B products that need a low-friction first workspace-owned credential rollout.",
     appReview: "The basic OIDC + posting flow is comparatively straightforward. Higher-tier LinkedIn products are where approval gets slower.",
     beforeYouStart: [
       "A company-owned LinkedIn developer account and company page context.",
@@ -544,7 +544,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       },
       {
         title: "Save the Client ID and Client Secret in UniPost",
-        body: "Paste the LinkedIn app credentials into the LinkedIn card under White-label Credentials. Once saved, new LinkedIn OAuth flows in that workspace will use your app branding.",
+        body: "Paste the LinkedIn app credentials into the LinkedIn card under Platform Credentials. Once saved, new LinkedIn OAuth flows in that workspace will use your app branding.",
       },
       {
         title: "Connect one real LinkedIn account end to end",
@@ -570,7 +570,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       credentialOwner: "LinkedIn app",
       returnPath: "/settings/integrations/linkedin/done",
       firstTestNote: "This should be the same member account you used for the first consent-screen smoke test.",
-      finalTestNote: "From here, run a small end-to-end publish test so you know the white-label LinkedIn connection is usable, not just visible.",
+      finalTestNote: "From here, run a small end-to-end publish test so you know the LinkedIn credential connection is usable, not just visible.",
     }),
     gotchas: [
       ["Redirect URI mismatch", "LinkedIn is unforgiving here. If the consent screen errors immediately, compare the callback URL character by character."],
@@ -589,7 +589,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
   tiktok: {
     slug: "tiktok",
     name: "TikTok",
-    title: "TikTok White-label Setup",
+    title: "TikTok Platform Credential Setup",
     lead: "TikTok usually takes more operational prep than LinkedIn, so this guide focuses on the shortest reliable path: get one app, one callback, and one creator account connected before you think about scale.",
     portalName: "TikTok for Developers",
     portalUrl: "https://developers.tiktok.com",
@@ -642,7 +642,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
       credentialOwner: "TikTok app",
       returnPath: "/settings/integrations/tiktok/done",
       firstTestNote: "Use the controlled creator account from your smoke test so account-type issues are easy to separate from API wiring issues.",
-      finalTestNote: "From here, run a small end-to-end publish test so you know the white-label TikTok connection is usable, not just visible.",
+      finalTestNote: "From here, run a small end-to-end publish test so you know the TikTok credential connection is usable, not just visible.",
     }),
     gotchas: [
       ["Creator-account assumptions", "Use a real creator account early so you discover any account-type issues while the setup surface is still small."],
@@ -661,7 +661,7 @@ export const WHITE_LABEL_GUIDES: Record<string, WhiteLabelGuide> = {
   youtube: {
     slug: "youtube",
     name: "YouTube",
-    title: "YouTube White-label Setup",
+    title: "YouTube Platform Credential Setup",
     lead: "YouTube setup is mostly a Google Cloud task. This guide strips it down to the pieces UniPost needs so you can get one branded OAuth flow working without wandering around Google Cloud menus.",
     portalName: "Google Cloud Console",
     portalUrl: "https://console.cloud.google.com",
@@ -787,7 +787,7 @@ https://www.googleapis.com/auth/youtube.upload`,
       },
       {
         title: "Paste both values into UniPost",
-        body: "Return to UniPost, open the White-label Credentials screen, find the YouTube row, paste the `Client ID` and `Client Secret`, and click `Save`. After that, start a fresh YouTube connection test with a real channel owner account.",
+        body: "Return to UniPost, open the Platform Credentials screen, find the YouTube row, paste the `Client ID` and `Client Secret`, and click `Save`. After that, start a fresh YouTube connection test with a real channel owner account.",
       },
     ],
     steps: [
@@ -801,7 +801,7 @@ https://www.googleapis.com/auth/youtube.upload`,
       },
       {
         title: "Paste the Client ID and Client Secret into UniPost",
-        body: "Open White-label Credentials in UniPost, find the YouTube row, and paste the Google OAuth credentials. Save first, then test the flow; do not troubleshoot OAuth against stale credentials.",
+        body: "Open Platform Credentials in UniPost, find the YouTube row, and paste the Google OAuth credentials. Save first, then test the flow; do not troubleshoot OAuth against stale credentials.",
       },
       {
         title: "Test with an account that actually owns a YouTube channel",
@@ -990,7 +990,7 @@ System.out.println(profile.get("branding_display_name").asText());`,
         },
         {
           title: "Step 4: create a YouTube Connect session for your app user",
-          body: "From your backend, create a Connect session with `platform` set to `youtube`, the branded `profile_id`, and your stable `external_user_id`. UniPost returns a hosted OAuth URL. Redirect your app user to that URL, or open it inside the connection flow in your own product, so they can authorize their YouTube channel under your white-label Google app.",
+          body: "From your backend, create a Connect session with `platform` set to `youtube`, the target `profile_id`, and your stable `external_user_id`. UniPost returns a hosted OAuth URL. Redirect your app user to that URL, or open it inside the connection flow in your own product, so they can authorize their YouTube channel under your Google OAuth app.",
           snippets: [
             {
               lang: "curl",
@@ -1170,7 +1170,7 @@ System.out.println(accounts);`,
         },
         {
           title: "Step 6: use that managed account and profile in your first real API workflow",
-          body: "At this point you have the four values you need most often: `API_KEY`, `profile_id`, `external_user_id`, and the connected YouTube `account_id`. From here, run a small end-to-end publish test so you know the white-label connection is usable, not just visible.",
+          body: "At this point you have the four values you need most often: `API_KEY`, `profile_id`, `external_user_id`, and the connected YouTube `account_id`. From here, run a small end-to-end publish test so you know the platform credential connection is usable, not just visible.",
         },
       ],
     },
@@ -1191,7 +1191,7 @@ System.out.println(accounts);`,
   twitter: {
     slug: "twitter",
     name: "X / Twitter",
-    title: "X / Twitter White-label Setup",
+    title: "X / Twitter Platform Credential Setup",
     lead: "X setup is best approached as a deliberate paid-platform integration: get the app approved for your intended tier, wire the callback cleanly, and validate one branded OAuth flow before scaling out.",
     portalName: "X Developer Portal",
     portalUrl: "https://developer.x.com",
@@ -1218,7 +1218,7 @@ System.out.println(accounts);`,
       },
       {
         title: "Paste the Client ID and Client Secret into UniPost",
-        body: "Use the X / Twitter credential row in UniPost's White-label Credentials screen. Save the credentials before testing, then retry from a clean browser session if you had earlier failures.",
+        body: "Use the X / Twitter credential row in UniPost's Platform Credentials screen. Save the credentials before testing, then retry from a clean browser session if you had earlier failures.",
       },
       {
         title: "Run one full connect on a controlled X account",
@@ -1244,7 +1244,7 @@ System.out.println(accounts);`,
       credentialOwner: "X app",
       returnPath: "/settings/integrations/x/done",
       firstTestNote: "If this call fails even after OAuth completes, re-check developer tier and app access before assuming the account list API is wrong.",
-      finalTestNote: "From here, run a small end-to-end publish test so you know the white-label X connection is usable, not just visible.",
+      finalTestNote: "From here, run a small end-to-end publish test so you know the X credential connection is usable, not just visible.",
     }),
     gotchas: [
       ["Tier mismatch", "X problems often look like OAuth bugs when the real issue is access level or commercial eligibility."],
@@ -1262,7 +1262,7 @@ System.out.println(accounts);`,
   },
 };
 
-export const WHITE_LABEL_GUIDE_ORDER: WhiteLabelGuide["slug"][] = [
+export const PLATFORM_CREDENTIAL_GUIDE_ORDER: PlatformCredentialGuide["slug"][] = [
   "meta",
   "linkedin",
   "tiktok",

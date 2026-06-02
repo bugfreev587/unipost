@@ -1,6 +1,12 @@
 package handler
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/platform"
+)
 
 func TestParseSocialPostLifecyclePatch(t *testing.T) {
 	tests := []struct {
@@ -62,5 +68,96 @@ func TestParseSocialPostLifecyclePatch(t *testing.T) {
 				tt.assert(t, patch)
 			}
 		})
+	}
+}
+
+func TestCanEditSocialPostContent(t *testing.T) {
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{status: "draft", want: true},
+		{status: "scheduled", want: true},
+		{status: "publishing", want: false},
+		{status: "published", want: false},
+		{status: "failed", want: false},
+		{status: "cancelled", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			if got := canEditSocialPostContent(tt.status); got != tt.want {
+				t.Fatalf("canEditSocialPostContent(%q) = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildContentUpdateParamsIncludesProfilesForScheduledPost(t *testing.T) {
+	scheduledAt := time.Date(2026, 6, 1, 18, 30, 0, 0, time.UTC)
+	posts := []platform.PlatformPostInput{{
+		AccountID: "acct_linkedin",
+		Caption:   "updated caption",
+		MediaURLs: []string{"https://cdn.example/image.jpg"},
+	}}
+	metadata, err := platform.EncodePostMetadata(posts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	params := buildSocialPostContentUpdateParams("post_1", "ws_1", posts, metadata, &scheduledAt, []string{"prof_1"})
+
+	if params.ID != "post_1" || params.WorkspaceID != "ws_1" {
+		t.Fatalf("unexpected ids: %#v", params)
+	}
+	if !params.Caption.Valid || params.Caption.String != "updated caption" {
+		t.Fatalf("caption = %#v, want updated caption", params.Caption)
+	}
+	if len(params.MediaUrls) != 1 || params.MediaUrls[0] != "https://cdn.example/image.jpg" {
+		t.Fatalf("media urls = %#v", params.MediaUrls)
+	}
+	if !bytes.Equal(params.Metadata, metadata) {
+		t.Fatalf("metadata mismatch")
+	}
+	if !params.ScheduledAt.Valid || !params.ScheduledAt.Time.Equal(scheduledAt) {
+		t.Fatalf("scheduled_at = %#v, want %s", params.ScheduledAt, scheduledAt)
+	}
+	if len(params.ProfileIds) != 1 || params.ProfileIds[0] != "prof_1" {
+		t.Fatalf("profile_ids = %#v, want prof_1", params.ProfileIds)
+	}
+}
+
+func TestBuildEditablePlatformPostsFromMetadata(t *testing.T) {
+	posts := []platform.PlatformPostInput{{
+		AccountID:       "acct_linkedin",
+		Caption:         "LinkedIn caption",
+		MediaIDs:        []string{"media_1"},
+		PlatformOptions: map[string]any{"visibility": "connections"},
+		FirstComment:    "first comment",
+		InReplyTo:       "https://example.com/thread",
+		ThreadPosition:  2,
+	}}
+	metadata, err := platform.EncodePostMetadata(posts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := buildEditablePlatformPosts(metadata, "fallback")
+
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	post := got[0]
+	if post.AccountID != "acct_linkedin" || post.Caption != "LinkedIn caption" {
+		t.Fatalf("post = %#v", post)
+	}
+	if len(post.MediaIDs) != 1 || post.MediaIDs[0] != "media_1" {
+		t.Fatalf("media ids = %#v", post.MediaIDs)
+	}
+	if post.PlatformOptions["visibility"] != "connections" {
+		t.Fatalf("platform options = %#v", post.PlatformOptions)
+	}
+	if post.FirstComment != "first comment" || post.InReplyTo != "https://example.com/thread" || post.ThreadPosition != 2 {
+		t.Fatalf("thread/comment fields = %#v", post)
 	}
 }

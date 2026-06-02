@@ -1,19 +1,23 @@
 # UniPost Agent Workflow
 
+## Non-negotiable development rule
+
+- This rule applies to every development task and must not be skipped: if the task's expected final outcome is unclear, ask the user for the target outcome before starting implementation. Do not infer, invent, or assume the final goal.
+- After any change is pushed to `origin/dev`, Codex must wait for the triggered development deployment to finish, then perform self-acceptance in the real dev environment against the expected outcome. Codex may report the task complete only after the real dev environment matches the expected outcome.
+
 ## Default branch flow
 
 - Treat `dev` as the default integration branch for all normal development work.
 - Do not develop directly on `dev` unless the user explicitly asks for it.
-- At the start of a new conversation, before creating any development branch, update the local `dev` branch first:
-  1. Fetch `origin`.
-  2. Switch to local `dev`.
-  3. Pull the latest `dev` from remote with `git pull --ff-only origin dev`.
-- If local `dev` cannot be fast-forwarded because it has local-only commits or has diverged from `origin/dev`, do not reset, rebase, drop, or stash anything without explicit user approval. Prefer asking to create the task branch from `origin/dev` so the local commits remain untouched.
-- For code or documentation changes, start from that freshly updated local `dev` branch:
-  1. Create a short-lived branch from `dev` named `dev-<task-slug>`.
-  2. Rename the conversation/thread to exactly match the new branch name.
+- At the start of every new conversation, before writing code or documentation changes, fetch `origin` and create a new short-lived branch directly from the latest `origin/dev`.
+  1. Run `git fetch origin`.
+  2. Create a branch from `origin/dev` named `dev-<task-slug>`.
+  3. Rename the conversation/thread to exactly match the new branch name.
+- Do not base new development work on the current local `dev` branch unless the user explicitly asks for it.
 - Do all implementation and local testing on the `dev-<task-slug>` branch.
-- After implementation is complete and tests pass, merge the task branch back into local `dev` or create a pull request from `dev-<task-slug>` to `dev`, depending on the size/risk of the change and the user's instruction.
+- For every code change, start from the latest `origin/dev`, create a clean `dev-<task-slug>` branch, and work only on that new branch until the change is ready.
+- After code changes are complete, pull the latest `origin/dev` into local `dev`, merge the task branch into local `dev`, and rerun all required tests before considering the task complete.
+- After implementation is complete and tests pass on both the task branch and the updated local `dev`, push local `dev` directly to `origin/dev` unless the user explicitly asks for a pull request instead.
 - Run the relevant validation again on local `dev` before pushing `dev`.
 - If validation passes, push local `dev` to `origin/dev`.
 - Pushing or merging to `dev` deploys the development environment only. Do not promote from `dev` to `staging` or `main` unless the user explicitly asks for a release, staging promotion, production release, or PR.
@@ -68,6 +72,7 @@
 
 - After any direct push, pull request merge, merge request merge, or branch promotion, Codex must monitor the triggered remote checks until they finish. This includes GitHub Actions, Vercel deployments, Railway deployments, and any other required or visibly triggered test/deploy checks.
 - A push, merge, or promotion is not complete while any required or triggered check is queued, pending, running, or waiting for deployment.
+- After any changes are pushed to `origin/dev`, Codex must wait for the development deployment to complete, then personally open the relevant development domain in a browser and verify that the change works before stopping the task or reporting final results.
 - Codex may report interim status, but must not claim the task is finished until all required or triggered checks have completed successfully and the push or merge itself is confirmed successful.
 - If any required or triggered check fails, Codex must inspect the failure logs, identify the cause, make the needed fix when it is within scope, rerun local validation, push the fix, and monitor the checks again.
 - If a failure requires credentials, external approval, paid-service access, or a product decision that Codex cannot safely resolve, Codex must stop, report the exact blocker, and ask the user for the missing permission or decision.

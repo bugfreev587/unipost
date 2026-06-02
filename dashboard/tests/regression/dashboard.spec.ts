@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 const testEmail = process.env.DASHBOARD_TEST_EMAIL;
 const testPassword = process.env.DASHBOARD_TEST_PASSWORD;
@@ -46,6 +48,35 @@ test.describe("public dashboard surfaces", () => {
     await expect(page.getByRole("link", { name: /Pinterest Analytics/i })).toBeVisible();
     await expect(page.getByText(/Coming Soon/i)).toHaveCount(0);
     await expect(page.getByText(/Thread Splitter|Caption Generator/i)).toHaveCount(0);
+  });
+});
+
+test.describe("workspace-scoped developer routes", () => {
+  const workspaceScopedPages = [
+    "src/app/(dashboard)/projects/[id]/api-keys/page.tsx",
+    "src/app/(dashboard)/projects/[id]/credentials/page.tsx",
+    "src/app/(dashboard)/projects/[id]/webhooks/page.tsx",
+  ];
+
+  for (const filePath of workspaceScopedPages) {
+    test(`${filePath} does not block on profile lookup`, async () => {
+      const source = await readFile(path.join(process.cwd(), filePath), "utf8");
+
+      expect(source).not.toContain("useWorkspaceId");
+      expect(source).not.toContain("getProfile(");
+    });
+  }
+});
+
+test.describe("platform credentials layout", () => {
+  test("save action uses a compact button column", async () => {
+    const pageSource = await readFile(path.join(process.cwd(), "src/app/(dashboard)/projects/[id]/credentials/page.tsx"), "utf8");
+    const globalCss = await readFile(path.join(process.cwd(), "src/app/globals.css"), "utf8");
+
+    expect(pageSource).toContain('className="platform-credential-form"');
+    expect(pageSource).toContain('className="dbtn dbtn-primary platform-credential-save"');
+    expect(globalCss).toMatch(/\.platform-credential-form\s*{[^}]*grid-template-columns:\s*minmax\(220px,\s*1fr\)\s+minmax\(220px,\s*1fr\)\s+max-content;/s);
+    expect(globalCss).toMatch(/\.platform-credential-save\s*{[^}]*justify-self:\s*start;[^}]*min-width:\s*96px;/s);
   });
 });
 

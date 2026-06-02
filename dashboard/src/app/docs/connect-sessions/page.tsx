@@ -130,15 +130,15 @@ export default function ConnectSessionsGuidePage() {
       className="docs-page-wide"
       eyebrow="Guide"
       title="Connect Sessions"
-      lead="Create hosted account-connection flows for end users. Connect Sessions can use UniPost's Quickstart OAuth apps or your own white-label platform credentials, depending on how you create the session."
+      lead="Create hosted account-connection flows for end users. Connect Sessions can use UniPost's shared OAuth apps or workspace platform credentials, depending on credential availability and allow_quickstart_creds."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
       <div className="cs-badges">
         <span className="cs-badge">Customer-owned accounts</span>
         <span className="cs-badge">Hosted OAuth</span>
-        <span className="cs-badge">Quickstart credentials</span>
-        <span className="cs-badge">White-label credentials</span>
+        <span className="cs-badge">Shared UniPost OAuth app</span>
+        <span className="cs-badge">Workspace platform credentials</span>
       </div>
 
       <h2 id="when-to-use">When to use Connect Sessions</h2>
@@ -155,30 +155,30 @@ export default function ConnectSessionsGuidePage() {
           ["Who authorizes", "Your end user, inside UniPost's hosted Connect flow"],
           ["What you store", <><code>external_user_id</code> plus the completed <code>managed_account_id</code></>],
           ["What you publish with", <><code>managed_account_id</code>, used as the UniPost <code>account_id</code> in <code>platform_posts</code></>],
-          ["Credential modes", "Quickstart credentials or white-label credentials"],
+          ["Credential modes", "Shared UniPost OAuth app or workspace platform credentials"],
           ["Session lifetime", "30 minutes. Polling after the TTL returns expired for sessions still pending."],
           ["Plan gates", "Some platforms can require a paid plan before account connection. For example, X / Twitter may return 402 PLAN_PLATFORM_NOT_ALLOWED."],
         ]}
       />
 
-      <h2 id="credential-modes">Credential modes</h2>
+      <h2 id="credential-modes">Credential sources</h2>
       <p className="cs-note">
         The endpoint is the same in both modes. The difference is which OAuth app
         the platform sees during authorization. If you omit{" "}
         <code>allow_quickstart_creds</code>, it defaults to <code>false</code>,
-        so OAuth platforms require uploaded white-label credentials.
+        so OAuth platforms require uploaded workspace Platform Credentials.
       </p>
       <DocsTable
-        columns={["Mode", "How to create it", "OAuth app used", "Best for"]}
+        columns={["Source", "How to create it", "OAuth app used", "Best for"]}
         rows={[
           [
-            "Quickstart Connect Session",
+            "Shared UniPost OAuth app",
             <><code>allow_quickstart_creds=true</code></>,
-            "Workspace credentials if present; otherwise UniPost's shared app",
-            "Customer onboarding where UniPost branding on the platform consent screen is acceptable",
+            "Workspace credentials if present; otherwise UniPost's shared OAuth app",
+            "Customer onboarding where shared OAuth app fallback is acceptable",
           ],
           [
-            "White-label Connect Session",
+            "Workspace platform credentials",
             <><code>allow_quickstart_creds=false</code> and uploaded platform credentials</>,
             "Your platform app credentials stored in UniPost",
             "Customer onboarding where the platform consent screen must show your app",
@@ -197,17 +197,17 @@ export default function ConnectSessionsGuidePage() {
         does not change the Bluesky Connect Session path.
       </p>
 
-      <h2 id="quickstart-session">Quickstart Connect Session</h2>
+      <h2 id="quickstart-session">Shared-app fallback session</h2>
       <p className="cs-note">
         Pass <code>allow_quickstart_creds=true</code> when you want hosted
-        customer onboarding without asking the customer to create their own
-        platform developer app first.
+        customer onboarding without requiring workspace-owned Platform
+        Credentials first.
       </p>
       <DocsCodeTabs snippets={QUICKSTART_SESSION_SNIPPETS} />
 
-      <h2 id="white-label-session">White-label Connect Session</h2>
+      <h2 id="white-label-session">Workspace-credential session</h2>
       <p className="cs-note">
-        Upload platform credentials first, then create sessions with{" "}
+        Upload workspace Platform Credentials first, then create sessions with{" "}
         <code>allow_quickstart_creds=false</code> so missing credentials fail
         immediately instead of silently falling back to UniPost&apos;s shared app.
       </p>
@@ -228,13 +228,13 @@ export default function ConnectSessionsGuidePage() {
           [
             "OAuth callback URL / redirect URI",
             "UniPost and the platform developer console",
-            "Where the social platform sends the OAuth code. Quickstart users do not configure this; white-label users copy the exact platform callback URL into their developer app.",
+            "Where the social platform sends the OAuth code. Shared-app fallback users do not configure this; workspace credential users copy the exact platform callback URL into their developer app.",
           ],
         ]}
       />
       <p className="cs-note">
-        For white-label setup, copy callback URLs from the platform guides under{" "}
-        <Link href="/docs/white-label">White-label Mode</Link>. Do not replace
+        For workspace Platform Credentials, copy callback URLs from the platform guides under{" "}
+        <Link href="/docs/platform-credentials">Platform Credentials</Link>. Do not replace
         them with your <code>return_url</code>.
       </p>
 
@@ -274,10 +274,15 @@ export default function ConnectSessionsGuidePage() {
           <div className="cs-next-title">Get session</div>
           <div className="cs-next-body">Fallback polling for status and the completed managed account id.</div>
         </Link>
+        <Link href="/docs/platform-credentials" className="cs-next-card">
+          <div className="cs-next-kicker">Developer apps</div>
+          <div className="cs-next-title">Platform Credentials</div>
+          <div className="cs-next-body">Upload platform credentials and copy exact OAuth callback URLs.</div>
+        </Link>
         <Link href="/docs/white-label" className="cs-next-card">
-          <div className="cs-next-kicker">Branded OAuth</div>
-          <div className="cs-next-title">White-label setup</div>
-          <div className="cs-next-body">Upload platform credentials, configure branding, and copy platform callback URLs.</div>
+          <div className="cs-next-kicker">Branding</div>
+          <div className="cs-next-title">Hosted Connect</div>
+          <div className="cs-next-body">Configure the white-label page shown before platform OAuth.</div>
         </Link>
         <Link href="/docs/publishing" className="cs-next-card">
           <div className="cs-next-kicker">After connection</div>

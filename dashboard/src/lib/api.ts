@@ -9,7 +9,7 @@ export interface Profile {
   account_count?: number;
   created_at: string;
   updated_at: string;
-  // Sprint 4 PR4: white-label Connect branding
+  // Hosted Connect profile branding
   branding_logo_url?: string;
   branding_display_name?: string;
   branding_primary_color?: string;
@@ -411,7 +411,7 @@ export async function deleteProfile(
   return request(`/v1/profiles/${id}`, token, { method: "DELETE" });
 }
 
-// Platform credentials (White Label, workspace-scoped)
+// Platform credentials (workspace-scoped OAuth app credentials)
 
 export interface PlatformCredential {
   platform: string;
@@ -1227,6 +1227,17 @@ export interface SubmittedSettings {
   thread_position?: number;
 }
 
+export interface EditablePlatformPost {
+  account_id: string;
+  caption: string;
+  media_urls?: string[];
+  media_ids?: string[];
+  platform_options?: Record<string, unknown>;
+  first_comment?: string;
+  in_reply_to?: string;
+  thread_position?: number;
+}
+
 export interface SocialPost {
   id: string;
   caption: string | null;
@@ -1252,6 +1263,9 @@ export interface SocialPost {
   // Derived from stored post metadata so the UI can still show target
   // platforms even when no result rows have been persisted yet.
   target_platforms?: string[];
+  // Stored request entries used by draft/scheduled edit surfaces to
+  // restore the same per-account form the user created.
+  platform_posts?: EditablePlatformPost[];
   results?: SocialPostResult[];
 }
 
@@ -1617,6 +1631,17 @@ export async function rescheduleSocialPost(
   return request(`/v1/posts/${postId}`, token, {
     method: "PATCH",
     body: JSON.stringify({ scheduled_at: scheduledAt }),
+  });
+}
+
+export async function updateSocialPost(
+  token: string,
+  postId: string,
+  data: CreateSocialPostPayload
+): Promise<ApiResponse<SocialPost>> {
+  return request(`/v1/posts/${postId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(data),
   });
 }
 

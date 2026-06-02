@@ -408,6 +408,55 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 	writeSuccess(w, socialPostResponseFromRow(updated))
 }
 
+func isScheduledAtOnlyPatch(rawBody []byte) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rawBody, &fields); err != nil {
+		return false
+	}
+	if len(fields) != 1 {
+		return false
+	}
+	_, ok := fields["scheduled_at"]
+	return ok
+}
+
+func canEditSocialPostContent(status string) bool {
+	return status == "draft" || status == "scheduled"
+}
+
+func buildSocialPostContentUpdateParams(
+	postID string,
+	workspaceID string,
+	posts []platform.PlatformPostInput,
+	metaJSON []byte,
+	scheduledAt *time.Time,
+	profileIDs []string,
+) db.UpdateDraftContentParams {
+	canonicalCaption := pgtype.Text{}
+	canonicalMedia := []string{}
+	if len(posts) > 0 {
+		if posts[0].Caption != "" {
+			canonicalCaption = pgtype.Text{String: posts[0].Caption, Valid: true}
+		}
+		if posts[0].MediaURLs != nil {
+			canonicalMedia = posts[0].MediaURLs
+		}
+	}
+	scheduledAtParam := pgtype.Timestamptz{}
+	if scheduledAt != nil {
+		scheduledAtParam = pgtype.Timestamptz{Time: *scheduledAt, Valid: true}
+	}
+	return db.UpdateDraftContentParams{
+		ID:          postID,
+		WorkspaceID: workspaceID,
+		Caption:     canonicalCaption,
+		MediaUrls:   canonicalMedia,
+		Metadata:    metaJSON,
+		ScheduledAt: scheduledAtParam,
+		ProfileIds:  profileIDs,
+	}
+}
+
 // CancelPost handles POST /v1/posts/{id}/cancel. Allowed for
 // drafts and scheduled posts. Optimistic-locked the same way as
 // reschedule. Cancelled rows are filtered out by the scheduler's
@@ -430,16 +479,15 @@ func (h *SocialPostHandler) CancelPost(w http.ResponseWriter, r *http.Request) {
 	h.cancelSocialPost(w, r, workspaceID, postID)
 }
 
-// UpdateDraft handles PATCH /v1/posts/{id} for both drafts and
-// scheduled posts. The state machine:
+// UpdateDraft handles PATCH /v1/posts/{id} for drafts and scheduled
+// posts. The state machine:
 //
 //   - status='draft'     → caption / media / metadata / scheduled_at all editable
-//   - status='scheduled' → ONLY scheduled_at editable (Sprint 3 PR8)
+//   - status='scheduled' → caption / media / metadata / scheduled_at all editable
 //   - any other status   → 409 (already publishing or done)
 //
-// The two paths use different SQL queries with their own optimistic
-// locks so a row that flipped to 'publishing' between the read and
-// the write loses cleanly.
+// The content update uses an optimistic status guard so a row that
+// flipped to 'publishing' between the read and the write loses cleanly.
 func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
@@ -476,13 +524,14 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Sprint 3 PR8: scheduled-post reschedule branch. Only scheduled_at
-	// is editable; all other fields are ignored.
-	if existing.Status == "scheduled" {
+	// Backward-compatible reschedule branch used by the list view and
+	// SDK helpers. Full scheduled-post edits include platform_posts or
+	// account_ids and go through the content update branch below.
+	if existing.Status == "scheduled" && isScheduledAtOnlyPatch(rawBody) {
 		h.reschedulePost(w, r, workspaceID, postID, rawBody)
 		return
 	}
-	if existing.Status != "draft" {
+	if !canEditSocialPostContent(existing.Status) {
 		writeError(w, http.StatusConflict, "CONFLICT",
 			"Post is "+existing.Status+" — only drafts and scheduled posts can be edited")
 		return
@@ -505,36 +554,29 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	canonicalCaption := pgtype.Text{}
-	canonicalMedia := []string{}
-	if len(parsed.Posts) > 0 {
-		if parsed.Posts[0].Caption != "" {
-			canonicalCaption = pgtype.Text{String: parsed.Posts[0].Caption, Valid: true}
-		}
-		if parsed.Posts[0].MediaURLs != nil {
-			canonicalMedia = parsed.Posts[0].MediaURLs
-		}
-	}
-	scheduledAt := pgtype.Timestamptz{}
-	if parsed.ScheduledAt != nil {
-		scheduledAt = pgtype.Timestamptz{Time: *parsed.ScheduledAt, Valid: true}
+	scheduledAt := parsed.ScheduledAt
+	if scheduledAt == nil && existing.Status == "scheduled" && existing.ScheduledAt.Valid {
+		scheduledAt = &existing.ScheduledAt.Time
 	}
 
-	updated, err := h.queries.UpdateDraftContent(r.Context(), db.UpdateDraftContentParams{
-		ID:          postID,
-		WorkspaceID: workspaceID,
-		Caption:     canonicalCaption,
-		MediaUrls:   canonicalMedia,
-		Metadata:    metaJSON,
-		ScheduledAt: scheduledAt,
-	})
+	updated, err := h.queries.UpdateDraftContent(
+		r.Context(),
+		buildSocialPostContentUpdateParams(
+			postID,
+			workspaceID,
+			parsed.Posts,
+			metaJSON,
+			scheduledAt,
+			h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
+		),
+	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusConflict, "CONFLICT",
-				"Post is not a draft or does not exist in this workspace")
+				"Post is no longer editable or does not exist in this workspace")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update draft")
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update post")
 		return
 	}
 
@@ -556,11 +598,13 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 // this with the live results anyway.
 func socialPostResponseFromRow(post db.SocialPost) socialPostResponse {
 	resp := socialPostResponse{
-		ID:         post.ID,
-		Status:     post.Status,
-		CreatedAt:  post.CreatedAt.Time,
-		Source:     post.Source,
-		ProfileIDs: post.ProfileIds,
+		ID:            post.ID,
+		MediaURLs:     post.MediaUrls,
+		Status:        post.Status,
+		CreatedAt:     post.CreatedAt.Time,
+		Source:        post.Source,
+		ProfileIDs:    post.ProfileIds,
+		PlatformPosts: buildEditablePlatformPosts(post.Metadata, derefText(post.Caption)),
 	}
 	if post.Caption.Valid {
 		c := post.Caption.String

@@ -398,6 +398,7 @@ func (h *SocialPostHandler) socialPostResponseFromData(
 		PublishedAt:   publishedAt,
 		Source:        post.Source,
 		ProfileIDs:    post.ProfileIds,
+		PlatformPosts: buildEditablePlatformPosts(post.Metadata, derefText(post.Caption)),
 	}
 	submittedByAccount := buildSubmittedMap(post.Metadata, derefText(post.Caption))
 	for _, res := range results {

@@ -19,7 +19,7 @@ export default function DocsHomePage() {
         </Link>
         <Link href="/docs/connect-sessions" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Connect Sessions</div>
-          <p>Let end users connect customer-owned accounts with hosted OAuth, using Quickstart or white-label credentials.</p>
+          <p>Let end users connect customer-owned accounts with hosted OAuth, using UniPost&apos;s shared app or workspace Platform Credentials.</p>
         </Link>
       </div>
 
@@ -46,8 +46,8 @@ export default function DocsHomePage() {
 
       <p>
         <strong>Customer-owned accounts:</strong> if you are embedding UniPost into your own product, start with{" "}
-        <Link href="/docs/connect-sessions">Connect Sessions</Link>. Use <Link href="/docs/white-label">White-label Mode</Link>{" "}
-        when you need your own OAuth app and branded consent screens.
+        <Link href="/docs/connect-sessions">Connect Sessions</Link>. Use <Link href="/docs/white-label">Hosted Connect</Link>{" "}
+        when you need white-label branding, and use <Link href="/docs/platform-credentials">Platform Credentials</Link> when you need your own OAuth app and platform quota.
       </p>
     </DocsPage>
   );
