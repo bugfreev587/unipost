@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { PLATFORM_LABELS, PLATFORM_BRAND_COLORS } from "./use-create-post-form";
 import type { SocialAccount } from "@/lib/api";
 import { getAccountDisplayName } from "./account-labels";
@@ -92,6 +92,8 @@ function AccountCardSmall({
   onToggle: (id: string) => void;
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
+  const iconColor = account.platform === "youtube" ? "var(--dmuted)" : brandColor;
+  const iconBackground = account.platform === "youtube" ? "color-mix(in srgb, var(--dmuted) 12%, transparent)" : `${brandColor}20`;
   const label = accountSourceLabel(account);
   const accountLabel = getAccountDisplayName(account);
 
@@ -129,9 +131,9 @@ function AccountCardSmall({
       <div className="flex items-center gap-2">
         <div
           className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
-          style={{ background: `${brandColor}20`, color: brandColor }}
+          style={{ background: iconBackground, color: iconColor }}
         >
-          <PlatformIcon platform={account.platform} size={10} />
+          <AccountDestinationIcon platform={account.platform} size={10} />
         </div>
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-[0.1em] font-mono leading-none" style={{ color: "var(--dmuted2)" }}>
@@ -207,6 +209,8 @@ function PostToChip({
   onRemove: (id: string) => void;
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
+  const iconColor = account.platform === "youtube" ? "var(--dmuted)" : brandColor;
+  const iconBackground = account.platform === "youtube" ? "color-mix(in srgb, var(--dmuted) 12%, transparent)" : `${brandColor}20`;
   const accountLabel = getAccountDisplayName(account);
   const sourceLabel = accountSourceLabel(account);
   const chipLabel = account.platform === "youtube" ? `${sourceLabel}: ${accountLabel}` : accountLabel;
@@ -224,9 +228,9 @@ function PostToChip({
     >
       <div
         className="w-3.5 h-3.5 rounded flex items-center justify-center flex-shrink-0"
-        style={{ background: `${brandColor}20`, color: brandColor }}
+        style={{ background: iconBackground, color: iconColor }}
       >
-        <PlatformIcon platform={account.platform} size={8} />
+        <AccountDestinationIcon platform={account.platform} size={8} />
       </div>
       <span
         className={`truncate max-w-[148px] ${isDuplicate ? "line-through" : ""}`}

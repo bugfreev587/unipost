@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { X, ExternalLink, Copy } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import type { SocialPost } from "@/lib/api";
 import { buildContactPageHref } from "@/lib/support";
 
@@ -101,7 +101,7 @@ export function PostDetailDrawer({ post, onClose, onDuplicate }: Props) {
                 const url = externalUrl(r.platform, r.external_id || "");
                 return (
                   <div key={i} className="pdd-result">
-                    <PlatformIcon platform={r.platform || ""} size={16} />
+                    <AccountDestinationIcon platform={r.platform || ""} size={16} />
                     <div className="pdd-result-info">
                       <div className="pdd-result-name">
                         {r.account_name || r.platform || "Unknown"}

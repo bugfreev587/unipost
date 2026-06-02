@@ -1,6 +1,6 @@
 "use client";
 
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import {
   PLATFORM_LABELS,
   PLATFORM_BRAND_COLORS,
@@ -102,6 +102,8 @@ export function PlatformEditorBlock({
   onToggleCollapse,
 }: PlatformEditorBlockProps) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "#888";
+  const iconColor = account.platform === "youtube" ? "var(--dmuted)" : brandColor;
+  const iconBackground = account.platform === "youtube" ? "color-mix(in srgb, var(--dmuted) 12%, transparent)" : `${brandColor}20`;
   const label = PLATFORM_LABELS[account.platform] || account.platform;
   const accountLabel = getAccountDisplayName(account);
   const limit = captionLimit || PLATFORM_CHAR_LIMITS[account.platform] || 5000;
@@ -151,9 +153,9 @@ export function PlatformEditorBlock({
         <div className="flex items-center gap-2.5">
           <div
             className="w-6 h-6 rounded flex items-center justify-center"
-            style={{ background: `${brandColor}20`, color: brandColor }}
+            style={{ background: iconBackground, color: iconColor }}
           >
-            <PlatformIcon platform={account.platform} size={11} />
+            <AccountDestinationIcon platform={account.platform} size={11} />
           </div>
           <div>
             <div className="text-[13.5px] leading-[1.25]" style={{ color: "var(--dtext)", fontWeight: 600 }}>{label}</div>

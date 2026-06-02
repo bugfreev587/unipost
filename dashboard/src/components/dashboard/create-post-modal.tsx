@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { AlertTriangle, Loader2, X, Send, Calendar, FileText, Pencil } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus, STATUS_COLORS } from "@/components/tools/platform-limits";
 import type { CreateSocialPostPayload, SocialAccount, SocialPost, SocialPostValidationResult } from "@/lib/api";
 import { createSocialPost, validateSocialPost } from "@/lib/api";
@@ -219,7 +219,9 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
                         style={expanded ? { borderRadius: "6px 6px 0 0" } : undefined}
                       >
                         <span className="cpm-override-left">
-                          <PlatformIcon platform={acc.platform} size={13} />
+                          <span style={{ color: acc.platform === "youtube" ? "var(--dmuted)" : undefined, display: "inline-flex" }}>
+                            <AccountDestinationIcon platform={acc.platform} size={13} />
+                          </span>
                           {getAccountDisplayName(acc)}
                           {!hasOverride && <span className="cpm-override-tag">Same caption</span>}
                         </span>
@@ -262,7 +264,9 @@ export function CreatePostModal({ accounts, workspaceId, getToken, onClose, onCr
                 activeAccounts.map(a => (
                   <label key={a.id} className="cpm-account">
                     <input type="checkbox" checked={selectedIds.has(a.id)} onChange={() => toggleAccount(a.id)} />
-                    <PlatformIcon platform={a.platform} size={14} />
+                    <span style={{ color: a.platform === "youtube" ? "var(--dmuted)" : undefined, display: "inline-flex" }}>
+                      <AccountDestinationIcon platform={a.platform} size={14} />
+                    </span>
                     <span className="cpm-account-name" title={getAccountDisplayName(a)}>{getAccountDisplayName(a)}</span>
                   </label>
                 ))

@@ -1,6 +1,6 @@
 "use client";
 
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import type { SocialAccount, Profile } from "@/lib/api";
 
 // ── Connection Stats ─────────────────────────────────────────────────
@@ -72,7 +72,9 @@ export function ConnectionStats({ accounts, profiles }: ConnectionStatsProps) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, auto)", gap: "8px 20px", marginTop: 6 }}>
             {[...byPlatform.entries()].sort((a, b) => b[1] - a[1]).map(([platform, count]) => (
               <span key={platform} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
-                <PlatformIcon platform={platform} size={14} />
+                <span style={{ color: platform === "youtube" ? "var(--dmuted)" : undefined, display: "inline-flex" }}>
+                  <AccountDestinationIcon platform={platform} size={14} />
+                </span>
                 <span style={{ color: "var(--dtext)", fontWeight: 700 }}>{count}</span>
                 <span style={{ color: "var(--dmuted)", fontWeight: 600 }}>{quickstartSourceLabel(platform)}</span>
               </span>

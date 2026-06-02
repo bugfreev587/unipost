@@ -18,7 +18,7 @@ import {
   type UIEvent,
   type WheelEvent,
 } from "react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { CreatePostDrawer } from "@/components/posts/create-post/create-post-drawer";
 import { PlatformEditorBlock } from "@/components/posts/create-post/platform-editor-block";
 import {
@@ -841,7 +841,7 @@ export function PostsCalendarView() {
                   onChange={() => setSelectedPlatforms((current) => toggleSetValue(current, platform))}
                 />
                 <span className="posts-calendar-checkmark neutral" />
-                <PlatformIcon platform={platform} size={15} />
+                <AccountDestinationIcon platform={platform} size={15} />
                 <span>{formatPlatformName(platform)}</span>
               </label>
             ))
@@ -1221,7 +1221,7 @@ function EventPopover({
                   <span className="posts-calendar-popover-platforms">
                     {platforms.map((platform) => (
                       <span key={platform} className="posts-calendar-popover-platform-chip">
-                        <PlatformIcon platform={platform} size={14} />
+                        <AccountDestinationIcon platform={platform} size={14} />
                         {formatPlatformName(platform)}
                       </span>
                     ))}
@@ -1324,7 +1324,7 @@ function CalendarPostResultCard({
     <article className="posts-calendar-result-card">
       <div className="posts-calendar-result-head">
         <div className="posts-calendar-result-title">
-          <PlatformIcon platform={result.platform || ""} size={15} />
+          <AccountDestinationIcon platform={result.platform || ""} size={15} />
           <span>{result.account_name || result.platform || "Unknown"}</span>
           <span className={`posts-calendar-result-status ${statusClassName(result.status)}`}>{result.status}</span>
         </div>
@@ -1705,7 +1705,7 @@ function CalendarEditInspector({
                     checked={form.selectedAccountIds.has(account.id)}
                     onChange={() => form.toggleAccount(account.id)}
                   />
-                  <PlatformIcon platform={account.platform} size={15} />
+                  <AccountDestinationIcon platform={account.platform} size={15} />
                   <span>{account.account_name || formatPlatformName(account.platform)}</span>
                 </label>
               ))}
