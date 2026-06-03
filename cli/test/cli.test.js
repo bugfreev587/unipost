@@ -367,11 +367,12 @@ test("auth login --setup-token exchanges once, stores the API key in secure stor
       assert.equal([...secureStore.values.values()].includes("up_live_setup_secret"), true);
 
       const configAfterLogin = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(configAfterLogin.base_url, baseUrl);
       assert.equal(configAfterLogin.credential.storage, "keychain");
       assert.equal(configAfterLogin.credential.workspace_id, "ws_setup");
       assert.equal(JSON.stringify(configAfterLogin).includes("up_live_setup_secret"), false);
 
-      const status = await runCli(["auth", "status", "--json", "--base-url", baseUrl], { env, secureStore });
+      const status = await runCli(["auth", "status", "--json"], { env, secureStore });
       assert.equal(status.code, 0);
       const statusBody = JSON.parse(status.stdout);
       assert.equal(statusBody.data.authenticated, true);
@@ -453,6 +454,9 @@ test("agent bootstrap --setup-token exchanges the token before loading workspace
       assert.equal(body.data.ready_for_draft, true);
       assert.equal(seen[0], "POST /v1/cli/setup-tokens/exchange");
       assert.equal([...secureStore.values.values()].includes("up_live_bootstrap_secret"), true);
+      const configAfterBootstrap = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(configAfterBootstrap.base_url, baseUrl);
+      assert.equal(configAfterBootstrap.credential.storage, "keychain");
     });
   });
 });

@@ -604,10 +604,14 @@ async function storeKeychainCredential(context, { apiKey, workspace, client }) {
     credential_source: "setup_token",
     authenticated_at: new Date().toISOString(),
   };
-  const config = await patchConfig(context, {
+  const configPatch = {
     credential,
     default_workspace_id: workspaceID,
-  });
+  };
+  if (context.options.baseUrlSource !== "default" && context.options.baseUrl) {
+    configPatch.base_url = context.options.baseUrl;
+  }
+  const config = await patchConfig(context, configPatch);
   return config.credential;
 }
 
