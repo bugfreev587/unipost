@@ -20,13 +20,6 @@ unipost agent bootstrap --client codex --json`,
 unipost auth login --api-key "$UNIPOST_API_KEY" --json
 unipost auth status --json`,
   },
-  {
-    label: "No-install one-off alternative",
-    lang: "bash",
-    code: `# Use this only when you cannot install a persistent unipost command.
-npx -y @unipost/cli auth status --json
-npx -y @unipost/cli agent bootstrap --client codex --json`,
-  },
 ];
 
 const AGENT_SETUP_SNIPPETS = [
@@ -184,6 +177,7 @@ const JSON_ENVELOPE = [
 ];
 
 const COMMAND_ROWS = [
+  ["CLI self-management", "`upgrade`, `self update`, `self help`, `--version`, `--help`, and `completion`."],
   ["Auth and config", "`config path`, `config show`, `config set base_url`, `config set default_profile_id`, `auth login --setup-token`, `auth login --api-key`, `auth logout`, `auth status`, `auth list`, and `auth use`."],
   ["Quickstart", "`init`, `doctor`, `quickstart`, `profiles list/create/get/use`, and `connect create/get/wait`."],
   ["Accounts", "`accounts list`, `accounts get`, `accounts health`, `accounts capabilities`, and `accounts metrics`."],
@@ -195,7 +189,8 @@ const COMMAND_ROWS = [
 ] as const;
 
 const TROUBLESHOOTING_ROWS = [
-  ["`zsh: command not found: unipost`", "Install the CLI once with `npm install -g @unipost/cli`, then rerun `unipost --help`. If you cannot install globally, use the no-install one-off alternative `npx -y @unipost/cli ...`."],
+  ["`zsh: command not found: unipost`", "Install the CLI once with `npm install -g @unipost/cli`, then open a new terminal and run `unipost --help`. If it still fails, check that your npm global bin directory is on PATH with `npm bin -g`."],
+  ["Need the latest CLI", "Update with `unipost upgrade`, then run `unipost --version` to confirm the installed version."],
   ["Codex or Claude Code still does not know UniPost after setup-token login", "The setup token signs in the UniPost CLI only. Run `unipost agent install --client codex --json` or `unipost agent install --client claude-code --json`, then follow the returned instruction package setup in that agent."],
   ["`codex` or `claude` command is missing", "Install or open that AI agent separately. UniPost CLI does not install Codex, Claude Code, or any other local agent executable."],
   ["API key is missing or invalid", "Use the Dashboard setup token flow first. If you are running in CI, set `UNIPOST_API_KEY`, then run `unipost auth status --json`."],
@@ -238,15 +233,16 @@ export default function CliPage() {
 
       <h2 id="before-running">Before you run a command</h2>
       <p>
-        Install once with <code>npm install -g @unipost/cli</code>. After install, use <code>unipost</code> commands everywhere: terminal workflows, Dashboard setup-token commands, and local agent setup. Use <code>npx -y @unipost/cli</code> only as a no-install one-off alternative when global install is not available.
+        Install once with <code>npm install -g @unipost/cli</code>. After install, use <code>unipost</code> commands everywhere: terminal workflows, Dashboard setup-token commands, and local agent setup. Update with <code>unipost upgrade</code> when you need the latest CLI.
       </p>
       <DocsTable
         columns={["What you run", "What it actually does"]}
         rows={[
           ["`npm install -g @unipost/cli`", "Install once. This creates the persistent `unipost` command in your shell."],
           ["`unipost ...`", "The normal command prefix after install. Use this in Dashboard setup-token commands, terminal workflows, and agent setup."],
+          ["`unipost upgrade`", "Updates the installed CLI package with npm, then you can run `unipost --version` to confirm."],
+          ["`unipost self help`", "Shows CLI install, update, version, and help commands."],
           ["Dashboard setup-token command", "Exchanges the one-time token for a named CLI key and stores it in OS keychain. A setup token only logs the UniPost CLI in."],
-          ["`npx -y @unipost/cli ...`", "No-install one-off alternative. It runs one command and does not create a persistent `unipost` binary."],
           ["`codex`, `claude`, or another agent command", "A separate local AI agent. UniPost CLI does not install those programs."],
         ]}
       />

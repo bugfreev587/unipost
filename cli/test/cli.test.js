@@ -32,6 +32,7 @@ async function runCli(args, options = {}) {
         stderr += chunk;
       },
     },
+    execFile: options.execFile,
   });
 
   return { code, stdout, stderr };
@@ -147,9 +148,38 @@ test("--help defaults examples to the installed unipost command", async () => {
   assert.equal(result.code, 0);
   assert.match(result.stdout, /\n  unipost auth status/);
   assert.match(result.stdout, /Install:\n  npm install -g @unipost\/cli/);
-  assert.match(result.stdout, /No-install one-off alternative:/);
-  assert.match(result.stdout, /npx -y @unipost\/cli <command>/);
-  assert.doesNotMatch(result.stdout, /npx -y @unipost\/cli auth status/);
+  assert.match(result.stdout, /\n  unipost upgrade/);
+  assert.match(result.stdout, /\n  unipost self update/);
+  assert.match(result.stdout, /\n  unipost self help/);
+  assert.match(result.stdout, /Upgrade:\n  unipost upgrade/);
+  assert.doesNotMatch(result.stdout, /npx -y @unipost\/cli/);
+});
+
+test("upgrade runs the npm global package update", async () => {
+  const calls = [];
+  const result = await runCli(["upgrade"], {
+    async execFile(command, args) {
+      calls.push({ command, args });
+      return { stdout: "changed 1 package\n", stderr: "" };
+    },
+  });
+
+  assert.equal(result.code, 0);
+  assert.deepEqual(calls, [
+    { command: "npm", args: ["install", "-g", "@unipost/cli@latest"] },
+  ]);
+  assert.match(result.stdout, /Updated UniPost CLI/);
+  assert.match(result.stdout, /unipost --version/);
+});
+
+test("self help explains install update and version commands", async () => {
+  const result = await runCli(["self", "help"]);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /CLI self-management/);
+  assert.match(result.stdout, /npm install -g @unipost\/cli/);
+  assert.match(result.stdout, /unipost upgrade/);
+  assert.match(result.stdout, /unipost --version/);
 });
 
 test("auth status --json fails with a stable envelope when credentials are missing", async () => {

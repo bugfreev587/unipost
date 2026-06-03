@@ -176,6 +176,7 @@ function createContext(argv, io) {
     stdout: io.stdout || process.stdout,
     stderr: io.stderr || process.stderr,
     fetchImpl: io.fetchImpl || globalThis.fetch,
+    execFile: io.execFile || execFile,
     secureStore: io.secureStore || createDefaultSecureStore(),
   };
 }
@@ -196,6 +197,7 @@ function fallbackContext(argv, io) {
     stdout: io.stdout || process.stdout,
     stderr: io.stderr || process.stderr,
     fetchImpl: io.fetchImpl || globalThis.fetch,
+    execFile: io.execFile || execFile,
     secureStore: io.secureStore || createDefaultSecureStore(),
   };
 }
@@ -434,12 +436,64 @@ async function dispatch(context) {
   if (command === "completion") {
     return completion(context, subcommand);
   }
+  if (command === "upgrade") {
+    return upgradeCli(context);
+  }
+  if (command === "self") {
+    return selfCommand(context, subcommand);
+  }
 
   throw new CliError({
     code: "invalid_command",
     normalizedCode: "invalid_command",
     message: `Unknown command: ${context.commandParts.join(" ")}`,
     hint: `Run ${CLI_RUNNER} --help to see supported commands.`,
+    docsUrl: DOCS_CLI_URL,
+    exitCode: EXIT.invalidArgs,
+  });
+}
+
+async function upgradeCli(context) {
+  const npmCommand = platform() === "win32" ? "npm.cmd" : "npm";
+  const args = ["install", "-g", "@unipost/cli@latest"];
+  try {
+    await context.execFile(npmCommand, args);
+  } catch (error) {
+    throw new CliError({
+      code: "cli_upgrade_failed",
+      normalizedCode: "cli_upgrade_failed",
+      message: "Failed to update UniPost CLI.",
+      hint: "Run npm install -g @unipost/cli@latest manually, then run unipost --version.",
+      docsUrl: DOCS_CLI_URL,
+      exitCode: EXIT.generic,
+      cause: error,
+    });
+  }
+
+  return envelopeResult({
+    data: {
+      package: "@unipost/cli",
+      command: "npm install -g @unipost/cli@latest",
+    },
+    human: [
+      "Updated UniPost CLI with npm install -g @unipost/cli@latest.",
+      "Run unipost --version to confirm the installed version.",
+    ].join("\n") + "\n",
+  });
+}
+
+function selfCommand(context, subcommand) {
+  if (!subcommand || subcommand === "help") {
+    return textResult(selfHelpText());
+  }
+  if (subcommand === "update" || subcommand === "upgrade") {
+    return upgradeCli(context);
+  }
+  throw new CliError({
+    code: "invalid_command",
+    normalizedCode: "invalid_command",
+    message: `Unknown command: ${context.commandParts.join(" ")}`,
+    hint: `Run ${CLI_RUNNER} self help to see CLI self-management commands.`,
     docsUrl: DOCS_CLI_URL,
     exitCode: EXIT.invalidArgs,
   });
@@ -3733,6 +3787,9 @@ Usage:
   ${CLI_RUNNER} agent mcp-config|mcp-test|install [--client <client>] [--json]
   ${CLI_RUNNER} doctor [--json] [--api-key <key>] [--base-url <url>]
   ${CLI_RUNNER} completion <bash|zsh|fish>
+  ${CLI_RUNNER} upgrade
+  ${CLI_RUNNER} self update
+  ${CLI_RUNNER} self help
 
 Global flags:
   --json, --output <table|json|yaml>, --field <field>, --non-interactive
@@ -3752,8 +3809,32 @@ Auth note:
 Install:
   npm install -g @unipost/cli
 
-No-install one-off alternative:
-  npx -y @unipost/cli <command>
+Upgrade:
+  ${CLI_RUNNER} upgrade
+
+CLI self-management:
+  ${CLI_RUNNER} --version
+  ${CLI_RUNNER} --help
+  ${CLI_RUNNER} upgrade
+  ${CLI_RUNNER} self update
+  ${CLI_RUNNER} self help
+`;
+}
+
+function selfHelpText() {
+  return `CLI self-management
+
+Install:
+  npm install -g @unipost/cli
+
+Update:
+  ${CLI_RUNNER} upgrade
+  ${CLI_RUNNER} self update
+
+Inspect:
+  ${CLI_RUNNER} --version
+  ${CLI_RUNNER} --help
+  ${CLI_RUNNER} doctor --json
 `;
 }
 
