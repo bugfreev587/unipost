@@ -8,8 +8,8 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 
-const CLI_VERSION = "0.1.1";
-const CLI_RUNNER = "npx -y @unipost/cli";
+const CLI_VERSION = "0.1.2";
+const CLI_RUNNER = "unipost";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
 const DOCS_CLI_URL = "https://unipost.dev/docs/cli";
@@ -3749,8 +3749,11 @@ Auth note:
   a named API key and stores the secret in OS keychain. auth login --api-key
   remains metadata-only and never writes the plaintext key to config.
 
-Install note:
-  If installed globally, replace \`${CLI_RUNNER}\` with \`unipost\`.
+Install:
+  npm install -g @unipost/cli
+
+No-install one-off alternative:
+  npx -y @unipost/cli <command>
 `;
 }
 

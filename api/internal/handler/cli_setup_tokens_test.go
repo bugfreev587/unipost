@@ -57,12 +57,12 @@ func TestCLISetupTokenIssueStoresOnlyHashAndReturnsAgentCommand(t *testing.T) {
 	if env.Data.ExpiresAt.Sub(now.Add(10*time.Minute)) != 0 {
 		t.Fatalf("expires_at = %s", env.Data.ExpiresAt)
 	}
-	wantCommand := "npx -y @unipost/cli agent bootstrap --client codex --setup-token ust_test_issue_token --base-url https://dev-api.unipost.dev --json"
+	wantCommand := "unipost agent bootstrap --client codex --setup-token ust_test_issue_token --base-url https://dev-api.unipost.dev --json"
 	if env.Data.Command != wantCommand {
 		t.Fatalf("command = %q, want %q", env.Data.Command, wantCommand)
 	}
-	if !strings.Contains(env.Data.Prompt, "npx -y @unipost/cli agent bootstrap --base-url https://dev-api.unipost.dev --json") {
-		t.Fatalf("recommended prompt should use npx command, got %q", env.Data.Prompt)
+	if !strings.Contains(env.Data.Prompt, "unipost agent bootstrap --base-url https://dev-api.unipost.dev --json") {
+		t.Fatalf("recommended prompt should use installed unipost command, got %q", env.Data.Prompt)
 	}
 	if store.createdSetup.WorkspaceID != "ws_setup" || store.createdSetup.UserID != "user_admin" {
 		t.Fatalf("created setup params = %+v", store.createdSetup)

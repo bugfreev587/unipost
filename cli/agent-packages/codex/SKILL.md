@@ -9,10 +9,10 @@ Use the UniPost CLI as the source of truth. Do not infer command syntax from doc
 
 ## Startup
 
-1. Run `npx -y @unipost/cli agent bootstrap --client codex --json`.
-2. Run `npx -y @unipost/cli agent capabilities --client codex --json`.
-3. Run `npx -y @unipost/cli agent context --json` when authenticated.
-4. Use `npx -y @unipost/cli agent mcp-test --json` before configuring MCP.
+1. Run `unipost agent bootstrap --client codex --json`.
+2. Run `unipost agent capabilities --client codex --json`.
+3. Run `unipost agent context --json` when authenticated.
+4. Use `unipost agent mcp-test --json` before configuring MCP.
 
 ## Safety
 
@@ -20,9 +20,9 @@ Use the UniPost CLI as the source of truth. Do not infer command syntax from doc
 - Do not live-publish from an `agent plan`.
 - For live or scheduled publish, stop for explicit user approval and use the normal publish command with `--yes` and `--idempotency-key`.
 - Treat `display_command` as human-readable only; use structured `canonical_action` and `args`.
-- If using `npx -y @unipost/cli agent execute --plan`, run only read-only, validate, or draft-write actions; reject `live_write` plans.
+- If using `unipost agent execute --plan`, run only read-only, validate, or draft-write actions; reject `live_write` plans.
 - Never invent account IDs, profile IDs, media IDs, post IDs, or result IDs.
 
 ## MCP
 
-Use `npx -y @unipost/cli agent mcp-config --client codex` for config and `npx -y @unipost/cli examples mcp.claude-code` for Claude Code setup examples.
+Use `unipost agent mcp-config --client codex` for config and `unipost examples mcp.claude-code` for Claude Code setup examples.

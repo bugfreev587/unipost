@@ -141,13 +141,15 @@ test("prints the CLI version", async () => {
   assert.equal(result.stderr, "");
 });
 
-test("--help defaults examples to the npx runner", async () => {
+test("--help defaults examples to the installed unipost command", async () => {
   const result = await runCli(["--help"]);
 
   assert.equal(result.code, 0);
-  assert.match(result.stdout, /npx -y @unipost\/cli auth status/);
-  assert.match(result.stdout, /If installed globally, replace `npx -y @unipost\/cli` with `unipost`/);
-  assert.doesNotMatch(result.stdout, /\n  unipost auth status/);
+  assert.match(result.stdout, /\n  unipost auth status/);
+  assert.match(result.stdout, /Install:\n  npm install -g @unipost\/cli/);
+  assert.match(result.stdout, /No-install one-off alternative:/);
+  assert.match(result.stdout, /npx -y @unipost\/cli <command>/);
+  assert.doesNotMatch(result.stdout, /npx -y @unipost\/cli auth status/);
 });
 
 test("auth status --json fails with a stable envelope when credentials are missing", async () => {
@@ -216,8 +218,8 @@ test("auth status preserves backend normalized errors and maps unauthorized to e
     assert.equal(body.error.code, "unauthorized");
     assert.equal(body.error.normalized_code, "unauthorized");
     assert.equal(body.error.message, "API key is invalid.");
-    assert.match(body.error.hint, /npx -y @unipost\/cli auth status/);
-    assert.doesNotMatch(body.error.hint, /run unipost auth status/i);
+    assert.match(body.error.hint, /run unipost auth status/i);
+    assert.doesNotMatch(body.error.hint, /npx -y @unipost\/cli auth status/);
     assert.equal(body.meta.request_id, "req_auth_fail");
   });
 });
@@ -463,8 +465,9 @@ test("agent bootstrap --setup-token exchanges the token before loading workspace
       assert.equal(body.data.client, "claude-code");
       assert.equal(body.data.workspace.id, "ws_bootstrap");
       assert.equal(body.data.ready_for_draft, true);
-      assert.match(body.data.next_actions.join("\n"), /npx -y @unipost\/cli posts validate/);
-      assert.doesNotMatch(body.data.next_actions.join("\n"), /Run unipost/);
+      assert.match(body.data.next_actions.join("\n"), /unipost posts validate/);
+      assert.doesNotMatch(body.data.next_actions.join("\n"), /npx -y @unipost\/cli posts validate/);
+      assert.doesNotMatch(body.data.next_actions.join("\n"), /npx -y @unipost\/cli/);
       assert.equal(seen[0], "POST /v1/cli/setup-tokens/exchange");
       assert.equal([...secureStore.values.values()].includes("up_live_bootstrap_secret"), true);
       const configAfterBootstrap = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
@@ -1289,16 +1292,16 @@ test("Phase 5 examples and client configs expose MCP ecosystem setup", async () 
   assert.equal(installBody.data.mode, "instructions");
   assert.ok(installBody.data.files.some((file) => file.path.endsWith("agent-packages/codex/SKILL.md")));
   assert.match(installBody.data.instructions, /agent capabilities/);
-  assert.match(installBody.data.instructions, /npx -y @unipost\/cli agent bootstrap/);
-  assert.doesNotMatch(installBody.data.instructions, /Run `unipost agent/);
+  assert.match(installBody.data.instructions, /unipost agent bootstrap/);
+  assert.doesNotMatch(installBody.data.instructions, /npx -y @unipost\/cli agent bootstrap/);
 
   const codexInstructions = await readFile(new URL("../agent-packages/codex/SKILL.md", import.meta.url), "utf8");
-  assert.match(codexInstructions, /npx -y @unipost\/cli agent bootstrap --client codex/);
-  assert.doesNotMatch(codexInstructions, /Run `unipost agent/);
+  assert.match(codexInstructions, /unipost agent bootstrap --client codex/);
+  assert.doesNotMatch(codexInstructions, /npx -y @unipost\/cli agent bootstrap --client codex/);
 
   const claudeInstructions = await readFile(new URL("../agent-packages/claude-code/CLAUDE.md", import.meta.url), "utf8");
-  assert.match(claudeInstructions, /npx -y @unipost\/cli agent bootstrap --client claude-code/);
-  assert.doesNotMatch(claudeInstructions, /Run `unipost agent/);
+  assert.match(claudeInstructions, /unipost agent bootstrap --client claude-code/);
+  assert.doesNotMatch(claudeInstructions, /npx -y @unipost\/cli agent bootstrap --client claude-code/);
 });
 
 test("Phase 5 mcp-test validates auth and reports shared catalog readiness", async () => {
@@ -1518,8 +1521,8 @@ test("agent guide and mcp-config return client-specific setup content", async ()
   const guideBody = JSON.parse(guide.stdout);
   assert.equal(guideBody.data.client, "codex");
   assert.match(guideBody.data.recommended_prompt, /posts validate/);
-  assert.match(guideBody.data.recommended_prompt, /npx -y @unipost\/cli agent bootstrap/);
-  assert.doesNotMatch(guideBody.data.recommended_prompt, /`unipost agent/);
+  assert.match(guideBody.data.recommended_prompt, /unipost agent bootstrap/);
+  assert.doesNotMatch(guideBody.data.recommended_prompt, /npx -y @unipost\/cli agent bootstrap/);
 
   const claudeConfig = await runCli(["agent", "mcp-config", "claude-code", "--json"]);
   assert.equal(claudeConfig.code, 0);
@@ -1566,8 +1569,9 @@ test("agent bootstrap diagnoses missing auth and succeeds with API-key fallback"
     assert.equal(body.data.authenticated, true);
     assert.equal(body.data.ready_for_draft, true);
     assert.equal(body.data.client, "codex");
-    assert.match(body.data.next_actions.join("\n"), /npx -y @unipost\/cli posts validate/);
-    assert.doesNotMatch(body.data.next_actions.join("\n"), /Run unipost/);
+    assert.match(body.data.next_actions.join("\n"), /unipost posts validate/);
+    assert.doesNotMatch(body.data.next_actions.join("\n"), /npx -y @unipost\/cli posts validate/);
+    assert.doesNotMatch(body.data.next_actions.join("\n"), /npx -y @unipost\/cli/);
   });
 });
 
@@ -1616,8 +1620,9 @@ test("init and quickstart summarize the first-run state without creating a live 
       const initBody = JSON.parse(init.stdout);
       assert.equal(initBody.data.workspace.id, "ws_init");
       assert.equal(initBody.data.profiles.length, 0);
-      assert.match(initBody.data.next_actions.join("\n"), /npx -y @unipost\/cli profiles create/);
-      assert.doesNotMatch(initBody.data.next_actions.join("\n"), /Run unipost/);
+      assert.match(initBody.data.next_actions.join("\n"), /unipost profiles create/);
+      assert.doesNotMatch(initBody.data.next_actions.join("\n"), /npx -y @unipost\/cli profiles create/);
+      assert.doesNotMatch(initBody.data.next_actions.join("\n"), /npx -y @unipost\/cli/);
 
       const quickstart = await runCli(["quickstart", "--name", "New Brand", "--json", "--base-url", baseUrl], { env });
       assert.equal(quickstart.code, 0);
@@ -1625,8 +1630,8 @@ test("init and quickstart summarize the first-run state without creating a live 
       assert.equal(body.data.profile.id, "pr_new");
       assert.equal(body.data.accounts.length, 0);
       assert.equal(body.data.live_publish_created, false);
-      assert.match(body.data.next_actions.join("\n"), /npx -y @unipost\/cli connect create/);
-      assert.doesNotMatch(body.data.next_actions.join("\n"), /unipost connect create/);
+      assert.match(body.data.next_actions.join("\n"), /unipost connect create/);
+      assert.doesNotMatch(body.data.next_actions.join("\n"), /npx -y @unipost\/cli connect create/);
       assert.deepEqual(bodies, [{ name: "New Brand" }]);
     });
   });
