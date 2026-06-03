@@ -114,6 +114,16 @@ test("profile colors prefer valid branding colors and otherwise use a stable pal
   assert.notEqual(getProfileCalendarColor({ id: "profile-a", name: "A" }), getProfileCalendarColor({ id: "profile-b", name: "B" }));
 });
 
+test("calendar status colors use fixed dark semantic colors", async () => {
+  const model = await import("../src/components/posts/calendar/calendar-model.ts");
+
+  assert.equal(typeof model.getCalendarStatusColor, "function");
+  assert.equal(model.getCalendarStatusColor("published"), "#15803d");
+  assert.equal(model.getCalendarStatusColor("failed"), "#b91c1c");
+  assert.equal(model.getCalendarStatusColor("draft"), "#a16207");
+  assert.equal(model.getCalendarStatusColor("scheduled"), "#1d4ed8");
+});
+
 test("buildWeekDays returns a rolling seven-day window anchored to the selected day", () => {
   const week = buildWeekDays(new Date(2026, 3, 8), new Date(2026, 3, 10));
 
