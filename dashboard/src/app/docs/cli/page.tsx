@@ -3,7 +3,7 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 
 const QUICKSTART_SNIPPETS = [
   {
-    label: "Phase 2 source run",
+    label: "Phase 3 source run",
     lang: "bash",
     code: `cd cli
 npm test
@@ -11,7 +11,8 @@ export UNIPOST_API_KEY=up_live_...
 node bin/unipost.js init --json
 node bin/unipost.js quickstart --name "Brand" --json
 node bin/unipost.js agent bootstrap --client codex --json
-node bin/unipost.js posts validate --account sa_... --caption "Shipping with UniPost CLI." --json`,
+node bin/unipost.js agent plan --intent plan_publish_post --from-file post.json --json
+node bin/unipost.js posts create --from-file post.json --dry-run --json`,
   },
   {
     label: "Planned npm install",
@@ -27,6 +28,7 @@ unipost agent guide --client codex`,
     lang: "bash",
     code: `unipost agent capabilities --json
 unipost agent bootstrap --client codex --json
+unipost agent plan-publish --from-file post.json --json
 unipost agent guide --client claude-code --json
 unipost agent mcp-config --client codex`,
   },
@@ -40,20 +42,39 @@ const SAFE_POST_SNIPPETS = [
 unipost posts draft --account sa_... --caption "Shipping with UniPost CLI."`,
   },
   {
+    label: "Dry-run before approval",
+    lang: "bash",
+    code: `unipost posts create \\
+  --from-file post.json \\
+  --dry-run \\
+  --json`,
+  },
+  {
+    label: "Approved scheduled publish",
+    lang: "bash",
+    code: `unipost posts schedule \\
+  --account sa_... \\
+  --caption "Shipping with UniPost CLI." \\
+  --at 2026-06-10T09:00:00Z \\
+  --yes \\
+  --idempotency-key user-approved-2026-06-03-001 \\
+  --json
+
+unipost posts wait post_... --timeout 120 --json`,
+  },
+  {
+    label: "Cancel or retry",
+    lang: "bash",
+    code: `unipost posts cancel post_... --yes --json
+unipost posts retry post_... --result result_... --yes --json`,
+  },
+  {
     label: "Native fetch example",
     lang: "bash",
     code: `unipost examples posts.create \\
   --lang node \\
   --account sa_... \\
-  --caption "Shipping with UniPost CLI."`,
-  },
-  {
-    label: "Later live-write guardrail",
-    lang: "bash",
-    code: `unipost posts create \\
-  --from-file post.json \\
-  --yes \\
-  --idempotency-key user-approved-2026-06-02-001 \\
+  --caption "Shipping with UniPost CLI." \\
   --json`,
   },
 ];
@@ -99,23 +120,23 @@ const JSON_ENVELOPE = [
 ];
 
 const COMMAND_ROWS = [
-  ["Auth and config", "Phase 2: `auth status`, `auth list`, `auth use`; later: browser/device login, logout, and config inspection."],
-  ["Quickstart", "Phase 2: `init`, `doctor`, `quickstart`, `profiles list/create/get/use`, `connect create/get/wait`."],
-  ["Accounts", "Phase 2: `accounts list`, `accounts get`; later: health, capability, and metric views."],
-  ["Posts", "Phase 2: `posts validate`, `posts draft`; later: publish, schedule, wait, cancel, retry, list, and get."],
-  ["Media", "Later phase: upload, inspect, and wait for media processing."],
-  ["Analytics", "Later phase: workspace, post, platform, and account-level reporting."],
-  ["Examples", "Phase 2: `examples posts.create` with cURL and native Node fetch; later: connect and MCP examples."],
-  ["Agent", "Phase 2: `agent bootstrap`, `agent capabilities`, `agent guide`, `agent context`, `agent mcp-config`; later: planning and execution helpers."],
+  ["Auth and config", "Phase 3: `auth status`, `auth list`, `auth use`; later: browser/device login, logout, and config inspection."],
+  ["Quickstart", "Phase 3: `init`, `doctor`, `quickstart`, `profiles list/create/get/use`, `connect create/get/wait`."],
+  ["Accounts", "Phase 3: `accounts list`, `accounts get`; later: health, capability, and metric views."],
+  ["Posts", "Phase 3: `posts list`, `posts get`, `posts analytics`, `posts validate`, `posts draft`, `posts create --dry-run`, `posts create`, `posts schedule`, `posts publish-draft`, `posts wait`, `posts cancel`, `posts retry`."],
+  ["Media", "Phase 3: `media get`; later: local upload and media wait."],
+  ["Analytics", "Phase 3: `analytics summary`, `analytics posts`, `analytics platforms`, `analytics platform`."],
+  ["Examples", "Phase 3: `examples posts.create` with cURL and native Node fetch; later: connect and MCP examples."],
+  ["Agent", "Phase 3: `agent bootstrap`, `agent capabilities`, `agent guide`, `agent context`, `agent mcp-config`, `agent plan`, `agent plan-publish`."],
 ] as const;
 
 export default function CliPage() {
   return (
     <DocsPage
       className="docs-page-wide"
-      eyebrow="Phase 2"
+      eyebrow="Phase 3"
       title="CLI"
-      lead="The UniPost CLI is the first-party terminal interface for developer quickstarts, CI checks, support diagnostics, and AI-agent draft workflows."
+      lead="The UniPost CLI is the first-party terminal interface for developer quickstarts, CI checks, support diagnostics, and AI-agent operator workflows."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
@@ -123,10 +144,10 @@ export default function CliPage() {
         <div>
           <div className="cli-status-label">Current status</div>
           <p>
-            The Phase 2 source package now supports <code>init</code>, <code>quickstart</code>, profile setup, connect-session helpers, account discovery, post validation and draft creation, stable JSON envelopes, and agent bootstrap/context commands. Public npm release, browser/device auth, and live publishing commands remain later phases; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
+            The Phase 3 source package now supports <code>init</code>, <code>quickstart</code>, profile setup, connect-session helpers, account discovery, stable JSON envelopes, post dry-runs, scheduled publish, post waits, cancel/retry workflows, media and analytics reads, and structured agent planning. Public npm release and browser/device auth remain later phases; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
           </p>
         </div>
-        <div className="cli-phase-pill">Phase 2 quickstart</div>
+        <div className="cli-phase-pill">Phase 3 operator beta</div>
       </div>
 
       <h2 id="what-it-is">What the CLI is for</h2>
@@ -141,7 +162,7 @@ export default function CliPage() {
 
       <h2 id="planned-install">Install and first run</h2>
       <p>
-        Phase 2 supports API-key fallback with <code>UNIPOST_API_KEY</code>. Browser/device auth and Dashboard setup tokens are planned for the full agent-assisted onboarding flow.
+        Phase 3 supports API-key fallback with <code>UNIPOST_API_KEY</code>. Browser/device auth and Dashboard setup tokens are planned for the full agent-assisted onboarding flow.
       </p>
       <DocsCodeTabs snippets={QUICKSTART_SNIPPETS} />
 
@@ -150,39 +171,40 @@ export default function CliPage() {
 
       <h2 id="safe-publishing">Safe publishing model</h2>
       <p>
-        Phase 2 stops at validation and draft creation. Immediate or scheduled publishing is treated as a later live-write surface and will require explicit confirmation in non-interactive usage.
+        Phase 3 exposes publish-capable commands, but blocks accidental live writes. Validation, draft creation, and dry-runs stay safe without <code>--yes</code>; live and scheduled publishing require explicit approval plus a stable idempotency key.
       </p>
       <DocsTable
         columns={["Action", "Non-interactive rule"]}
         rows={[
           ["Validate", "Allowed without `--yes`."],
           ["Draft", "Allowed without `--yes`; it does not publish externally."],
-          ["Dry-run", "Later phase; allowed without `--yes` because it validates and previews only."],
-          ["Live publish", "Later phase; requires `--yes` and `--idempotency-key`."],
-          ["Scheduled publish", "Later phase; requires `--yes` and `--idempotency-key` because it eventually posts externally."],
-          ["Cancel or retry", "Later phase; requires explicit resource IDs and `--yes`."],
+          ["Dry-run", "Allowed without `--yes` because it validates and previews only."],
+          ["Live publish", "Requires `--yes` and `--idempotency-key`."],
+          ["Scheduled publish", "Requires `--yes` and `--idempotency-key` because it eventually posts externally."],
+          ["Cancel or retry", "Requires explicit resource IDs and `--yes`."],
         ]}
       />
       <DocsCodeTabs snippets={SAFE_POST_SNIPPETS} />
 
       <h2 id="agent-contract">Agent contract</h2>
       <p>
-        Codex, Claude Code, and other agents should use <code>agent bootstrap</code>, <code>agent capabilities</code>, <code>agent guide</code>, <code>agent context</code>, and <code>agent mcp-config</code> before writing. Planning and execution helpers are deferred until later security review.
+        Codex, Claude Code, and other agents should use <code>agent bootstrap</code>, <code>agent capabilities</code>, <code>agent guide</code>, <code>agent context</code>, <code>agent mcp-config</code>, and <code>agent plan</code> before writing. Plans return missing inputs, required confirmations, canonical actions, and safe dry-run steps so agents do not infer command syntax from prose.
       </p>
       <DocsTable
         columns={["Primitive", "Contract"]}
         rows={[
           ["Capability catalog", "Returns supported intent names, input schemas, safety levels, canonical actions, and `catalog_version`."],
           ["Context grounding", "Returns real workspace, profile, account, defaults, and setup-readiness context."],
-          ["Agent guide", "Returns client-specific prompt guidance for safe validate-before-draft workflows."],
-          ["Async waits", "`connect wait` lets agents observe terminal connection state instead of polling blindly; media and post waits are later."],
+          ["Agent guide", "Returns client-specific prompt guidance for safe validate/dry-run-before-publish workflows."],
+          ["Agent plan", "Returns structured actions for draft or publish intent, including missing inputs and required user confirmations."],
+          ["Async waits", "`connect wait` and `posts wait` let agents observe terminal state instead of polling blindly."],
           ["Status enums", "CLI JSON normalizes backend aliases such as `cancelled` to canonical `canceled`."],
         ]}
       />
 
       <h2 id="json-output">JSON and exit codes</h2>
       <p>
-        Every agent-relevant Phase 2 command supports a stable envelope. Machine fields such as <code>code</code>, <code>normalized_code</code>, <code>catalog_version</code>, and <code>status</code> stay stable English identifiers even when human messages are localized.
+        Every agent-relevant Phase 3 command supports a stable envelope. Machine fields such as <code>code</code>, <code>normalized_code</code>, <code>catalog_version</code>, and <code>status</code> stay stable English identifiers even when human messages are localized.
       </p>
       <DocsCodeTabs snippets={JSON_ENVELOPE} />
       <DocsTable
@@ -219,7 +241,7 @@ export default function CliPage() {
           ["Pagination", "`--limit`, `--cursor`, and `--all`; JSON metadata includes `next_cursor` when available."],
           ["Output", "`--json` or `--output json`; `--field` for scripts; `--no-color` and `NO_COLOR=1` for plain output."],
           ["Networking", "Bounded retries for reads and idempotent writes; respect `Retry-After`; no automatic retry for unsafe writes without idempotency."],
-          ["Credentials", "Phase 2 uses `UNIPOST_API_KEY` or `--api-key`; local config stores defaults only, not secrets. OS keychain and browser/device auth are later."],
+          ["Credentials", "Phase 3 uses `UNIPOST_API_KEY` or `--api-key`; local config stores defaults only, not secrets. OS keychain and browser/device auth are later."],
           ["Telemetry", "First-run notice, redaction, and opt-out through config, `--no-telemetry`, or `UNIPOST_TELEMETRY=0`."],
         ]}
       />
