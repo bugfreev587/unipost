@@ -13,19 +13,23 @@ test("api client exposes CLI setup-token creation", async () => {
   assert.match(source, /\/v1\/cli\/setup-tokens/);
 });
 
-test("api keys page offers agent setup commands for Claude Code and Codex", async () => {
+test("api keys page separates terminal CLI login from agent setup commands", async () => {
   const source = await readFile(join(root, "src/app/(dashboard)/projects/[id]/api-keys/page.tsx"), "utf8");
 
   assert.match(source, /createCliSetupToken/);
-  assert.match(source, /Set up UniPost CLI for agents/);
+  assert.match(source, /Set up UniPost CLI/);
+  assert.match(source, /terminal/);
+  assert.match(source, /Terminal/);
   assert.match(source, /claude-code/);
   assert.match(source, /codex/);
+  assert.match(source, /auth login --setup-token/);
   assert.match(source, /agent bootstrap --client/);
   assert.match(source, /--setup-token/);
   assert.match(source, /--base-url/);
   assert.match(source, /NEXT_PUBLIC_API_URL/);
   assert.match(source, /npm install -g @unipost\/cli/);
   assert.match(source, /unipost agent bootstrap --client/);
+  assert.match(source, /unipost auth status --json/);
   assert.doesNotMatch(source, /npx -y @unipost\/cli agent bootstrap --client/);
   assert.doesNotMatch(source, /setNewKey\(res\.data\.key\).*setup/i);
 });

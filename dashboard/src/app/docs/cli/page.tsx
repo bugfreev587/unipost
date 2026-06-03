@@ -3,15 +3,14 @@ import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 
 const CLI_AUTH_SNIPPETS = [
   {
-    label: "Install and setup token",
+    label: "Install and sign in",
     lang: "bash",
     code: `npm install -g @unipost/cli
 
-# Dashboard: Project -> API Keys -> Set up UniPost CLI for agents
-# Copy and run the generated command for your environment.
-unipost agent bootstrap --client codex --setup-token ust_... --base-url https://api.unipost.dev --json
-unipost auth status --json
-unipost agent bootstrap --client codex --json`,
+# Dashboard: Project -> API Keys -> Set up UniPost CLI
+# Choose Terminal, then copy and run the generated command.
+unipost auth login --setup-token ust_... --client terminal --base-url https://api.unipost.dev --json
+unipost auth status --json`,
   },
   {
     label: "API key fallback",
@@ -257,8 +256,8 @@ export default function CliPage() {
         columns={["Step", "What to do"]}
         rows={[
           ["1. Install once", "Run `npm install -g @unipost/cli`, then confirm `unipost --help` works."],
-          ["2. Copy the setup command", "Open Dashboard -> Project -> API Keys -> Set up UniPost CLI for agents. Copy the generated `unipost agent bootstrap ...` setup-token command for the current environment."],
-          ["3. Run it exactly", "Run the copied command as-is. It should include `--setup-token`, `--base-url`, and `--json`."],
+          ["2. Copy the setup command", "Open Dashboard -> Project -> API Keys -> Set up UniPost CLI. Choose Terminal. Copy the generated `unipost auth login ...` setup-token command for the current environment."],
+          ["3. Run it exactly", "Run the copied command as-is. It should include `--setup-token`, `--client terminal`, `--base-url`, and `--json`."],
           ["4. Verify auth", "Run `unipost auth status --json`. Confirm the credential source and `base_url` match the environment you are using."],
           ["5. Discover real IDs", "Run `unipost profiles list --json`, `unipost accounts list --json`, and `unipost accounts health --account sa_... --json` before validating or drafting posts."],
         ]}

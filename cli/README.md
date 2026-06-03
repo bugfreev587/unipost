@@ -16,7 +16,7 @@ unipost --help
 ```
 
 Use `unipost ...` by default after installation. The Dashboard setup-token
-command assumes this global install and returns a `unipost agent bootstrap ...`
+command assumes this global install and returns a `unipost auth login ...`
 command for the current environment.
 
 Update with `unipost upgrade`, then run `unipost --version` to confirm the
@@ -29,14 +29,14 @@ install or configure Codex, Claude Code, Cursor, or any other local AI agent.
 To let a local AI agent use UniPost:
 
 1. Finish CLI auth first:
-   `unipost agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json`
+   `unipost auth login --setup-token ust_... --client terminal --base-url https://api.unipost.dev --json`
 2. Add the UniPost instruction package for that agent:
    `unipost agent install --client codex --json`
 3. In the agent session, have it run:
    `unipost agent bootstrap --client codex --json`
 
 ```bash
-unipost agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json
+unipost auth login --setup-token ust_... --client terminal --base-url https://api.unipost.dev --json
 unipost config path --json
 unipost config set base_url https://dev-api.unipost.dev --json
 unipost config set default_profile_id pr_... --json

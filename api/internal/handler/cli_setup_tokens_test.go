@@ -72,6 +72,51 @@ func TestCLISetupTokenIssueStoresOnlyHashAndReturnsAgentCommand(t *testing.T) {
 	}
 }
 
+func TestCLISetupTokenIssueReturnsTerminalLoginCommand(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	store := &cliSetupTokenFakeStore{}
+	h := NewCLISetupTokenHandler(store).
+		WithNow(func() time.Time { return now }).
+		WithTokenGenerator(func() (string, error) { return "ust_test_terminal_token", nil })
+
+	req := httptest.NewRequest(http.MethodPost, "https://dev-api.unipost.dev/v1/cli/setup-tokens", strings.NewReader(`{"client":"terminal"}`))
+	ctx := auth.SetWorkspaceID(req.Context(), "ws_setup")
+	ctx = context.WithValue(ctx, auth.UserIDKey, "user_admin")
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.Issue(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			SetupToken string `json:"setup_token"`
+			Client     string `json:"client"`
+			KeyName    string `json:"key_name"`
+			Command    string `json:"command"`
+			Prompt     string `json:"recommended_prompt"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if env.Data.Client != "terminal" || env.Data.KeyName != "UniPost CLI" {
+		t.Fatalf("unexpected terminal client/key name: %+v", env.Data)
+	}
+	wantCommand := "unipost auth login --setup-token ust_test_terminal_token --client terminal --base-url https://dev-api.unipost.dev --json"
+	if env.Data.Command != wantCommand {
+		t.Fatalf("command = %q, want %q", env.Data.Command, wantCommand)
+	}
+	if strings.Contains(env.Data.Command, "agent bootstrap") {
+		t.Fatalf("terminal setup command should not use agent bootstrap: %q", env.Data.Command)
+	}
+	if !strings.Contains(env.Data.Prompt, "unipost auth status --json") || strings.Contains(env.Data.Prompt, "agent install") {
+		t.Fatalf("terminal recommended prompt should stay terminal-only, got %q", env.Data.Prompt)
+	}
+}
+
 func TestCLISetupTokenExchangeCreatesNamedAPIKeyAndConsumesToken(t *testing.T) {
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	setupToken := "ust_test_exchange_token"

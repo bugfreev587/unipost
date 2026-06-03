@@ -672,7 +672,7 @@ export async function createApiKey(
 
 export async function createCliSetupToken(
   token: string,
-  data: { client: "codex" | "claude-code" | "cursor" | "windsurf" }
+  data: { client: "terminal" | "codex" | "claude-code" | "cursor" | "windsurf" }
 ): Promise<ApiResponse<CliSetupTokenResponse>> {
   return request(`/v1/cli/setup-tokens`, token, {
     method: "POST",

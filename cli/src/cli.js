@@ -528,7 +528,7 @@ async function authLogin(context) {
       code: "missing_required_input",
       normalizedCode: "missing_required_input",
       message: "auth login requires --api-key or --setup-token.",
-      hint: "Use auth login --setup-token <token> from the dashboard agent setup flow, or pass --api-key for metadata-only fallback.",
+      hint: "Use auth login --setup-token <token> from the dashboard CLI setup flow, or pass --api-key for metadata-only fallback.",
       docsUrl: DOCS_CLI_URL,
       exitCode: EXIT.missingInput,
     });
@@ -572,8 +572,8 @@ async function authLogin(context) {
   });
 }
 
-async function loginWithSetupToken(context) {
-  const client = context.options.client || "codex";
+async function loginWithSetupToken(context, defaultClient = "terminal") {
+  const client = context.options.client || defaultClient;
   const exchange = await exchangeSetupToken(context, client);
   const apiKey = exchange.api_key || exchange.apiKey;
   if (!apiKey?.key) {
@@ -591,11 +591,18 @@ async function loginWithSetupToken(context) {
   context.options.credentialSource = "setup_token";
   try {
     const { workspace, response } = await fetchWorkspace(context);
+    const credentialClient = exchange.client || client;
     const credential = await storeKeychainCredential(context, {
       apiKey,
       workspace,
-      client: exchange.client || client,
+      client: credentialClient,
     });
+    const nextActions = [
+      `Run ${CLI_RUNNER} auth status --json to confirm keychain-backed auth.`,
+    ];
+    if (credentialClient !== "terminal") {
+      nextActions.push(`Run ${CLI_RUNNER} agent bootstrap --json before agent workflows.`);
+    }
 
     return envelopeResult({
       data: {
@@ -604,10 +611,7 @@ async function loginWithSetupToken(context) {
         credential,
         stored_secret: true,
         config_path: configPath(context),
-        next_actions: [
-          `Run ${CLI_RUNNER} auth status --json to confirm keychain-backed auth.`,
-          `Run ${CLI_RUNNER} agent bootstrap --json before agent workflows.`,
-        ],
+        next_actions: nextActions,
       },
       meta: {
         request_id: response.requestId,
@@ -2423,7 +2427,7 @@ async function agentContextData(context) {
 async function agentBootstrap(context) {
   const client = context.options.client || "codex";
   if (!context.options.apiKey && context.options.setupToken) {
-    await loginWithSetupToken(context);
+    await loginWithSetupToken(context, client);
   }
   if (!context.options.apiKey) {
     return envelopeResult({
@@ -3425,7 +3429,7 @@ _unipost() {
     '--field[Print one field from the envelope]:field:' \\
     '--base-url[Override API base URL]:url:' \\
     '--api-key[Pass a UniPost API key]:key:' \\
-    '--client[Calling client]:client:(codex claude-code cursor windsurf)' \\
+    '--client[Calling client]:client:(terminal codex claude-code cursor windsurf)' \\
     '--limit[Page size for list commands]:limit:' \\
     '--cursor[Page cursor for list commands]:cursor:' \\
     '--status[Filter posts by status]:status:' \\
@@ -3503,7 +3507,7 @@ complete -c unipost -a "agent install" -d "Print agent instruction package setup
 complete -c unipost -a doctor -d "Run local and API diagnostics"
 complete -c unipost -a completion -d "Generate shell completion"
 complete -c unipost -l json -d "Output the stable JSON envelope"
-complete -c unipost -l client -xa "codex claude-code cursor windsurf"
+complete -c unipost -l client -xa "terminal codex claude-code cursor windsurf"
 complete -c unipost -l limit -d "Page size for list commands"
 complete -c unipost -l cursor -d "Page cursor for list commands"
 complete -c unipost -l all -d "Follow pagination until exhausted"
@@ -3794,7 +3798,7 @@ Usage:
 Global flags:
   --json, --output <table|json|yaml>, --field <field>, --non-interactive
   --base-url <url>, --api-key <key>, --setup-token <token>, --limit <n>, --cursor <cursor>, --all
-  --client <codex|claude-code|cursor|windsurf>, --profile <id>, --account <id>
+  --client <terminal|codex|claude-code|cursor|windsurf>, --profile <id>, --account <id>
   --platform <name>, --caption <text>, --status <status>, --result <id>
   --from <date>, --to <date>, --at <timestamp>, --schedule-at <timestamp>
   --from-file <path>, --plan <path>, --content-type <mime>, --yes

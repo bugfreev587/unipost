@@ -355,21 +355,21 @@ test("auth login stores only redacted credential metadata and logout clears it",
   });
 });
 
-test("auth login --setup-token exchanges once, stores the API key in secure storage, and logout removes it", async () => {
+test("auth login --setup-token defaults to terminal setup, stores the API key in secure storage, and logout removes it", async () => {
   await withTempConfig(async (configDir) => {
     const secureStore = createMemorySecureStore();
     await withServer(async (req, res) => {
       if (req.method === "POST" && req.url === "/v1/cli/setup-tokens/exchange") {
         assert.equal(req.headers.authorization, undefined);
         const body = await readRequestJson(req);
-        assert.deepEqual(body, { setup_token: "ust_setup_test", client: "codex" });
+        assert.deepEqual(body, { setup_token: "ust_setup_test", client: "terminal" });
         writeJson(res, 201, {
           data: {
             workspace_id: "ws_setup",
-            client: "codex",
+            client: "terminal",
             api_key: {
               id: "key_cli_setup",
-              name: "Codex CLI",
+              name: "UniPost CLI",
               key: "up_live_setup_secret",
               prefix: "up_live_setup",
               environment: "production",
@@ -395,7 +395,6 @@ test("auth login --setup-token exchanges once, stores the API key in secure stor
       const login = await runCli([
         "auth", "login",
         "--setup-token", "ust_setup_test",
-        "--client", "codex",
         "--json",
         "--base-url", baseUrl,
       ], { env, secureStore });
@@ -404,9 +403,12 @@ test("auth login --setup-token exchanges once, stores the API key in secure stor
       const loginBody = JSON.parse(login.stdout);
       assert.equal(loginBody.data.workspace.id, "ws_setup");
       assert.equal(loginBody.data.credential.storage, "keychain");
-      assert.equal(loginBody.data.credential.client, "codex");
+      assert.equal(loginBody.data.credential.client, "terminal");
       assert.equal(loginBody.data.credential.key_id, "key_cli_setup");
       assert.equal(loginBody.data.stored_secret, true);
+      assert.deepEqual(loginBody.data.next_actions, [
+        "Run unipost auth status --json to confirm keychain-backed auth.",
+      ]);
       assert.equal([...secureStore.values.values()].includes("up_live_setup_secret"), true);
 
       const configAfterLogin = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
@@ -681,6 +683,7 @@ test("completion zsh prints a shell completion script without calling the API", 
   assert.match(result.stdout, /agent install/);
   assert.match(result.stdout, /--plan/);
   assert.match(result.stdout, /--client/);
+  assert.match(result.stdout, /terminal codex claude-code cursor windsurf/);
   assert.match(result.stdout, /--limit/);
   assert.match(result.stdout, /--cursor/);
   assert.match(result.stdout, /--all/);
