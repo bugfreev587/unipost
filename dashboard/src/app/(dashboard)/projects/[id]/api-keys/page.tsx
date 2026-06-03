@@ -135,12 +135,14 @@ export default function ApiKeysPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <Dialog open={setupOpen} onOpenChange={(open) => { setSetupOpen(open); if (!open) { setSetupPrompt(null); setSetupCopied(false); } }}>
             <DialogTrigger render={<button className="dbtn dbtn-ghost" />}>
-              <Terminal style={{ width: 13, height: 13 }} /> Connect with Claude Code / Codex
+              <Terminal style={{ width: 13, height: 13 }} /> Set up UniPost CLI for agents
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Connect with Claude Code / Codex</DialogTitle>
-                <DialogDescription>Create a short-lived setup token for agent CLI auth.</DialogDescription>
+                <DialogTitle>Set up UniPost CLI for agents</DialogTitle>
+                <DialogDescription>
+                  Create a short-lived setup token that signs the UniPost CLI in. This does not install or configure the selected AI agent.
+                </DialogDescription>
               </DialogHeader>
               <div style={{ padding: "8px 0" }}>
                 <label className="dform-label">Client</label>
@@ -178,6 +180,9 @@ export default function ApiKeysPage() {
                     </div>
                     <div className="dt-body-sm" style={{ marginTop: 8 }}>
                       Expires {new Date(setupPrompt.expires_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                    </div>
+                    <div className="dt-body-sm" style={{ marginTop: 8 }}>
+                      After this command succeeds, run <code>npx -y @unipost/cli agent install --client {setupClient} --json</code> and follow the returned instructions if you want the selected agent to use UniPost.
                     </div>
                   </>
                 )}
