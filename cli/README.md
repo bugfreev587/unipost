@@ -15,6 +15,18 @@ such as `zsh: command not found: unipost`. Keep using the `npx -y @unipost/cli`
 prefix, or run `npm install -g @unipost/cli` once if you want a persistent
 `unipost` command.
 
+The Dashboard setup-token command signs in the UniPost CLI only. It does not
+install or configure Codex, Claude Code, Cursor, or any other local AI agent.
+
+To let a local AI agent use UniPost:
+
+1. Finish CLI auth first:
+   `npx -y @unipost/cli agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json`
+2. Add the UniPost instruction package for that agent:
+   `npx -y @unipost/cli agent install --client codex --json`
+3. In the agent session, have it run:
+   `npx -y @unipost/cli agent bootstrap --client codex --json`
+
 ```bash
 npx -y @unipost/cli agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json
 npx -y @unipost/cli config path --json

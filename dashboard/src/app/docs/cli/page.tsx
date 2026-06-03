@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 
-const SETUP_SNIPPETS = [
+const CLI_AUTH_SNIPPETS = [
   {
     label: "Dashboard setup token",
     lang: "bash",
-    code: `# Dashboard: Project -> API Keys -> Connect with Claude Code / Codex
+    code: `# Dashboard: Project -> API Keys -> Set up UniPost CLI for agents
+# Run this command exactly as copied; do not shorten it to "unipost".
 npx -y @unipost/cli agent bootstrap --client codex --setup-token ust_... --base-url https://api.unipost.dev --json
 npx -y @unipost/cli auth status --json
 npx -y @unipost/cli agent bootstrap --client codex --json`,
@@ -20,9 +21,32 @@ npx -y @unipost/cli auth status --json`,
   {
     label: "Optional global install",
     lang: "bash",
-    code: `npm install -g @unipost/cli
+    code: `# Only use bare "unipost" commands after this global install.
+npm install -g @unipost/cli
 unipost auth status --json
 unipost agent bootstrap --client codex --json`,
+  },
+];
+
+const AGENT_SETUP_SNIPPETS = [
+  {
+    label: "Codex",
+    lang: "bash",
+    code: `# Finish CLI auth first. This teaches Codex how to use UniPost;
+# it does not install the Codex CLI itself.
+npx -y @unipost/cli agent install --client codex --json
+npx -y @unipost/cli agent bootstrap --client codex --json
+npx -y @unipost/cli agent capabilities --client codex --json
+npx -y @unipost/cli agent context --json`,
+  },
+  {
+    label: "Claude Code",
+    lang: "bash",
+    code: `# Finish CLI auth first. This prints the Claude Code instruction package setup.
+npx -y @unipost/cli agent install --client claude-code --json
+npx -y @unipost/cli agent bootstrap --client claude-code --json
+npx -y @unipost/cli agent capabilities --client claude-code --json
+npx -y @unipost/cli agent mcp-config --client claude-code --json`,
   },
 ];
 
@@ -171,6 +195,8 @@ const COMMAND_ROWS = [
 
 const TROUBLESHOOTING_ROWS = [
   ["`zsh: command not found: unipost` after running the npx setup command", "`npx -y @unipost/cli ...` runs the package for that command only; it does not install a global `unipost` command. Keep using `npx -y @unipost/cli ...`, or run `npm install -g @unipost/cli` once if you want `unipost --help` and `unipost ...` to work."],
+  ["Codex or Claude Code still does not know UniPost after setup-token login", "The setup token signs in the UniPost CLI only. Run `npx -y @unipost/cli agent install --client codex --json` or `npx -y @unipost/cli agent install --client claude-code --json`, then follow the returned instruction package setup in that agent."],
+  ["`codex` or `claude` command is missing", "Install or open that AI agent separately. UniPost CLI does not install Codex, Claude Code, or any other local agent executable."],
   ["API key is missing or invalid", "Use the Dashboard setup token flow first. If you are running in CI, set `UNIPOST_API_KEY`, then run `npx -y @unipost/cli auth status --json`."],
   ["`setup_token_invalid`, `setup_token_expired`, or `setup_token_used`", "Create a fresh Dashboard setup token. Setup tokens are short-lived and single-use, so copy the newest command from Dashboard before retrying."],
   ["`keychain_unavailable`", "The CLI could not store the named key in OS keychain. Retry from a normal logged-in desktop shell, or use `UNIPOST_API_KEY` as the fallback auth path."],
@@ -185,7 +211,7 @@ export default function CliPage() {
       className="docs-page-wide"
       eyebrow="Developer tools"
       title="CLI"
-      lead="Configure UniPost auth, account defaults, safe publish workflows, and AI-agent setup from your terminal."
+      lead="Use UniPost from a terminal, or give a local AI agent a safe UniPost toolchain. Pick the setup path that matches what you are trying to do."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
@@ -209,20 +235,51 @@ export default function CliPage() {
         ]}
       />
 
-      <h2 id="setup-steps">Set up the CLI in 3 steps</h2>
+      <h2 id="before-running">Before you run a command</h2>
       <p>
-        Use the Dashboard setup token flow for local development and agent setup. Use <code>UNIPOST_API_KEY</code> for CI, containers, or shells where keychain storage is unavailable.
-        The copied Dashboard command uses <code>npx -y @unipost/cli</code>, which runs the published package for that one command without installing a permanent <code>unipost</code> binary.
+        UniPost uses <code>npx -y @unipost/cli</code> by default. That command downloads and runs the CLI for the current command only. It does not install a global <code>unipost</code> command, so <code>unipost --help</code> works only after the optional global install below.
+      </p>
+      <DocsTable
+        columns={["What you run", "What it actually does"]}
+        rows={[
+          ["`npx -y @unipost/cli ...`", "Runs UniPost CLI for this command. Use this in every example unless you installed the CLI globally."],
+          ["Dashboard setup-token command", "Exchanges the one-time token for a named CLI key and stores it in OS keychain. A setup token only logs the UniPost CLI in."],
+          ["`npm install -g @unipost/cli`", "Optional. Installs a persistent `unipost` command. Only use bare `unipost` commands after `npm install -g @unipost/cli`."],
+          ["`codex`, `claude`, or another agent command", "A separate local AI agent. UniPost CLI does not install those programs."],
+        ]}
+      />
+
+      <h2 id="setup-paths">Choose your setup path</h2>
+      <p>
+        The setup token only logs the UniPost CLI in. It does not install or configure Codex, Claude Code, or any other agent. If you only want to use UniPost from a terminal, follow Path A. If you want a local AI agent to use UniPost, finish Path A first, then follow Path B.
+      </p>
+
+      <h3 id="path-command-line">Path A: Command line only</h3>
+      <DocsTable
+        columns={["Step", "What to do"]}
+        rows={[
+          ["1. Copy the setup command", "Open Dashboard -> Project -> API Keys -> Set up UniPost CLI for agents. Copy the generated setup-token command for the current environment."],
+          ["2. Run it exactly", "Run this command exactly as copied; do not shorten it to `unipost`. It should start with `npx -y @unipost/cli agent bootstrap ...`."],
+          ["3. Verify auth", "Run `npx -y @unipost/cli auth status --json`. Confirm the credential source and `base_url` match the environment you are using."],
+          ["4. Discover real IDs", "Run `npx -y @unipost/cli profiles list --json`, `npx -y @unipost/cli accounts list --json`, and `npx -y @unipost/cli accounts health --account sa_... --json` before validating or drafting posts."],
+        ]}
+      />
+      <DocsCodeTabs snippets={CLI_AUTH_SNIPPETS} />
+
+      <h3 id="path-local-agent">Path B: Local AI agent</h3>
+      <p>
+        Path B is for Codex, Claude Code, Cursor, or another local agent that should operate UniPost safely. This path does not install the agent executable itself; install or open that agent separately if its own command is missing.
       </p>
       <DocsTable
         columns={["Step", "What to do"]}
         rows={[
-          ["1. Sign in", "In Dashboard, open Project -> API Keys -> Connect with Claude Code / Codex, copy the setup-token command, and run it in the terminal. The copied command includes the API URL for the current environment."],
-          ["2. Verify auth", "Run `npx -y @unipost/cli auth status --json`. The result should show the active credential source and the configured API base URL."],
-          ["3. Pick defaults", "Run `profiles list`, `accounts list`, and `accounts health`; set `default_profile_id` if you want shorter commands later."],
+          ["1. Finish CLI auth", "Complete Path A first. The agent will reuse the same UniPost CLI credentials and config."],
+          ["2. Add UniPost instructions", "Run `npx -y @unipost/cli agent install --client codex --json` or `npx -y @unipost/cli agent install --client claude-code --json`, then follow the returned instruction package setup."],
+          ["3. Start the agent with grounding", "In the agent session, have it run `npx -y @unipost/cli agent bootstrap --client codex --json`, `agent capabilities`, and `agent context` before it plans or writes anything."],
+          ["4. Keep publish safe", "Agents should validate, draft, or dry-run first. Live or scheduled publish still requires explicit user approval plus `--yes` and `--idempotency-key`."],
         ]}
       />
-      <DocsCodeTabs snippets={SETUP_SNIPPETS} />
+      <DocsCodeTabs snippets={AGENT_SETUP_SNIPPETS} />
 
       <h2 id="configure">Configure the CLI</h2>
       <p>
