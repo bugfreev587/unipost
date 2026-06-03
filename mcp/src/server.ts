@@ -36,6 +36,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { registerAgentContractTools } from "./agent-contract.js";
 
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -833,6 +834,8 @@ function createMcpServer(apiKey: string): McpServer {
       return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
     },
   );
+
+  registerAgentContractTools(server, (path, options) => apiRequest(path, apiKey, options));
 
   return server;
 }

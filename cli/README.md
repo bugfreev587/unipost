@@ -1,6 +1,6 @@
 # UniPost CLI
 
-Phase 4 beta source package for the planned UniPost CLI.
+Phase 5 beta source package for the planned UniPost CLI.
 
 The current implementation supports API-key fallback through `UNIPOST_API_KEY`.
 Browser/device auth and Dashboard setup-token exchange are still backend
@@ -31,7 +31,14 @@ UNIPOST_API_KEY=up_live_... unipost analytics summary --from 2026-06-01 --to 202
 UNIPOST_API_KEY=up_live_... unipost agent bootstrap --client codex --json
 UNIPOST_API_KEY=up_live_... unipost agent capabilities --json
 UNIPOST_API_KEY=up_live_... unipost agent plan --intent plan_publish_post --from-file post.json --json
+UNIPOST_API_KEY=up_live_... unipost agent mcp-test --json
+UNIPOST_API_KEY=up_live_... unipost agent mcp-config --client claude-code --json
+UNIPOST_API_KEY=up_live_... unipost agent mcp-config --client cursor --json
+UNIPOST_API_KEY=up_live_... unipost agent install --client codex --json
+UNIPOST_API_KEY=up_live_... unipost agent install --client claude-code --json
+UNIPOST_API_KEY=up_live_... unipost agent execute --plan plan.json --json
 UNIPOST_API_KEY=up_live_... unipost examples posts.create --lang node --account sa_...
+UNIPOST_API_KEY=up_live_... unipost examples mcp.claude-code --json
 UNIPOST_API_KEY=up_live_... unipost doctor --json
 unipost completion zsh
 ```
@@ -39,9 +46,14 @@ unipost completion zsh
 The CLI stores non-secret local defaults such as the selected profile in
 `~/.unipost/config.json`. API keys are not written to that file.
 
-Phase 4 supports agent planning, dry-run publish validation, scheduled publish,
+Phase 5 supports agent planning, dry-run publish validation, scheduled publish,
 post lifecycle waits, cancel/retry operations, account diagnostics, local media
-upload/readiness waits, and analytics reads.
+upload/readiness waits, analytics reads, MCP client setup generation, MCP auth
+testing, Codex/Claude Code instruction packages, and a limited structured
+`agent execute` beta.
 Publish-capable writes require explicit user approval through `--yes` and a
 stable `--idempotency-key`; draft creation and dry-run validation remain safe
 without live publishing.
+`agent execute` only accepts structured plan actions for read-only, validate, or
+draft-write flows. It rejects live publish actions and never executes raw command
+strings from a plan.
