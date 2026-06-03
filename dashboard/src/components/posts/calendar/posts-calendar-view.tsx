@@ -58,6 +58,7 @@ import {
   getCalendarSnapSteps,
   getCalendarPostDate,
   getCalendarPostMinuteOfDay,
+  getCalendarStatusColor,
   getContinuousCalendarSnapOffset,
   getPostStatusGroup,
   getProfileCalendarColor,
@@ -996,12 +997,16 @@ function CalendarEventButton({
   const meta = STATUS_META[status];
   const profile = getPrimaryProfile(post, profilesById);
   const color = getPostColor(post, profilesById, profileColors);
+  const statusColor = getCalendarStatusColor(status);
   const time = formatPostTime(post);
   return (
     <button
       type="button"
       className="posts-calendar-event"
-      style={{ "--event-color": color } as CSSProperties}
+      style={{
+        "--event-profile-color": color,
+        "--event-status-color": statusColor,
+      } as CSSProperties}
       onClick={onClick}
       title={`${post.caption || "No title"} - ${meta.label}${profile ? ` - ${profile.name}` : ""}`}
     >
@@ -1086,13 +1091,15 @@ function TimedPostButton({
   const meta = STATUS_META[status];
   const profile = getPrimaryProfile(post, profilesById);
   const color = getPostColor(post, profilesById, profileColors);
+  const statusColor = getCalendarStatusColor(status);
   const time = formatPostTime(post);
   return (
     <button
       type="button"
       className="posts-calendar-timed-event"
       style={{
-        "--event-color": color,
+        "--event-profile-color": color,
+        "--event-status-color": statusColor,
         top: `${Math.max(4, layout.top)}px`,
         left: `calc(${layout.leftPercent}% + 6px)`,
         width: `calc(${layout.widthPercent}% - 12px)`,
@@ -1133,6 +1140,7 @@ function EventPopover({
 }) {
   const status = getPostStatusGroup(post);
   const meta = STATUS_META[status];
+  const statusColor = getCalendarStatusColor(status);
   const platforms = getPostPlatforms(post);
   const popoverRef = useRef<HTMLElement | null>(null);
   const [viewportSize, setViewportSize] = useState<CalendarPopoverSize>(() => getViewportSize());
@@ -1171,7 +1179,8 @@ function EventPopover({
     [anchorRect, boundsRect, popoverSize, viewportSize],
   );
   const popoverStyle = {
-    "--event-color": color,
+    "--event-profile-color": color,
+    "--event-status-color": statusColor,
     "--popover-left": `${placement.left}px`,
     "--popover-top": `${placement.top}px`,
     "--popover-available-height": `${placement.availableHeight}px`,
@@ -1628,7 +1637,7 @@ function CalendarEditInspector({
     || (!form.canSubmit ? "Complete the required post fields before saving." : null);
 
   const inspectorStyle = {
-    "--event-color": color,
+    "--event-profile-color": color,
     "--popover-left": `${placement.left}px`,
     "--popover-top": `${placement.top}px`,
     "--popover-available-height": `${placement.availableHeight}px`,
@@ -2210,10 +2219,10 @@ const CALENDAR_CSS = `
 .posts-calendar-day-number{display:flex;justify-content:flex-end;height:22px;font-size:16px;color:var(--dmuted);font-weight:600}
 .posts-calendar-day.today .posts-calendar-day-number span{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;background:var(--danger);color:white;margin-top:-2px}
 .posts-calendar-events{display:flex;flex-direction:column;gap:4px;min-width:0}
-.posts-calendar-event{--event-color:#8b8b93;position:relative;display:grid;grid-template-columns:3px auto minmax(0,1fr) auto;align-items:center;gap:5px;width:100%;min-height:22px;border:1px solid color-mix(in srgb,var(--event-color) 22%,transparent);border-radius:6px;background:color-mix(in srgb,var(--event-color) 17%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:2px 6px 2px 4px;cursor:pointer;overflow:hidden}
-.posts-calendar-event:hover{border-color:color-mix(in srgb,var(--event-color) 48%,var(--dborder));background:color-mix(in srgb,var(--event-color) 25%,var(--calendar-event-surface,var(--surface)))}
-.posts-calendar-event-rail{width:3px;align-self:stretch;border-radius:99px;background:var(--event-color)}
-.posts-calendar-event-status{font-size:9px;font-weight:800;letter-spacing:.04em;color:color-mix(in srgb,var(--event-color) 84%,var(--dtext));line-height:1}
+.posts-calendar-event{--event-profile-color:#8b8b93;--event-status-color:#475569;position:relative;display:grid;grid-template-columns:3px auto minmax(0,1fr) auto;align-items:center;gap:5px;width:100%;min-height:22px;border:1px solid color-mix(in srgb,var(--event-profile-color) 20%,transparent);border-radius:6px;background:color-mix(in srgb,var(--event-profile-color) 15%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:2px 6px 2px 4px;cursor:pointer;overflow:hidden}
+.posts-calendar-event:hover{border-color:color-mix(in srgb,var(--event-profile-color) 42%,var(--dborder));background:color-mix(in srgb,var(--event-profile-color) 22%,var(--calendar-event-surface,var(--surface)))}
+.posts-calendar-event-rail{width:3px;align-self:stretch;border-radius:99px;background:var(--event-status-color)}
+.posts-calendar-event-status{font-size:9px;font-weight:800;letter-spacing:.04em;color:var(--event-status-color);line-height:1}
 .posts-calendar-event-caption{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:650}
 .posts-calendar-event-time{font-size:11px;color:var(--dmuted2);white-space:nowrap}
 .posts-calendar-more{height:22px;border:0;border-radius:6px;background:transparent;color:var(--dmuted);font:inherit;font-size:12px;font-weight:650;text-align:left;padding:0 7px;cursor:pointer}
@@ -2246,11 +2255,11 @@ const CALENDAR_CSS = `
 .posts-calendar-day-grid.weekend .posts-calendar-day-column-wrap{background:var(--calendar-weekend-surface)}
 .posts-calendar-time-column{--calendar-event-surface:var(--surface);position:relative;height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
 .posts-calendar-time-column.weekend{--calendar-event-surface:var(--calendar-weekend-surface);background-color:var(--calendar-weekend-surface)}
-.posts-calendar-timed-event{--event-color:#8b8b93;position:absolute;min-height:var(--calendar-timed-event-min-height,38px);border:1px solid color-mix(in srgb,var(--event-color) 30%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-color) 21%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
-.posts-calendar-timed-event:hover{border-color:color-mix(in srgb,var(--event-color) 54%,var(--dborder));background:color-mix(in srgb,var(--event-color) 28%,var(--calendar-event-surface,var(--surface)))}
+.posts-calendar-timed-event{--event-profile-color:#8b8b93;--event-status-color:#475569;position:absolute;min-height:var(--calendar-timed-event-min-height,38px);border:1px solid color-mix(in srgb,var(--event-profile-color) 24%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-profile-color) 17%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
+.posts-calendar-timed-event:hover{border-color:color-mix(in srgb,var(--event-profile-color) 48%,var(--dborder));background:color-mix(in srgb,var(--event-profile-color) 24%,var(--calendar-event-surface,var(--surface)))}
 .posts-calendar-timed-content{min-width:0;display:flex;flex-direction:column;gap:2px}
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
-.posts-calendar-timed-meta{font-size:11px;color:color-mix(in srgb,var(--event-color) 78%,var(--dmuted));font-weight:700;line-height:1.15;white-space:nowrap}
+.posts-calendar-timed-meta{font-size:11px;color:var(--event-status-color);font-weight:700;line-height:1.15;white-space:nowrap}
 .posts-calendar-popover-layer{position:fixed;inset:0;background:transparent;z-index:90}
 .posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);box-sizing:border-box;width:min(560px,calc(100vw - 24px));max-height:min(calc(100dvh - 24px),var(--popover-available-height,calc(100dvh - 24px)));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:visible}
 .posts-calendar-popover-content{box-sizing:border-box;max-height:min(calc(100dvh - 26px),calc(var(--popover-available-height,calc(100dvh - 24px)) - 2px));overflow:auto;padding:16px;border-radius:inherit}
@@ -2264,12 +2273,12 @@ const CALENDAR_CSS = `
 .posts-calendar-popover-head h2{margin:5px 0 0;color:var(--dtext);font-size:18px;line-height:1.35;font-weight:720;letter-spacing:0}
 .posts-calendar-popover-head button{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--dborder);border-radius:999px;background:var(--surface2);color:var(--dmuted);cursor:pointer}
 .posts-calendar-popover-profile{display:inline-flex;align-items:center;gap:7px;color:var(--dmuted);font-size:13px;font-weight:650}
-.posts-calendar-popover-profile span{width:9px;height:9px;border-radius:999px;background:var(--event-color)}
+.posts-calendar-popover-profile span{width:9px;height:9px;border-radius:999px;background:var(--event-profile-color)}
 .posts-calendar-popover-meta{display:grid;gap:12px;margin:0}
 .posts-calendar-popover-meta div{display:grid;grid-template-columns:82px minmax(0,1fr);gap:12px;align-items:flex-start}
 .posts-calendar-popover-meta dt{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dmuted2)}
 .posts-calendar-popover-meta dd{margin:0;color:var(--dtext);font-size:14px;line-height:1.45}
-.posts-calendar-popover-status{display:inline-flex;align-items:center;height:19px;border-radius:5px;padding:0 5px;margin-right:7px;background:color-mix(in srgb,var(--event-color) 20%,transparent);color:color-mix(in srgb,var(--event-color) 80%,var(--dtext));font-size:10px;font-weight:800;letter-spacing:.04em}
+.posts-calendar-popover-status{display:inline-flex;align-items:center;height:19px;border-radius:5px;padding:0 5px;margin-right:7px;background:color-mix(in srgb,var(--event-status-color) 18%,transparent);color:var(--event-status-color);font-size:10px;font-weight:800;letter-spacing:.04em}
 .posts-calendar-popover-platforms{display:flex;flex-wrap:wrap;gap:6px}
 .posts-calendar-popover-platform-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--dborder);background:var(--surface2);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:650}
 .posts-calendar-detail-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:12px}

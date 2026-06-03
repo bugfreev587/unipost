@@ -137,6 +137,30 @@ test("Posts calendar snap tracks keep fixed gutters outside moving date tracks",
   assert.doesNotMatch(source, /posts-calendar-swipe-viewport/);
 });
 
+test("Posts calendar event chips separate status color from profile background color", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const calendarEvent = source.slice(
+    source.indexOf("function CalendarEventButton"),
+    source.indexOf("function TimeLabels"),
+  );
+  const timedEvent = source.slice(
+    source.indexOf("function TimedPostButton"),
+    source.indexOf("function EventPopover"),
+  );
+
+  assert.match(source, /getCalendarStatusColor/);
+  assert.match(calendarEvent, /const statusColor = getCalendarStatusColor\(status\)/);
+  assert.match(timedEvent, /const statusColor = getCalendarStatusColor\(status\)/);
+  assert.match(calendarEvent, /"--event-status-color": statusColor/);
+  assert.match(calendarEvent, /"--event-profile-color": color/);
+  assert.match(timedEvent, /"--event-status-color": statusColor/);
+  assert.match(timedEvent, /"--event-profile-color": color/);
+  assert.match(source, /\.posts-calendar-event-rail\{[^}]*background:var\(--event-status-color\)/);
+  assert.match(source, /\.posts-calendar-event-status\{[^}]*color:var\(--event-status-color\)/);
+  assert.match(source, /\.posts-calendar-event\{[^}]*background:color-mix\(in srgb,var\(--event-profile-color\)/);
+  assert.match(source, /\.posts-calendar-timed-event\{[^}]*background:color-mix\(in srgb,var\(--event-profile-color\)/);
+});
+
 test("Posts calendar week view removes all-day row from the week grid", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const weekTimeGutter = source.slice(
@@ -332,7 +356,7 @@ test("Posts calendar details popover preserves platform icon rendering inside ch
   );
 
   assert.match(popover, /className="posts-calendar-popover-platform-chip"/);
-  assert.match(popover, /<PlatformIcon platform=\{platform\} size=\{14\} \/>/);
+  assert.match(popover, /<AccountDestinationIcon platform=\{platform\} size=\{14\} \/>/);
   assert.match(source, /\.posts-calendar-popover-platform-chip\{[^}]*display:inline-flex/);
   assert.doesNotMatch(source, /\.posts-calendar-popover-platforms span\{/);
 });
