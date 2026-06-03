@@ -305,7 +305,7 @@ function parseArgs(argv) {
         code: "invalid_argument",
         normalizedCode: "invalid_argument",
         message: `Unknown option: ${arg}`,
-        hint: "Run unipost --help to see supported flags.",
+        hint: `Run ${CLI_RUNNER} --help to see supported flags.`,
         docsUrl: DOCS_CLI_URL,
         exitCode: EXIT.invalidArgs,
       });
@@ -439,7 +439,7 @@ async function dispatch(context) {
     code: "invalid_command",
     normalizedCode: "invalid_command",
     message: `Unknown command: ${context.commandParts.join(" ")}`,
-    hint: "Run unipost --help to see supported commands.",
+    hint: `Run ${CLI_RUNNER} --help to see supported commands.`,
     docsUrl: DOCS_CLI_URL,
     exitCode: EXIT.invalidArgs,
   });
@@ -915,11 +915,11 @@ async function init(context) {
 
   const nextActions = [];
   if (profiles.length === 0) {
-    nextActions.push("Run unipost profiles create --name \"Brand\".");
+    nextActions.push(`Run ${CLI_RUNNER} profiles create --name "Brand".`);
   } else if (!config.default_profile_id) {
-    nextActions.push("Run unipost profiles use <profile_id>.");
+    nextActions.push(`Run ${CLI_RUNNER} profiles use <profile_id>.`);
   }
-  nextActions.push("Run unipost quickstart to continue with Connect and draft creation.");
+  nextActions.push(`Run ${CLI_RUNNER} quickstart to continue with Connect and draft creation.`);
 
   return envelopeResult({
     data: {
@@ -958,18 +958,18 @@ async function quickstart(context) {
   const { accounts: accountList } = await fetchAccounts(context);
   const steps = [];
   if (!profile) {
-    steps.push("Create a profile with unipost profiles create --name \"Brand\".");
+    steps.push(`Create a profile with ${CLI_RUNNER} profiles create --name "Brand".`);
   }
   if (profile && accountList.length === 0) {
-    steps.push(`Connect an account with unipost connect create --platform linkedin --profile ${profile.id}.`);
+    steps.push(`Connect an account with ${CLI_RUNNER} connect create --platform linkedin --profile ${profile.id}.`);
   }
   if (accountList.length > 0) {
     const account = context.options.account
       ? accountList.find((item) => item.id === context.options.account)
       : accountList[0];
     if (account) {
-      steps.push(`Validate a post with unipost posts validate --account ${account.id} --caption "Hello from UniPost".`);
-      steps.push(`Create a draft with unipost posts draft --account ${account.id} --caption "Hello from UniPost".`);
+      steps.push(`Validate a post with ${CLI_RUNNER} posts validate --account ${account.id} --caption "Hello from UniPost".`);
+      steps.push(`Create a draft with ${CLI_RUNNER} posts draft --account ${account.id} --caption "Hello from UniPost".`);
     }
   }
 
@@ -1456,7 +1456,7 @@ async function waitForPost(context, postID) {
     code: "timeout",
     normalizedCode: "timeout",
     message: `Timed out waiting for post ${postID}.`,
-    hint: "Increase --timeout or check the post later with unipost posts get.",
+    hint: `Increase --timeout or check the post later with ${CLI_RUNNER} posts get.`,
     exitCode: EXIT.timeout,
     requestId: lastResponse?.requestId,
     status: lastResponse?.response?.status,
@@ -1609,7 +1609,7 @@ async function waitForMedia(context, mediaID) {
     code: "timeout",
     normalizedCode: "timeout",
     message: `Timed out waiting for media ${mediaID}.`,
-    hint: "Increase --timeout or check the media later with unipost media get.",
+    hint: `Increase --timeout or check the media later with ${CLI_RUNNER} media get.`,
     exitCode: EXIT.timeout,
     requestId: lastResponse?.requestId,
     status: lastResponse?.response?.status,
@@ -1874,21 +1874,21 @@ async function agentPlan(context, intent) {
         actions: missing.length === 0 ? [
           {
             canonical_action: "accounts.health",
-            command: "unipost accounts health",
+            command: `${CLI_RUNNER} accounts health`,
             args: compactObject({ "--account": accountID, "--json": true }),
             safety_level: "read_only",
             safe_to_execute_without_user: true,
           },
           {
             canonical_action: "accounts.capabilities",
-            command: "unipost accounts capabilities",
+            command: `${CLI_RUNNER} accounts capabilities`,
             args: compactObject({ "--account": accountID, "--json": true }),
             safety_level: "read_only",
             safe_to_execute_without_user: true,
           },
           {
             canonical_action: "accounts.metrics",
-            command: "unipost accounts metrics",
+            command: `${CLI_RUNNER} accounts metrics`,
             args: compactObject({ "--account": accountID, "--json": true }),
             safety_level: "read_only",
             safe_to_execute_without_user: true,
@@ -1915,13 +1915,13 @@ async function agentPlan(context, intent) {
         actions: missing.length === 0 ? [
           {
             canonical_action: "posts.validate",
-            command: "unipost posts validate",
+            command: `${CLI_RUNNER} posts validate`,
             args: postArgs(accountIDs, caption, { json: true }),
             safety_level: "read_only",
           },
           {
             canonical_action: "posts.draft",
-            command: "unipost posts draft",
+            command: `${CLI_RUNNER} posts draft`,
             args: postArgs(accountIDs, caption, { json: true }),
             safety_level: "draft_write",
           },
@@ -1963,21 +1963,21 @@ async function agentPlan(context, intent) {
         actions: missing.length === 0 ? [
           {
             canonical_action: "posts.validate",
-            command: "unipost posts validate",
+            command: `${CLI_RUNNER} posts validate`,
             args: validateArgs,
             safety_level: "read_only",
             safe_to_execute_without_user: true,
           },
           {
             canonical_action: "posts.create_dry_run",
-            command: "unipost posts create",
+            command: `${CLI_RUNNER} posts create`,
             args: dryRunArgs,
             safety_level: "read_only",
             safe_to_execute_without_user: true,
           },
           {
             canonical_action: "posts.create",
-            command: "unipost posts create",
+            command: `${CLI_RUNNER} posts create`,
             args: createArgs,
             safety_level: "live_write",
             required_user_confirmations: ["approve_live_publish"],
@@ -2003,7 +2003,7 @@ async function agentPlan(context, intent) {
         safe_to_execute_without_user: missing.length === 0,
         actions: missing.length === 0 ? [{
           canonical_action: "connect.create",
-          command: "unipost connect create",
+          command: `${CLI_RUNNER} connect create`,
           args: compactObject({ "--platform": platform, "--json": true }),
           safety_level: "setup_write",
         }] : [],
@@ -2028,7 +2028,7 @@ async function agentPlan(context, intent) {
         actions: missing.length === 0 ? [
           {
             canonical_action: "media.upload",
-            command: "unipost media upload",
+            command: `${CLI_RUNNER} media upload`,
             args: compactObject({ file_path: filePath, "--content-type": contentType, "--json": true }),
             safety_level: "setup_write",
             required_user_confirmations: ["approve_local_file_upload"],
@@ -2036,7 +2036,7 @@ async function agentPlan(context, intent) {
           },
           {
             canonical_action: "media.wait",
-            command: "unipost media wait",
+            command: `${CLI_RUNNER} media wait`,
             args: { media_id: "<media_id_from_upload>", "--json": true },
             safety_level: "read_only",
             safe_to_execute_without_user: true,
@@ -2281,7 +2281,7 @@ function agentCapabilities() {
         {
           name: "connect_account",
           description: "Create a hosted OAuth connect session for a social platform.",
-          command: "unipost connect create --platform <platform> --json",
+          command: `${CLI_RUNNER} connect create --platform <platform> --json`,
           canonical_action: "connect.create",
           safety_level: "setup_write",
           required_inputs: ["platform"],
@@ -2302,7 +2302,7 @@ function agentCapabilities() {
         {
           name: "upload_media",
           description: "Reserve and upload a local image or video, then wait until the media ID is publish-ready.",
-          command: "unipost media upload <path> --json",
+          command: `${CLI_RUNNER} media upload <path> --json`,
           canonical_action: "media.upload",
           safety_level: "setup_write",
           required_inputs: ["file_path"],
@@ -2321,7 +2321,7 @@ function agentCapabilities() {
         {
           name: "generate_post_example",
           description: "Generate dependency-free cURL or native Node fetch examples.",
-          command: "unipost examples posts.create --lang <curl|node> --json",
+          command: `${CLI_RUNNER} examples posts.create --lang <curl|node> --json`,
           canonical_action: "examples.posts.create",
           safety_level: "read_only",
           required_inputs: [],
@@ -2399,13 +2399,13 @@ async function agentBootstrap(context) {
   const readyForDraft = data.profiles.length > 0 && data.accounts.length > 0;
   const nextActions = [];
   if (data.profiles.length === 0) {
-    nextActions.push("Run unipost profiles create --name \"Brand\".");
+    nextActions.push(`Run ${CLI_RUNNER} profiles create --name "Brand".`);
   }
   if (data.profiles.length > 0 && data.accounts.length === 0) {
-    nextActions.push("Run unipost connect create --platform linkedin --json and have the user complete OAuth.");
+    nextActions.push(`Run ${CLI_RUNNER} connect create --platform linkedin --json and have the user complete OAuth.`);
   }
   if (readyForDraft) {
-    nextActions.push("Run unipost posts validate before unipost posts draft.");
+    nextActions.push(`Run ${CLI_RUNNER} posts validate before ${CLI_RUNNER} posts draft.`);
   }
 
   return envelopeResult({
@@ -2804,7 +2804,7 @@ async function resolveProfileID(context) {
       code: "missing_required_input",
       normalizedCode: "missing_required_input",
       message: "No profile exists for this workspace.",
-      hint: "Run unipost profiles create --name \"Brand\" or pass --profile after creating one.",
+      hint: `Run ${CLI_RUNNER} profiles create --name "Brand" or pass --profile after creating one.`,
       exitCode: EXIT.missingInput,
     });
   }
@@ -2812,7 +2812,7 @@ async function resolveProfileID(context) {
     code: "missing_required_input",
     normalizedCode: "missing_required_input",
     message: "Multiple profiles exist; choose one for this command.",
-    hint: "Pass --profile <profile_id> or run unipost profiles use <profile_id>.",
+    hint: `Pass --profile <profile_id> or run ${CLI_RUNNER} profiles use <profile_id>.`,
     exitCode: EXIT.missingInput,
   });
 }
@@ -2867,7 +2867,7 @@ function invalidSubcommand(command, subcommand) {
     code: "invalid_command",
     normalizedCode: "invalid_command",
     message: `Unknown command: ${command}${subcommand ? ` ${subcommand}` : ""}`,
-    hint: "Run unipost --help to see supported commands.",
+    hint: `Run ${CLI_RUNNER} --help to see supported commands.`,
     docsUrl: DOCS_CLI_URL,
     exitCode: EXIT.invalidArgs,
   });
@@ -3231,7 +3231,7 @@ function exitCodeFromStatus(status) {
 
 function hintForCode(code) {
   if (code === "unauthorized") {
-    return "Check UNIPOST_API_KEY, local auth, or run unipost auth status.";
+    return `Check UNIPOST_API_KEY, local auth, or run ${CLI_RUNNER} auth status.`;
   }
   if (code === "forbidden") {
     return "The current credential lacks permission for this action.";
@@ -3678,7 +3678,7 @@ function renderMedia(mediaItem) {
     `${mediaItem.id || "media"}\t${mediaItem.status || ""}\t${mediaItem.content_type || ""}\t${mediaItem.size_bytes ?? ""}`.trim(),
   ];
   if (mediaReady(mediaItem)) {
-    lines.push(`Next: add "${mediaItem.id}" to media_ids in post.json, then run unipost posts create --from-file post.json --dry-run --json`);
+    lines.push(`Next: add "${mediaItem.id}" to media_ids in post.json, then run ${CLI_RUNNER} posts create --from-file post.json --dry-run --json`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -3702,37 +3702,37 @@ function helpText() {
   return `UniPost CLI ${CLI_VERSION}
 
 Usage:
-  unipost --version
-  unipost init [--json]
-  unipost quickstart [--json] [--name <profile-name>]
-  unipost config path|show [--json]
-  unipost config set base_url <url> [--json]
-  unipost config set default_profile_id <profile_id> [--json]
-  unipost auth login --setup-token <token> [--client <client>] [--json]
-  unipost auth login --api-key <key> [--json]
-  unipost auth logout [--json]
-  unipost auth status [--json] [--api-key <key>] [--base-url <url>]
-  unipost profiles list|create|use [--json]
-  unipost connect create|get|wait [--json]
-  unipost accounts list|get|health|capabilities|metrics [--json]
-  unipost posts list|get|analytics [--json]
-  unipost posts validate|draft --account <id> --caption <text> [--json]
-  unipost posts create --account <id> --caption <text> --yes --idempotency-key <key>
-  unipost posts create --from-file post.json --dry-run [--json]
-  unipost posts schedule --account <id> --caption <text> --at <timestamp> --yes --idempotency-key <key>
-  unipost posts wait|cancel|retry <post_id> [--json]
-  unipost media upload <file_path> [--content-type <mime>] [--json]
-  unipost media get|wait <media_id> [--json]
-  unipost analytics summary|posts|platforms|platform [--json]
-  unipost examples posts.create --lang <curl|node>
-  unipost examples mcp.claude-code
-  unipost agent plan --intent <intent> [--json]
-  unipost agent execute --plan plan.json [--json]
-  unipost agent bootstrap [--setup-token <token>] [--client <client>] [--json]
-  unipost agent capabilities|context|guide [--json]
-  unipost agent mcp-config|mcp-test|install [--client <client>] [--json]
-  unipost doctor [--json] [--api-key <key>] [--base-url <url>]
-  unipost completion <bash|zsh|fish>
+  ${CLI_RUNNER} --version
+  ${CLI_RUNNER} init [--json]
+  ${CLI_RUNNER} quickstart [--json] [--name <profile-name>]
+  ${CLI_RUNNER} config path|show [--json]
+  ${CLI_RUNNER} config set base_url <url> [--json]
+  ${CLI_RUNNER} config set default_profile_id <profile_id> [--json]
+  ${CLI_RUNNER} auth login --setup-token <token> [--client <client>] [--json]
+  ${CLI_RUNNER} auth login --api-key <key> [--json]
+  ${CLI_RUNNER} auth logout [--json]
+  ${CLI_RUNNER} auth status [--json] [--api-key <key>] [--base-url <url>]
+  ${CLI_RUNNER} profiles list|create|use [--json]
+  ${CLI_RUNNER} connect create|get|wait [--json]
+  ${CLI_RUNNER} accounts list|get|health|capabilities|metrics [--json]
+  ${CLI_RUNNER} posts list|get|analytics [--json]
+  ${CLI_RUNNER} posts validate|draft --account <id> --caption <text> [--json]
+  ${CLI_RUNNER} posts create --account <id> --caption <text> --yes --idempotency-key <key>
+  ${CLI_RUNNER} posts create --from-file post.json --dry-run [--json]
+  ${CLI_RUNNER} posts schedule --account <id> --caption <text> --at <timestamp> --yes --idempotency-key <key>
+  ${CLI_RUNNER} posts wait|cancel|retry <post_id> [--json]
+  ${CLI_RUNNER} media upload <file_path> [--content-type <mime>] [--json]
+  ${CLI_RUNNER} media get|wait <media_id> [--json]
+  ${CLI_RUNNER} analytics summary|posts|platforms|platform [--json]
+  ${CLI_RUNNER} examples posts.create --lang <curl|node>
+  ${CLI_RUNNER} examples mcp.claude-code
+  ${CLI_RUNNER} agent plan --intent <intent> [--json]
+  ${CLI_RUNNER} agent execute --plan plan.json [--json]
+  ${CLI_RUNNER} agent bootstrap [--setup-token <token>] [--client <client>] [--json]
+  ${CLI_RUNNER} agent capabilities|context|guide [--json]
+  ${CLI_RUNNER} agent mcp-config|mcp-test|install [--client <client>] [--json]
+  ${CLI_RUNNER} doctor [--json] [--api-key <key>] [--base-url <url>]
+  ${CLI_RUNNER} completion <bash|zsh|fish>
 
 Global flags:
   --json, --output <table|json|yaml>, --field <field>, --non-interactive
@@ -3748,6 +3748,9 @@ Auth note:
   auth login --setup-token exchanges a Dashboard-generated short-lived token for
   a named API key and stores the secret in OS keychain. auth login --api-key
   remains metadata-only and never writes the plaintext key to config.
+
+Install note:
+  If installed globally, replace \`${CLI_RUNNER}\` with \`unipost\`.
 `;
 }
 

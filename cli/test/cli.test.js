@@ -141,6 +141,15 @@ test("prints the CLI version", async () => {
   assert.equal(result.stderr, "");
 });
 
+test("--help defaults examples to the npx runner", async () => {
+  const result = await runCli(["--help"]);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /npx -y @unipost\/cli auth status/);
+  assert.match(result.stdout, /If installed globally, replace `npx -y @unipost\/cli` with `unipost`/);
+  assert.doesNotMatch(result.stdout, /\n  unipost auth status/);
+});
+
 test("auth status --json fails with a stable envelope when credentials are missing", async () => {
   const result = await runCli(["auth", "status", "--json", "--base-url", "http://127.0.0.1:65534"]);
 
@@ -207,6 +216,8 @@ test("auth status preserves backend normalized errors and maps unauthorized to e
     assert.equal(body.error.code, "unauthorized");
     assert.equal(body.error.normalized_code, "unauthorized");
     assert.equal(body.error.message, "API key is invalid.");
+    assert.match(body.error.hint, /npx -y @unipost\/cli auth status/);
+    assert.doesNotMatch(body.error.hint, /run unipost auth status/i);
     assert.equal(body.meta.request_id, "req_auth_fail");
   });
 });
@@ -452,6 +463,8 @@ test("agent bootstrap --setup-token exchanges the token before loading workspace
       assert.equal(body.data.client, "claude-code");
       assert.equal(body.data.workspace.id, "ws_bootstrap");
       assert.equal(body.data.ready_for_draft, true);
+      assert.match(body.data.next_actions.join("\n"), /npx -y @unipost\/cli posts validate/);
+      assert.doesNotMatch(body.data.next_actions.join("\n"), /Run unipost/);
       assert.equal(seen[0], "POST /v1/cli/setup-tokens/exchange");
       assert.equal([...secureStore.values.values()].includes("up_live_bootstrap_secret"), true);
       const configAfterBootstrap = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
@@ -1553,6 +1566,8 @@ test("agent bootstrap diagnoses missing auth and succeeds with API-key fallback"
     assert.equal(body.data.authenticated, true);
     assert.equal(body.data.ready_for_draft, true);
     assert.equal(body.data.client, "codex");
+    assert.match(body.data.next_actions.join("\n"), /npx -y @unipost\/cli posts validate/);
+    assert.doesNotMatch(body.data.next_actions.join("\n"), /Run unipost/);
   });
 });
 
@@ -1598,8 +1613,11 @@ test("init and quickstart summarize the first-run state without creating a live 
       };
       const init = await runCli(["init", "--json", "--base-url", baseUrl], { env });
       assert.equal(init.code, 0);
-      assert.equal(JSON.parse(init.stdout).data.workspace.id, "ws_init");
-      assert.equal(JSON.parse(init.stdout).data.profiles.length, 0);
+      const initBody = JSON.parse(init.stdout);
+      assert.equal(initBody.data.workspace.id, "ws_init");
+      assert.equal(initBody.data.profiles.length, 0);
+      assert.match(initBody.data.next_actions.join("\n"), /npx -y @unipost\/cli profiles create/);
+      assert.doesNotMatch(initBody.data.next_actions.join("\n"), /Run unipost/);
 
       const quickstart = await runCli(["quickstart", "--name", "New Brand", "--json", "--base-url", baseUrl], { env });
       assert.equal(quickstart.code, 0);
@@ -1607,6 +1625,8 @@ test("init and quickstart summarize the first-run state without creating a live 
       assert.equal(body.data.profile.id, "pr_new");
       assert.equal(body.data.accounts.length, 0);
       assert.equal(body.data.live_publish_created, false);
+      assert.match(body.data.next_actions.join("\n"), /npx -y @unipost\/cli connect create/);
+      assert.doesNotMatch(body.data.next_actions.join("\n"), /unipost connect create/);
       assert.deepEqual(bodies, [{ name: "New Brand" }]);
     });
   });
