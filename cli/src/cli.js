@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 
-const CLI_VERSION = "0.1.0";
+const CLI_VERSION = "0.1.1";
 const CLI_RUNNER = "npx -y @unipost/cli";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";

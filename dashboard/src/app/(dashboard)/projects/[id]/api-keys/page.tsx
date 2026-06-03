@@ -25,6 +25,8 @@ import { ConfirmModal } from "@/components/confirm-modal";
 
 type AgentClient = "codex" | "claude-code";
 
+const SETUP_API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev").replace(/\/+$/, "");
+
 export default function ApiKeysPage() {
   const { getToken } = useAuth();
   const searchParams = useSearchParams();
@@ -121,7 +123,7 @@ export default function ApiKeysPage() {
     setSetupCopied(true);
     setTimeout(() => setSetupCopied(false), 2000);
   }
-  const setupCommandPreview = setupPrompt?.command || `npx -y @unipost/cli agent bootstrap --client ${setupClient} --setup-token <token> --json`;
+  const setupCommandPreview = setupPrompt?.command || `npx -y @unipost/cli agent bootstrap --client ${setupClient} --setup-token <token> --base-url ${SETUP_API_BASE_URL} --json`;
 
   return (
     <>

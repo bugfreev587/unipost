@@ -19,7 +19,10 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
-const cliSetupTokenTTL = 10 * time.Minute
+const (
+	cliSetupTokenTTL          = 10 * time.Minute
+	cliSetupDefaultAPIBaseURL = "https://api.unipost.dev"
+)
 
 type CLISetupTokenStore interface {
 	CreateCLISetupToken(context.Context, db.CreateCLISetupTokenParams) (db.CLISetupToken, error)
@@ -32,6 +35,7 @@ type CLISetupTokenHandler struct {
 	store          CLISetupTokenStore
 	now            func() time.Time
 	tokenGenerator func() (string, error)
+	apiBaseURL     string
 }
 
 func NewCLISetupTokenHandler(store CLISetupTokenStore) *CLISetupTokenHandler {
@@ -49,6 +53,11 @@ func (h *CLISetupTokenHandler) WithNow(now func() time.Time) *CLISetupTokenHandl
 
 func (h *CLISetupTokenHandler) WithTokenGenerator(generator func() (string, error)) *CLISetupTokenHandler {
 	h.tokenGenerator = generator
+	return h
+}
+
+func (h *CLISetupTokenHandler) WithAPIBaseURL(apiBaseURL string) *CLISetupTokenHandler {
+	h.apiBaseURL = normalizeCLISetupBaseURL(apiBaseURL)
 	return h
 }
 
@@ -107,14 +116,15 @@ func (h *CLISetupTokenHandler) Issue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	command := "npx -y @unipost/cli agent bootstrap --client " + client + " --setup-token " + setupToken + " --json"
+	apiBaseURL := h.cliSetupAPIBaseURL(r)
+	command := "npx -y @unipost/cli agent bootstrap --client " + client + " --setup-token " + setupToken + " --base-url " + apiBaseURL + " --json"
 	writeCreated(w, cliSetupTokenIssueResponse{
 		SetupToken:        setupToken,
 		Client:            client,
 		KeyName:           keyName,
 		ExpiresAt:         expiresAt,
 		Command:           command,
-		RecommendedPrompt: "Run the command once in the agent terminal, then rerun `npx -y @unipost/cli agent bootstrap --json` for context.",
+		RecommendedPrompt: "Run the command once in the agent terminal, then rerun `npx -y @unipost/cli agent bootstrap --base-url " + apiBaseURL + " --json` for context.",
 	})
 }
 
@@ -223,6 +233,54 @@ func normalizeCLIClient(client string) string {
 	default:
 		return "codex"
 	}
+}
+
+func (h *CLISetupTokenHandler) cliSetupAPIBaseURL(r *http.Request) string {
+	if h.apiBaseURL != "" {
+		return h.apiBaseURL
+	}
+	if r == nil {
+		return cliSetupDefaultAPIBaseURL
+	}
+	host := strings.TrimSpace(r.Host)
+	if host == "" && r.URL != nil {
+		host = strings.TrimSpace(r.URL.Host)
+	}
+	if host == "" {
+		return cliSetupDefaultAPIBaseURL
+	}
+	scheme := cliSetupRequestScheme(r, host)
+	return scheme + "://" + host
+}
+
+func cliSetupRequestScheme(r *http.Request, host string) string {
+	for _, value := range strings.Split(r.Header.Get("X-Forwarded-Proto"), ",") {
+		proto := strings.ToLower(strings.TrimSpace(value))
+		if proto == "http" || proto == "https" {
+			return proto
+		}
+	}
+	if r.URL != nil {
+		scheme := strings.ToLower(strings.TrimSpace(r.URL.Scheme))
+		if scheme == "http" || scheme == "https" {
+			return scheme
+		}
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") || strings.HasPrefix(host, "[::1]") {
+		return "http"
+	}
+	return "https"
+}
+
+func normalizeCLISetupBaseURL(apiBaseURL string) string {
+	baseURL := strings.TrimSpace(apiBaseURL)
+	if baseURL == "" {
+		return ""
+	}
+	return strings.TrimRight(baseURL, "/")
 }
 
 func cliSetupKeyName(client string) string {

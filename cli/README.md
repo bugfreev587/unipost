@@ -9,7 +9,7 @@ named revocable API key and stores the plaintext secret in OS keychain, not in
 the local config file.
 
 ```bash
-npx -y @unipost/cli agent bootstrap --setup-token ust_... --client codex --json
+npx -y @unipost/cli agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json
 npx -y @unipost/cli config path --json
 npx -y @unipost/cli config set base_url https://dev-api.unipost.dev --json
 npx -y @unipost/cli config set default_profile_id pr_... --json
