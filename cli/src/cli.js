@@ -6,7 +6,8 @@ const CLI_VERSION = "0.1.0";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
 const DOCS_CLI_URL = "https://unipost.dev/docs/cli";
-const AGENT_CATALOG_VERSION = "2026-06-02.phase2";
+const AGENT_CATALOG_VERSION = "2026-06-02.phase3";
+const TERMINAL_POST_STATUSES = new Set(["published", "failed", "partial", "canceled"]);
 
 const EXIT = {
   success: 0,
@@ -54,8 +55,14 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
   "--idempotency-key",
   "--agent-name",
   "--schedule-at",
+  "--at",
   "--limit",
   "--cursor",
+  "--status",
+  "--result",
+  "--from",
+  "--to",
+  "--format",
   "--lang",
   "--name",
   "--platform",
@@ -307,6 +314,12 @@ async function dispatch(context) {
   }
   if (command === "posts") {
     return posts(context, subcommand, third);
+  }
+  if (command === "media") {
+    return media(context, subcommand, third);
+  }
+  if (command === "analytics") {
+    return analytics(context, subcommand, third);
   }
   if (command === "examples") {
     return examples(context, subcommand);
@@ -784,10 +797,50 @@ async function accounts(context, subcommand, id) {
   return invalidSubcommand("accounts", subcommand);
 }
 
-async function posts(context, subcommand) {
+async function posts(context, subcommand, id) {
+  if (subcommand === "list" || !subcommand) {
+    requireApiKey(context, "posts list");
+    const response = await requestJson(context, apiPath("/v1/posts", {
+      status: context.options.status,
+      limit: context.options.limit,
+      cursor: context.options.cursor,
+    }), { auth: true });
+    const postList = normalizeStatuses(unwrapData(response.body) || []);
+    return envelopeResult({
+      data: { posts: postList },
+      meta: {
+        request_id: response.requestId,
+        pagination: paginationFromBody(response.body),
+        rate_limit: response.rateLimit,
+      },
+      human: renderPosts(postList),
+    });
+  }
+  if (subcommand === "get") {
+    requireApiKey(context, "posts get");
+    const postID = requireValue(id, "post_id", "posts get requires a post ID.");
+    const response = await requestJson(context, `/v1/posts/${encodeURIComponent(postID)}`, { auth: true });
+    const post = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { post },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: renderPost(post),
+    });
+  }
+  if (subcommand === "analytics") {
+    requireApiKey(context, "posts analytics");
+    const postID = requireValue(id, "post_id", "posts analytics requires a post ID.");
+    const response = await requestJson(context, `/v1/posts/${encodeURIComponent(postID)}/analytics`, { auth: true });
+    const analyticsData = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { analytics: analyticsData },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Analytics for ${postID}.\n`,
+    });
+  }
   if (subcommand === "validate") {
     requireApiKey(context, "posts validate");
-    const payload = postPayloadFromOptions(context);
+    const payload = await postPayloadFromOptions(context);
     const response = await requestJson(context, "/v1/posts/validate", {
       auth: true,
       method: "POST",
@@ -802,7 +855,7 @@ async function posts(context, subcommand) {
   }
   if (subcommand === "draft") {
     requireApiKey(context, "posts draft");
-    const payload = { ...postPayloadFromOptions(context), status: "draft" };
+    const payload = { ...(await postPayloadFromOptions(context)), status: "draft" };
     const response = await requestJson(context, "/v1/posts", {
       auth: true,
       method: "POST",
@@ -815,15 +868,300 @@ async function posts(context, subcommand) {
       human: `Created draft ${post.id || "post"}.\n`,
     });
   }
+  if (subcommand === "create") {
+    requireApiKey(context, "posts create");
+    const payload = await postPayloadFromOptions(context);
+    if (context.options.dryRun) {
+      const response = await requestJson(context, "/v1/posts/validate", {
+        auth: true,
+        method: "POST",
+        body: payload,
+      });
+      const validation = normalizeStatuses(unwrapData(response.body));
+      return envelopeResult({
+        data: { dry_run: true, payload, validation },
+        meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+        human: validation?.valid ? "Post dry run is valid.\n" : "Post dry run returned issues.\n",
+      });
+    }
+    if (payload.status !== "draft") {
+      requirePublishConfirmation(context, payload, "posts create");
+    }
+    const response = await requestJson(context, "/v1/posts", {
+      auth: true,
+      method: "POST",
+      body: payload,
+    });
+    const post = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { post },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Created post ${post.id || "post"}.\n`,
+    });
+  }
+  if (subcommand === "schedule") {
+    requireApiKey(context, "posts schedule");
+    const payload = await postPayloadFromOptions(context);
+    if (!payload.scheduled_at) {
+      throw new CliError({
+        code: "missing_required_input",
+        normalizedCode: "missing_required_input",
+        message: "posts schedule requires --at or scheduled_at in --from-file.",
+        hint: "Pass --at <RFC3339 timestamp>.",
+        exitCode: EXIT.missingInput,
+      });
+    }
+    requirePublishConfirmation(context, payload, "posts schedule");
+    const response = await requestJson(context, "/v1/posts", {
+      auth: true,
+      method: "POST",
+      body: payload,
+    });
+    const post = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { post },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Scheduled post ${post.id || "post"}.\n`,
+    });
+  }
+  if (subcommand === "publish-draft") {
+    requireApiKey(context, "posts publish-draft");
+    const postID = requireValue(id, "post_id", "posts publish-draft requires a post ID.");
+    requirePublishConfirmation(context, {}, "posts publish-draft");
+    const response = await requestJson(context, `/v1/posts/${encodeURIComponent(postID)}/publish`, {
+      auth: true,
+      method: "POST",
+    });
+    const post = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { post },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Queued draft ${postID} for publishing.\n`,
+    });
+  }
+  if (subcommand === "wait") {
+    requireApiKey(context, "posts wait");
+    const postID = requireValue(id, "post_id", "posts wait requires a post ID.");
+    return waitForPost(context, postID);
+  }
+  if (subcommand === "cancel") {
+    requireApiKey(context, "posts cancel");
+    const postID = requireValue(id, "post_id", "posts cancel requires a post ID.");
+    requireDestructiveConfirmation(context, "posts cancel");
+    const response = await requestJson(context, `/v1/posts/${encodeURIComponent(postID)}/cancel`, {
+      auth: true,
+      method: "POST",
+    });
+    const post = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { post },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Canceled post ${post.id || postID}.\n`,
+    });
+  }
+  if (subcommand === "retry") {
+    requireApiKey(context, "posts retry");
+    const postID = requireValue(id, "post_id", "posts retry requires a post ID.");
+    const resultID = requireValue(context.options.result, "--result <result_id>", "posts retry requires --result.");
+    requireDestructiveConfirmation(context, "posts retry");
+    const response = await requestJson(context, `/v1/posts/${encodeURIComponent(postID)}/results/${encodeURIComponent(resultID)}/retry`, {
+      auth: true,
+      method: "POST",
+    });
+    const retry = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { retry },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Retried result ${resultID} for post ${postID}.\n`,
+    });
+  }
   return invalidSubcommand("posts", subcommand);
 }
 
-function postPayloadFromOptions(context) {
-  const caption = requireValue(context.options.caption, "--caption <text>", "posts command requires a caption.");
-  const accountIDs = splitIDs(requireValue(context.options.account, "--account <account_id>", "posts command requires at least one account."));
+async function postPayloadFromOptions(context) {
+  let payload = {};
+  if (context.options.fromFile) {
+    payload = await readJsonFile(context, context.options.fromFile);
+  } else {
+    const caption = requireValue(context.options.caption, "--caption <text>", "posts command requires a caption.");
+    const accountIDs = splitIDs(requireValue(context.options.account, "--account <account_id>", "posts command requires at least one account."));
+    payload = {
+      caption,
+      account_ids: accountIDs,
+    };
+  }
+  if (context.options.account) {
+    payload.account_ids = splitIDs(context.options.account);
+  }
+  if (context.options.caption) {
+    payload.caption = context.options.caption;
+  }
+  const scheduledAt = context.options.scheduleAt || context.options.at;
+  if (scheduledAt) {
+    payload.scheduled_at = scheduledAt;
+  }
+  return payload;
+}
+
+async function readJsonFile(context, filePath) {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("expected a JSON object");
+    }
+    return parsed;
+  } catch (error) {
+    throw new CliError({
+      code: "invalid_request",
+      normalizedCode: "invalid_request",
+      message: `Failed to read JSON from ${filePath}: ${error.message}`,
+      hint: "Pass --from-file with a JSON object matching the UniPost post request shape.",
+      exitCode: EXIT.validation,
+      cause: error,
+    });
+  }
+}
+
+function requirePublishConfirmation(context, payload, action) {
+  if (!context.options.yes) {
+    throw new CliError({
+      code: "unsafe_action_blocked",
+      normalizedCode: "unsafe_action_blocked",
+      message: `${action} can publish to external social networks and requires --yes.`,
+      hint: "Ask the user to approve the publish action, then rerun with --yes.",
+      exitCode: EXIT.unsafe,
+    });
+  }
+  if (!context.options.idempotencyKey && !payload?.idempotency_key) {
+    throw new CliError({
+      code: "missing_required_input",
+      normalizedCode: "missing_required_input",
+      message: `${action} requires --idempotency-key for publish-capable writes.`,
+      hint: "Pass --idempotency-key <stable-key> after explicit user approval.",
+      exitCode: EXIT.missingInput,
+    });
+  }
+}
+
+function requireDestructiveConfirmation(context, action) {
+  if (context.options.yes) {
+    return;
+  }
+  throw new CliError({
+    code: "unsafe_action_blocked",
+    normalizedCode: "unsafe_action_blocked",
+    message: `${action} requires --yes because it changes an existing post or delivery result.`,
+    hint: "Ask the user to approve the exact post/result ID, then rerun with --yes.",
+    exitCode: EXIT.unsafe,
+  });
+}
+
+async function waitForPost(context, postID) {
+  const timeoutSeconds = context.options.timeout ?? 120;
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let attempt = 0;
+  let lastResponse = null;
+
+  while (Date.now() <= deadline) {
+    attempt += 1;
+    const response = await requestJson(context, `/v1/posts/${encodeURIComponent(postID)}`, { auth: true });
+    lastResponse = response;
+    const post = normalizeStatuses(unwrapData(response.body));
+    if (TERMINAL_POST_STATUSES.has(post?.status)) {
+      return envelopeResult({
+        data: { post, attempts: attempt },
+        meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+        human: renderPost(post),
+      });
+    }
+    await sleep(pollDelayMs(context, attempt, response.response.headers));
+  }
+
+  throw new CliError({
+    code: "timeout",
+    normalizedCode: "timeout",
+    message: `Timed out waiting for post ${postID}.`,
+    hint: "Increase --timeout or check the post later with unipost posts get.",
+    exitCode: EXIT.timeout,
+    requestId: lastResponse?.requestId,
+    status: lastResponse?.response?.status,
+  });
+}
+
+async function media(context, subcommand, id) {
+  if (subcommand === "get") {
+    requireApiKey(context, "media get");
+    const mediaID = requireValue(id, "media_id", "media get requires a media ID.");
+    const response = await requestJson(context, `/v1/media/${encodeURIComponent(mediaID)}`, { auth: true });
+    const mediaItem = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { media: mediaItem },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `${mediaItem.id || mediaID} ${mediaItem.status || ""}\n`,
+    });
+  }
+  return invalidSubcommand("media", subcommand);
+}
+
+async function analytics(context, subcommand, id) {
+  const command = subcommand || "summary";
+  if (command === "summary") {
+    requireApiKey(context, "analytics summary");
+    const response = await requestJson(context, apiPath("/v1/analytics/summary", dateRangeQuery(context)), { auth: true });
+    const summary = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { summary },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: "Analytics summary loaded.\n",
+    });
+  }
+  if (command === "posts") {
+    requireApiKey(context, "analytics posts");
+    const response = await requestJson(context, apiPath("/v1/analytics/posts", {
+      ...dateRangeQuery(context),
+      limit: context.options.limit,
+      cursor: context.options.cursor,
+    }), { auth: true });
+    const postsData = normalizeStatuses(unwrapData(response.body) || []);
+    return envelopeResult({
+      data: { posts: postsData },
+      meta: {
+        request_id: response.requestId,
+        pagination: paginationFromBody(response.body),
+        rate_limit: response.rateLimit,
+      },
+      human: `Loaded analytics for ${postsData.length || 0} posts.\n`,
+    });
+  }
+  if (command === "platforms") {
+    requireApiKey(context, "analytics platforms");
+    const response = await requestJson(context, "/v1/analytics/platforms", { auth: true });
+    const platforms = normalizeStatuses(unwrapData(response.body) || []);
+    return envelopeResult({
+      data: { platforms },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Loaded ${platforms.length || 0} analytics platforms.\n`,
+    });
+  }
+  if (command === "platform") {
+    requireApiKey(context, "analytics platform");
+    const platform = requireValue(id, "platform", "analytics platform requires a platform name.");
+    const response = await requestJson(context, apiPath(`/v1/analytics/platforms/${encodeURIComponent(platform)}`, dateRangeQuery(context)), { auth: true });
+    const platformData = normalizeStatuses(unwrapData(response.body));
+    return envelopeResult({
+      data: { platform: platformData },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: `Loaded analytics for ${platform}.\n`,
+    });
+  }
+  return invalidSubcommand("analytics", subcommand);
+}
+
+function dateRangeQuery(context) {
   return {
-    caption,
-    account_ids: accountIDs,
+    from: context.options.from,
+    to: context.options.to,
   };
 }
 
@@ -860,6 +1198,13 @@ async function examples(context, subcommand) {
 }
 
 async function agent(context, subcommand, third) {
+  if (subcommand === "plan") {
+    const intent = requireValue(context.options.intent || third, "--intent <intent>", "agent plan requires --intent.");
+    return agentPlan(context, intent);
+  }
+  if (subcommand === "plan-publish") {
+    return agentPlan(context, "plan_publish_post");
+  }
   if (subcommand === "capabilities") {
     return agentCapabilities(context);
   }
@@ -893,6 +1238,227 @@ async function agent(context, subcommand, third) {
   return invalidSubcommand("agent", subcommand);
 }
 
+async function agentPlan(context, intent) {
+  const normalizedIntent = String(intent || "").trim();
+  const input = await agentPlanInput(context);
+
+  if (normalizedIntent === "diagnose_setup") {
+    return envelopeResult({
+      data: {
+        intent: normalizedIntent,
+        safety_level: "read_only",
+        missing_inputs: [],
+        required_user_confirmations: [],
+        safe_to_execute_without_user: true,
+        actions: [{
+          canonical_action: "agent.bootstrap",
+          command: "unipost agent bootstrap",
+          args: { "--json": true },
+          safety_level: "read_only",
+        }],
+      },
+      human: "Agent plan: run bootstrap diagnostics.\n",
+    });
+  }
+
+  if (normalizedIntent === "create_draft_post") {
+    const accountIDs = agentAccountIDs(input, context);
+    const caption = agentCaption(input, context);
+    const missing = missingInputs({ account_ids: accountIDs, caption });
+    return envelopeResult({
+      data: {
+        intent: normalizedIntent,
+        safety_level: "draft_write",
+        input: compactObject({ account_ids: accountIDs, caption }),
+        missing_inputs: missing,
+        required_user_confirmations: [],
+        safe_to_execute_without_user: missing.length === 0,
+        actions: missing.length === 0 ? [
+          {
+            canonical_action: "posts.validate",
+            command: "unipost posts validate",
+            args: postArgs(accountIDs, caption, { json: true }),
+            safety_level: "read_only",
+          },
+          {
+            canonical_action: "posts.draft",
+            command: "unipost posts draft",
+            args: postArgs(accountIDs, caption, { json: true }),
+            safety_level: "draft_write",
+          },
+        ] : [],
+      },
+      human: missing.length === 0 ? "Agent plan: validate then create a draft.\n" : "Agent plan has missing inputs.\n",
+    });
+  }
+
+  if (normalizedIntent === "plan_publish_post") {
+    const accountIDs = agentAccountIDs(input, context);
+    const caption = agentCaption(input, context);
+    const scheduledAt = input.scheduled_at || context.options.scheduleAt || context.options.at || "";
+    const missing = missingInputs({ account_ids: accountIDs, caption });
+    const validateArgs = agentPostArgs(context, accountIDs, caption, {
+      json: true,
+      scheduledAt,
+    });
+    const dryRunArgs = agentPostArgs(context, accountIDs, caption, {
+      json: true,
+      scheduledAt,
+      dryRun: true,
+    });
+    const createArgs = agentPostArgs(context, accountIDs, caption, {
+      json: true,
+      yes: "<required_after_user_confirmation>",
+      idempotencyKey: input.idempotency_key || "<required_stable_key>",
+      scheduledAt,
+    });
+    return envelopeResult({
+      data: {
+        intent: normalizedIntent,
+        safety_level: "live_write",
+        input: compactObject({ account_ids: accountIDs, caption, scheduled_at: scheduledAt }),
+        missing_inputs: missing,
+        required_user_confirmations: ["approve_live_publish"],
+        safe_to_execute_without_user: false,
+        actions: missing.length === 0 ? [
+          {
+            canonical_action: "posts.validate",
+            command: "unipost posts validate",
+            args: validateArgs,
+            safety_level: "read_only",
+            safe_to_execute_without_user: true,
+          },
+          {
+            canonical_action: "posts.create_dry_run",
+            command: "unipost posts create",
+            args: dryRunArgs,
+            safety_level: "read_only",
+            safe_to_execute_without_user: true,
+          },
+          {
+            canonical_action: "posts.create",
+            command: "unipost posts create",
+            args: createArgs,
+            safety_level: "live_write",
+            required_user_confirmations: ["approve_live_publish"],
+            safe_to_execute_without_user: false,
+          },
+        ] : [],
+      },
+      human: missing.length === 0 ? "Agent plan: validate, then publish only after explicit confirmation.\n" : "Agent plan has missing inputs.\n",
+    });
+  }
+
+  if (normalizedIntent === "connect_account") {
+    const platform = input.platform || context.options.platform || "";
+    const missing = missingInputs({ platform });
+    return envelopeResult({
+      data: {
+        intent: normalizedIntent,
+        safety_level: "setup_write",
+        input: compactObject({ platform }),
+        missing_inputs: missing,
+        required_user_confirmations: [],
+        safe_to_execute_without_user: missing.length === 0,
+        actions: missing.length === 0 ? [{
+          canonical_action: "connect.create",
+          command: "unipost connect create",
+          args: compactObject({ "--platform": platform, "--json": true }),
+          safety_level: "setup_write",
+        }] : [],
+      },
+      human: missing.length === 0 ? "Agent plan: create a connect session.\n" : "Agent plan has missing inputs.\n",
+    });
+  }
+
+  throw new CliError({
+    code: "invalid_argument",
+    normalizedCode: "invalid_argument",
+    message: `Unsupported agent intent: ${normalizedIntent}`,
+    hint: "Run unipost agent capabilities --json to list supported intents.",
+    docsUrl: DOCS_CLI_URL,
+    exitCode: EXIT.invalidArgs,
+  });
+}
+
+async function agentPlanInput(context) {
+  const fromFile = context.options.fromFile ? await readJsonFile(context, context.options.fromFile) : {};
+  return compactObject({
+    ...fromFile,
+    ...(context.options.account ? { account_ids: splitIDs(context.options.account) } : {}),
+    ...(context.options.caption ? { caption: context.options.caption } : {}),
+    ...(context.options.platform ? { platform: context.options.platform } : {}),
+    ...(context.options.scheduleAt ? { scheduled_at: context.options.scheduleAt } : {}),
+    ...(context.options.at ? { scheduled_at: context.options.at } : {}),
+    ...(context.options.idempotencyKey ? { idempotency_key: context.options.idempotencyKey } : {}),
+  });
+}
+
+function agentAccountIDs(input) {
+  if (Array.isArray(input.account_ids) && input.account_ids.length > 0) {
+    return input.account_ids.map(String).filter(Boolean);
+  }
+  if (Array.isArray(input.platform_posts)) {
+    return input.platform_posts.map((post) => post?.account_id).filter(Boolean);
+  }
+  return [];
+}
+
+function agentCaption(input) {
+  if (typeof input.caption === "string" && input.caption.trim()) {
+    return input.caption.trim();
+  }
+  if (Array.isArray(input.platform_posts)) {
+    const first = input.platform_posts.find((post) => typeof post?.caption === "string" && post.caption.trim());
+    return first?.caption?.trim() || "";
+  }
+  return "";
+}
+
+function missingInputs(values) {
+  return Object.entries(values)
+    .filter(([, value]) => Array.isArray(value) ? value.length === 0 : !value)
+    .map(([key]) => key);
+}
+
+function postArgs(accountIDs, caption, options = {}) {
+  return compactObject({
+    "--account": accountIDs.join(","),
+    "--caption": caption,
+    ...(options.scheduledAt ? { "--schedule-at": options.scheduledAt } : {}),
+    ...(options.dryRun ? { "--dry-run": true } : {}),
+    ...(options.yes ? { "--yes": options.yes } : {}),
+    ...(options.idempotencyKey ? { "--idempotency-key": options.idempotencyKey } : {}),
+    ...(options.json ? { "--json": true } : {}),
+  });
+}
+
+function agentPostArgs(context, accountIDs, caption, options = {}) {
+  if (!context.options.fromFile) {
+    return postArgs(accountIDs, caption, options);
+  }
+  return compactObject({
+    "--from-file": context.options.fromFile,
+    ...(options.scheduledAt ? { "--schedule-at": options.scheduledAt } : {}),
+    ...(options.dryRun ? { "--dry-run": true } : {}),
+    ...(options.yes ? { "--yes": options.yes } : {}),
+    ...(options.idempotencyKey ? { "--idempotency-key": options.idempotencyKey } : {}),
+    ...(options.json ? { "--json": true } : {}),
+  });
+}
+
+function compactObject(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => {
+    if (item === undefined || item === null || item === "") {
+      return false;
+    }
+    if (Array.isArray(item) && item.length === 0) {
+      return false;
+    }
+    return true;
+  }));
+}
+
 function agentCapabilities() {
   return envelopeResult({
     data: {
@@ -916,9 +1482,25 @@ function agentCapabilities() {
         "connect wait",
         "accounts list",
         "accounts get",
+        "posts list",
+        "posts get",
+        "posts analytics",
         "posts validate",
         "posts draft",
+        "posts create",
+        "posts schedule",
+        "posts publish-draft",
+        "posts wait",
+        "posts cancel",
+        "posts retry",
+        "media get",
+        "analytics summary",
+        "analytics posts",
+        "analytics platforms",
+        "analytics platform",
         "examples posts.create",
+        "agent plan",
+        "agent plan-publish",
         "agent bootstrap",
         "agent capabilities",
         "agent context",
@@ -960,6 +1542,33 @@ function agentCapabilities() {
             additionalProperties: false,
           },
           preflight: "Run unipost posts validate with the same account_ids and caption before creating a draft.",
+        },
+        {
+          name: "plan_publish_post",
+          description: "Plan a live or scheduled publish flow without executing the write.",
+          command: "unipost agent plan --intent plan_publish_post --from-file post.json --json",
+          canonical_action: "agent.plan_publish_post",
+          safety_level: "live_write_plan",
+          required_inputs: ["account_ids", "caption"],
+          optional_inputs: ["scheduled_at", "media_ids", "platform_posts", "idempotency_key"],
+          input_schema: {
+            type: "object",
+            properties: {
+              account_ids: { type: "array", items: { type: "string" }, minItems: 1 },
+              caption: { type: "string", minLength: 1 },
+              scheduled_at: { type: "string" },
+              media_ids: { type: "array", items: { type: "string" } },
+              platform_posts: { type: "array", items: { type: "object" } },
+              idempotency_key: { type: "string" },
+            },
+            additionalProperties: true,
+          },
+          required_user_confirmations: ["approve_live_publish"],
+          canonical_actions: ["posts.validate", "posts.create_dry_run", "posts.create"],
+          guardrails: [
+            "posts create and posts schedule require --yes plus --idempotency-key before publish-capable writes.",
+            "Use posts create --from-file --dry-run before requesting publish approval.",
+          ],
         },
         {
           name: "connect_account",
@@ -1088,8 +1697,10 @@ function agentGuide(client) {
     client: normalizedClient,
     recommended_prompt: [
       "Before using UniPost, run `unipost agent bootstrap --json`.",
-      "For writes, call `unipost posts validate --json` first.",
-      "Create drafts with `unipost posts draft`; never live-publish unless the user explicitly asks and the command requires --yes.",
+      "For publish requests, call `unipost agent plan --intent plan_publish_post --json` first.",
+      "Run `unipost posts validate --json` or the dry-run command before any publish-capable write.",
+      "Use `unipost posts create --from-file post.json --dry-run --json` before asking for live-publish approval.",
+      "Never live-publish unless the user explicitly approves the exact action and the command includes --yes plus --idempotency-key.",
     ].join(" "),
     stable_contracts: [
       "Branch on normalized_code, exit code, and documented status enum values.",
@@ -1261,10 +1872,15 @@ async function requestJson(context, path, options = {}) {
     Accept: "application/json",
     "User-Agent": `unipost-cli/${CLI_VERSION}`,
     "X-UniPost-CLI-Version": CLI_VERSION,
+    "X-UniPost-CLI-Source": "cli",
+    "X-UniPost-CLI-Command": context.commandParts.join(" "),
   };
 
   if (auth) {
     headers.Authorization = `Bearer ${context.options.apiKey}`;
+  }
+  if (context.options.agentName) {
+    headers["X-UniPost-Agent-Name"] = context.options.agentName;
   }
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -1341,6 +1957,17 @@ function paginationFromBody(body) {
     pagination.next_cursor = body.next_cursor;
   }
   return pagination;
+}
+
+function apiPath(path, params = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && String(value) !== "") {
+      search.set(key, String(value));
+    }
+  }
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 function configDir(context) {
@@ -1627,8 +2254,23 @@ _unipost() {
     'profiles create:Create a profile'
     'connect create:Create an account Connect session'
     'accounts list:List connected accounts'
+    'posts list:List posts'
+    'posts get:Get a post'
+    'posts analytics:Get post analytics'
     'posts validate:Validate a post payload'
     'posts draft:Create a server-side draft'
+    'posts create:Create a live or scheduled post'
+    'posts schedule:Schedule a post'
+    'posts wait:Wait for a terminal post status'
+    'posts cancel:Cancel a draft or scheduled post'
+    'posts retry:Retry a failed result'
+    'media get:Get media status'
+    'analytics summary:Get analytics summary'
+    'analytics posts:Get post analytics rows'
+    'analytics platforms:Get analytics platforms'
+    'analytics platform:Get analytics for one platform'
+    'agent plan:Build a safe execution plan'
+    'agent plan-publish:Plan a publish flow'
     'agent bootstrap:Diagnose agent setup'
     'agent capabilities:Print agent command catalog'
     'doctor:Run local and API diagnostics'
@@ -1643,6 +2285,16 @@ _unipost() {
     '--client[Calling client]:client:(codex claude-code cursor windsurf)' \\
     '--limit[Page size for list commands]:limit:' \\
     '--cursor[Page cursor for list commands]:cursor:' \\
+    '--status[Filter posts by status]:status:' \\
+    '--result[Post result id]:result:' \\
+    '--from[Start date]:from:' \\
+    '--to[End date]:to:' \\
+    '--at[Schedule timestamp]:at:' \\
+    '--schedule-at[Schedule timestamp]:schedule-at:' \\
+    '--from-file[Read request JSON]:file:' \\
+    '--idempotency-key[Idempotency key]:key:' \\
+    '--agent-name[Calling agent name]:name:' \\
+    '--yes[Confirm publish-capable or destructive writes]' \\
     '--all[Follow pagination until exhausted]' \\
     '--non-interactive[Never prompt]' \\
     '--no-color[Disable ANSI color]' \\
@@ -1657,7 +2309,7 @@ _unipost "$@"
 function bashCompletion() {
   return `# bash completion for unipost
 _unipost_completion() {
-  local words="init quickstart auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get posts validate posts draft examples posts.create agent bootstrap agent capabilities agent context agent guide agent mcp-config doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --limit --cursor --all --non-interactive --no-color --no-telemetry"
+  local words="init quickstart auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media get analytics summary analytics posts analytics platforms analytics platform examples posts.create agent plan agent plan-publish agent bootstrap agent capabilities agent context agent guide agent mcp-config doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
   COMPREPLY=($(compgen -W "$words" -- "\${COMP_WORDS[COMP_CWORD]}"))
 }
 complete -F _unipost_completion unipost
@@ -1670,8 +2322,19 @@ complete -c unipost -a "auth status" -d "Verify the configured UniPost credentia
 complete -c unipost -a "profiles list" -d "List profiles"
 complete -c unipost -a "connect create" -d "Create a Connect session"
 complete -c unipost -a "accounts list" -d "List connected accounts"
+complete -c unipost -a "posts list" -d "List posts"
+complete -c unipost -a "posts get" -d "Get a post"
 complete -c unipost -a "posts validate" -d "Validate a post"
 complete -c unipost -a "posts draft" -d "Create a draft"
+complete -c unipost -a "posts create" -d "Create a post"
+complete -c unipost -a "posts schedule" -d "Schedule a post"
+complete -c unipost -a "posts wait" -d "Wait for post status"
+complete -c unipost -a "posts cancel" -d "Cancel a post"
+complete -c unipost -a "posts retry" -d "Retry a failed result"
+complete -c unipost -a "media get" -d "Get media status"
+complete -c unipost -a "analytics summary" -d "Get analytics summary"
+complete -c unipost -a "analytics platforms" -d "Get analytics platforms"
+complete -c unipost -a "agent plan" -d "Build a safe execution plan"
 complete -c unipost -a "agent bootstrap" -d "Diagnose agent setup"
 complete -c unipost -a doctor -d "Run local and API diagnostics"
 complete -c unipost -a completion -d "Generate shell completion"
@@ -1680,6 +2343,16 @@ complete -c unipost -l client -xa "codex claude-code cursor windsurf"
 complete -c unipost -l limit -d "Page size for list commands"
 complete -c unipost -l cursor -d "Page cursor for list commands"
 complete -c unipost -l all -d "Follow pagination until exhausted"
+complete -c unipost -l status -d "Filter posts by status"
+complete -c unipost -l result -d "Post result ID"
+complete -c unipost -l from -d "Start date"
+complete -c unipost -l to -d "End date"
+complete -c unipost -l at -d "Schedule timestamp"
+complete -c unipost -l schedule-at -d "Schedule timestamp"
+complete -c unipost -l from-file -d "Read request JSON"
+complete -c unipost -l idempotency-key -d "Idempotency key"
+complete -c unipost -l agent-name -d "Calling agent name"
+complete -c unipost -l yes -d "Confirm write"
 `;
 }
 
@@ -1858,6 +2531,20 @@ function renderAccounts(accountList) {
   }).join("\n")}\n`;
 }
 
+function renderPosts(postList) {
+  if (postList.length === 0) {
+    return "No posts found.\n";
+  }
+  return `${postList.map((post) => `${post.id}\t${post.status || ""}\t${post.caption || ""}`.trim()).join("\n")}\n`;
+}
+
+function renderPost(post) {
+  if (!post) {
+    return "Post not found.\n";
+  }
+  return `${post.id || "post"}\t${post.status || ""}${post.caption ? `\t${post.caption}` : ""}\n`;
+}
+
 function renderDoctor(checks, workspace, telemetry) {
   const lines = ["UniPost doctor\n"];
   for (const check of checks) {
@@ -1884,8 +2571,16 @@ Usage:
   unipost profiles list|create|use [--json]
   unipost connect create|get|wait [--json]
   unipost accounts list|get [--json]
+  unipost posts list|get|analytics [--json]
   unipost posts validate|draft --account <id> --caption <text> [--json]
+  unipost posts create --account <id> --caption <text> --yes --idempotency-key <key>
+  unipost posts create --from-file post.json --dry-run [--json]
+  unipost posts schedule --account <id> --caption <text> --at <timestamp> --yes --idempotency-key <key>
+  unipost posts wait|cancel|retry <post_id> [--json]
+  unipost media get <media_id> [--json]
+  unipost analytics summary|posts|platforms|platform [--json]
   unipost examples posts.create --lang <curl|node>
+  unipost agent plan --intent <intent> [--json]
   unipost agent bootstrap|capabilities|context [--json]
   unipost doctor [--json] [--api-key <key>] [--base-url <url>]
   unipost completion <bash|zsh|fish>
@@ -1894,7 +2589,10 @@ Global flags:
   --json, --output <table|json|yaml>, --field <field>, --non-interactive
   --base-url <url>, --api-key <key>, --limit <n>, --cursor <cursor>, --all
   --client <codex|claude-code|cursor|windsurf>, --profile <id>, --account <id>
-  --platform <name>, --caption <text>, --no-color, --no-telemetry
+  --platform <name>, --caption <text>, --status <status>, --result <id>
+  --from <date>, --to <date>, --at <timestamp>, --schedule-at <timestamp>
+  --from-file <path>, --yes, --idempotency-key <key>, --agent-name <name>
+  --no-color, --no-telemetry
 `;
 }
 
