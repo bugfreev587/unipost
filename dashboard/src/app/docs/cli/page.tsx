@@ -1,52 +1,53 @@
 import Link from "next/link";
 import { DocsCodeTabs, DocsPage, DocsTable } from "../_components/docs-shell";
 
-const QUICKSTART_SNIPPETS = [
+const SETUP_SNIPPETS = [
   {
-    label: "Phase 5 source run",
+    label: "Dashboard setup token",
+    lang: "bash",
+    code: `# Dashboard: Project -> API Keys -> Connect with Claude Code / Codex
+unipost auth login --setup-token ust_... --client codex --json
+unipost auth status --json
+unipost agent bootstrap --client codex --json`,
+  },
+  {
+    label: "API key fallback",
+    lang: "bash",
+    code: `export UNIPOST_API_KEY=up_live_...
+unipost auth login --api-key "$UNIPOST_API_KEY" --json
+unipost auth status --json`,
+  },
+  {
+    label: "Source beta",
     lang: "bash",
     code: `cd cli
 npm test
-export UNIPOST_API_KEY=up_live_...
-node bin/unipost.js config path --json
-node bin/unipost.js config set base_url https://dev-api.unipost.dev --json
-node bin/unipost.js config show --json
-node bin/unipost.js auth login --setup-token ust_... --client codex --json
-node bin/unipost.js auth login --api-key "$UNIPOST_API_KEY" --json
-node bin/unipost.js init --json
-node bin/unipost.js quickstart --name "Brand" --json
-node bin/unipost.js agent bootstrap --client codex --json
-node bin/unipost.js accounts health --account sa_... --json
-node bin/unipost.js media upload ./video.mp4 --json
-node bin/unipost.js media wait med_... --json
-node bin/unipost.js agent plan --intent plan_publish_post --from-file post.json --json
-node bin/unipost.js agent plan --intent create_draft_post --from-file post.json --json > safe-plan.json
-node bin/unipost.js agent mcp-test --json
-node bin/unipost.js agent mcp-config --client claude-code --json
-node bin/unipost.js agent install --client codex --json
-node bin/unipost.js agent execute --plan safe-plan.json --json
-node bin/unipost.js posts create --from-file post.json --dry-run --json`,
+node bin/unipost.js auth status --json
+node bin/unipost.js agent bootstrap --client codex --json`,
+  },
+];
+
+const CONFIG_SNIPPETS = [
+  {
+    label: "Check current config",
+    lang: "bash",
+    code: `unipost config path --json
+unipost config show --json
+unipost auth status --json`,
   },
   {
-    label: "Planned npm install",
+    label: "Use dev API",
     lang: "bash",
-    code: `npm install -g @unipost/cli
-export UNIPOST_API_KEY=up_live_...
-unipost init
-unipost quickstart --name "Brand"
-unipost agent guide --client codex
-unipost agent install --client codex`,
+    code: `unipost config set base_url https://dev-api.unipost.dev --json
+unipost config show --json`,
   },
   {
-    label: "Agent setup",
+    label: "Set defaults",
     lang: "bash",
-    code: `unipost agent capabilities --json
-unipost agent bootstrap --client codex --json
-unipost agent plan-publish --from-file post.json --json
-unipost agent guide --client claude-code --json
-unipost agent mcp-test --json
-unipost agent mcp-config --client codex
-unipost examples mcp.claude-code --json`,
+    code: `unipost profiles list --json
+unipost config set default_profile_id pr_... --json
+unipost accounts list --json
+unipost accounts health --account sa_... --json`,
   },
 ];
 
@@ -159,34 +160,43 @@ const JSON_ENVELOPE = [
 ];
 
 const COMMAND_ROWS = [
-  ["Auth and config", "Acceptance cleanup: `config path`, `config show`, `config set base_url`, `config set default_profile_id`, `auth login --api-key`, `auth logout`, `auth status`, `auth list`, and `auth use`."],
-  ["Quickstart", "Phase 4: `init`, `doctor`, `quickstart`, `profiles list/create/get/use`, `connect create/get/wait`."],
-  ["Accounts", "Phase 4: `accounts list`, `accounts get`, `accounts health`, `accounts capabilities`, `accounts metrics`."],
-  ["Posts", "Phase 3: `posts list`, `posts get`, `posts analytics`, `posts validate`, `posts draft`, `posts create --dry-run`, `posts create`, `posts schedule`, `posts publish-draft`, `posts wait`, `posts cancel`, `posts retry`."],
-  ["Media", "Phase 4: `media upload`, `media get`, `media wait`."],
-  ["Analytics", "Phase 4: `analytics summary`, `analytics posts`, `analytics platforms`, `analytics platform`; export remains later."],
-  ["Examples", "Phase 5: `examples posts.create` plus `examples mcp.claude-code` for hosted MCP setup."],
-  ["Agent", "Phase 5: `agent bootstrap`, `agent capabilities`, `agent guide`, `agent context`, `agent mcp-config`, `agent mcp-test`, `agent install`, `agent plan`, `agent plan-publish`, and restricted `agent execute`."],
+  ["Auth and config", "`config path`, `config show`, `config set base_url`, `config set default_profile_id`, `auth login --setup-token`, `auth login --api-key`, `auth logout`, `auth status`, `auth list`, and `auth use`."],
+  ["Quickstart", "`init`, `doctor`, `quickstart`, `profiles list/create/get/use`, and `connect create/get/wait`."],
+  ["Accounts", "`accounts list`, `accounts get`, `accounts health`, `accounts capabilities`, and `accounts metrics`."],
+  ["Posts", "`posts list`, `posts get`, `posts analytics`, `posts validate`, `posts draft`, `posts create --dry-run`, `posts create`, `posts schedule`, `posts publish-draft`, `posts wait`, `posts cancel`, and `posts retry`."],
+  ["Media", "`media upload`, `media get`, and `media wait`."],
+  ["Analytics", "`analytics summary`, `analytics posts`, `analytics platforms`, and `analytics platform`."],
+  ["Examples", "`examples posts.create` plus `examples mcp.claude-code` for hosted MCP setup."],
+  ["Agent", "`agent bootstrap`, `agent capabilities`, `agent guide`, `agent context`, `agent mcp-config`, `agent mcp-test`, `agent install`, `agent plan`, `agent plan-publish`, and restricted `agent execute`."],
+] as const;
+
+const TROUBLESHOOTING_ROWS = [
+  ["API key is missing or invalid", "Use the Dashboard setup token flow first. If you are running in CI, set `UNIPOST_API_KEY`, then run `unipost auth status --json`."],
+  ["`setup_token_invalid`, `setup_token_expired`, or `setup_token_used`", "Create a fresh Dashboard setup token. Setup tokens are short-lived and single-use, so copy the newest command from Dashboard before retrying."],
+  ["`keychain_unavailable`", "The CLI could not store the named key in OS keychain. Retry from a normal logged-in desktop shell, or use `UNIPOST_API_KEY` as the fallback auth path."],
+  ["Wrong API URL", "Run `unipost config show --json`. Production defaults to `https://api.unipost.dev`; for dev validation set `config set base_url https://dev-api.unipost.dev --json`."],
+  ["No profile or account IDs", "Run `unipost profiles list --json`, `unipost quickstart --name \"Brand\" --json`, or `unipost connect create --json`, then check `unipost accounts list --json`."],
+  ["Live publish is blocked", "Start with `posts validate`, `posts draft`, or `posts create --dry-run`. Only add `--yes` and `--idempotency-key` after the user explicitly approves live or scheduled publishing."],
 ] as const;
 
 export default function CliPage() {
   return (
     <DocsPage
       className="docs-page-wide"
-      eyebrow="Phase 5"
+      eyebrow="Developer tools"
       title="CLI"
-      lead="The UniPost CLI is the first-party terminal interface for developer quickstarts, CI checks, support diagnostics, and AI-agent operator workflows."
+      lead="Configure UniPost auth, account defaults, safe publish workflows, and AI-agent setup from your terminal."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
       <div className="cli-status">
         <div>
-          <div className="cli-status-label">Current status</div>
+          <div className="cli-status-label">Beta status</div>
           <p>
-            The Phase 5 source package now supports <code>config path/show/set</code>, <code>auth login --setup-token</code>, <code>auth login --api-key</code>, <code>auth logout</code>, <code>init</code>, <code>quickstart</code>, profile setup, connect-session helpers, account discovery, account health/capability/metric diagnostics, stable JSON envelopes, post dry-runs, scheduled publish, post waits, cancel/retry workflows, local media upload/readiness waits, analytics reads, structured agent planning, hosted MCP setup generation, MCP auth testing, Codex/Claude Code instruction packages, Dashboard "Connect with Claude Code / Codex" setup-token issuance, named revocable CLI API-key creation, keychain storage, and a restricted <code>agent execute</code> beta. Public npm release and browser/device auth remain later phases; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
+            Dashboard setup tokens and API-key fallback are available now. A setup token creates a named revocable CLI key and stores it in OS keychain; <code>UNIPOST_API_KEY</code> remains the CI-friendly fallback. Public npm release and browser/device auth remain later phases; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
           </p>
         </div>
-        <div className="cli-phase-pill">Phase 5 agent ecosystem beta</div>
+        <div className="cli-phase-pill">Agent setup beta</div>
       </div>
 
       <h2 id="what-it-is">What the CLI is for</h2>
@@ -199,11 +209,28 @@ export default function CliPage() {
         ]}
       />
 
-      <h2 id="planned-install">Install and first run</h2>
+      <h2 id="setup-steps">Set up the CLI in 3 steps</h2>
       <p>
-        Phase 5 supports Dashboard setup tokens, keychain-backed CLI auth, API-key fallback with <code>UNIPOST_API_KEY</code>, redacted local credential metadata, hosted MCP client config generation, and agent instruction package setup. <code>auth login --setup-token</code> exchanges a short-lived Dashboard token for a named revocable CLI key and stores the secret in OS keychain. <code>auth login --api-key</code> remains metadata-only and does not store the plaintext secret.
+        Use the Dashboard setup token flow for local development and agent setup. Use <code>UNIPOST_API_KEY</code> for CI, containers, or shells where keychain storage is unavailable.
       </p>
-      <DocsCodeTabs snippets={QUICKSTART_SNIPPETS} />
+      <DocsTable
+        columns={["Step", "What to do"]}
+        rows={[
+          ["1. Sign in", "In Dashboard, open Project -> API Keys -> Connect with Claude Code / Codex, copy the setup-token command, and run it in the terminal."],
+          ["2. Verify auth", "Run `unipost auth status --json`. The result should show the active credential source and the configured API base URL."],
+          ["3. Pick defaults", "Run `profiles list`, `accounts list`, and `accounts health`; set `default_profile_id` if you want shorter commands later."],
+        ]}
+      />
+      <DocsCodeTabs snippets={SETUP_SNIPPETS} />
+
+      <h2 id="configure">Configure the CLI</h2>
+      <p>
+        The CLI stores non-secret settings such as <code>base_url</code> and <code>default_profile_id</code> in its local config file. Production defaults to <code>https://api.unipost.dev</code>. When validating the development environment, set <code>base_url</code> to <code>https://dev-api.unipost.dev</code>.
+      </p>
+      <DocsCodeTabs snippets={CONFIG_SNIPPETS} />
+
+      <h2 id="common-issues">Common issues</h2>
+      <DocsTable columns={["Problem", "Fix"]} rows={TROUBLESHOOTING_ROWS} />
 
       <h2 id="command-groups">Command groups</h2>
       <DocsTable columns={["Group", "Commands"]} rows={COMMAND_ROWS} />
