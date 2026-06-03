@@ -12,6 +12,7 @@ test("CLI docs explain setup, configuration, and common fixes", async () => {
   assert.match(source, /Configure the CLI/);
   assert.match(source, /Common issues/);
   assert.match(source, /Dashboard setup token/);
+  assert.match(source, /npx -y @unipost\/cli/);
   assert.match(source, /UNIPOST_API_KEY/);
   assert.match(source, /config set base_url/);
   assert.match(source, /auth status --json/);

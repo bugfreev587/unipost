@@ -1272,6 +1272,16 @@ test("Phase 5 examples and client configs expose MCP ecosystem setup", async () 
   assert.equal(installBody.data.mode, "instructions");
   assert.ok(installBody.data.files.some((file) => file.path.endsWith("agent-packages/codex/SKILL.md")));
   assert.match(installBody.data.instructions, /agent capabilities/);
+  assert.match(installBody.data.instructions, /npx -y @unipost\/cli agent bootstrap/);
+  assert.doesNotMatch(installBody.data.instructions, /Run `unipost agent/);
+
+  const codexInstructions = await readFile(new URL("../agent-packages/codex/SKILL.md", import.meta.url), "utf8");
+  assert.match(codexInstructions, /npx -y @unipost\/cli agent bootstrap --client codex/);
+  assert.doesNotMatch(codexInstructions, /Run `unipost agent/);
+
+  const claudeInstructions = await readFile(new URL("../agent-packages/claude-code/CLAUDE.md", import.meta.url), "utf8");
+  assert.match(claudeInstructions, /npx -y @unipost\/cli agent bootstrap --client claude-code/);
+  assert.doesNotMatch(claudeInstructions, /Run `unipost agent/);
 });
 
 test("Phase 5 mcp-test validates auth and reports shared catalog readiness", async () => {
@@ -1491,6 +1501,8 @@ test("agent guide and mcp-config return client-specific setup content", async ()
   const guideBody = JSON.parse(guide.stdout);
   assert.equal(guideBody.data.client, "codex");
   assert.match(guideBody.data.recommended_prompt, /posts validate/);
+  assert.match(guideBody.data.recommended_prompt, /npx -y @unipost\/cli agent bootstrap/);
+  assert.doesNotMatch(guideBody.data.recommended_prompt, /`unipost agent/);
 
   const claudeConfig = await runCli(["agent", "mcp-config", "claude-code", "--json"]);
   assert.equal(claudeConfig.code, 0);

@@ -107,14 +107,14 @@ func (h *CLISetupTokenHandler) Issue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	command := "unipost agent bootstrap --client " + client + " --setup-token " + setupToken + " --json"
+	command := "npx -y @unipost/cli agent bootstrap --client " + client + " --setup-token " + setupToken + " --json"
 	writeCreated(w, cliSetupTokenIssueResponse{
 		SetupToken:        setupToken,
 		Client:            client,
 		KeyName:           keyName,
 		ExpiresAt:         expiresAt,
 		Command:           command,
-		RecommendedPrompt: "Run the command once in the agent terminal, then rerun `unipost agent bootstrap --json` for context.",
+		RecommendedPrompt: "Run the command once in the agent terminal, then rerun `npx -y @unipost/cli agent bootstrap --json` for context.",
 	})
 }
 
