@@ -1,13 +1,18 @@
 import { createHash } from "node:crypto";
+import { execFile as execFileCallback } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { basename, extname, join } from "node:path";
+import { promisify } from "node:util";
+
+const execFile = promisify(execFileCallback);
 
 const CLI_VERSION = "0.1.0";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
 const DOCS_CLI_URL = "https://unipost.dev/docs/cli";
+const KEYCHAIN_SERVICE = "dev.unipost.cli";
 const AGENT_CATALOG_VERSION = "2026-06-03.phase5";
 const MCP_ENDPOINT = "https://mcp.unipost.dev/mcp";
 const AGENT_PACKAGE_FILES = [
@@ -44,6 +49,9 @@ const ERROR_EXIT_BY_CODE = new Map([
   ["plan_post_quota_exceeded", EXIT.validation],
   ["request_rate_limited", EXIT.upstream],
   ["rate_limited", EXIT.upstream],
+  ["setup_token_expired", EXIT.auth],
+  ["setup_token_invalid", EXIT.auth],
+  ["setup_token_used", EXIT.auth],
   ["enqueue_rate_limited", EXIT.upstream],
   ["queue_depth_exceeded", EXIT.upstream],
   ["upstream_error", EXIT.upstream],
@@ -167,6 +175,7 @@ function createContext(argv, io) {
     stdout: io.stdout || process.stdout,
     stderr: io.stderr || process.stderr,
     fetchImpl: io.fetchImpl || globalThis.fetch,
+    secureStore: io.secureStore || createDefaultSecureStore(),
   };
 }
 
@@ -186,7 +195,75 @@ function fallbackContext(argv, io) {
     stdout: io.stdout || process.stdout,
     stderr: io.stderr || process.stderr,
     fetchImpl: io.fetchImpl || globalThis.fetch,
+    secureStore: io.secureStore || createDefaultSecureStore(),
   };
+}
+
+function createDefaultSecureStore() {
+  if (platform() !== "darwin") {
+    return {
+      async set() {
+        throw keychainUnavailableError();
+      },
+      async get() {
+        throw keychainUnavailableError();
+      },
+      async delete() {
+        throw keychainUnavailableError();
+      },
+    };
+  }
+  return {
+    async set({ service, account, value }) {
+      await execFile("/usr/bin/security", [
+        "add-generic-password",
+        "-s", service,
+        "-a", account,
+        "-w", value,
+        "-U",
+      ]);
+    },
+    async get({ service, account }) {
+      try {
+        const { stdout } = await execFile("/usr/bin/security", [
+          "find-generic-password",
+          "-s", service,
+          "-a", account,
+          "-w",
+        ]);
+        return String(stdout || "").trim();
+      } catch (error) {
+        if (String(error?.stderr || error?.message || "").includes("could not be found")) {
+          return "";
+        }
+        throw error;
+      }
+    },
+    async delete({ service, account }) {
+      try {
+        await execFile("/usr/bin/security", [
+          "delete-generic-password",
+          "-s", service,
+          "-a", account,
+        ]);
+      } catch (error) {
+        if (!String(error?.stderr || error?.message || "").includes("could not be found")) {
+          throw error;
+        }
+      }
+    },
+  };
+}
+
+function keychainUnavailableError() {
+  return new CliError({
+    code: "keychain_unavailable",
+    normalizedCode: "keychain_unavailable",
+    message: "OS keychain storage is unavailable on this platform.",
+    hint: "Use UNIPOST_API_KEY for command-level fallback auth, or run setup-token login on macOS keychain.",
+    docsUrl: DOCS_CLI_URL,
+    exitCode: EXIT.auth,
+  });
 }
 
 function parseArgs(argv) {
@@ -388,12 +465,15 @@ async function authStatus(context) {
 }
 
 async function authLogin(context) {
+  if (context.options.setupToken) {
+    return loginWithSetupToken(context);
+  }
   if (!context.options.apiKey) {
     throw new CliError({
       code: "missing_required_input",
       normalizedCode: "missing_required_input",
-      message: "auth login requires --api-key until device/setup-token auth is available.",
-      hint: "Use auth login --api-key <key>, or set UNIPOST_API_KEY for command-level fallback auth.",
+      message: "auth login requires --api-key or --setup-token.",
+      hint: "Use auth login --setup-token <token> from the dashboard agent setup flow, or pass --api-key for metadata-only fallback.",
       docsUrl: DOCS_CLI_URL,
       exitCode: EXIT.missingInput,
     });
@@ -422,7 +502,7 @@ async function authLogin(context) {
       stored_secret: false,
       config_path: configPath(context),
       next_actions: [
-        "Set UNIPOST_API_KEY for commands that need authentication until keychain-backed login is implemented.",
+        "Use auth login --setup-token for keychain-backed CLI auth, or continue passing UNIPOST_API_KEY for command-level fallback.",
       ],
     },
     warnings: [{
@@ -437,9 +517,108 @@ async function authLogin(context) {
   });
 }
 
+async function loginWithSetupToken(context) {
+  const client = context.options.client || "codex";
+  const exchange = await exchangeSetupToken(context, client);
+  const apiKey = exchange.api_key || exchange.apiKey;
+  if (!apiKey?.key) {
+    throw new CliError({
+      code: "invalid_response",
+      normalizedCode: "invalid_response",
+      message: "Setup-token exchange did not return an API key.",
+      exitCode: EXIT.upstream,
+    });
+  }
+
+  const previousApiKey = context.options.apiKey;
+  const previousCredentialSource = context.options.credentialSource;
+  context.options.apiKey = apiKey.key;
+  context.options.credentialSource = "setup_token";
+  try {
+    const { workspace, response } = await fetchWorkspace(context);
+    const credential = await storeKeychainCredential(context, {
+      apiKey,
+      workspace,
+      client: exchange.client || client,
+    });
+
+    return envelopeResult({
+      data: {
+        authenticated: true,
+        workspace,
+        credential,
+        stored_secret: true,
+        config_path: configPath(context),
+        next_actions: [
+          "Run unipost auth status --json to confirm keychain-backed auth.",
+          "Run unipost agent bootstrap --json before agent workflows.",
+        ],
+      },
+      meta: {
+        request_id: response.requestId,
+        rate_limit: response.rateLimit,
+      },
+      human: `Logged in to workspace ${workspace?.id || "unknown"} with keychain-backed CLI auth.\n`,
+    });
+  } catch (error) {
+    context.options.apiKey = previousApiKey;
+    context.options.credentialSource = previousCredentialSource;
+    throw error;
+  }
+}
+
+async function exchangeSetupToken(context, client) {
+  const response = await requestJson(context, "/v1/cli/setup-tokens/exchange", {
+    method: "POST",
+    auth: false,
+    body: {
+      setup_token: context.options.setupToken,
+      client,
+    },
+  });
+  return unwrapData(response.body);
+}
+
+async function storeKeychainCredential(context, { apiKey, workspace, client }) {
+  const workspaceID = workspace?.id || "";
+  const keyID = apiKey.id || "";
+  const account = `workspace:${workspaceID}:key:${keyID || fingerprintSecret(apiKey.key)}`;
+  await context.secureStore.set({
+    service: KEYCHAIN_SERVICE,
+    account,
+    value: apiKey.key,
+  });
+  const credential = {
+    type: "api_key",
+    storage: "keychain",
+    workspace_id: workspaceID,
+    workspace_name: workspace?.name || "",
+    client,
+    key_id: keyID,
+    key_name: apiKey.name || "",
+    key_prefix: apiKey.prefix || "",
+    key_fingerprint: fingerprintSecret(apiKey.key),
+    keychain_service: KEYCHAIN_SERVICE,
+    keychain_account: account,
+    credential_source: "setup_token",
+    authenticated_at: new Date().toISOString(),
+  };
+  const config = await patchConfig(context, {
+    credential,
+    default_workspace_id: workspaceID,
+  });
+  return config.credential;
+}
+
 async function authLogout(context) {
   const current = await readConfig(context);
   const hadCredential = Object.prototype.hasOwnProperty.call(current, "credential");
+  if (current.credential?.storage === "keychain" && current.credential.keychain_account) {
+    await context.secureStore.delete({
+      service: current.credential.keychain_service || KEYCHAIN_SERVICE,
+      account: current.credential.keychain_account,
+    });
+  }
   const { credential: _credential, ...rest } = current;
   const config = await writeConfig(context, {
     ...rest,
@@ -454,8 +633,8 @@ async function authLogout(context) {
       config,
     },
     warnings: [{
-      code: "remote_revoke_unavailable",
-      message: "auth logout clears local metadata only; named revocable API keys require backend support.",
+      code: "remote_revoke_not_requested",
+      message: "auth logout clears local credentials only; revoke the named API key from the UniPost dashboard if it should stop working remotely.",
     }],
     human: hadCredential ? "Removed local credential metadata.\n" : "No local credential metadata found.\n",
   });
@@ -693,22 +872,25 @@ async function authUse(context, workspaceID) {
 }
 
 async function init(context) {
+  if (!context.options.apiKey && context.options.setupToken) {
+    await loginWithSetupToken(context);
+  }
   if (!context.options.apiKey) {
     return envelopeResult({
       data: {
         authenticated: false,
         credential_source: "none",
-        setup_token_supported: false,
+        setup_token_supported: true,
         next_actions: [
-          "Set UNIPOST_API_KEY and rerun unipost init.",
-          "When setup-token/device auth is implemented, start a fresh Dashboard-generated setup token.",
+          "Open UniPost Dashboard API Keys and choose Connect with Claude Code / Codex.",
+          "Run unipost init --setup-token <token> --json once, or set UNIPOST_API_KEY for fallback auth.",
         ],
       },
       warnings: [{
-        code: "setup_token_backend_unavailable",
-        message: "Device/setup-token auth is not implemented yet; Phase 2 uses UNIPOST_API_KEY fallback.",
+        code: "auth_setup_required",
+        message: "Setup-token auth is available, but no setup token or stored credential was provided.",
       }],
-      human: "No UniPost API key found. Set UNIPOST_API_KEY and rerun unipost init.\n",
+      human: "No UniPost API key found. Generate a setup token from the dashboard and rerun init.\n",
       exitCode: EXIT.auth,
     });
   }
@@ -2181,24 +2363,29 @@ async function agentContextData(context) {
 
 async function agentBootstrap(context) {
   const client = context.options.client || "codex";
+  if (!context.options.apiKey && context.options.setupToken) {
+    await loginWithSetupToken(context);
+  }
   if (!context.options.apiKey) {
     return envelopeResult({
       data: {
         client,
         authenticated: false,
         ready_for_draft: false,
-        setup_token_supported: false,
+        setup_token_supported: true,
         next_actions: [
-          "Set UNIPOST_API_KEY in the agent environment and rerun unipost agent bootstrap --json.",
+          "Open UniPost Dashboard API Keys and choose Connect with Claude Code / Codex.",
+          "Run unipost agent bootstrap --setup-token <token> --client <client> --json once.",
+          "Or set UNIPOST_API_KEY for command-level fallback auth.",
           "Run unipost init after the API key is available.",
         ],
-        recommended_prompt: "Use the UniPost CLI only after confirming UNIPOST_API_KEY is configured. Start with `unipost agent bootstrap --json`.",
+        recommended_prompt: "Ask the user to generate a UniPost CLI setup token in Dashboard, then run `unipost agent bootstrap --setup-token <token> --json` once.",
       },
       warnings: [{
-        code: "setup_token_backend_unavailable",
-        message: "Device/setup-token auth is not implemented yet; use UNIPOST_API_KEY fallback.",
+        code: "auth_setup_required",
+        message: "Setup-token auth is available, but no setup token or stored credential was provided.",
       }],
-      human: "UniPost auth is missing. Set UNIPOST_API_KEY before agent use.\n",
+      human: "UniPost auth is missing. Generate a setup token from the dashboard before agent use.\n",
       exitCode: EXIT.auth,
     });
   }
@@ -2689,7 +2876,7 @@ function requireApiKey(context, command) {
     code: "unauthorized",
     normalizedCode: "unauthorized",
     message: "API key is missing.",
-    hint: "Set UNIPOST_API_KEY or pass --api-key. Browser/device login is planned for a later phase.",
+    hint: "Run auth login --setup-token <token>, set UNIPOST_API_KEY, or pass --api-key.",
     docsUrl: DOCS_QUICKSTART_URL,
     exitCode: EXIT.auth,
     requestId: "",
@@ -2816,15 +3003,30 @@ async function applyConfigDefaults(context) {
   if (context.options.version || context.options.help || context.commandParts[0] === "config") {
     return;
   }
-  if (context.options.baseUrlSource !== "default") {
-    return;
-  }
   const config = await readConfig(context);
-  if (config.base_url) {
+  if (context.options.baseUrlSource === "default" && config.base_url) {
     validateConfigBaseURL(config.base_url);
     context.options.baseUrl = normalizeBaseUrl(config.base_url);
     context.options.baseUrlSource = "config";
   }
+  if (shouldLoadStoredCredential(context) && config.credential?.storage === "keychain") {
+    const value = await context.secureStore.get({
+      service: config.credential.keychain_service || KEYCHAIN_SERVICE,
+      account: config.credential.keychain_account,
+    });
+    if (value) {
+      context.options.apiKey = value;
+      context.options.credentialSource = "keychain";
+    }
+  }
+}
+
+function shouldLoadStoredCredential(context) {
+  if (context.options.apiKey || context.options.setupToken) {
+    return false;
+  }
+  const command = context.commandParts.join(" ");
+  return command !== "auth login" && command !== "auth logout";
 }
 
 async function readConfig(context) {
@@ -3113,7 +3315,7 @@ _unipost() {
     'config path:Print the local UniPost config path'
     'config show:Print redacted local UniPost config'
     'config set:Set a safe local UniPost config value'
-    'auth login:Validate an API key and store redacted credential metadata'
+    'auth login:Log in with a setup token or validate API-key metadata'
     'auth logout:Remove local credential metadata'
     'auth status:Verify the configured UniPost credential'
     'auth list:List locally discoverable UniPost credentials'
@@ -3193,7 +3395,7 @@ _unipost "$@"
 function bashCompletion() {
   return `# bash completion for unipost
 _unipost_completion() {
-  local words="init quickstart config path config show config set auth login auth logout auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
+  local words="init quickstart config path config show config set auth login auth logout auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --setup-token --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
   COMPREPLY=($(compgen -W "$words" -- "\${COMP_WORDS[COMP_CWORD]}"))
 }
 complete -F _unipost_completion unipost
@@ -3205,7 +3407,7 @@ function fishCompletion() {
 complete -c unipost -a "config path" -d "Print local config path"
 complete -c unipost -a "config show" -d "Print redacted local config"
 complete -c unipost -a "config set" -d "Set a safe local config value"
-complete -c unipost -a "auth login" -d "Store redacted credential metadata"
+complete -c unipost -a "auth login" -d "Log in with setup-token keychain auth or API-key metadata"
 complete -c unipost -a "auth logout" -d "Remove local credential metadata"
 complete -c unipost -a "auth status" -d "Verify the configured UniPost credential"
 complete -c unipost -a "profiles list" -d "List profiles"
@@ -3501,6 +3703,7 @@ Usage:
   unipost config path|show [--json]
   unipost config set base_url <url> [--json]
   unipost config set default_profile_id <profile_id> [--json]
+  unipost auth login --setup-token <token> [--client <client>] [--json]
   unipost auth login --api-key <key> [--json]
   unipost auth logout [--json]
   unipost auth status [--json] [--api-key <key>] [--base-url <url>]
@@ -3520,14 +3723,15 @@ Usage:
   unipost examples mcp.claude-code
   unipost agent plan --intent <intent> [--json]
   unipost agent execute --plan plan.json [--json]
-  unipost agent bootstrap|capabilities|context|guide [--json]
+  unipost agent bootstrap [--setup-token <token>] [--client <client>] [--json]
+  unipost agent capabilities|context|guide [--json]
   unipost agent mcp-config|mcp-test|install [--client <client>] [--json]
   unipost doctor [--json] [--api-key <key>] [--base-url <url>]
   unipost completion <bash|zsh|fish>
 
 Global flags:
   --json, --output <table|json|yaml>, --field <field>, --non-interactive
-  --base-url <url>, --api-key <key>, --limit <n>, --cursor <cursor>, --all
+  --base-url <url>, --api-key <key>, --setup-token <token>, --limit <n>, --cursor <cursor>, --all
   --client <codex|claude-code|cursor|windsurf>, --profile <id>, --account <id>
   --platform <name>, --caption <text>, --status <status>, --result <id>
   --from <date>, --to <date>, --at <timestamp>, --schedule-at <timestamp>
@@ -3536,8 +3740,9 @@ Global flags:
   --no-color, --no-telemetry
 
 Auth note:
-  auth login --api-key stores redacted credential metadata only.
-  Until device/setup-token and keychain auth exist, set UNIPOST_API_KEY for authenticated commands.
+  auth login --setup-token exchanges a Dashboard-generated short-lived token for
+  a named API key and stores the secret in OS keychain. auth login --api-key
+  remains metadata-only and never writes the plaintext key to config.
 `;
 }
 

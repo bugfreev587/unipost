@@ -2,18 +2,22 @@
 
 Phase 5 acceptance cleanup source package for the planned UniPost CLI.
 
-The current implementation supports API-key fallback through `UNIPOST_API_KEY`.
-Browser/device auth and Dashboard setup-token exchange are still backend
-dependencies; until those endpoints exist, init/bootstrap diagnose setup and
-reuse the API key already available in the environment.
+The current implementation supports Dashboard-generated setup tokens for
+keychain-backed CLI auth, plus API-key fallback through `UNIPOST_API_KEY`.
+Browser/device auth is still a later auth surface; setup-token login creates a
+named revocable API key and stores the plaintext secret in OS keychain, not in
+the local config file.
 
 ```bash
 unipost config path --json
 unipost config set base_url https://dev-api.unipost.dev --json
 unipost config set default_profile_id pr_... --json
 unipost config show --json
+unipost auth login --setup-token ust_... --client codex --json
 unipost auth login --api-key up_live_... --json
 unipost auth logout --json
+unipost auth status --json
+unipost agent bootstrap --setup-token ust_... --client claude-code --json
 UNIPOST_API_KEY=up_live_... unipost init --json
 UNIPOST_API_KEY=up_live_... unipost quickstart --json
 UNIPOST_API_KEY=up_live_... unipost auth status --json
@@ -51,11 +55,12 @@ unipost completion zsh
 
 The CLI stores non-secret local defaults such as the selected profile in
 `~/.unipost/config.json`. `auth login --api-key` validates the key against
-`/v1/workspace`, then stores redacted credential metadata only. API keys are
-not written to that file. `auth logout` removes local metadata only; remote
-revoke, named revocable CLI keys, setup-token exchange, browser/device auth,
-keychain storage, and Dashboard "Connect with Claude Code / Codex" issuance
-remain backend or Dashboard dependencies.
+`/v1/workspace`, then stores redacted credential metadata only. `auth login
+--setup-token` exchanges a short-lived Dashboard token for a named API key and
+stores that secret in OS keychain; the config file stores only the keychain
+locator and redacted metadata. `auth logout` removes local keychain/config
+credentials only; revoke the named key from Dashboard if it should stop working
+remotely.
 
 Phase 5 supports agent planning, dry-run publish validation, scheduled publish,
 post lifecycle waits, cancel/retry operations, account diagnostics, local media
