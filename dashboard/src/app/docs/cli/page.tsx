@@ -8,6 +8,10 @@ const QUICKSTART_SNIPPETS = [
     code: `cd cli
 npm test
 export UNIPOST_API_KEY=up_live_...
+node bin/unipost.js config path --json
+node bin/unipost.js config set base_url https://dev-api.unipost.dev --json
+node bin/unipost.js config show --json
+node bin/unipost.js auth login --api-key "$UNIPOST_API_KEY" --json
 node bin/unipost.js init --json
 node bin/unipost.js quickstart --name "Brand" --json
 node bin/unipost.js agent bootstrap --client codex --json
@@ -154,7 +158,7 @@ const JSON_ENVELOPE = [
 ];
 
 const COMMAND_ROWS = [
-  ["Auth and config", "Phase 4: `auth status`, `auth list`, `auth use`; later: browser/device login, logout, and config inspection."],
+  ["Auth and config", "Acceptance cleanup: `config path`, `config show`, `config set base_url`, `config set default_profile_id`, `auth login --api-key`, `auth logout`, `auth status`, `auth list`, and `auth use`."],
   ["Quickstart", "Phase 4: `init`, `doctor`, `quickstart`, `profiles list/create/get/use`, `connect create/get/wait`."],
   ["Accounts", "Phase 4: `accounts list`, `accounts get`, `accounts health`, `accounts capabilities`, `accounts metrics`."],
   ["Posts", "Phase 3: `posts list`, `posts get`, `posts analytics`, `posts validate`, `posts draft`, `posts create --dry-run`, `posts create`, `posts schedule`, `posts publish-draft`, `posts wait`, `posts cancel`, `posts retry`."],
@@ -178,7 +182,7 @@ export default function CliPage() {
         <div>
           <div className="cli-status-label">Current status</div>
           <p>
-            The Phase 5 source package now supports <code>init</code>, <code>quickstart</code>, profile setup, connect-session helpers, account discovery, account health/capability/metric diagnostics, stable JSON envelopes, post dry-runs, scheduled publish, post waits, cancel/retry workflows, local media upload/readiness waits, analytics reads, structured agent planning, hosted MCP setup generation, MCP auth testing, Codex/Claude Code instruction packages, and a restricted <code>agent execute</code> beta. Public npm release and browser/device auth remain later phases; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
+            The Phase 5 source package now supports <code>config path/show/set</code>, <code>auth login --api-key</code>, <code>auth logout</code>, <code>init</code>, <code>quickstart</code>, profile setup, connect-session helpers, account discovery, account health/capability/metric diagnostics, stable JSON envelopes, post dry-runs, scheduled publish, post waits, cancel/retry workflows, local media upload/readiness waits, analytics reads, structured agent planning, hosted MCP setup generation, MCP auth testing, Codex/Claude Code instruction packages, and a restricted <code>agent execute</code> beta. Public npm release, browser/device auth, Dashboard setup-token exchange, keychain storage, named revocable CLI key creation, and Dashboard "Connect with Claude Code / Codex" issuance remain later phases; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
           </p>
         </div>
         <div className="cli-phase-pill">Phase 5 agent ecosystem beta</div>
@@ -196,7 +200,7 @@ export default function CliPage() {
 
       <h2 id="planned-install">Install and first run</h2>
       <p>
-        Phase 5 supports API-key fallback with <code>UNIPOST_API_KEY</code>, hosted MCP client config generation, and agent instruction package setup. Browser/device auth and Dashboard setup tokens are planned for the full agent-assisted onboarding flow.
+        Phase 5 supports API-key fallback with <code>UNIPOST_API_KEY</code>, redacted local credential metadata, hosted MCP client config generation, and agent instruction package setup. <code>auth login --api-key</code> validates a key but does not store the plaintext secret; authenticated commands should still receive <code>UNIPOST_API_KEY</code> or <code>--api-key</code>. Browser/device auth, Dashboard setup tokens, named revocable API-key issuance, and keychain storage are planned for the full agent-assisted onboarding flow.
       </p>
       <DocsCodeTabs snippets={QUICKSTART_SNIPPETS} />
 
@@ -205,7 +209,7 @@ export default function CliPage() {
 
       <h2 id="safe-publishing">Safe publishing model</h2>
       <p>
-        Phase 5 keeps publish-capable commands behind the same guardrails. Validation, draft creation, media upload, readiness waits, dry-runs, MCP auth tests, and instruction setup stay safe without <code>--yes</code>; live and scheduled publishing require explicit approval plus a stable idempotency key. The <code>agent execute</code> beta only runs structured read-only, validate, and draft-write actions; it rejects live publish actions and raw command strings.
+        Phase 5 keeps publish-capable commands behind the same guardrails. Validation, draft creation, media upload, readiness waits, dry-runs, MCP auth tests, and instruction setup stay safe without <code>--yes</code>; live and scheduled publishing require explicit approval plus a stable idempotency key. The <code>agent execute</code> beta only runs current <code>agent plan --json</code> envelopes with matching <code>catalog_version</code> and structured read-only, validate, or draft-write actions; it rejects stale plans, live publish actions, pending confirmations, and raw command strings.
       </p>
       <DocsTable
         columns={["Action", "Non-interactive rule"]}
@@ -233,7 +237,7 @@ export default function CliPage() {
           ["Agent plan", "Returns structured actions for draft or publish intent, including missing inputs and required user confirmations."],
           ["MCP bridge", "`examples mcp.claude-code`, `agent mcp-config`, and `agent mcp-test` bootstrap the hosted MCP endpoint without replacing MCP."],
           ["Instruction packages", "`agent install --client codex|claude-code` points agents at first-party instructions for safe UniPost operation."],
-          ["Execute beta", "`agent execute --plan plan.json` accepts only structured safe actions and rejects live publish plans."],
+          ["Execute beta", "`agent execute --plan plan.json` accepts only current `agent plan --json` envelopes, uses the registry safety level instead of plan-provided `safety_level`, and rejects live publish plans."],
           ["Async waits", "`connect wait`, `posts wait`, and `media wait` let agents observe terminal state instead of polling blindly."],
           ["Status enums", "CLI JSON normalizes backend aliases such as `cancelled` to canonical `canceled`."],
         ]}
@@ -278,7 +282,7 @@ export default function CliPage() {
           ["Pagination", "`--limit`, `--cursor`, and `--all`; JSON metadata includes `next_cursor` when available."],
           ["Output", "`--json` or `--output json`; `--field` for scripts; `--no-color` and `NO_COLOR=1` for plain output."],
           ["Networking", "Bounded retries for reads and idempotent writes; respect `Retry-After`; no automatic retry for unsafe writes without idempotency."],
-          ["Credentials", "Phase 5 uses `UNIPOST_API_KEY` or `--api-key`; local config stores defaults only, not secrets. OS keychain and browser/device auth are later."],
+          ["Credentials", "Phase 5 uses `UNIPOST_API_KEY` or `--api-key`; local config stores defaults and redacted credential metadata only, not secrets. OS keychain, browser/device auth, setup-token exchange, and remote revocation are later."],
           ["Telemetry", "First-run notice, redaction, and opt-out through config, `--no-telemetry`, or `UNIPOST_TELEMETRY=0`."],
         ]}
       />
