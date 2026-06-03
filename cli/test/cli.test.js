@@ -826,6 +826,181 @@ test("Phase 3 read commands expose stable JSON for posts media and analytics", a
   });
 });
 
+test("Phase 4 accounts diagnostics read health capabilities and metrics endpoints", async () => {
+  await withServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/accounts/sa_1/health") {
+      writeJson(res, 200, {
+        data: {
+          social_account_id: "sa_1",
+          platform: "linkedin",
+          status: "degraded",
+          last_error: { code: "rate_limited", message: "Too many requests" },
+        },
+        request_id: "req_health",
+      });
+      return;
+    }
+    if (req.method === "GET" && req.url === "/v1/accounts/sa_1/capabilities") {
+      writeJson(res, 200, {
+        data: {
+          account_id: "sa_1",
+          platform: "linkedin",
+          capability: { text: { max_length: 3000 }, media: { images: { max_count: 9 } } },
+        },
+        request_id: "req_capabilities",
+      });
+      return;
+    }
+    if (req.method === "GET" && req.url === "/v1/accounts/sa_1/metrics") {
+      writeJson(res, 200, {
+        data: {
+          social_account_id: "sa_1",
+          platform: "linkedin",
+          follower_count: 123,
+          following_count: 45,
+          post_count: 6,
+        },
+        request_id: "req_metrics",
+      });
+      return;
+    }
+    writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: `Not found: ${req.url}` } });
+  }, async (baseUrl) => {
+    const env = { UNIPOST_API_KEY: "up_test_valid" };
+
+    const health = await runCli(["accounts", "health", "--account", "sa_1", "--json", "--base-url", baseUrl], { env });
+    assert.equal(health.code, 0);
+    const healthBody = JSON.parse(health.stdout);
+    assert.equal(healthBody.data.health.status, "degraded");
+    assert.equal(healthBody.data.health.last_error.code, "rate_limited");
+
+    const capabilities = await runCli(["accounts", "capabilities", "--account", "sa_1", "--json", "--base-url", baseUrl], { env });
+    assert.equal(capabilities.code, 0);
+    const capabilitiesBody = JSON.parse(capabilities.stdout);
+    assert.equal(capabilitiesBody.data.capabilities.platform, "linkedin");
+    assert.equal(capabilitiesBody.data.capabilities.capability.media.images.max_count, 9);
+
+    const metrics = await runCli(["accounts", "metrics", "--account", "sa_1", "--json", "--base-url", baseUrl], { env });
+    assert.equal(metrics.code, 0);
+    const metricsBody = JSON.parse(metrics.stdout);
+    assert.equal(metricsBody.data.metrics.follower_count, 123);
+  });
+});
+
+test("Phase 4 media upload reserves uploads and waits for canonical readiness", async () => {
+  await withTempConfig(async (configDir) => {
+    const mediaPath = join(configDir, "clip.mp4");
+    await writeFile(mediaPath, "media bytes");
+    let mediaReads = 0;
+
+    await withServer(async (req, res) => {
+      if (req.method === "POST" && req.url === "/v1/media") {
+        const body = await readRequestJson(req);
+        assert.equal(body.filename, "clip.mp4");
+        assert.equal(body.content_type, "video/mp4");
+        assert.equal(body.size_bytes, 11);
+        assert.match(body.content_hash, /^[a-f0-9]{64}$/);
+        writeJson(res, 201, {
+          data: {
+            id: "med_1",
+            status: "pending",
+            content_type: "video/mp4",
+            size_bytes: 11,
+            upload_url: "http://unipost-cli-test.local/uploads/med_1",
+          },
+          request_id: "req_media_create",
+        });
+        return;
+      }
+      if (req.method === "PUT" && req.url === "/uploads/med_1") {
+        assert.equal(req.headers["content-type"], "video/mp4");
+        res.writeHead(200);
+        res.end("");
+        return;
+      }
+      if (req.method === "GET" && req.url === "/v1/media/med_1") {
+        mediaReads += 1;
+        writeJson(res, 200, {
+          data: {
+            id: "med_1",
+            status: mediaReads === 1 ? "pending" : "uploaded",
+            content_type: "video/mp4",
+            size_bytes: 11,
+          },
+          request_id: "req_media_get",
+        });
+        return;
+      }
+      writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: `Not found: ${req.url}` } });
+    }, async (baseUrl) => {
+      const env = { UNIPOST_API_KEY: "up_test_valid", UNIPOST_TEST_POLL_MS: "1" };
+
+      const upload = await runCli(["media", "upload", mediaPath, "--json", "--base-url", baseUrl], { env });
+      assert.equal(upload.code, 0);
+      const uploadBody = JSON.parse(upload.stdout);
+      assert.equal(uploadBody.data.media.id, "med_1");
+      assert.equal(uploadBody.data.media.status, "ready");
+      assert.equal(uploadBody.data.ready, true);
+      assert.equal(uploadBody.data.media.content_type, "video/mp4");
+
+      mediaReads = 0;
+      const wait = await runCli(["media", "wait", "med_1", "--timeout", "2", "--json", "--base-url", baseUrl], { env });
+      assert.equal(wait.code, 0);
+      const waitBody = JSON.parse(wait.stdout);
+      assert.equal(waitBody.data.media.status, "ready");
+      assert.equal(waitBody.data.ready, true);
+      assert.equal(waitBody.data.attempts, 2);
+    });
+  });
+});
+
+test("Phase 4 agent capabilities include advanced diagnostics and media operations", async () => {
+  const capabilities = await runCli(["agent", "capabilities", "--json"]);
+  assert.equal(capabilities.code, 0);
+  const body = JSON.parse(capabilities.stdout);
+  assert.equal(body.data.catalog_version, "2026-06-03.phase4");
+  assert.ok(body.data.commands.includes("accounts health"));
+  assert.ok(body.data.commands.includes("accounts capabilities"));
+  assert.ok(body.data.commands.includes("accounts metrics"));
+  assert.ok(body.data.commands.includes("media upload"));
+  assert.ok(body.data.commands.includes("media wait"));
+  assert.ok(body.data.intents.some((intent) => intent.name === "diagnose_account"));
+  assert.ok(body.data.intents.some((intent) => intent.name === "upload_media"));
+});
+
+test("Phase 4 agent plan supports account diagnostics and media upload intents", async () => {
+  await withTempConfig(async (configDir) => {
+    const uploadPlanPath = join(configDir, "upload-plan.json");
+    await writeFile(uploadPlanPath, JSON.stringify({
+      file_path: "/tmp/clip.mp4",
+      content_type: "video/mp4",
+    }));
+
+    const diagnose = await runCli(["agent", "plan", "--intent", "diagnose_account", "--account", "sa_1", "--json"]);
+    assert.equal(diagnose.code, 0);
+    const diagnoseBody = JSON.parse(diagnose.stdout);
+    assert.equal(diagnoseBody.data.intent, "diagnose_account");
+    assert.equal(diagnoseBody.data.safety_level, "read_only");
+    assert.deepEqual(diagnoseBody.data.missing_inputs, []);
+    assert.deepEqual(diagnoseBody.data.actions.map((action) => action.canonical_action), [
+      "accounts.health",
+      "accounts.capabilities",
+      "accounts.metrics",
+    ]);
+
+    const upload = await runCli(["agent", "plan", "--intent", "upload_media", "--from-file", uploadPlanPath, "--json"]);
+    assert.equal(upload.code, 0);
+    const uploadBody = JSON.parse(upload.stdout);
+    assert.equal(uploadBody.data.intent, "upload_media");
+    assert.equal(uploadBody.data.safety_level, "setup_write");
+    assert.equal(uploadBody.data.safe_to_execute_without_user, false);
+    assert.deepEqual(uploadBody.data.required_user_confirmations, ["approve_local_file_upload"]);
+    assert.deepEqual(uploadBody.data.actions.map((action) => action.canonical_action), ["media.upload", "media.wait"]);
+    assert.equal(uploadBody.data.actions[0].args.file_path, "/tmp/clip.mp4");
+    assert.equal(uploadBody.data.actions[0].args["--content-type"], "video/mp4");
+  });
+});
+
 test("Phase 3 agent plan returns executable steps and required confirmations", async () => {
   await withTempConfig(async (configDir) => {
     const postPath = join(configDir, "plan-post.json");
@@ -861,7 +1036,7 @@ test("agent capabilities and context expose stable machine-readable discovery", 
   const capabilities = await runCli(["agent", "capabilities", "--json"]);
   assert.equal(capabilities.code, 0);
   const capabilitiesBody = JSON.parse(capabilities.stdout);
-  assert.equal(capabilitiesBody.data.catalog_version, "2026-06-02.phase3");
+  assert.equal(capabilitiesBody.data.catalog_version, "2026-06-03.phase4");
   const draftIntent = capabilitiesBody.data.intents.find((intent) => intent.name === "create_draft_post");
   assert.equal(draftIntent.safety_level, "draft_write");
   assert.equal(draftIntent.canonical_action, "posts.draft");

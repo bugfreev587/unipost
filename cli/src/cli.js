@@ -1,13 +1,16 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 
 const CLI_VERSION = "0.1.0";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
 const DOCS_CLI_URL = "https://unipost.dev/docs/cli";
-const AGENT_CATALOG_VERSION = "2026-06-02.phase3";
+const AGENT_CATALOG_VERSION = "2026-06-03.phase4";
 const TERMINAL_POST_STATUSES = new Set(["published", "failed", "partial", "canceled"]);
+const TERMINAL_MEDIA_STATUSES = new Set(["ready", "failed"]);
 
 const EXIT = {
   success: 0,
@@ -63,6 +66,7 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
   "--from",
   "--to",
   "--format",
+  "--content-type",
   "--lang",
   "--name",
   "--platform",
@@ -794,6 +798,18 @@ async function accounts(context, subcommand, id) {
       human: renderAccounts([account]),
     });
   }
+  if (subcommand === "health" || subcommand === "capabilities" || subcommand === "metrics") {
+    requireApiKey(context, `accounts ${subcommand}`);
+    const accountID = requireAccountID(context, id, `accounts ${subcommand}`);
+    const response = await requestJson(context, `/v1/accounts/${encodeURIComponent(accountID)}/${subcommand}`, { auth: true });
+    const payload = normalizeStatuses(unwrapData(response.body));
+    const dataKey = subcommand === "capabilities" ? "capabilities" : subcommand;
+    return envelopeResult({
+      data: { [dataKey]: payload },
+      meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+      human: renderAccountDiagnostic(subcommand, accountID, payload),
+    });
+  }
   return invalidSubcommand("accounts", subcommand);
 }
 
@@ -1089,7 +1105,199 @@ async function waitForPost(context, postID) {
   });
 }
 
+async function uploadMedia(context, filePath) {
+  const fileInfo = await mediaFileInfo(filePath);
+  const contentType = context.options.contentType || inferContentType(filePath);
+  if (!contentType) {
+    throw new CliError({
+      code: "missing_required_input",
+      normalizedCode: "missing_required_input",
+      message: "media upload could not infer content type from the file extension.",
+      hint: "Pass --content-type <mime>, such as --content-type video/mp4.",
+      exitCode: EXIT.missingInput,
+    });
+  }
+
+  const createResponse = await requestJson(context, "/v1/media", {
+    auth: true,
+    method: "POST",
+    body: {
+      filename: basename(filePath),
+      content_type: contentType,
+      size_bytes: fileInfo.sizeBytes,
+      content_hash: fileInfo.contentHash,
+    },
+  });
+  const reserved = normalizeStatuses(unwrapData(createResponse.body));
+
+  if (!reserved?.id) {
+    throw new CliError({
+      code: "invalid_response",
+      normalizedCode: "invalid_response",
+      message: "Media reserve response did not include a media ID.",
+      hint: "Capture request_id and contact support.",
+      exitCode: EXIT.upstream,
+      requestId: createResponse.requestId,
+      status: createResponse.response.status,
+    });
+  }
+
+  if (mediaReady(reserved) || reserved.status === "failed") {
+    return mediaEnvelope(context, reserved, 0, createResponse);
+  }
+
+  const uploadURL = reserved.upload_url;
+  if (!uploadURL) {
+    throw new CliError({
+      code: "invalid_response",
+      normalizedCode: "invalid_response",
+      message: "Media reserve response did not include an upload URL.",
+      hint: "Retry media upload or contact support with the request_id.",
+      exitCode: EXIT.upstream,
+      requestId: createResponse.requestId,
+      status: createResponse.response.status,
+    });
+  }
+
+  await uploadBytes(context, uploadURL, filePath, contentType);
+  return waitForMedia(context, reserved.id);
+}
+
+async function mediaFileInfo(filePath) {
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile()) {
+      throw new Error("path is not a regular file");
+    }
+    return {
+      sizeBytes: fileStat.size,
+      contentHash: await hashFile(filePath),
+    };
+  } catch (error) {
+    throw new CliError({
+      code: "invalid_request",
+      normalizedCode: "invalid_request",
+      message: `Failed to read media file ${filePath}: ${error.message}`,
+      hint: "Pass a readable local image or video path.",
+      exitCode: EXIT.validation,
+      cause: error,
+    });
+  }
+}
+
+async function hashFile(filePath) {
+  const hash = createHash("sha256");
+  await new Promise((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", resolve);
+  });
+  return hash.digest("hex");
+}
+
+async function uploadBytes(context, uploadURL, filePath, contentType) {
+  let response;
+  try {
+    response = await context.fetchImpl(uploadURL, {
+      method: "PUT",
+      headers: {
+        "Content-Type": contentType,
+      },
+      body: createReadStream(filePath),
+      duplex: "half",
+    });
+  } catch (error) {
+    throw new CliError({
+      code: "network_error",
+      normalizedCode: "network_error",
+      message: `Media upload failed: ${error.message}`,
+      hint: "Retry media upload; the reserve URL may have expired.",
+      exitCode: EXIT.network,
+      cause: error,
+    });
+  }
+
+  if (!response.ok) {
+    throw new CliError({
+      code: "upstream_error",
+      normalizedCode: "upstream_error",
+      message: `Media upload target returned HTTP ${response.status}.`,
+      hint: "Retry media upload; if it repeats, capture request_id and contact support.",
+      exitCode: EXIT.upstream,
+      status: response.status,
+    });
+  }
+}
+
+async function waitForMedia(context, mediaID) {
+  const timeoutSeconds = context.options.timeout ?? 120;
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let attempt = 0;
+  let lastResponse = null;
+
+  while (Date.now() <= deadline) {
+    attempt += 1;
+    const response = await requestJson(context, `/v1/media/${encodeURIComponent(mediaID)}`, { auth: true });
+    lastResponse = response;
+    const mediaItem = normalizeStatuses(unwrapData(response.body));
+    if (TERMINAL_MEDIA_STATUSES.has(mediaItem?.status)) {
+      return mediaEnvelope(context, mediaItem, attempt, response);
+    }
+    await sleep(pollDelayMs(context, attempt, response.response.headers));
+  }
+
+  throw new CliError({
+    code: "timeout",
+    normalizedCode: "timeout",
+    message: `Timed out waiting for media ${mediaID}.`,
+    hint: "Increase --timeout or check the media later with unipost media get.",
+    exitCode: EXIT.timeout,
+    requestId: lastResponse?.requestId,
+    status: lastResponse?.response?.status,
+  });
+}
+
+function mediaEnvelope(context, mediaItem, attempts, response) {
+  return envelopeResult({
+    data: {
+      media: mediaItem,
+      ready: mediaReady(mediaItem),
+      ...(attempts ? { attempts } : {}),
+      next_publish_hint: mediaReady(mediaItem) ? `Use media_id ${mediaItem.id} in posts create --from-file or post.json media_ids.` : "",
+    },
+    meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+    human: renderMedia(mediaItem),
+  });
+}
+
+function mediaReady(mediaItem) {
+  return mediaItem?.status === "ready";
+}
+
+function inferContentType(filePath) {
+  const ext = extname(filePath).toLowerCase();
+  return {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".heic": "image/heic",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".qt": "video/quicktime",
+    ".webm": "video/webm",
+    ".m4v": "video/x-m4v",
+  }[ext] || "";
+}
+
 async function media(context, subcommand, id) {
+  if (subcommand === "upload") {
+    requireApiKey(context, "media upload");
+    const filePath = requireValue(id, "file_path", "media upload requires a local file path.");
+    return uploadMedia(context, filePath);
+  }
   if (subcommand === "get") {
     requireApiKey(context, "media get");
     const mediaID = requireValue(id, "media_id", "media get requires a media ID.");
@@ -1100,6 +1308,11 @@ async function media(context, subcommand, id) {
       meta: { request_id: response.requestId, rate_limit: response.rateLimit },
       human: `${mediaItem.id || mediaID} ${mediaItem.status || ""}\n`,
     });
+  }
+  if (subcommand === "wait") {
+    requireApiKey(context, "media wait");
+    const mediaID = requireValue(id, "media_id", "media wait requires a media ID.");
+    return waitForMedia(context, mediaID);
   }
   return invalidSubcommand("media", subcommand);
 }
@@ -1261,6 +1474,45 @@ async function agentPlan(context, intent) {
     });
   }
 
+  if (normalizedIntent === "diagnose_account") {
+    const accountID = input.account_id || context.options.account || "";
+    const missing = missingInputs({ account_id: accountID });
+    return envelopeResult({
+      data: {
+        intent: normalizedIntent,
+        safety_level: "read_only",
+        input: compactObject({ account_id: accountID }),
+        missing_inputs: missing,
+        required_user_confirmations: [],
+        safe_to_execute_without_user: missing.length === 0,
+        actions: missing.length === 0 ? [
+          {
+            canonical_action: "accounts.health",
+            command: "unipost accounts health",
+            args: compactObject({ "--account": accountID, "--json": true }),
+            safety_level: "read_only",
+            safe_to_execute_without_user: true,
+          },
+          {
+            canonical_action: "accounts.capabilities",
+            command: "unipost accounts capabilities",
+            args: compactObject({ "--account": accountID, "--json": true }),
+            safety_level: "read_only",
+            safe_to_execute_without_user: true,
+          },
+          {
+            canonical_action: "accounts.metrics",
+            command: "unipost accounts metrics",
+            args: compactObject({ "--account": accountID, "--json": true }),
+            safety_level: "read_only",
+            safe_to_execute_without_user: true,
+          },
+        ] : [],
+      },
+      human: missing.length === 0 ? "Agent plan: read account diagnostics.\n" : "Agent plan has missing inputs.\n",
+    });
+  }
+
   if (normalizedIntent === "create_draft_post") {
     const accountIDs = agentAccountIDs(input, context);
     const caption = agentCaption(input, context);
@@ -1368,6 +1620,40 @@ async function agentPlan(context, intent) {
         }] : [],
       },
       human: missing.length === 0 ? "Agent plan: create a connect session.\n" : "Agent plan has missing inputs.\n",
+    });
+  }
+
+  if (normalizedIntent === "upload_media") {
+    const filePath = input.file_path || "";
+    const contentType = input.content_type || context.options.contentType || "";
+    const missing = missingInputs({ file_path: filePath });
+    return envelopeResult({
+      data: {
+        intent: normalizedIntent,
+        safety_level: "setup_write",
+        input: compactObject({ file_path: filePath, content_type: contentType }),
+        missing_inputs: missing,
+        required_user_confirmations: ["approve_local_file_upload"],
+        safe_to_execute_without_user: false,
+        actions: missing.length === 0 ? [
+          {
+            canonical_action: "media.upload",
+            command: "unipost media upload",
+            args: compactObject({ file_path: filePath, "--content-type": contentType, "--json": true }),
+            safety_level: "setup_write",
+            required_user_confirmations: ["approve_local_file_upload"],
+            safe_to_execute_without_user: false,
+          },
+          {
+            canonical_action: "media.wait",
+            command: "unipost media wait",
+            args: { media_id: "<media_id_from_upload>", "--json": true },
+            safety_level: "read_only",
+            safe_to_execute_without_user: true,
+          },
+        ] : [],
+      },
+      human: missing.length === 0 ? "Agent plan: upload local media after user confirmation, then wait for readiness.\n" : "Agent plan has missing inputs.\n",
     });
   }
 
@@ -1482,6 +1768,9 @@ function agentCapabilities() {
         "connect wait",
         "accounts list",
         "accounts get",
+        "accounts health",
+        "accounts capabilities",
+        "accounts metrics",
         "posts list",
         "posts get",
         "posts analytics",
@@ -1493,7 +1782,9 @@ function agentCapabilities() {
         "posts wait",
         "posts cancel",
         "posts retry",
+        "media upload",
         "media get",
+        "media wait",
         "analytics summary",
         "analytics posts",
         "analytics platforms",
@@ -1523,6 +1814,24 @@ function agentCapabilities() {
             },
             additionalProperties: false,
           },
+        },
+        {
+          name: "diagnose_account",
+          description: "Read account health, capabilities and metrics for support diagnostics.",
+          command: "unipost accounts health --account <account_id> --json",
+          canonical_action: "accounts.diagnose",
+          safety_level: "read_only",
+          required_inputs: ["account_id"],
+          optional_inputs: [],
+          input_schema: {
+            type: "object",
+            required: ["account_id"],
+            properties: {
+              account_id: { type: "string", minLength: 1 },
+            },
+            additionalProperties: false,
+          },
+          canonical_actions: ["accounts.health", "accounts.capabilities", "accounts.metrics"],
         },
         {
           name: "create_draft_post",
@@ -1590,6 +1899,25 @@ function agentCapabilities() {
             },
             additionalProperties: false,
           },
+        },
+        {
+          name: "upload_media",
+          description: "Reserve and upload a local image or video, then wait until the media ID is publish-ready.",
+          command: "unipost media upload <path> --json",
+          canonical_action: "media.upload",
+          safety_level: "setup_write",
+          required_inputs: ["file_path"],
+          optional_inputs: ["content_type"],
+          input_schema: {
+            type: "object",
+            required: ["file_path"],
+            properties: {
+              file_path: { type: "string", minLength: 1 },
+              content_type: { type: "string" },
+            },
+            additionalProperties: false,
+          },
+          canonical_actions: ["media.upload", "media.wait"],
         },
         {
           name: "generate_post_example",
@@ -2033,6 +2361,9 @@ function normalizeStatus(status) {
   if (status === "cancelled") {
     return "canceled";
   }
+  if (status === "uploaded") {
+    return "ready";
+  }
   return status;
 }
 
@@ -2065,6 +2396,10 @@ function requireValue(value, flag, message) {
     hint: `Pass ${flag}.`,
     exitCode: EXIT.missingInput,
   });
+}
+
+function requireAccountID(context, value, command) {
+  return requireValue(value || context.options.account, "--account <account_id>", `${command} requires an account ID.`);
 }
 
 function splitIDs(value) {
@@ -2254,6 +2589,9 @@ _unipost() {
     'profiles create:Create a profile'
     'connect create:Create an account Connect session'
     'accounts list:List connected accounts'
+    'accounts health:Get account health diagnostics'
+    'accounts capabilities:Get account platform capabilities'
+    'accounts metrics:Get account metrics'
     'posts list:List posts'
     'posts get:Get a post'
     'posts analytics:Get post analytics'
@@ -2264,7 +2602,9 @@ _unipost() {
     'posts wait:Wait for a terminal post status'
     'posts cancel:Cancel a draft or scheduled post'
     'posts retry:Retry a failed result'
+    'media upload:Upload local media'
     'media get:Get media status'
+    'media wait:Wait for media readiness'
     'analytics summary:Get analytics summary'
     'analytics posts:Get post analytics rows'
     'analytics platforms:Get analytics platforms'
@@ -2292,6 +2632,7 @@ _unipost() {
     '--at[Schedule timestamp]:at:' \\
     '--schedule-at[Schedule timestamp]:schedule-at:' \\
     '--from-file[Read request JSON]:file:' \\
+    '--content-type[Override media MIME type]:mime:' \\
     '--idempotency-key[Idempotency key]:key:' \\
     '--agent-name[Calling agent name]:name:' \\
     '--yes[Confirm publish-capable or destructive writes]' \\
@@ -2309,7 +2650,7 @@ _unipost "$@"
 function bashCompletion() {
   return `# bash completion for unipost
 _unipost_completion() {
-  local words="init quickstart auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media get analytics summary analytics posts analytics platforms analytics platform examples posts.create agent plan agent plan-publish agent bootstrap agent capabilities agent context agent guide agent mcp-config doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
+  local words="init quickstart auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create agent plan agent plan-publish agent bootstrap agent capabilities agent context agent guide agent mcp-config doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --content-type --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
   COMPREPLY=($(compgen -W "$words" -- "\${COMP_WORDS[COMP_CWORD]}"))
 }
 complete -F _unipost_completion unipost
@@ -2322,6 +2663,9 @@ complete -c unipost -a "auth status" -d "Verify the configured UniPost credentia
 complete -c unipost -a "profiles list" -d "List profiles"
 complete -c unipost -a "connect create" -d "Create a Connect session"
 complete -c unipost -a "accounts list" -d "List connected accounts"
+complete -c unipost -a "accounts health" -d "Get account health diagnostics"
+complete -c unipost -a "accounts capabilities" -d "Get account platform capabilities"
+complete -c unipost -a "accounts metrics" -d "Get account metrics"
 complete -c unipost -a "posts list" -d "List posts"
 complete -c unipost -a "posts get" -d "Get a post"
 complete -c unipost -a "posts validate" -d "Validate a post"
@@ -2331,7 +2675,9 @@ complete -c unipost -a "posts schedule" -d "Schedule a post"
 complete -c unipost -a "posts wait" -d "Wait for post status"
 complete -c unipost -a "posts cancel" -d "Cancel a post"
 complete -c unipost -a "posts retry" -d "Retry a failed result"
+complete -c unipost -a "media upload" -d "Upload local media"
 complete -c unipost -a "media get" -d "Get media status"
+complete -c unipost -a "media wait" -d "Wait for media readiness"
 complete -c unipost -a "analytics summary" -d "Get analytics summary"
 complete -c unipost -a "analytics platforms" -d "Get analytics platforms"
 complete -c unipost -a "agent plan" -d "Build a safe execution plan"
@@ -2350,6 +2696,7 @@ complete -c unipost -l to -d "End date"
 complete -c unipost -l at -d "Schedule timestamp"
 complete -c unipost -l schedule-at -d "Schedule timestamp"
 complete -c unipost -l from-file -d "Read request JSON"
+complete -c unipost -l content-type -d "Override media MIME type"
 complete -c unipost -l idempotency-key -d "Idempotency key"
 complete -c unipost -l agent-name -d "Calling agent name"
 complete -c unipost -l yes -d "Confirm write"
@@ -2531,6 +2878,19 @@ function renderAccounts(accountList) {
   }).join("\n")}\n`;
 }
 
+function renderAccountDiagnostic(kind, accountID, payload) {
+  if (kind === "health") {
+    return `${accountID}\t${payload.platform || ""}\t${payload.status || ""}${payload.last_error?.code ? `\t${payload.last_error.code}` : ""}\n`;
+  }
+  if (kind === "capabilities") {
+    return `${accountID}\t${payload.platform || ""}\tcapabilities loaded\n`;
+  }
+  if (kind === "metrics") {
+    return `${accountID}\t${payload.platform || ""}\tfollowers=${payload.follower_count ?? ""}\tposts=${payload.post_count ?? ""}\n`;
+  }
+  return `${accountID}\t${kind}\n`;
+}
+
 function renderPosts(postList) {
   if (postList.length === 0) {
     return "No posts found.\n";
@@ -2543,6 +2903,19 @@ function renderPost(post) {
     return "Post not found.\n";
   }
   return `${post.id || "post"}\t${post.status || ""}${post.caption ? `\t${post.caption}` : ""}\n`;
+}
+
+function renderMedia(mediaItem) {
+  if (!mediaItem) {
+    return "Media not found.\n";
+  }
+  const lines = [
+    `${mediaItem.id || "media"}\t${mediaItem.status || ""}\t${mediaItem.content_type || ""}\t${mediaItem.size_bytes ?? ""}`.trim(),
+  ];
+  if (mediaReady(mediaItem)) {
+    lines.push(`Next: add "${mediaItem.id}" to media_ids in post.json, then run unipost posts create --from-file post.json --dry-run --json`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function renderDoctor(checks, workspace, telemetry) {
@@ -2570,14 +2943,15 @@ Usage:
   unipost auth status [--json] [--api-key <key>] [--base-url <url>]
   unipost profiles list|create|use [--json]
   unipost connect create|get|wait [--json]
-  unipost accounts list|get [--json]
+  unipost accounts list|get|health|capabilities|metrics [--json]
   unipost posts list|get|analytics [--json]
   unipost posts validate|draft --account <id> --caption <text> [--json]
   unipost posts create --account <id> --caption <text> --yes --idempotency-key <key>
   unipost posts create --from-file post.json --dry-run [--json]
   unipost posts schedule --account <id> --caption <text> --at <timestamp> --yes --idempotency-key <key>
   unipost posts wait|cancel|retry <post_id> [--json]
-  unipost media get <media_id> [--json]
+  unipost media upload <file_path> [--content-type <mime>] [--json]
+  unipost media get|wait <media_id> [--json]
   unipost analytics summary|posts|platforms|platform [--json]
   unipost examples posts.create --lang <curl|node>
   unipost agent plan --intent <intent> [--json]
@@ -2591,7 +2965,7 @@ Global flags:
   --client <codex|claude-code|cursor|windsurf>, --profile <id>, --account <id>
   --platform <name>, --caption <text>, --status <status>, --result <id>
   --from <date>, --to <date>, --at <timestamp>, --schedule-at <timestamp>
-  --from-file <path>, --yes, --idempotency-key <key>, --agent-name <name>
+  --from-file <path>, --content-type <mime>, --yes, --idempotency-key <key>, --agent-name <name>
   --no-color, --no-telemetry
 `;
 }
