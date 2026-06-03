@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -590,11 +590,278 @@ test("posts validate and draft send the legacy account_ids request shape", async
   });
 });
 
+test("Phase 3 posts create --from-file --dry-run validates without publishing", async () => {
+  await withTempConfig(async (configDir) => {
+    const postPath = join(configDir, "post.json");
+    await writeFile(postPath, JSON.stringify({
+      account_ids: ["sa_1"],
+      caption: "Dry run launch",
+      media_ids: ["med_1"],
+      scheduled_at: "2026-06-10T09:00:00Z",
+      idempotency_key: "dry-run-key",
+    }));
+
+    const requests = [];
+    await withServer(async (req, res) => {
+      requests.push({ url: req.url, method: req.method, body: await readRequestJson(req) });
+      if (req.method === "POST" && req.url === "/v1/posts/validate") {
+        writeJson(res, 200, {
+          data: { valid: true, errors: [], warnings: [], normalized: true },
+          request_id: "req_dry_run",
+        });
+        return;
+      }
+      writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+    }, async (baseUrl) => {
+      const result = await runCli(["posts", "create", "--from-file", postPath, "--dry-run", "--json", "--base-url", baseUrl], {
+        env: { UNIPOST_API_KEY: "up_test_valid" },
+      });
+
+      assert.equal(result.code, 0);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.data.dry_run, true);
+      assert.equal(body.data.validation.valid, true);
+      assert.deepEqual(body.data.payload.account_ids, ["sa_1"]);
+      assert.deepEqual(requests, [{
+        url: "/v1/posts/validate",
+        method: "POST",
+        body: {
+          account_ids: ["sa_1"],
+          caption: "Dry run launch",
+          media_ids: ["med_1"],
+          scheduled_at: "2026-06-10T09:00:00Z",
+          idempotency_key: "dry-run-key",
+        },
+      }]);
+    });
+  });
+});
+
+test("Phase 3 live post creation is blocked without confirmation and idempotency", async () => {
+  await withServer(async (req, res) => {
+    const body = await readRequestJson(req);
+    assert.equal(req.method, "POST");
+    assert.equal(req.url, "/v1/posts");
+    assert.equal(req.headers["idempotency-key"], "idem_live");
+    assert.equal(req.headers["x-unipost-cli-command"], "posts create");
+    assert.equal(req.headers["x-unipost-agent-name"], "codex");
+    assert.deepEqual(body, { caption: "Live launch", account_ids: ["sa_1"] });
+    writeJson(res, 201, {
+      data: { id: "post_live", caption: "Live launch", status: "publishing" },
+      request_id: "req_live_create",
+    });
+  }, async (baseUrl) => {
+    const env = { UNIPOST_API_KEY: "up_test_valid" };
+
+    const missingYes = await runCli([
+      "posts", "create", "--account", "sa_1", "--caption", "Live launch", "--non-interactive", "--json", "--base-url", baseUrl,
+    ], { env });
+    assert.equal(missingYes.code, 9);
+    assert.equal(JSON.parse(missingYes.stdout).error.normalized_code, "unsafe_action_blocked");
+
+    const missingIdempotency = await runCli([
+      "posts", "create", "--account", "sa_1", "--caption", "Live launch", "--yes", "--non-interactive", "--json", "--base-url", baseUrl,
+    ], { env });
+    assert.equal(missingIdempotency.code, 3);
+    assert.equal(JSON.parse(missingIdempotency.stdout).error.normalized_code, "missing_required_input");
+
+    const ok = await runCli([
+      "posts", "create", "--account", "sa_1", "--caption", "Live launch", "--yes", "--idempotency-key", "idem_live", "--agent-name", "codex", "--json", "--base-url", baseUrl,
+    ], { env });
+    assert.equal(ok.code, 0);
+    assert.equal(JSON.parse(ok.stdout).data.post.id, "post_live");
+  });
+});
+
+test("Phase 3 posts schedule maps to create with scheduled_at", async () => {
+  await withServer(async (req, res) => {
+    const body = await readRequestJson(req);
+    assert.equal(req.method, "POST");
+    assert.equal(req.url, "/v1/posts");
+    assert.equal(req.headers["idempotency-key"], "idem_sched");
+    assert.deepEqual(body, {
+      caption: "Scheduled launch",
+      account_ids: ["sa_1"],
+      scheduled_at: "2026-06-10T09:00:00Z",
+    });
+    writeJson(res, 201, {
+      data: {
+        id: "post_scheduled",
+        caption: "Scheduled launch",
+        status: "scheduled",
+        scheduled_at: "2026-06-10T09:00:00Z",
+      },
+      request_id: "req_schedule",
+    });
+  }, async (baseUrl) => {
+    const result = await runCli([
+      "posts", "schedule", "--account", "sa_1", "--caption", "Scheduled launch", "--at", "2026-06-10T09:00:00Z", "--yes", "--idempotency-key", "idem_sched", "--json", "--base-url", baseUrl,
+    ], {
+      env: { UNIPOST_API_KEY: "up_test_valid" },
+    });
+
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.post.status, "scheduled");
+    assert.equal(body.data.post.scheduled_at, "2026-06-10T09:00:00Z");
+  });
+});
+
+test("Phase 3 posts wait cancel and retry use canonical lifecycle endpoints", async () => {
+  let postReads = 0;
+  await withServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/posts/post_1") {
+      postReads += 1;
+      writeJson(res, 200, {
+        data: postReads === 1 ? {
+          id: "post_1",
+          status: "publishing",
+          results: [{ id: "res_1", status: "pending" }],
+        } : {
+          id: "post_1",
+          status: "partial",
+          results: [{ id: "res_1", status: "failed" }],
+        },
+        request_id: "req_post_get",
+      });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/v1/posts/post_1/cancel") {
+      writeJson(res, 200, { data: { id: "post_1", status: "cancelled" }, request_id: "req_cancel" });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/v1/posts/post_1/results/res_1/retry") {
+      writeJson(res, 202, { data: { id: "job_1", status: "queued" }, request_id: "req_retry" });
+      return;
+    }
+    writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+  }, async (baseUrl) => {
+    const env = { UNIPOST_API_KEY: "up_test_valid", UNIPOST_TEST_POLL_MS: "1" };
+
+    const wait = await runCli(["posts", "wait", "post_1", "--timeout", "2", "--json", "--base-url", baseUrl], { env });
+    assert.equal(wait.code, 0);
+    const waitBody = JSON.parse(wait.stdout);
+    assert.equal(waitBody.data.post.status, "partial");
+    assert.equal(waitBody.data.attempts, 2);
+
+    const cancelBlocked = await runCli(["posts", "cancel", "post_1", "--json", "--base-url", baseUrl], { env });
+    assert.equal(cancelBlocked.code, 9);
+
+    const cancel = await runCli(["posts", "cancel", "post_1", "--yes", "--json", "--base-url", baseUrl], { env });
+    assert.equal(cancel.code, 0);
+    assert.equal(JSON.parse(cancel.stdout).data.post.status, "canceled");
+
+    const retry = await runCli(["posts", "retry", "post_1", "--result", "res_1", "--yes", "--json", "--base-url", baseUrl], { env });
+    assert.equal(retry.code, 0);
+    assert.equal(JSON.parse(retry.stdout).data.retry.status, "queued");
+  });
+});
+
+test("Phase 3 read commands expose stable JSON for posts media and analytics", async () => {
+  await withServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/posts?status=failed&limit=2&cursor=cur_1") {
+      writeJson(res, 200, {
+        data: [{ id: "post_failed", status: "failed" }],
+        meta: { total: 1, limit: 2, next_cursor: "cur_2" },
+        request_id: "req_posts_list",
+      });
+      return;
+    }
+    if (req.method === "GET" && req.url === "/v1/posts/post_failed") {
+      writeJson(res, 200, { data: { id: "post_failed", status: "failed" }, request_id: "req_post_get" });
+      return;
+    }
+    if (req.method === "GET" && req.url === "/v1/posts/post_failed/analytics") {
+      writeJson(res, 200, { data: { post_id: "post_failed", impressions: 42 }, request_id: "req_post_analytics" });
+      return;
+    }
+    if (req.method === "GET" && req.url === "/v1/media/med_1") {
+      writeJson(res, 200, { data: { id: "med_1", status: "ready" }, request_id: "req_media_get" });
+      return;
+    }
+    if (req.method === "GET" && req.url === "/v1/analytics/summary?from=2026-06-01&to=2026-06-30") {
+      writeJson(res, 200, { data: { posts: { total: 3 } }, request_id: "req_analytics_summary" });
+      return;
+    }
+    if (req.method === "GET" && req.url === "/v1/analytics/platforms") {
+      writeJson(res, 200, { data: [{ platform: "linkedin", posts: 2 }], request_id: "req_analytics_platforms" });
+      return;
+    }
+    if (req.method === "GET" && req.url === "/v1/analytics/platforms/linkedin?from=2026-06-01") {
+      writeJson(res, 200, { data: { platform: "linkedin", posts: 2 }, request_id: "req_analytics_platform" });
+      return;
+    }
+    writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: `Not found: ${req.url}` } });
+  }, async (baseUrl) => {
+    const env = { UNIPOST_API_KEY: "up_test_valid" };
+
+    const list = await runCli(["posts", "list", "--status", "failed", "--limit", "2", "--cursor", "cur_1", "--json", "--base-url", baseUrl], { env });
+    assert.equal(list.code, 0);
+    assert.equal(JSON.parse(list.stdout).data.posts[0].status, "failed");
+    assert.equal(JSON.parse(list.stdout).meta.pagination.next_cursor, "cur_2");
+
+    const get = await runCli(["posts", "get", "post_failed", "--json", "--base-url", baseUrl], { env });
+    assert.equal(get.code, 0);
+    assert.equal(JSON.parse(get.stdout).data.post.id, "post_failed");
+
+    const postAnalytics = await runCli(["posts", "analytics", "post_failed", "--json", "--base-url", baseUrl], { env });
+    assert.equal(postAnalytics.code, 0);
+    assert.equal(JSON.parse(postAnalytics.stdout).data.analytics.impressions, 42);
+
+    const media = await runCli(["media", "get", "med_1", "--json", "--base-url", baseUrl], { env });
+    assert.equal(media.code, 0);
+    assert.equal(JSON.parse(media.stdout).data.media.status, "ready");
+
+    const summary = await runCli(["analytics", "summary", "--from", "2026-06-01", "--to", "2026-06-30", "--json", "--base-url", baseUrl], { env });
+    assert.equal(summary.code, 0);
+    assert.equal(JSON.parse(summary.stdout).data.summary.posts.total, 3);
+
+    const platforms = await runCli(["analytics", "platforms", "--json", "--base-url", baseUrl], { env });
+    assert.equal(platforms.code, 0);
+    assert.equal(JSON.parse(platforms.stdout).data.platforms[0].platform, "linkedin");
+
+    const platform = await runCli(["analytics", "platform", "linkedin", "--from", "2026-06-01", "--json", "--base-url", baseUrl], { env });
+    assert.equal(platform.code, 0);
+    assert.equal(JSON.parse(platform.stdout).data.platform.platform, "linkedin");
+  });
+});
+
+test("Phase 3 agent plan returns executable steps and required confirmations", async () => {
+  await withTempConfig(async (configDir) => {
+    const postPath = join(configDir, "plan-post.json");
+    await writeFile(postPath, JSON.stringify({
+      account_ids: ["sa_1"],
+      caption: "Plan launch",
+      scheduled_at: "2026-06-10T09:00:00Z",
+    }));
+
+    const plan = await runCli(["agent", "plan", "--intent", "plan_publish_post", "--from-file", postPath, "--json"]);
+    assert.equal(plan.code, 0);
+    const body = JSON.parse(plan.stdout);
+    assert.equal(body.data.intent, "plan_publish_post");
+    assert.equal(body.data.safe_to_execute_without_user, false);
+    assert.deepEqual(body.data.missing_inputs, []);
+    assert.deepEqual(body.data.required_user_confirmations, ["approve_live_publish"]);
+    assert.deepEqual(body.data.actions.map((action) => action.canonical_action), ["posts.validate", "posts.create_dry_run", "posts.create"]);
+    assert.equal(body.data.actions[1].args["--dry-run"], true);
+    assert.equal(body.data.actions[1].args["--from-file"], postPath);
+    assert.equal(body.data.actions[2].args["--schedule-at"], "2026-06-10T09:00:00Z");
+
+    const alias = await runCli(["agent", "plan-publish", "--from-file", postPath, "--json"]);
+    assert.equal(alias.code, 0);
+    assert.equal(JSON.parse(alias.stdout).data.intent, "plan_publish_post");
+
+    const missing = await runCli(["agent", "plan", "--intent", "create_draft_post", "--caption", "Only caption", "--json"]);
+    assert.equal(missing.code, 0);
+    assert.deepEqual(JSON.parse(missing.stdout).data.missing_inputs, ["account_ids"]);
+  });
+});
+
 test("agent capabilities and context expose stable machine-readable discovery", async () => {
   const capabilities = await runCli(["agent", "capabilities", "--json"]);
   assert.equal(capabilities.code, 0);
   const capabilitiesBody = JSON.parse(capabilities.stdout);
-  assert.equal(capabilitiesBody.data.catalog_version, "2026-06-02.phase2");
+  assert.equal(capabilitiesBody.data.catalog_version, "2026-06-02.phase3");
   const draftIntent = capabilitiesBody.data.intents.find((intent) => intent.name === "create_draft_post");
   assert.equal(draftIntent.safety_level, "draft_write");
   assert.equal(draftIntent.canonical_action, "posts.draft");
