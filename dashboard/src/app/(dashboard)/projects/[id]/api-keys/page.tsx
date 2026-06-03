@@ -23,7 +23,7 @@ import {
 import { Plus, Key, AlertTriangle, Terminal, Copy, Check } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
 
-type AgentClient = "codex" | "claude-code";
+type SetupClient = "terminal" | "codex" | "claude-code";
 
 const SETUP_API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev").replace(/\/+$/, "");
 
@@ -42,7 +42,7 @@ export default function ApiKeysPage() {
   const [copied, setCopied] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
-  const [setupClient, setSetupClient] = useState<AgentClient>("codex");
+  const [setupClient, setSetupClient] = useState<SetupClient>("terminal");
   const [setupPrompt, setSetupPrompt] = useState<CliSetupTokenResponse | null>(null);
   const [setupCreating, setSetupCreating] = useState(false);
   const [setupCopied, setSetupCopied] = useState(false);
@@ -123,7 +123,9 @@ export default function ApiKeysPage() {
     setSetupCopied(true);
     setTimeout(() => setSetupCopied(false), 2000);
   }
-  const setupCommandPreview = setupPrompt?.command || `unipost agent bootstrap --client ${setupClient} --setup-token <token> --base-url ${SETUP_API_BASE_URL} --json`;
+  const setupCommandPreview = setupPrompt?.command || (setupClient === "terminal"
+    ? `unipost auth login --setup-token <token> --client terminal --base-url ${SETUP_API_BASE_URL} --json`
+    : `unipost agent bootstrap --client ${setupClient} --setup-token <token> --base-url ${SETUP_API_BASE_URL} --json`);
 
   return (
     <>
@@ -135,19 +137,20 @@ export default function ApiKeysPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <Dialog open={setupOpen} onOpenChange={(open) => { setSetupOpen(open); if (!open) { setSetupPrompt(null); setSetupCopied(false); } }}>
             <DialogTrigger render={<button className="dbtn dbtn-ghost" />}>
-              <Terminal style={{ width: 13, height: 13 }} /> Set up UniPost CLI for agents
+              <Terminal style={{ width: 13, height: 13 }} /> Set up UniPost CLI
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Set up UniPost CLI for agents</DialogTitle>
+                <DialogTitle>Set up UniPost CLI</DialogTitle>
                 <DialogDescription>
-                  Install once with npm install -g @unipost/cli, then create a short-lived setup token that signs the UniPost CLI in. This does not install or configure the selected AI agent.
+                  Install once with npm install -g @unipost/cli, then create a short-lived setup token that signs the UniPost CLI in. Choose Terminal for command line only. Choose Codex or Claude Code only when a local agent will use UniPost.
                 </DialogDescription>
               </DialogHeader>
               <div style={{ padding: "8px 0" }}>
-                <label className="dform-label">Client</label>
+                <label className="dform-label">Setup type</label>
                 <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
                   {([
+                    ["terminal", "Terminal"],
                     ["codex", "Codex"],
                     ["claude-code", "Claude Code"],
                   ] as const).map(([client, label]) => (
@@ -185,7 +188,15 @@ export default function ApiKeysPage() {
                       Expires {new Date(setupPrompt.expires_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                     </div>
                     <div className="dt-body-sm" style={{ marginTop: 8 }}>
-                      After this command succeeds, run <code>unipost agent install --client {setupClient} --json</code> and follow the returned instructions if you want the selected agent to use UniPost.
+                      {setupClient === "terminal" ? (
+                        <>
+                          After this command succeeds, run <code>unipost auth status --json</code> to confirm CLI auth.
+                        </>
+                      ) : (
+                        <>
+                          After this command succeeds, run <code>unipost agent install --client {setupClient} --json</code> and follow the returned instructions so the selected agent can use UniPost.
+                        </>
+                      )}
                     </div>
                   </>
                 )}

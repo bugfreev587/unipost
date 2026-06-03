@@ -20,7 +20,10 @@ test("CLI docs explain setup, configuration, and common fixes", async () => {
   assert.match(source, /CLI self-management/);
   assert.match(source, /unipost upgrade/);
   assert.match(source, /unipost self help/);
-  assert.match(source, /Copy the generated `unipost agent bootstrap/);
+  assert.match(source, /Choose Terminal/);
+  assert.match(source, /Copy the generated `unipost auth login/);
+  assert.match(source, /--client terminal/);
+  assert.match(source, /Path B is for Codex, Claude Code, Cursor/);
   assert.match(source, /Configure the CLI/);
   assert.match(source, /Common issues/);
   assert.match(source, /Dashboard setup token/);
@@ -40,10 +43,11 @@ test("CLI docs explain setup, configuration, and common fixes", async () => {
 test("API key setup dialog does not imply Codex is configured by auth alone", async () => {
   const source = await readFile(join(root, "src/app/(dashboard)/projects/[id]/api-keys/page.tsx"), "utf8");
 
-  assert.match(source, /Set up UniPost CLI for agents/);
+  assert.match(source, /Set up UniPost CLI/);
   assert.match(source, /Install once with npm install -g @unipost\/cli/);
   assert.match(source, /create a short-lived setup token that signs the UniPost CLI in/i);
-  assert.match(source, /This does not install or configure the selected AI agent/);
+  assert.match(source, /Choose Terminal for command line only/);
+  assert.match(source, /Choose Codex or Claude Code only when a local agent will use UniPost/);
 });
 
 test("CLI README explains install-first usage and separate agent install", async () => {
@@ -54,6 +58,7 @@ test("CLI README explains install-first usage and separate agent install", async
   assert.match(source, /Use `unipost \.\.\.` by default/);
   assert.match(source, /Update with `unipost upgrade`/);
   assert.match(source, /unipost self help/);
+  assert.match(source, /unipost auth login --setup-token ust_\.\.\. --client terminal/);
   assert.doesNotMatch(source, /npx -y @unipost\/cli/);
   assert.doesNotMatch(source, /No-install one-off alternative/);
   assert.match(source, /To let a local AI agent use UniPost/);

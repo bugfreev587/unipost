@@ -117,14 +117,13 @@ func (h *CLISetupTokenHandler) Issue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apiBaseURL := h.cliSetupAPIBaseURL(r)
-	command := "unipost agent bootstrap --client " + client + " --setup-token " + setupToken + " --base-url " + apiBaseURL + " --json"
 	writeCreated(w, cliSetupTokenIssueResponse{
 		SetupToken:        setupToken,
 		Client:            client,
 		KeyName:           keyName,
 		ExpiresAt:         expiresAt,
-		Command:           command,
-		RecommendedPrompt: "Run the command once in the agent terminal, then rerun `unipost agent bootstrap --base-url " + apiBaseURL + " --json` for context.",
+		Command:           cliSetupCommand(client, setupToken, apiBaseURL),
+		RecommendedPrompt: cliSetupRecommendedPrompt(client, apiBaseURL),
 	})
 }
 
@@ -228,11 +227,25 @@ func generateCLISetupToken() (string, error) {
 func normalizeCLIClient(client string) string {
 	normalized := strings.ToLower(strings.TrimSpace(client))
 	switch normalized {
-	case "codex", "claude-code", "cursor", "windsurf":
+	case "terminal", "codex", "claude-code", "cursor", "windsurf":
 		return normalized
 	default:
 		return "codex"
 	}
+}
+
+func cliSetupCommand(client, setupToken, apiBaseURL string) string {
+	if client == "terminal" {
+		return "unipost auth login --setup-token " + setupToken + " --client terminal --base-url " + apiBaseURL + " --json"
+	}
+	return "unipost agent bootstrap --client " + client + " --setup-token " + setupToken + " --base-url " + apiBaseURL + " --json"
+}
+
+func cliSetupRecommendedPrompt(client, apiBaseURL string) string {
+	if client == "terminal" {
+		return "Run the command once in your terminal, then run `unipost auth status --json` to confirm CLI auth."
+	}
+	return "Run the command once in the agent terminal, then rerun `unipost agent bootstrap --base-url " + apiBaseURL + " --json` for context."
 }
 
 func (h *CLISetupTokenHandler) cliSetupAPIBaseURL(r *http.Request) string {
@@ -285,6 +298,8 @@ func normalizeCLISetupBaseURL(apiBaseURL string) string {
 
 func cliSetupKeyName(client string) string {
 	switch client {
+	case "terminal":
+		return "UniPost CLI"
 	case "claude-code":
 		return "Claude Code CLI"
 	case "cursor":
