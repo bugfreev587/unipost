@@ -6,24 +6,23 @@ const SETUP_SNIPPETS = [
     label: "Dashboard setup token",
     lang: "bash",
     code: `# Dashboard: Project -> API Keys -> Connect with Claude Code / Codex
-unipost auth login --setup-token ust_... --client codex --json
-unipost auth status --json
-unipost agent bootstrap --client codex --json`,
+npx -y @unipost/cli agent bootstrap --client codex --setup-token ust_... --json
+npx -y @unipost/cli auth status --json
+npx -y @unipost/cli agent bootstrap --client codex --json`,
   },
   {
     label: "API key fallback",
     lang: "bash",
     code: `export UNIPOST_API_KEY=up_live_...
-unipost auth login --api-key "$UNIPOST_API_KEY" --json
-unipost auth status --json`,
+npx -y @unipost/cli auth login --api-key "$UNIPOST_API_KEY" --json
+npx -y @unipost/cli auth status --json`,
   },
   {
-    label: "Source beta",
+    label: "Optional global install",
     lang: "bash",
-    code: `cd cli
-npm test
-node bin/unipost.js auth status --json
-node bin/unipost.js agent bootstrap --client codex --json`,
+    code: `npm install -g @unipost/cli
+unipost auth status --json
+unipost agent bootstrap --client codex --json`,
   },
 ];
 
@@ -31,23 +30,23 @@ const CONFIG_SNIPPETS = [
   {
     label: "Check current config",
     lang: "bash",
-    code: `unipost config path --json
-unipost config show --json
-unipost auth status --json`,
+    code: `npx -y @unipost/cli config path --json
+npx -y @unipost/cli config show --json
+npx -y @unipost/cli auth status --json`,
   },
   {
     label: "Use dev API",
     lang: "bash",
-    code: `unipost config set base_url https://dev-api.unipost.dev --json
-unipost config show --json`,
+    code: `npx -y @unipost/cli config set base_url https://dev-api.unipost.dev --json
+npx -y @unipost/cli config show --json`,
   },
   {
     label: "Set defaults",
     lang: "bash",
-    code: `unipost profiles list --json
-unipost config set default_profile_id pr_... --json
-unipost accounts list --json
-unipost accounts health --account sa_... --json`,
+    code: `npx -y @unipost/cli profiles list --json
+npx -y @unipost/cli config set default_profile_id pr_... --json
+npx -y @unipost/cli accounts list --json
+npx -y @unipost/cli accounts health --account sa_... --json`,
   },
 ];
 
@@ -55,13 +54,13 @@ const SAFE_POST_SNIPPETS = [
   {
     label: "Validate and draft",
     lang: "bash",
-    code: `unipost posts validate --account sa_... --caption "Shipping with UniPost CLI."
-unipost posts draft --account sa_... --caption "Shipping with UniPost CLI."`,
+    code: `npx -y @unipost/cli posts validate --account sa_... --caption "Shipping with UniPost CLI."
+npx -y @unipost/cli posts draft --account sa_... --caption "Shipping with UniPost CLI."`,
   },
   {
     label: "Dry-run before approval",
     lang: "bash",
-    code: `unipost posts create \\
+    code: `npx -y @unipost/cli posts create \\
   --from-file post.json \\
   --dry-run \\
   --json`,
@@ -69,7 +68,7 @@ unipost posts draft --account sa_... --caption "Shipping with UniPost CLI."`,
   {
     label: "Approved scheduled publish",
     lang: "bash",
-    code: `unipost posts schedule \\
+    code: `npx -y @unipost/cli posts schedule \\
   --account sa_... \\
   --caption "Shipping with UniPost CLI." \\
   --at 2026-06-10T09:00:00Z \\
@@ -77,21 +76,21 @@ unipost posts draft --account sa_... --caption "Shipping with UniPost CLI."`,
   --idempotency-key user-approved-2026-06-03-001 \\
   --json
 
-unipost posts wait post_... --timeout 120 --json`,
+npx -y @unipost/cli posts wait post_... --timeout 120 --json`,
   },
   {
     label: "Cancel or retry",
     lang: "bash",
-    code: `unipost posts cancel post_... --yes --json
-unipost posts retry post_... --result result_... --yes --json`,
+    code: `npx -y @unipost/cli posts cancel post_... --yes --json
+npx -y @unipost/cli posts retry post_... --result result_... --yes --json`,
   },
   {
     label: "Media upload",
     lang: "bash",
-    code: `unipost media upload ./video.mp4 --json
-unipost media wait med_... --timeout 120 --json
+    code: `npx -y @unipost/cli media upload ./video.mp4 --json
+npx -y @unipost/cli media wait med_... --timeout 120 --json
 
-unipost posts create \\
+npx -y @unipost/cli posts create \\
   --from-file post-with-media.json \\
   --dry-run \\
   --json`,
@@ -99,7 +98,7 @@ unipost posts create \\
   {
     label: "Native fetch example",
     lang: "bash",
-    code: `unipost examples posts.create \\
+    code: `npx -y @unipost/cli examples posts.create \\
   --lang node \\
   --account sa_... \\
   --caption "Shipping with UniPost CLI." \\
@@ -108,12 +107,12 @@ unipost posts create \\
   {
     label: "Structured agent execute",
     lang: "bash",
-    code: `unipost agent plan \\
+    code: `npx -y @unipost/cli agent plan \\
   --intent create_draft_post \\
   --from-file post.json \\
   --json > safe-plan.json
 
-unipost agent execute \\
+npx -y @unipost/cli agent execute \\
   --plan safe-plan.json \\
   --json`,
   },
@@ -171,11 +170,11 @@ const COMMAND_ROWS = [
 ] as const;
 
 const TROUBLESHOOTING_ROWS = [
-  ["API key is missing or invalid", "Use the Dashboard setup token flow first. If you are running in CI, set `UNIPOST_API_KEY`, then run `unipost auth status --json`."],
+  ["API key is missing or invalid", "Use the Dashboard setup token flow first. If you are running in CI, set `UNIPOST_API_KEY`, then run `npx -y @unipost/cli auth status --json`."],
   ["`setup_token_invalid`, `setup_token_expired`, or `setup_token_used`", "Create a fresh Dashboard setup token. Setup tokens are short-lived and single-use, so copy the newest command from Dashboard before retrying."],
   ["`keychain_unavailable`", "The CLI could not store the named key in OS keychain. Retry from a normal logged-in desktop shell, or use `UNIPOST_API_KEY` as the fallback auth path."],
-  ["Wrong API URL", "Run `unipost config show --json`. Production defaults to `https://api.unipost.dev`; for dev validation set `config set base_url https://dev-api.unipost.dev --json`."],
-  ["No profile or account IDs", "Run `unipost profiles list --json`, `unipost quickstart --name \"Brand\" --json`, or `unipost connect create --json`, then check `unipost accounts list --json`."],
+  ["Wrong API URL", "Run `npx -y @unipost/cli config show --json`. Production defaults to `https://api.unipost.dev`; for dev validation set `npx -y @unipost/cli config set base_url https://dev-api.unipost.dev --json`."],
+  ["No profile or account IDs", "Run `npx -y @unipost/cli profiles list --json`, `npx -y @unipost/cli quickstart --name \"Brand\" --json`, or `npx -y @unipost/cli connect create --json`, then check `npx -y @unipost/cli accounts list --json`."],
   ["Live publish is blocked", "Start with `posts validate`, `posts draft`, or `posts create --dry-run`. Only add `--yes` and `--idempotency-key` after the user explicitly approves live or scheduled publishing."],
 ] as const;
 
@@ -193,7 +192,7 @@ export default function CliPage() {
         <div>
           <div className="cli-status-label">Beta status</div>
           <p>
-            Dashboard setup tokens and API-key fallback are available now. A setup token creates a named revocable CLI key and stores it in OS keychain; <code>UNIPOST_API_KEY</code> remains the CI-friendly fallback. Public npm release and browser/device auth remain later phases; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
+            Dashboard setup tokens, npm-based <code>npx -y @unipost/cli</code> setup, and API-key fallback are available now. A setup token creates a named revocable CLI key and stores it in OS keychain; <code>UNIPOST_API_KEY</code> remains the CI-friendly fallback. Browser/device auth remains a later auth surface; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
           </p>
         </div>
         <div className="cli-phase-pill">Agent setup beta</div>
@@ -217,7 +216,7 @@ export default function CliPage() {
         columns={["Step", "What to do"]}
         rows={[
           ["1. Sign in", "In Dashboard, open Project -> API Keys -> Connect with Claude Code / Codex, copy the setup-token command, and run it in the terminal."],
-          ["2. Verify auth", "Run `unipost auth status --json`. The result should show the active credential source and the configured API base URL."],
+          ["2. Verify auth", "Run `npx -y @unipost/cli auth status --json`. The result should show the active credential source and the configured API base URL."],
           ["3. Pick defaults", "Run `profiles list`, `accounts list`, and `accounts health`; set `default_profile_id` if you want shorter commands later."],
         ]}
       />

@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCallback);
 
 const CLI_VERSION = "0.1.0";
+const CLI_RUNNER = "npx -y @unipost/cli";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
 const DOCS_CLI_URL = "https://unipost.dev/docs/cli";
@@ -550,8 +551,8 @@ async function loginWithSetupToken(context) {
         stored_secret: true,
         config_path: configPath(context),
         next_actions: [
-          "Run unipost auth status --json to confirm keychain-backed auth.",
-          "Run unipost agent bootstrap --json before agent workflows.",
+          `Run ${CLI_RUNNER} auth status --json to confirm keychain-backed auth.`,
+          `Run ${CLI_RUNNER} agent bootstrap --json before agent workflows.`,
         ],
       },
       meta: {
@@ -883,7 +884,7 @@ async function init(context) {
         setup_token_supported: true,
         next_actions: [
           "Open UniPost Dashboard API Keys and choose Connect with Claude Code / Codex.",
-          "Run unipost init --setup-token <token> --json once, or set UNIPOST_API_KEY for fallback auth.",
+          `Run ${CLI_RUNNER} init --setup-token <token> --json once, or set UNIPOST_API_KEY for fallback auth.`,
         ],
       },
       warnings: [{
@@ -1739,7 +1740,7 @@ async function examples(context, subcommand) {
         example: "mcp.claude-code",
         client: "claude-code",
         content,
-        auth_test_command: "unipost agent mcp-test --json",
+        auth_test_command: `${CLI_RUNNER} agent mcp-test --json`,
       },
       human: `${content}\n`,
     });
@@ -1845,7 +1846,7 @@ async function agentPlan(context, intent) {
         safe_to_execute_without_user: true,
         actions: [{
           canonical_action: "agent.bootstrap",
-          command: "unipost agent bootstrap",
+          command: `${CLI_RUNNER} agent bootstrap`,
           args: { "--json": true },
           safety_level: "read_only",
         }],
@@ -2046,7 +2047,7 @@ async function agentPlan(context, intent) {
     code: "invalid_argument",
     normalizedCode: "invalid_argument",
     message: `Unsupported agent intent: ${normalizedIntent}`,
-    hint: "Run unipost agent capabilities --json to list supported intents.",
+    hint: `Run ${CLI_RUNNER} agent capabilities --json to list supported intents.`,
     docsUrl: DOCS_CLI_URL,
     exitCode: EXIT.invalidArgs,
   });
@@ -2196,7 +2197,7 @@ function agentCapabilities() {
         {
           name: "diagnose_setup",
           description: "Check auth, workspace, profile and account readiness for an agent.",
-          command: "unipost agent bootstrap --json",
+          command: `${CLI_RUNNER} agent bootstrap --json`,
           canonical_action: "agent.bootstrap",
           safety_level: "read_only",
           required_inputs: [],
@@ -2212,7 +2213,7 @@ function agentCapabilities() {
         {
           name: "diagnose_account",
           description: "Read account health, capabilities and metrics for support diagnostics.",
-          command: "unipost accounts health --account <account_id> --json",
+          command: `${CLI_RUNNER} accounts health --account <account_id> --json`,
           canonical_action: "accounts.diagnose",
           safety_level: "read_only",
           required_inputs: ["account_id"],
@@ -2230,7 +2231,7 @@ function agentCapabilities() {
         {
           name: "create_draft_post",
           description: "Validate copy and create a UniPost draft without publishing externally.",
-          command: "unipost posts draft --account <account_id> --caption <text> --json",
+          command: `${CLI_RUNNER} posts draft --account <account_id> --caption <text> --json`,
           canonical_action: "posts.draft",
           safety_level: "draft_write",
           required_inputs: ["account_ids", "caption"],
@@ -2244,12 +2245,12 @@ function agentCapabilities() {
             },
             additionalProperties: false,
           },
-          preflight: "Run unipost posts validate with the same account_ids and caption before creating a draft.",
+          preflight: `Run ${CLI_RUNNER} posts validate with the same account_ids and caption before creating a draft.`,
         },
         {
           name: "plan_publish_post",
           description: "Plan a live or scheduled publish flow without executing the write.",
-          command: "unipost agent plan --intent plan_publish_post --from-file post.json --json",
+          command: `${CLI_RUNNER} agent plan --intent plan_publish_post --from-file post.json --json`,
           canonical_action: "agent.plan_publish_post",
           safety_level: "live_write_plan",
           required_inputs: ["account_ids", "caption"],
@@ -2375,11 +2376,11 @@ async function agentBootstrap(context) {
         setup_token_supported: true,
         next_actions: [
           "Open UniPost Dashboard API Keys and choose Connect with Claude Code / Codex.",
-          "Run unipost agent bootstrap --setup-token <token> --client <client> --json once.",
+          `Run ${CLI_RUNNER} agent bootstrap --setup-token <token> --client <client> --json once.`,
           "Or set UNIPOST_API_KEY for command-level fallback auth.",
-          "Run unipost init after the API key is available.",
+          `Run ${CLI_RUNNER} init after the API key is available.`,
         ],
-        recommended_prompt: "Ask the user to generate a UniPost CLI setup token in Dashboard, then run `unipost agent bootstrap --setup-token <token> --json` once.",
+        recommended_prompt: `Ask the user to generate a UniPost CLI setup token in Dashboard, then run \`${CLI_RUNNER} agent bootstrap --setup-token <token> --json\` once.`,
       },
       warnings: [{
         code: "auth_setup_required",
@@ -2423,10 +2424,10 @@ function agentGuide(client) {
   return {
     client: normalizedClient,
     recommended_prompt: [
-      "Before using UniPost, run `unipost agent bootstrap --json`.",
-      "For publish requests, call `unipost agent plan --intent plan_publish_post --json` first.",
-      "Run `unipost posts validate --json` or the dry-run command before any publish-capable write.",
-      "Use `unipost posts create --from-file post.json --dry-run --json` before asking for live-publish approval.",
+      `Before using UniPost, run \`${CLI_RUNNER} agent bootstrap --json\`.`,
+      `For publish requests, call \`${CLI_RUNNER} agent plan --intent plan_publish_post --json\` first.`,
+      `Run \`${CLI_RUNNER} posts validate --json\` or the dry-run command before any publish-capable write.`,
+      `Use \`${CLI_RUNNER} posts create --from-file post.json --dry-run --json\` before asking for live-publish approval.`,
       "Never live-publish unless the user explicitly approves the exact action and the command includes --yes plus --idempotency-key.",
     ].join(" "),
     stable_contracts: [
@@ -2451,7 +2452,7 @@ function agentMcpConfig(context, client) {
       transport: "streamable_http",
       endpoint: MCP_ENDPOINT,
       content,
-      auth_test_command: "unipost agent mcp-test --json",
+      auth_test_command: `${CLI_RUNNER} agent mcp-test --json`,
     };
   }
   if (normalizedClient === "codex") {
@@ -2465,7 +2466,7 @@ function agentMcpConfig(context, client) {
       transport: "streamable_http",
       endpoint: MCP_ENDPOINT,
       content,
-      auth_test_command: "unipost agent mcp-test --json",
+      auth_test_command: `${CLI_RUNNER} agent mcp-test --json`,
     };
   }
   const config = {
@@ -2484,14 +2485,14 @@ function agentMcpConfig(context, client) {
     endpoint: MCP_ENDPOINT,
     config,
     content: JSON.stringify(config, null, 2),
-    auth_test_command: "unipost agent mcp-test --json",
+    auth_test_command: `${CLI_RUNNER} agent mcp-test --json`,
   };
 }
 
 function claudeCodeMcpExample() {
   return [
     "export UNIPOST_API_KEY=up_live_...",
-    "unipost agent mcp-test --json",
+    `${CLI_RUNNER} agent mcp-test --json`,
     "",
     "claude mcp add unipost \\",
     "  -t http \\",
@@ -2538,8 +2539,8 @@ function agentInstallInstructions(client) {
     selected_file: file,
     instructions: [
       `Use ${file} as the first-party UniPost instruction package for ${normalizedClient}.`,
-      "Run `unipost agent bootstrap --json`, `unipost agent capabilities --json`, and `unipost agent guide --client <client>` before modifying user projects.",
-      "Use `unipost agent mcp-test --json` before configuring MCP.",
+      `Run \`${CLI_RUNNER} agent bootstrap --json\`, \`${CLI_RUNNER} agent capabilities --json\`, and \`${CLI_RUNNER} agent guide --client <client>\` before modifying user projects.`,
+      `Use \`${CLI_RUNNER} agent mcp-test --json\` before configuring MCP.`,
       "Do not execute live publish plans; use explicit publish commands only after user approval with --yes and --idempotency-key.",
     ].join("\n"),
   };
@@ -2556,7 +2557,7 @@ async function agentExecute(context) {
       code: "missing_required_input",
       normalizedCode: "missing_required_input",
       message: "agent execute found no structured actions in the plan.",
-      hint: "Create a plan with unipost agent plan --intent ... --json.",
+      hint: `Create a plan with ${CLI_RUNNER} agent plan --intent ... --json.`,
       exitCode: EXIT.missingInput,
     });
   }
@@ -2600,8 +2601,8 @@ function validateAgentPlanEnvelope(plan) {
     throw new CliError({
       code: "invalid_agent_plan",
       normalizedCode: "invalid_agent_plan",
-      message: "agent execute requires a JSON envelope produced by unipost agent plan --json.",
-      hint: "Create a fresh plan with unipost agent plan --intent ... --json and pass it with --plan.",
+      message: `agent execute requires a JSON envelope produced by ${CLI_RUNNER} agent plan --json.`,
+      hint: `Create a fresh plan with ${CLI_RUNNER} agent plan --intent ... --json and pass it with --plan.`,
       exitCode: EXIT.validation,
     });
   }
@@ -2621,7 +2622,7 @@ function validateAgentPlanEnvelope(plan) {
       code: "invalid_agent_plan",
       normalizedCode: "invalid_agent_plan",
       message: "agent execute found an invalid agent plan payload.",
-      hint: "Run unipost agent capabilities --json and regenerate the plan with unipost agent plan --json.",
+      hint: `Run ${CLI_RUNNER} agent capabilities --json and regenerate the plan with ${CLI_RUNNER} agent plan --json.`,
       exitCode: EXIT.validation,
     });
   }
@@ -2642,7 +2643,7 @@ function validateAgentExecuteActions(actions) {
         code: "unsupported_agent_execute_action",
         normalizedCode: "unsupported_agent_execute_action",
         message: `agent execute does not support action ${action?.canonical_action || "unknown"}.`,
-        hint: "Run unipost agent capabilities --json and use explicit CLI commands for unsupported actions.",
+        hint: `Run ${CLI_RUNNER} agent capabilities --json and use explicit CLI commands for unsupported actions.`,
         exitCode: EXIT.validation,
       });
     }

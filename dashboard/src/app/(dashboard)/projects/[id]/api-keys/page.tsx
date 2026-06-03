@@ -121,7 +121,7 @@ export default function ApiKeysPage() {
     setSetupCopied(true);
     setTimeout(() => setSetupCopied(false), 2000);
   }
-  const setupCommandPreview = setupPrompt?.command || `unipost agent bootstrap --client ${setupClient} --setup-token <token> --json`;
+  const setupCommandPreview = setupPrompt?.command || `npx -y @unipost/cli agent bootstrap --client ${setupClient} --setup-token <token> --json`;
 
   return (
     <>
