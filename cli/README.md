@@ -19,9 +19,9 @@ Use `unipost ...` by default after installation. The Dashboard setup-token
 command assumes this global install and returns a `unipost agent bootstrap ...`
 command for the current environment.
 
-No-install one-off alternative: if you cannot install globally, run
-`npx -y @unipost/cli ...` instead of `unipost ...`. `npx` runs the package for
-that one command only and does not create a persistent `unipost` command.
+Update with `unipost upgrade`, then run `unipost --version` to confirm the
+installed version. Use `unipost self help` for install, update, version, and
+help commands.
 
 The Dashboard setup-token command signs in the UniPost CLI only. It does not
 install or configure Codex, Claude Code, Cursor, or any other local AI agent.
@@ -75,6 +75,8 @@ UNIPOST_API_KEY=up_live_... unipost agent execute --plan plan.json --json
 UNIPOST_API_KEY=up_live_... unipost examples posts.create --lang node --account sa_...
 UNIPOST_API_KEY=up_live_... unipost examples mcp.claude-code --json
 UNIPOST_API_KEY=up_live_... unipost doctor --json
+unipost upgrade
+unipost self help
 unipost completion zsh
 ```
 

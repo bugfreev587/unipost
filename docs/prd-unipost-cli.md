@@ -277,13 +277,14 @@ That entry point should give users either:
 Recommended command:
 
 ```bash
-npx -y @unipost/cli agent bootstrap --client codex
+npm install -g @unipost/cli
+unipost agent bootstrap --client codex
 ```
 
 Recommended prompt:
 
 ```text
-请帮我接入 UniPost。运行 npx -y @unipost/cli agent bootstrap --client codex，然后根据 CLI 输出继续操作。
+请帮我接入 UniPost。先确认本地已安装 UniPost CLI，然后运行 unipost agent bootstrap --client codex，根据 CLI 输出继续操作。
 ```
 
 The product goal is that the user can speak naturally in Codex / Claude Code:
@@ -1590,19 +1591,19 @@ Expected Dashboard flow:
 Example command shown in Dashboard:
 
 ```bash
-npx -y @unipost/cli agent bootstrap --client codex --setup-token ust_...
+unipost agent bootstrap --client codex --setup-token ust_...
 ```
 
 Example prompt shown in Dashboard:
 
 ```text
-请帮我接入 UniPost API。运行 npx -y @unipost/cli agent bootstrap --client codex，然后根据 CLI 输出继续操作。如果 CLI 需要我选择 profile、平台或账号，请用白话问我确认。
+请帮我接入 UniPost API。先确认本地已安装 UniPost CLI，然后运行 unipost agent bootstrap --client codex，根据 CLI 输出继续操作。如果 CLI 需要我选择 profile、平台或账号，请用白话问我确认。
 ```
 
 The setup token must be short-lived, single-use and scoped to onboarding. If setup-token auth is not available, Dashboard should show the device auth flow instead:
 
 ```bash
-npx -y @unipost/cli agent bootstrap --client codex
+unipost agent bootstrap --client codex
 ```
 
 The CLI then returns an activation URL and short code for the user to approve in browser.
@@ -1619,7 +1620,7 @@ Agent: 我先检查 UniPost CLI 和你的 workspace 状态。
 Agent runs:
 
 ```bash
-npx -y @unipost/cli agent bootstrap --client codex --json
+unipost agent bootstrap --client codex --json
 unipost agent capabilities --client codex --json
 unipost agent guide --client codex
 unipost doctor --json
