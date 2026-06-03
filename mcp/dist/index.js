@@ -4,6 +4,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const zod_1 = require("zod");
+const agent_contract_js_1 = require("./agent-contract.js");
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const API_KEY = process.env.UNIPOST_API_KEY || "";
 async function apiRequest(path, options) {
@@ -124,6 +125,7 @@ server.tool("unipost_list_posts", "List recent posts with their status", {
         ],
     };
 });
+(0, agent_contract_js_1.registerAgentContractTools)(server, apiRequest);
 // Start server
 async function main() {
     if (!API_KEY) {

@@ -387,6 +387,11 @@ test("completion zsh prints a shell completion script without calling the API", 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /#compdef unipost/);
   assert.match(result.stdout, /auth status/);
+  assert.match(result.stdout, /examples mcp\.claude-code/);
+  assert.match(result.stdout, /agent execute/);
+  assert.match(result.stdout, /agent mcp-test/);
+  assert.match(result.stdout, /agent install/);
+  assert.match(result.stdout, /--plan/);
   assert.match(result.stdout, /--client/);
   assert.match(result.stdout, /--limit/);
   assert.match(result.stdout, /--cursor/);
@@ -958,7 +963,7 @@ test("Phase 4 agent capabilities include advanced diagnostics and media operatio
   const capabilities = await runCli(["agent", "capabilities", "--json"]);
   assert.equal(capabilities.code, 0);
   const body = JSON.parse(capabilities.stdout);
-  assert.equal(body.data.catalog_version, "2026-06-03.phase4");
+  assert.equal(body.data.catalog_version, "2026-06-03.phase5");
   assert.ok(body.data.commands.includes("accounts health"));
   assert.ok(body.data.commands.includes("accounts capabilities"));
   assert.ok(body.data.commands.includes("accounts metrics"));
@@ -1001,6 +1006,130 @@ test("Phase 4 agent plan supports account diagnostics and media upload intents",
   });
 });
 
+test("Phase 5 examples and client configs expose MCP ecosystem setup", async () => {
+  const example = await runCli(["examples", "mcp.claude-code", "--json"]);
+  assert.equal(example.code, 0);
+  const exampleBody = JSON.parse(example.stdout);
+  assert.equal(exampleBody.data.example, "mcp.claude-code");
+  assert.match(exampleBody.data.content, /claude mcp add unipost/);
+  assert.match(exampleBody.data.content, /mcp\.unipost\.dev\/mcp/);
+  assert.match(exampleBody.data.content, /agent mcp-test/);
+
+  const cursorConfig = await runCli(["agent", "mcp-config", "cursor", "--json"]);
+  assert.equal(cursorConfig.code, 0);
+  const cursorBody = JSON.parse(cursorConfig.stdout);
+  assert.equal(cursorBody.data.client, "cursor");
+  assert.equal(cursorBody.data.transport, "streamable_http");
+  assert.equal(cursorBody.data.config.mcpServers.unipost.url, "https://mcp.unipost.dev/mcp");
+  assert.equal(cursorBody.data.config.mcpServers.unipost.headers.Authorization, "Bearer ${UNIPOST_API_KEY}");
+
+  const claudeConfig = await runCli(["agent", "mcp-config", "claude-code", "--json"]);
+  assert.equal(claudeConfig.code, 0);
+  assert.match(JSON.parse(claudeConfig.stdout).data.content, /claude mcp add unipost/);
+
+  const install = await runCli(["agent", "install", "--client", "codex", "--json"]);
+  assert.equal(install.code, 0);
+  const installBody = JSON.parse(install.stdout);
+  assert.equal(installBody.data.client, "codex");
+  assert.equal(installBody.data.mode, "instructions");
+  assert.ok(installBody.data.files.some((file) => file.path.endsWith("agent-packages/codex/SKILL.md")));
+  assert.match(installBody.data.instructions, /agent capabilities/);
+});
+
+test("Phase 5 mcp-test validates auth and reports shared catalog readiness", async () => {
+  await withServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/workspace") {
+      writeJson(res, 200, { data: { id: "ws_mcp", name: "MCP Workspace" }, request_id: "req_mcp_test" });
+      return;
+    }
+    writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["agent", "mcp-test", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_test_valid" },
+    });
+
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.authenticated, true);
+    assert.equal(body.data.workspace.id, "ws_mcp");
+    assert.equal(body.data.mcp.endpoint, "https://mcp.unipost.dev/mcp");
+    assert.equal(body.data.catalog_version, "2026-06-03.phase5");
+  });
+});
+
+test("Phase 5 agent execute runs only structured safe actions and rejects live writes", async () => {
+  await withTempConfig(async (configDir) => {
+    const safePlanPath = join(configDir, "safe-plan.json");
+    await writeFile(safePlanPath, JSON.stringify({
+      ok: true,
+      data: {
+        intent: "create_draft_post",
+        actions: [
+          {
+            canonical_action: "posts.validate",
+            args: { "--account": "sa_1", "--caption": "Safe draft", "--json": true },
+          },
+          {
+            canonical_action: "posts.draft",
+            args: { "--account": "sa_1", "--caption": "Safe draft", "--json": true },
+          },
+        ],
+      },
+    }));
+    const livePlanPath = join(configDir, "live-plan.json");
+    await writeFile(livePlanPath, JSON.stringify({
+      ok: true,
+      data: {
+        intent: "plan_publish_post",
+        actions: [
+          {
+            canonical_action: "posts.validate",
+            args: { "--account": "sa_1", "--caption": "Publish me", "--json": true },
+          },
+          {
+            canonical_action: "posts.create",
+            safety_level: "read_only",
+            display_command: "echo unsafe",
+            args: { "--account": "sa_1", "--caption": "Publish me", "--json": true },
+          },
+        ],
+      },
+    }));
+
+    const bodies = [];
+    await withServer(async (req, res) => {
+      if (req.method === "POST" && req.url === "/v1/posts/validate") {
+        bodies.push({ url: req.url, body: await readRequestJson(req) });
+        writeJson(res, 200, { data: { valid: true, warnings: [] }, request_id: "req_validate" });
+        return;
+      }
+      if (req.method === "POST" && req.url === "/v1/posts") {
+        bodies.push({ url: req.url, body: await readRequestJson(req) });
+        writeJson(res, 201, { data: { id: "post_draft", status: "draft" }, request_id: "req_draft" });
+        return;
+      }
+      writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: `Not found: ${req.url}` } });
+    }, async (baseUrl) => {
+      const env = { UNIPOST_API_KEY: "up_test_valid" };
+      const executed = await runCli(["agent", "execute", "--plan", safePlanPath, "--json", "--base-url", baseUrl], { env });
+      assert.equal(executed.code, 0);
+      const executedBody = JSON.parse(executed.stdout);
+      assert.deepEqual(executedBody.data.executed_actions, ["posts.validate", "posts.draft"]);
+      assert.equal(executedBody.data.results[1].data.post.id, "post_draft");
+      assert.deepEqual(bodies.map((entry) => entry.url), ["/v1/posts/validate", "/v1/posts"]);
+      assert.equal(bodies[1].body.status, "draft");
+      bodies.length = 0;
+
+      const rejected = await runCli(["agent", "execute", "--plan", livePlanPath, "--json", "--base-url", baseUrl], { env });
+      assert.equal(rejected.code, 9);
+      const rejectedBody = JSON.parse(rejected.stdout);
+      assert.equal(rejectedBody.ok, false);
+      assert.equal(rejectedBody.error.code, "requires_explicit_publish_command");
+      assert.deepEqual(bodies, []);
+    });
+  });
+});
+
 test("Phase 3 agent plan returns executable steps and required confirmations", async () => {
   await withTempConfig(async (configDir) => {
     const postPath = join(configDir, "plan-post.json");
@@ -1036,7 +1165,7 @@ test("agent capabilities and context expose stable machine-readable discovery", 
   const capabilities = await runCli(["agent", "capabilities", "--json"]);
   assert.equal(capabilities.code, 0);
   const capabilitiesBody = JSON.parse(capabilities.stdout);
-  assert.equal(capabilitiesBody.data.catalog_version, "2026-06-03.phase4");
+  assert.equal(capabilitiesBody.data.catalog_version, "2026-06-03.phase5");
   const draftIntent = capabilitiesBody.data.intents.find((intent) => intent.name === "create_draft_post");
   assert.equal(draftIntent.safety_level, "draft_write");
   assert.equal(draftIntent.canonical_action, "posts.draft");
@@ -1079,9 +1208,8 @@ test("agent guide and mcp-config return client-specific setup content", async ()
   const claudeConfig = await runCli(["agent", "mcp-config", "claude-code", "--json"]);
   assert.equal(claudeConfig.code, 0);
   const claudeBody = JSON.parse(claudeConfig.stdout);
-  const parsedConfig = JSON.parse(claudeBody.data.content);
-  assert.equal(parsedConfig.mcpServers.unipost.command, "unipost");
-  assert.deepEqual(parsedConfig.mcpServers.unipost.args, ["agent", "capabilities", "--json"]);
+  assert.equal(claudeBody.data.endpoint, "https://mcp.unipost.dev/mcp");
+  assert.match(claudeBody.data.content, /claude mcp add unipost/);
 
   const codexConfig = await runCli(["agent", "mcp-config", "codex"]);
   assert.equal(codexConfig.code, 0);

@@ -8,7 +8,12 @@ const CLI_VERSION = "0.1.0";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
 const DOCS_CLI_URL = "https://unipost.dev/docs/cli";
-const AGENT_CATALOG_VERSION = "2026-06-03.phase4";
+const AGENT_CATALOG_VERSION = "2026-06-03.phase5";
+const MCP_ENDPOINT = "https://mcp.unipost.dev/mcp";
+const AGENT_PACKAGE_FILES = [
+  "agent-packages/codex/SKILL.md",
+  "agent-packages/claude-code/CLAUDE.md",
+];
 const TERMINAL_POST_STATUSES = new Set(["published", "failed", "partial", "canceled"]);
 const TERMINAL_MEDIA_STATUSES = new Set(["ready", "failed"]);
 
@@ -76,6 +81,7 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
   "--caption",
   "--timeout",
   "--from-file",
+  "--plan",
 ]);
 
 const GLOBAL_BOOLEAN_FLAGS = new Set([
@@ -1379,6 +1385,18 @@ function dateRangeQuery(context) {
 }
 
 async function examples(context, subcommand) {
+  if (subcommand === "mcp.claude-code") {
+    const content = claudeCodeMcpExample();
+    return envelopeResult({
+      data: {
+        example: "mcp.claude-code",
+        client: "claude-code",
+        content,
+        auth_test_command: "unipost agent mcp-test --json",
+      },
+      human: `${content}\n`,
+    });
+  }
   if (subcommand !== "posts.create") {
     return invalidSubcommand("examples", subcommand);
   }
@@ -1418,6 +1436,9 @@ async function agent(context, subcommand, third) {
   if (subcommand === "plan-publish") {
     return agentPlan(context, "plan_publish_post");
   }
+  if (subcommand === "execute") {
+    return agentExecute(context);
+  }
   if (subcommand === "capabilities") {
     return agentCapabilities(context);
   }
@@ -1446,6 +1467,17 @@ async function agent(context, subcommand, third) {
     return envelopeResult({
       data: config,
       human: `${config.content}\n`,
+    });
+  }
+  if (subcommand === "mcp-test") {
+    return agentMcpTest(context);
+  }
+  if (subcommand === "install") {
+    const client = context.options.client || third || "codex";
+    const install = agentInstallInstructions(client);
+    return envelopeResult({
+      data: install,
+      human: `${install.instructions}\n`,
     });
   }
   return invalidSubcommand("agent", subcommand);
@@ -1790,13 +1822,17 @@ function agentCapabilities() {
         "analytics platforms",
         "analytics platform",
         "examples posts.create",
+        "examples mcp.claude-code",
         "agent plan",
         "agent plan-publish",
+        "agent execute",
         "agent bootstrap",
         "agent capabilities",
         "agent context",
         "agent guide",
         "agent mcp-config",
+        "agent mcp-test",
+        "agent install",
       ],
       intents: [
         {
@@ -2039,32 +2075,282 @@ function agentGuide(client) {
 
 function agentMcpConfig(context, client) {
   const normalizedClient = String(client || "claude-code").toLowerCase();
-  if (normalizedClient === "codex") {
+  const bearer = "Bearer ${UNIPOST_API_KEY}";
+  if (normalizedClient === "claude-code") {
+    const content = [
+      "claude mcp add unipost \\",
+      "  -t http \\",
+      "  --header \"Authorization:Bearer ${UNIPOST_API_KEY}\" \\",
+      `  -- "${MCP_ENDPOINT}"`,
+    ].join("\n");
     return {
-      client: "codex",
-      content: [
-        "[mcp_servers.unipost]",
-        "command = \"unipost\"",
-        "args = [\"agent\", \"capabilities\", \"--json\"]",
-        "env = { UNIPOST_API_KEY = \"$UNIPOST_API_KEY\" }",
-      ].join("\n"),
+      client: "claude-code",
+      transport: "streamable_http",
+      endpoint: MCP_ENDPOINT,
+      content,
+      auth_test_command: "unipost agent mcp-test --json",
     };
   }
-  return {
-    client: normalizedClient,
-    content: JSON.stringify({
-      mcpServers: {
-        unipost: {
-          command: "unipost",
-          args: ["agent", "capabilities", "--json"],
-          env: {
-            UNIPOST_API_KEY: "${UNIPOST_API_KEY}",
-            UNIPOST_BASE_URL: context.options.baseUrl,
-          },
+  if (normalizedClient === "codex") {
+    const content = [
+      "[mcp_servers.unipost]",
+      `url = "${MCP_ENDPOINT}"`,
+      'headers = { Authorization = "Bearer ${UNIPOST_API_KEY}" }',
+    ].join("\n");
+    return {
+      client: "codex",
+      transport: "streamable_http",
+      endpoint: MCP_ENDPOINT,
+      content,
+      auth_test_command: "unipost agent mcp-test --json",
+    };
+  }
+  const config = {
+    mcpServers: {
+      unipost: {
+        url: MCP_ENDPOINT,
+        headers: {
+          Authorization: bearer,
         },
       },
-    }, null, 2),
+    },
   };
+  return {
+    client: normalizedClient,
+    transport: "streamable_http",
+    endpoint: MCP_ENDPOINT,
+    config,
+    content: JSON.stringify(config, null, 2),
+    auth_test_command: "unipost agent mcp-test --json",
+  };
+}
+
+function claudeCodeMcpExample() {
+  return [
+    "export UNIPOST_API_KEY=up_live_...",
+    "unipost agent mcp-test --json",
+    "",
+    "claude mcp add unipost \\",
+    "  -t http \\",
+    "  --header \"Authorization:Bearer ${UNIPOST_API_KEY}\" \\",
+    `  -- "${MCP_ENDPOINT}"`,
+    "",
+    "Then ask Claude Code to run UniPost through the MCP tools and keep live publish behind explicit approval.",
+  ].join("\n");
+}
+
+async function agentMcpTest(context) {
+  requireApiKey(context, "agent mcp-test");
+  const { workspace, response } = await fetchWorkspace(context);
+  return envelopeResult({
+    data: {
+      authenticated: true,
+      workspace,
+      catalog_version: AGENT_CATALOG_VERSION,
+      mcp: {
+        endpoint: MCP_ENDPOINT,
+        transport: "streamable_http",
+        auth_header: "Authorization: Bearer ${UNIPOST_API_KEY}",
+        mirrors_intents: agentIntentNames(),
+      },
+    },
+    meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+    human: `MCP auth ready for workspace ${workspace?.id || "unknown"}.\n`,
+  });
+}
+
+function agentInstallInstructions(client) {
+  const normalizedClient = String(client || "codex").toLowerCase();
+  const file = normalizedClient === "claude-code"
+    ? "agent-packages/claude-code/CLAUDE.md"
+    : "agent-packages/codex/SKILL.md";
+  return {
+    client: normalizedClient,
+    mode: "instructions",
+    automatic_install: false,
+    files: AGENT_PACKAGE_FILES.map((path) => ({
+      path,
+      description: path.endsWith("SKILL.md") ? "Codex skill instructions" : "Claude Code project instructions",
+    })),
+    selected_file: file,
+    instructions: [
+      `Use ${file} as the first-party UniPost instruction package for ${normalizedClient}.`,
+      "Run `unipost agent bootstrap --json`, `unipost agent capabilities --json`, and `unipost agent guide --client <client>` before modifying user projects.",
+      "Use `unipost agent mcp-test --json` before configuring MCP.",
+      "Do not execute live publish plans; use explicit publish commands only after user approval with --yes and --idempotency-key.",
+    ].join("\n"),
+  };
+}
+
+async function agentExecute(context) {
+  requireApiKey(context, "agent execute");
+  const planPath = requireValue(context.options.plan, "--plan <plan.json>", "agent execute requires --plan.");
+  const plan = await readJsonFile(context, planPath);
+  const actions = extractPlanActions(plan);
+  if (actions.length === 0) {
+    throw new CliError({
+      code: "missing_required_input",
+      normalizedCode: "missing_required_input",
+      message: "agent execute found no structured actions in the plan.",
+      hint: "Create a plan with unipost agent plan --intent ... --json.",
+      exitCode: EXIT.missingInput,
+    });
+  }
+  validateAgentExecuteActions(actions);
+
+  const executedActions = [];
+  const results = [];
+  for (const action of actions) {
+    const result = await executeStructuredAgentAction(context, action);
+    executedActions.push(action.canonical_action);
+    results.push({
+      canonical_action: action.canonical_action,
+      safety_level: agentExecuteRegistry()[action.canonical_action].safety_level,
+      data: result.data,
+      warnings: result.warnings || [],
+      meta: result.meta || {},
+    });
+  }
+
+  return envelopeResult({
+    data: {
+      plan: basename(planPath),
+      executed_actions: executedActions,
+      results,
+    },
+    human: `Executed ${executedActions.length} safe agent actions.\n`,
+  });
+}
+
+function extractPlanActions(plan) {
+  const payload = plan?.data && typeof plan.data === "object" ? plan.data : plan;
+  return Array.isArray(payload?.actions) ? payload.actions : [];
+}
+
+function validateAgentExecuteActions(actions) {
+  for (const action of actions) {
+    const spec = agentExecuteRegistry()[action?.canonical_action];
+    if (!spec) {
+      throw new CliError({
+        code: "unsupported_agent_execute_action",
+        normalizedCode: "unsupported_agent_execute_action",
+        message: `agent execute does not support action ${action?.canonical_action || "unknown"}.`,
+        hint: "Run unipost agent capabilities --json and use explicit CLI commands for unsupported actions.",
+        exitCode: EXIT.validation,
+      });
+    }
+    if (spec.safety_level === "live_write") {
+      throw new CliError({
+        code: "requires_explicit_publish_command",
+        normalizedCode: "requires_explicit_publish_command",
+        message: "agent execute cannot execute live publish actions from a plan.",
+        hint: "Ask the user for explicit approval, then use posts create/publish-draft with --yes and --idempotency-key.",
+        exitCode: EXIT.unsafe,
+      });
+    }
+    if (!["read_only", "validate_only", "draft_write"].includes(spec.safety_level)) {
+      throw new CliError({
+        code: "agent_execute_confirmation_required",
+        normalizedCode: "agent_execute_confirmation_required",
+        message: `agent execute cannot run ${spec.safety_level} actions.`,
+        hint: "Use the explicit CLI command after the user approves the exact action.",
+        exitCode: EXIT.unsafe,
+      });
+    }
+  }
+}
+
+async function executeStructuredAgentAction(context, action) {
+  const registry = agentExecuteRegistry();
+  const spec = registry[action?.canonical_action];
+  return spec.run(context, actionOptionsFromArgs(action.args || {}));
+}
+
+function agentExecuteRegistry() {
+  return {
+    "posts.validate": {
+      safety_level: "validate_only",
+      run: (context, options) => posts(derivedContext(context, ["posts", "validate"], options), "validate"),
+    },
+    "posts.draft": {
+      safety_level: "draft_write",
+      run: (context, options) => posts(derivedContext(context, ["posts", "draft"], options), "draft"),
+    },
+    "accounts.health": {
+      safety_level: "read_only",
+      run: (context, options) => accounts(derivedContext(context, ["accounts", "health"], options), "health"),
+    },
+    "accounts.capabilities": {
+      safety_level: "read_only",
+      run: (context, options) => accounts(derivedContext(context, ["accounts", "capabilities"], options), "capabilities"),
+    },
+    "accounts.metrics": {
+      safety_level: "read_only",
+      run: (context, options) => accounts(derivedContext(context, ["accounts", "metrics"], options), "metrics"),
+    },
+    "media.wait": {
+      safety_level: "read_only",
+      run: (context, options) => media(derivedContext(context, ["media", "wait"], options), "wait", options.media_id),
+    },
+    "posts.create": {
+      safety_level: "live_write",
+      run: null,
+    },
+    "posts.schedule": {
+      safety_level: "live_write",
+      run: null,
+    },
+    "posts.publish_draft": {
+      safety_level: "live_write",
+      run: null,
+    },
+  };
+}
+
+function derivedContext(context, commandParts, options) {
+  return {
+    ...context,
+    commandParts,
+    options: {
+      ...context.options,
+      ...options,
+      output: "json",
+      json: true,
+    },
+  };
+}
+
+function actionOptionsFromArgs(args) {
+  const options = {};
+  for (const [key, value] of Object.entries(args || {})) {
+    if (key.startsWith("--")) {
+      options[toCamelCase(key.slice(2))] = value;
+      if (key === "--json") {
+        options.json = Boolean(value);
+      }
+    } else if (key === "account_id") {
+      options.account = value;
+    } else if (key === "account_ids") {
+      options.account = Array.isArray(value) ? value.join(",") : value;
+    } else if (key === "media_id") {
+      options.media_id = value;
+    } else {
+      options[key] = value;
+    }
+  }
+  return options;
+}
+
+function agentIntentNames() {
+  return [
+    "diagnose_setup",
+    "diagnose_account",
+    "create_draft_post",
+    "plan_publish_post",
+    "connect_account",
+    "upload_media",
+    "generate_post_example",
+  ];
 }
 
 async function selectProfile(context, profiles, options = {}) {
@@ -2609,10 +2895,18 @@ _unipost() {
     'analytics posts:Get post analytics rows'
     'analytics platforms:Get analytics platforms'
     'analytics platform:Get analytics for one platform'
+    'examples posts.create:Generate REST examples'
+    'examples mcp.claude-code:Generate Claude Code MCP setup example'
     'agent plan:Build a safe execution plan'
     'agent plan-publish:Plan a publish flow'
+    'agent execute:Execute a structured safe plan'
     'agent bootstrap:Diagnose agent setup'
     'agent capabilities:Print agent command catalog'
+    'agent context:Print grounded workspace context'
+    'agent guide:Print client-specific agent guidance'
+    'agent mcp-config:Generate MCP client config'
+    'agent mcp-test:Validate MCP auth readiness'
+    'agent install:Print agent instruction package setup'
     'doctor:Run local and API diagnostics'
     'completion:Generate shell completion'
   )
@@ -2632,6 +2926,7 @@ _unipost() {
     '--at[Schedule timestamp]:at:' \\
     '--schedule-at[Schedule timestamp]:schedule-at:' \\
     '--from-file[Read request JSON]:file:' \\
+    '--plan[Read structured agent plan JSON]:file:' \\
     '--content-type[Override media MIME type]:mime:' \\
     '--idempotency-key[Idempotency key]:key:' \\
     '--agent-name[Calling agent name]:name:' \\
@@ -2650,7 +2945,7 @@ _unipost "$@"
 function bashCompletion() {
   return `# bash completion for unipost
 _unipost_completion() {
-  local words="init quickstart auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create agent plan agent plan-publish agent bootstrap agent capabilities agent context agent guide agent mcp-config doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --content-type --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
+  local words="init quickstart auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
   COMPREPLY=($(compgen -W "$words" -- "\${COMP_WORDS[COMP_CWORD]}"))
 }
 complete -F _unipost_completion unipost
@@ -2680,8 +2975,17 @@ complete -c unipost -a "media get" -d "Get media status"
 complete -c unipost -a "media wait" -d "Wait for media readiness"
 complete -c unipost -a "analytics summary" -d "Get analytics summary"
 complete -c unipost -a "analytics platforms" -d "Get analytics platforms"
+complete -c unipost -a "examples posts.create" -d "Generate REST examples"
+complete -c unipost -a "examples mcp.claude-code" -d "Generate Claude Code MCP setup example"
 complete -c unipost -a "agent plan" -d "Build a safe execution plan"
+complete -c unipost -a "agent execute" -d "Execute a structured safe plan"
 complete -c unipost -a "agent bootstrap" -d "Diagnose agent setup"
+complete -c unipost -a "agent capabilities" -d "Print agent command catalog"
+complete -c unipost -a "agent context" -d "Print grounded workspace context"
+complete -c unipost -a "agent guide" -d "Print client-specific agent guidance"
+complete -c unipost -a "agent mcp-config" -d "Generate MCP client config"
+complete -c unipost -a "agent mcp-test" -d "Validate MCP auth readiness"
+complete -c unipost -a "agent install" -d "Print agent instruction package setup"
 complete -c unipost -a doctor -d "Run local and API diagnostics"
 complete -c unipost -a completion -d "Generate shell completion"
 complete -c unipost -l json -d "Output the stable JSON envelope"
@@ -2696,6 +3000,7 @@ complete -c unipost -l to -d "End date"
 complete -c unipost -l at -d "Schedule timestamp"
 complete -c unipost -l schedule-at -d "Schedule timestamp"
 complete -c unipost -l from-file -d "Read request JSON"
+complete -c unipost -l plan -d "Read structured agent plan JSON"
 complete -c unipost -l content-type -d "Override media MIME type"
 complete -c unipost -l idempotency-key -d "Idempotency key"
 complete -c unipost -l agent-name -d "Calling agent name"
@@ -2954,8 +3259,11 @@ Usage:
   unipost media get|wait <media_id> [--json]
   unipost analytics summary|posts|platforms|platform [--json]
   unipost examples posts.create --lang <curl|node>
+  unipost examples mcp.claude-code
   unipost agent plan --intent <intent> [--json]
-  unipost agent bootstrap|capabilities|context [--json]
+  unipost agent execute --plan plan.json [--json]
+  unipost agent bootstrap|capabilities|context|guide [--json]
+  unipost agent mcp-config|mcp-test|install [--client <client>] [--json]
   unipost doctor [--json] [--api-key <key>] [--base-url <url>]
   unipost completion <bash|zsh|fish>
 
@@ -2965,7 +3273,8 @@ Global flags:
   --client <codex|claude-code|cursor|windsurf>, --profile <id>, --account <id>
   --platform <name>, --caption <text>, --status <status>, --result <id>
   --from <date>, --to <date>, --at <timestamp>, --schedule-at <timestamp>
-  --from-file <path>, --content-type <mime>, --yes, --idempotency-key <key>, --agent-name <name>
+  --from-file <path>, --plan <path>, --content-type <mime>, --yes
+  --idempotency-key <key>, --agent-name <name>
   --no-color, --no-telemetry
 `;
 }
