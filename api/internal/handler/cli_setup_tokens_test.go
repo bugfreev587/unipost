@@ -24,7 +24,7 @@ func TestCLISetupTokenIssueStoresOnlyHashAndReturnsAgentCommand(t *testing.T) {
 		WithNow(func() time.Time { return now }).
 		WithTokenGenerator(func() (string, error) { return "ust_test_issue_token", nil })
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/cli/setup-tokens", strings.NewReader(`{"client":"codex"}`))
+	req := httptest.NewRequest(http.MethodPost, "https://dev-api.unipost.dev/v1/cli/setup-tokens", strings.NewReader(`{"client":"codex"}`))
 	ctx := auth.SetWorkspaceID(req.Context(), "ws_setup")
 	ctx = context.WithValue(ctx, auth.UserIDKey, "user_admin")
 	req = req.WithContext(ctx)
@@ -57,11 +57,11 @@ func TestCLISetupTokenIssueStoresOnlyHashAndReturnsAgentCommand(t *testing.T) {
 	if env.Data.ExpiresAt.Sub(now.Add(10*time.Minute)) != 0 {
 		t.Fatalf("expires_at = %s", env.Data.ExpiresAt)
 	}
-	wantCommand := "npx -y @unipost/cli agent bootstrap --client codex --setup-token ust_test_issue_token --json"
+	wantCommand := "npx -y @unipost/cli agent bootstrap --client codex --setup-token ust_test_issue_token --base-url https://dev-api.unipost.dev --json"
 	if env.Data.Command != wantCommand {
 		t.Fatalf("command = %q, want %q", env.Data.Command, wantCommand)
 	}
-	if !strings.Contains(env.Data.Prompt, "npx -y @unipost/cli agent bootstrap --json") {
+	if !strings.Contains(env.Data.Prompt, "npx -y @unipost/cli agent bootstrap --base-url https://dev-api.unipost.dev --json") {
 		t.Fatalf("recommended prompt should use npx command, got %q", env.Data.Prompt)
 	}
 	if store.createdSetup.WorkspaceID != "ws_setup" || store.createdSetup.UserID != "user_admin" {

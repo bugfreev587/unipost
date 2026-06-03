@@ -22,6 +22,8 @@ test("api keys page offers agent setup commands for Claude Code and Codex", asyn
   assert.match(source, /codex/);
   assert.match(source, /agent bootstrap --client/);
   assert.match(source, /--setup-token/);
+  assert.match(source, /--base-url/);
+  assert.match(source, /NEXT_PUBLIC_API_URL/);
   assert.match(source, /npx -y @unipost\/cli agent bootstrap --client/);
   assert.doesNotMatch(source, /`unipost agent bootstrap --client/);
   assert.doesNotMatch(source, /setNewKey\(res\.data\.key\).*setup/i);

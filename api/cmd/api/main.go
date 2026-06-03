@@ -401,7 +401,7 @@ func main() {
 	}
 	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
-	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries)
+	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries).WithAPIBaseURL(os.Getenv("API_BASE_URL"))
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker)

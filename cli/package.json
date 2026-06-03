@@ -1,6 +1,6 @@
 {
   "name": "@unipost/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "UniPost CLI for developer quickstarts and AI agent operator workflows.",
   "type": "module",
   "bin": {

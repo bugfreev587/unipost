@@ -6,7 +6,7 @@ const SETUP_SNIPPETS = [
     label: "Dashboard setup token",
     lang: "bash",
     code: `# Dashboard: Project -> API Keys -> Connect with Claude Code / Codex
-npx -y @unipost/cli agent bootstrap --client codex --setup-token ust_... --json
+npx -y @unipost/cli agent bootstrap --client codex --setup-token ust_... --base-url https://api.unipost.dev --json
 npx -y @unipost/cli auth status --json
 npx -y @unipost/cli agent bootstrap --client codex --json`,
   },
@@ -129,7 +129,7 @@ const JSON_ENVELOPE = [
   "meta": {
     "request_id": "req_...",
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.1.0",
+    "cli_version": "0.1.1",
     "command": "accounts list",
     "source": "cli"
   }
@@ -150,7 +150,7 @@ const JSON_ENVELOPE = [
   "meta": {
     "request_id": "req_...",
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.1.0",
+    "cli_version": "0.1.1",
     "command": "auth status",
     "source": "cli"
   }
@@ -173,7 +173,7 @@ const TROUBLESHOOTING_ROWS = [
   ["API key is missing or invalid", "Use the Dashboard setup token flow first. If you are running in CI, set `UNIPOST_API_KEY`, then run `npx -y @unipost/cli auth status --json`."],
   ["`setup_token_invalid`, `setup_token_expired`, or `setup_token_used`", "Create a fresh Dashboard setup token. Setup tokens are short-lived and single-use, so copy the newest command from Dashboard before retrying."],
   ["`keychain_unavailable`", "The CLI could not store the named key in OS keychain. Retry from a normal logged-in desktop shell, or use `UNIPOST_API_KEY` as the fallback auth path."],
-  ["Wrong API URL", "Run `npx -y @unipost/cli config show --json`. Production defaults to `https://api.unipost.dev`; for dev validation set `npx -y @unipost/cli config set base_url https://dev-api.unipost.dev --json`."],
+  ["Wrong API URL", "Copy the newest Dashboard setup command; it includes `--base-url` for the current environment. If you are configuring manually, run `npx -y @unipost/cli config set base_url https://dev-api.unipost.dev --json` for dev validation."],
   ["No profile or account IDs", "Run `npx -y @unipost/cli profiles list --json`, `npx -y @unipost/cli quickstart --name \"Brand\" --json`, or `npx -y @unipost/cli connect create --json`, then check `npx -y @unipost/cli accounts list --json`."],
   ["Live publish is blocked", "Start with `posts validate`, `posts draft`, or `posts create --dry-run`. Only add `--yes` and `--idempotency-key` after the user explicitly approves live or scheduled publishing."],
 ] as const;
@@ -215,7 +215,7 @@ export default function CliPage() {
       <DocsTable
         columns={["Step", "What to do"]}
         rows={[
-          ["1. Sign in", "In Dashboard, open Project -> API Keys -> Connect with Claude Code / Codex, copy the setup-token command, and run it in the terminal."],
+          ["1. Sign in", "In Dashboard, open Project -> API Keys -> Connect with Claude Code / Codex, copy the setup-token command, and run it in the terminal. The copied command includes the API URL for the current environment."],
           ["2. Verify auth", "Run `npx -y @unipost/cli auth status --json`. The result should show the active credential source and the configured API base URL."],
           ["3. Pick defaults", "Run `profiles list`, `accounts list`, and `accounts health`; set `default_profile_id` if you want shorter commands later."],
         ]}
