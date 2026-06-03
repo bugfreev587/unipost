@@ -21,6 +21,7 @@ async function runCli(args, options = {}) {
   const code = await main(args, {
     env,
     fetchImpl: options.fetchImpl || (activeFixture ? fixtureFetch : globalThis.fetch.bind(globalThis)),
+    secureStore: options.secureStore,
     stdout: {
       write(chunk) {
         stdout += chunk;
@@ -111,6 +112,25 @@ async function withTempConfig(callback) {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+function createMemorySecureStore() {
+  const values = new Map();
+  const deleted = [];
+  return {
+    values,
+    deleted,
+    async set({ service, account, value }) {
+      values.set(`${service}:${account}`, value);
+    },
+    async get({ service, account }) {
+      return values.get(`${service}:${account}`) || "";
+    },
+    async delete({ service, account }) {
+      deleted.push({ service, account });
+      values.delete(`${service}:${account}`);
+    },
+  };
 }
 
 test("prints the CLI version", async () => {
@@ -288,6 +308,151 @@ test("auth login stores only redacted credential metadata and logout clears it",
 
       const configAfterLogout = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
       assert.equal(Object.prototype.hasOwnProperty.call(configAfterLogout, "credential"), false);
+    });
+  });
+});
+
+test("auth login --setup-token exchanges once, stores the API key in secure storage, and logout removes it", async () => {
+  await withTempConfig(async (configDir) => {
+    const secureStore = createMemorySecureStore();
+    await withServer(async (req, res) => {
+      if (req.method === "POST" && req.url === "/v1/cli/setup-tokens/exchange") {
+        assert.equal(req.headers.authorization, undefined);
+        const body = await readRequestJson(req);
+        assert.deepEqual(body, { setup_token: "ust_setup_test", client: "codex" });
+        writeJson(res, 201, {
+          data: {
+            workspace_id: "ws_setup",
+            client: "codex",
+            api_key: {
+              id: "key_cli_setup",
+              name: "Codex CLI",
+              key: "up_live_setup_secret",
+              prefix: "up_live_setup",
+              environment: "production",
+              created_at: "2026-06-03T12:00:00Z",
+            },
+          },
+          request_id: "req_exchange",
+        });
+        return;
+      }
+      if (req.method === "GET" && req.url === "/v1/workspace") {
+        assert.equal(req.headers.authorization, "Bearer up_live_setup_secret");
+        writeJson(res, 200, {
+          data: { id: "ws_setup", name: "Setup Workspace" },
+          request_id: "req_setup_workspace",
+        });
+        return;
+      }
+      writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+    }, async (baseUrl) => {
+      const env = { UNIPOST_CONFIG_DIR: configDir };
+
+      const login = await runCli([
+        "auth", "login",
+        "--setup-token", "ust_setup_test",
+        "--client", "codex",
+        "--json",
+        "--base-url", baseUrl,
+      ], { env, secureStore });
+      assert.equal(login.code, 0);
+      assert.equal(JSON.stringify(login).includes("up_live_setup_secret"), false);
+      const loginBody = JSON.parse(login.stdout);
+      assert.equal(loginBody.data.workspace.id, "ws_setup");
+      assert.equal(loginBody.data.credential.storage, "keychain");
+      assert.equal(loginBody.data.credential.client, "codex");
+      assert.equal(loginBody.data.credential.key_id, "key_cli_setup");
+      assert.equal(loginBody.data.stored_secret, true);
+      assert.equal([...secureStore.values.values()].includes("up_live_setup_secret"), true);
+
+      const configAfterLogin = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(configAfterLogin.credential.storage, "keychain");
+      assert.equal(configAfterLogin.credential.workspace_id, "ws_setup");
+      assert.equal(JSON.stringify(configAfterLogin).includes("up_live_setup_secret"), false);
+
+      const status = await runCli(["auth", "status", "--json", "--base-url", baseUrl], { env, secureStore });
+      assert.equal(status.code, 0);
+      const statusBody = JSON.parse(status.stdout);
+      assert.equal(statusBody.data.authenticated, true);
+      assert.equal(statusBody.data.credential_source, "keychain");
+      assert.equal(statusBody.data.workspace.id, "ws_setup");
+
+      const logout = await runCli(["auth", "logout", "--json"], { env, secureStore });
+      assert.equal(logout.code, 0);
+      assert.equal(JSON.parse(logout.stdout).data.removed_credential, true);
+      assert.equal(secureStore.deleted.length, 1);
+      assert.equal([...secureStore.values.values()].includes("up_live_setup_secret"), false);
+
+      const configAfterLogout = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(Object.prototype.hasOwnProperty.call(configAfterLogout, "credential"), false);
+    });
+  });
+});
+
+test("agent bootstrap --setup-token exchanges the token before loading workspace context", async () => {
+  await withTempConfig(async (configDir) => {
+    const secureStore = createMemorySecureStore();
+    const seen = [];
+    await withServer(async (req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      if (req.method === "POST" && req.url === "/v1/cli/setup-tokens/exchange") {
+        assert.equal(req.headers.authorization, undefined);
+        const body = await readRequestJson(req);
+        assert.deepEqual(body, { setup_token: "ust_bootstrap_test", client: "claude-code" });
+        writeJson(res, 201, {
+          data: {
+            workspace_id: "ws_bootstrap",
+            client: "claude-code",
+            api_key: {
+              id: "key_bootstrap",
+              name: "Claude Code CLI",
+              key: "up_live_bootstrap_secret",
+              prefix: "up_live_boot",
+              environment: "production",
+              created_at: "2026-06-03T12:00:00Z",
+            },
+          },
+          request_id: "req_bootstrap_exchange",
+        });
+        return;
+      }
+      assert.equal(req.headers.authorization, "Bearer up_live_bootstrap_secret");
+      if (req.method === "GET" && req.url === "/v1/workspace") {
+        writeJson(res, 200, {
+          data: { id: "ws_bootstrap", name: "Bootstrap Workspace" },
+          request_id: "req_bootstrap_workspace",
+        });
+        return;
+      }
+      if (req.method === "GET" && req.url === "/v1/profiles") {
+        writeJson(res, 200, { data: [{ id: "pr_boot", name: "Studio", account_count: 1 }] });
+        return;
+      }
+      if (req.method === "GET" && req.url === "/v1/accounts") {
+        writeJson(res, 200, { data: [{ id: "acct_boot", platform: "linkedin", status: "connected" }] });
+        return;
+      }
+      writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+    }, async (baseUrl) => {
+      const env = { UNIPOST_CONFIG_DIR: configDir };
+      const result = await runCli([
+        "agent", "bootstrap",
+        "--setup-token", "ust_bootstrap_test",
+        "--client", "claude-code",
+        "--json",
+        "--base-url", baseUrl,
+      ], { env, secureStore });
+
+      assert.equal(result.code, 0);
+      assert.equal(JSON.stringify(result).includes("up_live_bootstrap_secret"), false);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.data.authenticated, true);
+      assert.equal(body.data.client, "claude-code");
+      assert.equal(body.data.workspace.id, "ws_bootstrap");
+      assert.equal(body.data.ready_for_draft, true);
+      assert.equal(seen[0], "POST /v1/cli/setup-tokens/exchange");
+      assert.equal([...secureStore.values.values()].includes("up_live_bootstrap_secret"), true);
     });
   });
 });
@@ -1345,7 +1510,9 @@ test("agent bootstrap diagnoses missing auth and succeeds with API-key fallback"
   const missingBody = JSON.parse(missing.stdout);
   assert.equal(missingBody.ok, true);
   assert.equal(missingBody.data.authenticated, false);
-  assert.match(missingBody.data.next_actions[0], /UNIPOST_API_KEY/);
+  assert.equal(missingBody.data.setup_token_supported, true);
+  assert.match(missingBody.data.next_actions.join("\n"), /setup-token/);
+  assert.match(missingBody.data.next_actions.join("\n"), /UNIPOST_API_KEY/);
 
   await withServer((req, res) => {
     if (req.url === "/v1/workspace") {
