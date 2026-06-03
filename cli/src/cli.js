@@ -130,6 +130,7 @@ export async function main(argv, io = {}) {
   let context;
   try {
     context = createContext(argv, io);
+    await applyConfigDefaults(context);
     const result = await dispatch(context);
     writeResult(context, result);
     return result.exitCode || EXIT.success;
@@ -145,6 +146,7 @@ function createContext(argv, io) {
   const parsed = parseArgs(argv);
   const output = parsed.options.json ? "json" : parsed.options.output || "table";
   const baseUrl = normalizeBaseUrl(parsed.options.baseUrl || env.UNIPOST_BASE_URL || DEFAULT_BASE_URL);
+  const baseUrlSource = parsed.options.baseUrl ? "flag" : env.UNIPOST_BASE_URL ? "env" : "default";
   const telemetry = resolveTelemetry(parsed.options, env);
   const credentialSource = parsed.options.apiKey ? "flag" : env.UNIPOST_API_KEY ? "env" : "none";
 
@@ -155,6 +157,7 @@ function createContext(argv, io) {
       ...parsed.options,
       output,
       baseUrl,
+      baseUrlSource,
       apiKey: parsed.options.apiKey || env.UNIPOST_API_KEY || "",
       credentialSource,
       noColor: Boolean(parsed.options.noColor || env.NO_COLOR),
@@ -176,6 +179,7 @@ function fallbackContext(argv, io) {
     options: {
       output: "table",
       baseUrl,
+      baseUrlSource: env.UNIPOST_BASE_URL ? "env" : "default",
       telemetry: resolveTelemetry({}, env),
     },
     env,
@@ -301,11 +305,20 @@ async function dispatch(context) {
   if (command === "auth" && subcommand === "status") {
     return authStatus(context);
   }
+  if (command === "auth" && subcommand === "login") {
+    return authLogin(context);
+  }
+  if (command === "auth" && subcommand === "logout") {
+    return authLogout(context);
+  }
   if (command === "auth" && subcommand === "list") {
     return authList(context);
   }
   if (command === "auth" && subcommand === "use") {
     return authUse(context, third);
+  }
+  if (command === "config") {
+    return configCommand(context, subcommand, third);
   }
   if (command === "init") {
     return init(context);
@@ -372,6 +385,158 @@ async function authStatus(context) {
     },
     human: `Authenticated with workspace ${workspace?.id || "unknown"}.\n`,
   });
+}
+
+async function authLogin(context) {
+  if (!context.options.apiKey) {
+    throw new CliError({
+      code: "missing_required_input",
+      normalizedCode: "missing_required_input",
+      message: "auth login requires --api-key until device/setup-token auth is available.",
+      hint: "Use auth login --api-key <key>, or set UNIPOST_API_KEY for command-level fallback auth.",
+      docsUrl: DOCS_CLI_URL,
+      exitCode: EXIT.missingInput,
+    });
+  }
+
+  const { workspace, response } = await fetchWorkspace(context);
+  const credential = {
+    type: "api_key",
+    storage: "metadata_only",
+    workspace_id: workspace?.id || "",
+    workspace_name: workspace?.name || "",
+    credential_source: "auth login --api-key",
+    key_fingerprint: fingerprintSecret(context.options.apiKey),
+    authenticated_at: new Date().toISOString(),
+  };
+  const config = await patchConfig(context, {
+    credential,
+    default_workspace_id: workspace?.id || "",
+  });
+
+  return envelopeResult({
+    data: {
+      authenticated: true,
+      workspace,
+      credential: config.credential,
+      stored_secret: false,
+      config_path: configPath(context),
+      next_actions: [
+        "Set UNIPOST_API_KEY for commands that need authentication until keychain-backed login is implemented.",
+      ],
+    },
+    warnings: [{
+      code: "credential_metadata_only",
+      message: "auth login records redacted credential metadata only; it does not store the API key locally.",
+    }],
+    meta: {
+      request_id: response.requestId,
+      rate_limit: response.rateLimit,
+    },
+    human: `Logged in to workspace ${workspace?.id || "unknown"} metadata only. Set UNIPOST_API_KEY for authenticated commands.\n`,
+  });
+}
+
+async function authLogout(context) {
+  const current = await readConfig(context);
+  const hadCredential = Object.prototype.hasOwnProperty.call(current, "credential");
+  const { credential: _credential, ...rest } = current;
+  const config = await writeConfig(context, {
+    ...rest,
+    updated_at: new Date().toISOString(),
+  });
+
+  return envelopeResult({
+    data: {
+      removed_credential: hadCredential,
+      remote_revoked: false,
+      config_path: configPath(context),
+      config,
+    },
+    warnings: [{
+      code: "remote_revoke_unavailable",
+      message: "auth logout clears local metadata only; named revocable API keys require backend support.",
+    }],
+    human: hadCredential ? "Removed local credential metadata.\n" : "No local credential metadata found.\n",
+  });
+}
+
+async function configCommand(context, subcommand, key) {
+  if (subcommand === "path") {
+    const path = configPath(context);
+    return envelopeResult({
+      data: { config_path: path },
+      human: `${path}\n`,
+    });
+  }
+
+  if (subcommand === "show") {
+    const config = sanitizeConfig(await readConfig(context));
+    return envelopeResult({
+      data: {
+        config,
+        config_path: configPath(context),
+      },
+      human: `${JSON.stringify(config, null, 2)}\n`,
+    });
+  }
+
+  if (subcommand === "set") {
+    const value = context.commandParts.slice(3).join(" ");
+    const configKey = requireValue(key, "config_key", "config set requires a key.");
+    const configValue = requireValue(value, "config_value", "config set requires a value.");
+    const patch = configPatch(configKey, configValue);
+    const config = sanitizeConfig(await patchConfig(context, patch));
+    return envelopeResult({
+      data: {
+        key: configKey,
+        value: config[configKey],
+        config,
+        config_path: configPath(context),
+      },
+      human: `Set ${configKey}.\n`,
+    });
+  }
+
+  return invalidSubcommand("config", subcommand);
+}
+
+function configPatch(key, value) {
+  if (key === "base_url") {
+    const url = normalizeBaseUrl(value);
+    validateConfigBaseURL(url);
+    return { base_url: url };
+  }
+  if (key === "default_profile_id") {
+    return { default_profile_id: value };
+  }
+  if (key === "default_workspace_id") {
+    return { default_workspace_id: value };
+  }
+  throw new CliError({
+    code: "invalid_argument",
+    normalizedCode: "invalid_argument",
+    message: `Unsupported config key: ${key}`,
+    hint: "Supported config keys: base_url, default_profile_id, default_workspace_id.",
+    docsUrl: DOCS_CLI_URL,
+    exitCode: EXIT.invalidArgs,
+  });
+}
+
+function validateConfigBaseURL(value) {
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) {
+      throw new Error("Unsupported protocol");
+    }
+  } catch {
+    throw new CliError({
+      code: "invalid_argument",
+      normalizedCode: "invalid_argument",
+      message: "base_url must be a valid http or https URL.",
+      exitCode: EXIT.invalidArgs,
+    });
+  }
 }
 
 async function doctor(context) {
@@ -1490,6 +1655,7 @@ async function agentPlan(context, intent) {
   if (normalizedIntent === "diagnose_setup") {
     return envelopeResult({
       data: {
+        catalog_version: AGENT_CATALOG_VERSION,
         intent: normalizedIntent,
         safety_level: "read_only",
         missing_inputs: [],
@@ -1511,6 +1677,7 @@ async function agentPlan(context, intent) {
     const missing = missingInputs({ account_id: accountID });
     return envelopeResult({
       data: {
+        catalog_version: AGENT_CATALOG_VERSION,
         intent: normalizedIntent,
         safety_level: "read_only",
         input: compactObject({ account_id: accountID }),
@@ -1551,6 +1718,7 @@ async function agentPlan(context, intent) {
     const missing = missingInputs({ account_ids: accountIDs, caption });
     return envelopeResult({
       data: {
+        catalog_version: AGENT_CATALOG_VERSION,
         intent: normalizedIntent,
         safety_level: "draft_write",
         input: compactObject({ account_ids: accountIDs, caption }),
@@ -1598,6 +1766,7 @@ async function agentPlan(context, intent) {
     });
     return envelopeResult({
       data: {
+        catalog_version: AGENT_CATALOG_VERSION,
         intent: normalizedIntent,
         safety_level: "live_write",
         input: compactObject({ account_ids: accountIDs, caption, scheduled_at: scheduledAt }),
@@ -1638,6 +1807,7 @@ async function agentPlan(context, intent) {
     const missing = missingInputs({ platform });
     return envelopeResult({
       data: {
+        catalog_version: AGENT_CATALOG_VERSION,
         intent: normalizedIntent,
         safety_level: "setup_write",
         input: compactObject({ platform }),
@@ -1661,6 +1831,7 @@ async function agentPlan(context, intent) {
     const missing = missingInputs({ file_path: filePath });
     return envelopeResult({
       data: {
+        catalog_version: AGENT_CATALOG_VERSION,
         intent: normalizedIntent,
         safety_level: "setup_write",
         input: compactObject({ file_path: filePath, content_type: contentType }),
@@ -1789,6 +1960,11 @@ function agentCapabilities() {
       commands: [
         "init",
         "quickstart",
+        "config path",
+        "config show",
+        "config set",
+        "auth login",
+        "auth logout",
         "auth status",
         "auth list",
         "auth use",
@@ -2186,7 +2362,8 @@ async function agentExecute(context) {
   requireApiKey(context, "agent execute");
   const planPath = requireValue(context.options.plan, "--plan <plan.json>", "agent execute requires --plan.");
   const plan = await readJsonFile(context, planPath);
-  const actions = extractPlanActions(plan);
+  const planData = validateAgentPlanEnvelope(plan);
+  const actions = planData.actions;
   if (actions.length === 0) {
     throw new CliError({
       code: "missing_required_input",
@@ -2197,6 +2374,15 @@ async function agentExecute(context) {
     });
   }
   validateAgentExecuteActions(actions);
+  if (hasOutstandingAgentConfirmation(planData)) {
+    throw new CliError({
+      code: "agent_execute_confirmation_required",
+      normalizedCode: "agent_execute_confirmation_required",
+      message: "agent execute cannot run a plan with missing inputs or user confirmations.",
+      hint: "Resolve missing inputs and use explicit CLI commands for any user-approved action.",
+      exitCode: EXIT.unsafe,
+    });
+  }
 
   const executedActions = [];
   const results = [];
@@ -2222,9 +2408,43 @@ async function agentExecute(context) {
   });
 }
 
-function extractPlanActions(plan) {
-  const payload = plan?.data && typeof plan.data === "object" ? plan.data : plan;
-  return Array.isArray(payload?.actions) ? payload.actions : [];
+function validateAgentPlanEnvelope(plan) {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan) || plan.ok !== true || !plan.data || typeof plan.data !== "object" || Array.isArray(plan.data)) {
+    throw new CliError({
+      code: "invalid_agent_plan",
+      normalizedCode: "invalid_agent_plan",
+      message: "agent execute requires a JSON envelope produced by unipost agent plan --json.",
+      hint: "Create a fresh plan with unipost agent plan --intent ... --json and pass it with --plan.",
+      exitCode: EXIT.validation,
+    });
+  }
+
+  const payload = plan.data;
+  if (payload.catalog_version !== AGENT_CATALOG_VERSION) {
+    throw new CliError({
+      code: "stale_agent_plan",
+      normalizedCode: "stale_agent_plan",
+      message: `agent execute requires catalog_version ${AGENT_CATALOG_VERSION}.`,
+      hint: "Regenerate the plan with the current UniPost CLI before executing it.",
+      exitCode: EXIT.validation,
+    });
+  }
+  if (!agentIntentNames().includes(payload.intent) || !Array.isArray(payload.actions)) {
+    throw new CliError({
+      code: "invalid_agent_plan",
+      normalizedCode: "invalid_agent_plan",
+      message: "agent execute found an invalid agent plan payload.",
+      hint: "Run unipost agent capabilities --json and regenerate the plan with unipost agent plan --json.",
+      exitCode: EXIT.validation,
+    });
+  }
+  return payload;
+}
+
+function hasOutstandingAgentConfirmation(planData) {
+  return planData.safe_to_execute_without_user !== true
+    || (Array.isArray(planData.missing_inputs) && planData.missing_inputs.length > 0)
+    || (Array.isArray(planData.required_user_confirmations) && planData.required_user_confirmations.length > 0);
 }
 
 function validateAgentExecuteActions(actions) {
@@ -2592,6 +2812,21 @@ function configPath(context) {
   return join(configDir(context), "config.json");
 }
 
+async function applyConfigDefaults(context) {
+  if (context.options.version || context.options.help || context.commandParts[0] === "config") {
+    return;
+  }
+  if (context.options.baseUrlSource !== "default") {
+    return;
+  }
+  const config = await readConfig(context);
+  if (config.base_url) {
+    validateConfigBaseURL(config.base_url);
+    context.options.baseUrl = normalizeBaseUrl(config.base_url);
+    context.options.baseUrlSource = "config";
+  }
+}
+
 async function readConfig(context) {
   try {
     return JSON.parse(await readFile(configPath(context), "utf8"));
@@ -2624,6 +2859,14 @@ async function patchConfig(context, patch) {
     ...patch,
     updated_at: new Date().toISOString(),
   });
+}
+
+function sanitizeConfig(value) {
+  return stripSecrets(value || {});
+}
+
+function fingerprintSecret(value) {
+  return createHash("sha256").update(String(value || "")).digest("hex").slice(0, 16);
 }
 
 function stripSecrets(value) {
@@ -2867,6 +3110,11 @@ function zshCompletion() {
 _unipost() {
   local -a commands
   commands=(
+    'config path:Print the local UniPost config path'
+    'config show:Print redacted local UniPost config'
+    'config set:Set a safe local UniPost config value'
+    'auth login:Validate an API key and store redacted credential metadata'
+    'auth logout:Remove local credential metadata'
     'auth status:Verify the configured UniPost credential'
     'auth list:List locally discoverable UniPost credentials'
     'init:Initialize local UniPost CLI config'
@@ -2945,7 +3193,7 @@ _unipost "$@"
 function bashCompletion() {
   return `# bash completion for unipost
 _unipost_completion() {
-  local words="init quickstart auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
+  local words="init quickstart config path config show config set auth login auth logout auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
   COMPREPLY=($(compgen -W "$words" -- "\${COMP_WORDS[COMP_CWORD]}"))
 }
 complete -F _unipost_completion unipost
@@ -2954,6 +3202,11 @@ complete -F _unipost_completion unipost
 
 function fishCompletion() {
   return `complete -c unipost -f
+complete -c unipost -a "config path" -d "Print local config path"
+complete -c unipost -a "config show" -d "Print redacted local config"
+complete -c unipost -a "config set" -d "Set a safe local config value"
+complete -c unipost -a "auth login" -d "Store redacted credential metadata"
+complete -c unipost -a "auth logout" -d "Remove local credential metadata"
 complete -c unipost -a "auth status" -d "Verify the configured UniPost credential"
 complete -c unipost -a "profiles list" -d "List profiles"
 complete -c unipost -a "connect create" -d "Create a Connect session"
@@ -3245,6 +3498,11 @@ Usage:
   unipost --version
   unipost init [--json]
   unipost quickstart [--json] [--name <profile-name>]
+  unipost config path|show [--json]
+  unipost config set base_url <url> [--json]
+  unipost config set default_profile_id <profile_id> [--json]
+  unipost auth login --api-key <key> [--json]
+  unipost auth logout [--json]
   unipost auth status [--json] [--api-key <key>] [--base-url <url>]
   unipost profiles list|create|use [--json]
   unipost connect create|get|wait [--json]
@@ -3276,6 +3534,10 @@ Global flags:
   --from-file <path>, --plan <path>, --content-type <mime>, --yes
   --idempotency-key <key>, --agent-name <name>
   --no-color, --no-telemetry
+
+Auth note:
+  auth login --api-key stores redacted credential metadata only.
+  Until device/setup-token and keychain auth exist, set UNIPOST_API_KEY for authenticated commands.
 `;
 }
 

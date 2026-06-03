@@ -224,6 +224,74 @@ test("auth list/use tracks local workspace defaults without storing API keys", a
   });
 });
 
+test("config path/show/set manages safe local defaults", async () => {
+  await withTempConfig(async (configDir) => {
+    const env = { UNIPOST_CONFIG_DIR: configDir };
+
+    const path = await runCli(["config", "path", "--json"], { env });
+    assert.equal(path.code, 0);
+    assert.equal(JSON.parse(path.stdout).data.config_path, join(configDir, "config.json"));
+
+    const setBaseURL = await runCli(["config", "set", "base_url", "https://dev-api.unipost.dev", "--json"], { env });
+    assert.equal(setBaseURL.code, 0);
+    assert.equal(JSON.parse(setBaseURL.stdout).data.config.base_url, "https://dev-api.unipost.dev");
+
+    const setProfile = await runCli(["config", "set", "default_profile_id", "pr_acceptance", "--json"], { env });
+    assert.equal(setProfile.code, 0);
+    assert.equal(JSON.parse(setProfile.stdout).data.config.default_profile_id, "pr_acceptance");
+
+    const show = await runCli(["config", "show", "--json"], { env });
+    assert.equal(show.code, 0);
+    const showBody = JSON.parse(show.stdout);
+    assert.equal(showBody.data.config.base_url, "https://dev-api.unipost.dev");
+    assert.equal(showBody.data.config.default_profile_id, "pr_acceptance");
+    assert.equal(JSON.stringify(showBody).includes("up_test"), false);
+
+    const config = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+    assert.equal(config.base_url, "https://dev-api.unipost.dev");
+    assert.equal(config.default_profile_id, "pr_acceptance");
+  });
+});
+
+test("auth login stores only redacted credential metadata and logout clears it", async () => {
+  await withTempConfig(async (configDir) => {
+    await withServer((req, res) => {
+      assert.equal(req.method, "GET");
+      assert.equal(req.url, "/v1/workspace");
+      assert.equal(req.headers.authorization, "Bearer up_test_secret_acceptance");
+      writeJson(res, 200, {
+        data: { id: "ws_login", name: "Login Workspace" },
+        request_id: "req_login",
+      });
+    }, async (baseUrl) => {
+      const env = { UNIPOST_CONFIG_DIR: configDir };
+
+      const login = await runCli(["auth", "login", "--api-key", "up_test_secret_acceptance", "--json", "--base-url", baseUrl], { env });
+      assert.equal(login.code, 0);
+      const loginBody = JSON.parse(login.stdout);
+      assert.equal(loginBody.data.workspace.id, "ws_login");
+      assert.equal(loginBody.data.credential.storage, "metadata_only");
+      assert.equal(loginBody.data.stored_secret, false);
+      assert.equal(JSON.stringify(loginBody).includes("up_test_secret_acceptance"), false);
+
+      const configAfterLogin = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(configAfterLogin.credential.workspace_id, "ws_login");
+      assert.equal(configAfterLogin.credential.storage, "metadata_only");
+      assert.equal(Boolean(configAfterLogin.credential.key_fingerprint), true);
+      assert.equal(JSON.stringify(configAfterLogin).includes("up_test_secret_acceptance"), false);
+
+      const logout = await runCli(["auth", "logout", "--json"], { env });
+      assert.equal(logout.code, 0);
+      const logoutBody = JSON.parse(logout.stdout);
+      assert.equal(logoutBody.data.removed_credential, true);
+      assert.equal(logoutBody.data.remote_revoked, false);
+
+      const configAfterLogout = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(Object.prototype.hasOwnProperty.call(configAfterLogout, "credential"), false);
+    });
+  });
+});
+
 test("--field prints a selected value from the JSON envelope", async () => {
   await withServer((req, res) => {
     writeJson(res, 200, {
@@ -386,7 +454,12 @@ test("completion zsh prints a shell completion script without calling the API", 
 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /#compdef unipost/);
+  assert.match(result.stdout, /auth login/);
+  assert.match(result.stdout, /auth logout/);
   assert.match(result.stdout, /auth status/);
+  assert.match(result.stdout, /config show/);
+  assert.match(result.stdout, /config path/);
+  assert.match(result.stdout, /config set/);
   assert.match(result.stdout, /examples mcp\.claude-code/);
   assert.match(result.stdout, /agent execute/);
   assert.match(result.stdout, /agent mcp-test/);
@@ -1063,7 +1136,9 @@ test("Phase 5 agent execute runs only structured safe actions and rejects live w
     await writeFile(safePlanPath, JSON.stringify({
       ok: true,
       data: {
+        catalog_version: "2026-06-03.phase5",
         intent: "create_draft_post",
+        safe_to_execute_without_user: true,
         actions: [
           {
             canonical_action: "posts.validate",
@@ -1080,7 +1155,9 @@ test("Phase 5 agent execute runs only structured safe actions and rejects live w
     await writeFile(livePlanPath, JSON.stringify({
       ok: true,
       data: {
+        catalog_version: "2026-06-03.phase5",
         intent: "plan_publish_post",
+        safe_to_execute_without_user: false,
         actions: [
           {
             canonical_action: "posts.validate",
@@ -1130,6 +1207,50 @@ test("Phase 5 agent execute runs only structured safe actions and rejects live w
   });
 });
 
+test("agent execute rejects non-plan and stale-catalog envelopes before API calls", async () => {
+  await withTempConfig(async (configDir) => {
+    const legacyPlanPath = join(configDir, "legacy-plan.json");
+    await writeFile(legacyPlanPath, JSON.stringify({
+      actions: [{
+        canonical_action: "posts.validate",
+        args: { "--account": "sa_1", "--caption": "Legacy", "--json": true },
+      }],
+    }));
+
+    const stalePlanPath = join(configDir, "stale-plan.json");
+    await writeFile(stalePlanPath, JSON.stringify({
+      ok: true,
+      data: {
+        catalog_version: "2026-06-03.phase4",
+        intent: "create_draft_post",
+        safe_to_execute_without_user: true,
+        actions: [{
+          canonical_action: "posts.validate",
+          safety_level: "read_only",
+          display_command: "curl https://example.invalid",
+          args: { "--account": "sa_1", "--caption": "Stale", "--json": true },
+        }],
+      },
+    }));
+
+    await withServer((req, res) => {
+      writeJson(res, 500, { error: { code: "UNEXPECTED_REQUEST", normalized_code: "upstream_error", message: `Unexpected request: ${req.url}` } });
+    }, async (baseUrl, requests) => {
+      const env = { UNIPOST_API_KEY: "up_test_valid" };
+
+      const legacy = await runCli(["agent", "execute", "--plan", legacyPlanPath, "--json", "--base-url", baseUrl], { env });
+      assert.equal(legacy.code, 6);
+      assert.equal(JSON.parse(legacy.stdout).error.code, "invalid_agent_plan");
+      assert.equal(requests.length, 0);
+
+      const stale = await runCli(["agent", "execute", "--plan", stalePlanPath, "--json", "--base-url", baseUrl], { env });
+      assert.equal(stale.code, 6);
+      assert.equal(JSON.parse(stale.stdout).error.code, "stale_agent_plan");
+      assert.equal(requests.length, 0);
+    });
+  });
+});
+
 test("Phase 3 agent plan returns executable steps and required confirmations", async () => {
   await withTempConfig(async (configDir) => {
     const postPath = join(configDir, "plan-post.json");
@@ -1142,6 +1263,7 @@ test("Phase 3 agent plan returns executable steps and required confirmations", a
     const plan = await runCli(["agent", "plan", "--intent", "plan_publish_post", "--from-file", postPath, "--json"]);
     assert.equal(plan.code, 0);
     const body = JSON.parse(plan.stdout);
+    assert.equal(body.data.catalog_version, "2026-06-03.phase5");
     assert.equal(body.data.intent, "plan_publish_post");
     assert.equal(body.data.safe_to_execute_without_user, false);
     assert.deepEqual(body.data.missing_inputs, []);
