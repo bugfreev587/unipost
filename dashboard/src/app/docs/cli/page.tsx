@@ -170,6 +170,7 @@ const COMMAND_ROWS = [
 ] as const;
 
 const TROUBLESHOOTING_ROWS = [
+  ["`zsh: command not found: unipost` after running the npx setup command", "`npx -y @unipost/cli ...` runs the package for that command only; it does not install a global `unipost` command. Keep using `npx -y @unipost/cli ...`, or run `npm install -g @unipost/cli` once if you want `unipost --help` and `unipost ...` to work."],
   ["API key is missing or invalid", "Use the Dashboard setup token flow first. If you are running in CI, set `UNIPOST_API_KEY`, then run `npx -y @unipost/cli auth status --json`."],
   ["`setup_token_invalid`, `setup_token_expired`, or `setup_token_used`", "Create a fresh Dashboard setup token. Setup tokens are short-lived and single-use, so copy the newest command from Dashboard before retrying."],
   ["`keychain_unavailable`", "The CLI could not store the named key in OS keychain. Retry from a normal logged-in desktop shell, or use `UNIPOST_API_KEY` as the fallback auth path."],
@@ -211,6 +212,7 @@ export default function CliPage() {
       <h2 id="setup-steps">Set up the CLI in 3 steps</h2>
       <p>
         Use the Dashboard setup token flow for local development and agent setup. Use <code>UNIPOST_API_KEY</code> for CI, containers, or shells where keychain storage is unavailable.
+        The copied Dashboard command uses <code>npx -y @unipost/cli</code>, which runs the published package for that one command without installing a permanent <code>unipost</code> binary.
       </p>
       <DocsTable
         columns={["Step", "What to do"]}

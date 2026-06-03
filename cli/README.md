@@ -8,6 +8,13 @@ Browser/device auth is still a later auth surface; setup-token login creates a
 named revocable API key and stores the plaintext secret in OS keychain, not in
 the local config file.
 
+Use `npx -y @unipost/cli ...` by default. `npx` downloads and runs the package
+for the current command only; it does not install a global `unipost` command.
+If you run `unipost --help` before installing globally, shells return errors
+such as `zsh: command not found: unipost`. Keep using the `npx -y @unipost/cli`
+prefix, or run `npm install -g @unipost/cli` once if you want a persistent
+`unipost` command.
+
 ```bash
 npx -y @unipost/cli agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json
 npx -y @unipost/cli config path --json
