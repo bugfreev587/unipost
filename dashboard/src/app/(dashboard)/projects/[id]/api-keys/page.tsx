@@ -123,7 +123,7 @@ export default function ApiKeysPage() {
     setSetupCopied(true);
     setTimeout(() => setSetupCopied(false), 2000);
   }
-  const setupCommandPreview = setupPrompt?.command || `npx -y @unipost/cli agent bootstrap --client ${setupClient} --setup-token <token> --base-url ${SETUP_API_BASE_URL} --json`;
+  const setupCommandPreview = setupPrompt?.command || `unipost agent bootstrap --client ${setupClient} --setup-token <token> --base-url ${SETUP_API_BASE_URL} --json`;
 
   return (
     <>
@@ -141,7 +141,7 @@ export default function ApiKeysPage() {
               <DialogHeader>
                 <DialogTitle>Set up UniPost CLI for agents</DialogTitle>
                 <DialogDescription>
-                  Create a short-lived setup token that signs the UniPost CLI in. This does not install or configure the selected AI agent.
+                  Install once with npm install -g @unipost/cli, then create a short-lived setup token that signs the UniPost CLI in. This does not install or configure the selected AI agent.
                 </DialogDescription>
               </DialogHeader>
               <div style={{ padding: "8px 0" }}>
@@ -164,6 +164,9 @@ export default function ApiKeysPage() {
                 </div>
                 {setupPrompt && (
                   <>
+                    <div className="dt-body-sm" style={{ marginBottom: 10 }}>
+                      If you have not installed it yet, run <code>npm install -g @unipost/cli</code> first.
+                    </div>
                     <label className="dform-label">Setup Command</label>
                     <div className="key-display">
                       <span className="key-value" style={{ whiteSpace: "normal", wordBreak: "break-all" }}>
@@ -182,7 +185,7 @@ export default function ApiKeysPage() {
                       Expires {new Date(setupPrompt.expires_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                     </div>
                     <div className="dt-body-sm" style={{ marginTop: 8 }}>
-                      After this command succeeds, run <code>npx -y @unipost/cli agent install --client {setupClient} --json</code> and follow the returned instructions if you want the selected agent to use UniPost.
+                      After this command succeeds, run <code>unipost agent install --client {setupClient} --json</code> and follow the returned instructions if you want the selected agent to use UniPost.
                     </div>
                   </>
                 )}

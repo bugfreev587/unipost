@@ -13,15 +13,16 @@ test("CLI docs explain setup, configuration, and common fixes", async () => {
   assert.match(source, /Path B: Local AI agent/);
   assert.match(source, /setup token only logs the UniPost CLI in/);
   assert.match(source, /It does not install or configure Codex, Claude Code, or any other agent/);
-  assert.match(source, /Run this command exactly as copied; do not shorten it to `unipost`/);
-  assert.match(source, /Only use bare `unipost` commands after `npm install -g @unipost\/cli`/);
+  assert.match(source, /Install once/);
+  assert.match(source, /npm install -g @unipost\/cli/);
+  assert.match(source, /After install, use <code>unipost<\/code> commands/);
+  assert.match(source, /Copy the generated `unipost agent bootstrap/);
   assert.match(source, /Configure the CLI/);
   assert.match(source, /Common issues/);
   assert.match(source, /Dashboard setup token/);
   assert.match(source, /npx -y @unipost\/cli/);
-  assert.match(source, /does not install a global `unipost` command/);
+  assert.match(source, /No-install one-off alternative/);
   assert.match(source, /zsh: command not found: unipost/);
-  assert.match(source, /npm install -g @unipost\/cli/);
   assert.match(source, /--base-url https:\/\/api\.unipost\.dev/);
   assert.match(source, /UNIPOST_API_KEY/);
   assert.match(source, /config set base_url/);
@@ -36,15 +37,18 @@ test("API key setup dialog does not imply Codex is configured by auth alone", as
   const source = await readFile(join(root, "src/app/(dashboard)/projects/[id]/api-keys/page.tsx"), "utf8");
 
   assert.match(source, /Set up UniPost CLI for agents/);
-  assert.match(source, /Create a short-lived setup token that signs the UniPost CLI in/);
+  assert.match(source, /Install once with npm install -g @unipost\/cli/);
+  assert.match(source, /create a short-lived setup token that signs the UniPost CLI in/i);
   assert.match(source, /This does not install or configure the selected AI agent/);
 });
 
-test("CLI README explains npx-first usage and separate agent install", async () => {
+test("CLI README explains install-first usage and separate agent install", async () => {
   const source = await readFile(join(root, "../cli/README.md"), "utf8");
 
-  assert.match(source, /Use `npx -y @unipost\/cli \.\.\.` by default/);
-  assert.match(source, /does not install a global `unipost` command/);
+  assert.match(source, /Install once:/);
+  assert.match(source, /npm install -g @unipost\/cli/);
+  assert.match(source, /Use `unipost \.\.\.` by default/);
+  assert.match(source, /No-install one-off alternative/);
   assert.match(source, /To let a local AI agent use UniPost/);
-  assert.match(source, /npx -y @unipost\/cli agent install --client codex --json/);
+  assert.match(source, /unipost agent install --client codex --json/);
 });

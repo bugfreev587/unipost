@@ -8,12 +8,20 @@ Browser/device auth is still a later auth surface; setup-token login creates a
 named revocable API key and stores the plaintext secret in OS keychain, not in
 the local config file.
 
-Use `npx -y @unipost/cli ...` by default. `npx` downloads and runs the package
-for the current command only; it does not install a global `unipost` command.
-If you run `unipost --help` before installing globally, shells return errors
-such as `zsh: command not found: unipost`. Keep using the `npx -y @unipost/cli`
-prefix, or run `npm install -g @unipost/cli` once if you want a persistent
-`unipost` command.
+Install once:
+
+```bash
+npm install -g @unipost/cli
+unipost --help
+```
+
+Use `unipost ...` by default after installation. The Dashboard setup-token
+command assumes this global install and returns a `unipost agent bootstrap ...`
+command for the current environment.
+
+No-install one-off alternative: if you cannot install globally, run
+`npx -y @unipost/cli ...` instead of `unipost ...`. `npx` runs the package for
+that one command only and does not create a persistent `unipost` command.
 
 The Dashboard setup-token command signs in the UniPost CLI only. It does not
 install or configure Codex, Claude Code, Cursor, or any other local AI agent.
@@ -21,57 +29,54 @@ install or configure Codex, Claude Code, Cursor, or any other local AI agent.
 To let a local AI agent use UniPost:
 
 1. Finish CLI auth first:
-   `npx -y @unipost/cli agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json`
+   `unipost agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json`
 2. Add the UniPost instruction package for that agent:
-   `npx -y @unipost/cli agent install --client codex --json`
+   `unipost agent install --client codex --json`
 3. In the agent session, have it run:
-   `npx -y @unipost/cli agent bootstrap --client codex --json`
+   `unipost agent bootstrap --client codex --json`
 
 ```bash
-npx -y @unipost/cli agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json
-npx -y @unipost/cli config path --json
-npx -y @unipost/cli config set base_url https://dev-api.unipost.dev --json
-npx -y @unipost/cli config set default_profile_id pr_... --json
-npx -y @unipost/cli config show --json
-npx -y @unipost/cli auth login --api-key up_live_... --json
-npx -y @unipost/cli auth logout --json
-npx -y @unipost/cli auth status --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli init --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli quickstart --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli profiles list --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli connect create --platform linkedin --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli accounts list --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli accounts health --account sa_... --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli accounts capabilities --account sa_... --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli accounts metrics --account sa_... --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli posts validate --account sa_... --caption "Hello" --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli posts draft --account sa_... --caption "Hello" --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli posts create --from-file post.json --dry-run --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli posts schedule --account sa_... --caption "Hello" --at 2026-06-10T09:00:00Z --yes --idempotency-key demo-001 --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli posts wait post_... --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli posts cancel post_... --yes --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli posts retry post_... --result result_... --yes --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli media upload ./video.mp4 --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli media get med_... --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli media wait med_... --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli analytics summary --from 2026-06-01 --to 2026-06-30 --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent bootstrap --client codex --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent capabilities --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent plan --intent plan_publish_post --from-file post.json --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent mcp-test --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent mcp-config --client claude-code --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent mcp-config --client cursor --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent install --client codex --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent install --client claude-code --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli agent execute --plan plan.json --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli examples posts.create --lang node --account sa_...
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli examples mcp.claude-code --json
-UNIPOST_API_KEY=up_live_... npx -y @unipost/cli doctor --json
-npx -y @unipost/cli completion zsh
+unipost agent bootstrap --setup-token ust_... --client codex --base-url https://api.unipost.dev --json
+unipost config path --json
+unipost config set base_url https://dev-api.unipost.dev --json
+unipost config set default_profile_id pr_... --json
+unipost config show --json
+unipost auth login --api-key up_live_... --json
+unipost auth logout --json
+unipost auth status --json
+UNIPOST_API_KEY=up_live_... unipost init --json
+UNIPOST_API_KEY=up_live_... unipost quickstart --json
+UNIPOST_API_KEY=up_live_... unipost profiles list --json
+UNIPOST_API_KEY=up_live_... unipost connect create --platform linkedin --json
+UNIPOST_API_KEY=up_live_... unipost accounts list --json
+UNIPOST_API_KEY=up_live_... unipost accounts health --account sa_... --json
+UNIPOST_API_KEY=up_live_... unipost accounts capabilities --account sa_... --json
+UNIPOST_API_KEY=up_live_... unipost accounts metrics --account sa_... --json
+UNIPOST_API_KEY=up_live_... unipost posts validate --account sa_... --caption "Hello" --json
+UNIPOST_API_KEY=up_live_... unipost posts draft --account sa_... --caption "Hello" --json
+UNIPOST_API_KEY=up_live_... unipost posts create --from-file post.json --dry-run --json
+UNIPOST_API_KEY=up_live_... unipost posts schedule --account sa_... --caption "Hello" --at 2026-06-10T09:00:00Z --yes --idempotency-key demo-001 --json
+UNIPOST_API_KEY=up_live_... unipost posts wait post_... --json
+UNIPOST_API_KEY=up_live_... unipost posts cancel post_... --yes --json
+UNIPOST_API_KEY=up_live_... unipost posts retry post_... --result result_... --yes --json
+UNIPOST_API_KEY=up_live_... unipost media upload ./video.mp4 --json
+UNIPOST_API_KEY=up_live_... unipost media get med_... --json
+UNIPOST_API_KEY=up_live_... unipost media wait med_... --json
+UNIPOST_API_KEY=up_live_... unipost analytics summary --from 2026-06-01 --to 2026-06-30 --json
+UNIPOST_API_KEY=up_live_... unipost agent bootstrap --client codex --json
+UNIPOST_API_KEY=up_live_... unipost agent capabilities --json
+UNIPOST_API_KEY=up_live_... unipost agent plan --intent plan_publish_post --from-file post.json --json
+UNIPOST_API_KEY=up_live_... unipost agent mcp-test --json
+UNIPOST_API_KEY=up_live_... unipost agent mcp-config --client claude-code --json
+UNIPOST_API_KEY=up_live_... unipost agent mcp-config --client cursor --json
+UNIPOST_API_KEY=up_live_... unipost agent install --client codex --json
+UNIPOST_API_KEY=up_live_... unipost agent install --client claude-code --json
+UNIPOST_API_KEY=up_live_... unipost agent execute --plan plan.json --json
+UNIPOST_API_KEY=up_live_... unipost examples posts.create --lang node --account sa_...
+UNIPOST_API_KEY=up_live_... unipost examples mcp.claude-code --json
+UNIPOST_API_KEY=up_live_... unipost doctor --json
+unipost completion zsh
 ```
-
-If you prefer a persistent shell command, run `npm install -g @unipost/cli`
-once, then replace `npx -y @unipost/cli` with `unipost`.
 
 The CLI stores non-secret local defaults such as the selected profile in
 `~/.unipost/config.json`. `auth login --api-key` validates the key against
