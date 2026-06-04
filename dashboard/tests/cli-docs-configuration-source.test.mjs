@@ -49,6 +49,7 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(shellSource, /Overview/);
   assert.match(shellSource, /Reference/);
   assert.match(shellSource, /\/docs\/cli\/reference/);
+  assert.match(shellSource, /@media \(max-width:640px\)\{\.docs-auth-actions\{display:none\}/);
 
   assert.match(overviewSource, /title="CLI - Overview"/);
   assert.match(overviewSource, /\/docs\/cli\/reference/);
