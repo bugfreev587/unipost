@@ -324,6 +324,43 @@ test("Posts calendar event buttons expose complete accessible labels", async () 
   assert.match(labelHelper, /meta\.label/);
 });
 
+test("Posts calendar create flow refreshes data after drawer success", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const handleCreated = source.slice(
+    source.indexOf("const handleCreated = useCallback"),
+    source.indexOf("const handleEdited = useCallback"),
+  );
+  const drawer = source.slice(
+    source.indexOf("<CreatePostDrawer"),
+    source.indexOf("</section>"),
+  );
+
+  assert.match(handleCreated, /await loadData\(\)/);
+  assert.match(handleCreated, /\[loadData\]/);
+  assert.match(drawer, /open=\{drawerOpen\}/);
+  assert.match(drawer, /onOpenChange=\{setDrawerOpen\}/);
+  assert.match(drawer, /onCreated=\{handleCreated\}/);
+});
+
+test("Posts calendar keeps empty workspace paths usable", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const profilesFilter = source.slice(
+    source.indexOf('<FilterSection title="Profiles">'),
+    source.indexOf('<FilterSection title="Platforms">'),
+  );
+  const platformsFilter = source.slice(
+    source.indexOf('<FilterSection title="Platforms">'),
+    source.indexOf('<FilterSection title="Status">'),
+  );
+
+  assert.match(profilesFilter, /profiles\.length === 0/);
+  assert.match(profilesFilter, /No profiles found/);
+  assert.match(platformsFilter, /platformOptions\.length === 0/);
+  assert.match(platformsFilter, /No connected platforms/);
+  assert.match(source, /renderMonthView\(\)/);
+  assert.match(source, /<CreatePostDrawer/);
+});
+
 test("Posts calendar switches from details popover to edit inspector without keeping the details popover open", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const openEditPost = source.slice(
