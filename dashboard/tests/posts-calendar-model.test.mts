@@ -269,9 +269,9 @@ test("continuous calendar snap offsets recycle whole date lines without waiting 
   assert.deepEqual(getContinuousCalendarSnapOffset(0, 100), { steps: 0, offsetPx: 0 });
 });
 
-test("parseCalendarViewMode accepts URL view modes and falls back to month", () => {
-  assert.equal(parseCalendarViewMode("day"), "day");
-  assert.equal(parseCalendarViewMode("week"), "week");
+test("parseCalendarViewMode keeps v1 scoped to month", () => {
+  assert.equal(parseCalendarViewMode("day"), "month");
+  assert.equal(parseCalendarViewMode("week"), "month");
   assert.equal(parseCalendarViewMode("month"), "month");
   assert.equal(parseCalendarViewMode("agenda"), "month");
   assert.equal(parseCalendarViewMode(null), "month");
