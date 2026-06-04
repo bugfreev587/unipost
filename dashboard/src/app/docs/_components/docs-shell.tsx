@@ -313,7 +313,14 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Advanced",
       items: [
-        { label: "CLI", href: "/docs/cli" },
+        {
+          label: "CLI",
+          children: [
+            { label: "Overview", href: "/docs/cli" },
+            { label: "CLI Reference", href: "/docs/cli/reference" },
+            { label: "AI Agent Guide", href: "/docs/cli/agents" },
+          ],
+        },
         { label: "MCP", href: "/docs/mcp" },
       ],
     },
@@ -2321,6 +2328,7 @@ html.dark .docs-shell-guide-redesign .docs-toc-link:hover{
 .docs-chooser-skip:hover{text-decoration:underline}
 @media (max-width:1240px){.docs-layout{grid-template-columns:252px minmax(0,1fr);gap:26px}.docs-toc{display:none}.docs-layout-api{grid-template-columns:var(--docs-api-sidebar-width, 312px) 14px minmax(0,1fr)}.docs-layout-platforms{grid-template-columns:220px minmax(0,1fr)}}
 @media (min-width:1121px) and (max-width:1240px){.docs-shell-guide-redesign .docs-toc{display:block}}
+@media (max-width:640px){.docs-auth-actions{display:none}.docs-topbar-right{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.docs-topbar-right::-webkit-scrollbar{display:none}.docs-search-trigger{flex:1 1 auto;min-width:0}}
 @media (max-width:960px){.docs-topbar-inner{padding:12px 18px;align-items:flex-start;flex-direction:column}.docs-topbar-left,.docs-topbar-right{width:100%}.docs-topbar-left{gap:14px}.docs-primary-nav{gap:14px;overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.docs-topbar-right{align-items:flex-start;justify-content:flex-start;flex-direction:row}.docs-layout{grid-template-columns:1fr;padding:22px 16px 60px}.docs-sidebar,.docs-sidebar-resizer{display:none}.docs-page{padding:32px 24px 38px;border-radius:20px}.docs-page-api{padding:32px 24px 38px}.docs-page h1{font-size:34px;max-width:none}.docs-lead{font-size:17px}.docs-grid,.docs-mini-grid,.docs-chooser-grid{grid-template-columns:1fr}.docs-task-item{grid-template-columns:1fr}.docs-chooser-card{padding:22px 18px}}
 `;
 
@@ -2352,6 +2360,8 @@ function isOverviewGuidePath(current: string) {
     || current === "/docs/publishing"
     || current === "/docs/sdk"
     || current === "/docs/cli"
+    || current === "/docs/cli/reference"
+    || current === "/docs/cli/agents"
     || current === "/docs/mcp"
     || current === "/docs/white-label"
     || current.startsWith("/docs/white-label/")

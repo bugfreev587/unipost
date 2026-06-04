@@ -12,9 +12,20 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { listApiKeys, createApiKey, revokeApiKey, type ApiKey } from "@/lib/api";
-import { Plus, Key, AlertTriangle } from "lucide-react";
+import {
+  listApiKeys,
+  createApiKey,
+  createCliSetupToken,
+  revokeApiKey,
+  type ApiKey,
+  type CliSetupTokenResponse,
+} from "@/lib/api";
+import { Plus, Key, AlertTriangle, Terminal, Copy, Check } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
+
+type SetupClient = "terminal" | "codex" | "claude-code";
+
+const SETUP_API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev").replace(/\/+$/, "");
 
 export default function ApiKeysPage() {
   const { getToken } = useAuth();
@@ -30,6 +41,11 @@ export default function ApiKeysPage() {
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupClient, setSetupClient] = useState<SetupClient>("terminal");
+  const [setupPrompt, setSetupPrompt] = useState<CliSetupTokenResponse | null>(null);
+  const [setupCreating, setSetupCreating] = useState(false);
+  const [setupCopied, setSetupCopied] = useState(false);
 
   const loadKeys = useCallback(async () => {
     try {
@@ -86,6 +102,31 @@ export default function ApiKeysPage() {
     }
   }
 
+  async function handleCreateSetupToken() {
+    setSetupCreating(true);
+    setSetupCopied(false);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await createCliSetupToken(token, { client: setupClient });
+      setSetupPrompt(res.data);
+    } catch (err) {
+      console.error("Failed to create CLI setup token:", err);
+    } finally {
+      setSetupCreating(false);
+    }
+  }
+
+  function handleCopySetupCommand() {
+    if (!setupPrompt?.command) return;
+    navigator.clipboard.writeText(setupPrompt.command);
+    setSetupCopied(true);
+    setTimeout(() => setSetupCopied(false), 2000);
+  }
+  const setupCommandPreview = setupPrompt?.command || (setupClient === "terminal"
+    ? `unipost auth login --setup-token <token> --client terminal --base-url ${SETUP_API_BASE_URL} --json`
+    : `unipost agent bootstrap --client ${setupClient} --setup-token <token> --base-url ${SETUP_API_BASE_URL} --json`);
+
   return (
     <>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
@@ -93,52 +134,128 @@ export default function ApiKeysPage() {
           <div className="dt-page-title">API Keys</div>
           <div className="dt-subtitle">Manage authentication keys for your workspace</div>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
-            <Plus style={{ width: 13, height: 13 }} /> Create Key
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create API Key</DialogTitle>
-              <DialogDescription>Generate a new key for authenticating API requests.</DialogDescription>
-            </DialogHeader>
-            <div style={{ padding: "8px 0" }}>
-              <div style={{ marginBottom: 16 }}>
-                <label className="dform-label">Key Name</label>
-                <input
-                  className="dform-input"
-                  placeholder="e.g. Production, Staging..."
-                  value={keyName}
-                  onChange={(e) => setKeyName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="dform-label">Environment</label>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {(["production", "test"] as const).map((env) => (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <Dialog open={setupOpen} onOpenChange={(open) => { setSetupOpen(open); if (!open) { setSetupPrompt(null); setSetupCopied(false); } }}>
+            <DialogTrigger render={<button className="dbtn dbtn-ghost" />}>
+              <Terminal style={{ width: 13, height: 13 }} /> Set up UniPost CLI
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Set up UniPost CLI</DialogTitle>
+                <DialogDescription>
+                  Install once with npm install -g @unipost/cli, then create a short-lived setup token that signs the UniPost CLI in. Choose Terminal for command line only. Choose Codex or Claude Code only when a local agent will use UniPost.
+                </DialogDescription>
+              </DialogHeader>
+              <div style={{ padding: "8px 0" }}>
+                <label className="dform-label">Setup type</label>
+                <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+                  {([
+                    ["terminal", "Terminal"],
+                    ["codex", "Codex"],
+                    ["claude-code", "Claude Code"],
+                  ] as const).map(([client, label]) => (
                     <button
-                      key={env}
+                      key={client}
                       type="button"
-                      onClick={() => setKeyEnv(env)}
-                      className={keyEnv === env ? "dbtn dbtn-primary" : "dbtn dbtn-ghost"}
+                      onClick={() => { setSetupClient(client); setSetupPrompt(null); setSetupCopied(false); }}
+                      className={setupClient === client ? "dbtn dbtn-primary" : "dbtn dbtn-ghost"}
                       style={{ padding: "5px 12px", fontSize: 12 }}
                     >
-                      {env.charAt(0).toUpperCase() + env.slice(1)}
+                      {label}
                     </button>
                   ))}
                 </div>
+                {setupPrompt && (
+                  <>
+                    <div className="dt-body-sm" style={{ marginBottom: 10 }}>
+                      If you have not installed it yet, run <code>npm install -g @unipost/cli</code> first.
+                    </div>
+                    <label className="dform-label">Setup Command</label>
+                    <div className="key-display">
+                      <span className="key-value" style={{ whiteSpace: "normal", wordBreak: "break-all" }}>
+                        {setupCommandPreview}
+                      </span>
+                      <button
+                        className={`copy-btn ${setupCopied ? "copied" : ""}`}
+                        onClick={handleCopySetupCommand}
+                        style={{ color: setupCopied ? "var(--daccent)" : undefined }}
+                        title="Copy setup command"
+                      >
+                        {setupCopied ? <Check style={{ width: 13, height: 13 }} /> : <Copy style={{ width: 13, height: 13 }} />}
+                      </button>
+                    </div>
+                    <div className="dt-body-sm" style={{ marginTop: 8 }}>
+                      Expires {new Date(setupPrompt.expires_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                    </div>
+                    <div className="dt-body-sm" style={{ marginTop: 8 }}>
+                      {setupClient === "terminal" ? (
+                        <>
+                          After this command succeeds, run <code>unipost auth status --json</code> to confirm CLI auth.
+                        </>
+                      ) : (
+                        <>
+                          After this command succeeds, run <code>unipost agent install --client {setupClient} --json</code> and follow the returned instructions so the selected agent can use UniPost.
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
-            <DialogFooter>
-              <button className="dbtn dbtn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
-              <button className="dbtn dbtn-primary" onClick={handleCreate} disabled={creating || !keyName.trim()}>
-                {creating ? "Creating..." : "Create Key"}
-              </button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+              <DialogFooter>
+                <button className="dbtn dbtn-ghost" onClick={() => setSetupOpen(false)}>Cancel</button>
+                <button className="dbtn dbtn-primary" onClick={handleCreateSetupToken} disabled={setupCreating}>
+                  {setupCreating ? "Creating..." : setupPrompt ? "Regenerate" : "Create Setup Token"}
+                </button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger render={<button className="dbtn dbtn-primary" />}>
+              <Plus style={{ width: 13, height: 13 }} /> Create Key
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create API Key</DialogTitle>
+                <DialogDescription>Generate a new key for authenticating API requests.</DialogDescription>
+              </DialogHeader>
+              <div style={{ padding: "8px 0" }}>
+                <div style={{ marginBottom: 16 }}>
+                  <label className="dform-label">Key Name</label>
+                  <input
+                    className="dform-input"
+                    placeholder="e.g. Production, Staging..."
+                    value={keyName}
+                    onChange={(e) => setKeyName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="dform-label">Environment</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {(["production", "test"] as const).map((env) => (
+                      <button
+                        key={env}
+                        type="button"
+                        onClick={() => setKeyEnv(env)}
+                        className={keyEnv === env ? "dbtn dbtn-primary" : "dbtn dbtn-ghost"}
+                        style={{ padding: "5px 12px", fontSize: 12 }}
+                      >
+                        {env.charAt(0).toUpperCase() + env.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <button className="dbtn dbtn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+                <button className="dbtn dbtn-primary" onClick={handleCreate} disabled={creating || !keyName.trim()}>
+                  {creating ? "Creating..." : "Create Key"}
+                </button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       {/* New key reveal */}

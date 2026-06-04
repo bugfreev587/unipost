@@ -39,6 +39,7 @@ const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
 const sse_js_1 = require("@modelcontextprotocol/sdk/server/sse.js");
 const streamableHttp_js_1 = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 const zod_1 = require("zod");
+const agent_contract_js_1 = require("./agent-contract.js");
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const HOSTED_URL_GUIDANCE = "If you are creating a post from an already-public media URL, pass that URL directly under platform_posts[].media_urls in unipost_create_post. Use unipost_upload_media only when you need UniPost to store raw bytes and return a media_id.";
@@ -672,6 +673,7 @@ function createMcpServer(apiKey) {
         });
         return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
     });
+    (0, agent_contract_js_1.registerAgentContractTools)(server, (path, options) => apiRequest(path, apiKey, options));
     return server;
 }
 // ── HTTP Server ──

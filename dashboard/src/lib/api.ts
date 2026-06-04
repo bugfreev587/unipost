@@ -35,6 +35,15 @@ export interface ApiKeyCreateResponse {
   created_at: string;
 }
 
+export interface CliSetupTokenResponse {
+  setup_token: string;
+  client: string;
+  key_name: string;
+  expires_at: string;
+  command: string;
+  recommended_prompt: string;
+}
+
 export interface WebhookSubscription {
   id: string;
   name: string;
@@ -656,6 +665,16 @@ export async function createApiKey(
   data: { name: string; environment?: string; expires_at?: string }
 ): Promise<ApiResponse<ApiKeyCreateResponse>> {
   return request(`/v1/api-keys`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createCliSetupToken(
+  token: string,
+  data: { client: "terminal" | "codex" | "claude-code" | "cursor" | "windsurf" }
+): Promise<ApiResponse<CliSetupTokenResponse>> {
+  return request(`/v1/cli/setup-tokens`, token, {
     method: "POST",
     body: JSON.stringify(data),
   });

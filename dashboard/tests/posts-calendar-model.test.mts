@@ -81,7 +81,7 @@ test("bucketPostByLocalDay uses scheduled, then published, then created timestam
   assert.equal(bucketPostByLocalDay({ status: "draft" }), null);
 });
 
-test("status groups include in-flight, failed partial, cancelled, and archived", () => {
+test("status groups include in-flight, failed partial, cancelled, archived, and unknown", () => {
   assert.equal(getPostStatusGroup({ status: "queued" }), "in_progress");
   assert.equal(getPostStatusGroup({ status: "dispatching" }), "in_progress");
   assert.equal(getPostStatusGroup({ status: "retrying" }), "in_progress");
@@ -90,6 +90,7 @@ test("status groups include in-flight, failed partial, cancelled, and archived",
   assert.equal(getPostStatusGroup({ status: "failed" }), "failed");
   assert.equal(getPostStatusGroup({ status: "cancelled" }), "cancelled");
   assert.equal(getPostStatusGroup({ status: "published", archived_at: "2026-05-30T12:00:00Z" }), "archived");
+  assert.equal(getPostStatusGroup({ status: "future_review" }), "unknown");
 });
 
 test("status filters default to all posts and exclude archived from non-archived filters", () => {
@@ -106,6 +107,8 @@ test("status filters default to all posts and exclude archived from non-archived
     true,
   );
   assert.equal(shouldShowPostForStatusFilter({ status: "processing" }, "in_progress"), true);
+  assert.equal(shouldShowPostForStatusFilter({ status: "future_review" }, "all"), true);
+  assert.equal(shouldShowPostForStatusFilter({ status: "future_review" }, "draft"), false);
 });
 
 test("profile colors prefer valid branding colors and otherwise use a stable palette", () => {
@@ -279,9 +282,9 @@ test("continuous calendar snap offsets recycle whole date lines without waiting 
   assert.deepEqual(getContinuousCalendarSnapOffset(0, 100), { steps: 0, offsetPx: 0 });
 });
 
-test("parseCalendarViewMode accepts URL view modes and falls back to month", () => {
-  assert.equal(parseCalendarViewMode("day"), "day");
-  assert.equal(parseCalendarViewMode("week"), "week");
+test("parseCalendarViewMode keeps v1 scoped to month", () => {
+  assert.equal(parseCalendarViewMode("day"), "month");
+  assert.equal(parseCalendarViewMode("week"), "month");
   assert.equal(parseCalendarViewMode("month"), "month");
   assert.equal(parseCalendarViewMode("agenda"), "month");
   assert.equal(parseCalendarViewMode(null), "month");

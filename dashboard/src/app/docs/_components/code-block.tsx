@@ -117,18 +117,22 @@ export function CodeBlock({
 export function CodeTabs({
   snippets,
   viewerMaxHeight,
+  viewerHeight,
+  scrollbarVisibility = "default",
   themeVariant = "default",
 }: {
   snippets: CodeSnippet[];
   viewerMaxHeight?: number;
+  viewerHeight?: number | string;
+  scrollbarVisibility?: "default" | "on-scroll";
   themeVariant?: "default" | "api";
 }) {
   const allJson = snippets.length > 0 && snippets.every((snippet) => normalizeLanguage(snippet.lang || snippet.label, snippet.code) === "json");
 
   if (allJson) {
-    return <JsonMonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} themeVariant={themeVariant} />;
+    return <JsonMonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} height={viewerHeight} scrollbarVisibility={scrollbarVisibility} themeVariant={themeVariant} />;
   }
-  return <MonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} themeVariant={themeVariant} />;
+  return <MonacoTabs snippets={snippets} maxHeight={viewerMaxHeight} height={viewerHeight} scrollbarVisibility={scrollbarVisibility} themeVariant={themeVariant} />;
 }
 
 export function codeBlockStyles() {
@@ -159,6 +163,8 @@ html.dark .docs-code-block,html.dark .docs-code-tabs{
 .docs-code-expand-title{font-family:var(--docs-mono, var(--mono), monospace);font-size:12px;font-weight:700;color:#f4f4f5}
 .docs-code-expand-body{min-height:0;overflow:hidden;background:#272936}
 .docs-code-expand-body .docs-monaco-frame{border:none!important;border-radius:0!important}
+.docs-monaco-frame.scrollbar-on-scroll .monaco-scrollable-element > .scrollbar.vertical{opacity:0;transition:opacity .14s ease}
+.docs-monaco-frame.scrollbar-on-scroll.scrollbar-active .monaco-scrollable-element > .scrollbar.vertical,.docs-monaco-frame.scrollbar-on-scroll:focus-within .monaco-scrollable-element > .scrollbar.vertical{opacity:1}
 .docs-code-surface{margin:0 14px 14px;padding:18px 20px;background:var(--docs-code-surface-bg, var(--docs-tech-bg));overflow:auto;border-radius:16px}
 .docs-code-surface.tabs{border-radius:16px}
 .docs-code-surface.bare{margin:0;padding:18px 20px;border-radius:16px}

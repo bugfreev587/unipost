@@ -58,6 +58,13 @@ const MCP_SNIPPETS = [
 
 const CURL_SNIPPET = [
   {
+    label: "CLI auth test",
+    code: `export UNIPOST_API_KEY=up_live_...
+unipost agent mcp-test --json
+unipost agent mcp-config --client claude-code --json
+unipost agent mcp-config --client cursor --json`,
+  },
+  {
     label: "cURL",
     code: `curl -X POST https://mcp.unipost.dev/mcp \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
@@ -90,7 +97,8 @@ export default function McpPage() {
         <span className="mcp-badge">Hosted</span>
         <span className="mcp-badge">Streamable HTTP</span>
         <span className="mcp-badge">Bearer auth</span>
-        <span className="mcp-badge">8 tools</span>
+        <span className="mcp-badge">11 tools</span>
+        <span className="mcp-badge">Phase 5 agent contract</span>
         <span className="mcp-badge">4 clients supported</span>
       </div>
 
@@ -141,9 +149,26 @@ export default function McpPage() {
           ["unipost_get_post", "Get the status and details of a post"],
           ["unipost_get_analytics", "Read engagement metrics for a post"],
           ["unipost_list_posts", "List recent posts filtered by status"],
+          ["unipost_agent_capabilities", "Read the shared UniPost agent intent catalog and safety model"],
+          ["unipost_agent_context", "Ground an agent in workspace, profile, account, and setup readiness context"],
+          ["unipost_agent_plan", "Convert an agent intent into structured safe actions"],
         ]}
       />
       <p className="mcp-note">The MCP surface is strongest for account lookup, text publishing, analytics, and media that is already reachable by URL or already uploaded into UniPost. Large local video files are not the ideal path today.</p>
+
+      <h2 id="agent-contract">Agent contract</h2>
+      <p className="mcp-note">Phase 5 mirrors CLI agent intent names and safety levels into the MCP server. Agents can discover capabilities through MCP, generate a plan, and still use the CLI for local validation, drafts, and explicit publish approval when a terminal workflow is the better fit.</p>
+      <DocsTable
+        columns={["Tool or command", "Contract"]}
+        rows={[
+          ["unipost_agent_capabilities", "Returns intent names, canonical actions, safety levels, required inputs, and `catalog_version`."],
+          ["unipost_agent_context", "Returns authenticated workspace context through the same API key used by hosted MCP."],
+          ["unipost_agent_plan", "Returns structured actions for supported intents without executing raw terminal commands."],
+          ["unipost agent mcp-test --json", "CLI-side auth and readiness check before adding UniPost to an MCP client."],
+          ["unipost agent install --client codex|claude-code", "Generates first-party client instruction package setup guidance."],
+          ["unipost agent execute --plan plan.json", "Optional beta for structured read-only, validate, and draft-write plans; live publish plans are rejected."],
+        ]}
+      />
 
       <h2 id="recommended-flow">Recommended flow</h2>
       <p className="mcp-note">&ldquo;Generate text, then publish immediately&rdquo; is not the safest pattern. Prefer generate → validate → preview → publish.</p>
@@ -199,7 +224,7 @@ export default function McpPage() {
       <p className="mcp-note">UniPost exposes <code>unipost_create_youtube_video_post</code> as a higher-level wrapper, but for very large local files the most reliable path is still a hosted <code>video_url</code> or a reusable <code>media_id</code>.</p>
 
       <h2 id="client-config">Client configuration</h2>
-      <p className="mcp-note">Each client expects this config in a different place. Drop the matching snippet in the file below, then restart the client.</p>
+      <p className="mcp-note">Each client expects this config in a different place. You can copy the matching snippet here or generate it with <code>unipost agent mcp-config --client cursor|claude-code</code>, then restart the client.</p>
       <DocsTable
         columns={["Client", "Config location", "Notes"]}
         rows={[
@@ -212,7 +237,7 @@ export default function McpPage() {
       <DocsCodeTabs snippets={MCP_SNIPPETS} />
 
       <h2 id="testing">Test the server directly</h2>
-      <p className="mcp-note">If you want to confirm auth and transport outside an MCP client, initialize the server directly with cURL.</p>
+      <p className="mcp-note">If you want to confirm auth and transport outside an MCP client, run the CLI auth test first. The cURL initialize call is useful for lower-level transport debugging.</p>
       <DocsCodeTabs snippets={CURL_SNIPPET} />
 
       <h2 id="limitations">Limitations</h2>
