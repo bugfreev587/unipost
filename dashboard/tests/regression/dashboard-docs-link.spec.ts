@@ -58,4 +58,25 @@ test.describe("dashboard docs link", () => {
       }),
     ).toBe("https://dev.unipost.dev/docs/quickstart");
   });
+
+  test("prefers current app origin before CI app URL fallback", () => {
+    const previousAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+    process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+
+    try {
+      expect(
+        getDashboardDocsHref({
+          landingUrl: "",
+          baseUrl: "",
+          currentOrigin: "https://staging-app.unipost.dev",
+        }),
+      ).toBe("https://staging.unipost.dev/docs/quickstart");
+    } finally {
+      if (previousAppUrl === undefined) {
+        delete process.env.NEXT_PUBLIC_APP_URL;
+      } else {
+        process.env.NEXT_PUBLIC_APP_URL = previousAppUrl;
+      }
+    }
+  });
 });
