@@ -14,10 +14,15 @@ repositories {
 
 dependencies {
     implementation("dev.unipost:sdk-java:${sdkVersion.get()}")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
 }
 
 application {
     mainClass.set("dev.unipost.validation.UnipostSdkTest")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 java {

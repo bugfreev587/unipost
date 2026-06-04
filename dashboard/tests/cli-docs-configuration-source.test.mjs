@@ -1,0 +1,174 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { test } from "node:test";
+
+const root = process.cwd();
+
+test("CLI docs explain setup, configuration, and common fixes", async () => {
+  const source = await readFile(join(root, "src/app/docs/cli/page.tsx"), "utf8");
+
+  assert.match(source, /What UniPost CLI lets agents do/);
+  assert.match(source, /Connect UniPost faster/);
+  assert.match(source, /Inspect real workspace data/);
+  assert.match(source, /Validate and draft safely/);
+  assert.match(source, /Codex or Claude Code can read your project/);
+  assert.match(source, /profiles, connected accounts, account health, platform capabilities, and metrics/);
+  assert.match(source, /Live or scheduled publishing is never automatic/);
+  assert.match(source, /Start in three steps/);
+  assert.match(source, /Choose your setup path/);
+  assert.match(source, /Path A: Command line only/);
+  assert.match(source, /Path B: Local AI agent/);
+  assert.match(source, /setup token only logs the UniPost CLI in/);
+  assert.match(source, /It does not install or configure Codex, Claude Code, or any other agent/);
+  assert.match(source, /Install once/);
+  assert.match(source, /npm install -g @unipost\/cli/);
+  assert.match(source, /After install, use <code>unipost<\/code> commands/);
+  assert.match(source, /Update with <code>unipost upgrade<\/code>/);
+  assert.match(source, /CLI self-management/);
+  assert.match(source, /unipost upgrade/);
+  assert.match(source, /unipost self help/);
+  assert.match(source, /Choose Terminal/);
+  assert.match(source, /Copy the generated `unipost auth login/);
+  assert.match(source, /--client terminal/);
+  assert.match(source, /Path B is for Codex, Claude Code, Cursor/);
+  assert.match(source, /Configure the CLI/);
+  assert.match(source, /Common issues/);
+  assert.match(source, /Dashboard setup token/);
+  assert.doesNotMatch(source, /npx -y @unipost\/cli/);
+  assert.doesNotMatch(source, /No-install one-off alternative/);
+  assert.match(source, /zsh: command not found: unipost/);
+  assert.match(source, /--base-url https:\/\/api\.unipost\.dev/);
+  assert.match(source, /UNIPOST_API_KEY/);
+  assert.match(source, /config set base_url/);
+  assert.match(source, /auth status --json/);
+  assert.match(source, /setup_token_expired/);
+  assert.match(source, /setup_token_used/);
+  assert.match(source, /keychain_unavailable/);
+  assert.match(source, /--dry-run/);
+  assert.doesNotMatch(source, /Canonical statuses/);
+  assert.doesNotMatch(source, /Runtime behavior/);
+});
+
+test("CLI docs split overview from a grouped command reference", async () => {
+  const shellSource = await readFile(join(root, "src/app/docs/_components/docs-shell.tsx"), "utf8");
+  const overviewSource = await readFile(join(root, "src/app/docs/cli/page.tsx"), "utf8");
+  const referenceSource = await readFile(join(root, "src/app/docs/cli/reference/page.tsx"), "utf8");
+  const agentGuideSource = await readFile(join(root, "src/app/docs/cli/agents/page.tsx"), "utf8");
+  const responseTabsSource = await readFile(join(root, "src/app/docs/cli/reference/command-response-tabs.tsx"), "utf8");
+
+  assert.match(shellSource, /CLI/);
+  assert.match(shellSource, /Overview/);
+  assert.match(shellSource, /CLI Reference/);
+  assert.match(shellSource, /AI Agent Guide/);
+  assert.match(shellSource, /\/docs\/cli\/reference/);
+  assert.match(shellSource, /\/docs\/cli\/agents/);
+  assert.match(shellSource, /@media \(max-width:640px\)\{\.docs-auth-actions\{display:none\}/);
+
+  assert.match(overviewSource, /title="CLI - Overview"/);
+  assert.match(overviewSource, /\/docs\/cli\/reference/);
+  assert.match(overviewSource, /\/docs\/cli\/agents/);
+
+  assert.match(referenceSource, /title="CLI Reference"/);
+  assert.match(referenceSource, /CLI_REFERENCE_SECTIONS/);
+  assert.match(referenceSource, /Setup & Diagnostics/);
+  assert.match(referenceSource, /Auth & Config/);
+  assert.match(referenceSource, /Profiles & Connect/);
+  assert.match(referenceSource, /Accounts/);
+  assert.match(referenceSource, /Posts/);
+  assert.match(referenceSource, /Media/);
+  assert.match(referenceSource, /Analytics/);
+  assert.match(referenceSource, /Examples/);
+  assert.match(referenceSource, /Agent & MCP/);
+  assert.match(referenceSource, /Self-management & Shell/);
+  assert.match(referenceSource, /cli-reference-group/);
+  assert.match(referenceSource, /cli-command-row/);
+  assert.match(referenceSource, /cli-command-summary/);
+  assert.match(referenceSource, /\.cli-reference-group\{display:grid;gap:16px;align-items:start\}/);
+  assert.doesNotMatch(referenceSource, /\.cli-reference-group\{[^}]*grid-template-columns:minmax\(180px/);
+  assert.match(referenceSource, /\.cli-command-summary\{display:grid;grid-template-columns:minmax\(260px,\.38fr\) minmax\(0,1fr\) 18px/);
+  assert.match(referenceSource, /\.cli-command-example\{font-family:var\(--docs-mono\);font-size:12\.5px;line-height:1\.45;color:var\(--docs-text-soft\);overflow-wrap:anywhere\}/);
+  assert.doesNotMatch(referenceSource, /\.cli-command-example\{[^}]*font-weight:650/);
+  assert.match(referenceSource, /CommandResponseTabs/);
+  assert.match(referenceSource, /cli-command-response-mount/);
+  assert.match(responseTabsSource, /closest\("details"\)/);
+  assert.match(responseTabsSource, /addEventListener\("toggle", syncOpen\)/);
+  assert.match(responseTabsSource, /removeEventListener\("toggle", syncOpen\)/);
+  assert.match(responseTabsSource, /viewerHeight=\{240\}/);
+  assert.match(responseTabsSource, /scrollbarVisibility="on-scroll"/);
+  assert.match(referenceSource, /<details/);
+  assert.match(referenceSource, /<summary/);
+  assert.doesNotMatch(referenceSource, /command-reference-card/);
+  assert.doesNotMatch(referenceSource, /command-reference-examples/);
+  assert.match(referenceSource, /Example response/);
+  assert.match(referenceSource, /unipost accounts list --json/);
+  assert.match(referenceSource, /"command": "accounts list"/);
+  assert.match(referenceSource, /unipost agent capabilities --json/);
+
+  assert.match(agentGuideSource, /title="AI Agent Guide"/);
+  assert.match(agentGuideSource, /plain-language prompts/);
+  assert.match(agentGuideSource, /Read workspace context/);
+  assert.match(agentGuideSource, /Inspect account readiness/);
+  assert.match(agentGuideSource, /Prepare posts safely/);
+  assert.match(agentGuideSource, /Publish only after approval/);
+  assert.match(agentGuideSource, /Use UniPost CLI to look up my profiles and connected accounts/);
+  assert.match(agentGuideSource, /Check whether my connected accounts are ready to publish/);
+  assert.match(agentGuideSource, /Help me draft a LinkedIn post/);
+  assert.match(agentGuideSource, /I confirm publishing this draft/);
+  assert.match(agentGuideSource, /Use UniPost CLI to complete this task/);
+  assert.match(agentGuideSource, /unipost agent bootstrap --client claude-code --json/);
+  assert.match(agentGuideSource, /unipost profiles list --json/);
+  assert.match(agentGuideSource, /unipost accounts list --json/);
+  assert.match(agentGuideSource, /unipost posts validate --account sa_\.\.\. --caption "\.\.\." --json/);
+  assert.match(agentGuideSource, /unipost posts draft --account sa_\.\.\. --caption "\.\.\." --json/);
+  assert.match(agentGuideSource, /do not publish, schedule, cancel, retry, or mutate data/);
+  assert.match(agentGuideSource, /--yes/);
+  assert.match(agentGuideSource, /--idempotency-key/);
+  assert.doesNotMatch(agentGuideSource, /[\u3400-\u9fff]/);
+});
+
+test("CLI command responses keep a fixed inline height and can scroll without expanding", async () => {
+  const codeBlockSource = await readFile(join(root, "src/app/docs/_components/code-block.tsx"), "utf8");
+  const monacoSource = await readFile(join(root, "src/app/docs/api/_components/json-monaco-viewer.tsx"), "utf8");
+
+  assert.match(codeBlockSource, /viewerHeight\?: number \| string/);
+  assert.match(codeBlockSource, /scrollbarVisibility\?: "default" \| "on-scroll"/);
+  assert.match(codeBlockSource, /height=\{viewerHeight\}/);
+  assert.match(codeBlockSource, /scrollbarVisibility=\{scrollbarVisibility\}/);
+
+  assert.match(monacoSource, /type ScrollbarVisibility = "default" \| "on-scroll"/);
+  assert.match(monacoSource, /docs-monaco-frame scrollbar-on-scroll/);
+  assert.match(monacoSource, /scrollbarVisibility === "on-scroll"/);
+  assert.match(monacoSource, /onWheelCapture=\{showScrollbar\}/);
+  assert.match(monacoSource, /onTouchMoveCapture=\{showScrollbar\}/);
+  assert.match(monacoSource, /handleMouseWheel: expanded \|\| scrollbarVisibility === "on-scroll"/);
+  assert.match(monacoSource, /vertical: expanded \|\| scrollbarVisibility === "on-scroll" \? "auto" : "hidden"/);
+
+  assert.match(codeBlockSource, /\.docs-monaco-frame\.scrollbar-on-scroll \.monaco-scrollable-element > \.scrollbar\.vertical/);
+  assert.match(codeBlockSource, /\.docs-monaco-frame\.scrollbar-on-scroll\.scrollbar-active \.monaco-scrollable-element > \.scrollbar\.vertical/);
+});
+
+test("API key setup dialog does not imply Codex is configured by auth alone", async () => {
+  const source = await readFile(join(root, "src/app/(dashboard)/projects/[id]/api-keys/page.tsx"), "utf8");
+
+  assert.match(source, /Set up UniPost CLI/);
+  assert.match(source, /Install once with npm install -g @unipost\/cli/);
+  assert.match(source, /create a short-lived setup token that signs the UniPost CLI in/i);
+  assert.match(source, /Choose Terminal for command line only/);
+  assert.match(source, /Choose Codex or Claude Code only when a local agent will use UniPost/);
+});
+
+test("CLI README explains install-first usage and separate agent install", async () => {
+  const source = await readFile(join(root, "../cli/README.md"), "utf8");
+
+  assert.match(source, /Install once:/);
+  assert.match(source, /npm install -g @unipost\/cli/);
+  assert.match(source, /Use `unipost \.\.\.` by default/);
+  assert.match(source, /Update with `unipost upgrade`/);
+  assert.match(source, /unipost self help/);
+  assert.match(source, /unipost auth login --setup-token ust_\.\.\. --client terminal/);
+  assert.doesNotMatch(source, /npx -y @unipost\/cli/);
+  assert.doesNotMatch(source, /No-install one-off alternative/);
+  assert.match(source, /To let a local AI agent use UniPost/);
+  assert.match(source, /unipost agent install --client codex --json/);
+});

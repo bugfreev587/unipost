@@ -9,6 +9,14 @@ const calendarViewPath = path.join(root, "src/components/posts/calendar/posts-ca
 
 test("Posts calendar view keeps the requested calendar controls and drawer integration", async () => {
   const source = await readFile(calendarViewPath, "utf8");
+  const segment = source.slice(
+    source.indexOf('<div className="posts-calendar-segment"'),
+    source.indexOf('<div className="posts-calendar-month-nav"'),
+  );
+  const dayButtonStart = segment.indexOf('className={calendarMode === "day"');
+  const weekButtonStart = segment.indexOf('className={calendarMode === "week"');
+  const dayButton = segment.slice(dayButtonStart, segment.indexOf("</button>", dayButtonStart));
+  const weekButton = segment.slice(weekButtonStart, segment.indexOf("</button>", weekButtonStart));
 
   assert.match(source, /export function PostsCalendarView/);
   assert.match(source, /CreatePostDrawer/);
@@ -19,9 +27,17 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /Month/);
   assert.match(source, /usePathname,\s*useParams,\s*useRouter,\s*useSearchParams/);
   assert.match(source, /parseCalendarViewMode\(searchParams\.get\("view"\)\)/);
-  assert.match(source, /replaceCalendarMode\("day"\)/);
-  assert.match(source, /replaceCalendarMode\("week"\)/);
   assert.match(source, /replaceCalendarMode\("month"\)/);
+  assert.doesNotMatch(segment, /replaceCalendarMode\("day"\)/);
+  assert.doesNotMatch(segment, /replaceCalendarMode\("week"\)/);
+  assert.match(dayButton, /aria-disabled="true"/);
+  assert.match(dayButton, /disabled/);
+  assert.match(dayButton, /title="Day view is not available in v1"/);
+  assert.match(dayButton, />\s*Day/);
+  assert.match(weekButton, /aria-disabled="true"/);
+  assert.match(weekButton, /disabled/);
+  assert.match(weekButton, /title="Week view is not available in v1"/);
+  assert.match(weekButton, />\s*Week/);
   assert.match(source, /nextParams\.set\("view",\s*mode\)/);
   assert.match(source, /router\.replace\(`\$\{pathname\}\$\{query \? `\?\$\{query\}` : ""\}`,\s*\{\s*scroll:\s*false\s*\}\)/);
   assert.match(source, /renderWeekView/);
@@ -43,7 +59,6 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /getCalendarSnapSteps/);
   assert.match(source, /getCalendarSnapOffset/);
   assert.match(source, /shiftCalendarDateBySnapSteps/);
-  assert.match(source, /buildRollingMonthGrid/);
   assert.match(source, /buildRollingWeekDays/);
   assert.match(source, /posts-calendar-month-track/);
   assert.match(source, /posts-calendar-week-track/);
@@ -123,7 +138,7 @@ test("Posts calendar snap tracks keep fixed gutters outside moving date tracks",
   assert.doesNotMatch(weekColumns, /posts-calendar-week-heading-row/);
   assert.match(weekView, /className="posts-calendar-week-shell"/);
   assert.ok(monthWeekdayIndex >= 0, "month weekday header should render as its own static row");
-  assert.ok(monthTrackIndex >= 0, "month should render a rolling track for date cells");
+  assert.ok(monthTrackIndex >= 0, "month should render a fixed track for date cells");
   assert.ok(monthWeekdayIndex < monthTrackIndex, "month weekday header should stay outside the moving date track");
   assert.ok(weekHeaderIndex >= 0, "week date header should render before the time grid");
   assert.ok(weekBodyIndex >= 0, "week body should render after the header");
@@ -131,8 +146,10 @@ test("Posts calendar snap tracks keep fixed gutters outside moving date tracks",
   assert.match(weekHeader, /posts-calendar-week-header-inner posts-calendar-week-track/);
   assert.match(weekColumns, /posts-calendar-week-columns posts-calendar-week-track/);
   assert.match(source, /\.posts-calendar-month-track\{[^}]*width:100%/);
-  assert.match(source, /\.posts-calendar-month-track\{[^}]*height:calc\(100% \* 8 \/ 6\)/);
-  assert.match(source, /renderMonthDayGrid\(interactive \? rollingMonthCells : cells/);
+  assert.match(source, /\.posts-calendar-month-track\{[^}]*height:100%/);
+  assert.match(source, /renderMonthDayGrid\(cells,\s*"posts-calendar-month-days posts-calendar-month-track"\)/);
+  assert.doesNotMatch(source, /rollingMonthCells/);
+  assert.doesNotMatch(source, /buildRollingMonthGrid/);
   assert.match(source, /renderWeekColumns\(interactive \? rollingWeekDays : days/);
   assert.doesNotMatch(source, /posts-calendar-swipe-viewport/);
 });
@@ -307,6 +324,67 @@ test("Posts calendar details popover anchors to the selected event button", asyn
   assert.doesNotMatch(source, /background:color-mix\(in srgb,var\(--overlay\) 48%,transparent\)/);
 });
 
+test("Posts calendar event buttons expose complete accessible labels", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const eventButton = source.slice(
+    source.indexOf("function CalendarEventButton"),
+    source.indexOf("function TimeLabels"),
+  );
+  const labelHelper = source.slice(
+    source.indexOf("function getCalendarEventAccessibleLabel"),
+    source.indexOf("function CalendarEventButton"),
+  );
+
+  assert.match(eventButton, /const accessibleLabel = getCalendarEventAccessibleLabel/);
+  assert.match(eventButton, /timezone:\s*string/);
+  assert.match(source, /<CalendarEventButton[\s\S]*timezone=\{timezone\}/);
+  assert.match(source, /<TimedPostColumn[\s\S]*timezone=\{timezone\}/);
+  assert.match(eventButton, /aria-label=\{accessibleLabel\}/);
+  assert.match(eventButton, /title=\{accessibleLabel\}/);
+  assert.match(labelHelper, /profile\?\.name/);
+  assert.match(labelHelper, /formatPlatformLabel/);
+  assert.match(labelHelper, /formatPostDateTime/);
+  assert.match(labelHelper, /timezone/);
+  assert.match(labelHelper, /meta\.label/);
+});
+
+test("Posts calendar create flow refreshes data after drawer success", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const handleCreated = source.slice(
+    source.indexOf("const handleCreated = useCallback"),
+    source.indexOf("const handleEdited = useCallback"),
+  );
+  const drawer = source.slice(
+    source.indexOf("<CreatePostDrawer"),
+    source.indexOf("</section>"),
+  );
+
+  assert.match(handleCreated, /await loadData\(\)/);
+  assert.match(handleCreated, /\[loadData\]/);
+  assert.match(drawer, /open=\{drawerOpen\}/);
+  assert.match(drawer, /onOpenChange=\{setDrawerOpen\}/);
+  assert.match(drawer, /onCreated=\{handleCreated\}/);
+});
+
+test("Posts calendar keeps empty workspace paths usable", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const profilesFilter = source.slice(
+    source.indexOf('<FilterSection title="Profiles">'),
+    source.indexOf('<FilterSection title="Platforms">'),
+  );
+  const platformsFilter = source.slice(
+    source.indexOf('<FilterSection title="Platforms">'),
+    source.indexOf('<FilterSection title="Status">'),
+  );
+
+  assert.match(profilesFilter, /profiles\.length === 0/);
+  assert.match(profilesFilter, /No profiles found/);
+  assert.match(platformsFilter, /platformOptions\.length === 0/);
+  assert.match(platformsFilter, /No connected platforms/);
+  assert.match(source, /renderMonthView\(\)/);
+  assert.match(source, /<CreatePostDrawer/);
+});
+
 test("Posts calendar switches from details popover to edit inspector without keeping the details popover open", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const openEditPost = source.slice(
@@ -329,6 +407,8 @@ test("Posts calendar details popover mirrors list view post details", async () =
 
   assert.match(popover, /<CalendarPostDetailGrid post=\{post\} meta=\{meta\} \/>/);
   assert.match(popover, /<CalendarPostResults post=\{post\} \/>/);
+  assert.match(popover, /href=\{`\/projects\/\$\{profileId\}\/posts\/list\?post=\$\{encodeURIComponent\(post\.id\)\}`\}/);
+  assert.match(popover, />\s*Open in List\s*</);
   assert.match(detailsHelpers, /function CalendarPostDetailGrid/);
   assert.match(detailsHelpers, /Caption/);
   assert.match(detailsHelpers, /Mode/);

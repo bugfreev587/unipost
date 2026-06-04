@@ -3,6 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { registerAgentContractTools } from "./agent-contract.js";
 
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const API_KEY = process.env.UNIPOST_API_KEY || "";
@@ -156,6 +157,8 @@ server.tool(
     };
   }
 );
+
+registerAgentContractTools(server, apiRequest);
 
 // Start server
 async function main() {

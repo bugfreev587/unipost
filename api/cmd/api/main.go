@@ -401,6 +401,7 @@ func main() {
 	}
 	workspaceHandler := handler.NewWorkspaceHandler(queries)
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
+	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries).WithAPIBaseURL(os.Getenv("API_BASE_URL"))
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker)
@@ -541,6 +542,10 @@ func main() {
 	// land later.
 	r.Post("/v1/meta/data-deletion", metaDataDeletionHandler.HandleDataDeletion)
 
+	// CLI setup-token exchange. The setup token itself is the short-lived
+	// bearer, so this endpoint stays outside the normal API-key auth group.
+	r.Post("/v1/cli/setup-tokens/exchange", cliSetupTokenHandler.Exchange)
+
 	// User-identity routes (Clerk session only — these are about the
 	// signed-in human, not a workspace, so no API-key counterpart).
 	r.Group(func(r chi.Router) {
@@ -638,6 +643,7 @@ func main() {
 		r.Get("/v1/api-keys", apiKeyHandler.List)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/api-keys", apiKeyHandler.Create)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/api-keys/{keyID}", apiKeyHandler.Revoke)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/cli/setup-tokens", cliSetupTokenHandler.Issue)
 
 		// Profiles.
 		r.Get("/v1/profiles", profileHandler.APIList)
