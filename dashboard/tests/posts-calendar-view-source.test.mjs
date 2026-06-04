@@ -300,6 +300,30 @@ test("Posts calendar details popover anchors to the selected event button", asyn
   assert.doesNotMatch(source, /background:color-mix\(in srgb,var\(--overlay\) 48%,transparent\)/);
 });
 
+test("Posts calendar event buttons expose complete accessible labels", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const eventButton = source.slice(
+    source.indexOf("function CalendarEventButton"),
+    source.indexOf("function TimeLabels"),
+  );
+  const labelHelper = source.slice(
+    source.indexOf("function getCalendarEventAccessibleLabel"),
+    source.indexOf("function CalendarEventButton"),
+  );
+
+  assert.match(eventButton, /const accessibleLabel = getCalendarEventAccessibleLabel/);
+  assert.match(eventButton, /timezone:\s*string/);
+  assert.match(source, /<CalendarEventButton[\s\S]*timezone=\{timezone\}/);
+  assert.match(source, /<TimedPostColumn[\s\S]*timezone=\{timezone\}/);
+  assert.match(eventButton, /aria-label=\{accessibleLabel\}/);
+  assert.match(eventButton, /title=\{accessibleLabel\}/);
+  assert.match(labelHelper, /profile\?\.name/);
+  assert.match(labelHelper, /formatPlatformLabel/);
+  assert.match(labelHelper, /formatPostDateTime/);
+  assert.match(labelHelper, /timezone/);
+  assert.match(labelHelper, /meta\.label/);
+});
+
 test("Posts calendar switches from details popover to edit inspector without keeping the details popover open", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const openEditPost = source.slice(
