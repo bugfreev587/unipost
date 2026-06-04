@@ -128,6 +128,7 @@ const STATUS_META: Record<CalendarStatusGroup, { label: string; short: string }>
   draft: { label: "Draft", short: "DRFT" },
   cancelled: { label: "Cancelled", short: "CNCL" },
   archived: { label: "Archived", short: "ARCH" },
+  unknown: { label: "Unknown", short: "UNK" },
 };
 
 export function PostsCalendarView() {
