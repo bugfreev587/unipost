@@ -111,7 +111,11 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(agentGuideSource, /Inspect account readiness/);
   assert.match(agentGuideSource, /Prepare posts safely/);
   assert.match(agentGuideSource, /Publish only after approval/);
-  assert.match(agentGuideSource, /请使用 UniPost CLI 查询我的 profiles 和 connected accounts/);
+  assert.match(agentGuideSource, /Use UniPost CLI to look up my profiles and connected accounts/);
+  assert.match(agentGuideSource, /Check whether my connected accounts are ready to publish/);
+  assert.match(agentGuideSource, /Help me draft a LinkedIn post/);
+  assert.match(agentGuideSource, /I confirm publishing this draft/);
+  assert.match(agentGuideSource, /Use UniPost CLI to complete this task/);
   assert.match(agentGuideSource, /unipost agent bootstrap --client claude-code --json/);
   assert.match(agentGuideSource, /unipost profiles list --json/);
   assert.match(agentGuideSource, /unipost accounts list --json/);
@@ -120,6 +124,7 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(agentGuideSource, /do not publish, schedule, cancel, retry, or mutate data/);
   assert.match(agentGuideSource, /--yes/);
   assert.match(agentGuideSource, /--idempotency-key/);
+  assert.doesNotMatch(agentGuideSource, /[\u3400-\u9fff]/);
 });
 
 test("CLI command responses keep a fixed inline height and can scroll without expanding", async () => {
