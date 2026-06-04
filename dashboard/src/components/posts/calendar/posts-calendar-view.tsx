@@ -644,6 +644,7 @@ export function PostsCalendarView() {
                   post={post}
                   profilesById={profilesById}
                   profileColors={profileColors}
+                  timezone={timezone}
                   onClick={(event) => handleSelectPost(post.id, event.currentTarget)}
                 />
               ))}
@@ -737,6 +738,7 @@ export function PostsCalendarView() {
               profilesById={profilesById}
               profileColors={profileColors}
               isWeekend={isWeekendDate(day.date)}
+              timezone={timezone}
               onSelectPost={handleSelectPost}
             />
           ))}
@@ -783,6 +785,7 @@ export function PostsCalendarView() {
             profilesById={profilesById}
             profileColors={profileColors}
             isWeekend={isWeekendDate(visibleDate)}
+            timezone={timezone}
             onSelectPost={handleSelectPost}
           />
         </div>
@@ -981,15 +984,35 @@ function FilterSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
+function getCalendarEventAccessibleLabel(
+  post: SocialPost,
+  meta: { label: string; short: string },
+  profile: Profile | null,
+  timezone: string,
+): string {
+  const caption = post.caption || "No title";
+  const platforms = getPostPlatforms(post).map(formatPlatformLabel).join(", ") || "No platforms";
+  return [
+    caption,
+    `Status: ${meta.label}`,
+    `Profile: ${profile?.name || "No profile"}`,
+    `Platforms: ${platforms}`,
+    `Date: ${formatPostDateTime(post)}`,
+    `Timezone: ${timezone}`,
+  ].join(". ");
+}
+
 function CalendarEventButton({
   post,
   profilesById,
   profileColors,
+  timezone,
   onClick,
 }: {
   post: SocialPost;
   profilesById: Map<string, Profile>;
   profileColors: Map<string, string>;
+  timezone: string;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const status = getPostStatusGroup(post);
@@ -997,13 +1020,15 @@ function CalendarEventButton({
   const profile = getPrimaryProfile(post, profilesById);
   const color = getPostColor(post, profilesById, profileColors);
   const time = formatPostTime(post);
+  const accessibleLabel = getCalendarEventAccessibleLabel(post, meta, profile, timezone);
   return (
     <button
       type="button"
       className="posts-calendar-event"
       style={{ "--event-color": color } as CSSProperties}
       onClick={onClick}
-      title={`${post.caption || "No title"} - ${meta.label}${profile ? ` - ${profile.name}` : ""}`}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
     >
       <span className="posts-calendar-event-rail" />
       <span className="posts-calendar-event-status">{meta.short}</span>
@@ -1030,12 +1055,14 @@ function TimedPostColumn({
   profilesById,
   profileColors,
   isWeekend,
+  timezone,
   onSelectPost,
 }: {
   posts: SocialPost[];
   profilesById: Map<string, Profile>;
   profileColors: Map<string, string>;
   isWeekend: boolean;
+  timezone: string;
   onSelectPost: (postId: string, target: HTMLElement) => void;
 }) {
   const eventLayouts = getTimedEventLayouts(
@@ -1061,6 +1088,7 @@ function TimedPostColumn({
             profilesById={profilesById}
             profileColors={profileColors}
             layout={layout}
+            timezone={timezone}
             onClick={(event) => onSelectPost(post.id, event.currentTarget)}
           />
         );
@@ -1074,12 +1102,14 @@ function TimedPostButton({
   profilesById,
   profileColors,
   layout,
+  timezone,
   onClick,
 }: {
   post: SocialPost;
   profilesById: Map<string, Profile>;
   profileColors: Map<string, string>;
   layout: TimedCalendarEventLayout;
+  timezone: string;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const status = getPostStatusGroup(post);
@@ -1087,6 +1117,7 @@ function TimedPostButton({
   const profile = getPrimaryProfile(post, profilesById);
   const color = getPostColor(post, profilesById, profileColors);
   const time = formatPostTime(post);
+  const accessibleLabel = getCalendarEventAccessibleLabel(post, meta, profile, timezone);
   return (
     <button
       type="button"
@@ -1099,7 +1130,8 @@ function TimedPostButton({
         zIndex: layout.lane + 1,
       } as CSSProperties}
       onClick={onClick}
-      title={`${post.caption || "No title"} - ${meta.label}${profile ? ` - ${profile.name}` : ""}`}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
     >
       <span className="posts-calendar-event-rail" />
       <span className="posts-calendar-timed-content">
@@ -2009,6 +2041,10 @@ function formatPlatformName(platform: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatPlatformLabel(platform: string): string {
+  return formatPlatformName(platform);
 }
 
 function statusClassName(status: string): string {
