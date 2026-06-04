@@ -31,3 +31,32 @@ test("Posts routes are feature-flagged between calendar and legacy list", async 
   assert.match(legacyView, /searchParams\.get\("post"\)/);
   assert.match(legacyView, /setPendingExpandedPostId\(focusPostId\)/);
 });
+
+test("Legacy posts list keeps management workflows after route split", async () => {
+  const legacyView = await readFile(legacyViewPath, "utf8");
+
+  assert.match(legacyView, /\(\["all", "published", "scheduled", "failed", "draft", "archived"\] as FilterTab\[\]\)/);
+  assert.match(legacyView, /placeholder="Search posts\.\.\."/);
+  assert.match(legacyView, /<option value="all">All platforms<\/option>/);
+  assert.match(legacyView, /checked=\{filtered\.length > 0 && filtered\.every\(\(post\) => selectedPostIds\.has\(post\.id\)\)\}/);
+  assert.match(legacyView, /requestArchive\(\[...selectedPostIds\]\)/);
+  assert.match(legacyView, /requestRestore\(\[...selectedPostIds\]\)/);
+  assert.match(legacyView, /requestDelete\(\[...selectedPostIds\]\)/);
+  assert.match(legacyView, /archiveSocialPost\(token, id\)/);
+  assert.match(legacyView, /restoreSocialPost\(token, id\)/);
+  assert.match(legacyView, /deleteSocialPost\(token, id\)/);
+  assert.match(legacyView, /setExpandedPostId\(\(current\) => current === post\.id \? null : post\.id\)/);
+  assert.match(legacyView, /Platform Results/);
+  assert.match(legacyView, /PostResultsGrid/);
+  assert.match(legacyView, /retrySocialPostResult\(token, post\.id, result\.id\)/);
+  assert.match(legacyView, /onRetryComplete=\{async \(\) => \{\s*await loadData\(\);\s*\}\}/);
+  assert.match(legacyView, /openRescheduleDialog\(post\)/);
+  assert.match(legacyView, /rescheduleSocialPost\(token, reschedulePost\.id, nextTime\.toISOString\(\)\)/);
+  assert.match(legacyView, /<CreatePostDrawer/);
+  assert.match(legacyView, /onCreated=\{async \(postId\) => \{/);
+  assert.match(legacyView, /setPendingExpandedPostId\(postId\)/);
+  assert.match(legacyView, /searchParams\.get\("action"\) === "new"/);
+  assert.match(legacyView, /searchParams\.get\("template"\) === "welcome"/);
+  assert.match(legacyView, /readStoredReplay\(\)\?\.selectedAccountId/);
+  assert.match(legacyView, /consumeStoredQuickstartSelectedAccountId\(\)/);
+});
