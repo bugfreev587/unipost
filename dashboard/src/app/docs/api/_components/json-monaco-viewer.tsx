@@ -16,6 +16,7 @@ export type JsonViewerSnippet = {
 type MonacoLanguage = "javascript" | "python" | "go" | "json" | "shell" | "plaintext";
 type ViewerThemeVariant = "default" | "api";
 type ScrollbarVisibility = "default" | "on-scroll";
+type MonacoEditorInstance = import("monaco-editor").editor.IStandaloneCodeEditor;
 
 function tryFormatJson(value: string) {
   try {
@@ -91,6 +92,48 @@ function useScrollbarActivity(scrollbarVisibility: ScrollbarVisibility) {
   }, []);
 
   return { scrollbarActive, showScrollbar };
+}
+
+function useMonacoScrollTopReset(enabled: boolean, resetKey: string) {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<MonacoEditorInstance | null>(null);
+
+  const resetScrollTop = useCallback(() => {
+    if (!enabled) return;
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const editor = editorRef.current;
+        if (!editor) return;
+
+        editor.layout();
+        editor.setScrollTop(0);
+        editor.setScrollLeft(0);
+      });
+    });
+  }, [enabled]);
+
+  useEffect(() => {
+    resetScrollTop();
+  }, [resetKey, resetScrollTop]);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const details = frameRef.current?.closest("details");
+    if (!details) return;
+
+    function handleToggle() {
+      if ((details as HTMLDetailsElement).open) {
+        resetScrollTop();
+      }
+    }
+
+    details.addEventListener("toggle", handleToggle);
+    return () => details.removeEventListener("toggle", handleToggle);
+  }, [enabled, resetScrollTop]);
+
+  return { frameRef, editorRef, resetScrollTop };
 }
 
 function CopyButton({ code }: { code: string }) {
@@ -228,6 +271,7 @@ export function JsonMonacoViewer({
   const formatted = useMemo(() => tryFormatJson(code), [code]);
   const [themeName, setThemeName] = useState("unipost-json-dark");
   const { scrollbarActive, showScrollbar } = useScrollbarActivity(scrollbarVisibility);
+  const { frameRef, editorRef, resetScrollTop } = useMonacoScrollTopReset(scrollbarVisibility === "on-scroll", formatted || code);
   const baseFrameClassName = scrollbarVisibility === "on-scroll" ? "docs-monaco-frame scrollbar-on-scroll" : "docs-monaco-frame";
   const frameClassName = `${baseFrameClassName}${expanded ? " expanded" : ""}${scrollbarActive ? " scrollbar-active" : ""}`;
 
@@ -290,6 +334,7 @@ export function JsonMonacoViewer({
 
   return (
     <div
+      ref={frameRef}
       className={frameClassName}
       onTouchMoveCapture={showScrollbar}
       onWheelCapture={showScrollbar}
@@ -308,9 +353,11 @@ export function JsonMonacoViewer({
         beforeMount={(monaco) => {
           applyTheme(monaco);
         }}
-        onMount={(_, monaco) => {
+        onMount={(editor, monaco) => {
+          editorRef.current = editor;
           (window as typeof window & { monaco?: typeof import("monaco-editor") }).monaco = monaco;
           applyTheme(monaco);
+          resetScrollTop();
         }}
         options={{
           readOnly: true,
@@ -365,6 +412,7 @@ export function MonacoCodeViewer({
   const value = useMemo(() => getViewerValue(code, normalizedLanguage), [code, normalizedLanguage]);
   const [themeName, setThemeName] = useState("unipost-snippet-dark");
   const { scrollbarActive, showScrollbar } = useScrollbarActivity(scrollbarVisibility);
+  const { frameRef, editorRef, resetScrollTop } = useMonacoScrollTopReset(scrollbarVisibility === "on-scroll", value);
   const baseFrameClassName = scrollbarVisibility === "on-scroll" ? "docs-monaco-frame scrollbar-on-scroll" : "docs-monaco-frame";
   const frameClassName = `${baseFrameClassName}${expanded ? " expanded" : ""}${scrollbarActive ? " scrollbar-active" : ""}`;
 
@@ -434,6 +482,7 @@ export function MonacoCodeViewer({
 
   return (
     <div
+      ref={frameRef}
       className={frameClassName}
       onTouchMoveCapture={showScrollbar}
       onWheelCapture={showScrollbar}
@@ -452,9 +501,11 @@ export function MonacoCodeViewer({
         beforeMount={(monaco) => {
           applyTheme(monaco);
         }}
-        onMount={(_, monaco) => {
+        onMount={(editor, monaco) => {
+          editorRef.current = editor;
           (window as typeof window & { monaco?: typeof import("monaco-editor") }).monaco = monaco;
           applyTheme(monaco);
+          resetScrollTop();
         }}
         options={{
           readOnly: true,
