@@ -994,11 +994,11 @@ function pruneResponseData(value: unknown, depth = 0): unknown {
 const styles = `
 .cli-reference-note{margin:8px 0 24px;padding:14px 16px;border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated)}
 .cli-reference-note p{margin:0;color:var(--docs-text-soft);line-height:1.65}
-.cli-reference-groups{display:grid;gap:26px;margin-top:30px}
-.cli-reference-group{display:grid;grid-template-columns:minmax(180px,.32fr) minmax(0,1fr);gap:18px;align-items:start}
-.cli-reference-group+.cli-reference-group{padding-top:26px;border-top:1px solid var(--docs-border)}
-.cli-reference-group-copy h2{margin:0;font-size:18px;line-height:1.25;color:var(--docs-text);font-weight:720}
-.cli-reference-group-copy p{margin:8px 0 0;color:var(--docs-text-soft);font-size:13.5px;line-height:1.65}
+.cli-reference-groups{display:grid;gap:30px;margin-top:30px}
+.cli-reference-group{display:grid;gap:16px;align-items:start}
+.cli-reference-group+.cli-reference-group{padding-top:28px;border-top:1px solid var(--docs-border)}
+.cli-reference-group-copy h2{margin:0;font-size:20px;line-height:1.25;color:var(--docs-text);font-weight:720}
+.cli-reference-group-copy p{margin:8px 0 0;color:var(--docs-text-soft);font-size:14.5px;line-height:1.65;max-width:82ch}
 .cli-command-list{display:grid;gap:8px;min-width:0}
 .cli-command-row{border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);overflow:hidden;box-shadow:none}
 .cli-command-row[open]{border-color:var(--docs-border-strong)}
@@ -1015,7 +1015,7 @@ const styles = `
 .cli-command-response-label{font-family:var(--docs-mono);font-size:11px;font-weight:800;letter-spacing:0;text-transform:uppercase;color:var(--docs-text-faint)}
 .cli-command-panel .docs-code-tabs,.cli-command-panel .docs-code-block{margin:0;border-radius:8px;box-shadow:none}
 @media (max-width:920px){
-  .cli-reference-group{grid-template-columns:1fr;gap:12px}
+  .cli-reference-group{gap:12px}
   .cli-reference-group+.cli-reference-group{padding-top:24px}
   .cli-command-summary{grid-template-columns:minmax(0,1fr) 18px;gap:10px}
   .cli-command-example{grid-column:1/-1}
