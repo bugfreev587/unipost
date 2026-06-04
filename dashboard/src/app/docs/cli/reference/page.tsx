@@ -1,4 +1,5 @@
-import { DocsCodeTabs, DocsPage, DocsTable } from "../../_components/docs-shell";
+import { CodeTabs } from "../../_components/code-block";
+import { DocsPage, DocsTable } from "../../_components/docs-shell";
 
 type CliReferenceCommand = {
   name: string;
@@ -827,7 +828,7 @@ export default function CliReferencePage() {
       className="docs-page-wide cli-reference-page"
       eyebrow="Developer tools"
       title="CLI - Reference"
-      lead="Every supported UniPost CLI command, grouped by workflow, with a copyable example and representative response."
+      lead="Every supported UniPost CLI command, grouped by workflow, with compact examples for agents and CI."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
@@ -840,54 +841,52 @@ export default function CliReferencePage() {
       <h2 id="global-flags">Global flags</h2>
       <DocsTable columns={["Flag", "Use"]} rows={GLOBAL_FLAGS} />
 
-      {CLI_REFERENCE_SECTIONS.map((section) => (
-        <section className="cli-reference-section" key={section.title}>
-          <h2 id={slugify(section.title)}>{section.title}</h2>
-          <p>{section.description}</p>
-          <div className="cli-reference-command-list">
-            {section.commands.map((command) => (
-              <CommandReferenceCard command={command} key={command.name} />
-            ))}
-          </div>
-        </section>
-      ))}
+      <div className="cli-reference-groups">
+        {CLI_REFERENCE_SECTIONS.map((section) => (
+          <section className="cli-reference-group" key={section.title} aria-labelledby={slugify(section.title)}>
+            <div className="cli-reference-group-copy">
+              <h2 id={slugify(section.title)}>{section.title}</h2>
+              <p>{section.description}</p>
+            </div>
+            <div className="cli-command-list">
+              {section.commands.map((command) => (
+                <CommandReferenceRow command={command} sectionTitle={section.title} key={command.name} />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     </DocsPage>
   );
 }
 
-function CommandReferenceCard({ command }: { command: CliReferenceCommand }) {
+function CommandReferenceRow({ command, sectionTitle }: { command: CliReferenceCommand; sectionTitle: string }) {
+  const response = getCompactCommandResponse(command);
+  const responseLabel = command.responseLang === "text" ? "Text" : "JSON";
+
   return (
-    <section className="command-reference-card">
-      <h3 id={slugify(command.name)}>
-        <code>{command.name}</code>
-      </h3>
-      <div className="command-reference-purpose">
-        <div className="command-reference-label">What it does</div>
+    <details className="cli-command-row">
+      <summary className="cli-command-summary">
+        <span className="cli-command-title">
+          <span className="cli-command-badge">{getCommandBadge(command.name, sectionTitle)}</span>
+          <span className="cli-command-name">{command.name}</span>
+        </span>
+        <code className="cli-command-example">{formatCommandExample(command.example)}</code>
+        <span className="cli-command-chevron" aria-hidden="true" />
+      </summary>
+      <div className="cli-command-panel">
         <p>{command.description}</p>
+        <div className="cli-command-response-label">Example response</div>
+        <CodeTabs
+          snippets={[{
+            label: responseLabel,
+            lang: command.responseLang || "json",
+            code: response,
+          }]}
+          viewerMaxHeight={240}
+        />
       </div>
-      <div className="command-reference-examples">
-        <div>
-          <div className="command-reference-label">Example</div>
-          <DocsCodeTabs
-            snippets={[{
-              label: "Command",
-              lang: "bash",
-              code: command.example,
-            }]}
-          />
-        </div>
-        <div>
-          <div className="command-reference-label">Example response</div>
-          <DocsCodeTabs
-            snippets={[{
-              label: command.responseLang === "text" ? "Text" : "JSON",
-              lang: command.responseLang || "json",
-              code: command.response,
-            }]}
-          />
-        </div>
-      </div>
-    </section>
+    </details>
   );
 }
 
@@ -919,18 +918,107 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function getCommandBadge(commandName: string, sectionTitle: string) {
+  if (commandName.startsWith("--")) return "SELF";
+
+  const namespace = commandName.split(/\s+/)[0];
+  if (["init", "quickstart", "doctor"].includes(namespace)) return "SETUP";
+  if (namespace === "completion" || namespace === "upgrade" || namespace === "self") return "SELF";
+  if (namespace === "examples") return "EX";
+  if (namespace.length <= 9) return namespace.toUpperCase();
+
+  return sectionTitle
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)[0]
+    ?.slice(0, 9)
+    .toUpperCase() || "CLI";
+}
+
+function formatCommandExample(example: string) {
+  return example
+    .replace(/\\\s*\n\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getCompactCommandResponse(command: CliReferenceCommand) {
+  if (command.responseLang === "text") return compactTextResponse(command.response);
+
+  try {
+    const parsed = JSON.parse(command.response) as Record<string, unknown>;
+    const meta = parsed.meta && typeof parsed.meta === "object" && !Array.isArray(parsed.meta)
+      ? parsed.meta as Record<string, unknown>
+      : {};
+    const compact = {
+      ok: parsed.ok,
+      data: pruneResponseData(parsed.data),
+      warnings: parsed.warnings,
+      meta: {
+        command: typeof meta.command === "string" ? meta.command : command.name,
+      },
+    };
+
+    return JSON.stringify(compact, null, 2);
+  } catch {
+    return command.response;
+  }
+}
+
+function compactTextResponse(response: string) {
+  const lines = response.trimEnd().split("\n");
+  if (lines.length <= 6) return response;
+  return `${lines.slice(0, 6).join("\n")}\n...`;
+}
+
+function pruneResponseData(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value !== "object") {
+    if (typeof value === "string" && value.length > 96) return `${value.slice(0, 93)}...`;
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [];
+    return [pruneResponseData(value[0], depth + 1)];
+  }
+
+  const entries = Object.entries(value);
+  const maxKeys = depth === 0 ? 4 : 3;
+
+  return Object.fromEntries(
+    entries
+      .slice(0, maxKeys)
+      .map(([key, entryValue]) => [key, pruneResponseData(entryValue, depth + 1)])
+  );
+}
+
 const styles = `
-.cli-reference-note{margin:8px 0 28px;padding:16px 18px;border:1px solid var(--docs-border);border-radius:12px;background:var(--docs-bg-elevated)}
+.cli-reference-note{margin:8px 0 24px;padding:14px 16px;border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated)}
 .cli-reference-note p{margin:0;color:var(--docs-text-soft);line-height:1.65}
-.cli-reference-section>p{max-width:74ch;color:var(--docs-text-soft)}
-.cli-reference-command-list{margin-top:8px}
-.command-reference-card{padding:30px 0;border-top:1px solid var(--docs-border)}
-.command-reference-card:first-child{border-top-color:var(--docs-border-strong)}
-.command-reference-card h3{margin-top:0}
-.command-reference-card h3 code{font-size:.94em}
-.command-reference-purpose p{margin:6px 0 0;color:var(--docs-text-soft);line-height:1.65}
-.command-reference-label{font-family:var(--docs-mono);font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--docs-text-faint)}
-.command-reference-examples{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;margin-top:18px;align-items:start}
-.command-reference-examples .docs-code-tabs,.command-reference-examples .docs-code-block{margin-top:8px;margin-bottom:0}
-@media (max-width:920px){.command-reference-examples{grid-template-columns:1fr}}
+.cli-reference-groups{display:grid;gap:26px;margin-top:30px}
+.cli-reference-group{display:grid;grid-template-columns:minmax(180px,.32fr) minmax(0,1fr);gap:18px;align-items:start}
+.cli-reference-group+.cli-reference-group{padding-top:26px;border-top:1px solid var(--docs-border)}
+.cli-reference-group-copy h2{margin:0;font-size:18px;line-height:1.25;color:var(--docs-text);font-weight:720}
+.cli-reference-group-copy p{margin:8px 0 0;color:var(--docs-text-soft);font-size:13.5px;line-height:1.65}
+.cli-command-list{display:grid;gap:8px;min-width:0}
+.cli-command-row{border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);overflow:hidden;box-shadow:none}
+.cli-command-row[open]{border-color:var(--docs-border-strong)}
+.cli-command-summary{display:grid;grid-template-columns:minmax(170px,.34fr) minmax(0,1fr) 18px;gap:14px;align-items:center;padding:13px 14px;list-style:none;cursor:pointer;min-width:0}
+.cli-command-summary::-webkit-details-marker{display:none}
+.cli-command-title{display:flex;align-items:center;gap:10px;min-width:0}
+.cli-command-badge{display:inline-flex;align-items:center;justify-content:center;min-width:58px;height:28px;padding:0 10px;border-radius:8px;background:rgba(16,185,129,.1);color:#10b981;font-family:var(--docs-mono);font-size:12px;font-weight:800}
+.cli-command-name{font-size:13.5px;color:var(--docs-text);font-weight:650;overflow-wrap:anywhere}
+.cli-command-example{font-family:var(--docs-mono);font-size:12.5px;line-height:1.45;color:var(--docs-text-soft);overflow-wrap:anywhere}
+.cli-command-chevron{width:8px;height:8px;border-right:1.5px solid var(--docs-text-faint);border-bottom:1.5px solid var(--docs-text-faint);transform:rotate(45deg);transition:transform .14s ease}
+.cli-command-row[open] .cli-command-chevron{transform:rotate(-135deg)}
+.cli-command-panel{display:grid;gap:10px;padding:0 14px 14px;border-top:1px solid var(--docs-border)}
+.cli-command-panel p{margin:12px 0 0;color:var(--docs-text-soft);font-size:13.5px;line-height:1.6}
+.cli-command-response-label{font-family:var(--docs-mono);font-size:11px;font-weight:800;letter-spacing:0;text-transform:uppercase;color:var(--docs-text-faint)}
+.cli-command-panel .docs-code-tabs,.cli-command-panel .docs-code-block{margin:0;border-radius:8px;box-shadow:none}
+@media (max-width:920px){
+  .cli-reference-group{grid-template-columns:1fr;gap:12px}
+  .cli-reference-group+.cli-reference-group{padding-top:24px}
+  .cli-command-summary{grid-template-columns:minmax(0,1fr) 18px;gap:10px}
+  .cli-command-example{grid-column:1/-1}
+  .cli-command-chevron{grid-column:2;grid-row:1}
+}
 `;

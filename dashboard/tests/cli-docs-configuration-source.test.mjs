@@ -65,9 +65,13 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /Examples/);
   assert.match(referenceSource, /Agent & MCP/);
   assert.match(referenceSource, /Self-management & Shell/);
-  assert.match(referenceSource, /command-reference-card/);
-  assert.match(referenceSource, /What it does/);
-  assert.match(referenceSource, /Example/);
+  assert.match(referenceSource, /cli-reference-group/);
+  assert.match(referenceSource, /cli-command-row/);
+  assert.match(referenceSource, /cli-command-summary/);
+  assert.match(referenceSource, /<details/);
+  assert.match(referenceSource, /<summary/);
+  assert.doesNotMatch(referenceSource, /command-reference-card/);
+  assert.doesNotMatch(referenceSource, /command-reference-examples/);
   assert.match(referenceSource, /Example response/);
   assert.match(referenceSource, /unipost accounts list --json/);
   assert.match(referenceSource, /"command": "accounts list"/);
