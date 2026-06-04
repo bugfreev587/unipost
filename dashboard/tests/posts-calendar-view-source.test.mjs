@@ -332,7 +332,7 @@ test("Posts calendar details popover preserves platform icon rendering inside ch
   );
 
   assert.match(popover, /className="posts-calendar-popover-platform-chip"/);
-  assert.match(popover, /<PlatformIcon platform=\{platform\} size=\{14\} \/>/);
+  assert.match(popover, /<AccountDestinationIcon platform=\{platform\} size=\{14\} \/>/);
   assert.match(source, /\.posts-calendar-popover-platform-chip\{[^}]*display:inline-flex/);
   assert.doesNotMatch(source, /\.posts-calendar-popover-platforms span\{/);
 });
