@@ -877,14 +877,18 @@ export function PostsCalendarView() {
               <button
                 type="button"
                 className={calendarMode === "day" ? "active" : ""}
-                onClick={() => replaceCalendarMode("day")}
+                aria-disabled="true"
+                disabled
+                title="Day view is not available in v1"
               >
                 Day
               </button>
               <button
                 type="button"
                 className={calendarMode === "week" ? "active" : ""}
-                onClick={() => replaceCalendarMode("week")}
+                aria-disabled="true"
+                disabled
+                title="Week view is not available in v1"
               >
                 Week
               </button>

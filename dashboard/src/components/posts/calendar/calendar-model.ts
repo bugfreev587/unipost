@@ -20,7 +20,7 @@ export type CalendarModelPost = {
   archived_at?: string | null;
 };
 
-const CALENDAR_VIEW_MODES = new Set<CalendarViewMode>(["day", "week", "month"]);
+const CALENDAR_VIEW_MODES = new Set<CalendarViewMode>(["month"]);
 
 export type CalendarModelProfile = {
   id: string;

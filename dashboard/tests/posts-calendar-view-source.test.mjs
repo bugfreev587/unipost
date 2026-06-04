@@ -9,6 +9,14 @@ const calendarViewPath = path.join(root, "src/components/posts/calendar/posts-ca
 
 test("Posts calendar view keeps the requested calendar controls and drawer integration", async () => {
   const source = await readFile(calendarViewPath, "utf8");
+  const segment = source.slice(
+    source.indexOf('<div className="posts-calendar-segment"'),
+    source.indexOf('<div className="posts-calendar-month-nav"'),
+  );
+  const dayButtonStart = segment.indexOf('className={calendarMode === "day"');
+  const weekButtonStart = segment.indexOf('className={calendarMode === "week"');
+  const dayButton = segment.slice(dayButtonStart, segment.indexOf("</button>", dayButtonStart));
+  const weekButton = segment.slice(weekButtonStart, segment.indexOf("</button>", weekButtonStart));
 
   assert.match(source, /export function PostsCalendarView/);
   assert.match(source, /CreatePostDrawer/);
@@ -19,9 +27,17 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /Month/);
   assert.match(source, /usePathname,\s*useParams,\s*useRouter,\s*useSearchParams/);
   assert.match(source, /parseCalendarViewMode\(searchParams\.get\("view"\)\)/);
-  assert.match(source, /replaceCalendarMode\("day"\)/);
-  assert.match(source, /replaceCalendarMode\("week"\)/);
   assert.match(source, /replaceCalendarMode\("month"\)/);
+  assert.doesNotMatch(segment, /replaceCalendarMode\("day"\)/);
+  assert.doesNotMatch(segment, /replaceCalendarMode\("week"\)/);
+  assert.match(dayButton, /aria-disabled="true"/);
+  assert.match(dayButton, /disabled/);
+  assert.match(dayButton, /title="Day view is not available in v1"/);
+  assert.match(dayButton, />\s*Day/);
+  assert.match(weekButton, /aria-disabled="true"/);
+  assert.match(weekButton, /disabled/);
+  assert.match(weekButton, /title="Week view is not available in v1"/);
+  assert.match(weekButton, />\s*Week/);
   assert.match(source, /nextParams\.set\("view",\s*mode\)/);
   assert.match(source, /router\.replace\(`\$\{pathname\}\$\{query \? `\?\$\{query\}` : ""\}`,\s*\{\s*scroll:\s*false\s*\}\)/);
   assert.match(source, /renderWeekView/);
