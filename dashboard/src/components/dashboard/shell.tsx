@@ -10,6 +10,7 @@ import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
 import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
 import { useFeatureFlags } from "@/lib/use-feature-flags";
 import { getCanonicalProjectPath } from "@/lib/profile-route";
+import { getDashboardDocsHref } from "@/lib/dashboard-docs-link";
 import {
   buildProjectNavHref,
   projectNavItemIsActive,
@@ -108,6 +109,14 @@ function getServerSnapshot() {
   return false;
 }
 
+function getClientOriginSnapshot(): string | undefined {
+  return window.location.origin;
+}
+
+function getServerOriginSnapshot(): string | undefined {
+  return undefined;
+}
+
 // Filter nav items based on backend feature flags plus internal admin-only surfaces.
 function filterNavItems(backendFlags?: Record<string, boolean>, isAdmin = false) {
   return ALL_NAV_ITEMS.filter((item) => {
@@ -144,6 +153,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const themeMounted = useSyncExternalStore(subscribeToClientSnapshot, getClientSnapshot, getServerSnapshot);
+  const currentOrigin = useSyncExternalStore(subscribeToClientSnapshot, getClientOriginSnapshot, getServerOriginSnapshot);
   // Only one submenu should be expanded at a time.
   const [expandedMenu, setExpandedMenu] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -261,6 +271,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     topic: "dashboard-help",
     source: "sidebar",
   });
+  const dashboardDocsHref = getDashboardDocsHref({ currentOrigin });
   const settingsActive = pathname.startsWith("/settings");
   const themeIsDark = themeMounted && resolvedTheme === "dark";
   const ThemeIcon = themeIsDark ? Moon : Sun;
@@ -536,7 +547,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         {/* ── Bottom actions: docs ── */}
         <div style={{ padding: "4px 10px 10px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
           <a
-            href="https://unipost.dev/docs"
+            href={dashboardDocsHref}
             target="_blank"
             rel="noopener noreferrer"
             title="Open docs"
