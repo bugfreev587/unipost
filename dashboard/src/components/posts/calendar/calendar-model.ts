@@ -8,7 +8,7 @@ export type CalendarStatusFilter =
   | "cancelled"
   | "archived";
 
-export type CalendarStatusGroup = Exclude<CalendarStatusFilter, "all">;
+export type CalendarStatusGroup = Exclude<CalendarStatusFilter, "all"> | "unknown";
 export type CalendarViewMode = "day" | "week" | "month";
 export type CalendarPopoverSide = "right" | "left" | "bottom" | "top";
 
@@ -491,8 +491,9 @@ export function getPostStatusGroup(post: CalendarModelPost): CalendarStatusGroup
   if (post.status === "scheduled") return "scheduled";
   if (IN_PROGRESS_STATUSES.has(post.status)) return "in_progress";
   if (FAILED_STATUSES.has(post.status)) return "failed";
+  if (post.status === "draft") return "draft";
   if (post.status === "cancelled") return "cancelled";
-  return "draft";
+  return "unknown";
 }
 
 export function shouldShowPostForStatusFilter(post: CalendarModelPost, filter: CalendarStatusFilter): boolean {
