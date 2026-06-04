@@ -69,6 +69,7 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /cli-reference-group/);
   assert.match(referenceSource, /cli-command-row/);
   assert.match(referenceSource, /cli-command-summary/);
+  assert.match(referenceSource, /\.cli-command-example\{[^}]*font-weight:650/);
   assert.match(referenceSource, /<details/);
   assert.match(referenceSource, /<summary/);
   assert.doesNotMatch(referenceSource, /command-reference-card/);
