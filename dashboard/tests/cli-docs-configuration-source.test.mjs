@@ -71,7 +71,9 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /cli-command-summary/);
   assert.match(referenceSource, /\.cli-reference-group\{display:grid;gap:16px;align-items:start\}/);
   assert.doesNotMatch(referenceSource, /\.cli-reference-group\{[^}]*grid-template-columns:minmax\(180px/);
-  assert.match(referenceSource, /\.cli-command-example\{[^}]*font-weight:650/);
+  assert.match(referenceSource, /\.cli-command-summary\{display:grid;grid-template-columns:minmax\(260px,\.38fr\) minmax\(0,1fr\) 18px/);
+  assert.match(referenceSource, /\.cli-command-example\{font-family:var\(--docs-mono\);font-size:12\.5px;line-height:1\.45;color:var\(--docs-text-soft\);overflow-wrap:anywhere\}/);
+  assert.doesNotMatch(referenceSource, /\.cli-command-example\{[^}]*font-weight:650/);
   assert.match(referenceSource, /<details/);
   assert.match(referenceSource, /<summary/);
   assert.doesNotMatch(referenceSource, /command-reference-card/);
